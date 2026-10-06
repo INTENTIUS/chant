@@ -71,14 +71,40 @@ export { attributionIssues, isProtectedResourceAttribute, PROTECTED_RESOURCE_ATT
 
 // Composites
 export { NodeAgent, nodeAgentPropsProblem, type NodeAgentProps, type NodeAgentMembers, type NodeAgentInstance } from "./composites";
+export {
+  RedMetrics,
+  redMetricsNames,
+  redMetricsPropsProblem,
+  GenAiPipeline,
+  OtlpCollector,
+  otlpCollectorPropsProblem,
+  TailSamplingTier,
+  tailSamplingTierPropsProblem,
+  tailSamplingLoadBalancer,
+  type RedMetricsProps,
+  type RedMetricsMembers,
+  type RedMetricsInstance,
+  type RedMetricsNames,
+  type GenAiPipelineProps,
+  type GenAiPipelineMembers,
+  type GenAiPipelineInstance,
+  type OtlpCollectorProps,
+  type OtlpCollectorMembers,
+  type OtlpCollectorInstance,
+  type TailSamplingTierProps,
+  type TailSamplingTierMembers,
+  type TailSamplingTierInstance,
+} from "./composites";
 
 // What the platform collector composites (docker, k8s, fly) share
 export {
   otlpCollector,
+  otlpCollectorParts,
   collectorEndpoints,
   COLLECTOR_IMAGE,
   COLLECTOR_CONFIG_PATH,
   type OtlpCollectorOptions,
+  type OtlpCollectorParts,
   type CollectorPort,
   type CollectorEndpoints,
 } from "./platform";
@@ -86,6 +112,7 @@ export {
 // The GenAI preset: content removal and agent RED and token metrics
 export {
   genAiPipeline,
+  genAiPipelineParts,
   genAiComponents,
   genAiMetrics,
   GENAI_ATTRIBUTES,
@@ -107,6 +134,7 @@ export {
   DELTA_READY_EXPORTERS,
   genAiNeedsDeltaToCumulative,
   type GenAiPipelineOptions,
+  type GenAiPipelineParts,
   type GenAiComponentsOptions,
   type GenAiComponents,
   type GenAiMetricsOptions,
@@ -132,4 +160,17 @@ export {
   type SpanMetricsNames,
   type SpanMetricsNamingConfig,
   type PrometheusNaming,
+  promSelector,
+  promSumRate,
+  promErrorRatio,
+  promQuantile,
+  promNumber,
+  spanKindMatchers,
+  spanMetricsRedQueries,
+  SPAN_METRICS_KINDS,
+  RED_DEFAULT_SPAN_KINDS,
+  type PromMatcher,
+  type SpanMetricsKind,
+  type RedQueryOptions,
+  type RedQueries,
 } from "./metric-names";

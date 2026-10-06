@@ -239,3 +239,144 @@ export function serviceGraphNames(
     clientDuration: metric("request_client", "histogram", "s"),
   };
 }
+
+// ── RED queries over span metrics ────────────────────────────────────
+//
+// The PromQL a RED dashboard and RED alerts share. They live here, next to
+// the names they read, so the grafana lexicon (panels) and the prometheus
+// lexicon (alerting rules) build the same expressions without either one
+// importing the other.
+
+/** A label matcher: `[label, op, value]`. */
+export type PromMatcher = [label: string, op: "=" | "!=" | "=~" | "!~", value: string];
+
+/** `metric{a="x", b=~"y"}`; just `metric` with no matchers. */
+export function promSelector(metric: string, matchers: PromMatcher[]): string {
+  if (matchers.length === 0) return metric;
+  return `${metric}{${matchers.map(([l, op, v]) => `${l}${op}${JSON.stringify(v)}`).join(", ")}}`;
+}
+
+/** `sum by (labels) (rate(sel[range]))`, or `sum (...)` with no labels. */
+export function promSumRate(sel: string, by: string[], range: string): string {
+  return `sum${by.length ? ` by (${by.join(", ")})` : ""} (rate(${sel}[${range}]))`;
+}
+
+/**
+ * `errors / all` as rates summed by `by`, with the numerator padded to zero:
+ * `(errors or all * 0) / all`. A group with calls but no error series gets 0
+ * instead of dropping out of the result.
+ */
+export function promErrorRatio(errorSel: string, allSel: string, by: string[], range: string): string {
+  const all = promSumRate(allSel, by, range);
+  return `(\n${promSumRate(errorSel, by, range)}\nor\n${all} * 0\n)\n/\n${all}`;
+}
+
+/** A number as PromQL writes it, without float noise. */
+export function promNumber(n: number): string {
+  return String(Number(n.toPrecision(10)));
+}
+
+/** `histogram_quantile(q, sum by (le, labels) (rate(bucket[range])))`. */
+export function promQuantile(q: number, bucketSel: string, by: string[], range: string): string {
+  return `histogram_quantile(${promNumber(q)}, ${promSumRate(bucketSel, ["le", ...by], range)})`;
+}
+
+/** The `span_kind` label values the spanmetrics connector writes. */
+export type SpanMetricsKind =
+  | "SPAN_KIND_UNSPECIFIED"
+  | "SPAN_KIND_INTERNAL"
+  | "SPAN_KIND_SERVER"
+  | "SPAN_KIND_CLIENT"
+  | "SPAN_KIND_PRODUCER"
+  | "SPAN_KIND_CONSUMER";
+
+/** Every `span_kind` value, in the order the spec lists them. */
+export const SPAN_METRICS_KINDS: readonly SpanMetricsKind[] = Object.freeze([
+  "SPAN_KIND_UNSPECIFIED",
+  "SPAN_KIND_INTERNAL",
+  "SPAN_KIND_SERVER",
+  "SPAN_KIND_CLIENT",
+  "SPAN_KIND_PRODUCER",
+  "SPAN_KIND_CONSUMER",
+]);
+
+/** The kinds RED queries count unless told otherwise: the spans that serve a request or consume a message. */
+export const RED_DEFAULT_SPAN_KINDS: readonly SpanMetricsKind[] = Object.freeze(["SPAN_KIND_SERVER", "SPAN_KIND_CONSUMER"]);
+
+/** What `spanMetricsRedQueries` takes besides the names. */
+export interface RedQueryOptions {
+  /** The range every `rate` reads: `$__rate_interval` on a dashboard, `5m` in a rule. */
+  range: string;
+  /** Duration quantiles, one expression each (default p50, p95 and p99). */
+  quantiles?: number[];
+  /** A regex the service label must match, e.g. `$service`. Unset: no service matcher. */
+  serviceMatch?: string;
+  /**
+   * The span kinds counted (default server and consumer spans). `[]` counts
+   * every kind. With the default, a connector that excludes `span.kind`
+   * gets no kind filter; naming kinds for such a connector is an error.
+   */
+  spanKinds?: readonly SpanMetricsKind[];
+  /** Labels the results are split by besides the service label. */
+  by?: string[];
+  /** The name errors are reported under, e.g. `RedDashboard`. */
+  owner?: string;
+}
+
+/** The RED expressions for one spanmetrics connector. */
+export interface RedQueries {
+  /** The service label the results are split by. */
+  service: string;
+  /** The span-kind matcher, or none. */
+  kindMatchers: PromMatcher[];
+  /** Counted spans per second. */
+  rate: string;
+  /** Errors over counted spans, 0 for a service with none. */
+  errorRatio: string;
+  /** One expression per quantile, in the histogram's unit. Empty when the connector has no histogram. */
+  duration: Array<{ quantile: number; expr: string }>;
+}
+
+const DEFAULT_RED_QUANTILES = [0.5, 0.95, 0.99];
+
+/**
+ * The span-kind matcher for `kinds`, or none: none for `[]`, and none for
+ * the default kinds when the connector excludes `span.kind`.
+ */
+export function spanKindMatchers(names: SpanMetricsNames, kinds: readonly SpanMetricsKind[] | undefined, owner = "spanKindMatchers"): PromMatcher[] {
+  const label = names.labels.spanKind;
+  if (kinds === undefined) return label ? [[label, "=~", RED_DEFAULT_SPAN_KINDS.join("|")]] : [];
+  for (const k of kinds) {
+    if (!SPAN_METRICS_KINDS.includes(k)) throw new Error(`${owner}: unknown span kind ${JSON.stringify(k)}; use one of ${SPAN_METRICS_KINDS.join(", ")}`);
+  }
+  if (kinds.length === 0) return [];
+  if (!label) throw new Error(`${owner}: the connector excludes span.kind, so the metrics can't be filtered by spanKinds`);
+  return [[label, "=~", [...new Set(kinds)].join("|")]];
+}
+
+/**
+ * Rate, error ratio and duration quantiles per service, from a spanmetrics
+ * connector's names. The grafana lexicon's `RedDashboard` and the prometheus
+ * lexicon's `RedAlerts` both build their queries here.
+ */
+export function spanMetricsRedQueries(names: SpanMetricsNames, options: RedQueryOptions): RedQueries {
+  const owner = options.owner ?? "spanMetricsRedQueries";
+  const svc = names.labels.service;
+  const status = names.labels.statusCode;
+  if (!svc) throw new Error(`${owner}: the connector excludes service.name, so there is no service to break the metrics down by`);
+  if (!status) throw new Error(`${owner}: the connector excludes status.code, so errors can't be told from successes`);
+  const kind = spanKindMatchers(names, options.spanKinds, owner);
+  const scope: PromMatcher[] = [...(options.serviceMatch !== undefined ? [[svc, "=~", options.serviceMatch] as PromMatcher] : []), ...kind];
+  const by = [svc, ...(options.by ?? [])];
+  const calls = promSelector(names.calls.prometheus, scope);
+  const errors = promSelector(names.calls.prometheus, [...scope, [status, "=", names.errorStatus]]);
+  const buckets = names.duration ? promSelector(`${names.duration.prometheus}_bucket`, scope) : undefined;
+  const quantiles = options.quantiles ?? DEFAULT_RED_QUANTILES;
+  return {
+    service: svc,
+    kindMatchers: kind,
+    rate: promSumRate(calls, by, options.range),
+    errorRatio: promErrorRatio(errors, calls, by, options.range),
+    duration: buckets ? quantiles.map((q) => ({ quantile: q, expr: promQuantile(q, buckets, by, options.range) })) : [],
+  };
+}

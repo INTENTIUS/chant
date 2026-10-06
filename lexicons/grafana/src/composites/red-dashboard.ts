@@ -13,7 +13,14 @@
  */
 
 import { Composite, type CompositeInstance } from "@intentius/chant/composite";
-import { spanMetricsNames, type PrometheusNaming, type SpanMetricsNames } from "@intentius/chant-lexicon-otel/metric-names";
+import {
+  RED_DEFAULT_SPAN_KINDS as SHARED_DEFAULT_SPAN_KINDS,
+  spanMetricsNames,
+  spanMetricsRedQueries,
+  type PrometheusNaming,
+  type SpanMetricsKind,
+  type SpanMetricsNames,
+} from "@intentius/chant-lexicon-otel/metric-names";
 import type { OTelComponent } from "@intentius/chant-lexicon-otel/define";
 import type { SpanMetricsConnectorConfig } from "@intentius/chant-lexicon-otel/components/connectors";
 import type { PrometheusExporterConfig } from "@intentius/chant-lexicon-otel/components/exporters";
@@ -22,19 +29,7 @@ import { Row, TimeSeriesPanel } from "../panels";
 import { PromQuery } from "../query";
 import { QueryVariable } from "../variables";
 import { slugUid } from "../util";
-import {
-  dashboardProps,
-  durationUnit,
-  errorRatio,
-  legend,
-  quantile,
-  quantileName,
-  requireDatasource,
-  selector,
-  sumRate,
-  type DashboardOptions,
-  type Matcher,
-} from "./shared";
+import { dashboardProps, durationUnit, legend, quantileName, requireDatasource, selector, type DashboardOptions } from "./shared";
 
 export interface RedDashboardProps extends DashboardOptions {
   /**
@@ -56,25 +51,10 @@ export interface RedDashboardProps extends DashboardOptions {
 }
 
 /** The `span_kind` label values the spanmetrics connector writes. */
-export type SpanKind =
-  | "SPAN_KIND_UNSPECIFIED"
-  | "SPAN_KIND_INTERNAL"
-  | "SPAN_KIND_SERVER"
-  | "SPAN_KIND_CLIENT"
-  | "SPAN_KIND_PRODUCER"
-  | "SPAN_KIND_CONSUMER";
-
-const SPAN_KINDS: readonly SpanKind[] = [
-  "SPAN_KIND_UNSPECIFIED",
-  "SPAN_KIND_INTERNAL",
-  "SPAN_KIND_SERVER",
-  "SPAN_KIND_CLIENT",
-  "SPAN_KIND_PRODUCER",
-  "SPAN_KIND_CONSUMER",
-];
+export type SpanKind = SpanMetricsKind;
 
 /** The kinds `RedDashboard` counts unless told otherwise: the spans that serve a request or consume a message. */
-export const RED_DEFAULT_SPAN_KINDS: readonly SpanKind[] = Object.freeze(["SPAN_KIND_SERVER", "SPAN_KIND_CONSUMER"]);
+export const RED_DEFAULT_SPAN_KINDS: readonly SpanKind[] = SHARED_DEFAULT_SPAN_KINDS;
 
 export type RedDashboardMembers = { dashboard: DashboardEntity };
 
@@ -92,24 +72,11 @@ function isNames(x: unknown): x is SpanMetricsNames {
 }
 
 /**
- * The span-kind matcher for `kinds`, or none: none for `[]`, and none for
- * the default kinds when the connector excludes `span.kind`.
- */
-function spanKindMatchers(names: SpanMetricsNames, kinds: readonly SpanKind[] | undefined): Matcher[] {
-  const label = names.labels.spanKind;
-  if (kinds === undefined) return label ? [[label, "=~", RED_DEFAULT_SPAN_KINDS.join("|")]] : [];
-  for (const k of kinds) {
-    if (!SPAN_KINDS.includes(k)) throw new Error(`RedDashboard: unknown span kind ${JSON.stringify(k)}; use one of ${SPAN_KINDS.join(", ")}`);
-  }
-  if (kinds.length === 0) return [];
-  if (!label) throw new Error("RedDashboard: the connector excludes span.kind, so the metrics can't be filtered by spanKinds");
-  return [[label, "=~", [...new Set(kinds)].join("|")]];
-}
-
-/**
  * The PromQL the RED dashboard runs, from the connector's names. Exposed for
  * tests and for panels of your own. `spanKinds` defaults to server and
- * consumer spans; `[]` counts every kind.
+ * consumer spans; `[]` counts every kind. The expressions come from the otel
+ * lexicon's `spanMetricsRedQueries()`, which the prometheus lexicon's
+ * `RedAlerts` reads too.
  */
 export function redQueries(
   names: SpanMetricsNames,
@@ -117,20 +84,12 @@ export function redQueries(
   serviceFilter = "$service",
   spanKinds?: readonly SpanKind[],
 ) {
-  const svc = names.labels.service;
-  const status = names.labels.statusCode;
-  if (!svc) throw new Error("RedDashboard: the connector excludes service.name, so there is no service to break the metrics down by");
-  if (!status) throw new Error("RedDashboard: the connector excludes status.code, so errors can't be told from successes");
-  const kind = spanKindMatchers(names, spanKinds);
-  const scope: Matcher[] = [[svc, "=~", serviceFilter], ...kind];
-  const calls = selector(names.calls.prometheus, scope);
-  const errors = selector(names.calls.prometheus, [...scope, [status, "=", names.errorStatus]]);
-  const buckets = names.duration ? selector(`${names.duration.prometheus}_bucket`, scope) : undefined;
+  const q = spanMetricsRedQueries(names, { range: "$__rate_interval", quantiles, serviceMatch: serviceFilter, spanKinds, owner: "RedDashboard" });
   return {
-    rate: sumRate(calls, [svc]),
-    errorRatio: errorRatio(errors, calls, [svc]),
-    duration: buckets ? quantiles.map((q) => ({ quantile: q, expr: quantile(q, buckets, [svc]) })) : [],
-    services: `label_values(${selector(names.calls.prometheus, kind)}, ${svc})`,
+    rate: q.rate,
+    errorRatio: q.errorRatio,
+    duration: q.duration,
+    services: `label_values(${selector(names.calls.prometheus, q.kindMatchers)}, ${q.service})`,
   };
 }
 

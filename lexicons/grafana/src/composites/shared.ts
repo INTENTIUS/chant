@@ -3,6 +3,14 @@
  * take, a PromQL selector builder, and the field configs they reuse.
  */
 
+import {
+  promErrorRatio,
+  promNumber,
+  promQuantile,
+  promSelector,
+  promSumRate,
+  type PromMatcher,
+} from "@intentius/chant-lexicon-otel/metric-names";
 import type { DatasourceInput } from "../query";
 import type { DashboardLinkInput } from "../dashboard";
 import type { FolderEntity } from "../folder";
@@ -27,17 +35,21 @@ export interface DashboardOptions {
 }
 
 /** A label matcher: `[label, op, value]`. */
-export type Matcher = [label: string, op: "=" | "!=" | "=~" | "!~", value: string];
+export type Matcher = PromMatcher;
+
+// The PromQL builders live in the otel lexicon's metric-names, next to the
+// names they read, so the prometheus lexicon's RedAlerts builds the same
+// expressions without importing grafana. Here they default the range to
+// Grafana's `$__rate_interval`.
 
 /** `metric{a="x", b=~"y"}`; just `metric` with no matchers. */
 export function selector(metric: string, matchers: Matcher[]): string {
-  if (matchers.length === 0) return metric;
-  return `${metric}{${matchers.map(([l, op, v]) => `${l}${op}${JSON.stringify(v)}`).join(", ")}}`;
+  return promSelector(metric, matchers);
 }
 
 /** `sum by (labels) (rate(sel[range]))`, or `sum (...)` with no labels. */
 export function sumRate(sel: string, by: string[], range = "$__rate_interval"): string {
-  return `sum${by.length ? ` by (${by.join(", ")})` : ""} (rate(${sel}[${range}]))`;
+  return promSumRate(sel, by, range);
 }
 
 /**
@@ -47,18 +59,17 @@ export function sumRate(sel: string, by: string[], range = "$__rate_interval"): 
  * "No data" for a service that has had no errors.
  */
 export function errorRatio(errorSel: string, allSel: string, by: string[]): string {
-  const all = sumRate(allSel, by);
-  return `(\n${sumRate(errorSel, by)}\nor\n${all} * 0\n)\n/\n${all}`;
+  return promErrorRatio(errorSel, allSel, by, "$__rate_interval");
 }
 
 /** `histogram_quantile(q, sum by (le, labels) (rate(bucket[range])))`. */
 export function quantile(q: number, bucketSel: string, by: string[]): string {
-  return `histogram_quantile(${num(q)}, ${sumRate(bucketSel, ["le", ...by])})`;
+  return promQuantile(q, bucketSel, by, "$__rate_interval");
 }
 
 /** A number as PromQL and Grafana thresholds write it, without float noise. */
 export function num(n: number): string {
-  return String(Number(n.toPrecision(10)));
+  return promNumber(n);
 }
 
 /** `p95` for 0.95, `p99.9` for 0.999. */

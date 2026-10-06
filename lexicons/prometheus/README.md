@@ -28,6 +28,9 @@ export { api, oncall, fallback, root };
 | `RuleGroup` | rule file |
 | `Slo` (composite) | rule file: SLI recording rules, error budget and multiwindow burn-rate alerts |
 | `GenAiRules` (composite) | rule file: request, error, latency, token and cost rules and opt-in alerts for the otel GenAI preset |
+| `RedAlerts` (composite) | rule file: error-ratio and latency alerts per service over a spanmetrics connector's metrics |
+| `Watchdog` (composite) | rule file and `alertmanager.yml`: an always-firing alert, its heartbeat route and receiver |
+| `AlertRouting` (composite) | `alertmanager.yml`: a route tree by team and severity, inhibit rules between levels, receivers |
 | `ScrapeConfig`, `PrometheusConfig` | `prometheus.yml`: scrape jobs with relabelling and typed kubernetes, file, http, dns, ec2 and consul discovery (other `*_sd_configs` kinds pass through untyped), plus `global`, `alerting`, `rule_files`, `remote_write`, `remote_read` and `otlp` |
 | `Route`, `Receiver` (every Alertmanager integration), `InhibitRule`, `TimeInterval`, `AlertmanagerSettings` | `alertmanager.yml` |
 
@@ -62,6 +65,8 @@ PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's ow
 - `src/alertmanager.ts`: the Alertmanager entities
 - `src/composites/slo.ts`: `Slo` and `sloMetrics`
 - `src/composites/genai.ts`: `GenAiRules` and `genAiRuleMetrics`
+- `src/composites/red-alerts.ts`: `RedAlerts` and `redAlertRules`
+- `src/composites/watchdog.ts`, `src/composites/alert-routing.ts`: `Watchdog` and `AlertRouting`
 - `src/build.ts`: entities to config to YAML
 - `src/promql.ts`, `src/matchers.ts`, `src/duration.ts`: parsing
 - `src/validate-config.ts`, `src/lint/`: checks

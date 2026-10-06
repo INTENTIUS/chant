@@ -15,11 +15,19 @@ const exported = Object.entries(composites)
   .filter(([, value]) => isCompositeDefinition(value))
   .map(([name]) => name)
   .sort();
+/** Rule composites bundle a RuleGroup; the routing ones the Alertmanager entities they declare. */
+const BUNDLES: Record<string, string[]> = {
+  AlertRouting: ["InhibitRule", "Receiver", "Route"],
+  GenAiRules: ["RuleGroup"],
+  RedAlerts: ["RuleGroup"],
+  Slo: ["RuleGroup"],
+  Watchdog: ["Receiver", "Route", "RuleGroup"],
+};
 const catalogued = compositeCatalog.map((entry) => entry.name).sort();
 
 describe("the prometheus composite catalog", () => {
   test("every exported composite has an entry, and every entry names an exported composite", () => {
-    expect(exported).toEqual(["GenAiRules", "Slo"]);
+    expect(exported).toEqual(["AlertRouting", "GenAiRules", "RedAlerts", "Slo", "Watchdog"]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- prometheus`").toEqual(exported);
   });
 
@@ -27,7 +35,7 @@ describe("the prometheus composite catalog", () => {
     for (const entry of compositeCatalog) {
       expect(entry.lexicon, entry.name).toBe("prometheus");
       expect(entry.description.length, entry.name).toBeGreaterThan(0);
-      expect(entry.bundles, entry.name).toEqual(["RuleGroup"]);
+      expect(entry.bundles, entry.name).toEqual(BUNDLES[entry.name]);
     }
   });
 

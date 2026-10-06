@@ -75,7 +75,7 @@ OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to O
 - `src/validate-config.ts`, `src/lint/`: checks
 - `src/topology.ts`, `src/semconv.ts`: the read surface
 - `src/genai.ts`: the GenAI preset
-- `src/composites/`: `NodeAgent`, the per-node Kubernetes agent config
+- `src/composites/`: `NodeAgent` (the per-node Kubernetes agent config), `RedMetrics` (spanmetrics and servicegraph to a prometheus exporter), `GenAiPipeline` and `OtlpCollector` (the presets as composites), `TailSamplingTier` (a tail sampling tier off Kubernetes)
 - `src/init-templates.ts`: `chant init --lexicon otel` scaffolds (default, `k8s-agent`, `genai`)
 - `src/import/`: `chant import` for collector YAML (parser, generator, round-trip tests and fixtures)
 - `examples/`: getting-started, k8s-node-agent, genai-agent, tail-sampling-gateway, custom-component

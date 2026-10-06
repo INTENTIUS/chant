@@ -92,6 +92,18 @@ function isCompositeDefinition(type: ts.Type): boolean {
 
 type ClassKind = "resource" | "property";
 
+/** Whether a function body calls `createResource(...)` directly. */
+function callsCreateResource(body: ts.Node): boolean {
+  let found = false;
+  const scan = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "createResource") found = true;
+    else ts.forEachChild(n, scan);
+  };
+  scan(body);
+  return found;
+}
+
 /**
  * Whether a symbol is a lexicon class, and which kind: generated and
  * hand-written lexicon classes alike are `const X = createResource(...)` or
@@ -127,6 +139,12 @@ function classKind(symbol: ts.Symbol, checker: ts.TypeChecker): ClassKind | unde
       // The otel lexicon's built-in components come from `defineBuiltin`, its own createResource wrapper.
       if (init.expression.text === "createResource" || init.expression.text === "defineBuiltin") return "resource";
       if (init.expression.text === "createProperty") return "property";
+      // A lexicon's own class factory, `function entityClass(...) { const Base = createResource(...); ... }`
+      // (the prometheus Alertmanager entities), makes resource classes too.
+      let callee = checker.getSymbolAtLocation(init.expression);
+      if (callee && callee.flags & ts.SymbolFlags.Alias) callee = checker.getAliasedSymbol(callee);
+      const fn = callee?.valueDeclaration;
+      if (fn && ts.isFunctionDeclaration(fn) && fn.body && callsCreateResource(fn.body)) return "resource";
       return undefined;
     }
     if (!ts.isIdentifier(init)) return undefined;

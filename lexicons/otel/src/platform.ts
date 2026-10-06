@@ -15,7 +15,7 @@ import { OtlpReceiver } from "./components/receivers";
 import { BatchProcessor, MemoryLimiterProcessor } from "./components/processors";
 import { DebugExporter } from "./components/exporters";
 import { HealthCheckExtension } from "./components/extensions";
-import { Pipeline } from "./pipeline";
+import { Pipeline, type PipelineEntity } from "./pipeline";
 import { SIGNALS, parseComponentId, type CollectorConfig, type Signal } from "./model";
 import { listenerPaths } from "./validate-config";
 
@@ -34,13 +34,21 @@ export interface OtlpCollectorOptions {
   healthCheck?: boolean;
 }
 
-/**
- * The entities of a small OTLP collector: an `otlp` receiver on 4317 (gRPC)
- * and 4318 (HTTP), `memory_limiter` then `batch`, the given exporters, and a
- * `health_check` extension. Pass the result to `collectorYaml`.
- */
-export function otlpCollector(options: OtlpCollectorOptions = {}): Declarable[] {
-  const { exporters = [new DebugExporter({ verbosity: "basic" })], signals = [...SIGNALS], healthCheck = true } = options;
+/** The parts of `otlpCollector()`'s config, by name. */
+export interface OtlpCollectorParts {
+  otlp: OTelComponent<"receiver", "otlp", object>;
+  memoryLimiter: OTelComponent<"processor", "memory_limiter", object>;
+  batch: OTelComponent<"processor", "batch", object>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  exporters: OTelComponent<"exporter", string, any>[];
+  /** Absent with `healthCheck: false`. */
+  health?: OTelComponent<"extension", "health_check", object>;
+  /** One pipeline per signal asked for. */
+  pipelines: Partial<Record<Signal, PipelineEntity>>;
+}
+
+/** The receiver and processors `otlpCollector()` and `OtlpCollector` start from. */
+function collectorBase() {
   const otlp = new OtlpReceiver({
     protocols: {
       grpc: { endpoint: "0.0.0.0:4317" },
@@ -53,6 +61,35 @@ export function otlpCollector(options: OtlpCollectorOptions = {}): Declarable[] 
     spike_limit_percentage: 20,
   });
   const batch = new BatchProcessor({});
+  return { otlp, memoryLimiter, batch };
+}
+
+/** `otlpCollector()`'s config by part, for the `OtlpCollector` composite. A signal listed twice gets one pipeline. */
+export function otlpCollectorParts(options: OtlpCollectorOptions = {}): OtlpCollectorParts {
+  const { exporters = [new DebugExporter({ verbosity: "basic" })], signals = [...SIGNALS], healthCheck = true } = options;
+  const { otlp, memoryLimiter, batch } = collectorBase();
+  const pipelines: Partial<Record<Signal, PipelineEntity>> = {};
+  for (const signal of signals) {
+    pipelines[signal] ??= new Pipeline({ signal, receivers: [otlp], processors: [memoryLimiter, batch], exporters });
+  }
+  return {
+    otlp,
+    memoryLimiter,
+    batch,
+    exporters,
+    ...(healthCheck ? { health: new HealthCheckExtension({ endpoint: "0.0.0.0:13133" }) } : {}),
+    pipelines,
+  };
+}
+
+/**
+ * The entities of a small OTLP collector: an `otlp` receiver on 4317 (gRPC)
+ * and 4318 (HTTP), `memory_limiter` then `batch`, the given exporters, and a
+ * `health_check` extension. Pass the result to `collectorYaml`.
+ */
+export function otlpCollector(options: OtlpCollectorOptions = {}): Declarable[] {
+  const { exporters = [new DebugExporter({ verbosity: "basic" })], signals = [...SIGNALS], healthCheck = true } = options;
+  const { otlp, memoryLimiter, batch } = collectorBase();
   const entities: Declarable[] = [otlp, memoryLimiter, batch, ...exporters];
   if (healthCheck) entities.push(new HealthCheckExtension({ endpoint: "0.0.0.0:13133" }));
   for (const signal of signals) {

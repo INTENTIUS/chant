@@ -1,0 +1,54 @@
+---
+title: "RED Alerts"
+description: "The RedAlerts composite: error-ratio and latency alerts per service over the span metrics of a spanmetrics connector, built with the same PromQL as the grafana RedDashboard"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/red-alerts.mdx instead; changes here are overwritten. */}
+
+
+`RedAlerts` builds one `RuleGroup` with two alerts per service over the metrics an OpenTelemetry `spanmetrics` connector emits: the share of spans that ended in error, and a duration quantile. It reads the metric and label names from the connector's declaration through the otel lexicon's `spanMetricsNames()`, so a connector with another namespace or histogram unit moves the expressions with it.
+
+```ts
+import { RedMetrics } from "@intentius/chant-lexicon-otel";
+import { RedAlerts } from "@intentius/chant-lexicon-prometheus";
+
+export const red = RedMetrics({ spanMetrics: { namespace: "shop", histogram: { unit: "s" } } });
+export const redAlerts = RedAlerts({
+  spanMetrics: red.spanMetrics,
+  exporter: red.exporter,
+  errorRatio: { threshold: 0.02, severity: "critical" },
+  latency: { quantile: 0.99, thresholdSeconds: 0.5 },
+});
+```
+
+`spanMetrics` takes any `SpanMetricsConnector`, or the names `spanMetricsNames()` returned for one. Pass the `prometheus` exporter too when its `namespace` or `add_metric_suffixes` changes the names.
+
+## The alerts
+
+| Alert | Fires when | Default |
+|---|---|---|
+| `ServiceErrorRatioHigh` | errors over all counted spans, per service, is above `threshold` | on, above 0.05 |
+| `ServiceLatencyHigh` | the `quantile` of span duration, per service, is above `thresholdSeconds` | on, p95 above 1s, when the connector has a duration histogram |
+
+Both take `for` (default `10m`), `severity` (default `warning`), `labels` and `annotations`, and `false` leaves one out. The threshold in seconds is converted to the histogram's unit, so a millisecond histogram compares against `1000`. Asking for the latency alert on a connector with `histogram.disable` is an error.
+
+## The expressions
+
+The alerts and the grafana lexicon's `RedDashboard` build their PromQL with one function, `spanMetricsRedQueries()` in the otel lexicon's `metric-names` module. The panel a responder opens from an alert runs the alert's expression, with Grafana's `$__rate_interval` in place of `rateWindow`. The prometheus lexicon does not import grafana; both import otel, which already names the metrics.
+
+Both count server and consumer spans only by default (`span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"`): a service's outgoing calls and internal spans do not dilute its error ratio. `spanKinds` names other kinds, and `[]` counts every kind. A service with spans but no errors gets a ratio of 0, not no data.
+
+| Prop | Default | What it does |
+|---|---|---|
+| `rateWindow` | `5m` | The range every `rate` reads |
+| `spanKinds` | server and consumer | The span kinds counted |
+| `minRate` | none | Spans per second a service must see for its alerts to fire, joined with `and on (service_name)` |
+| `groupBy` | none | More labels the alerts are split by, such as `deployment_environment`; they must be connector dimensions |
+| `name` | `red` | The rule group's name |
+| `labels`, `interval` | none | The group's labels and evaluation interval |
+
+`redAlertRules(props)` returns the alerting rules without the group, for a group of your own.
+
+The severities go where [`AlertRouting`](../alert-routing/) sends them: `warning` with its `warning` level, `critical` with its `critical` level.

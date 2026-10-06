@@ -63,7 +63,7 @@ import {
   type SumConnectorConfig,
 } from "./components/connectors";
 import type { Duration } from "./components/common";
-import { Pipeline } from "./pipeline";
+import { Pipeline, type PipelineEntity } from "./pipeline";
 import { prometheusMetricName, SPANMETRICS_DEFAULT_DIMENSIONS, type CollectorMetric } from "./metric-names";
 
 // ── The GenAI attribute vocabulary, at GENAI_SEMCONV_PIN ─────────────
@@ -678,6 +678,23 @@ export interface GenAiPipelineOptions extends GenAiComponentsOptions {
 }
 
 /**
+ * The entities `genAiPipeline()` returns, by name: what the `GenAiPipeline`
+ * composite's members are. A key is absent when its part is off: `sampled`
+ * without `sampling`, `sdkMetrics` without `clientMetrics`, `logs` with
+ * `logs: false`, `health` with `healthCheck: false`.
+ */
+export type GenAiPipelineParts = {
+  otlp: Declarable;
+  traces: PipelineEntity;
+  sampled?: PipelineEntity;
+  genAiTraces: PipelineEntity;
+  genAiMetrics: PipelineEntity;
+  sdkMetrics?: PipelineEntity;
+  logs?: PipelineEntity;
+  health?: Declarable;
+};
+
+/**
  * The entities of an OTLP collector for GenAI workloads: an `otlp` receiver
  * on 4317 and 4318; `memory_limiter`, content removal and `batch` on traces
  * and logs; a `traces/genai` branch that turns GenAI spans into metrics
@@ -686,6 +703,11 @@ export interface GenAiPipelineOptions extends GenAiComponentsOptions {
  * pieces into pipelines of your own.
  */
 export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] {
+  return Object.values(genAiPipelineParts(options)) as Declarable[];
+}
+
+/** `genAiPipeline()`'s entities by name, in the order it returns them. */
+export function genAiPipelineParts(options: GenAiPipelineOptions = {}): GenAiPipelineParts {
   const debug = new DebugExporter({ verbosity: "basic" });
   const { traceExporters = [debug], metricExporters = [debug], logExporters = [debug], logs = true, sampling = [], healthCheck = true } =
     options;
@@ -709,73 +731,64 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
     spike_limit_percentage: 20,
   });
   const batch = new BatchProcessor({});
-  const entities: Declarable[] = [otlp];
+  // Insertion order is the order genAiPipeline() has always returned.
+  const out: Partial<GenAiPipelineParts> = { otlp };
 
   if (sampling.length === 0) {
-    entities.push(
-      new Pipeline({
-        signal: "traces",
-        receivers: [otlp],
-        processors: [memoryLimiter, ...parts.processors, batch],
-        exporters: [...traceExporters, parts.forward],
-      }),
-    );
+    out.traces = new Pipeline({
+      signal: "traces",
+      receivers: [otlp],
+      processors: [memoryLimiter, ...parts.processors, batch],
+      exporters: [...traceExporters, parts.forward],
+    });
   } else {
     const sampled = new ForwardConnector({ name: "sampled" });
-    entities.push(
-      new Pipeline({
-        signal: "traces",
-        receivers: [otlp],
-        processors: [memoryLimiter, ...parts.processors],
-        exporters: [parts.forward, sampled],
-      }),
-      new Pipeline({
-        signal: "traces",
-        name: "sampled",
-        receivers: [sampled],
-        processors: [...sampling, batch],
-        exporters: traceExporters,
-      }),
-    );
-  }
-  entities.push(
-    new Pipeline({
+    out.traces = new Pipeline({
       signal: "traces",
-      name: "genai",
-      receivers: [parts.forward],
-      processors: [parts.genAiSpans],
-      exporters: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
-    }),
-    new Pipeline({
-      signal: "metrics",
-      name: "genai",
-      receivers: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
-      processors: [...cumulative, batch],
-      exporters: metricExporters,
-    }),
-  );
+      receivers: [otlp],
+      processors: [memoryLimiter, ...parts.processors],
+      exporters: [parts.forward, sampled],
+    });
+    out.sampled = new Pipeline({
+      signal: "traces",
+      name: "sampled",
+      receivers: [sampled],
+      processors: [...sampling, batch],
+      exporters: traceExporters,
+    });
+  }
+  out.genAiTraces = new Pipeline({
+    signal: "traces",
+    name: "genai",
+    receivers: [parts.forward],
+    processors: [parts.genAiSpans],
+    exporters: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
+  });
+  out.genAiMetrics = new Pipeline({
+    signal: "metrics",
+    name: "genai",
+    receivers: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
+    processors: [...cumulative, batch],
+    exporters: metricExporters,
+  });
   if (client) {
     // The SDK's own metrics: the client metrics in passthrough, and the
     // ones no span carries (time to first chunk, gen_ai.server.*) either way.
-    entities.push(
-      new Pipeline({
-        signal: "metrics",
-        receivers: [otlp],
-        processors: [memoryLimiter, ...(parts.sdkClientMetricsFilter ? [parts.sdkClientMetricsFilter] : []), batch],
-        exporters: metricExporters,
-      }),
-    );
+    out.sdkMetrics = new Pipeline({
+      signal: "metrics",
+      receivers: [otlp],
+      processors: [memoryLimiter, ...(parts.sdkClientMetricsFilter ? [parts.sdkClientMetricsFilter] : []), batch],
+      exporters: metricExporters,
+    });
   }
   if (logs) {
-    entities.push(
-      new Pipeline({
-        signal: "logs",
-        receivers: [otlp],
-        processors: [memoryLimiter, ...parts.processors, batch],
-        exporters: logExporters,
-      }),
-    );
+    out.logs = new Pipeline({
+      signal: "logs",
+      receivers: [otlp],
+      processors: [memoryLimiter, ...parts.processors, batch],
+      exporters: logExporters,
+    });
   }
-  if (healthCheck) entities.push(new HealthCheckExtension({ endpoint: "0.0.0.0:13133" }));
-  return entities;
+  if (healthCheck) out.health = new HealthCheckExtension({ endpoint: "0.0.0.0:13133" });
+  return out as GenAiPipelineParts;
 }

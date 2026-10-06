@@ -5,6 +5,84 @@ import type { CompositeEntry } from "@intentius/chant/lexicon";
 
 export const compositeCatalog: CompositeEntry[] = [
   {
+    "name": "AlertRouting",
+    "lexicon": "prometheus",
+    "description": "A routing tree by team and severity, with inhibit rules between levels.",
+    "bundles": [
+      "InhibitRule",
+      "Receiver",
+      "Route"
+    ],
+    "params": [
+      {
+        "name": "receiver",
+        "type": "AlertRoutingReceiver",
+        "required": false,
+        "description": "The root route's receiver, for what no child route takes (default: a `default` receiver with no integrations)."
+      },
+      {
+        "name": "levels",
+        "type": "AlertRoutingLevel[]",
+        "required": false,
+        "description": "Severity levels, most severe first (default `critical`, `warning`, `info`; see `ALERT_ROUTING_LEVELS`)."
+      },
+      {
+        "name": "teams",
+        "type": "AlertRoutingTeam[]",
+        "required": false,
+        "description": "Team routes, tried before the severity levels (default: none)."
+      },
+      {
+        "name": "teamLabel",
+        "type": "string",
+        "required": false,
+        "description": "The label team routes match on (default `team`)."
+      },
+      {
+        "name": "routes",
+        "type": "Array<RouteEntity | RouteProps>",
+        "required": false,
+        "description": "Child routes of your own, tried first, e.g. `[watchdog.route]`."
+      },
+      {
+        "name": "groupBy",
+        "type": "string[]",
+        "required": false,
+        "description": "Labels alerts are grouped by into one notification (default `[\"alertname\"]`)."
+      },
+      {
+        "name": "inhibit",
+        "type": "boolean",
+        "required": false,
+        "description": "Inhibit lower levels while a higher one fires (default: on)."
+      },
+      {
+        "name": "inhibitEqual",
+        "type": "string[]",
+        "required": false,
+        "description": "The labels that must match for one alert to hold back another (default `alertname`, `slo`, `service_name` and the team label)."
+      },
+      {
+        "name": "groupWait",
+        "type": "string",
+        "required": false,
+        "description": "How long to wait before the first notification of a new group."
+      },
+      {
+        "name": "groupInterval",
+        "type": "string",
+        "required": false,
+        "description": "How long to wait before notifying about new alerts in a group already notified."
+      },
+      {
+        "name": "repeatInterval",
+        "type": "string",
+        "required": false,
+        "description": "How long to wait before sending a notification again."
+      }
+    ]
+  },
+  {
     "name": "GenAiRules",
     "lexicon": "prometheus",
     "description": "Recording rules and opt-in alerts for GenAI calls, from the otel preset's metrics.",
@@ -75,6 +153,82 @@ export const compositeCatalog: CompositeEntry[] = [
     ]
   },
   {
+    "name": "RedAlerts",
+    "lexicon": "prometheus",
+    "description": "Error-ratio and latency alerts per service, from a `spanmetrics` connector.",
+    "bundles": [
+      "RuleGroup"
+    ],
+    "params": [
+      {
+        "name": "spanMetrics",
+        "type": "OTelComponent<\"connector\", \"spanmetrics\", SpanMetricsConnectorConfig> | SpanMetricsNames",
+        "required": true,
+        "description": "The `spanmetrics` connector the metrics come from (the otel lexicon's `RedMetrics` has it as `spanMetrics`), or the names `spanMetricsNames()` returned for it."
+      },
+      {
+        "name": "exporter",
+        "type": "OTelComponent<\"exporter\", \"prometheus\", PrometheusExporterConfig> | PrometheusNaming",
+        "required": false,
+        "description": "The `prometheus` exporter that serves them, when its `namespace` or `add_metric_suffixes` changes the names."
+      },
+      {
+        "name": "errorRatio",
+        "type": "boolean | RedErrorRatioAlert",
+        "required": false,
+        "description": "Error ratio per service (default: on, above 0.05)."
+      },
+      {
+        "name": "latency",
+        "type": "boolean | RedLatencyAlert",
+        "required": false,
+        "description": "A duration quantile per service (default: on, p95 above 1s, when the connector has a histogram)."
+      },
+      {
+        "name": "spanKinds",
+        "type": "SpanMetricsKind[]",
+        "required": false,
+        "description": "The span kinds counted (default server and consumer spans); `[]` counts every kind."
+      },
+      {
+        "name": "rateWindow",
+        "type": "string",
+        "required": false,
+        "description": "The range every `rate` reads (default `5m`)."
+      },
+      {
+        "name": "minRate",
+        "type": "number",
+        "required": false,
+        "description": "Spans per second a service must see for its alerts to fire, so a handful of calls can't page (default: no floor)."
+      },
+      {
+        "name": "groupBy",
+        "type": "string[]",
+        "required": false,
+        "description": "More Prometheus labels the alerts are split by besides the service, e.g. `deployment_environment`."
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "The rule group's name (default `red`)."
+      },
+      {
+        "name": "labels",
+        "type": "LabelSet",
+        "required": false,
+        "description": "Labels added to every rule, e.g. `team`."
+      },
+      {
+        "name": "interval",
+        "type": "string",
+        "required": false,
+        "description": "Evaluation interval of the group (default: Prometheus's `evaluation_interval`)."
+      }
+    ]
+  },
+  {
     "name": "Slo",
     "lexicon": "prometheus",
     "description": "An SLO, built to recording rules and multiwindow multi-burn-rate alerts.",
@@ -129,6 +283,66 @@ export const compositeCatalog: CompositeEntry[] = [
         "type": "string",
         "required": false,
         "description": "Evaluation interval of the group (default: Prometheus's `evaluation_interval`)."
+      }
+    ]
+  },
+  {
+    "name": "Watchdog",
+    "lexicon": "prometheus",
+    "description": "An always-firing alert and the route that sends it to a heartbeat receiver.",
+    "bundles": [
+      "Receiver",
+      "Route",
+      "RuleGroup"
+    ],
+    "params": [
+      {
+        "name": "receiver",
+        "type": "ReceiverEntity | ReceiverProps | string",
+        "required": false,
+        "description": "Where the heartbeat goes: a declared `Receiver`, a receiver's props (the composite declares it), or the name of one declared elsewhere."
+      },
+      {
+        "name": "urlFile",
+        "type": "string",
+        "required": false,
+        "description": "The file the default receiver's webhook reads its URL from (default `/etc/alertmanager/secrets/heartbeat-url`)."
+      },
+      {
+        "name": "alert",
+        "type": "string",
+        "required": false,
+        "description": "The alert's name (default `Watchdog`)."
+      },
+      {
+        "name": "severity",
+        "type": "string",
+        "required": false,
+        "description": "The alert's `severity` label (default `none`): no severity route takes it."
+      },
+      {
+        "name": "repeatInterval",
+        "type": "string",
+        "required": false,
+        "description": "How often the heartbeat is sent again while the alert fires (default `1m`)."
+      },
+      {
+        "name": "group",
+        "type": "string",
+        "required": false,
+        "description": "The rule group's name (default `watchdog`)."
+      },
+      {
+        "name": "labels",
+        "type": "LabelSet",
+        "required": false,
+        "description": "More labels on the alert."
+      },
+      {
+        "name": "annotations",
+        "type": "LabelSet",
+        "required": false,
+        "description": "More annotations on the alert."
       }
     ]
   }
