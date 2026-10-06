@@ -69,7 +69,7 @@
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete && cp src/generated/index.d.ts dist/generated/index.d.d.ts"
   },
   "dependencies": {
     "@intentius/chant-lexicon-otel": "*",

@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Deployment, Service, Ingress, PodDisruptionBudget } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface WebAppProps {
@@ -60,10 +61,10 @@ export interface WebAppProps {
   env?: Array<{ name: string; value: string }>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    ingress?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    ingress?: MemberDefaults<"Ingress">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
   };
 }
 

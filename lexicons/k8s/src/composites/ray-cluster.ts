@@ -21,6 +21,7 @@ import {
   Service,
   RayCluster as RayClusterResource,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 // ── Shared types (re-exported for RayJob and RayService) ────────────────────
 
@@ -127,14 +128,14 @@ export interface RayClusterProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides via mergeDefaults. */
   defaults?: {
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    networkPolicy?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
-    pvc?: Partial<Record<string, unknown>>;
-    dashboardService?: Partial<Record<string, unknown>>;
-    rayCluster?: Partial<Record<string, unknown>>;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    networkPolicy?: MemberDefaults<"NetworkPolicy">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
+    pvc?: MemberDefaults<"PersistentVolumeClaim">;
+    dashboardService?: MemberDefaults<"Service">;
+    rayCluster?: MemberDefaults<"RayCluster">;
   };
 }
 
@@ -332,7 +333,7 @@ export function buildRayNetworkPolicy(
   namespace: string,
   commonLabels: Record<string, string>,
   exposeDashboard: boolean,
-  defOverride: Partial<Record<string, unknown>> | undefined,
+  defOverride: MemberDefaults<"NetworkPolicy"> | undefined,
 ): InstanceType<typeof NetworkPolicy> {
   const clusterSelector = { matchLabels: { "ray.io/cluster-name": name } };
 

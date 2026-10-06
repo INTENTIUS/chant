@@ -14,6 +14,7 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { ruleGroupConfig, type RuleGroupEntity, type RuleGroupProps } from "@intentius/chant-lexicon-prometheus";
 import { Deployment, Service, ServiceMonitor, PrometheusRule } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface AlertRule {
@@ -69,10 +70,10 @@ export interface MonitoredServiceProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    serviceMonitor?: Partial<Record<string, unknown>>;
-    prometheusRule?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    serviceMonitor?: MemberDefaults<"ServiceMonitor">;
+    prometheusRule?: MemberDefaults<"PrometheusRule">;
   };
 }
 

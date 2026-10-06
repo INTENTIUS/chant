@@ -352,10 +352,14 @@ export function resource<T extends Declarable, P>(
  *
  * No deep merge — too dangerous with IaC props where nested objects
  * (e.g. policy documents) should be replaced wholesale.
+ *
+ * `overrides` may be any object type, not only `Partial<T>`: a composite
+ * types each member's override against that member's own props, and `T`
+ * here is the shape of the literal the composite builds, which is narrower.
  */
 export function mergeDefaults<T extends Record<string, unknown>>(
   base: T,
-  overrides?: Partial<T>,
+  overrides?: Partial<T> | object,
 ): T {
   if (!overrides) return base;
   const result = { ...base };

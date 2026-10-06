@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Namespace, ResourceQuota, LimitRange, NetworkPolicy } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface NamespaceEnvProps {
   /** Namespace name. */
@@ -33,10 +34,10 @@ export interface NamespaceEnvProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    namespace?: Partial<Record<string, unknown>>;
-    resourceQuota?: Partial<Record<string, unknown>>;
-    limitRange?: Partial<Record<string, unknown>>;
-    networkPolicy?: Partial<Record<string, unknown>>;
+    namespace?: MemberDefaults<"Namespace">;
+    resourceQuota?: MemberDefaults<"ResourceQuota">;
+    limitRange?: MemberDefaults<"LimitRange">;
+    networkPolicy?: MemberDefaults<"NetworkPolicy">;
   };
 }
 

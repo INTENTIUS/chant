@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Deployment, Service, ServiceAccount, ClusterRole, ClusterRoleBinding, APIService } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface MetricsServerProps {
   /** Agent name (default: "metrics-server"). */
@@ -21,14 +22,14 @@ export interface MetricsServerProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    aggregatedClusterRole?: Partial<Record<string, unknown>>;
-    authDelegatorBinding?: Partial<Record<string, unknown>>;
-    apiService?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    aggregatedClusterRole?: MemberDefaults<"ClusterRole">;
+    authDelegatorBinding?: MemberDefaults<"ClusterRoleBinding">;
+    apiService?: MemberDefaults<"APIService">;
   };
 }
 

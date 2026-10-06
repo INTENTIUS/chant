@@ -16,6 +16,7 @@
 
 import { mergeDefaults } from "@intentius/chant";
 import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { CollectorPolicyRule } from "./otel-collector-rbac";
 import { nodeVolumeMounts, nodeVolumes, type CollectorNodeAccess } from "./otel-collector-node";
 
@@ -60,11 +61,11 @@ export interface CollectorAgentOptions {
   /** How a config that reads container logs gets read access to them (default `group`). */
   logAccess?: CollectorLogAccess;
   defaults?: {
-    daemonSet?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
+    daemonSet?: MemberDefaults<"DaemonSet">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    configMap?: MemberDefaults<"ConfigMap">;
   };
 }
 

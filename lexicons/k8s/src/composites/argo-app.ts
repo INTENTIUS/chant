@@ -17,6 +17,7 @@ import {
   ApplicationSet as ApplicationSetResource,
   Secret as SecretResource,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -94,7 +95,7 @@ export interface ArgoAppForOptions {
   syncPolicy?: ArgoSyncPolicy;
   /** Extra labels applied to the Application. */
   labels?: Record<string, string>;
-  defaults?: { application?: Partial<Record<string, unknown>> };
+  defaults?: { application?: MemberDefaults<"Application"> };
 }
 
 export type ArgoAppForResult = {
@@ -193,7 +194,7 @@ export interface ArgoAppSetForRegionsOptions {
   syncPolicy?: ArgoSyncPolicy;
   /** Extra labels applied to the ApplicationSet. */
   labels?: Record<string, string>;
-  defaults?: { applicationSet?: Partial<Record<string, unknown>> };
+  defaults?: { applicationSet?: MemberDefaults<"ApplicationSet"> };
 }
 
 export type ArgoAppSetForRegionsResult = {
@@ -321,7 +322,7 @@ export interface RegisterArgoClusterOptions {
   argoNamespace?: string;
   /** Extra labels (merged with the required secret-type label). */
   labels?: Record<string, string>;
-  defaults?: { secret?: Partial<Record<string, unknown>> };
+  defaults?: { secret?: MemberDefaults<"Secret"> };
 }
 
 export type RegisterArgoClusterResult = {

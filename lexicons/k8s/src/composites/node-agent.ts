@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface NodeAgentProps {
@@ -51,11 +52,11 @@ export interface NodeAgentProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    daemonSet?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
+    daemonSet?: MemberDefaults<"DaemonSet">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    configMap?: MemberDefaults<"ConfigMap">;
   };
 }
 

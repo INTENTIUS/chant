@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { StatefulSet, Service, PodDisruptionBudget } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface StatefulAppProps {
@@ -51,9 +52,9 @@ export interface StatefulAppProps {
   env?: Array<{ name: string; value: string }>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    statefulSet?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
+    statefulSet?: MemberDefaults<"StatefulSet">;
+    service?: MemberDefaults<"Service">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
   };
 }
 

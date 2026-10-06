@@ -6,6 +6,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { StorageClass } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface EbsStorageClassProps {
   /** StorageClass name. */
@@ -32,7 +33,7 @@ export interface EbsStorageClassProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    storageClass?: Partial<Record<string, unknown>>;
+    storageClass?: MemberDefaults<"StorageClass">;
   };
 }
 

@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Deployment, Service, NetworkPolicy } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface NetworkPolicyPeer {
@@ -52,9 +53,9 @@ export interface NetworkIsolatedAppProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    networkPolicy?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    networkPolicy?: MemberDefaults<"NetworkPolicy">;
   };
 }
 

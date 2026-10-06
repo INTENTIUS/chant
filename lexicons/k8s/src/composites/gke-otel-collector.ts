@@ -22,6 +22,7 @@ import {
 import { collectorAgentResources, type CollectorAgentResources } from "./otel-collector-agent";
 import { agentClusterRules } from "./otel-collector-rbac";
 import { collectorNodeAccess } from "./otel-collector-node";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface GkeOtelCollectorProps {
   /** GKE cluster name. */
@@ -48,11 +49,11 @@ export interface GkeOtelCollectorProps {
   memoryLimit?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    daemonSet?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
+    daemonSet?: MemberDefaults<"DaemonSet">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    configMap?: MemberDefaults<"ConfigMap">;
   };
 }
 

@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface AzureMonitorCollectorProps {
   /** Azure Log Analytics workspace ID. */
@@ -33,11 +34,11 @@ export interface AzureMonitorCollectorProps {
   clientId?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    daemonSet?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
+    daemonSet?: MemberDefaults<"DaemonSet">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    configMap?: MemberDefaults<"ConfigMap">;
   };
 }
 
