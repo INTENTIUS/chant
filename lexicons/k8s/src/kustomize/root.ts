@@ -29,25 +29,20 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
 import { defaultKustomizeRunner, renderKustomizeDocuments, type KustomizeRunner } from "./render";
-import { renderedManifestEntity } from "./rendered-entity";
+import { addRenderedEntity, renderedManifestEntity } from "./rendered-entity";
+import { applyRenderedPatches, type RenderedPatch } from "../patch/rendered-patch";
+
+/**
+ * One `k8s.kustomize.roots` entry: a directory, or a directory plus patches
+ * applied to its rendered documents (#3566).
+ */
+export type KustomizeRootEntry = string | { path: string; patches?: RenderedPatch[] };
 
 const KUSTOMIZATION_FILES = ["kustomization.yaml", "kustomization.yml", "Kustomization"];
 
 export interface KustomizeRootsResult {
   entities: Map<string, Declarable>;
   warnings: string[];
-}
-
-/** `Deployment` + `my-app` → `deploymentMyApp`, the import path's naming. */
-function logicalId(kind: string, name: string | undefined): string {
-  const prefix = kind.charAt(0).toLowerCase() + kind.slice(1);
-  if (!name) return prefix;
-  const pascal = name
-    .split(/[^a-zA-Z0-9]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join("");
-  return `${prefix}${pascal}`;
 }
 
 /**
@@ -57,8 +52,8 @@ function logicalId(kind: string, name: string | undefined): string {
 export async function renderKustomizeRoots(opts: {
   /** Directory the project config was loaded from; relative roots resolve against it. */
   projectRoot: string;
-  /** `k8s.kustomize.roots` — kustomization dirs, usually relative. */
-  roots: readonly string[];
+  /** `k8s.kustomize.roots` — kustomization dirs, usually relative, optionally with patches. */
+  roots: readonly KustomizeRootEntry[];
   /** Injectable renderer (tests); defaults to the real subprocess runner. */
   run?: KustomizeRunner;
 }): Promise<KustomizeRootsResult> {
@@ -66,7 +61,9 @@ export async function renderKustomizeRoots(opts: {
   const entities = new Map<string, Declarable>();
   const warnings: string[] = [];
 
-  for (const root of opts.roots) {
+  for (const entry of opts.roots) {
+    const root = typeof entry === "string" ? entry : entry.path;
+    const patches = typeof entry === "string" ? undefined : entry.patches;
     const rootDir = isAbsolute(root) ? root : resolve(opts.projectRoot, root);
     // The label rendered docs carry as provenance: the declared (relative)
     // form when possible, so it names the overlay the way the config does.
@@ -82,26 +79,15 @@ export async function renderKustomizeRoots(opts: {
       );
     }
 
-    const documents = await renderKustomizeDocuments(rootDir, run);
+    const rendered = await renderKustomizeDocuments(rootDir, run);
+    const documents = applyRenderedPatches(rendered, patches, `kustomize root "${rootLabel}"`);
     for (const doc of documents) {
       const entity = renderedManifestEntity(doc, rootLabel);
       if (!entity) {
         warnings.push(`kustomize root "${rootLabel}" rendered a document without apiVersion/kind — skipped`);
         continue;
       }
-      const metadata = entity.props.metadata as Record<string, unknown>;
-      const kind = entity.props.kind as string;
-      const name = typeof metadata.name === "string" ? metadata.name : undefined;
-      const namespace = typeof metadata.namespace === "string" ? metadata.namespace : undefined;
-
-      // Deterministic, human-readable keys. Two documents can share
-      // kind+name (different namespaces, or different API groups with the
-      // same kind word) — qualify by namespace first, then number.
-      const base = `${rootLabel}/${logicalId(kind, name)}`;
-      let key = base;
-      if (entities.has(key) && namespace) key = `${base}.${namespace}`;
-      for (let n = 2; entities.has(key); n++) key = `${base}~${n}`;
-      entities.set(key, entity);
+      addRenderedEntity(entities, rootLabel, entity);
     }
   }
 

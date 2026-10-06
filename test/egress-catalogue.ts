@@ -43,7 +43,7 @@ import { join, relative, sep } from "node:path";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "upgrade" | "provenance" | "ci" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "include" | "template" | "upgrade" | "provenance" | "ci" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -71,6 +71,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Code generation",
     summary:
       "`chant dev generate`, `chant dev pinned-upgrade` and `chant vendor` fetch upstream schemas. Every lexicon's `spec/fetch.ts` runs here and nowhere else: the generated types and the committed spec snapshot are what a build reads, so a machine that never runs codegen never needs the endpoints below. `chant dev pinned-upgrade` is the one command here that queries `api.github.com`, and it is a lexicon-maintainer command — it moves a pin in a lexicon's own source, and nothing on an adopter's build, lint or apply path calls it.",
+  },
+  {
+    id: "include",
+    label: "Including a pinned URL in a build",
+    summary:
+      "A `k8sInclude` whose `source` is an `http(s)` URL is fetched by `chant build` the first time the build sees its digest. The bytes must match the declared `sha256` digest. They are cached under it in `~/.chant/includes/` (moved by `CHANT_INCLUDE_CACHE_ROOT`). Every later build reads the cache and reaches nothing. A project with no URL include, or with its includes already cached, builds offline.",
   },
   {
     id: "template",
@@ -134,7 +140,7 @@ export interface OfflinePhase {
 export const OFFLINE_PHASES: readonly OfflinePhase[] = [
   {
     command: "chant build",
-    note: "Discovery, evaluation and serialization. No network in process. One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below.",
+    note: "Discovery, evaluation and serialization. No network in process, except a `k8sInclude` URL whose digest is not yet cached (see above). One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below.",
     guarded: true,
   },
   {
@@ -677,6 +683,14 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The shared boot loop polls the container's health endpoint until it answers; loopback only, and the image pull it depends on is the container runtime's.",
   },
 
+  // ── include ────────────────────────────────────────────────────────────────
+  {
+    file: "lexicons/k8s/src/include/resolve.ts",
+    primitives: ["fetch"],
+    phase: "include",
+    destination: "the URL a `k8sInclude` declares as its `source`",
+    why: "Fetches a pinned multi-document YAML at `buildRoots()` when no cached copy matches its `sha256` digest. Bytes that do not match the digest fail the build and are not cached; matching bytes are cached by digest, so later builds are offline (chant #3566).",
+  },
   // ── codegen ────────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/codegen/fetch.ts",

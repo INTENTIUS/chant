@@ -58,6 +58,7 @@
  */
 
 import type { ChantConfig } from "@intentius/chant/config";
+import type { RenderedPatch } from "./patch/rendered-patch";
 
 /** A single environment's cluster binding. */
 export interface K8sClusterProfile {
@@ -101,15 +102,23 @@ export interface K8sChantConfig {
    * `chant.config.*`), NOT `sourceDir` — the overlay tree usually lives
    * beside the typed source, not inside it.
    *
+   * An entry may also be `{ path, patches }`: the patches apply to the
+   * rendered documents before they become entities (see `RenderedPatch`).
+   *
    * ```ts
    * k8s: {
-   *   kustomize: { roots: ["overlays/prod"] },
+   *   kustomize: {
+   *     roots: [
+   *       "overlays/prod",
+   *       { path: "overlays/edge", patches: [{ kind: "Deployment", name: "web", merge: { spec: { replicas: 2 } } }] },
+   *     ],
+   *   },
    * } satisfies K8sChantConfig
    * ```
    */
   kustomize?: {
-    /** Kustomization directories to render into the build. */
-    roots?: string[];
+    /** Kustomization directories to render into the build, optionally with patches. */
+    roots?: Array<string | { path: string; patches?: RenderedPatch[] }>;
   };
 
   /**

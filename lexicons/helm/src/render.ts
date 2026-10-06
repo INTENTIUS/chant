@@ -42,6 +42,7 @@ import { Composite } from "@intentius/chant";
 // arbitrary K8s manifests. The k8s serializer reads props.apiVersion and
 // props.kind verbatim when set, so the actual class doesn't matter.
 import { Deployment } from "@intentius/chant-lexicon-k8s/generated/index";
+import { applyRenderedPatches, type RenderedPatch } from "@intentius/chant-lexicon-k8s/patch/rendered-patch";
 import yaml from "js-yaml";
 
 import { resolveCapabilityProfile, type HelmCapabilityProfile, type HelmCapabilityProfileRef } from "./config";
@@ -109,6 +110,18 @@ export interface HelmRenderProps {
    * means the manifest records `sourceRef: null`.
    */
   sourceRef?: string;
+  /**
+   * Patches applied to the rendered documents before they become entities
+   * (#3566): select by kind and name (namespace and apiVersion optional) and
+   * apply an RFC 6902 `jsonPatch` or an RFC 7386 `merge`. The patched form is
+   * what the build emits and what `lifecycle diff --live` compares. A
+   * selector matching no rendered document fails the build, so a chart
+   * upgrade that renames a resource is noticed.
+   *
+   * Patches act on the parsed render, after caching and digests: the render
+   * store and `contentDigest` still describe helm's own output.
+   */
+  patches?: RenderedPatch[];
 }
 
 // The invocation-record ledger lives in ./render-records.ts — a module with
@@ -427,7 +440,11 @@ export const HelmRender = Composite<HelmRenderProps>((props) => {
   const valuesProbe = profile ? runValuesProbeBestEffort(props) : undefined;
 
   const yamlText = profile ? loadOrRenderPinned(props, profile, valuesProbe) : loadOrRender(props, undefined);
-  const docs = parseMultiDoc(yamlText);
+  const docs = applyRenderedPatches(
+    parseMultiDoc(yamlText),
+    props.patches,
+    `HelmRender "${props.name}" (${props.chart}${props.version ? `@${props.version}` : ""})`,
+  ) as RenderedDoc[];
 
   // Digests are recorded only for pinned renders (#1237). Profile presence
   // is the v1 gate: the classifier (#1234) needs the chart source on disk,

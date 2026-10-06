@@ -137,6 +137,46 @@ When it does not, the type is inferred from `values.yaml`. Every key is optional
 
 Remote charts are downloaded without the helm binary, from the repository's `index.yaml` or the OCI registry, and `version` is required. A local chart is read from its directory. Commit the generated code. `chant build` stays offline and fails when a chart's pin, or a local chart's `Chart.yaml`, `values.yaml` or `values.schema.json`, changed since the code was generated.
 
+## Patching a render
+
+When a chart has no value for the field you need, `HelmRender` can patch its output instead of forking the chart. Each patch selects rendered documents by `kind` and `name` (`namespace` and `apiVersion` are optional) and applies either a `jsonPatch` (RFC 6902 operations) or a `merge` (RFC 7386):
+
+```typescript
+import { HelmRender } from "@intentius/chant-lexicon-helm";
+import { renderedPatch } from "@intentius/chant-lexicon-k8s";
+
+export const eso = HelmRender({
+  name: "external-secrets",
+  repo: "https://charts.external-secrets.io",
+  chart: "external-secrets",
+  version: "0.10.4",
+  namespace: "external-secrets",
+  patches: [
+    renderedPatch({
+      kind: "Deployment",
+      name: "external-secrets-webhook",
+      merge: { spec: { template: { spec: { priorityClassName: "system-cluster-critical" } } } },
+    }),
+    {
+      kind: "Deployment",
+      name: "external-secrets",
+      jsonPatch: [
+        { op: "test", path: "/spec/template/spec/containers/0/name", value: "external-secrets" },
+        { op: "add", path: "/spec/template/spec/containers/0/args/-", value: "--loglevel=debug" },
+      ],
+    },
+  ],
+});
+```
+
+The patched documents are what the build emits, so they get ownership stamping and post-synth checks, and `lifecycle diff --live` compares the patched form with the cluster.
+
+A selector that matches no rendered document fails the build and lists the documents of that kind the chart did render. When a chart upgrade renames a resource, the build tells you, and the patch does not quietly stop applying. A `test` operation does the same for a value the patch depends on, such as a container's position in a list.
+
+Patches act on the parsed render after it is cached. The render store and the `contentDigest` still describe helm's own output, so the render's identity does not change when you add or edit a patch.
+
+The patch format is shared with the k8s lexicon's `k8sInclude` and kustomize build roots; see the k8s lexicon's page on importing YAML for the full reference.
+
 ## Render digests
 
 A pinned render records two digests. Each answers a different question.

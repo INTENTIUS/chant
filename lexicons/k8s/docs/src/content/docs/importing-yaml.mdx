@@ -90,11 +90,102 @@ just k3d-validate --reuse-cluster --verbose
 
 See [Testing & Validation](/chant/lexicons/k8s/testing/) for full details on the k3d validation workflow.
 
+## Using YAML without converting it
+
+Converting to typed source is not always worth it. A vendored operator bundle, a CRD bundle from an upstream release, or an overlay tree another team maintains can join the build as it is. Its documents become entities like any declared resource: the build output carries them with default labels and ownership stamped, post-synth checks read them, and `lifecycle diff --live` compares them with the cluster.
+
+### Including a file or URL
+
+`k8sInclude` declares a multi-document YAML file or a pinned URL:
+
+```typescript
+import { k8sInclude } from "@intentius/chant-lexicon-k8s";
+
+// Relative to the project root (the directory holding chant.config.ts).
+export const legacy = k8sInclude({ source: "manifests/legacy.yaml" });
+
+// A URL must carry the sha256 digest of the bytes you reviewed.
+export const certManager = k8sInclude({
+  source: "https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml",
+  digest: "sha256:<64 hex digits>",
+});
+```
+
+Compute a URL's digest from a copy you have looked at, for example `curl -sL <url> | shasum -a 256`, and prefix it with `sha256:`. A URL without a digest is refused when the module loads.
+
+The file is read, or the URL fetched, during `chant build`. Fetched bytes must match the digest or the build fails with both digests in the message. Matching bytes are cached under `~/.chant/includes/`, named by digest, so later builds read the cache and need no network. Set `CHANT_INCLUDE_CACHE_ROOT` to move the cache, for example to a directory a CI job restores or an air-gapped build is handed. A digest on a local file is optional; when set, the file must match it too.
+
+Each document becomes an entity named `<export name>/<kind><Name>`, for example `certManager/deploymentCertManagerWebhook`. Two documents with the same kind and name are told apart by namespace, then by a number in document order, so the names are the same on every build. Every included document carries a `chant.intentius.io/include-source` annotation naming its file or URL.
+
+Empty documents (a stray `---`) are skipped. A missing file, a failed fetch, a file with no documents, and a document without `apiVersion` and `kind` each fail the build with the path or URL in the message.
+
+### Kustomize build roots
+
+`k8s.kustomize.roots` in `chant.config.ts` names kustomization directories to render with `kustomize build` (or `kubectl kustomize` when the standalone binary is missing) during the build. Paths are relative to the project root. The rendered documents become entities the same way included ones do, named `<root>/<kind><Name>` and annotated with `chant.intentius.io/kustomize-root`.
+
+```typescript
+export default {
+  lexicons: ["k8s"],
+  k8s: {
+    kustomize: { roots: ["overlays/prod"] },
+  },
+};
+```
+
+## Patching included and rendered documents
+
+A file or chart sometimes has no setting for the field you need. Patches change included and rendered documents before they become entities, so the patched form is what the build emits, what ownership stamping and post-synth checks see, and what `lifecycle diff --live` compares with the cluster.
+
+A patch selects documents by `kind` and `name`, with optional `namespace` and `apiVersion`, and carries either a `jsonPatch` (RFC 6902 operations: `add`, `remove`, `replace`, `move`, `copy`, `test`) or a `merge` (RFC 7386: objects merge, arrays are replaced whole, `null` deletes a key).
+
+```typescript
+import { k8sInclude, renderedPatch } from "@intentius/chant-lexicon-k8s";
+
+export const certManager = k8sInclude({
+  source: "https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml",
+  digest: "sha256:<64 hex digits>",
+  patches: [
+    renderedPatch({
+      kind: "Deployment",
+      name: "cert-manager",
+      namespace: "cert-manager",
+      merge: { spec: { replicas: 2 } },
+    }),
+    {
+      kind: "Deployment",
+      name: "cert-manager-webhook",
+      jsonPatch: [
+        { op: "test", path: "/spec/template/spec/containers/0/name", value: "cert-manager-webhook" },
+        { op: "add", path: "/spec/template/spec/containers/0/args/-", value: "--v=4" },
+      ],
+    },
+  ],
+});
+```
+
+A plain object works anywhere a patch is accepted. Wrapping it in `renderedPatch` checks a `merge` body against the props of the lexicon's class for that kind.
+
+The same patches go on a kustomize root by writing the entry as an object:
+
+```typescript
+k8s: {
+  kustomize: {
+    roots: [
+      { path: "overlays/prod", patches: [{ kind: "Deployment", name: "web", merge: { spec: { replicas: 3 } } }] },
+    ],
+  },
+},
+```
+
+and on a Helm render through `HelmRender`'s `patches` prop (see the Helm lexicon's best practices).
+
+Patches apply in order, and each applies to every document its selector matches, so a later patch sees an earlier one's result. Leaving out `namespace` matches documents in any namespace. A `test` operation fails the build when the value is not what you expected, which pins the assumption a patch rests on. A selector that matches no document also fails the build, listing the documents of that kind that are present; this is how a renamed resource in an upgraded bundle or chart gets noticed instead of the patch silently no longer applying.
+
 ## Limitations
 
 The import pipeline does not support:
 
 - **Helm charts** — template syntax (`{{ .Values.x }}`) is not valid YAML
-- **Kustomize overlays** — overlays are processed by kustomize before producing YAML
+- **Kustomize overlays** — overlays are processed by kustomize before producing YAML; to build one as it is, use a [kustomize build root](#kustomize-build-roots)
 - **Custom Resource Definitions (CRDs)** — only built-in K8s resource types are recognized
 - **Cloud-specific volumes** — provider-specific volume types (awsElasticBlockStore, gcePersistentDisk) are parsed but excluded from k3d cluster validation (k3d doesn’t provide cloud volume drivers)

@@ -11,6 +11,8 @@ import { helmContentDigest, helmInputDigest, renderStability } from "./render-di
 import { loadRenderManifest } from "./render-store";
 import { clearValuesProbeRecords, getValuesProbeRecords } from "./values-probe";
 import { whm504 } from "./lint/post-synth/whm504";
+import type { Declarable } from "@intentius/chant/declarable";
+import { k8sSerializer } from "@intentius/chant-lexicon-k8s/serializer";
 
 const FIXTURE_DIR = join(tmpdir(), "chant-helm-render-fixture");
 const CHART_DIR = join(FIXTURE_DIR, "tiny-chart");
@@ -666,5 +668,119 @@ describe.skipIf(!fixtureAvailable)("coalesced-values probe wired into the render
     expect(diags[0].entity).toBe("rel");
     expect(diags[0].message).toContain("totallyUnknownSubchart");
     expect(diags[0].message).toContain("target no subchart");
+  });
+});
+
+/**
+ * Patches on a render (#3566), against a scripted `helm` double that prints
+ * a recorded render, so no real helm binary, chart or network is involved.
+ */
+describe("HelmRender patches", () => {
+  const FAKE_BIN = join(tmpdir(), "chant-helm-render-patch-bin");
+  let origPath: string | undefined;
+
+  beforeAll(() => {
+    mkdirSync(FAKE_BIN, { recursive: true });
+    writeFileSync(
+      join(FAKE_BIN, "helm"),
+      `#!/bin/sh
+cat <<'EOF'
+---
+# Source: widget/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rel-widget
+  namespace: widgets
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: app
+        image: example.com/widget:1.0
+---
+# Source: widget/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rel-widget
+  namespace: widgets
+spec:
+  ports:
+  - port: 80
+EOF
+`,
+      { mode: 0o755 },
+    );
+  });
+
+  beforeEach(() => {
+    origPath = process.env.PATH;
+    process.env.PATH = FAKE_BIN + delimiter + (origPath ?? "");
+    clearHelmRenderRecords();
+  });
+
+  afterEach(() => {
+    process.env.PATH = origPath;
+  });
+
+  function memberProps(result: ReturnType<typeof HelmRender>, key: string): Record<string, unknown> {
+    const member = (result.members as Record<string, { props: Record<string, unknown> }>)[key];
+    expect(member).toBeDefined();
+    return member.props;
+  }
+
+  test("a merge patch and a JSON patch change the rendered documents before they become members", () => {
+    const result = HelmRender({
+      name: "rel",
+      chart: "/dev/null/widget",
+      noCache: true,
+      patches: [
+        { kind: "Deployment", name: "rel-widget", namespace: "widgets", merge: { spec: { replicas: 3 } } },
+        {
+          kind: "Service",
+          name: "rel-widget",
+          jsonPatch: [
+            { op: "test", path: "/spec/ports/0/port", value: 80 },
+            { op: "add", path: "/spec/ports/0/name", value: "http" },
+            { op: "add", path: "/metadata/annotations", value: { "example.com/scrape": "true" } },
+          ],
+        },
+      ],
+    } as Parameters<typeof HelmRender>[0]);
+
+    expect((memberProps(result, "Deployment_rel_widget").spec as { replicas: number }).replicas).toBe(3);
+    const service = memberProps(result, "Service_rel_widget");
+    expect((service.spec as { ports: unknown[] }).ports).toEqual([{ port: 80, name: "http" }]);
+    expect((service.metadata as { annotations: unknown }).annotations).toEqual({ "example.com/scrape": "true" });
+  });
+
+  test("the patched form is what the k8s serializer emits", () => {
+    const result = HelmRender({
+      name: "rel",
+      chart: "/dev/null/widget",
+      noCache: true,
+      patches: [{ kind: "Deployment", name: "rel-widget", merge: { spec: { replicas: 7 } } }],
+    } as Parameters<typeof HelmRender>[0]);
+    const entities = new Map(Object.entries(result.members as Record<string, Declarable>));
+    const out = k8sSerializer.serialize(entities);
+    const yamlText = typeof out === "string" ? out : out.primary;
+    expect(yamlText).toContain("replicas: 7");
+    expect(yamlText).not.toContain("replicas: 1");
+  });
+
+  test("a selector matching no rendered document fails the render, naming it", () => {
+    expect(() =>
+      HelmRender({
+        name: "rel",
+        chart: "/dev/null/widget",
+        version: "1.2.0",
+        noCache: true,
+        patches: [{ kind: "Deployment", name: "widget", merge: { spec: { replicas: 2 } } }],
+      } as Parameters<typeof HelmRender>[0]),
+    ).toThrow(
+      /HelmRender "rel" \(\/dev\/null\/widget@1\.2\.0\): patch 0 \(kind Deployment, name widget\) matched no document\. Deployment documents present: widgets\/rel-widget\./,
+    );
   });
 });

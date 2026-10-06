@@ -157,6 +157,45 @@ describe("renderKustomizeRoots", () => {
     ).rejects.toThrow(/no kustomization file.*kustomization\.yaml/);
   });
 
+  test("an entry with patches applies them to the rendered documents (#3566)", async () => {
+    const { entities } = await renderKustomizeRoots({
+      projectRoot: fixtureRoot,
+      roots: [
+        {
+          path: "overlays/prod",
+          patches: [
+            { kind: "Deployment", name: "prod-web", merge: { spec: { replicas: 5 } } },
+            {
+              kind: "Service",
+              name: "prod-web",
+              jsonPatch: [{ op: "add", path: "/metadata/labels", value: { tier: "edge" } }],
+            },
+          ],
+        },
+      ],
+      run: cannedRunner([]),
+    });
+    const props = (key: string) => (entities.get(key) as unknown as { props: Record<string, unknown> }).props;
+    expect((props("overlays/prod/deploymentProdWeb").spec as { replicas: number }).replicas).toBe(5);
+    expect((props("overlays/prod/serviceProdWeb").metadata as { labels: unknown }).labels).toEqual({ tier: "edge" });
+    // The provenance annotation is stamped after patching, so it survives.
+    expect(
+      (props("overlays/prod/serviceProdWeb").metadata as { annotations: Record<string, string> }).annotations[
+        KUSTOMIZE_ROOT_ANNOTATION
+      ],
+    ).toBe("overlays/prod");
+  });
+
+  test("a patch that matches no rendered document fails, naming the root", async () => {
+    await expect(
+      renderKustomizeRoots({
+        projectRoot: fixtureRoot,
+        roots: [{ path: "overlays/prod", patches: [{ kind: "Deployment", name: "web", merge: {} }] }],
+        run: cannedRunner([]),
+      }),
+    ).rejects.toThrow(/kustomize root "overlays\/prod": patch 0 \(kind Deployment, name web\) matched no document/);
+  });
+
   test("a rendered document without apiVersion/kind is skipped with a warning", async () => {
     const { entities, warnings } = await renderKustomizeRoots({
       projectRoot: fixtureRoot,
