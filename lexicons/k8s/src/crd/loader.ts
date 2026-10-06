@@ -40,7 +40,7 @@ export async function loadMultipleCRDs(sources: CRDSource[]): Promise<K8sParseRe
 /**
  * Fetch raw CRD YAML content from a source.
  */
-async function fetchCRDContent(source: CRDSource): Promise<string> {
+export async function fetchCRDContent(source: CRDSource): Promise<string> {
   switch (source.type) {
     case "file":
       return loadFromFile(source);

@@ -34,6 +34,7 @@ import { k8sConfigSchema } from "./config-schema";
 import type { K8sChantConfig } from "./config";
 import { renderKustomizeRoots } from "./kustomize/root";
 import { encryptedSecretBuildRoot } from "./sops/encrypted-secret-file";
+import { k8sProjectCodegen } from "./crd/project-codegen";
 import type { Declarable } from "@intentius/chant/declarable";
 
 export const k8sPlugin: LexiconPlugin = {
@@ -76,6 +77,13 @@ export const k8sPlugin: LexiconPlugin = {
 
   postSynthChecks() {
     return postSynthCheckList;
+  },
+
+  // Typed classes for the project's own CRDs (`k8s.crds`), written by
+  // `chant generate` and checked for drift by every build. See
+  // ./crd/project-codegen.ts.
+  projectCodegen() {
+    return k8sProjectCodegen();
   },
 
   // #1548 piece 3 — kustomization dirs declared as build roots. Each entry in

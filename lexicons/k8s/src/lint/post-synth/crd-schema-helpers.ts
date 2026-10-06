@@ -15,6 +15,7 @@ import { createRequire } from "module";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import type { CrdFieldSchema } from "../../spec/parse";
 import { docsToManifests, type K8sManifest } from "./k8s-helpers";
+import { projectSpecSchema } from "../../project-kinds";
 
 export type { CrdFieldSchema };
 
@@ -61,10 +62,17 @@ export function setCrdSchemaRegistry(registry: Map<string, CrdFieldSchema> | nul
   cachedRegistry = registry;
 }
 
-/** The schema for a manifest's `apiVersion`/`kind`, if the lexicon ships one. */
+/**
+ * The schema for a manifest's `apiVersion`/`kind`: one the project generated
+ * from its own CRDs (`chant generate`, ../../project-kinds.ts) first, then one
+ * the lexicon ships.
+ */
 export function specSchemaFor(manifest: K8sManifest): CrdFieldSchema | undefined {
   if (typeof manifest.apiVersion !== "string" || typeof manifest.kind !== "string") return undefined;
-  return getCrdSchemaRegistry().get(registryKey(manifest.apiVersion, manifest.kind));
+  return (
+    projectSpecSchema(manifest.apiVersion, manifest.kind) ??
+    getCrdSchemaRegistry().get(registryKey(manifest.apiVersion, manifest.kind))
+  );
 }
 
 /** Every manifest in the build that has a shipped spec schema, with that schema. */

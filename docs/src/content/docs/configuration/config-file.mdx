@@ -108,6 +108,14 @@ run: { on: "mylexicon" },
 
 An explicit `--on` takes precedence over `run.on`, and `--on local` selects the built-in runtime for one invocation. When `run.on` names a lexicon that is not configured or has no `opRuntime`, `chant run` refuses with the message `--on` would give. The `run` block accepts only `on`, and a block that fails validation is refused rather than ignored.
 
+### `codegen`
+
+Where [`chant generate`](/chant/cli/codegen/) writes the typed code it generates from sources the config declares (`k8s.crds`, `helm.charts`). Each lexicon writes to its own subdirectory of `codegen.outDir`, which is relative to the project root and defaults to `src/generated`.
+
+```typescript
+codegen: { outDir: "infra/generated" },
+```
+
 ### `environments`
 
 An optional array of environment names the project deploys to. An environment is just a named identity chant threads through the operational layer — there is no per-environment config block to maintain.

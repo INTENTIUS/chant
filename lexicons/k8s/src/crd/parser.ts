@@ -47,6 +47,14 @@ export function parseCRD(content: string): K8sParseResult[] {
 }
 
 /**
+ * The version a CRD's types are generated from: the served storage version,
+ * else the first served one.
+ */
+export function crdTargetVersion(spec: CRDSpec): CRDSpec["versions"][number] | undefined {
+  return spec.versions.find((v) => v.storage && v.served) ?? spec.versions.find((v) => v.served);
+}
+
+/**
  * Parse a CRD spec into K8sParseResult entries.
  * Extracts one result per served version with storage version preferred.
  */
@@ -54,11 +62,7 @@ export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
   const results: K8sParseResult[] = [];
   const groupNs = namespaceSegmentForGroup(spec.group);
 
-  // Find the storage version (the canonical version)
-  const storageVersion = spec.versions.find((v) => v.storage && v.served);
-  // Fall back to any served version
-  const targetVersion = storageVersion ?? spec.versions.find((v) => v.served);
-
+  const targetVersion = crdTargetVersion(spec);
   if (!targetVersion) return results;
 
   const typeName = `K8s::${groupNs}::${spec.names.kind}`;

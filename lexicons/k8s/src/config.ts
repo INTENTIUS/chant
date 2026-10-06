@@ -134,7 +134,39 @@ export interface K8sChantConfig {
     /** Namespace the receipt ConfigMaps live in. Defaults to `default`. */
     namespace?: string;
   };
+
+  /**
+   * CRDs this project generates typed classes from, with `chant generate`.
+   *
+   * Each source is a CRD file in the repo, a pinned URL, or a pinned Helm
+   * chart that ships CRDs; a multi-document file or bundle yields every CRD
+   * in it, or only the `kinds` listed. The classes are written to
+   * `src/generated/k8s/` (see `codegen.outDir`), committed, and imported like
+   * any module. `chant build` fails when a source changed since the classes
+   * were generated, and the generated kinds get the same spec checks
+   * (WK8501/WK8502) as the CRDs the lexicon ships.
+   *
+   * Paths are relative to the project root. A URL needs the `sha256` of its
+   * content, and a chart its `version`, so generation never depends on the
+   * day it ran.
+   *
+   * ```ts
+   * k8s: {
+   *   crds: [
+   *     { type: "file", path: "crds/widgets.yaml" },
+   *     { type: "url", url: "https://example.com/v1.2.0/crds.yaml", sha256: "9f86d0…", kinds: ["Gadget"] },
+   *   ],
+   * } satisfies K8sChantConfig
+   * ```
+   */
+  crds?: K8sProjectCrdSource[];
 }
+
+/** One `k8s.crds` entry. `kinds` keeps only the CRDs of those kinds. */
+export type K8sProjectCrdSource =
+  | { type: "file"; path: string; kinds?: string[] }
+  | { type: "url"; url: string; sha256: string; kinds?: string[] }
+  | { type: "helm"; chart: string; version: string; digest?: string; chartSubdir?: string; kinds?: string[] };
 
 declare module "@intentius/chant/config" {
   interface ChantConfig {

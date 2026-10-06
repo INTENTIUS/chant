@@ -47,7 +47,7 @@ A generated CRD class takes `spec: Record<string, unknown>`. The field names, sc
 - `WK8501` flags a `spec` field the CRD does not declare, with a "did you mean" suggestion. The API server would prune it and the controller would never see it.
 - `WK8502` flags a scalar with the wrong type (`replicas: "2"`) or a value outside its enum (`desiredState: "Runing"`).
 
-Objects the CRD marks `x-kubernetes-preserve-unknown-fields` or `additionalProperties` accept any member; `x-kubernetes-int-or-string` accepts either. Nothing checks a built-in kind this way, because the generated `.d.ts` already does.
+Objects the CRD marks `x-kubernetes-preserve-unknown-fields` or `additionalProperties` accept any member; `x-kubernetes-int-or-string` accepts either. Nothing checks a built-in kind this way, because the generated `.d.ts` already does. A class generated in your project from `k8s.crds` gets both: its constructor is typed from the schema, and the same two checks run on it.
 
 ## Gateway API
 
@@ -478,25 +478,50 @@ Status is a **runtime** value. chant synthesis is pure and stateless — a resou
 
 ## Adding your own CRD
 
-Append an entry to `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts` and re-run codegen:
+Declare the CRD in your project's `chant.config.ts` and run `chant generate`. The lexicon parses it with the same parser it uses for the CRDs it ships, and writes a typed class per kind into `src/generated/k8s/`:
 
 ```typescript
-export const CRD_SOURCES: CRDSource[] = [
-  // ...existing entries
-  { type: "url", url: "https://raw.githubusercontent.com/acme/operator/v1.0.0/config/crd/bases/acme.io_widgets.yaml" },
-];
+// chant.config.ts
+export default {
+  lexicons: ["k8s"],
+  k8s: {
+    crds: [
+      // A CRD file in your repo. Multi-document files yield every CRD in them.
+      { type: "file", path: "crds/widgets.yaml" },
+      // A pinned URL: the sha256 of the file's content is required.
+      {
+        type: "url",
+        url: "https://raw.githubusercontent.com/acme/operator/v1.0.0/config/crd/bases/acme.io_gadgets.yaml",
+        sha256: "<sha256 of the file>",
+      },
+      // A chart that ships its CRDs in crds/, pinned by version. `kinds` keeps only these.
+      { type: "helm", chart: "oci://ghcr.io/acme/charts/operator", version: "1.0.0", kinds: ["Gizmo"] },
+    ],
+  },
+};
 ```
 
 ```bash
-cd lexicons/k8s && npm run generate
+chant generate
 ```
 
-Guidelines:
+```typescript
+// src/widgets.ts
+import { Widget } from "./generated/k8s";
 
-- **Pin the version** in the URL (a `vX.Y.Z` tag or release asset), never `main`. Codegen is deterministic only if the source is.
-- **One URL per CRD**, or a single multi-doc bundle URL (the parser uses `loadAll`, as with cert-manager).
-- The group's first segment becomes the namespace. Add a `GROUP_NAMESPACE_OVERRIDES` entry in `crd/parser.ts` if the default mapping reads poorly.
-- Document the produced classes and the operator install command in a comment block next to the entry — match the existing entries.
+export const widget = new Widget({
+  metadata: { name: "demo", namespace: "web" },
+  spec: { size: 3, color: "red" },
+});
+```
+
+Commit `src/generated/k8s/` with the rest of the project. The class is named after the kind; when two declared CRDs share a kind, both classes take the group as a prefix (`AcmeWidget`, `ExampleWidget`). Unlike the shipped classes, whose `spec` is typed as a record, a generated class types every field of the CRD's schema for the storage version, so a misspelled or wrongly typed field fails to typecheck. The build serializes it with the CRD's `apiVersion` and `kind`, and [spec validation](#spec-validation) checks it like a shipped CRD.
+
+`chant build` never fetches. It fails when a declared CRD changed since `chant generate` last ran (a file was edited, a pin was changed, a source was added or removed), and says to regenerate. See [`chant generate`](/chant/cli/codegen/) for the output directory and the check.
+
+### Adding a CRD to the lexicon itself
+
+A CRD every chant user should get belongs in the lexicon. Append an entry to `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts` and re-run the lexicon's codegen (`cd lexicons/k8s && npm run generate`). Pin the version in the URL (a `vX.Y.Z` tag or release asset), never `main`. The group's first segment becomes the namespace; add a `GROUP_NAMESPACE_OVERRIDES` entry in `crd/parser.ts` if the default mapping reads poorly. Document the produced classes and the operator install command in a comment next to the entry, as the existing entries do.
 
 ## A kind with no generated class: `k8sManifest`
 
@@ -515,4 +540,4 @@ export const widget = k8sManifest({
 
 The props **are** the manifest: the serializer emits the document as written, plus the default-label and ownership merge every discovered resource gets. `apiVersion` and `kind` are required — they are what makes the object addressable — and they resolve the entity type through the same group rule a generated class uses, so `acme.io/v1 Widget` is `K8s::Acme::Widget` either way and `lifecycle diff --live` reads it through the same operation surface.
 
-What you give up is the whole point of a generated class: no typed constructor, no spec validation at lint time, no LSP hover. Prefer generating the CRD. Two callers use this deliberately — a [kustomize build root](/chant/lexicons/k8s/importing-yaml/), whose output is already finished documents, and `chant carve emit` adopting a Terraform `kubernetes_manifest`, whose kind is only known once the body is read.
+What you give up is the whole point of a generated class: no typed constructor, no spec validation at lint time, no LSP hover. Prefer [generating the CRD](#adding-your-own-crd). Two callers use this deliberately — a [kustomize build root](/chant/lexicons/k8s/importing-yaml/), whose output is already finished documents, and `chant carve emit` adopting a Terraform `kubernetes_manifest`, whose kind is only known once the body is read.
