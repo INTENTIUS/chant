@@ -1,0 +1,45 @@
+# A vendored operator bundle, as an upstream release would publish it.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: widget-system
+---
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: widget-config
+  namespace: widget-system
+data:
+  level: info
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: widget-config
+  namespace: widget-edge
+data:
+  level: debug
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: widget-controller
+  namespace: widget-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: widget-controller
+  template:
+    metadata:
+      labels:
+        app: widget-controller
+    spec:
+      containers:
+        - name: manager
+          image: example.com/widget-controller:v0.4.1
+          env:
+            - name: API_TOKEN
+              value: not-a-real-token

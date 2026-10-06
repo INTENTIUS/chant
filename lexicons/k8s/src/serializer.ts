@@ -34,6 +34,7 @@ import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type Default
 import { isRenderedManifestEntity } from "./manifest-entity";
 import { projectKindForType } from "./project-kinds";
 import { isEncryptedSecretFileEntity } from "./sops/entity";
+import { isK8sInclude } from "./include/entity";
 import { isRuleGroup, ruleGroupConfig } from "@intentius/chant-lexicon-prometheus";
 
 const require = createRequire(import.meta.url);
@@ -426,6 +427,9 @@ export const k8sSerializer: Serializer = {
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
       if (isDefaultLabels(entity) || isDefaultAnnotations(entity)) continue;
+      // A `k8sInclude` declaration is resolved into its documents at
+      // `buildRoots()`; the declaration itself emits nothing.
+      if (isK8sInclude(entity)) continue;
 
       // Committed SOPS ciphertext (epic lex00/iac-cd-bench#6) leaves as a
       // SIDECAR and never as a document in the primary output. That is the

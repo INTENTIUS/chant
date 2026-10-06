@@ -61,6 +61,23 @@ export { microTime, isMicroTimeFormatted } from "./micro-time";
 export { k8sManifest } from "./manifest-entity";
 export type { RenderedManifestEntity } from "./manifest-entity";
 
+// Plain YAML included as it is, local or pinned URL (#3566). The factory is
+// pure; the bytes are read at buildRoots() (./include/resolve.ts).
+export { k8sInclude, isK8sInclude, INCLUDE_SOURCE_ANNOTATION } from "./include/entity";
+export type { K8sIncludeProps, K8sIncludeDeclaration } from "./include/entity";
+
+// Patches on rendered documents: k8sInclude, kustomize roots, HelmRender (#3566).
+export { renderedPatch, applyRenderedPatches, applyJsonPatch, applyMergePatch } from "./patch/rendered-patch";
+export type {
+  RenderedPatch,
+  RenderedJsonPatch,
+  RenderedMergePatch,
+  RenderedSelector,
+  JsonPatchOperation,
+  MergePatchOf,
+  KindProps,
+} from "./patch/rendered-patch";
+
 // Generated entities — export everything from generated index
 // After running `chant generate`, this re-exports all K8s resource classes
 export * from "./generated/index";
