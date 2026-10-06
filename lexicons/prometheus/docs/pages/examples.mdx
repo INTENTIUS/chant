@@ -46,3 +46,15 @@ Prometheus and Alertmanager as plain k8s workloads, each reading its config from
 ```ts title="src/workloads.ts"
 {{file:k3d-stack/src/workloads.ts}}
 ```
+
+## observe-converge
+
+Op steps around a built rule file and collector config (see [Op Steps](../op-steps/)). `ops/checks.op.ts` runs promtool over the rule file, with tests generated from the SLO, and the collector binary over its config. `ops/rules-loaded.op.ts` and `ops/collector-health.op.ts` are ConvergeOps on the observe dial whose observers are `rulesLoadedObserve` and `collectorHealthObserve`, and `ops/rule-audit.op.ts` audits the running Prometheus hourly. Its end-to-end test runs both ConvergeOps against Prometheus and the collector in Docker, and watches each resource go from drifted to in-sync or back.
+
+```ts title="ops/rules-loaded.op.ts"
+{{file:observe-converge/ops/rules-loaded.op.ts}}
+```
+
+```ts title="ops/collector-health.op.ts"
+{{file:observe-converge/ops/collector-health.op.ts}}
+```

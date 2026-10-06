@@ -320,3 +320,63 @@ const alertmanager = ConfiguredApp({
 export { prometheus, alertmanager };
 ```
 ```
+
+## observe-converge
+
+Op steps around a built rule file and collector config (see [Op Steps](../op-steps/)). `ops/checks.op.ts` runs promtool over the rule file, with tests generated from the SLO, and the collector binary over its config. `ops/rules-loaded.op.ts` and `ops/collector-health.op.ts` are ConvergeOps on the observe dial whose observers are `rulesLoadedObserve` and `collectorHealthObserve`, and `ops/rule-audit.op.ts` audits the running Prometheus hourly. Its end-to-end test runs both ConvergeOps against Prometheus and the collector in Docker, and watches each resource go from drifted to in-sync or back.
+
+```ts title="ops/rules-loaded.op.ts"
+```typescript title="rules-loaded.op.ts"
+// Every five minutes, on the observe dial: is each rule group the build
+// declares loaded by Prometheus, and is every rule in it healthy?
+//
+// The observer reads dist/rules.yml for the declared groups on each tick and
+// asks Prometheus's /api/v1/rules (at $PROMETHEUS_URL, else
+// localhost:9090). A group Prometheus has not loaded, or one with a rule in
+// `health: "err"`, is drifted, with the rule's lastError as the detail.
+import { ConvergeOp, eq, report, when, type ResourceSymptom } from "@intentius/chant/op";
+import { rulesLoadedObserve } from "@intentius/chant-lexicon-prometheus";
+
+export const { op: rulesLoaded } = ConvergeOp({
+  name: "rules-loaded",
+  env: "local",
+  dial: "observe",
+  schedule: "*/5 * * * *",
+  observe: rulesLoadedObserve({ rules: "dist/rules.yml" }),
+  rules: [
+    when<ResourceSymptom>(eq("status", "drifted"), report("a declared rule group is not loaded or has a failing rule"), {
+      id: "rule-group-drift",
+      why: "Prometheus evaluates only what it loaded; a group it dropped alerts on nothing, so say so before anyone relies on it.",
+    }),
+  ],
+});
+```
+```
+
+```ts title="ops/collector-health.op.ts"
+```typescript title="collector-health.op.ts"
+// Every five minutes, on the observe dial: does the collector answer on the
+// endpoints its config declares?
+//
+// The observer reads dist/collector.yaml on each tick: the health_check it
+// enables (0.0.0.0:13133, read as localhost) and its own metrics (8888). A
+// collector whose config enables no health_check would be unknown, never
+// drifted.
+import { ConvergeOp, eq, report, when, type ResourceSymptom } from "@intentius/chant/op";
+import { collectorHealthObserve } from "@intentius/chant-lexicon-otel";
+
+export const { op: collectorHealth } = ConvergeOp({
+  name: "collector-health",
+  env: "local",
+  dial: "observe",
+  schedule: "*/5 * * * *",
+  observe: collectorHealthObserve({ collectors: [{ name: "collector", config: "dist/collector.yaml" }] }),
+  rules: [
+    when<ResourceSymptom>(eq("status", "drifted"), report("the collector is not answering on a declared endpoint"), {
+      id: "collector-down",
+      why: "Telemetry sent to a collector that is down is lost; report it before the dashboards go quiet.",
+    }),
+  ],
+});
+```
+```
