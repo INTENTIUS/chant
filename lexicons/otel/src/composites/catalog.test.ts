@@ -19,7 +19,7 @@ const catalogued = compositeCatalog.map((entry) => entry.name).sort();
 
 describe("the otel composite catalog", () => {
   test("every exported composite has an entry, and every entry names an exported composite", () => {
-    expect(exported).toEqual(["NodeAgent"]);
+    expect(exported).toEqual(["GenAiPipeline", "NodeAgent", "OtlpCollector", "RedMetrics", "TailSamplingTier"]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- otel`").toEqual(exported);
   });
 

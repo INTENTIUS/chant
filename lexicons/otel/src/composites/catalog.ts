@@ -5,6 +5,131 @@ import type { CompositeEntry } from "@intentius/chant/lexicon";
 
 export const compositeCatalog: CompositeEntry[] = [
   {
+    "name": "GenAiPipeline",
+    "lexicon": "otel",
+    "description": "The collector config of an OTLP collector for GenAI workloads, from the GenAI preset.",
+    "bundles": [
+      "BatchProcessor",
+      "DebugExporter",
+      "DeltaToCumulativeProcessor",
+      "FilterProcessor",
+      "ForwardConnector",
+      "HealthCheckExtension",
+      "MemoryLimiterProcessor",
+      "OtlpReceiver",
+      "Pipeline",
+      "RedactionProcessor",
+      "SignalToMetricsConnector",
+      "SpanMetricsConnector",
+      "SumConnector",
+      "TransformProcessor"
+    ],
+    "params": [
+      {
+        "name": "traceExporters",
+        "type": "Exporter[]",
+        "required": false,
+        "description": "Where traces go."
+      },
+      {
+        "name": "metricExporters",
+        "type": "Exporter[]",
+        "required": false,
+        "description": "Where the span and token metrics go, and with `clientMetrics` the SDK's metrics too."
+      },
+      {
+        "name": "logExporters",
+        "type": "Exporter[]",
+        "required": false,
+        "description": "Where logs (and events sent as logs) go."
+      },
+      {
+        "name": "logs",
+        "type": "boolean",
+        "required": false,
+        "description": "Give logs a pipeline, so event-based content is removed too."
+      },
+      {
+        "name": "sampling",
+        "type": "Processor[]",
+        "required": false,
+        "description": "Processors that thin exported traces, such as `tail_sampling`."
+      },
+      {
+        "name": "healthCheck",
+        "type": "boolean",
+        "required": false,
+        "description": "Serve `health_check` on 0.0.0.0:13133."
+      },
+      {
+        "name": "deltaToCumulative",
+        "type": "boolean | \"auto\"",
+        "required": false,
+        "description": "Put a `deltatocumulative/genai` processor in front of `batch` on `metrics/genai`, so the delta token sums of the `sum` connector, and with `clientMetrics."
+      },
+      {
+        "name": "keepContent",
+        "type": "boolean",
+        "required": false,
+        "description": "Keep content attributes and bodies."
+      },
+      {
+        "name": "contentAttributes",
+        "type": "string[]",
+        "required": false,
+        "description": "More attribute keys that hold content, deleted along with the convention ones."
+      },
+      {
+        "name": "maskValues",
+        "type": "string[]",
+        "required": false,
+        "description": "RE2 patterns masked in every attribute value (redaction `blocked_values`), whether content is kept or not."
+      },
+      {
+        "name": "hashFunction",
+        "type": "RedactionProcessorConfig[\"hash_function\"]",
+        "required": false,
+        "description": "Hash masked values with this function instead of writing `****`."
+      },
+      {
+        "name": "buckets",
+        "type": "Duration[]",
+        "required": false,
+        "description": "Duration histogram buckets."
+      },
+      {
+        "name": "metricsFlushInterval",
+        "type": "Duration",
+        "required": false,
+        "description": "How often span and token metrics are flushed."
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "required": false,
+        "description": "Prefix of the emitted metric names."
+      },
+      {
+        "name": "dimensions",
+        "type": "SpanMetricsDimension[]",
+        "required": false,
+        "description": "Dimensions added to the span metrics beyond the GenAI ones."
+      },
+      {
+        "name": "providerDimensions",
+        "type": "boolean",
+        "required": false,
+        "description": "Add `gen_ai.provider.name` and `gen_ai.response.model` to `genai.calls` and `genai.duration`."
+      },
+      {
+        "name": "clientMetrics",
+        "type": "GenAiClientMetricsSource",
+        "required": false,
+        "description": "Also produce the conventions' client metrics, `gen_ai.client.operation.duration` and `gen_ai.client.token.usage`."
+      }
+    ]
+  },
+  {
     "name": "NodeAgent",
     "lexicon": "otel",
     "description": "The collector config of a per-node Kubernetes agent.",
@@ -69,6 +194,173 @@ export const compositeCatalog: CompositeEntry[] = [
         "type": "number",
         "required": false,
         "description": "`memory_limiter`'s hard limit in MiB (default 400; the spike limit is a quarter of it)."
+      },
+      {
+        "name": "healthCheck",
+        "type": "boolean",
+        "required": false,
+        "description": "Serve `health_check` on 0.0.0.0:13133 (default: on)."
+      }
+    ]
+  },
+  {
+    "name": "OtlpCollector",
+    "lexicon": "otel",
+    "description": "A small OTLP collector config: OTLP in, `memory_limiter` and `batch`, the given exporters out, for each signal.",
+    "bundles": [
+      "BatchProcessor",
+      "DebugExporter",
+      "HealthCheckExtension",
+      "MemoryLimiterProcessor",
+      "OtlpReceiver",
+      "Pipeline"
+    ],
+    "params": [
+      {
+        "name": "exporters",
+        "type": "OTelComponent<\"exporter\", string, any>[]",
+        "required": false,
+        "description": "Where telemetry goes."
+      },
+      {
+        "name": "signals",
+        "type": "Signal[]",
+        "required": false,
+        "description": "Which signals get a pipeline."
+      },
+      {
+        "name": "healthCheck",
+        "type": "boolean",
+        "required": false,
+        "description": "Serve `health_check` on 0.0.0.0:13133."
+      }
+    ]
+  },
+  {
+    "name": "RedMetrics",
+    "lexicon": "otel",
+    "description": "RED metrics from traces: `spanmetrics` and `servicegraph` connectors feeding a `prometheus` exporter.",
+    "bundles": [
+      "BatchProcessor",
+      "MemoryLimiterProcessor",
+      "OtlpReceiver",
+      "Pipeline",
+      "PrometheusExporter",
+      "ServiceGraphConnector",
+      "SpanMetricsConnector"
+    ],
+    "params": [
+      {
+        "name": "receivers",
+        "type": "TraceSource[]",
+        "required": false,
+        "description": "Where spans come from: receivers, or a connector from another traces pipeline."
+      },
+      {
+        "name": "traceExporters",
+        "type": "Exporter[]",
+        "required": false,
+        "description": "Where traces go besides the connectors, e.g. a tracing backend."
+      },
+      {
+        "name": "exporter",
+        "type": "OTelComponent<\"exporter\", \"prometheus\", PrometheusExporterConfig>",
+        "required": false,
+        "description": "The `prometheus` exporter the metrics are served on."
+      },
+      {
+        "name": "spanMetrics",
+        "type": "SpanMetricsConnectorConfig",
+        "required": false,
+        "description": "The `spanmetrics` connector's config: namespace, dimensions, histogram unit and buckets (default: the connector's defaults)."
+      },
+      {
+        "name": "serviceGraph",
+        "type": "boolean | ServiceGraphConnectorConfig",
+        "required": false,
+        "description": "Service-to-service edge metrics from a `servicegraph` connector (default: on)."
+      },
+      {
+        "name": "memoryLimitMib",
+        "type": "number",
+        "required": false,
+        "description": "`memory_limiter`'s hard limit in MiB (default: 80% of the container's memory, with a 20% spike limit)."
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "The instance name of the connectors, the exporter and the two pipelines (default `red`)."
+      }
+    ]
+  },
+  {
+    "name": "TailSamplingTier",
+    "lexicon": "otel",
+    "description": "The collector config of a tail sampling tier: whole traces in, the ones a policy keeps out.",
+    "bundles": [
+      "BatchProcessor",
+      "DebugExporter",
+      "HealthCheckExtension",
+      "MemoryLimiterProcessor",
+      "OtlpReceiver",
+      "Pipeline",
+      "TailSamplingProcessor"
+    ],
+    "params": [
+      {
+        "name": "exporters",
+        "type": "Exporter[]",
+        "required": false,
+        "description": "Where the kept traces go."
+      },
+      {
+        "name": "receivers",
+        "type": "TraceSource[]",
+        "required": false,
+        "description": "Where spans come from."
+      },
+      {
+        "name": "decisionWait",
+        "type": "Duration",
+        "required": false,
+        "description": "How long after a trace's first span the decision is made (default `10s`)."
+      },
+      {
+        "name": "errors",
+        "type": "boolean",
+        "required": false,
+        "description": "Keep every trace with a span ended in error (default: on)."
+      },
+      {
+        "name": "slowerThanMs",
+        "type": "number | false",
+        "required": false,
+        "description": "Keep every trace that took at least this many milliseconds (default 1000; `false` for none)."
+      },
+      {
+        "name": "percentage",
+        "type": "number | false",
+        "required": false,
+        "description": "Keep this percentage of all other traces, by trace id hash (default 10; `false` for none)."
+      },
+      {
+        "name": "policies",
+        "type": "TailSamplingPolicy[]",
+        "required": false,
+        "description": "More policies, evaluated after the ones above."
+      },
+      {
+        "name": "numTraces",
+        "type": "number",
+        "required": false,
+        "description": "How many traces to hold in memory at once (default: the collector's 50000)."
+      },
+      {
+        "name": "memoryLimitMib",
+        "type": "number",
+        "required": false,
+        "description": "`memory_limiter`'s hard limit in MiB (default: 80% of the container's memory, with a 20% spike limit)."
       },
       {
         "name": "healthCheck",

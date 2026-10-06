@@ -1,6 +1,6 @@
 ---
 title: "Composites"
-description: "NodeAgent, the per-node agent config, and running a declared collector config on a platform: the shared helpers, and the Docker, Kubernetes, Fly and GKE composites built on them"
+description: "NodeAgent, RedMetrics, GenAiPipeline, OtlpCollector and TailSamplingTier, and running a declared collector config on a platform: the shared helpers, and the Docker, Kubernetes, Fly and GKE composites built on them"
 diataxis: reference
 order: 6
 ---
@@ -37,6 +37,92 @@ Every pipeline runs `memory_limiter`, `k8sattributes`, `resourcedetection` (`env
 The pod has to provide the node name in `nodeNameEnv` (from `spec.nodeName`), the host root mounted read-only at `/hostfs`, `/var/log/pods` mounted read-only, and a service account that may read pods, namespaces, nodes and replicasets (and `nodes/stats` with `kubeletStats`). The k8s lexicon's `OtelCollector` takes the members as its `config` and provides all of it, worked out from the config: the variable from `spec.nodeName`, both host mounts read-only, group 0 so its non-root user can read the root-owned log files, and the RBAC and ports (see [node access](/chant/lexicons/k8s/otel-collector/#node-access)). Its WK8605 check reports a hand-written workload that leaves one out.
 
 `chant init --lexicon otel --template k8s-agent` scaffolds a project around it.
+
+## `RedMetrics`
+
+`RedMetrics` declares rate, errors and duration (RED) metrics from traces, served for Prometheus to scrape. Spans come in on an `otlp` receiver, go through `memory_limiter` and `batch` to a `spanmetrics` connector and a `servicegraph` connector, and both feed a `metrics` pipeline that ends at a `prometheus` exporter on 0.0.0.0:8889. Traces can go on to a backend as well.
+
+```ts
+import { RedMetrics, OtlpExporter } from "@intentius/chant-lexicon-otel";
+
+const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+export const red = RedMetrics({ traceExporters: [tempo], spanMetrics: { namespace: "shop", histogram: { unit: "s" } } });
+```
+
+| Prop | Default | What it does |
+|------|---------|--------------|
+| `receivers` | an `otlp` receiver on 4317 and 4318 | Where spans come from; a connector from another traces pipeline works too |
+| `traceExporters` | none | Where traces go besides the connectors |
+| `exporter` | `prometheus/red` on 0.0.0.0:8889 | The `prometheus` exporter the metrics are served on |
+| `spanMetrics` | the connector's defaults | The `spanmetrics` config: namespace, dimensions, histogram unit and buckets |
+| `serviceGraph` | on | The `servicegraph` connector, or its config; `false` leaves it out |
+| `memoryLimitMib` | 80% of the container's memory | `memory_limiter`'s hard limit; the spike limit is a quarter of it |
+| `name` | `red` | The instance name of the connectors, the default exporter and the pipelines (`traces/red`, `metrics/red`) |
+
+`redMetricsNames(red)` returns the Prometheus names it serves, read with `spanMetricsNames()` and `serviceGraphNames()`. The grafana lexicon's `RedDashboard` and the prometheus lexicon's `RedAlerts` take the connector and the exporter, so the dashboard and the alerts follow a renamed namespace:
+
+```ts
+import { RedDashboard } from "@intentius/chant-lexicon-grafana";
+import { RedAlerts } from "@intentius/chant-lexicon-prometheus";
+
+export const dashboard = RedDashboard({ spanMetrics: red.spanMetrics, exporter: red.exporter, datasource: prometheus });
+export const alerts = RedAlerts({ spanMetrics: red.spanMetrics, exporter: red.exporter });
+```
+
+Both build their PromQL with `spanMetricsRedQueries(names, { range })` from this lexicon's `metric-names` module, so a panel and the alert a responder opens it from run the same expression. The dashboard reads it over `$__rate_interval`, the alerts over their `rateWindow`.
+
+## `GenAiPipeline`
+
+`GenAiPipeline(options)` declares the same config `genAiPipeline(options)` returns, with each entity under a member name: `otlp`, `traces`, `sampled` (with `sampling`), `genAiTraces`, `genAiMetrics`, `sdkMetrics` (with `clientMetrics`), `logs` and `health`. The options and their defaults are the preset's; see [GenAI pipeline](../genai-pipeline/).
+
+```ts
+import { GenAiPipeline, PrometheusExporter } from "@intentius/chant-lexicon-otel";
+
+const scrape = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+export const genai = GenAiPipeline({ metricExporters: [scrape], clientMetrics: "derive" });
+```
+
+The prometheus lexicon's `GenAiRules` reads the metric names from `genAiMetrics(options)` called with the same options.
+
+## `OtlpCollector`
+
+`OtlpCollector(options)` declares the config `otlpCollector(options)` returns (see [the helpers](#helpers-for-platform-composites) below) with each part as a member: `otlp`, `memoryLimiter`, `batch`, `debug` when no `exporters` are given, `health` unless `healthCheck` is `false`, and `traces`, `metrics` and `logs` for the signals asked for.
+
+```ts
+import { OtlpCollector, OtlpExporter } from "@intentius/chant-lexicon-otel";
+
+const backend = new OtlpExporter({ name: "backend", endpoint: "collector.example.com:4317" });
+export const collector = OtlpCollector({ exporters: [backend], signals: ["traces", "logs"] });
+```
+
+## `TailSamplingTier`
+
+`TailSamplingTier` declares the collector config of a tail sampling tier for hosts other than Kubernetes (VMs, Docker, Fly, ECS). On Kubernetes, the k8s lexicon's `OtelCollectorGateway` and its WK8601 to WK8603 checks cover the same ground. Tail sampling needs every span of a trace in one collector, so the agents in front send through a `loadbalancing` exporter that routes by trace id; `tailSamplingLoadBalancer(resolver, name)` declares it.
+
+```ts
+import { TailSamplingTier, tailSamplingLoadBalancer, OtlpExporter } from "@intentius/chant-lexicon-otel";
+
+const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+export const sampler = TailSamplingTier({ exporters: [tempo], slowerThanMs: 500, percentage: 5 });
+
+// On each agent, in front of the tier:
+export const toSampler = tailSamplingLoadBalancer({ dns: { hostname: "sampler.internal" } }, "sampler");
+```
+
+| Prop | Default | What it does |
+|------|---------|--------------|
+| `exporters` | one `debug` exporter | Where the kept traces go |
+| `receivers` | an `otlp` receiver on 4317 and 4318 | Where spans come from |
+| `decisionWait` | `10s` | How long after a trace's first span the decision is made |
+| `errors` | on | Keep every trace with a span in error (a `status_code` policy) |
+| `slowerThanMs` | 1000 | Keep every trace at least this long (a `latency` policy); `false` for none |
+| `percentage` | 10 | Keep this share of the rest (a `probabilistic` policy); `false` for none |
+| `policies` | none | More `tail_sampling` policies, after the three above |
+| `numTraces` | the collector's 50000 | How many traces to hold in memory |
+| `memoryLimitMib` | 80% of the container's memory | `memory_limiter`'s hard limit |
+| `healthCheck` | on | A `health_check` extension on 0.0.0.0:13133 |
+
+The pipeline is `otlp`, `memory_limiter`, `tail_sampling`, `batch`, then the exporters. Compute span metrics before this tier, on the agents or with `RedMetrics`, or they count only the traces it keeps. `tailSamplingLoadBalancer` leaves the exporter's TLS on; pass `{ otlp: { tls: { insecure: true } } }` as its third argument on a private network.
 
 ## `collectorYaml(entities)`
 

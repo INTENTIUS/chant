@@ -37,3 +37,17 @@ export type {
   GenAiAlertInfo,
   GenAiQuantileSeries,
 } from "./genai";
+export { RedAlerts, redAlertRules, RED_ALERT_NAMES } from "./red-alerts";
+export type { RedAlertsProps, RedAlertsMembers, RedAlertsInstance, RedAlertOptions, RedErrorRatioAlert, RedLatencyAlert } from "./red-alerts";
+export { Watchdog, WATCHDOG_URL_FILE } from "./watchdog";
+export type { WatchdogProps, WatchdogMembers, WatchdogInstance } from "./watchdog";
+export { AlertRouting, ALERT_ROUTING_LEVELS } from "./alert-routing";
+export type {
+  AlertRoutingProps,
+  AlertRoutingMembers,
+  AlertRoutingInstance,
+  AlertRoutingLevel,
+  AlertRoutingTeam,
+  AlertRoutingTiming,
+  AlertRoutingReceiver,
+} from "./alert-routing";

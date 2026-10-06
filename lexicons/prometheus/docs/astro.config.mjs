@@ -58,6 +58,10 @@ export default defineConfig({
                               "slug": "rule-groups"
                         },
                         {
+                              "label": "Alert Routing and Watchdog",
+                              "slug": "alert-routing"
+                        },
+                        {
                               "label": "Alertmanager",
                               "slug": "alertmanager"
                         },
@@ -68,6 +72,10 @@ export default defineConfig({
                         {
                               "label": "GenAI Rules",
                               "slug": "genai-rules"
+                        },
+                        {
+                              "label": "RED Alerts",
+                              "slug": "red-alerts"
                         },
                         {
                               "label": "SLOs",
