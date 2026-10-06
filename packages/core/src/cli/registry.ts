@@ -394,6 +394,8 @@ export interface ParsedArgs {
   label?: string;
   /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
   branch?: string;
+  /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. */
+  ciWorkflows?: string[];
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new

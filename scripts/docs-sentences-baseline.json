@@ -96,6 +96,10 @@
   "claude/colon-reveal": 2,
   "formatting/bold-first-bullet": 1
  },
+ "docs/src/content/docs/cli/ci.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/components.mdx": {
   "claude/colon-reveal": 2
  },
@@ -1057,7 +1061,7 @@
   "formatting/em-dash-density": 17,
   "claude/colon-reveal": 5,
   "tricolon/comma-series": 2,
-  "anaphora/repeated-opening": 2,
+  "anaphora/repeated-opening": 3,
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/reference/template-migrations.mdx": {

@@ -61,6 +61,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `writeScope` | no | Who may write what: for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
 | `agents` | no | The agent sessions, each bound to one member or several. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0, and a session's `members` in chant 0.105.0. |
 | `identity` | no | Who a person-attributed record or gate approval may name, and which gates pass only on a signed approval. See [Identity](#identity). It was added in chant 0.102.0. |
+| `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.107.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
@@ -292,6 +293,44 @@ chant approve web ship --env prod --plan <digest> --actor github:alice --sign ~/
 ```
 
 The seal is an ssh signature in the `chant-gate` namespace over the op or component, the gate, the environment, the plan digest, the approver and the time, so it can't be moved to another plan or gate.
+
+## CI
+
+`ci.green` says which commits passed CI ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). [`chant ci tick`](/chant/cli/ci/) tags each passing commit, and people and tools read the newest one from git with `chant ci last-green`, without asking the forge.
+
+```json
+"ci": {
+  "green": {
+    "branch": "main",
+    "window": "24h",
+    "phases": {
+      "lint": ["lint"],
+      "build": ["build", "clippy"],
+      "e2e": ["e2e (*)"],
+      "macos": { "runs": ["macos (test)", "macos (webkit)"], "skipped": "pass" }
+    },
+    "require": ["lint", "build", "e2e", "macos"]
+  }
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `branch` | yes | The branch whose first-parent commits are tagged. |
+| `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
+| `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. |
+| `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
+
+A phase passes when every check run its patterns match finished with `success`, judged by each run's latest attempt. A run that finished as `skipped` passes only in a phase with `"skipped": "pass"`, which suits a job that a path filter runs on some commits only. The default, `fail`, never lets a skipped run pass. A run still queued or in progress, or a pattern that no run matches yet, leaves the commit undecided. A commit is green when every required phase passes, and it fails as soon as one of them fails.
+
+The result is kept as two kinds of annotated tag. chant makes each one once, and never moves or deletes either.
+
+| Tag | Made when | Its annotation |
+|---|---|---|
+| `ci/green/<sha>` | a commit passes every required phase | the time, and each required phase's runs |
+| `ci/revoked/<sha>` | a commit with a green tag later fails a required phase, as a re-run that went red does | the phase, the run that failed, and the time |
+
+A revoked commit doesn't go green again by itself. Deleting its `ci/revoked/<sha>` tag by hand makes it count as green again, since its green tag is still there.
 
 ## Diagrams
 

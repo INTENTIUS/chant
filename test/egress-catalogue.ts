@@ -43,7 +43,7 @@ import { join, relative, sep } from "node:path";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "upgrade" | "provenance" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "upgrade" | "provenance" | "ci" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -95,6 +95,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Auditing a remote repository",
     summary:
       "`chant audit <url>` reads someone else's repository over a git host's API. Auditing a local path reaches nothing.",
+  },
+  {
+    id: "ci",
+    label: "Tagging the commits that passed CI",
+    summary:
+      "`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` reads local tags only and reaches nothing.",
   },
   {
     id: "maintenance",
@@ -257,6 +263,24 @@ export interface NetworkShellOut {
  * entry says.
  */
 export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant ci tick",
+    file: "packages/core/src/workspace/ci-green.ts",
+    phase: "ci",
+    destination: "the repository's `origin` remote",
+    why: "`git fetch --no-tags --prune origin +refs/heads/<branch>:refs/remotes/origin/<branch> +refs/tags/ci/*:refs/tags/ci/*` brings the branch and the ci tags, pruning a ci tag deleted on the remote by hand, so the tick judges what the remote holds (#3573). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any.",
+  },
+  {
+    binary: "git",
+    subcommand: "push",
+    command: "chant ci tick",
+    file: "packages/core/src/workspace/ci-green.ts",
+    phase: "ci",
+    destination: "the repository's `origin` remote",
+    why: "`git push origin refs/tags/ci/green/<sha> ...` pushes the tags the tick made, never forced, so a tag that already exists there is refused rather than moved (#3573).",
+  },
   {
     binary: "git",
     subcommand: "fetch",
@@ -565,6 +589,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "the forge that hosts the pull request: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or a GitLab instance's API",
     why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. Only those two CI commands reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+  },
+  {
+    file: "packages/core/src/workspace/ci-green-forge.ts",
+    primitives: ["fetch"],
+    phase: "ci",
+    destination: "`api.github.com`, or `$GITHUB_API_URL` for GitHub Enterprise Server",
+    why: "`chant ci tick` lists every check run on each commit within `ci.green`'s window, to judge its phases by each run's latest attempt (#3573). The client takes an injected `fetch`, so no test opens a socket.",
   },
   {
     file: "packages/core/src/op/activities/pipeline-audit.ts",

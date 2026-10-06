@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json",
+  "title": "chant ci last-green output",
+  "description": "What `chant ci last-green --json` prints (#3573, ws-103): the newest first-parent commit of the branch ci.green names that has a ci/green/<sha> tag and no ci/revoked/<sha> tag. It reads local refs and tags and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.107.0 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "Exit code 0, with or without a green commit.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "branch",
+        "ref",
+        "commit"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root",
+            "file"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself."
+            },
+            "file": {
+              "enum": [
+                "chant.workspace.json",
+                "chant.workspace.jsonc"
+              ]
+            }
+          }
+        },
+        "branch": {
+          "type": "string",
+          "description": "ci.green.branch."
+        },
+        "ref": {
+          "type": "string",
+          "description": "The ref whose first-parent commits were walked: refs/remotes/origin/<branch> when the checkout has it, else refs/heads/<branch>."
+        },
+        "commit": {
+          "description": "The newest green commit that is not revoked, or null when there is none.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "sha",
+                "tag",
+                "tagged",
+                "committed"
+              ],
+              "properties": {
+                "sha": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40,64}$"
+                },
+                "tag": {
+                  "type": "string",
+                  "description": "ci/green/<sha>."
+                },
+                "tagged": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "When the green tag was made, ISO 8601, or null for a lightweight tag."
+                },
+                "committed": {
+                  "type": "string",
+                  "description": "The commit's committer time, ISO 8601."
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "ci-green-undeclared",
+                "ci-branch-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

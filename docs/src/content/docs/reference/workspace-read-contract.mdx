@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report` and `run-statement`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement` and `ci-last-green`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -45,6 +45,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace wip`](/chant/cli/workspace-wip/#reading-work-in-progress) | `--json` | `https://intentius.io/chant/schemas/workspace/wip/v1/wip.schema.json` |
 | [`chant workspace signers`](/chant/cli/workspace-signers/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json` |
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
+| [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -356,6 +357,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `wip-race` | error, `wip save` and `wip restore` | Another writer moved `refs/chant/wip/<branch>` between the command's read and its write. |
 | `wip-policy-none` | error, `wip push` and `wip fetch` | No box block declares `replicate`, so there is no remote. |
 | `wip-remote-unknown` | error, `wip push` and `wip fetch` | The policy names a git remote the checkout doesn't have. The host adds it, with its credential, before chant pushes. |
+| `ci-green-undeclared` | error, `ci last-green` and `ci tick` | The declaration has no `ci.green` block, so chant does not know which check runs make a commit green ([#3573](https://github.com/INTENTIUS/chant/issues/3573)). |
+| `ci-branch-unknown` | error, `ci last-green` and `ci tick` | The checkout has no ref for the branch `ci.green` names, neither the remote-tracking branch nor a local one. |
 | `listing-member-unknown` | error, `box listing set` | The member named is not declared. |
 | `listing-box-missing` | error, `box listing set` | The member's entry declares no box block, so it has no listing. |
 | `publish-member-unknown` | error, `box publish` | The member named is not declared. |

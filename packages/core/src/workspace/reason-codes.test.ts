@@ -44,6 +44,7 @@ import { BOX_LISTING_ERROR_CODES } from "./box-listing";
 import { BOX_PUBLISH_ERROR_CODES } from "./box-publish";
 import { WRITE_LOCK_ERROR_CODES } from "./write-lock-cli";
 import { WIP_ERROR_CODES, WIP_WRITE_ERROR_CODES } from "./wip";
+import { CI_GREEN_ERROR_CODES } from "./ci-green";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
 import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
 import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
@@ -111,6 +112,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   WRITE_LOCK_ERROR_CODES,
   WIP_ERROR_CODES,
   WIP_WRITE_ERROR_CODES,
+  CI_GREEN_ERROR_CODES,
   ROTATION_REFUSAL_CODES,
   SIGNERS_ERROR_CODES,
   EVIDENCE_ERROR_CODES,
