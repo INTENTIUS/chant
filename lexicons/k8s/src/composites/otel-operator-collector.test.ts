@@ -171,7 +171,7 @@ describe("WK8604 over an OpenTelemetryCollector's spec.config", () => {
   });
 
   test("reads a v1alpha1 CR's config text", () => {
-    const text = dump({ ...PLAIN, service: { pipelines: { traces: { receivers: ["otlp"], exporters: ["nope"] } } } });
+    const text = dump({ ...PLAIN, service: { pipelines: { traces: { receivers: ["otlp"], exporters: ["debug", "nope"] } } } });
     const doc = { apiVersion: "opentelemetry.io/v1alpha1", kind: "OpenTelemetryCollector", metadata: { name: "old" }, spec: { config: text } };
     const diags = wk8604.check(yaml(doc));
     expect(diags.map((d) => d.checkId)).toEqual(["OTEL101"]);
