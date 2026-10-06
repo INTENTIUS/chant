@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant ci last-green [--json]
 chant ci tick [--dry-run] [--forge github]
-chant ci workflow [--workflow <name>]... [--output <file>]
+chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
 ```
 
 `chant ci` records which commits of a branch passed CI as git tags, from the [`ci.green`](/chant/reference/workspace-declaration/#ci) block of the workspace declaration ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). A commit that passes every required phase gets `ci/green/<sha>`. A green commit that later fails one gets `ci/revoked/<sha>`. Anyone with a clone can then find the newest commit that passed, for example to freeze it and release from it.
@@ -47,4 +47,16 @@ Writes `.github/workflows/chant-ci-green.yml` (or `--output`), the root CI file 
 
 It finds the workflows to listen to by reading the other files in `.github/workflows/`. A job reports its `name` or its id as its check run, followed by ` (<matrix values>)` for a matrix job, and a workflow is kept when one of its jobs can report a check run that a required phase's pattern matches. It warns about each required pattern no job matches. `--workflow <name>` adds a workflow the scan can't see, such as one whose job names are built from expressions, and it is repeatable.
 
-The tick runs in the workspace root as `npx --yes @intentius/chant@<version> ci tick`, at the version that wrote the file. The file's first line is the generated-file header naming the command. When the command runs in a member's directory, that member records the file as one it generates ([ws-042](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-042-root-ci-files.md)). Regenerate it after changing `ci.green` or the workflows it listens to.
+The tick runs in the workspace root as `npx --yes @intentius/chant@<version> ci tick`, at the version that wrote the file. `--chant <command>` runs chant with another command instead, and `ci tick` is put after it. `--install <command>` adds a step before the tick that installs what that command needs, in the same directory. When the workspace root has a `package-lock.json`, the install step also gets setup-node's npm cache. Both flags go into the regenerate command in the header. The file's first line is the generated-file header naming the command. When the command runs in a member's directory, that member records the file as one it generates ([ws-042](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-042-root-ci-files.md)). Regenerate it after changing `ci.green` or the workflows it listens to.
+
+## chant's own repository
+
+chant declares `ci.green` for its own `main` in its `chant.workspace.json`. The phases are `check`, `test` and `validate`, the three checks branch protection requires. Each phase matches one check run of the same name from the `chant` workflow, where `test` is the job that passes only when the unit shards, the end-to-end tests and the binary tests all passed. The release gate in `publish.yml` and the weekly freshness checks run on main's commits too, so their jobs are named `release-gate`, `dogwood-freshness` and `emulator-freshness` to keep their runs out of those phases.
+
+Its tick runs the source at the commit it checks out, so a change to `chant ci` is tested on main before it ships:
+
+```bash
+chant ci workflow --chant 'npx tsx packages/core/src/cli/main.ts' --install 'npm install --ignore-scripts'
+```
+
+The install skips the lexicon builds, and the tick needs none of them. `just release` picks the commit it tags from these tags: `scripts/release-preflight.sh` reads them whenever the declaration on `origin/main` sets `ci.green` for `main`. When no commit has a green tag, it refuses to release. It doesn't fall back to asking GitHub, and `CHANT_RELEASE_SKIP_PREFLIGHT=1` skips the check.
