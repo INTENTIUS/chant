@@ -28,7 +28,10 @@
  * classified changes need, over its HTTP interface. `postgres` joined after
  * that (#3280): the sql lexicon's `postgresApply`, which sends a Postgres
  * server the statements a build's classified changes need, grouped into
- * transactions, with `CONCURRENTLY` statements outside them.
+ * transactions, with `CONCURRENTLY` statements outside them. `ruler` joined
+ * last (#3372): the prometheus lexicon's `rulerApply`, which posts rule groups
+ * to a Mimir, Cortex or Loki ruler and uploads a Mimir or Cortex Alertmanager
+ * config, inside the namespaces the project declares.
  * **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
@@ -48,7 +51,7 @@ import { importLexiconPackage } from "../../lexicon-module";
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana" | "clickhouse" | "postgres";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana" | "clickhouse" | "postgres" | "ruler";
 
 /**
  * How apply treats resources no longer declared.
@@ -69,7 +72,11 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "
  *   stack is reported not-prunable), `postgres` drops the objects in the
  *   declared schemas whose comment carries the project's marker (via the sql
  *   lexicon's `postgresApply`; never an object another tool keeps, and a
- *   project with no ownership stack is reported not-prunable), and
+ *   project with no ownership stack is reported not-prunable), `ruler`
+ *   deletes groups the ruler has and the project does not declare, only inside
+ *   the ruler namespaces the profile declares (via the prometheus lexicon's
+ *   `rulerApply`; a namespace the project does not declare is never listed,
+ *   so never touched, unlike `mimirtool rules sync`), and
  *   `cloudformation` is bounded by the stack — which holds, because a
  *   resource CFN did not create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but an approval gate precedes
@@ -255,6 +262,23 @@ export type ClickHouseApplier = (
  * reads `ownership` and the profile from the project's `chant.config.ts`.
  */
 export type PostgresApplier = ClickHouseApplier;
+
+/**
+ * The prometheus lexicon's ruler applier, as this module needs to call it
+ * (#3372): `rulerApply` composed with the lexicon's own `toApplyResult`.
+ *
+ * `environment` selects `prometheus.profiles.<environment>` (else the
+ * `PROMETHEUS_RULER_*` variables), which carries the ruler kind and URL, the
+ * `X-Scope-OrgID` tenant and the declared namespaces. The namespaces are the
+ * ownership boundary: nothing outside them is read, written or deleted.
+ */
+export type RulerApplier = ClickHouseApplier;
+
+/** The prometheus lexicon's ruler rollback, as {@link compensateApply} needs to call it. */
+export type RulerRollback = (
+  args: { buildPath: string; environment?: string },
+  signal?: AbortSignal,
+) => Promise<{ restored: number; removed: number; alertmanagerRestored: boolean; hadSnapshot: boolean }>;
 
 /**
  * The aws lexicon's CloudFormation applier, as this module needs to call it
@@ -534,6 +558,51 @@ async function loadPostgresApplier(): Promise<PostgresApplier> {
 }
 
 /**
+ * Load the prometheus lexicon's `rulerApply` (#3372). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason.
+ */
+async function loadRulerApplier(): Promise<RulerApplier> {
+  const spec = "@intentius/chant-lexicon-prometheus/api/apply";
+  type PromModule = {
+    rulerApply?: (args: { buildPath: string; environment?: string; prune?: boolean }, signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: PromModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as PromModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "ruler" needs @intentius/chant-lexicon-prometheus, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Ruler applies go through the prometheus ` +
+        `lexicon's applier (chant #3372); install the prometheus lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { rulerApply, toApplyResult } = mod;
+  if (typeof rulerApply !== "function" || typeof toApplyResult !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-prometheus exports no rulerApply — it predates chant #3372");
+  }
+  return async (args, signal) => toApplyResult(await rulerApply(args, signal));
+}
+
+/** Load the prometheus lexicon's `rulerRollback` (#3372), the compensation twin of {@link loadRulerApplier}. */
+async function loadRulerRollback(): Promise<RulerRollback> {
+  const spec = "@intentius/chant-lexicon-prometheus/api/apply";
+  let mod: { rulerRollback?: RulerRollback };
+  try {
+    mod = (await importLexiconPackage(spec)) as { rulerRollback?: RulerRollback };
+  } catch (err) {
+    throw new Error(
+      `rollback for target "ruler" needs @intentius/chant-lexicon-prometheus, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Install the prometheus lexicon and list it in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.rulerRollback !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-prometheus exports no rulerRollback — it predates chant #3372");
+  }
+  return mod.rulerRollback;
+}
+
+/**
  * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
  * {@link loadK8sApplier}, for the same reason.
  */
@@ -591,7 +660,8 @@ async function loadAwsRollback(): Promise<AwsRollback> {
  * (the CNRM manifest) for gcp, `dist/fly.json` (the serialized plan) for fly,
  * `dist/grafana.json` (the index the grafana serializer writes, with the
  * dashboard files beside it) for grafana, `dist/schema.json` (the sql
- * lexicon's build output) for clickhouse and postgres. Pure — exported for
+ * lexicon's build output) for clickhouse and postgres, `dist/rules.yml` (the
+ * rule file, with `alertmanager.yml` beside it) for ruler. Pure — exported for
  * testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
@@ -603,6 +673,8 @@ export function defaultOutput(target: ApplyTarget): string {
       return "dist/gcp.yaml";
     case "fly":
       return "dist/fly.json";
+    case "ruler":
+      return "dist/rules.yml";
     case "grafana":
       return "dist/grafana.json";
     case "clickhouse":
@@ -671,6 +743,7 @@ export async function nativeApply(
   grafanaApplier?: GrafanaApplier,
   clickhouseApplier?: ClickHouseApplier,
   postgresApplier?: PostgresApplier,
+  rulerApplier?: RulerApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -790,6 +863,18 @@ export async function nativeApply(
     return collapseEnvelope(envelope, args.env);
   }
 
+  if (args.target === "ruler") {
+    // ruler (#3372): the prometheus lexicon's applier. env selects
+    // `prometheus.profiles.<env>`, whose ruler names the tenant and the
+    // namespaces the project owns. A delete stays inside those namespaces.
+    const apply = rulerApplier ?? (await loadRulerApplier());
+    const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
+    // A group with no declared namespace, a plain Prometheus or Alertmanager
+    // with no upload API, and a refused write ride the envelope as
+    // NOT-ATTEMPTED, so an Op can gate on them.
+    return collapseEnvelope(envelope, args.env);
+  }
+
   // cloudformation (#1449): the aws lexicon's native applier. env is the stack
   // name and output the template path; endpoint resolution (#1694) and
   // capability derivation (#980) are awsApply's own, so nothing else is passed.
@@ -811,7 +896,7 @@ export async function nativeApply(
  * with compensation on rather than warn at rollback time.
  */
 export function hasNativeRollback(target: ApplyTarget): boolean {
-  return target === "cloudformation";
+  return target === "cloudformation" || target === "ruler";
 }
 
 export interface CompensateApplyArgs {
@@ -821,6 +906,8 @@ export interface CompensateApplyArgs {
   env: string;
   /** Explicit rollback command, used in preference to the native default. */
   command?: string;
+  /** The build output the apply read — `ruler` finds the previous-group snapshot beside it. */
+  output?: string;
 }
 
 /** What a compensation did. */
@@ -834,6 +921,10 @@ export interface CompensateApplyResult {
   rolledBack?: boolean;
   /** The settled post-rollback stack status — cloudformation. */
   status?: string;
+  /** Groups put back to their previous form — ruler. */
+  restored?: number;
+  /** Groups the apply created, deleted again — ruler. */
+  removed?: number;
 }
 
 /**
@@ -856,6 +947,7 @@ export async function compensateApply(
   args: CompensateApplyArgs,
   signal?: AbortSignal,
   rollback?: AwsRollback,
+  rulerRollback?: RulerRollback,
 ): Promise<CompensateApplyResult> {
   if (args.command) {
     const { stdout, stderr } = await execAsync(args.command, { signal });
@@ -874,12 +966,25 @@ export async function compensateApply(
     };
   }
 
+  if (args.target === "ruler") {
+    // ruler (#3372): re-apply the previous group set the last apply saved.
+    const roll = rulerRollback ?? (await loadRulerRollback());
+    const result = await roll({ buildPath: args.output ?? defaultOutput("ruler"), environment: args.env }, signal);
+    console.log(
+      result.hadSnapshot
+        ? `[${args.env}] ruler rollback: restored ${result.restored} group(s), removed ${result.removed}` +
+            (result.alertmanagerRestored ? ", restored the Alertmanager config" : "")
+        : `[${args.env}] ruler rollback: no apply left a snapshot, nothing to restore`,
+    );
+    return { restored: result.restored, removed: result.removed };
+  }
+
   // Defensive: unreachable from an ApplyOp, which refuses this combination at
   // build time (#1449). Reaching it means the op was assembled without that
   // check, and the honest outcome is a failure that says the state stands.
   throw new Error(
     `no automatic rollback for target "${args.target}" — the partial apply to ${args.env} was NOT ` +
       `reverted and cannot be. ApplyOp refuses compensate for this target at build time; either ` +
-      `supply compensate.command or use a target with a mapped rollback (cloudformation).`,
+      `supply compensate.command or use a target with a mapped rollback (cloudformation, ruler).`,
   );
 }
