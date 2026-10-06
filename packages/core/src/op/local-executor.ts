@@ -28,9 +28,11 @@ import { parseDuration } from "./duration";
 import { stepTimeoutProblem } from "./activity-profiles";
 import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
+import { gatePointOf } from "./gate-point";
+import { evaluatePointGate, workspaceGatePointAsker, type GatePointAsker } from "./gate-point-run";
 import type { ResolvedGateApproval } from "./gate-approval";
 import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
-import type { PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPointWait, type WaitingPoint } from "./steward-points";
 import { isGateWait } from "./gate-wait";
 import { currentStewardTurn, enterStewardTurn } from "./steward-turn";
@@ -72,10 +74,12 @@ export interface StepRecord {
     resolvedBy: string;
     timestamp: string;
     url?: string;
-    /** On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. */
-    via?: "quorum" | "policy";
+    /** On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. `"point"` on a gate that asks a decision point (#3170). */
+    via?: "quorum" | "policy" | "point";
     /** On a gate with a quorum (#2508): every approver who counted toward it. */
     approvers?: string[];
+    /** On a gate that asks a decision point (#3170): the answer record that passed it, which the gate ledger's resolution cites too. */
+    answer?: GateAnswerRef;
   };
   /**
    * Why a step declined to proceed on something that is not a failure
@@ -489,6 +493,10 @@ interface GateContext {
   passed?: PassedGate[];
   /** The run's hold on its work item's lease (#2748). Absent in compensation phases, which run whatever the lease did. */
   work?: RunWorkLease;
+  /** How a gate that names a decision point asks it (#3170). */
+  points?: GatePointAsker;
+  /** The environment the run was started for, a point gate's `gate.env` input. */
+  env?: string;
 }
 
 /**
@@ -604,6 +612,7 @@ async function runGateStep(
   gates: GateContext,
   resultsById: ReadonlyMap<string, unknown> = new Map(),
 ): Promise<{ record: StepRecord; pending?: PendingGateRecord; pushed?: boolean; pushWarning?: string }> {
+  if (step.point !== undefined) return runPointGateStep(step, phaseName, gates, resultsById);
   const start = Date.now();
   // #2300: `plan` is authored as a reference into the Plan phase's result
   // (`plan.out.planDigest`), and is resolved here through the same walk an
@@ -687,6 +696,57 @@ async function runGateStep(
     pushed: check.pushed,
     ...(check.pushWarning ? { pushWarning: check.pushWarning } : {}),
   };
+}
+
+/**
+ * Decide a gate that asks a decision point (#3170, `./gate-point-run.ts`).
+ * An answer it passes on lands on the step record as the approval, citing
+ * the answer record; an open question puts the question on the record, as an
+ * activity's open point does, and the caller ends the run `waiting`; any
+ * other answer fails the step.
+ */
+async function runPointGateStep(
+  step: GateStep,
+  phaseName: string,
+  gates: GateContext,
+  resultsById: ReadonlyMap<string, unknown>,
+): Promise<{ record: StepRecord; pushed?: boolean; pushWarning?: string }> {
+  const start = Date.now();
+  const point = gatePointOf(step.point)!;
+  const base = { phase: phaseName, fn: gateFn(step), args: {} };
+  const resolvedPlan = resolveStepOutputRefs(step.plan, resultsById);
+  const planDigest = typeof resolvedPlan === "string" && resolvedPlan !== "" ? resolvedPlan : undefined;
+  const inputs = point.inputs ? (resolveStepOutputRefs(point.inputs, resultsById) as Record<string, unknown>) : undefined;
+  try {
+    const check = await evaluatePointGate(gates.port, gates.points ?? workspaceGatePointAsker(process.cwd()), {
+      op: gates.op,
+      gate: gateName(step),
+      point,
+      ...(inputs ? { inputs } : {}),
+      ...(step.description ? { description: step.description } : {}),
+      ...(step.timeout ? { timeout: step.timeout } : {}),
+      ...(gates.runId ? { runId: gates.runId } : {}),
+      ...(planDigest !== undefined ? { planDigest } : {}),
+      ...(gates.env !== undefined ? { env: gates.env } : {}),
+      ...(gates.now ? { now: gates.now } : {}),
+    });
+    if (check.satisfied) {
+      const approval: NonNullable<StepRecord["approval"]> = {
+        gate: gateName(step),
+        resolvedBy: check.resolution.resolvedBy,
+        timestamp: check.resolution.timestamp,
+        via: "point",
+        ...(check.answer.answeredBy ? { approvers: check.answer.answeredBy } : {}),
+        answer: check.answer,
+      };
+      gates.passed?.push({ gate: gateName(step), approval });
+      return { record: { ...base, status: "ok", durationMs: Date.now() - start, approval }, pushed: check.pushed, ...(check.pushWarning ? { pushWarning: check.pushWarning } : {}) };
+    }
+    if ("refused" in check) return { record: { ...base, status: "fail", durationMs: Date.now() - start, error: check.refused } };
+    return { record: { ...base, status: "skipped", durationMs: Date.now() - start, point: check.waiting }, pushed: check.pushed, ...(check.pushWarning ? { pushWarning: check.pushWarning } : {}) };
+  } catch (err) {
+    return { record: { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(err) } };
+  }
 }
 
 /**
@@ -778,6 +838,11 @@ async function runEffectStep(
         skipRest(i + 1);
         return { records, failed: false, pending, pushed, ...(pushWarning ? { pushWarning } : {}) };
       }
+      if (record.point) {
+        // A gate's open decision point (#3170): as for an activity's.
+        skipRest(i + 1);
+        return { records, failed: false, point: record.point };
+      }
       continue;
     }
     const ran = await runStep(nested, phaseName, activities, profiles, resultsById, signal);
@@ -866,6 +931,13 @@ async function runPhase(
         }
         throw new GateStop(gateRecords, pending, phase.name, pushed, pushWarning);
       }
+      if (record.point) {
+        // A gate's open decision point (#3170): nothing fans out.
+        for (const skipped of phase.steps.filter(isActivity)) {
+          pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
+        }
+        throw new PointStop(gateRecords, record.point, phase.name);
+      }
     }
     const steps = phase.steps.filter(isActivity);
     const settled = await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)));
@@ -920,6 +992,12 @@ async function runPhase(
       if (pending) {
         skipRemaining(i + 1);
         throw new GateStop(records, pending, phase.name, pushed, pushWarning);
+      }
+      if (record.point) {
+        // A gate that asks a decision point (#3170) and found it open: the
+        // run waits on the question, as at an activity's open point.
+        skipRemaining(i + 1);
+        throw new PointStop(records, record.point, phase.name);
       }
       continue;
     }
@@ -980,6 +1058,11 @@ export interface RunOpOptions {
   now?: string;
   /** Identifies this run on any pending fact it records. */
   runId?: string;
+  /**
+   * How a gate that names a decision point asks it (#3170). Defaults to the
+   * workspace holding `cwd` (`workspaceGatePointAsker`); a test passes a stub.
+   */
+  points?: GatePointAsker;
   /**
    * The environment the run was started for (`--env`, #2522). The executor
    * only hands it to activities through the run context (`./run-context.ts`).
@@ -1102,6 +1185,8 @@ async function runOpInTurn(
     runId,
     ...(options.onRecord ? { onRecord: options.onRecord } : {}),
     passed: run.passedGates,
+    points: options.points ?? workspaceGatePointAsker(options.cwd ?? process.cwd()),
+    ...(options.env !== undefined ? { env: options.env } : {}),
   };
 
   // Effect steps are ordered (read-compare-run-write): refuse them in a

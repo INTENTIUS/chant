@@ -33,6 +33,7 @@
  */
 
 import {
+  appendGateResolution,
   appendPendingGate,
   isPendingGateExpired,
   latestPendingGate,
@@ -40,6 +41,7 @@ import {
   readGateLedger,
   resolveApprovalUrl,
   DEFAULT_GATE_EXPIRY,
+  type GateResolutionInput,
   type GateResolutionRecord,
   type PendingGateInput,
   type PendingGateRecord,
@@ -74,6 +76,12 @@ export interface PendingGatePush {
 export interface GateLedgerPort {
   read(op: string): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[] }>;
   appendPending(input: PendingGateInput): Promise<PendingGatePush>;
+  /**
+   * Append a resolution the run itself writes (#3170): a gate that asks a
+   * decision point records the answer that passed it. Absent on a port that
+   * only plain gates use.
+   */
+  appendResolution?(input: GateResolutionInput): Promise<{ record: GateResolutionRecord; pushed: boolean; pushWarning?: string }>;
   /**
    * The rule a workspace sets for approvals of `gate` (#3163, ws-080), or
    * null when none applies: the declaration's `identity.gates`, read at base.
@@ -120,6 +128,15 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       const { gateAdmission } = await import("../workspace/identity");
       return gateAdmission(opts?.cwd ?? process.cwd(), gate);
     },
+    async appendResolution(input) {
+      const { record } = await appendGateResolution(input, opts);
+      try {
+        const pushed = await pushLifecycle(opts);
+        return pushed ? { record, pushed } : { record, pushed, pushWarning: "no remote is configured for chant/lifecycle — the resolution was recorded locally only" };
+      } catch (err) {
+        return { record, pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
+      }
+    },
     async appendPending(input) {
       const { record } = await appendPendingGate(input, opts);
       try {
@@ -146,14 +163,22 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
 export function memoryGateLedgerPort(
   seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[] } = {},
-): GateLedgerPort & { appended: PendingGateRecord[] } {
+): GateLedgerPort & { appended: PendingGateRecord[]; resolved: GateResolutionRecord[] } {
   const resolutions = [...(seed.resolutions ?? [])];
   const pending = [...(seed.pending ?? [])];
   const appended: PendingGateRecord[] = [];
+  const resolved: GateResolutionRecord[] = [];
   return {
     appended,
+    resolved,
     async read() {
       return { resolutions: [...resolutions], pending: [...pending] };
+    },
+    async appendResolution(input) {
+      const record: GateResolutionRecord = { version: 1, ...input };
+      resolutions.push(record);
+      resolved.push(record);
+      return { record, pushed: true };
     },
     async appendPending(input) {
       const record: PendingGateRecord = { version: 1, kind: "pending", ...input };

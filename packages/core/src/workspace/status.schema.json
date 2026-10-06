@@ -848,7 +848,17 @@
             }
           ]
         },
-        "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null and --plan <planDigest> when planDigest is not null (#2832), so the line approves the plan this read showed, and --sign when signed is not null (#3163). The caller adds --actor <principal>." }
+        "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null and --plan <planDigest> when planDigest is not null (#2832), so the line approves the plan this read showed, and --sign when signed is not null (#3163). The caller adds --actor <principal>. For a gate that asks a decision point (#3170), the chant workspace points answer line for the question in answer." },
+        "answer": {
+          "type": "object",
+          "description": "The open question the gate waits on, when it asks a decision point (#3170): absent on a gate chant approve passes. Answered with chant workspace points answer <id>; the run that passes the gate then cites the answer record on the ledger.",
+          "required": ["point", "id", "path"],
+          "properties": {
+            "point": { "type": "string" },
+            "id": { "type": "string", "description": "The answer record's id." },
+            "path": { "type": "string", "description": "The answer record, from the repository root." }
+          }
+        }
       }
     },
     "environment": {

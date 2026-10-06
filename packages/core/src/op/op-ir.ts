@@ -149,6 +149,8 @@ export interface OpIRGateStep {
   plan?: GateStep["plan"];
   /** Quorum, roles and policy (#2508), carried as authored. Absent on a gate that passes on one approval. */
   approval?: GateStep["approval"];
+  /** The decision point the gate asks (#3170), carried as authored. Absent on a gate that `chant approve` passes. */
+  point?: GateStep["point"];
 }
 
 export interface OpIREffectStep {
@@ -258,6 +260,7 @@ function irGateStep(step: GateStep): OpIRGateStep {
     ...(step.description ? { description: step.description } : {}),
     ...(step.plan !== undefined ? { plan: step.plan } : {}),
     ...(step.approval !== undefined ? { approval: step.approval } : {}),
+    ...(step.point !== undefined ? { point: step.point } : {}),
   };
 }
 
@@ -412,6 +415,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       ...(step.description ? { description: step.description } : {}),
       ...(step.plan !== undefined ? { plan: step.plan } : {}),
       ...(step.approval !== undefined ? { approval: step.approval } : {}),
+      ...(step.point !== undefined ? { point: step.point } : {}),
     };
   }
   return {

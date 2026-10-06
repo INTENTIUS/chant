@@ -72,8 +72,18 @@ export interface StatusGate {
    * `--sign`. Null when any approval counts.
    */
   signed: { class: string | null } | null;
-  /** The command that approves it, run in the member's directory. */
+  /**
+   * The command that approves it, run in the member's directory. For a gate
+   * that asks a decision point (#3170), the `chant workspace points answer`
+   * line for its open question.
+   */
   approve: string;
+  /**
+   * The open question the gate waits on, when it asks a decision point
+   * (#3170): the point, the answer record's id and its path. Absent on a
+   * gate `chant approve` passes.
+   */
+  answer?: { point: string; id: string; path: string };
 }
 
 /** The rule for a gate, by name, as `identity.gates` at base sets it (#3163). Null when it sets none. */
@@ -171,7 +181,8 @@ function decide(component: string, standing: PendingGateRecord, all: GateResolut
     approvals: approvals.map(approvalOf),
     needed,
     signed: rule === null ? null : { class: rule.requirement.class },
-    approve: approveCommand(component, gate, env, planDigest, rule !== null),
+    approve: standing.answer ? `chant workspace points answer ${standing.answer.id} --answer <value> --by <name>` : approveCommand(component, gate, env, planDigest, rule !== null),
+    ...(standing.answer ? { answer: { point: standing.answer.point, id: standing.answer.id, path: standing.answer.path } } : {}),
   };
 }
 

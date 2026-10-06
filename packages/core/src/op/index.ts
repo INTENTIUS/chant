@@ -77,6 +77,10 @@ export {
 } from "../lifecycle/plan-digest";
 export { gateName, usesDeprecatedGateKey, DEPRECATED_GATE_KEY_WARNING } from "./gate-name";
 export type { GateNamed } from "./gate-name";
+export { gatePointOf, gatePointProblems, gatePointInputs, gateSubject, GATE_POINT_INPUTS, DEFAULT_GATE_POINT_PASS } from "./gate-point";
+export type { GatePoint, GatePointFacts } from "./gate-point";
+export { evaluatePointGate, workspaceGatePointAsker } from "./gate-point-run";
+export type { GatePointAsker, GatePointQuestion, GatePointRequest, PointGateCheck, PointGateInput } from "./gate-point-run";
 export { createLocalOpRuntime } from "./runtimes/local";
 export { runStateOf } from "./runtime";
 export type {

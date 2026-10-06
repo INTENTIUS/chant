@@ -1113,6 +1113,15 @@ export async function recordGateApproval(
     }));
     return { ok: false };
   }
+  // #3170: a gate that asks a decision point passes on the point's answer,
+  // which the run cites on the ledger. An approval here would count for nothing.
+  if (standingForOrigin?.answer) {
+    console.error(formatError({
+      message: `Gate "${gate}" on "${opName}" asks decision point ${standingForOrigin.answer.point}, so its answer passes the gate, not an approval`,
+      hint: `Answer the question: \`chant workspace points answer ${standingForOrigin.answer.id} --answer <value> --by <name>\`, then run \`chant run ${opName}\` again.`,
+    }));
+    return { ok: false };
+  }
   const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
   if (refusal && !opts.allowSameOrigin) {
     console.error(formatError({

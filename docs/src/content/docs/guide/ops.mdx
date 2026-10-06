@@ -286,6 +286,42 @@ The typed `Policy` scopes accept only entity types and actions from the project'
 
 OPS015 rejects an `approval` block at build when it is malformed, for example a policy that is not a gate policy set or `enforce` with no policy.
 
+### A gate that asks a decision point
+
+A gate can ask one of the workspace's [decision points](/chant/guide/decision-points/) instead of waiting for `chant approve` ([#3170](https://github.com/INTENTIUS/chant/issues/3170)). The point's deciders and quorum then decide whether the run goes through, and the answer is an answer record like any other, listed by `chant workspace points` and `chant workspace records`.
+
+```typescript
+gate("apply", { plan: plan.out.planDigest, point: "prod-apply" });
+
+// ApplyOp takes it on its gate:
+ApplyOp({ name: "prod-apply", env: "prod", target: "kubectl", gate: { gate: "approve-apply", point: "prod-apply" } });
+```
+
+The gate passes the point its own facts as inputs, under the names `chant workspace status` lists a gate with: `gate.component` (the Op), `gate.name`, `gate.env` (the run's `--env`) and `gate.planDigest`. Only the ones the point declares are passed. A gate that binds a plan needs a point that declares `gate.planDigest`, so each plan is its own question and an answer given for one plan never passes another. The run fails at the gate, naming the input, when the point does not declare it.
+
+```json
+{
+  "points": {
+    "prod-apply": {
+      "title": "Apply this plan to prod",
+      "question": { "type": "noul", "instructions": "Should this plan be applied to prod?", "criteria": { "true": "Apply it.", "false": "Do not apply it." } },
+      "inputs": { "gate.component": "the Op", "gate.planDigest": "the plan the gate binds" },
+      "deciders": [{ "kind": "quorum", "count": 1, "roles": ["maintainer"] }]
+    }
+  }
+}
+```
+
+Reaching the gate asks the point, the way the `decide` activity does:
+
+- When the question is open (escalated to people, or a model's proposal waiting for a person to confirm it), the run records a pending fact on the gate ledger that names the question, and ends `waiting` on it. `chant run` prints the question's id. Answer it with `chant workspace points answer <id> --answer true --by <name>`, or through hud, then run the Op again. A local steward reruns it on its next round.
+- When the answer is one the gate passes on, the run appends a resolution to the gate ledger and walks through. The resolution's `answer` names the point, the answer record's id and path, the answer and who gave it. A retry of the same plan finds that resolution and does not write a second one.
+- Any other answer fails the gate step, naming the record. `chant workspace points retract <id>` takes the answer back and puts the question to people again.
+
+The answer record names the gate back: its `constrains` is `gate:<op>/<gate>`, with `@<env>` when the run names an environment, and its inputs hold the `gate.*` values it was asked with. So the run's history (the step record's `approval.answer` and the ledger's resolution) and the workspace's decision history each point at the other.
+
+A gate passes on `true` by default. A choice or score point names the answers that pass with `point: { name: "prod-apply", pass: ["apply"] }`, and `inputs` gives the point any other inputs it declares, step-output references included. A gate with `point` takes no `approval` block, because the point's quorum is the gate's. `chant approve` refuses a gate whose standing pending fact names a question and prints the `points answer` line instead, and `chant workspace status` lists that line as the gate's `approve` command, with the question under `answer`.
+
 ## Running under a work lease
 
 An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item.
