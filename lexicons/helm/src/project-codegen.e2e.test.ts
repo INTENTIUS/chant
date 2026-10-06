@@ -160,6 +160,8 @@ async function config(root: string): Promise<Record<string, unknown>> {
   return (await loadChantConfig(root)).config as unknown as Record<string, unknown>;
 }
 
+let previousProgram: ts.Program | undefined;
+
 function typecheck(root: string, app: string): string[] {
   writeFileSync(join(root, "src", "app.ts"), app);
   const options: ts.CompilerOptions = {
@@ -174,7 +176,9 @@ function typecheck(root: string, app: string): string[] {
     typeRoots: [join(repoRoot, "node_modules", "@types")],
   };
   const files = [join(root, "src", "app.ts"), join(root, "src", "generated", "helm", "index.ts")];
-  const program = ts.createProgram(files, options);
+  // Reusing the previous program skips re-parsing the lexicon sources.
+  const program = ts.createProgram(files, options, undefined, previousProgram);
+  previousProgram = program;
   return files
     .flatMap((f) => [...program.getSyntacticDiagnostics(program.getSourceFile(f)), ...program.getSemanticDiagnostics(program.getSourceFile(f))])
     .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));

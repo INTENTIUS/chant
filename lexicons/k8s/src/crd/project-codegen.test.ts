@@ -124,6 +124,8 @@ async function build(root: string) {
 }
 
 /** Type-check the project's sources against the real lexicon declarations. */
+let previousProgram: ts.Program | undefined;
+
 function typecheck(root: string): string[] {
   const options: ts.CompilerOptions = {
     strict: true,
@@ -137,7 +139,9 @@ function typecheck(root: string): string[] {
     types: [],
   };
   const files = [join(root, "src", "app.ts"), join(root, "src", "generated", "k8s", "index.ts")];
-  const program = ts.createProgram(files, options);
+  // Reusing the previous program skips re-parsing the lexicon sources.
+  const program = ts.createProgram(files, options, undefined, previousProgram);
+  previousProgram = program;
   return files
     .flatMap((f) => [...program.getSyntacticDiagnostics(program.getSourceFile(f)), ...program.getSemanticDiagnostics(program.getSourceFile(f))])
     .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
