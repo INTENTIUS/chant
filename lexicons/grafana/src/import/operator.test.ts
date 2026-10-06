@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { EmbeddedContent } from "@intentius/chant/import/embedded";
 import { grafanaPlugin } from "../plugin";
-import { operatorContactPoint, operatorPolicyRoute, operatorRule } from "../k8s";
+import { operatorContactPoint, operatorPolicyRoute, operatorRouteSpec, operatorRule } from "../k8s";
 import { operatorImporter, provisionedReceivers, provisionedRoute, provisionedRule } from "./operator";
 
 const site = (hostType: string, select: string, spec: Record<string, unknown>): EmbeddedContent => ({
@@ -25,6 +25,7 @@ describe("Grafana Operator alerting embedded in a k8s manifest (#3538)", () => {
     expect(operatorImporter.matches(site("K8s::Grafana::GrafanaAlertRuleGroup", "rules", { rules: [] }))).toBe(true);
     expect(operatorImporter.matches(site("K8s::Grafana::GrafanaContactPoint", "receivers", { receivers: [] }))).toBe(true);
     expect(operatorImporter.matches(site("K8s::Grafana::GrafanaNotificationPolicy", "route", { route: {} }))).toBe(true);
+    expect(operatorImporter.matches(site("K8s::Grafana::GrafanaNotificationPolicyRoute", "route", { route: { receiver: "r" } }))).toBe(true);
     expect(operatorImporter.matches(site("K8s::Grafana::GrafanaMuteTiming", "time_intervals", { time_intervals: [] }))).toBe(true);
     expect(operatorImporter.matches(site("K8s::Grafana::GrafanaNotificationTemplate", "template", { template: "x" }))).toBe(true);
     expect(operatorImporter.matches(site("K8s::Grafana::GrafanaAlertRuleGroup", "receivers", {}))).toBe(false);
@@ -203,6 +204,27 @@ describe("Grafana Operator alerting embedded in a k8s manifest (#3538)", () => {
       const template = operatorImporter.import(site("K8s::Grafana::GrafanaNotificationTemplate", "template", { name: "t", template: '{{ define "t" }}x{{ end }}' }));
       expect(template.value.through?.name).toBe("operatorTemplate");
       expect(template.files.map((f) => f.content).join("\n")).toContain("new NotificationTemplate(");
+    });
+
+    test("a policy route is read as the child of a policy and written back through operatorRouteSpec", () => {
+      const spec = { receiver: "tickets", object_matchers: [["severity", "=", "ticket"]], mute_time_intervals: ["weekends"], routes: [{ object_matchers: [["team", "=", "a"]] }] };
+      const out = operatorImporter.import(site("K8s::Grafana::GrafanaNotificationPolicyRoute", "route", { route: spec }));
+      expect(out.value.through).toEqual({ from: "@intentius/chant-lexicon-grafana/k8s", name: "operatorRouteSpec" });
+      const text = out.files.map((f) => f.content).join("\n");
+      expect(text).toContain("new NotificationPolicy(");
+      expect(text).toContain('severity="ticket"');
+      expect(text).toContain('team="a"');
+    });
+
+    test("a policy route's routeSelector is left out with a warning, and a route with no receiver throws", () => {
+      const out = operatorImporter.import(site("K8s::Grafana::GrafanaNotificationPolicyRoute", "route", { route: { receiver: "r", routeSelector: { matchLabels: { a: "b" } } } }));
+      expect((out.warnings ?? []).join("\n")).toContain("routeSelector");
+      expect(() => operatorImporter.import(site("K8s::Grafana::GrafanaNotificationPolicyRoute", "route", { route: { matchers: [] } }))).toThrow(/spec.receiver/);
+    });
+
+    test("a policy that selects routes by label throws so the host keeps it as written", () => {
+      const route = { receiver: "oncall", routeSelector: { matchLabels: { a: "b" } } };
+      expect(() => operatorImporter.import(site("K8s::Grafana::GrafanaNotificationPolicy", "route", { route }))).toThrow(/routeSelector/);
     });
 
     test("a policy with no receiver, and a group with no folder, throw so the host keeps them as written", () => {

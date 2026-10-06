@@ -3,7 +3,9 @@
  * `chant import` (#3538).
  *
  * `GrafanaOperatorResources` (#3156) writes `GrafanaAlertRuleGroup`,
- * `GrafanaContactPoint`, `GrafanaNotificationPolicy`, `GrafanaMuteTiming` and
+ * `GrafanaContactPoint`, `GrafanaNotificationPolicy` (with, for
+ * `policyRoutes`, a `GrafanaNotificationPolicyRoute` per child route),
+ * `GrafanaMuteTiming` and
  * `GrafanaNotificationTemplate` from grafana alerting declarations. The k8s
  * parser offers the one field of each that holds the alerting content
  * (`spec.rules`, `spec.receivers`, `spec.route`, `spec.time_intervals`,
@@ -26,6 +28,9 @@
  *   name is not part of a declaration, so a contact point that reads a
  *   Secret is written with a small module holding
  *   `operatorReceivers(contactPoint, "<secret>")`;
+ * - a `GrafanaNotificationPolicyRoute`: its whole `spec` is the route, read
+ *   as the one child of a policy that has its receiver, and written back by
+ *   `operatorRouteSpec`;
  * - the policy tree: `object_matchers` go back to Alertmanager `matchers`
  *   strings where each can be written as one.
  *
@@ -48,6 +53,7 @@ const KINDS: Record<string, { select: string; className: string; through: string
   "K8s::Grafana::GrafanaAlertRuleGroup": { select: "rules", className: "AlertRuleGroup", through: "operatorRules" },
   "K8s::Grafana::GrafanaContactPoint": { select: "receivers", className: "ContactPoint", through: "operatorReceivers" },
   "K8s::Grafana::GrafanaNotificationPolicy": { select: "route", className: "NotificationPolicy", through: "operatorPolicy" },
+  "K8s::Grafana::GrafanaNotificationPolicyRoute": { select: "route", className: "NotificationPolicy", through: "operatorRouteSpec" },
   "K8s::Grafana::GrafanaMuteTiming": { select: "time_intervals", className: "MuteTiming", through: "operatorTimeIntervals" },
   "K8s::Grafana::GrafanaNotificationTemplate": { select: "template", className: "NotificationTemplate", through: "operatorTemplate" },
 };
@@ -169,7 +175,16 @@ function provisioningFile(type: string, spec: Json, warnings: string[]): { file:
     }
     case "K8s::Grafana::GrafanaNotificationPolicy": {
       if (!isObject(spec.route)) throw new Error(`${where} has no spec.route`);
+      // The routes it selects are their own resources, and a declaration cannot hold the selector: keep it as written.
+      if (spec.route.routeSelector !== undefined) throw new Error(`${where} merges routes in with spec.route.routeSelector, which a NotificationPolicy cannot hold`);
       return { file: { apiVersion: 1, policies: [provisionedRoute(spec.route)] } };
+    }
+    case "K8s::Grafana::GrafanaNotificationPolicyRoute": {
+      // The k8s parser offers the whole spec as `route`. A route has no declaration of its own, so it is read as the one child of a policy with its receiver.
+      if (!isObject(spec.route) || typeof spec.route.receiver !== "string") throw new Error(`${where} has no spec.receiver`);
+      const { routeSelector: _selector, ...route } = spec.route;
+      if (_selector !== undefined) warnings.push("the route's routeSelector (routes merged in by label) is not part of a declaration, so it is left out; import the selected routes on their own");
+      return { file: { apiVersion: 1, policies: [{ receiver: route.receiver, routes: [provisionedRoute(route)] }] } };
     }
     case "K8s::Grafana::GrafanaMuteTiming": {
       if (typeof name !== "string") throw new Error(`${where} has no spec.name`);

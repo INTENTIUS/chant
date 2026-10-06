@@ -46,6 +46,7 @@ import {
   GrafanaLibraryPanel,
   GrafanaMuteTiming,
   GrafanaNotificationPolicy,
+  GrafanaNotificationPolicyRoute,
   GrafanaNotificationTemplate,
 } from "@intentius/chant-lexicon-k8s/generated/index";
 import {
@@ -275,6 +276,16 @@ export interface GrafanaOperatorResourcesProps {
    * contact point has such a reference.
    */
   secretName?: string;
+  /**
+   * Write each direct child route of a notification policy as a
+   * `GrafanaNotificationPolicyRoute` of its own, which the policy merges in
+   * through `spec.route.routeSelector` (the operator allows `routes` or
+   * `routeSelector`, not both). The routes carry the label
+   * `grafana.chant.dev/policy: <policy resource name>`, which the selector
+   * matches. A route's own nested routes stay inline in its `spec.routes`.
+   * Defaults to false: the whole tree inline in `spec.route`.
+   */
+  policyRoutes?: boolean;
 }
 
 type OperatorEntity = (
@@ -285,6 +296,7 @@ type OperatorEntity = (
   | InstanceType<typeof GrafanaAlertRuleGroup>
   | InstanceType<typeof GrafanaContactPoint>
   | InstanceType<typeof GrafanaNotificationPolicy>
+  | InstanceType<typeof GrafanaNotificationPolicyRoute>
   | InstanceType<typeof GrafanaMuteTiming>
   | InstanceType<typeof GrafanaNotificationTemplate>
 ) &
@@ -350,8 +362,15 @@ export function operatorDatasource(
 
 // ── Alerting (#3156) ──────────────────────────────────────────────────
 
-/** A setting that is wholly a reference to a variable: `${NAME}`, `$__env{NAME}` or `$NAME`. */
-const WHOLE_VARIABLE = /^(?:\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$__env\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*))$/;
+/** The label a `GrafanaNotificationPolicyRoute` carries for the policy whose `routeSelector` merges it in. */
+export const POLICY_ROUTE_LABEL = "grafana.chant.dev/policy";
+
+/**
+ * A setting that is wholly a reference to a variable: `${NAME}`, `$__env{NAME}` or `$NAME`.
+ * The bare `$labels`, `$value` and `$values` are alert template variables, not environment
+ * variables, so a setting of exactly that text is left as written.
+ */
+const WHOLE_VARIABLE = /^(?:\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$__env\{([A-Za-z_][A-Za-z0-9_]*)\}|\$(?!(?:labels|values?)$)([A-Za-z_][A-Za-z0-9_]*))$/;
 /** A braced reference inside longer text, which `valuesFrom` cannot substitute into. */
 const EMBEDDED_VARIABLE = /\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$__env\{[^}]*\}|\$__(?:file|vault)\{[^}]*\}/;
 
@@ -502,6 +521,19 @@ export function operatorPolicy(policy: NotificationPolicyEntity): Record<string,
   return operatorPolicyRoute(notificationPolicyJson(policy));
 }
 
+/**
+ * `GrafanaNotificationPolicyRoute.spec` for a policy declaration holding the
+ * route as its one child: the child's fields, with `receiver` always set
+ * (the CRD requires it, so a child that inherits it gets the policy's).
+ */
+export function operatorRouteSpec(policy: NotificationPolicyEntity): Record<string, unknown> {
+  const tree = operatorPolicy(policy);
+  const routes = tree.routes as Array<Record<string, unknown>> | undefined;
+  const child = routes?.[0];
+  if (!child) throw new Error("grafana: the policy has no child route to write as a GrafanaNotificationPolicyRoute");
+  return { ...child, receiver: child.receiver ?? tree.receiver };
+}
+
 /** `GrafanaMuteTiming.spec.time_intervals` for a mute timing. */
 export function operatorTimeIntervals(timing: MuteTimingEntity): Array<Record<string, unknown>> {
   return muteTimingJson(timing).time_intervals;
@@ -533,7 +565,9 @@ export function operatorTemplate(template: NotificationTemplateEntity): string {
  *   a `GrafanaContactPoint` per contact point, `<name>-contact-point-<name>`,
  *   whose `${NAME}` secrets go to each receiver's `valuesFrom`; a
  *   `GrafanaNotificationPolicy`, `<name>-notification-policy`, with its
- *   nested routes inline; a `GrafanaMuteTiming` per mute timing and a
+ *   nested routes inline (or, with `policyRoutes`, one
+ *   `GrafanaNotificationPolicyRoute` per direct child route, selected by
+ *   label); a `GrafanaMuteTiming` per mute timing and a
  *   `GrafanaNotificationTemplate` per template.
  *
  * Every resource carries `instanceSelector`. Export the result from a k8s
@@ -650,9 +684,27 @@ export const GrafanaOperatorResources = Composite<GrafanaOperatorResourcesProps,
     }
     for (const policy of alerting.policies ?? []) {
       const name = unique(`${prefix}-notification-policy`);
+      const tree = operatorPolicyRoute(policy);
+      const children = Array.isArray(tree.routes) ? (tree.routes as Array<Record<string, unknown>>) : [];
+      if (props.policyRoutes && children.length > 0) {
+        const { routes: _inline, ...root } = tree;
+        const selector = { [POLICY_ROUTE_LABEL]: name };
+        members[memberName(name, prefix)] = new GrafanaNotificationPolicy({
+          metadata: metadata(name),
+          spec: { ...common, route: { ...root, routeSelector: { matchLabels: selector } } },
+        }) as OperatorEntity;
+        children.forEach((child, i) => {
+          const routeName = unique(`${prefix}-notification-policy-route-${i + 1}`);
+          members[memberName(routeName, prefix)] = new GrafanaNotificationPolicyRoute({
+            metadata: { ...metadata(routeName), labels: { ...(props.labels ?? {}), ...selector } },
+            spec: { ...child, receiver: child.receiver ?? tree.receiver },
+          }) as OperatorEntity;
+        });
+        continue;
+      }
       members[memberName(name, prefix)] = new GrafanaNotificationPolicy({
         metadata: metadata(name),
-        spec: { ...common, route: operatorPolicyRoute(policy) },
+        spec: { ...common, route: tree },
       }) as OperatorEntity;
     }
     for (const t of alerting.muteTimes ?? []) {

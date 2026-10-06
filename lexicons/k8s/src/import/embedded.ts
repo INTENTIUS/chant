@@ -12,7 +12,8 @@
  * - a Grafana Operator `GrafanaDashboard`'s `spec.json`, as text (#3015);
  * - the alerting content of the Grafana Operator's `GrafanaAlertRuleGroup`
  *   (`spec.rules`), `GrafanaContactPoint` (`spec.receivers`),
- *   `GrafanaNotificationPolicy` (`spec.route`), `GrafanaMuteTiming`
+ *   `GrafanaNotificationPolicy` (`spec.route`), `GrafanaNotificationPolicyRoute`
+ *   (the whole `spec`, offered as `route`), `GrafanaMuteTiming`
  *   (`spec.time_intervals`) and `GrafanaNotificationTemplate`
  *   (`spec.template`), each with the whole `spec` as the document so the
  *   owner can read the fields beside it (#3538).
@@ -128,6 +129,22 @@ export function delegateEmbedded(
       expectedOwner: { lexicon: "grafana", what: "a Grafana dashboard" },
     });
     if (ref) properties.spec = { ...properties.spec, json: ref };
+    return;
+  }
+
+  // A GrafanaNotificationPolicyRoute's spec is the route itself, so the whole spec is offered (as `route`) and replaced.
+  if (type === "K8s::Grafana::GrafanaNotificationPolicyRoute" && isObject(properties.spec) && typeof properties.spec.receiver === "string") {
+    const ref = embedded.resolve({
+      host: "k8s",
+      hostType: type,
+      location: `${kind} ${name} spec`,
+      directory: name,
+      document: { route: properties.spec },
+      select: "route",
+      labels,
+      expectedOwner: { lexicon: "grafana", what: "a Grafana notification policy route" },
+    });
+    if (ref) properties.spec = ref as unknown as Record<string, unknown>;
     return;
   }
 

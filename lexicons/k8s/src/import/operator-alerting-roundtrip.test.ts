@@ -76,12 +76,13 @@ function primary(out: string | SerializerResult | undefined): string {
   return typeof out === "string" ? out : out.primary;
 }
 
-function manifest(): string {
+function manifest(policyRoutes = false): string {
   const instance = GrafanaOperatorResources({
     entities: entities as never,
     instanceSelector: { matchLabels: { dashboards: "grafana" } },
     secretName: "grafana-secrets",
     namespace: "monitoring",
+    policyRoutes,
   });
   return primary(k8sSerializer.serialize(expandComposite("grafana", instance)));
 }
@@ -128,6 +129,28 @@ describe("GrafanaOperatorResources -> chant import -> chant build", () => {
       const text = (result.outputs.get("grafana") as SerializerResult | undefined)?.files?.[ALERTING_FILE];
       expect(text).toBeDefined();
       expect(normalizeAlerting(load(text!) as Json)).toEqual(normalizeAlerting({ ...expected, groups } as unknown as Json));
+    } finally {
+      removeDir(imported.dir);
+    }
+  });
+
+  test("a policy route is imported as a declaration and builds back to the same resource, its policy kept as written", async () => {
+    const yaml = manifest(true);
+    const input = (loadAll(yaml) as Json[]).filter((d) => d);
+    const route = find(input, "GrafanaNotificationPolicyRoute");
+
+    const imported = await importManifest(yaml);
+    try {
+      expect(imported.result.error).toBeUndefined();
+      expect(imported.result.success).toBe(true);
+      expect(imported.files["other.ts"]).toContain("operatorRouteSpec(");
+      expect(imported.files["grafana-notification-policy-route-1/notifications.ts"]).toContain("new NotificationPolicy(");
+
+      const result = await build(imported.srcDir, [k8sSerializer, grafanaSerializer]);
+      expect(result.errors).toEqual([]);
+      const output = (loadAll(primary(result.outputs.get("k8s"))) as Json[]).filter((d) => d);
+      expect(find(output, "GrafanaNotificationPolicyRoute")).toEqual(route);
+      expect(find(output, "GrafanaNotificationPolicy")).toEqual(find(input, "GrafanaNotificationPolicy"));
     } finally {
       removeDir(imported.dir);
     }
