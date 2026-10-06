@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-sql",
-  "version": "0.106.4",
+  "version": "0.107.0",
   "description": "SQL lexicon for chant — database schema as typed declarations, one dialect at a time; ClickHouse first, with types read from a pinned server's catalog",
   "license": "Apache-2.0",
   "private": true,
@@ -71,7 +71,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.106.4",
+    "@intentius/chant": "^0.107.0",
     "typescript": "^5.9.3"
   }
 }
