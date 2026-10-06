@@ -177,6 +177,7 @@ Record a gate's resolution on the gate ledger, then wake the runtime hosting the
 | `gate` | `string` | Yes | Gate name (must match the gate's name in the Op) |
 | `note` | `string` | No | Free-text context recorded on the resolution |
 | `url` | `string` | No | Absolute http/https URL this resolution happened at |
+| `env` | `string` | No | Environment the woken run runs in, as `chant run approve --env` names it; omitted, the runtime keeps the gated run's |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
 Returns `{ op, gate, resolvedBy, origin, timestamp, runtimeNotified }`.

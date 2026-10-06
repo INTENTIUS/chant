@@ -48,6 +48,11 @@ export interface HostedRunPromptOptions {
   env?: string;
   /** `--param name=value`, one flag per entry, in order (#3539). */
   params?: Record<string, unknown>;
+  /**
+   * `--work <item>` and `--holder <name>` (#3555): the work item the run is
+   * for and who holds its lease. The sandbox's run takes the lease.
+   */
+  work?: { item?: string; holder?: string };
   /** Flags after `--on local`, as `[flag, value]`; each value is quoted as needed. */
   flags?: Array<[string, string]>;
   /** Words appended as they are, already spelled for the command line. */
@@ -57,7 +62,8 @@ export interface HostedRunPromptOptions {
 /**
  * The prompt a hosted run is posted as: {@link runPrompt}, then `--env <env>`
  * when the caller named one (#3232), then each `--param` (#3539), then
- * `--on local` (#3225), then any further flags.
+ * `--work` and `--holder` (#3555), then `--on local` (#3225), then any
+ * further flags.
  *
  * `--env` carries the environment the caller asked for into the sandbox,
  * where `chant acp` hands it to the run as `currentOpRun().env`. `--param`
@@ -69,8 +75,10 @@ export interface HostedRunPromptOptions {
  *
  * A turn still matches {@link runPrompt} by prefix (`turnRunsOp`), and a
  * steward's Schedule keeps the bare line. An `--env` value that is not one
- * plain word is refused by name rather than posted; a `--param` or flag value
- * is quoted ({@link quoteArg}).
+ * plain word is refused by name rather than posted, as is a `--work` or
+ * `--holder` value the sandbox's parser would not read as a value (empty, or
+ * starting with `-`); a `--param`, `--work`, `--holder` or flag value is
+ * quoted ({@link quoteArg}).
  */
 export function hostedRunPrompt(op: string, opts: HostedRunPromptOptions = {}): string {
   const parts = [runPrompt(op)];
@@ -86,6 +94,16 @@ export function hostedRunPrompt(op: string, opts: HostedRunPromptOptions = {}): 
   for (const [name, value] of Object.entries(opts.params ?? {})) {
     parts.push(`--param ${quoteArg(`${name}=${paramText(value)}`)}`);
   }
+  for (const [flag, value] of [["--work", opts.work?.item], ["--holder", opts.work?.holder]] as const) {
+    if (value === undefined) continue;
+    if (value === "" || value.startsWith("-")) {
+      throw new Error(
+        `fountain runtime: ${flag} "${value}" cannot be posted to the steward: chant reads a value that is empty ` +
+          `or starts with "-" as a missing one`,
+      );
+    }
+    parts.push(`${flag} ${quoteArg(value)}`);
+  }
   parts.push("--on local");
   for (const [flag, value] of opts.flags ?? []) parts.push(`${flag} ${quoteArg(value)}`);
   for (const part of opts.extra ?? []) parts.push(part);
@@ -97,12 +115,4 @@ function paramText(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === undefined || value === null) return "";
   return typeof value === "object" ? JSON.stringify(value) : String(value);
-}
-
-/** The `--env` a posted prompt carries, or undefined. */
-export function envOfPrompt(prompt: string | undefined): string | undefined {
-  const words = (prompt ?? "").trim().split(/\s+/);
-  const at = words.indexOf("--env");
-  const env = at >= 0 ? words[at + 1] : undefined;
-  return env && !env.startsWith("-") ? env : undefined;
 }

@@ -468,6 +468,57 @@ describe("runOp: a steward's turn (#2750)", () => {
     expect(acquireStewardTurnMock).not.toHaveBeenCalled();
   });
 
+  // #3555: a runtime that carries the work item (fountain) is handed what the
+  // caller named, and nothing else; one that does not refuses --work by name.
+  function leasedOp(name: string) {
+    return [name, { config: { name, overview: `${name} overview`, phases: [], workLease: {} } }] as const;
+  }
+
+  test("--work on a runtime that carries work: start gets the item and holder the caller named (#3555)", async () => {
+    const runtime = {
+      name: "fountain",
+      carriesWork: true,
+      start: vi.fn(async (op: { name: string }, _opts: { work?: { item?: string; holder?: string } }) => ({
+        op: op.name,
+        runId: "f-1",
+        result: async () => ({ op: op.name, runId: "f-1", state: "completed" as const, startedAt: "t", endedAt: "t" }),
+      })),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([leasedOp("leased")]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("leased", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"] } });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "leased", on: "fountain", work: "ISSUE-7" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(runtime.start.mock.calls[0][1].work).toEqual({ item: "ISSUE-7" });
+  });
+
+  test("--work on a runtime that does not carry work: exit 1 naming the runtime, nothing started (#3555)", async () => {
+    const runtime = {
+      name: "fountain",
+      start: vi.fn(),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([leasedOp("leased")]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("leased", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"] } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "leased", on: "fountain", work: "ISSUE-7" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(1);
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect(stderr.join("\n")).toContain('--work and --holder run on the local runtime; "fountain" takes the work lease');
+  });
+
   test("local form, the turn lease's own acquire throws (a stale .lock): refused as a lease error, not an uncaught exception, and nothing runs", async () => {
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),

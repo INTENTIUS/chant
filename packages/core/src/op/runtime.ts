@@ -183,8 +183,10 @@ export interface OpRunStartOptions {
   signal?: AbortSignal;
   /**
    * For an Op that declares `workLease` (#2748): the work item this run is
-   * for (`--work <id>`) and who holds its lease (`--holder`). Only the local
-   * runtime takes it; a hosted run's lease is taken where the run executes.
+   * for (`--work <id>`) and who holds its lease (`--holder`). The local
+   * runtime takes the lease itself; a runtime that declares
+   * {@link OpRuntimeProvider.carriesWork} hands both to where the run
+   * executes, which takes it there.
    */
   work?: { item?: string; holder?: string };
   /**
@@ -218,6 +220,13 @@ export interface OpGateResolveOptions {
 export interface OpRuntimeProvider {
   /** How the CLI names this runtime in messages, and what `--on` matches. */
   readonly name: string;
+
+  /**
+   * Whether `start` carries `opts.work` to where the run executes (#3555),
+   * so `chant run <op> --work <id> --on <name>` is allowed. Omitted, a
+   * non-local runtime is refused `--work` and `--holder` by name.
+   */
+  readonly carriesWork?: boolean;
 
   /** Start a run. Rejects with an actionable Error when it cannot. */
   start(op: OpConfig, opts: OpRunStartOptions): Promise<OpRunHandle>;

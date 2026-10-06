@@ -100,6 +100,52 @@ describe("neverOverMcp (chant#3447)", () => {
     await expect(createOpReportTool().handler({ name: "tf-apply" })).resolves.toContain("# tf-apply");
   });
 
+  // chant#3555: op-approve hands the runtime the env it was given, as `chant
+  // run approve --env` does, and nothing when it was given none.
+  async function repoWithPlainGate(dir: string): Promise<void> {
+    git(["init", "-q", "-b", "main"], dir);
+    git(["config", "user.email", "t@chant.dev"], dir);
+    git(["config", "user.name", "T"], dir);
+    writeFileSync(join(dir, "README.md"), "x\n");
+    git(["add", "."], dir);
+    git(["commit", "-q", "-m", "init"], dir);
+    await appendPendingGate(
+      {
+        op: "plain-op",
+        gate: "release",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        origin: "cli",
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        planDigest: `sha256:${"d".repeat(64)}`,
+      },
+      { cwd: dir },
+    );
+  }
+
+  test("op-approve passes env to the runtime's resolveGate (chant#3555)", async () => {
+    await withTestDir(async (dir) => {
+      await repoWithPlainGate(dir);
+      process.chdir(dir);
+      const result = (await createOpApproveTool().handler({ name: "plain-op", gate: "release", env: "prod" })) as {
+        runtimeNotified: boolean;
+      };
+      expect(result.runtimeNotified).toBe(true);
+      expect(resolveGate).toHaveBeenCalledWith("plain-op", "release", expect.objectContaining({ gate: "release" }), {
+        env: "prod",
+      });
+    });
+  });
+
+  test("op-approve with no env leaves the runtime to keep the gated run's (chant#3555)", async () => {
+    await withTestDir(async (dir) => {
+      await repoWithPlainGate(dir);
+      process.chdir(dir);
+      await createOpApproveTool().handler({ name: "plain-op", gate: "release" });
+      expect(resolveGate).toHaveBeenCalledTimes(1);
+      expect(resolveGate.mock.calls[0]).toHaveLength(3);
+    });
+  });
+
   async function repoWithFanOutGate(dir: string): Promise<void> {
     git(["init", "-q", "-b", "main"], dir);
     git(["config", "user.email", "t@chant.dev"], dir);
