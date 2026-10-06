@@ -200,6 +200,9 @@ export const ChantConfigSchema = z.object({
   knowledge: z.object({
     dir: z.string().min(1).optional(),
   }).optional(),
+  codegen: z.object({
+    outDir: z.string().min(1).optional(),
+  }).strict().optional(),
   decide: decideConfigSchema.optional(),
   exclude: z.array(z.string().min(1)).optional(),
   include: z.array(z.string().min(1)).optional(),
@@ -476,6 +479,19 @@ export interface ChantConfig {
   knowledge?: {
     /** Bundle directory, relative to the project root. Defaults to `"knowledge"`. */
     dir?: string;
+  };
+
+  /**
+   * Project-local code generation (`chant generate`): where lexicons write
+   * the typed code they generate from sources this config declares, such as
+   * the k8s lexicon's `k8s.crds` and helm's `helm.charts`. Each lexicon
+   * writes to its own subdirectory, `<outDir>/<lexicon>/`. The output is
+   * meant to be committed, and `chant build` fails when it no longer matches
+   * the declared sources.
+   */
+  codegen?: {
+    /** Output directory, relative to the project root. Defaults to `"src/generated"`. */
+    outDir?: string;
   };
 
   /**

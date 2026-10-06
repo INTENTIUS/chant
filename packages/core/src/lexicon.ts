@@ -28,6 +28,7 @@ import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { BehaviourResult, PredictBehaviourOptions } from "./behaviour";
 import type { BehaviourKinds } from "./behaviour-kinds";
+import type { ProjectCodegen } from "./project-codegen";
 import type { SymbolResolver } from "./workspace/symbols";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
@@ -45,6 +46,13 @@ export type {
   OpRunState,
   OpRunStatus,
 } from "./op/runtime";
+
+export type {
+  ProjectCodegen,
+  ProjectCodegenContext,
+  ProjectCodegenGenerateContext,
+  ProjectCodegenOutput,
+} from "./project-codegen";
 
 // Re-exported so a lexicon can author its command group (#1078) from the
 // same `@intentius/chant/lexicon` entry it imports the plugin contract from.
@@ -1349,6 +1357,18 @@ export interface LexiconPlugin {
    * trace. Omit for lexicons with no non-source build-root concept.
    */
   buildRoots?(ctx: BuildRootContext): Promise<BuildRootContribution>;
+
+  /**
+   * Project-local code generation: typed code this lexicon generates into
+   * the project from sources the project declares in its own config
+   * namespace (the k8s lexicon's `k8s.crds`, helm's `helm.charts`). `chant
+   * generate` calls `generate` and writes the files under
+   * `<codegen.outDir>/<lexicon>/`; every build checks the committed output
+   * against `inputs` and fails when they disagree, then calls `load`. See
+   * ./project-codegen.ts. Omit for lexicons with nothing to generate per
+   * project.
+   */
+  projectCodegen?(): ProjectCodegen;
 
   /**
    * The units this lexicon owns that a change touched, judged from the

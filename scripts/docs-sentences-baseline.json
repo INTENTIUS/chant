@@ -96,6 +96,10 @@
   "claude/colon-reveal": 2,
   "formatting/bold-first-bullet": 1
  },
+ "docs/src/content/docs/cli/codegen.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/cli/components.mdx": {
   "formatting/em-dash-density": 13,
   "claude/colon-reveal": 2
