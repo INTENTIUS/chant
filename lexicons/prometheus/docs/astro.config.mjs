@@ -45,7 +45,7 @@ export default defineConfig({
                               "slug": "examples"
                         },
                         {
-                              "label": "Importing Rule Files and alertmanager.yml",
+                              "label": "Importing Rule Files, alertmanager.yml and prometheus.yml",
                               "slug": "importing"
                         }
                   ]
@@ -60,6 +60,10 @@ export default defineConfig({
                         {
                               "label": "Alertmanager",
                               "slug": "alertmanager"
+                        },
+                        {
+                              "label": "prometheus.yml",
+                              "slug": "prometheus-yml"
                         },
                         {
                               "label": "GenAI Rules",

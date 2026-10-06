@@ -1,11 +1,11 @@
 ---
-title: "Importing Rule Files and alertmanager.yml"
-description: "Turn an existing Prometheus rule file or alertmanager.yml into typed chant TypeScript that builds back to the same file"
+title: "Importing Rule Files, alertmanager.yml and prometheus.yml"
+description: "Turn an existing Prometheus rule file, alertmanager.yml or prometheus.yml into typed chant TypeScript that builds back to the same file"
 diataxis: how-to
 order: 9
 ---
 
-`chant import` reads a Prometheus rule file or an `alertmanager.yml` and writes TypeScript that declares the same thing with this lexicon's classes. `chant build` on the result gives back the file you started from, with key order and quoting normalised and groups, receivers and time intervals sorted by name.
+`chant import` reads a Prometheus rule file, an `alertmanager.yml` or a `prometheus.yml` and writes TypeScript that declares the same thing with this lexicon's classes. `chant build` on the result gives back the file you started from, with key order and quoting normalised and groups, receivers and time intervals sorted by name.
 
 ## Import the files
 
@@ -14,15 +14,16 @@ From a chant project whose `chant.config.ts` lists `prometheus`:
 ```bash
 chant import rules.yml --output src
 chant import alertmanager.yml --output src
+chant import prometheus.yml --output src
 ```
 
-A file with `groups:` of named rule lists is a rule file; one with `route:` or `receivers:` at the top level is an Alertmanager config. Outside such a project, name the lexicon and detection is skipped:
+A file with `groups:` of named rule lists is a rule file; one with `route:` or `receivers:` at the top level is an Alertmanager config; one with `scrape_configs:`, `rule_files:`, `alerting:`, `remote_write:` or `remote_read:` at the top level, or Prometheus's own keys under `global:`, is a `prometheus.yml`. Outside such a project, name the lexicon and detection is skipped:
 
 ```bash
 chant import alertmanager.yml --lexicon prometheus --output src
 ```
 
-The two imports write different modules, so the second adds its files beside the first (chant notes that the directory isn't empty, and skips any file that already exists unless you pass `--force`):
+The imports write different modules, so the second adds its files beside the first (chant notes that the directory isn't empty, and skips any file that already exists unless you pass `--force`):
 
 | File | Holds |
 |---|---|
@@ -33,14 +34,16 @@ The two imports write different modules, so the second adds its files beside the
 | `routes.ts` | the root `Route`, with its children as `RouteProps` objects |
 | `inhibit-rules.ts` | one `InhibitRule` per entry under `inhibit_rules:` |
 | `settings.ts` | `AlertmanagerSettings` for `global:`, `templates:` and `tracing:` |
+| `scrape-configs.ts` | one `ScrapeConfig` per entry under `scrape_configs:` |
+| `prometheus.ts` | `PrometheusConfig` for every other section of a `prometheus.yml` |
 
 A file with more than eight groups or receivers is split into `rules-1.ts`, `rules-2.ts` and so on, the limit COR009 sets. Then build both files back:
 
 ```bash
-chant build src --lexicon prometheus -o dist/rules.yml   # also writes dist/alertmanager.yml
+chant build src --lexicon prometheus -o dist/rules.yml   # also writes dist/alertmanager.yml and dist/prometheus.yml
 ```
 
-Rule groups inside Kubernetes manifests are imported the same way when you import the manifest with the k8s lexicon. A `PrometheusRule`'s `spec.groups` becomes the list of imported `RuleGroup`s, a rule file held in a ConfigMap becomes `ruleFileYaml([...])`, and an `alertmanager.yml` held in a ConfigMap becomes `alertmanagerYaml([...])` over the receivers, time intervals, route, inhibit rules and settings it declares. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+Rule groups inside Kubernetes manifests are imported the same way when you import the manifest with the k8s lexicon. A `PrometheusRule`'s `spec.groups` becomes the list of imported `RuleGroup`s, a rule file held in a ConfigMap becomes `ruleFileYaml([...])`, and an `alertmanager.yml` held in a ConfigMap becomes `alertmanagerYaml([...])` over the receivers, time intervals, route, inhibit rules and settings it declares, and a `prometheus.yml` held in a ConfigMap becomes `prometheusConfigYaml([...])` over the scrape jobs and the sections besides them. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
 
 ## What the generated source looks like
 

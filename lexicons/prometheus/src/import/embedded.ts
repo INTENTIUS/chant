@@ -16,12 +16,19 @@
  * ConfigMap then holds the config as the serializer writes it: the same
  * config, with Alertmanager's deprecated spellings rewritten as the
  * standalone import rewrites them.
+ *
+ * A `prometheus.yml` held as text in a ConfigMap is imported exactly as
+ * `chant import prometheus.yml` would import it, and becomes
+ * `prometheusConfigYaml([...])` over every scrape job and the sections
+ * besides them. The ConfigMap then holds the config as the serializer
+ * writes it: scrape jobs sorted by name, sections in Prometheus's order.
  */
 
 import type { EmbeddedContentImporter, EmbeddedImport } from "@intentius/chant/import/embedded";
 import { looksLikeAlertmanagerConfig, looksLikeRuleFile } from "../model";
+import { looksLikePrometheusConfig } from "../config-model";
 import { parsePrometheusYaml } from "./parser";
-import { generateAlertmanager, generateRuleFile } from "./generator";
+import { generateAlertmanager, generatePrometheusConfig, generateRuleFile } from "./generator";
 
 const PACKAGE = "@intentius/chant-lexicon-prometheus";
 
@@ -69,6 +76,30 @@ export const alertmanagerImporter: EmbeddedContentImporter = {
         bindings: declarations.map((d) => ({ from: d.path, name: d.name })),
         shape: "list",
         through: { from: PACKAGE, name: "alertmanagerYaml" },
+      },
+      warnings: parsed.warnings,
+    };
+  },
+};
+
+export const prometheusConfigImporter: EmbeddedContentImporter = {
+  what: "a prometheus.yml",
+
+  matches(content) {
+    return content.select === undefined && typeof content.text === "string" && looksLikePrometheusConfig(content.document);
+  },
+
+  import(content): EmbeddedImport {
+    const parsed = parsePrometheusYaml(content.text!);
+    if (parsed.kind !== "prometheus") throw new Error("this is not a prometheus.yml");
+    const { files, declarations } = generatePrometheusConfig(parsed.config);
+    if (declarations.length === 0) throw new Error("the import declared nothing");
+    return {
+      files,
+      value: {
+        bindings: declarations.map((d) => ({ from: d.path, name: d.name })),
+        shape: "list",
+        through: { from: PACKAGE, name: "prometheusConfigYaml" },
       },
       warnings: parsed.warnings,
     };

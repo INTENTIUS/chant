@@ -1,14 +1,17 @@
 /**
  * Validate the prometheus lexicon's own artifacts: every class is in the
  * registry, every entity constructs and serializes, and a sample rule file
- * and Alertmanager config pass the lexicon's own checks.
+ * and Alertmanager config pass the lexicon's own checks, and `promtool check
+ * config` accepts a sample `prometheus.yml` when `promtool` is installed.
  */
 
 import type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 import { CATALOG, lexiconRegistry } from "./catalog";
 import { RuleGroup } from "./rules";
 import { AlertmanagerSettings, InhibitRule, Receiver, Route, TimeInterval } from "./alertmanager";
-import { buildAlertmanagerConfig, buildRuleFile } from "./build";
+import { buildAlertmanagerConfig, buildRuleFile, prometheusConfigYaml, ruleFileYaml } from "./build";
+import { PrometheusConfig, ScrapeConfig } from "./prometheus-config";
+import { hasTool, promtoolCheckConfig } from "./tools";
 import { validateAlertmanagerConfig, validateRuleFile } from "./validate-config";
 
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
@@ -61,6 +64,27 @@ export async function validate(): Promise<ValidateResult> {
       ? { name: "alertmanager-roundtrip", ok: true }
       : { name: "alertmanager-roundtrip", ok: false, error: amIssues.map((i) => i.message).join("; ") },
   );
+
+  // `promtool check config` over a sample prometheus.yml, with the rule file it names beside it.
+  const promtool = process.env.PROMTOOL ?? "promtool";
+  if (!hasTool(promtool)) {
+    checks.push({ name: `promtool-check-config (skipped: ${promtool} is not installed)`, ok: true });
+  } else {
+    const config = prometheusConfigYaml([
+      new PrometheusConfig({
+        global: { scrape_interval: "15s", evaluation_interval: "30s" },
+        rule_files: ["rules.yml"],
+        alerting: { alertmanagers: [{ static_configs: [{ targets: ["alertmanager:9093"] }] }] },
+      }),
+      new ScrapeConfig({ job_name: "prometheus", static_configs: [{ targets: ["localhost:9090"] }] }),
+    ]);
+    const r = promtoolCheckConfig(config, { "rules.yml": ruleFileYaml([group]) }, promtool);
+    checks.push(
+      r.ok
+        ? { name: "promtool-check-config", ok: true }
+        : { name: "promtool-check-config", ok: false, error: r.output.trim() || "promtool check config failed" },
+    );
+  }
 
   return { success: checks.every((c) => c.ok), checks };
 }
