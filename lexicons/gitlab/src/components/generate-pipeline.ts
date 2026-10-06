@@ -305,7 +305,9 @@ function prLoopGitlabPipeline(
   const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), job.command, ...extraScript];
   const stages = ["plan", "apply"];
   const doc: Record<string, unknown> = {
-    workflow: { name: member ? `chant-pr-${member.name}-${env}` : `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onMerge }] },
+    // Included files merge their top-level keys, so a member's file carries
+    // the rules every member shares and no name: two names would collide.
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, GIT_DEPTH: "0" },
     [planJob]: {
