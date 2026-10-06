@@ -3094,6 +3094,111 @@ export const compositeCatalog: CompositeEntry[] = [
     ]
   },
   {
+    "name": "OtelOperatorCollector",
+    "lexicon": "k8s",
+    "description": "Create an OtelOperatorCollector composite.",
+    "bundles": [
+      "ClusterRole",
+      "ClusterRoleBinding",
+      "OpenTelemetryCollector",
+      "Role",
+      "RoleBinding",
+      "ServiceAccount"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "Custom resource name (default: \"otel-collector\")."
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "required": false,
+        "description": "Namespace (default: \"observability\")."
+      },
+      {
+        "name": "mode",
+        "type": "OtelOperatorMode",
+        "required": false,
+        "description": "How the operator runs it (default: \"daemonset\", the agent shape `OtelCollector` has)."
+      },
+      {
+        "name": "replicas",
+        "type": "number",
+        "required": false,
+        "description": "Replica count for `deployment` and `statefulset` (left to the operator's default of 1 when unset)."
+      },
+      {
+        "name": "image",
+        "type": "string",
+        "required": false,
+        "description": "Collector image (default: the contrib image at the otel lexicon's pinned collector version)."
+      },
+      {
+        "name": "config",
+        "type": "Iterable<Declarable>",
+        "required": false,
+        "description": "The collector config, as otel lexicon entities (components and pipelines)."
+      },
+      {
+        "name": "exporters",
+        "type": "OTelComponent<\"exporter\", string, any>[]",
+        "required": false,
+        "description": "Exporters for the default config (default: one `debug` exporter)."
+      },
+      {
+        "name": "signals",
+        "type": "Signal[]",
+        "required": false,
+        "description": "Signals the default config has pipelines for (default: traces, metrics and logs)."
+      },
+      {
+        "name": "labels",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "Additional labels."
+      },
+      {
+        "name": "logAccess",
+        "type": "CollectorLogAccess",
+        "required": false,
+        "description": "How a config with a `filelog` receiver reads the node's container logs; see `OtelCollector`."
+      },
+      {
+        "name": "cpuRequest",
+        "type": "string",
+        "required": false,
+        "description": "CPU request (default: \"100m\")."
+      },
+      {
+        "name": "memoryRequest",
+        "type": "string",
+        "required": false,
+        "description": "Memory request (default: \"256Mi\")."
+      },
+      {
+        "name": "cpuLimit",
+        "type": "string",
+        "required": false,
+        "description": "CPU limit (default: \"500m\")."
+      },
+      {
+        "name": "memoryLimit",
+        "type": "string",
+        "required": false,
+        "description": "Memory limit (default: \"512Mi\")."
+      },
+      {
+        "name": "defaults",
+        "type": "{ collector?: Partial<Record<string, unknown>>; serviceAccount?: Partial<Record<string, unknown>>; clusterRole?: Part...",
+        "required": false,
+        "description": "Per-member defaults for fine-grained overrides."
+      }
+    ]
+  },
+  {
     "name": "RayCluster",
     "lexicon": "k8s",
     "description": "Create a RayCluster composite — returns a KubeRay RayCluster CR and the surrounding K8s resources needed for a production Ray cluster.",

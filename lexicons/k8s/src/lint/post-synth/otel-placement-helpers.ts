@@ -15,6 +15,13 @@
  *    When a container passes `--config=<path>`, only keys named by those
  *    paths count.
  *
+ * 3. An OpenTelemetry Operator `OpenTelemetryCollector` carries its config in
+ *    `spec.config` (an object in v1beta1, a YAML string in v1alpha1) and its
+ *    placement in `spec.mode` and `spec.replicas`; it is its own workload. A
+ *    `sidecar` runs inside other pods and is left out. The Services the
+ *    operator makes (`<name>-collector`, `<name>-collector-headless`) are not
+ *    in the build, so \`servicesSelecting\` names them from the CR.
+ *
  * Anything this can't resolve (a ConfigMap or workload outside the build, a
  * replica count that isn't a number) is left out, so the checks stay silent
  * rather than guess. Like every bundle-join check they see one build root at
@@ -33,6 +40,7 @@ export const PLACEMENT_ANNOTATIONS = {
   workload: "otel.chant.dev/workload",
   config: "otel.chant.dev/config",
   gateways: "otel.chant.dev/gateways",
+  header: "otel.chant.dev/header",
 } as const;
 
 /** The part of a collector config the placement checks read. */
@@ -59,12 +67,50 @@ export interface CollectorPlacement {
    * Undefined for a DaemonSet, or when the count isn't a number.
    */
   replicas: number | undefined;
+  /** The ConfigMap holding the config; the CR's own name for an `OpenTelemetryCollector`. */
   configMap: string;
+  /** The data key holding the config; `spec.config` for an `OpenTelemetryCollector`. */
   key: string;
   config: CollectorConfigShape;
+  /** Where the config is, for messages: `ConfigMap observability/x, config.yaml` or `spec.config`. */
+  where: string;
+  /** The workload is an OpenTelemetry Operator `OpenTelemetryCollector`, which the operator turns into the pods. */
+  operatorCR?: true;
 }
 
 const PLACED_KINDS = new Set(["DaemonSet", "Deployment", "StatefulSet"]);
+
+const OTEL_OPERATOR_KINDS = { daemonset: "DaemonSet", deployment: "Deployment", statefulset: "StatefulSet" } as const;
+
+/** An OpenTelemetry Operator `OpenTelemetryCollector` (any version of `opentelemetry.io`). */
+export function isOperatorCollector(m: K8sManifest): boolean {
+  return m.kind === "OpenTelemetryCollector" && typeof m.apiVersion === "string" && m.apiVersion.startsWith("opentelemetry.io/");
+}
+
+/** The placement of one `OpenTelemetryCollector`, or undefined for a sidecar, a missing name or a config that isn't one. */
+function operatorPlacement(cr: K8sManifest): CollectorPlacement | undefined {
+  const name = cr.metadata?.name;
+  if (typeof name !== "string") return undefined;
+  const mode = cr.spec?.mode === undefined || cr.spec.mode === null ? "deployment" : cr.spec.mode;
+  if (typeof mode !== "string" || !(mode in OTEL_OPERATOR_KINDS)) return undefined;
+  const kind = OTEL_OPERATOR_KINDS[mode as keyof typeof OTEL_OPERATOR_KINDS];
+
+  // v1beta1 holds the config as an object, v1alpha1 as YAML text.
+  const raw = cr.spec?.config;
+  const config = isRecord(raw)
+    ? (parseCollectorConfig(JSON.stringify(raw)) as CollectorConfigShape | undefined)
+    : parseCollectorConfig(raw);
+  if (!config) return undefined;
+
+  let replicas: number | undefined;
+  if (kind !== "DaemonSet") {
+    const r = cr.spec?.replicas;
+    const base = r === undefined || r === null ? 1 : typeof r === "number" ? r : undefined;
+    const auto = isRecord(cr.spec?.autoscaler) ? cr.spec.autoscaler.maxReplicas : undefined;
+    replicas = base === undefined ? undefined : Math.max(base, typeof auto === "number" ? auto : 0);
+  }
+  return { workload: cr, kind, name, namespace: ns(cr), replicas, configMap: name, key: "spec.config", config, where: "spec.config", operatorCR: true };
+}
 
 function ns(m: K8sManifest): string {
   const n = m.metadata?.namespace;
@@ -212,15 +258,21 @@ export function collectorPlacements(manifests: K8sManifest[]): CollectorPlacemen
       }
       const named = parsed.filter(([key]) => argNames.includes(key));
       for (const [key, config] of named.length > 0 ? named : parsed) {
-        out.push({ workload, kind, name, namespace, replicas, configMap, key, config });
+        out.push({ workload, kind, name, namespace, replicas, configMap, key, config, where: `ConfigMap ${configMap}, ${key}` });
       }
     }
+  }
+  for (const m of manifests) {
+    if (!isOperatorCollector(m)) continue;
+    const p = operatorPlacement(m);
+    if (p) out.push(p);
   }
   return out;
 }
 
 /** How a placement is described in a message: `DaemonSet observability/otel-agent`. */
 export function describePlacement(p: CollectorPlacement): string {
+  if (p.operatorCR) return `OpenTelemetryCollector ${p.namespace}/${p.name} (mode ${p.kind.toLowerCase()})`;
   return `${p.kind} ${p.namespace}/${p.name}`;
 }
 
@@ -235,6 +287,14 @@ export interface SelectingService {
 
 /** The Services in a workload's namespace whose selector matches its pod template labels. */
 export function servicesSelecting(manifests: K8sManifest[], workload: K8sManifest): SelectingService[] {
+  // The operator's Services for a CR are not in the build; their names are fixed by the operator.
+  if (isOperatorCollector(workload) && typeof workload.metadata?.name === "string") {
+    const name = workload.metadata.name;
+    return [
+      { name: `${name}-collector`, namespace: ns(workload), headless: false },
+      { name: `${name}-collector-headless`, namespace: ns(workload), headless: true },
+    ];
+  }
   const template = isRecord(workload.spec?.template) ? workload.spec.template : undefined;
   const labels = isRecord(template?.metadata) && isRecord(template.metadata.labels) ? template.metadata.labels : {};
   const out: SelectingService[] = [];

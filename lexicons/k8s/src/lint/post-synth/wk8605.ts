@@ -21,7 +21,7 @@
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { docsToManifests, extractContainers, extractPodSpec, type K8sContainer, type K8sManifest } from "./k8s-helpers";
-import { collectorPlacements, describePlacement } from "./otel-placement-helpers";
+import { collectorPlacements, describePlacement, isOperatorCollector } from "./otel-placement-helpers";
 import { collectorNodeAccess, type NodeHostMount } from "../../composites/otel-collector-node";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -38,6 +38,8 @@ function within(path: string, dir: string): boolean {
  * container when none does. A sidecar's variables and mounts don't count.
  */
 function collectorContainers(workload: K8sManifest): K8sContainer[] {
+  // An OpenTelemetryCollector's `spec.env` and `spec.volumeMounts` are the collector container's own.
+  if (isOperatorCollector(workload)) return [{ env: workload.spec?.env as K8sContainer["env"], volumeMounts: workload.spec?.volumeMounts }];
   const all = extractContainers(workload);
   const withConfig = all.filter((c) =>
     [...(Array.isArray(c.command) ? c.command : []), ...(Array.isArray(c.args) ? c.args : [])].some(
@@ -49,7 +51,7 @@ function collectorContainers(workload: K8sManifest): K8sContainer[] {
 
 /** Each container mount backed by a hostPath volume, as [host path, container path]. */
 function hostMounts(workload: K8sManifest, containers: K8sContainer[]): Array<[string, string]> {
-  const pod = extractPodSpec(workload);
+  const pod = isOperatorCollector(workload) ? workload.spec : extractPodSpec(workload);
   const hostPaths = new Map<string, string>();
   for (const v of Array.isArray(pod?.volumes) ? pod.volumes : []) {
     if (isRecord(v) && typeof v.name === "string" && isRecord(v.hostPath) && typeof v.hostPath.path === "string") {
@@ -119,7 +121,7 @@ export const wk8605: PostSynthCheck = {
         checkId: "WK8605",
         severity: "warning",
         message:
-          `${describePlacement(p)} runs a collector config that reads the node (ConfigMap ${p.configMap}, ${p.key}), but: ${gaps.join("; ")}. ` +
+          `${describePlacement(p)} runs a collector config that reads the node (${p.where}), but: ${gaps.join("; ")}. ` +
           `Without them the collector reports on its own container, or nothing. OtelCollector adds these from the config; ` +
           `in a hand-written workload, add them read-only.`,
         entity: p.name,

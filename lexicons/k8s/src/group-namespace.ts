@@ -72,6 +72,10 @@ export const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   // don't need the same rescue. `addons.cluster.x-k8s.io` (CAAPH's HelmChartProxy,
   // core CAPI's ClusterResourceSet) likewise stays `Addons`.
   "cluster.x-k8s.io": "CAPI",
+  // The first-segment rule would give `Opentelemetry`, which misspells the
+  // product (OpenTelemetry is one word with two capitals) and leaves the
+  // operator's kinds as `K8s::Opentelemetry::OpenTelemetryCollector`.
+  "opentelemetry.io": "OpenTelemetry",
 };
 
 /**

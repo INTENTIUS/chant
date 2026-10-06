@@ -30,6 +30,7 @@ import {
  * | `role` | ConfigMap, workload | `agent` (a DaemonSet, one collector per node) or `gateway` (a Deployment) |
  * | `workload` | ConfigMap | the workload that mounts it, `DaemonSet/<name>` or `Deployment/<name>`, in the ConfigMap's namespace |
  * | `config` | workload | the name of the ConfigMap holding its `config.yaml` |
+ * | `header` | `OtelOperatorCollector`'s `OpenTelemetryCollector` | the config's `# chant:` header lines (custom-component pins, semconv use), one per line, which an object-valued `spec.config` has no comments to hold |
  * | `gateways` | agent ConfigMap and DaemonSet | comma-separated `<namespace>/<gateway name>=<routing>`, where routing is `loadbalancing` or `service` |
  *
  * The replica count is the workload's own `spec.replicas`.
@@ -39,6 +40,7 @@ export const OTEL_COLLECTOR_ANNOTATIONS = {
   workload: "otel.chant.dev/workload",
   config: "otel.chant.dev/config",
   gateways: "otel.chant.dev/gateways",
+  header: "otel.chant.dev/header",
 } as const;
 
 export type CollectorRole = "agent" | "gateway";

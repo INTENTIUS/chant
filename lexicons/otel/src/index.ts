@@ -46,9 +46,17 @@ export {
 
 // The plain-data model, YAML, checks and topology
 export * from "./model";
-export { buildCollectorConfig, collectorYaml, componentConfig, type BuiltCollector } from "./collector";
+export { buildCollectorConfig, collectorConfig, collectorYaml, componentConfig, type BuiltCollector } from "./collector";
 export { emitCollectorYaml, type EmitOptions } from "./yaml";
-export { configMapCollectorConfigs, describeConfigMapConfig, parseCollectorConfig, type ConfigMapCollectorConfig } from "./configmap";
+export {
+  configMapCollectorConfigs,
+  describeConfigMapConfig,
+  describeOperatorCollectorConfig,
+  operatorCollectorConfig,
+  parseCollectorConfig,
+  type ConfigMapCollectorConfig,
+  type OperatorCollectorConfig,
+} from "./configmap";
 export {
   validateCollectorConfig,
   validateCollectorEntities,

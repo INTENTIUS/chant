@@ -32,7 +32,7 @@ export const wk8601: PostSynthCheck = {
         checkId: "WK8601",
         severity: "warning",
         message:
-          `${describePlacement(p)} runs ${ids.join(", ")} (ConfigMap ${p.configMap}, ${p.key}) on every node. ` +
+          `${describePlacement(p)} runs ${ids.join(", ")} (${p.where}) on every node. ` +
           `Each agent sees only its own node's spans, so sampling decisions are made on partial traces. ` +
           `Move tail sampling to a gateway (OtelCollectorGateway) and send traces to it through a loadbalancing exporter routed by traceID.`,
         entity: p.name,

@@ -8,7 +8,7 @@ import type { SerializerResult } from "@intentius/chant/serializer";
 import { loadAll } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
 import { looksLikeCollectorConfig, type CollectorConfig } from "../../model";
-import { configMapCollectorConfigs, describeConfigMapConfig } from "../../configmap";
+import { configMapCollectorConfigs, describeConfigMapConfig, describeOperatorCollectorConfig, operatorCollectorConfig } from "../../configmap";
 import { validateCollectorConfig, validateCollectorEntities, type CollectorIssueCode, type CollectorIssue } from "../../validate-config";
 import { attributionIssues } from "../../attribution";
 
@@ -19,13 +19,16 @@ export interface FoundCollectorConfig {
   config: CollectorConfig;
   /** Set when the config is a value in a Kubernetes ConfigMap (chant #2930). */
   configMap?: { namespace: string; name: string; key: string };
+  /** Set when the config is the `spec.config` of an OpenTelemetry Operator `OpenTelemetryCollector` (chant #3367). */
+  operator?: { namespace: string; name: string };
 }
 
 /**
  * Every collector config in the output: the otel lexicon's own, any YAML
  * document shaped like one, and any ConfigMap data value that parses as one
  * (how `OtelCollector`, `OtelCollectorGateway` and `GkeOtelCollector` carry
- * theirs). Parsed with js-yaml rather than `ctx.docs`, because collector
+ * theirs), and the `spec.config` of an OpenTelemetry Operator
+ * `OpenTelemetryCollector` (chant #3367). Parsed with js-yaml rather than `ctx.docs`, because collector
  * configs are written with flow lists (`[otlp, batch]`) that core's small
  * YAML reader keeps as strings.
  *
@@ -57,6 +60,8 @@ export function collectorConfigs(ctx: PostSynthContext): FoundCollectorConfig[] 
         for (const { config, ...configMap } of configMapCollectorConfigs(doc)) {
           out.push({ source, config, configMap });
         }
+        const cr = operatorCollectorConfig(doc);
+        if (cr) out.push({ source, config: cr.config, operator: { namespace: cr.namespace, name: cr.name } });
       }
     }
   }
@@ -64,7 +69,11 @@ export function collectorConfigs(ctx: PostSynthContext): FoundCollectorConfig[] 
 }
 
 function toDiagnostic(issue: CollectorIssue, found?: Omit<FoundCollectorConfig, "config">): PostSynthDiagnostic {
-  const where = found?.configMap ? describeConfigMapConfig(found.configMap) : found && found.source !== "otel" ? found.source : undefined;
+  const where = found?.configMap
+    ? describeConfigMapConfig(found.configMap)
+    : found?.operator
+      ? describeOperatorCollectorConfig(found.operator)
+      : found && found.source !== "otel" ? found.source : undefined;
   return {
     checkId: issue.code,
     severity: issue.severity,
@@ -87,11 +96,15 @@ function configIssues(ctx: PostSynthContext, config: CollectorConfig): Collector
 /**
  * Every config-level diagnostic (OTEL101-OTEL106, OTEL112-OTEL127 and any later
  * config check) over the collector configs in the output. `configMapsOnly`
- * keeps the configs held in ConfigMaps, which is what WK8604 reads.
+ * keeps the configs held in ConfigMaps. `hostedOnly` keeps those and the `spec.config` of an operator `OpenTelemetryCollector`, which is what WK8604 reads.
  */
-export function collectorConfigDiagnostics(ctx: PostSynthContext, opts: { configMapsOnly?: boolean } = {}): PostSynthDiagnostic[] {
+export function collectorConfigDiagnostics(
+  ctx: PostSynthContext,
+  opts: { configMapsOnly?: boolean; hostedOnly?: boolean } = {},
+): PostSynthDiagnostic[] {
   return collectorConfigs(ctx)
     .filter((found) => !opts.configMapsOnly || found.configMap)
+    .filter((found) => !opts.hostedOnly || found.configMap || found.operator)
     .flatMap(({ config, ...found }) => configIssues(ctx, config).map((i) => toDiagnostic(i, found)));
 }
 

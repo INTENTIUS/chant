@@ -503,6 +503,25 @@ const ACK_EKS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/
 const GRAFANA_OPERATOR_VERSION = "v5.25.0";
 const GRAFANA_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/grafana/grafana-operator/${GRAFANA_OPERATOR_VERSION}/config/crd/bases`;
 
+/**
+ * OpenTelemetry Operator CRDs — opentelemetry.io (#3367)
+ *
+ * The `opentelemetry.io` group is mapped to the `OpenTelemetry` namespace (see
+ * GROUP_NAMESPACE_OVERRIDES in group-namespace.ts). Each CRD is generated at
+ * its storage version:
+ *   K8s::OpenTelemetry::OpenTelemetryCollector → opentelemetry.io/v1beta1 (spec.config is a structured object)
+ *   K8s::OpenTelemetry::Instrumentation        → opentelemetry.io/v1alpha1
+ *   K8s::OpenTelemetry::TargetAllocator        → opentelemetry.io/v1alpha1
+ *   K8s::OpenTelemetry::OpAMPBridge            → opentelemetry.io/v1alpha1
+ *   K8s::OpenTelemetry::ClusterObservability   → opentelemetry.io/v1alpha1 (new in v0.160.0: one CR that
+ *     sets up the operator's collectors and instrumentation cluster-wide)
+ *
+ * Operator install: kubectl apply -f
+ *   https://github.com/open-telemetry/opentelemetry-operator/releases/download/v0.160.0/opentelemetry-operator.yaml
+ */
+const OTEL_OPERATOR_VERSION = "v0.160.0";
+const OTEL_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/open-telemetry/opentelemetry-operator/${OTEL_OPERATOR_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -598,4 +617,9 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationpolicyroutes.yaml` },
   { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanamutetimings.yaml` },
   { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationtemplates.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_opentelemetrycollectors.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_instrumentations.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_targetallocators.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_opampbridges.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_clusterobservabilities.yaml` },
 ];

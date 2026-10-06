@@ -54,7 +54,7 @@ export const wk8603: PostSynthCheck = {
         checkId: "WK8603",
         severity: "warning",
         message:
-          `${describePlacement(p)} runs the k8s_cluster receiver on ${copies} (ConfigMap ${p.configMap}, ${p.key}): ${reasons.join("; ")}. ` +
+          `${describePlacement(p)} runs the k8s_cluster receiver on ${copies} (${p.where}): ${reasons.join("; ")}. ` +
           `Each copy reports every cluster object, duplicating series and API server watches. ` +
           `Run it in a single-replica Deployment, or reference a k8s_leader_elector extension from the receiver and enable it in service.extensions.`,
         entity: p.name,

@@ -11,7 +11,7 @@ Some OpenTelemetry Collector mistakes are about where a config runs, not what it
 | [WK8601](#wk8601-tail-sampling-on-every-node) | warning | a DaemonSet collector runs `tail_sampling` in a traces pipeline |
 | [WK8602](#wk8602-multi-replica-gateway-without-trace-aware-routing) | warning | a gateway with more than one replica runs `tail_sampling`, and a collector in the build sends it traces without a `loadbalancing` exporter routed by `traceID` |
 | [WK8603](#wk8603-k8s_cluster-in-every-collector-copy) | warning | a DaemonSet, or a workload with more than one replica, runs the `k8s_cluster` receiver without a working `k8s_leader_elector` |
-| [WK8604](#wk8604-the-otel-config-checks-on-configmap-configs) | per finding | a collector config in a ConfigMap fails one of the otel lexicon's config checks; reported under the OTEL id |
+| [WK8604](#wk8604-the-otel-config-checks-on-configmap-configs) | per finding | a collector config in a ConfigMap, or an `OpenTelemetryCollector`'s `spec.config`, fails one of the otel lexicon's config checks; reported under the OTEL id |
 | [WK8605](#wk8605-a-node-reading-config-without-the-node) | warning | a collector config reads the node, and the container running it lacks the node name variable or a host mount the config reads |
 
 They are in the k8s lexicon because they read Kubernetes manifests. The otel lexicon sees only the collector config. The OTEL110 and OTEL111 ids first planned for the tail sampling checks were never used.
@@ -22,6 +22,8 @@ The collector config is a string in a ConfigMap, and the replica count is on ano
 
 1. The workload's `otel.chant.dev/config` annotation names the ConfigMap whose `config.yaml` it runs. [`OtelCollector` and `OtelCollectorGateway`](../otel-collector/#deployment-shape-in-the-built-manifests) write it.
 2. Without the annotation, the ConfigMaps the pod spec mounts as volumes (directly or through a projected volume), keeping only data keys that parse as a collector config, meaning they have a `service.pipelines` map. When a container passes `--config=<path>`, only the key that path names counts. This is how `GkeOtelCollector` and hand-written manifests are read.
+
+3. An OpenTelemetry Operator `OpenTelemetryCollector` is its own workload: its config is `spec.config`, its kind comes from `spec.mode` (`deployment` when unset; a `sidecar` is left out), and its replica count is `spec.replicas`, raised to `spec.autoscaler.maxReplicas`. The operator's Services (`<name>-collector` and `<name>-collector-headless`) are not in the build, so WK8602 takes them from the name.
 
 DaemonSet, Deployment and StatefulSet workloads are read. The replica count is `spec.replicas` (1 when unset), raised to the `maxReplicas` of any HorizontalPodAutoscaler that targets the workload. Only pipelines in `service.pipelines` count, so a component that is declared but unused doesn't fire.
 
@@ -86,7 +88,7 @@ export const cluster = new K8sClusterReceiver({ auth_type: "serviceAccount", k8s
 
 ## WK8604: the otel config checks on ConfigMap configs
 
-The otel lexicon's config checks (OTEL101 to OTEL106 and OTEL112 to OTEL127) read collector YAML, but `chant build` gives them only the otel lexicon's output, and a config deployed through `OtelCollector`, `OtelCollectorGateway`, `GkeOtelCollector` or a hand-written manifest is a string inside a ConfigMap in the k8s output. WK8604 runs those checks there, OTEL118 only when the build stamps telemetry attribution. Every ConfigMap data value that parses as a collector config (a `service.pipelines` map) is checked, whether or not a workload in the build mounts it. It doesn't use the workload join above.
+The otel lexicon's config checks (OTEL101 to OTEL106 and OTEL112 to OTEL127) read collector YAML, but `chant build` gives them only the otel lexicon's output, and a config deployed through `OtelCollector`, `OtelCollectorGateway`, `GkeOtelCollector` or a hand-written manifest is a string inside a ConfigMap in the k8s output, and an `OpenTelemetryCollector` from the OpenTelemetry Operator (`OtelOperatorCollector`) holds it in `spec.config`. WK8604 runs those checks there (a finding names `OpenTelemetryCollector <namespace>/<name>, spec.config` for the latter), OTEL118 only when the build stamps telemetry attribution. Every ConfigMap data value that parses as a collector config (a `service.pipelines` map), and every `spec.config` of the same shape (an object in v1beta1, YAML text in v1alpha1), is checked, whether or not a workload in the build mounts it. It doesn't use the workload join above.
 
 Findings keep their otel ids and severities, so `lint.rules` entries and suppressions for OTEL103 apply wherever the config lives. The message starts with the ConfigMap's namespace, name and key:
 
