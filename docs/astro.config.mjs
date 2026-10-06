@@ -236,6 +236,7 @@ export default defineConfig({
 								{ label: 'carve advise', slug: 'cli/carve' },
 								{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },
 								{ label: 'change-set summary', slug: 'cli/change-set' },
+								{ label: 'ci', slug: 'cli/ci' },
 								{ label: 'audit', slug: 'cli/audit' },
 								{ label: 'migrate', slug: 'cli/migrate' },
 								{ label: 'update', slug: 'cli/update' },

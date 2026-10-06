@@ -1,0 +1,50 @@
+---
+title: "chant ci"
+description: Tag each commit that passed its required CI phases, revoke the tag when it later fails, and read the newest green commit from git
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant ci last-green [--json]
+chant ci tick [--dry-run] [--forge github]
+chant ci workflow [--workflow <name>]... [--output <file>]
+```
+
+`chant ci` records which commits of a branch passed CI as git tags, from the [`ci.green`](/chant/reference/workspace-declaration/#ci) block of the workspace declaration ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). A commit that passes every required phase gets `ci/green/<sha>`. A green commit that later fails one gets `ci/revoked/<sha>`. Anyone with a clone can then find the newest commit that passed, for example to freeze it and release from it.
+
+## ci last-green
+
+Prints the full id of the newest first-parent commit of the branch that has a green tag and no revoked tag. The walk follows `refs/remotes/origin/<branch>` when the checkout has it, else the local branch. Only local tags are read, so fetch them first:
+
+```bash
+git fetch origin --tags
+git checkout "$(chant ci last-green)"
+```
+
+When no commit qualifies, a message goes to stderr and the exit code is 1.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
+
+## ci tick
+
+One pass over the branch. It fetches the branch and the `ci/*` tags from `origin`, and the fetch prunes a `ci/*` tag deleted there by hand. It reads the check runs of each first-parent commit within `window`, then makes the tags that are due and pushes them, never forced:
+
+| A commit with | that now | gets |
+|---|---|---|
+| no green tag | passes every required phase | `ci/green/<sha>` |
+| a green tag and no revoked tag | fails a required phase | `ci/revoked/<sha>` |
+| a revoked tag | anything | nothing, and its check runs are not read |
+
+Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag.
+
+The check runs come from the forge. GitHub is the only one so far: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused until a client maps their jobs and statuses to check runs. Pushing the tags needs `contents: write` on the remote.
+
+## ci workflow
+
+Writes `.github/workflows/chant-ci-green.yml` (or `--output`), the root CI file that runs the tick. A tick starts when a workflow holding a required check run completes on the branch, so a result or a re-run is acted on within seconds. A cron every 15 minutes covers an event that was dropped or late. All ticks share one concurrency group that never cancels, so they run one at a time.
+
+It finds the workflows to listen to by reading the other files in `.github/workflows/`. A job reports its `name` or its id as its check run, followed by ` (<matrix values>)` for a matrix job, and a workflow is kept when one of its jobs can report a check run that a required phase's pattern matches. It warns about each required pattern no job matches. `--workflow <name>` adds a workflow the scan can't see, such as one whose job names are built from expressions, and it is repeatable.
+
+The tick runs in the workspace root as `npx --yes @intentius/chant@<version> ci tick`, at the version that wrote the file. The file's first line is the generated-file header naming the command. When the command runs in a member's directory, that member records the file as one it generates ([ws-042](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-042-root-ci-files.md)). Regenerate it after changing `ci.green` or the workflows it listens to.

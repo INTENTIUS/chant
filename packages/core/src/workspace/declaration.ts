@@ -180,6 +180,40 @@ export interface AgentDeclaration {
   pointer: string;
 }
 
+/** What a check run that finished as skipped counts as in a CI phase (#3573). */
+export type CiSkipped = "pass" | "fail";
+
+/** One phase of `ci.green`: the check runs that make it up (#3573, ws-103). */
+export interface CiPhase {
+  name: string;
+  /** Check-run name patterns, `*` standing for any run of characters. */
+  runs: string[];
+  /** `fail` (the default): a skipped run never passes. `pass`: it passes, for a job a path filter runs only on some commits. */
+  skipped: CiSkipped;
+  pointer: string;
+}
+
+/** The default `ci.green.window`. */
+export const DEFAULT_CI_WINDOW = "24h";
+
+/** The declaration's `ci.green` block (#3573, ws-103), with its defaults. */
+export interface CiGreen {
+  /** The branch whose first-parent commits are tagged. */
+  branch: string;
+  /** How far back a tick looks, such as `24h`. */
+  window: string;
+  /** The phases, in file order. */
+  phases: CiPhase[];
+  /** The phases a commit must pass, by name, in file order. */
+  require: string[];
+  pointer: string;
+}
+
+/** The declaration's `ci` block (#3573). */
+export interface CiDeclaration {
+  green: CiGreen | null;
+}
+
 export interface MemberRole {
   name: string;
   /** Relative to the member's directory, or null for the whole member. */
@@ -546,6 +580,8 @@ export interface Declaration {
   agents: AgentDeclaration[];
   /** Who a person-attributed write may name, and which gates need a signed approval (#3163), or null when the declaration has no `identity` block. */
   identity: IdentityPolicy | null;
+  /** What the workspace's CI decides about its commits (#3573), or null when the declaration has no `ci` block. */
+  ci: CiDeclaration | null;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -900,6 +936,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
   const agents = agentsOf(obj.agents, members, at);
   const tierSession = factoryTierSessionProblem(members, agents);
   if (tierSession) throw new WorkspaceReadError("declaration-invalid", tierSession.message, at(tierSession.pointer));
+  const ci = ciOf(obj.ci, at);
 
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
@@ -925,6 +962,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     writeScope,
     agents,
     identity: identityOf(obj.identity),
+    ci,
     file,
   };
 }
@@ -971,6 +1009,32 @@ function identityOf(raw: unknown): IdentityPolicy | null {
     gates[gate] = { gate, class: entry.class ?? null, pointer: `/identity/gates/${gate.replace(/~/g, "~0").replace(/\//g, "~1")}` };
   }
   return { attribution: block.attribution ?? "any", gates };
+}
+
+/**
+ * The `ci` block, already validated by the schema, with its defaults and the
+ * rule the schema can't say (#3573): every phase `require` names is declared.
+ */
+function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
+  if (raw === undefined) return null;
+  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[] } };
+  if (block.green === undefined) return { green: null };
+  const g = block.green;
+  const phases: CiPhase[] = Object.entries(g.phases).map(([name, p]) => ({
+    name,
+    runs: [...(Array.isArray(p) ? p : p.runs)],
+    skipped: Array.isArray(p) ? "fail" : (p.skipped ?? "fail"),
+    pointer: `/ci/green/phases/${pointerToken(name)}`,
+  }));
+  for (const [i, name] of g.require.entries()) {
+    if (phases.some((p) => p.name === name)) continue;
+    throw new WorkspaceReadError(
+      "declaration-invalid",
+      `ci.green.require names the phase ${JSON.stringify(name)}, which ci.green.phases does not declare; declared phases: ${phases.map((p) => p.name).join(", ")}`,
+      at(`/ci/green/require/${i}`),
+    );
+  }
+  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], pointer: "/ci/green" } };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

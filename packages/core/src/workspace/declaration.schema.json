@@ -166,6 +166,19 @@
           }
         }
       }
+    },
+    "ci": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": true
+      },
+      "description": "What the workspace's CI decides about its commits (#3573, ws-103). Added in schema 1 by chant 0.108.0, so a declaration that uses it sets minReader to 0.108.0 or newer.",
+      "properties": {
+        "green": {
+          "$ref": "#/$defs/ciGreen"
+        }
+      }
     }
   },
   "patternProperties": {
@@ -1397,6 +1410,95 @@
         "^x-": true
       },
       "additionalProperties": false
+    },
+    "ciGreen": {
+      "type": "object",
+      "description": "Which commits passed CI (#3573, ws-103). chant ci tick tags each first-parent commit of branch, within window, whose required phases all passed with ci/green/<sha>, and a green commit that later fails a required phase with ci/revoked/<sha>. Both are annotated tags made once and never moved or deleted by chant. chant ci last-green prints the newest commit with a green tag and no revoked tag.",
+      "required": [
+        "branch",
+        "phases",
+        "require"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+          "description": "The branch whose commits are tagged, such as main. Only its first-parent commits count."
+        },
+        "window": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(m|h|d)$",
+          "description": "How far back a tick looks, by committer time, such as 24h, 90m or 7d. 24h when absent."
+        },
+        "phases": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "The phases, by name. Each is a list of check-run name patterns, or { runs, skipped }. A pattern matches a check run's whole name, with * standing for any run of characters. A phase passes when every check run its patterns match finished with success, judged by each run's latest attempt.",
+          "propertyNames": {
+            "$ref": "#/$defs/ciPhaseName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/ciPhase"
+          }
+        },
+        "require": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The phases a commit must pass to be tagged green, by name. Each must be a declared phase.",
+          "items": {
+            "$ref": "#/$defs/ciPhaseName"
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "ciPhaseName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+    },
+    "ciPhase": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ciRunPatterns"
+        },
+        {
+          "type": "object",
+          "required": [
+            "runs"
+          ],
+          "properties": {
+            "runs": {
+              "$ref": "#/$defs/ciRunPatterns"
+            },
+            "skipped": {
+              "enum": [
+                "pass",
+                "fail"
+              ],
+              "description": "What a check run that finished as skipped counts as. fail (the default): it never passes. pass: it passes, for a job a path filter runs only on some commits."
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ciRunPatterns": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A check run's name, such as lint, or a pattern with *, such as e2e (*)."
+      }
     }
   }
 }

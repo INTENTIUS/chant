@@ -167,6 +167,19 @@ An in-process guard says nothing about a child process, so the offline phases' s
 |---|---|---|---|
 | `packages/core/src/audit/fetch.ts` | `fetch` | an allowlisted git host's API — GitHub, GitLab or Forgejo | The only audit module that touches the network: `chant audit <url>` pulls candidate files so the auditor can run on a URL. Hosts are allowlisted, redirects refused, and file count, size, bytes and time all capped. |
 
+### Tagging the commits that passed CI
+
+`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` reads local tags only and reaches nothing.
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/workspace/ci-green-forge.ts` | `fetch` | `api.github.com`, or `$GITHUB_API_URL` for GitHub Enterprise Server | `chant ci tick` lists every check run on each commit within `ci.green`'s window, to judge its phases by each run's latest attempt (#3573). The client takes an injected `fetch`, so no test opens a socket. |
+
+| Command | Spawns | Module | Destination | Why |
+|---|---|---|---|---|
+| `chant ci tick` | `git fetch` | `packages/core/src/workspace/ci-green.ts` | the repository's `origin` remote | `git fetch --no-tags --prune origin +refs/heads/<branch>:refs/remotes/origin/<branch> +refs/tags/ci/*:refs/tags/ci/*` brings the branch and the ci tags, pruning a ci tag deleted on the remote by hand, so the tick judges what the remote holds (#3573). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any. |
+| `chant ci tick` | `git push` | `packages/core/src/workspace/ci-green.ts` | the repository's `origin` remote | `git push origin refs/tags/ci/green/<sha> ...` pushes the tags the tick made, never forced, so a tag that already exists there is refused rather than moved (#3573). |
+
 ### Repository maintenance
 
 Freshness checks that run in this repository's own CI, against `api.github.com`. Nothing here sits on a path an adopter runs — no CLI command reaches these modules.
@@ -178,7 +191,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**54 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
+**55 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 

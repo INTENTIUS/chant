@@ -21,6 +21,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import { contract, git, REPO, validSchema } from "./__fixtures__/contract-repo";
 import checkSchema from "./check.schema.json";
+import ciLastGreenSchema from "./ci-last-green.schema.json";
 import { workspaceComposites } from "./composites";
 import compositesSchema from "./composites.schema.json";
 import { workspaceGraph } from "./graph-cli";
@@ -48,7 +49,7 @@ import statusSchema from "./status.schema.json";
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema, patch: patchSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema, patch: patchSchema, "ci-last-green": ciLastGreenSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {

@@ -134,6 +134,14 @@ export interface LsDiagram {
   member: string | null;
 }
 
+/** The declaration's `ci.green` (#3573, ws-103), with its defaults filled in. */
+export interface LsCiGreen {
+  branch: string;
+  window: string;
+  phases: { name: string; runs: string[]; skipped: "pass" | "fail" }[];
+  require: string[];
+}
+
 export interface LsGroup {
   name: string;
   kind: "examples";
@@ -164,6 +172,8 @@ export type LsDocument =
       groups: LsGroup[];
       /** Every declared diagram, the workspace's own first, then each member's, in file order (#2764). */
       diagrams: LsDiagram[];
+      /** What the workspace's CI decides about its commits (#3573), or null with no `ci` block. */
+      ci: { green: LsCiGreen | null } | null;
       summary: { members: number; unreadable: number; groups: number; matches: number };
     }
   | {
@@ -286,6 +296,18 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
       members,
       groups: lsGroups,
       diagrams,
+      ci: declaration.ci
+        ? {
+            green: declaration.ci.green
+              ? {
+                  branch: declaration.ci.green.branch,
+                  window: declaration.ci.green.window,
+                  phases: declaration.ci.green.phases.map((p) => ({ name: p.name, runs: p.runs, skipped: p.skipped })),
+                  require: declaration.ci.green.require,
+                }
+              : null,
+          }
+        : null,
       summary: {
         members: members.length,
         unreadable: members.filter((m) => !m.readable).length,

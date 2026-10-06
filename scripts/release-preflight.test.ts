@@ -137,6 +137,43 @@ describe("release-preflight.sh picks the commit (#2816)", () => {
   });
 });
 
+describe("release-preflight.sh reads the ci tags when main declares ci.green (#3573)", () => {
+  let a: string, b: string, c: string;
+  const tag = (name: string, sha: string) => git(work, "tag", "-a", "-m", name, name, sha);
+  beforeEach(() => {
+    const decl = JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: { branch: "main", phases: { chant: ["check"] }, require: ["chant"] } } });
+    a = commit("A", { "chant.workspace.json": decl });
+    b = commit("B", { "b.txt": "b" });
+    c = commit("C", { "c.txt": "c" });
+    tag(`ci/green/${a}`, a);
+    tag(`ci/green/${b}`, b);
+    tag(`ci/revoked/${b}`, b);
+    git(work, "push", "-q", "origin", "main", "--tags");
+    // gh would say every commit is green; the tags decide instead.
+    setRuns([c, b, a].map((s) => ({ headSha: s, status: "completed", conclusion: "success", url: `u/${s}` })));
+  });
+
+  it("releases the newest commit with a green tag and no revoked tag", () => {
+    const r = run("bash", [PREFLIGHT]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe(a);
+    expect(r.stderr).toMatch(/2 newer commit\(s\) on main are not tagged ci\/green/);
+  });
+
+  it("checks a named commit against its tags", () => {
+    expect(run("bash", [PREFLIGHT, a]).stdout).toBe(a);
+    const revoked = run("bash", [PREFLIGHT, b]);
+    expect(revoked.code).toBe(1);
+    expect(revoked.stderr).toMatch(/has no ci\/green tag, or has a ci\/revoked one/);
+    expect(run("bash", [PREFLIGHT, c]).code).toBe(1);
+  });
+
+  it("follows a revoked tag deleted on the remote by hand", () => {
+    git(work, "push", "-q", "origin", `:refs/tags/ci/revoked/${b}`);
+    expect(run("bash", [PREFLIGHT]).stdout).toBe(b);
+  });
+});
+
 describe("release-lib.sh (#2816)", () => {
   const lib = (body: string, extra: NodeJS.ProcessEnv = {}) =>
     run("bash", ["-c", `set -euo pipefail; source "${LIB}"; ${body}`], extra);

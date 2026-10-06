@@ -275,6 +275,9 @@ export const REASONS = {
   "wip-race": "Another writer moved refs/chant/wip/<branch> between this command's read and its write.",
   "wip-policy-none": "wip push or wip fetch was run, and no box block declares replicate, so there is no remote.",
   "wip-remote-unknown": "The replicate policy names a git remote the checkout does not have; the host adds it, with its credential, before chant pushes.",
+  // Which commits passed CI (ci last-green and ci tick, #3573): why nothing was read.
+  "ci-green-undeclared": "The declaration has no ci.green block, so chant does not know which check runs make a commit green.",
+  "ci-branch-unknown": "The checkout has no ref for the branch ci.green names: neither the remote-tracking branch nor a local one.",
   // A box whose isolation fails (check, #2727). Each is also a WSP finding.
   "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
   "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",
