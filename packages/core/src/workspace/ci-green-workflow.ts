@@ -16,6 +16,12 @@
  * a job that calls a reusable workflow; a `${{ }}` expression stands for
  * anything. `--workflow <name>` adds a workflow the scan can't see.
  *
+ * The tick runs the published chant that wrote the file, through npx.
+ * `--chant <command>` runs another one instead, and `--install <command>`
+ * adds a step that installs it, with setup-node caching npm's downloads when
+ * the workspace root has a `package-lock.json`. chant's own repository uses
+ * both to run its source at the commit it checks out.
+ *
  * Like a member's pipelines (./member-pipeline.ts), the file starts with the
  * generated-file header naming the command, and the member whose directory
  * the command runs in records it in its generated-file record, so `WSP081`
@@ -125,6 +131,16 @@ export interface WorkflowInput {
   workflows: readonly string[];
   /** The chant the tick runs, `@intentius/chant` at this version. */
   chantVersion: string;
+  /**
+   * The command that runs chant, with `ci tick` after it, in place of
+   * `npx --yes @intentius/chant@<chantVersion>`. chant's own repository runs
+   * its source this way, so the tick tests the commit it checks out.
+   */
+  chant?: string;
+  /** A step before the tick that installs what `chant` needs, run where the tick runs. */
+  install?: string;
+  /** With `install`, the `package-lock.json` setup-node caches npm's downloads by, from the repository root. */
+  npmLock?: string;
   /** The workspace root relative to the repository root, `.` for the root itself. */
   workspaceRoot: string;
 }
@@ -132,6 +148,9 @@ export interface WorkflowInput {
 /** The workflow's YAML, without the generated-file header. Deterministic: the same input writes the same bytes. */
 export function renderCiGreenWorkflow(input: WorkflowInput): string {
   const { green } = input;
+  const where = input.workspaceRoot === "." ? [] : [`        working-directory: ${q(input.workspaceRoot)}`];
+  const cache = input.install && input.npmLock ? ["          cache: npm", ...(input.npmLock === "package-lock.json" ? [] : [`          cache-dependency-path: ${q(input.npmLock)}`])] : [];
+  const tick = input.chant ? q(`${input.chant} ci tick`) : `npx --yes @intentius/chant@${input.chantVersion} ci tick`;
   const lines = [
     `name: ${CI_GREEN_WORKFLOW_NAME}`,
     "",
@@ -170,13 +189,15 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "      - uses: actions/setup-node@v6",
     "        with:",
     "          node-version: \"24\"",
+    ...cache,
+    ...(input.install ? ["      - name: Install what the tick runs", ...where, `        run: ${q(input.install)}`] : []),
     "      - name: Tag the commits that turned green, revoke the ones that turned red",
-    ...(input.workspaceRoot === "." ? [] : [`        working-directory: ${q(input.workspaceRoot)}`]),
+    ...where,
     "        env:",
     "          GITHUB_TOKEN: ${{ github.token }}",
     "          GIT_COMMITTER_NAME: github-actions[bot]",
     "          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com",
-    `        run: npx --yes @intentius/chant@${input.chantVersion} ci tick`,
+    `        run: ${tick}`,
   ];
   return lines.join("\n") + "\n";
 }

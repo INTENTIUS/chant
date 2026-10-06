@@ -89,6 +89,30 @@ describe("the workflows that hold required check runs (#3573)", () => {
     const nested = parseYAMLDocument(renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.108.0", workspaceRoot: "infra" })) as Yaml;
     expect(nested.jobs.tick.steps[2]["working-directory"]).toBe("infra");
   });
+
+  test("--chant replaces the npx pin, and --install adds a cached install step before the tick", () => {
+    const own = parseYAMLDocument(
+      renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.108.0", workspaceRoot: ".", chant: "npx tsx packages/core/src/cli/main.ts", install: "npm install --ignore-scripts", npmLock: "package-lock.json" }),
+    ) as Yaml;
+    const steps = own.jobs.tick.steps;
+    expect(steps[1].with).toEqual({ "node-version": "24", cache: "npm" });
+    expect(steps[2]).toEqual({ name: "Install what the tick runs", run: "npm install --ignore-scripts" });
+    expect(steps[3].run).toBe("npx tsx packages/core/src/cli/main.ts ci tick");
+
+    // In a nested workspace root both steps run there, and the cache keys on that root's lockfile.
+    const nested = parseYAMLDocument(
+      renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.108.0", workspaceRoot: "infra", chant: "npx chant", install: "npm ci", npmLock: "infra/package-lock.json" }),
+    ) as Yaml;
+    expect(nested.jobs.tick.steps[1].with).toEqual({ "node-version": "24", cache: "npm", "cache-dependency-path": "infra/package-lock.json" });
+    expect(nested.jobs.tick.steps[2]["working-directory"]).toBe("infra");
+    expect(nested.jobs.tick.steps[3]["working-directory"]).toBe("infra");
+
+    // A command YAML would misread as a mapping or a comment stays one string.
+    const odd = parseYAMLDocument(renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.108.0", workspaceRoot: ".", chant: "env A=b: c # x chant" })) as Yaml;
+    expect(odd.jobs.tick.steps).toHaveLength(3);
+    expect(odd.jobs.tick.steps[1].with).toEqual({ "node-version": "24" });
+    expect(odd.jobs.tick.steps[2].run).toBe("env A=b: c # x chant ci tick");
+  });
 });
 
 describe("chant ci workflow (#3573)", () => {
@@ -113,6 +137,39 @@ describe("chant ci workflow (#3573)", () => {
       const record = JSON.parse(readFileSync(join(root, ".chant", "generated.json"), "utf-8"));
       expect(record.files).toEqual([{ path: CI_GREEN_WORKFLOW_FILE, command: "chant ci workflow --workflow release" }]);
       // The scan skips the file it writes, so regenerating is byte-identical.
+      expect(await runCiWorkflow(ctx)).toBe(0);
+      expect(readFileSync(file, "utf-8")).toBe(first);
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("--chant and --install go into the file and its header, and regenerate byte-identically", async () => {
+    const root = scratchDir("chant-ci-workflow-");
+    git(root, "init", "-q");
+    writeFiles(root, {
+      "chant.workspace.json": declaration([], { ci: { green: GREEN } }),
+      "package-lock.json": "{}",
+      ".github/workflows/ci.yml": CI,
+      ".github/workflows/macos.yml": MACOS,
+    });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const ctx = { args: { ciChant: "npx tsx packages/core/src/cli/main.ts", ciInstall: "npm install --ignore-scripts" } } as unknown as CommandContext;
+      expect(await runCiWorkflow(ctx)).toBe(0);
+      const file = join(root, CI_GREEN_WORKFLOW_FILE);
+      const first = readFileSync(file, "utf-8");
+      expect(first.split("\n")[0]).toBe(
+        `# ${GENERATED_MARKER}. Regenerate with: chant ci workflow --chant 'npx tsx packages/core/src/cli/main.ts' --install 'npm install --ignore-scripts' (in the workspace root)`,
+      );
+      const steps = (parseYAMLDocument(first) as Yaml).jobs.tick.steps;
+      expect(steps[1].with.cache).toBe("npm");
+      expect(steps[2].run).toBe("npm install --ignore-scripts");
+      expect(steps[3].run).toBe("npx tsx packages/core/src/cli/main.ts ci tick");
       expect(await runCiWorkflow(ctx)).toBe(0);
       expect(readFileSync(file, "utf-8")).toBe(first);
     } finally {

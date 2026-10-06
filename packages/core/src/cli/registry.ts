@@ -396,6 +396,10 @@ export interface ParsedArgs {
   branch?: string;
   /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. */
   ciWorkflows?: string[];
+  /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. */
+  ciChant?: string;
+  /** `chant ci workflow --install <command>` (#3573): a step before the tick that installs what `--chant` runs. */
+  ciInstall?: string;
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new
