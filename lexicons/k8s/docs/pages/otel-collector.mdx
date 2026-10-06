@@ -215,6 +215,26 @@ With `loadBalance: true` it is `loadbalancing/gateway`, routing by trace id to t
 
 The `loadbalancing` exporter runs in the agent, so the `k8s` resolver needs the agent to read the gateway's Endpoints. When an agent's config has a `loadbalancing` exporter with the `k8s` resolver, whether from `gatewayExporter` or written by hand, `OtelCollector` adds a Role and RoleBinding named `<agent>-endpoints` in the resolved Service's namespace. They grant the agent's ServiceAccount `get`, `list` and `watch` on Endpoints, which the resolver watches at the pinned collector version, and on EndpointSlices, which later versions watch. A config whose `k8s` resolvers point at several namespaces gets one Role and RoleBinding in each: the first namespace's are `endpointsRole` and `endpointsRoleBinding`, and each further one's are `endpointsRoleIn<Namespace>` and `endpointsRoleBindingIn<Namespace>` (`team-a` gives `endpointsRoleInTeamA`). `defaults.endpointsRole` and `defaults.endpointsRoleBinding` apply to each.
 
+## OtelOperatorCollector: the OpenTelemetry Operator's custom resource
+
+`OtelOperatorCollector` builds the same collector for a cluster that runs the [OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator). Instead of a DaemonSet, ConfigMap and Service it returns one `OpenTelemetryCollector` (`opentelemetry.io/v1beta1`, generated from the operator's v0.160.0 CRDs as `K8s::OpenTelemetry::OpenTelemetryCollector`), plus a ServiceAccount, a ClusterRole and a ClusterRoleBinding with the rules `OtelCollector` works out from the config. The operator makes the workload `<name>-collector` and its Services.
+
+```ts
+import { OtelOperatorCollector } from "@intentius/chant-lexicon-k8s";
+
+export const collector = OtelOperatorCollector({
+  mode: "deployment",
+  replicas: 2,
+  config: [/* otel lexicon entities */],
+});
+```
+
+`spec.config` is the built config as an object, which v1beta1 declares as a map. `mode` is `daemonset` (the default), `deployment` or `statefulset`; `replicas` applies to the last two. `spec.ports`, `spec.env`, `spec.volumes`, `spec.volumeMounts` and the log group in `spec.podSecurityContext` come from the config the way `OtelCollector` reads them back for its DaemonSet.
+
+An object has no comment lines, so the `# chant:` header that records custom-component pins and semconv use goes in the `otel.chant.dev/header` annotation, one line per entry. `chant import` puts those lines back on top of the config when it reads the resource, and imports `spec.config` as otel declarations referenced through `collectorConfig([...])`, which gives an object where `collectorYaml` would give text.
+
+WK8604 runs the otel config checks over `spec.config`, naming the resource in each finding. WK8601 to WK8603 and WK8605 read `spec.mode`, `spec.replicas` (raised to `spec.autoscaler.maxReplicas`), `spec.env` and `spec.volumeMounts`; see the [placement checks](../otel-placement-checks/).
+
 ## Deployment shape in the built manifests
 
 The collector config is a string inside a ConfigMap, and whether it runs once per node or as several replicas is on another document. Both composites write annotations that join them, so a post-synth check can tell, from the built YAML alone, where each config runs and how agents reach the gateway.

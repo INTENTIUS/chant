@@ -153,3 +153,12 @@ export function collectorYaml(entities: Iterable<Declarable> | Map<string, Decla
   const built = buildCollectorConfig(entities);
   return emitCollectorYaml(built.config, { header: built.header });
 }
+
+/**
+ * The collector config object for a set of declared entities, for a host that
+ * holds the config as an object rather than as text: the OpenTelemetry
+ * Operator's `OpenTelemetryCollector` `spec.config` (v1beta1).
+ */
+export function collectorConfig(entities: Iterable<Declarable> | Map<string, Declarable>): CollectorConfig {
+  return buildCollectorConfig(entities).config;
+}

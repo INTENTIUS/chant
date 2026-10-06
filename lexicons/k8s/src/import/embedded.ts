@@ -9,6 +9,9 @@
  *   JSON);
  * - a `monitoring.coreos.com` PrometheusRule's `spec.groups`, as the rule file
  *   `{ groups }` those groups would make;
+ * - an OpenTelemetry Operator `OpenTelemetryCollector`'s `spec.config` (v1beta1,
+ *   a structured object), offered as `{ config, header }` with the `# chant:`
+ *   header lines kept in the `otel.chant.dev/header` annotation (#3367);
  * - a Grafana Operator `GrafanaDashboard`'s `spec.json`, as text (#3015);
  * - the alerting content of the Grafana Operator's `GrafanaAlertRuleGroup`
  *   (`spec.rules`), `GrafanaContactPoint` (`spec.receivers`),
@@ -30,6 +33,9 @@ import { embeddedDocument } from "@intentius/chant/import/embedded";
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
+
+/** The annotation `OtelCollectorCR` keeps the collector config's `# chant:` header lines in (see OTEL_COLLECTOR_ANNOTATIONS). */
+const OTEL_HEADER_ANNOTATION = "otel.chant.dev/header";
 
 /** The `grafana_dashboard` label the Grafana dashboard sidecar looks for (kube-prometheus-stack, the Grafana Helm chart). */
 export const GRAFANA_DASHBOARD_LABEL = "grafana_dashboard";
@@ -162,6 +168,26 @@ export function delegateEmbedded(
       expectedOwner: { lexicon: "grafana", what: alerting.what },
     });
     if (ref) properties.spec = { ...spec, [alerting.field]: ref };
+    return;
+  }
+
+  // The CR holds the config as an object, so the owner is asked for an object (`select: "config"`,
+  // answered with `collectorConfig([...])`) rather than for text, which would put a string where the CRD wants a map.
+  if (type === "K8s::OpenTelemetry::OpenTelemetryCollector" && isObject(properties.spec) && isObject(properties.spec.config)) {
+    const spec = properties.spec;
+    const raw = isObject(metadata) && isObject(metadata.annotations) ? metadata.annotations[OTEL_HEADER_ANNOTATION] : undefined;
+    const header = typeof raw === "string" ? raw.split("\n").filter((l) => l.length > 0) : [];
+    const ref = embedded.resolve({
+      host: "k8s",
+      hostType: type,
+      location: `OpenTelemetryCollector ${name} spec.config`,
+      directory: name,
+      document: { config: spec.config, header },
+      select: "config",
+      labels,
+      expectedOwner: { lexicon: "otel", what: "an OpenTelemetry Collector config" },
+    });
+    if (ref) properties.spec = { ...spec, config: ref };
     return;
   }
 

@@ -65,3 +65,38 @@ export function configMapCollectorConfigs(doc: unknown): ConfigMapCollectorConfi
 export function describeConfigMapConfig(c: Pick<ConfigMapCollectorConfig, "namespace" | "name" | "key">): string {
   return `ConfigMap ${c.namespace}/${c.name}, key ${c.key}`;
 }
+
+/** One collector config found in an OpenTelemetry Operator `OpenTelemetryCollector`. */
+export interface OperatorCollectorConfig {
+  /** `metadata.namespace`, or `default` when unset. */
+  namespace: string;
+  name: string;
+  config: CollectorConfig;
+}
+
+/**
+ * The collector config in one parsed manifest when it is an OpenTelemetry
+ * Operator `OpenTelemetryCollector`: `spec.config`, an object in v1beta1 and
+ * YAML text in v1alpha1. Undefined for any other document, and for a config
+ * without a `service.pipelines` map.
+ */
+export function operatorCollectorConfig(doc: unknown): OperatorCollectorConfig | undefined {
+  if (!isRecord(doc) || doc.kind !== "OpenTelemetryCollector") return undefined;
+  if (typeof doc.apiVersion !== "string" || !doc.apiVersion.startsWith("opentelemetry.io/")) return undefined;
+  const metadata = isRecord(doc.metadata) ? doc.metadata : {};
+  if (typeof metadata.name !== "string") return undefined;
+  const raw = isRecord(doc.spec) ? doc.spec.config : undefined;
+  const config = isRecord(raw)
+    ? isRecord(raw.service) && isRecord(raw.service.pipelines)
+      ? (raw as unknown as CollectorConfig)
+      : undefined
+    : parseCollectorConfig(raw);
+  if (!config) return undefined;
+  const namespace = typeof metadata.namespace === "string" && metadata.namespace.length > 0 ? metadata.namespace : "default";
+  return { namespace, name: metadata.name, config };
+}
+
+/** How an operator CR's config is named in a message: `OpenTelemetryCollector observability/gateway, spec.config`. */
+export function describeOperatorCollectorConfig(c: Pick<OperatorCollectorConfig, "namespace" | "name">): string {
+  return `OpenTelemetryCollector ${c.namespace}/${c.name}, spec.config`;
+}

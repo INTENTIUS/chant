@@ -32,6 +32,10 @@ describe("namespaceSegmentForGroup", () => {
     expect(namespaceSegmentForGroup("serving.kserve.io")).toBe("KServe");
   });
 
+  test("opentelemetry.io takes the OpenTelemetry override, not the misspelt first segment", () => {
+    expect(namespaceSegmentForGroup("opentelemetry.io")).toBe("OpenTelemetry");
+  });
+
   test("cluster.x-k8s.io takes the CAPI override, avoiding the Cluster::Cluster stutter", () => {
     expect(namespaceSegmentForGroup("cluster.x-k8s.io")).toBe("CAPI");
   });
