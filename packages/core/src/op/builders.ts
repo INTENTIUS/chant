@@ -4,6 +4,7 @@ import { WORK_LEASE_STEP_ID, type OpConfig, type PhaseDefinition, type StepDefin
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
 import { gateApprovalProblems } from "./gate-approval";
+import { gatePointProblems } from "./gate-point";
 import { makeOutProxy, stepOutput, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
 import type { ChantBuildArgs } from "./activities/build";
 import type { ShellCmdArgs } from "./activities/shell";
@@ -128,13 +129,23 @@ export function activity(
  *
  * Pass `approval` to require a quorum of human approvers, or to evaluate a
  * policy for each approval (#2508). See {@link GateStep.approval}.
+ *
+ * Pass `point` to have the gate ask a declared decision point instead
+ * (#3170): `gate("apply", { plan: plan.out.digest, point: "prod-apply" })`.
+ * The point's deciders and quorum decide, `chant workspace points answer`
+ * answers an open question, and the run passes on the answer. See
+ * {@link GateStep.point}.
  */
 export function gate(
   name: string,
-  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"]; approval?: GateStep["approval"] },
+  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"]; approval?: GateStep["approval"]; point?: GateStep["point"] },
 ): GateStep {
   if (opts?.approval !== undefined) {
     const problems = gateApprovalProblems(opts.approval);
+    if (problems.length > 0) throw new Error(`gate(${JSON.stringify(name)}): ${problems[0]}`);
+  }
+  if (opts?.point !== undefined) {
+    const problems = gatePointProblems(opts.point, opts.approval !== undefined);
     if (problems.length > 0) throw new Error(`gate(${JSON.stringify(name)}): ${problems[0]}`);
   }
   return {
@@ -144,6 +155,7 @@ export function gate(
     ...(opts?.description ? { description: opts.description } : {}),
     ...(opts?.plan !== undefined ? { plan: opts.plan } : {}),
     ...(opts?.approval !== undefined ? { approval: opts.approval } : {}),
+    ...(opts?.point !== undefined ? { point: opts.point } : {}),
   };
 }
 

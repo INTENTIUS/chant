@@ -9,6 +9,7 @@ import type { EffectReceiptRef } from "./receipt-store";
 import type { ActivityProfileName } from "./activity-profiles";
 import type { StepOutputRef } from "./step-output-ref";
 import type { GateApproval } from "./gate-approval";
+import type { GatePoint } from "./gate-point";
 
 export interface OpConfig {
   /** Kebab-case identifier. Names the Op's output directory (`dist/ops/<name>/`), and is the name `chant run <name>` and another Op's `depends` refer to. */
@@ -276,6 +277,16 @@ export interface GateStepBase {
    * `./gate-approval.ts`.
    */
   approval?: GateApproval;
+  /**
+   * A declared decision point this gate asks (#3170), by name or as a
+   * {@link GatePoint}. Reaching the gate asks the point: its deciders and
+   * quorum decide, the answer is an answer record, and `chant workspace
+   * points answer` answers an open question. The run passes the gate on an
+   * answer in `pass`, and the resolution it writes cites the record. A gate
+   * with a point takes no `approval`: the point's quorum is the gate's. See
+   * `./gate-point.ts`.
+   */
+  point?: string | GatePoint;
 }
 
 /**

@@ -41,6 +41,15 @@
  *   delete: "gated",
  *   gate: { gate: "approve-apply", description: "Approve prod apply with deletes" },
  * });
+ *
+ * // the gate asks the prod-apply decision point (#3170): answered with
+ * // `chant workspace points answer <id>`, then re-run
+ * export const { op } = ApplyOp({
+ *   name: "prod-apply",
+ *   env: "prod",
+ *   target: "kubectl",
+ *   gate: { gate: "approve-apply", point: "prod-apply" },
+ * });
  * ```
  *
  * @see #112 — stateless-authoritative state model + live import
@@ -50,6 +59,7 @@ import { Op, phase, activity, gate } from "../builders";
 import { stepOutput } from "../step-output-ref";
 import { gateName } from "../gate-name";
 import type { OpResource } from "../resource";
+import type { GateStep } from "../types";
 import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../activities/apply";
 
 export interface ApplyOpConfig {
@@ -97,6 +107,13 @@ export interface ApplyOpConfig {
     signalName?: string;
     timeout?: string;
     description?: string;
+    /**
+     * A declared decision point the gate asks (#3170), in place of `chant
+     * approve`: its deciders and quorum decide, and `chant workspace points
+     * answer` answers an open question. The point declares the input
+     * `gate.planDigest`, since the gate binds the plan. See `GateStep.point`.
+     */
+    point?: GateStep["point"];
   };
   /**
    * Saga-style rollback on partial apply failure, run as an `onFailure` phase.
@@ -164,6 +181,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
           // the gate refuses, naming the approved digest and the planned one,
           // instead of applying what nobody read.
           plan: stepOutput("plan", "planDigest"),
+          ...(config.gate?.point !== undefined ? { point: config.gate.point } : {}),
           description:
             config.gate?.description ??
             `Approve apply to ${config.env} (delete mode: ${deleteMode}` +

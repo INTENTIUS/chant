@@ -106,6 +106,23 @@ export function isApprovalUrl(raw: string): boolean {
   }
 }
 
+/**
+ * The answer record a gate that asks a decision point cites (#3170): the
+ * point, the record's id (what `chant workspace points answer` takes) and its
+ * path from the repository root. On a pending fact it is the open question
+ * the run waits on; on a resolution, the answer that passed the gate, with
+ * the answer, the decider that gave it and the people who did.
+ */
+export interface GateAnswerRef {
+  point: string;
+  id: string;
+  path: string;
+  answer?: string | boolean;
+  /** `table`, `model` or `quorum`. */
+  decider?: string;
+  answeredBy?: string[];
+}
+
 /** One immutable gate-resolution record. */
 export interface GateResolutionRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
@@ -204,6 +221,13 @@ export interface GateResolutionRecord {
    * verifies. Absent on an unsigned approval.
    */
   seal?: GateApprovalSeal;
+  /**
+   * The answer record that passed the gate, on a gate that asks a decision
+   * point (#3170). The run writes this resolution itself when the point's
+   * question is answered with an answer the gate passes on; the record's
+   * `constrains` names the gate back (`gate:<op>/<gate>`).
+   */
+  answer?: GateAnswerRef;
 }
 
 /** A gate approval's seal (#3163): who signed, the key's fingerprint (reported, never trusted), and the armored signature. */
@@ -283,6 +307,12 @@ export interface PendingGateRecord {
    * the run produced, and `chant operator status` to show quorum progress.
    */
   approval?: ResolvedGateApproval;
+  /**
+   * The open question this gate waits on, on a gate that asks a decision
+   * point (#3170). It is answered with `chant workspace points answer <id>`,
+   * not `chant approve`.
+   */
+  answer?: GateAnswerRef;
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
