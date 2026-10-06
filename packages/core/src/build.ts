@@ -897,7 +897,7 @@ async function buildFromDiscoveryResult(
       // designed shape until a lexicon materializes the receipt (#1835), not
       // a missing-serializer problem.
     } else {
-      warnings.push(`No serializer found for lexicon "${lexiconName}"`);
+      warnings.push(`No serializer found for lexicon "${lexiconName}". List the lexicon in chant.config.ts.`);
     }
   }
 

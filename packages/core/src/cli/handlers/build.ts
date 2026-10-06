@@ -214,6 +214,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
 
     const seenWarnings = new Set<string>();
     let failed = false;
+    // One build for every file: each group takes its own lexicons' outputs.
+    const sharedBuild = { serializers };
     for (const group of groups) {
       const { format, warning } = resolveBuildFormat(args.format, group.output);
       if (warning) console.error(formatInfo(warning));
@@ -222,6 +224,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
         output: group.output,
         format,
         serializers: group.serializers,
+        sharedBuild,
         plugins,
         verbose: args.verbose,
         env: args.env,

@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#3555](https://github.com/INTENTIUS/chant/issues/3555) `chant build --lexicon-output` builds the project once and writes each file from that build, instead of building once per file. The "No serializer found for lexicon" warning now ends with "List the lexicon in chant.config.ts." The otel lexicon types `sending_queue.block_on_overflow` and reports the old `sending_queue.blocking` as OTEL107, since the collector reads only `block_on_overflow`.
+
 Two level-0 changes that shipped in 0.81.0 without a warning release are now on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) list, and so is a third, below. The maintainer accepted all three on 2026-09-30.
 
 - [#3555](https://github.com/INTENTIUS/chant/issues/3555) generated Forgejo workflows carry no `permissions:` block, so the run page no longer shows a "Workflow warnings" box for it. The Forgejo dialect drops every scope Forgejo ignores, at the workflow and the job, and keeps `id-token` on a job that has it, which is what an OIDC role assumption needs ([#3500](https://github.com/INTENTIUS/chant/issues/3500)). `.forgejo/workflows/chant-pr.yml` from the pull-request pipeline loses its two job `permissions:` blocks, and `chant migrate --to forgejo` drops them from a GitHub workflow the same way. No build warning is printed for the dropped key.

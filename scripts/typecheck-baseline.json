@@ -15,7 +15,6 @@
     "lexicons/docker/src/serializer.test.ts",
     "lexicons/fly/src/lint/post-synth/fly010-machine-requires-image.test.ts",
     "lexicons/gcp/src/lint/rules/rules.test.ts",
-    "lexicons/github/src/composites/composites.test.ts",
     "lexicons/gitlab/scripts/full-roundtrip-helper.ts",
     "lexicons/gitlab/scripts/roundtrip-helper.ts",
     "lexicons/helm/src/intrinsics.test.ts",

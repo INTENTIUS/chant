@@ -51,6 +51,14 @@ describe("runBuild --lexicon-output", () => {
     ]);
   });
 
+  test("every file shares one build over all the serializers", async () => {
+    await runBuild(ctx({ lexiconOutput: ["otel=a.yml", "prometheus=b.yml"] }));
+    const shared = buildCommandMock.mock.calls.map(([o]) => o.sharedBuild);
+    expect(shared).toHaveLength(2);
+    expect(shared[0]).toBe(shared[1]);
+    expect(shared[0].serializers.map((s: Serializer) => s.name)).toEqual(["otel", "prometheus", "grafana"]);
+  });
+
   test("lexicons not named go to --output when given, and are skipped otherwise", async () => {
     await runBuild(ctx({ lexiconOutput: ["otel=a.yml"], output: "rest.json" }));
     expect(buildCommandMock.mock.calls.map(([o]) => [o.serializers.map((s: Serializer) => s.name), o.output])).toEqual([

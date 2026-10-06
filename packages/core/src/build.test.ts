@@ -253,7 +253,7 @@ export const testEntity = {
     const result = await build(testDir, []);
 
     expect(result.warnings.length).toBeGreaterThan(0);
-    expect(result.warnings[0]).toContain('No serializer found for lexicon "unknown"');
+    expect(result.warnings[0]).toContain('No serializer found for lexicon "unknown". List the lexicon in chant.config.ts.');
   });
 });
 
