@@ -31,16 +31,16 @@ function entityMap(...pairs: Array<[string, Declarable]>): Map<string, Declarabl
 }
 
 describe("applyForgejoDialect — dropped keys", () => {
-  test("keeps workflow-level permissions without warning", () => {
+  test("drops workflow-level permissions without warning", () => {
     const wf = new MockWorkflow({ name: "CI", permissions: { contents: "read" } });
     const { entities, warnings } = applyForgejoDialect(entityMap(["workflow", wf]));
     const props = (entities.get("workflow") as MockWorkflow).props;
-    expect(props.permissions).toEqual({ contents: "read" });
+    expect("permissions" in props).toBe(false);
     expect(props.name).toBe("CI");
     expect(warnings.filter((w) => w.includes("permissions"))).toHaveLength(0);
   });
 
-  test("keeps job permissions, so a job can request an OIDC token", () => {
+  test("keeps only id-token from job permissions, so a job can request an OIDC token", () => {
     const job = new MockJob({
       "runs-on": "ubuntu-latest",
       permissions: { "id-token": "write", contents: "read" },
@@ -48,9 +48,32 @@ describe("applyForgejoDialect — dropped keys", () => {
     });
     const { entities, warnings } = applyForgejoDialect(entityMap(["job", job]));
     const props = (entities.get("job") as MockJob).props;
-    expect(props.permissions).toEqual({ "id-token": "write", contents: "read" });
+    expect(props.permissions).toEqual({ "id-token": "write" });
     expect(props["runs-on"]).toBe("docker");
     expect(warnings.filter((w) => w.includes("permissions"))).toHaveLength(0);
+  });
+
+  test("drops job permissions that carry no id-token, and the read-all shorthand", () => {
+    const job = new MockJob({
+      "runs-on": "ubuntu-latest",
+      permissions: { contents: "read", "pull-requests": "write" },
+      steps: [{ name: "a", run: "echo a" }],
+    });
+    const other = new MockJob({ "runs-on": "ubuntu-latest", permissions: "read-all" });
+    const { entities, warnings } = applyForgejoDialect(entityMap(["job", job], ["other", other]));
+    expect("permissions" in (entities.get("job") as MockJob).props).toBe(false);
+    expect("permissions" in (entities.get("other") as MockJob).props).toBe(false);
+    expect(warnings).toHaveLength(0);
+  });
+
+  test("leaves a step input named permissions alone", () => {
+    const job = new MockJob({
+      "runs-on": "ubuntu-latest",
+      steps: [{ uses: "some-org/custom-action@v1", with: { permissions: "everyone" } }],
+    });
+    const { entities } = applyForgejoDialect(entityMap(["job", job]));
+    const steps = (entities.get("job") as MockJob).props.steps as Array<{ with: Record<string, unknown> }>;
+    expect(steps[0].with.permissions).toBe("everyone");
   });
 
   test("drops job and step continue-on-error, one warning each", () => {

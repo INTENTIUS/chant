@@ -38,11 +38,11 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
-  test("its commands talk to Forgejo, on Forgejo's runner, with the job permissions kept", () => {
+  test("its commands talk to Forgejo, on Forgejo's runner, with the job permissions dropped", () => {
     expect(result.yaml).toContain("--forge forgejo");
     expect(result.yaml).not.toContain("--forge github");
     expect(result.yaml).toContain("runs-on: docker");
-    expect(result.yaml).toMatch(/^\s+permissions:/m);
+    expect(result.yaml).not.toMatch(/^\s*permissions:/m);
   });
 
   test("the apply keeps its resume record in the runner's cache, through the Forgejo mirror of actions/cache (#3543)", () => {

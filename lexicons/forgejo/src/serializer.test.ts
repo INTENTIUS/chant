@@ -47,9 +47,9 @@ describe("forgejoSerializer — github-style source roundtrip", () => {
     expect(primary).toContain("npm run build");
   });
 
-  test("keeps permissions, drops continue-on-error with a warning on each", () => {
+  test("drops permissions silently, drops continue-on-error with a warning on each", () => {
     const result = asResult(forgejoSerializer.serialize(buildSource()));
-    expect(result.primary).toContain("permissions");
+    expect(result.primary).not.toContain("permissions");
     expect(result.primary).not.toContain("continue-on-error");
     // job continue-on-error + step continue-on-error
     expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(0);
@@ -128,7 +128,7 @@ describe("forgejoSerializer — multi-workflow output", () => {
 // "@intentius/chant-lexicon-github"`); nothing forgejo-specific is written for
 // it. This is the functional check that inheritance actually holds, not just
 // that the type is importable: the dialect still drops the job's
-// `permissions` and remaps its runner label, and the sticky-comment step — a
+// `permissions` (but for `id-token`) and remaps its runner label, and the sticky-comment step — a
 // plain `gh api` script with no `uses:` at all — passes through the dialect
 // transform untouched, because the dialect only ever rewrites job-level
 // `permissions:`/`environment:`/action refs and never looks at step content.
@@ -162,8 +162,8 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     const result = asResult(out);
     expect(result.primary).toContain("runs-on: docker");
     expect(result.primary).not.toContain("ubuntu-latest");
-    // The job carries `permissions`, which the dialect keeps.
-    expect(result.primary).toContain("permissions:");
+    // The job carries `permissions` with no `id-token`, which the dialect drops.
+    expect(result.primary).not.toContain("permissions:");
     expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(0);
     // The sticky-comment mechanism is a raw script, nothing to remap or drop.
     expect(result.primary).toContain("Post or update PR comment");
