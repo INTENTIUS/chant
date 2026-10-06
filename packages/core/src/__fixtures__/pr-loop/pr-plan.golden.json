@@ -8,7 +8,7 @@
   "head": "2222222222222222222222222222222222222222",
   "op": "pr-12",
   "gate": "pr-apply",
-  "digest": "jcs1-sha256:46bff52773a158dffa5c895b98f8760d601a2f9dc6af7dc235dbf65496f7bf65",
+  "digest": "jcs1-sha256:7623a8677afb0bf98d77c602521a3abfa96f76cff25675d350a28c2e26a7bad0",
   "status": "planned",
   "approval": {
     "status": "pending"
@@ -60,7 +60,7 @@
   "changeSet": {
     "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
     "contract": 1,
-    "digest": "jcs1-sha256:46bff52773a158dffa5c895b98f8760d601a2f9dc6af7dc235dbf65496f7bf65",
+    "digest": "jcs1-sha256:7623a8677afb0bf98d77c602521a3abfa96f76cff25675d350a28c2e26a7bad0",
     "members": [
       {
         "member": "a",

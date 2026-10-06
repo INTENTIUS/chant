@@ -1,7 +1,7 @@
 {
   "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
   "contract": 1,
-  "digest": "jcs1-sha256:f0a27adaabb4196d730ef797304be0637d9812210796800bc176d2c960f1ca81",
+  "digest": "jcs1-sha256:266dbcb79b7922940f2b18bae4bebda8418422d4a5539eeeed119759694bd3a3",
   "members": [
     {
       "member": "warden",

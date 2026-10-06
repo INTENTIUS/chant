@@ -16,8 +16,9 @@
  *
  * One gate per pull request: op `pr-<number>`, gate `pr-apply` unless the
  * pipeline names another. It binds the digest of the change-set document over
- * every planned member (`changeSetDigest`, #3181), the same digest a gated
- * wave binds over its members (#3049). A reviewer approves it with `chant
+ * every planned member (`changeSetDocumentDigest`, #3181): the set digest a
+ * gated wave binds over its members (#3049), and the document's entries, holes
+ * and side effects with it (#3555). A reviewer approves it with `chant
  * approve pr-<number> pr-apply --plan <digest>`. The op carries the number so
  * that one pull request's approval never answers another's, and the gate name
  * stays fixed so a workspace can require signed approvals for it under

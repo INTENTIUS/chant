@@ -113,9 +113,9 @@ describe("the GitLab merge-request pipeline", () => {
     expect(apply.script.find((l) => l.includes("pr-apply"))).toContain("--member network");
     // A change outside the member can reach it, so the jobs keep only their pipeline-source rules.
     expect(plan.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
-    expect(apply.resource_group).toBe("chant-apply-network-prod");
+    expect(apply.resource_group).toBe("chant-apply.network.prod");
     expect(plan.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
     expect(apply.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
-    expect(apply.cache).toEqual({ key: "chant-apply-network-prod-$CI_COMMIT_SHA", paths: ["infra/network/.chant/pr-resume/pr-apply.json"], when: "always" });
+    expect(apply.cache).toEqual({ key: "chant-apply.network.prod-$CI_COMMIT_SHA", paths: ["infra/network/.chant/pr-resume/pr-apply.json"], when: "always" });
   });
 });

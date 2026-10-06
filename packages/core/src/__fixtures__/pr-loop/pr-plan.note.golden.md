@@ -8,14 +8,14 @@ Planned 2 members. Head `222222222222`, measured from `111111111111`.
 | `a` | a | planned | 0 | 1 | 0 | 0 |
 | `app` | app | planned | 0 | 0 | 0 | 0 |
 
-Plan digest: `jcs1-sha256:46bff52773a158dffa5c895b98f8760d601a2f9dc6af7dc235dbf65496f7bf65`
+Plan digest: `jcs1-sha256:7623a8677afb0bf98d77c602521a3abfa96f76cff25675d350a28c2e26a7bad0`
 
 Not approved yet.
 
 A reviewer who approved this pull request approves the plan with:
 
 ```
-chant approve pr-12 pr-apply --plan jcs1-sha256:46bff52773a158dffa5c895b98f8760d601a2f9dc6af7dc235dbf65496f7bf65 --approver github:<your-login> --sign
+chant approve pr-12 pr-apply --plan jcs1-sha256:7623a8677afb0bf98d77c602521a3abfa96f76cff25675d350a28c2e26a7bad0 --approver github:<your-login> --sign
 ```
 
 It applies on merge if the plan is still this one. If it moved, the apply refuses and names both digests.
