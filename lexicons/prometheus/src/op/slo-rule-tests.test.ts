@@ -3,7 +3,7 @@
  * `promtool test rules` over them when promtool is on PATH (or named by
  * $PROMTOOL).
  */
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { load } from "js-yaml";
 import { Slo, sloMetrics } from "../composites/slo";
 import { ruleFileYaml } from "../build";
@@ -67,15 +67,18 @@ describe("sloRuleTests", () => {
     });
   });
 
-  test.skipIf(!hasTool(PROMTOOL))(
-    "promtool test rules agrees with every generated file",
-    () => {
+  describe.skipIf(!hasTool(PROMTOOL))("with promtool", () => {
+    // promtool takes most of 20s over the ticket pairs' days of samples on a CI
+    // runner, past the unit budget, which does not count a beforeAll.
+    let results: Array<{ ok: boolean; output: string }> = [];
+    beforeAll(() => {
       const rules = ruleFileYaml([slo.rules]);
-      for (const yaml of sloRuleTests([input])) {
-        const r = promtoolTestRules(rules, yaml, PROMTOOL);
-        expect(r.ok, r.output).toBe(true);
-      }
-    },
-    300_000,
-  );
+      results = sloRuleTests([input]).map((yaml) => promtoolTestRules(rules, yaml, PROMTOOL));
+    }, 300_000);
+
+    test("promtool test rules agrees with every generated file", () => {
+      expect(results).toHaveLength(2);
+      for (const r of results) expect(r.ok, r.output).toBe(true);
+    });
+  });
 });

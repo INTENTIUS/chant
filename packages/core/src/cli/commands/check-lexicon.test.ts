@@ -145,11 +145,11 @@ describe("countComposites", () => {
     }
   });
 
-  test("otel reports its one composite", async () => {
+  test("otel reports its five composites", async () => {
     const loaded = await loadLexiconFromDir(join(repoRoot, "lexicons", "otel"));
     expect(countComposites(loaded.plugin, join(repoRoot, "lexicons", "otel"))).toEqual({
-      count: 1,
-      detail: "1 composite(s) in composites()",
+      count: 5,
+      detail: "5 composite(s) in composites()",
     });
   });
 });
