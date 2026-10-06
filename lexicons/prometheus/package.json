@@ -41,6 +41,11 @@
       "types": "./dist/*.d.ts",
       "default": "./src/*.ts"
     },
+    "./api": {
+      "development": "./src/api/index.ts",
+      "types": "./dist/api/index.d.ts",
+      "default": "./src/api/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",

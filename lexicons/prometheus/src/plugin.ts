@@ -18,6 +18,7 @@ import { CATALOG } from "./catalog";
 import { PROMETHEUS_PIN } from "./pin";
 import { PROMQL_GRAMMAR } from "./promql";
 import { compositeCatalog } from "./composites/catalog";
+import { prometheusConfigSchema } from "./config";
 
 const catalogResource: McpResourceContribution = {
   uri: "prometheus:resource-catalog",
@@ -39,6 +40,7 @@ const catalogResource: McpResourceContribution = {
 export const prometheusPlugin: LexiconPlugin = {
   name: "prometheus",
   serializer: prometheusSerializer,
+  configSchema: prometheusConfigSchema,
 
   // ── Required lifecycle methods ────────────────────────────────
 
@@ -151,6 +153,20 @@ export const prometheusPlugin: LexiconPlugin = {
 
   hoverProvider(ctx: HoverContext) {
     return hover(ctx);
+  },
+
+  // ── Live observation and export (#3371) ──────────────────────
+  // Behind dynamic imports, so `chant build` never loads a transport. The
+  // ruler and Alertmanager are named by `prometheus.profiles.<env>` (./config.ts).
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
+
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
   },
 
   async docs(options?: { verbose?: boolean }) {
