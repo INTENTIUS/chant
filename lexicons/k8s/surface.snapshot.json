@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-05T18:22:56.759Z",
+  "generatedAt": "2026-10-06T20:45:48.271Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -207,6 +207,14 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.addPrefix"
     },
+    "AdditionalAlertManagerConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.additionalAlertManagerConfigs"
+    },
+    "AdditionalAlertRelabelConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.additionalAlertRelabelConfigs"
+    },
     "AdditionalOutputFormat": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.additionalOutputFormats"
@@ -235,6 +243,10 @@
         "spec:false"
       ]
     },
+    "AlertRelabelConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.alertRelabelConfigs"
+    },
     "Alert_EventSource": {
       "kind": "property",
       "resourceType": "K8s::Flux::Alert.eventSources"
@@ -242,6 +254,167 @@
     "Alert_ProviderRef": {
       "kind": "property",
       "resourceType": "K8s::Flux::Alert.providerRef"
+    },
+    "Alerting": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.alerting"
+    },
+    "Alertmanager": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::Alertmanager",
+      "props": [
+        "https:true",
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "AlertmanagerConfig": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "AlertmanagerConfigMatcherStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfigMatcherStrategy"
+    },
+    "AlertmanagerConfigNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfigNamespaceSelector"
+    },
+    "AlertmanagerConfigSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfigSelector"
+    },
+    "AlertmanagerConfig_InhibitRule": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.inhibitRules"
+    },
+    "AlertmanagerConfig_MuteTimeInterval": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.muteTimeIntervals"
+    },
+    "AlertmanagerConfig_Receiver": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.receivers"
+    },
+    "AlertmanagerConfig_Route": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.route"
+    },
+    "AlertmanagerConfig_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.status"
+    },
+    "AlertmanagerConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfiguration"
+    },
+    "Alertmanager_AdditionalArg": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.additionalArgs"
+    },
+    "Alertmanager_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.affinity"
+    },
+    "Alertmanager_AlertmanagerConfigMatcherStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfigMatcherStrategy"
+    },
+    "Alertmanager_AlertmanagerConfigNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfigNamespaceSelector"
+    },
+    "Alertmanager_AlertmanagerConfigSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfigSelector"
+    },
+    "Alertmanager_AlertmanagerConfiguration": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.alertmanagerConfiguration"
+    },
+    "Alertmanager_ClusterTLS": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.clusterTLS"
+    },
+    "Alertmanager_Container": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.containers"
+    },
+    "Alertmanager_DnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.dnsConfig"
+    },
+    "Alertmanager_HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.hostAliases"
+    },
+    "Alertmanager_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.imagePullSecrets"
+    },
+    "Alertmanager_InitContainer": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.initContainers"
+    },
+    "Alertmanager_Limits": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.limits"
+    },
+    "Alertmanager_PersistentVolumeClaimRetentionPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.persistentVolumeClaimRetentionPolicy"
+    },
+    "Alertmanager_PodMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.podMetadata"
+    },
+    "Alertmanager_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.resources"
+    },
+    "Alertmanager_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.securityContext"
+    },
+    "Alertmanager_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.status"
+    },
+    "Alertmanager_Storage": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.storage"
+    },
+    "Alertmanager_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.tolerations"
+    },
+    "Alertmanager_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.topologySpreadConstraints"
+    },
+    "Alertmanager_UpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.updateStrategy"
+    },
+    "Alertmanager_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.volumes"
+    },
+    "Alertmanager_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.volumeMounts"
+    },
+    "Alertmanager_Web": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.web"
+    },
+    "AlertmanagersConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.alertmanagersConfig"
     },
     "AllowedNamespaces": {
       "kind": "property",
@@ -376,10 +549,6 @@
       "kind": "property",
       "resourceType": "K8s::Argo::Application.syncPolicy"
     },
-    "AttachMetadata": {
-      "kind": "property",
-      "resourceType": "K8s::Monitoring::ServiceMonitor.attachMetadata"
-    },
     "AuthSecret": {
       "kind": "property",
       "resourceType": "K8s::K3s::HelmChart.authSecret"
@@ -395,6 +564,10 @@
     "AwsLaunchTemplate": {
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.awsLaunchTemplate"
+    },
+    "AzureSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.azureSDConfigs"
     },
     "Backup": {
       "kind": "resource",
@@ -420,10 +593,6 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Backup.status"
     },
-    "BasicAuth": {
-      "kind": "property",
-      "resourceType": "K8s::Traefik::Middleware.basicAuth"
-    },
     "Bastion": {
       "kind": "property",
       "resourceType": "K8s::Controlplane::AWSManagedControlPlane.bastion"
@@ -435,6 +604,10 @@
         "metadata:false",
         "spec:false"
       ]
+    },
+    "BearerTokenSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.bearerTokenSecret"
     },
     "Binding": {
       "kind": "resource",
@@ -821,6 +994,10 @@
       "kind": "property",
       "resourceType": "K8s::KServe::ClusterServingRuntime.workerSpec"
     },
+    "ClusterTLS": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.clusterTLS"
+    },
     "ClusterTrustBundle": {
       "kind": "resource",
       "resourceType": "K8s::Certificates::ClusterTrustBundle",
@@ -1026,6 +1203,10 @@
     "Configuration": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.configuration"
+    },
+    "ConsulSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.consulSDConfigs"
     },
     "Container": {
       "kind": "property",
@@ -1336,9 +1517,25 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.digestAuth"
     },
+    "DigitalOceanSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.digitalOceanSDConfigs"
+    },
+    "DnsSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.dnsSDConfigs"
+    },
     "DockerRegistrySecret": {
       "kind": "property",
       "resourceType": "K8s::K3s::HelmChart.dockerRegistrySecret"
+    },
+    "DockerSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.dockerSDConfigs"
+    },
+    "DockerSwarmSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.dockerSwarmSDConfigs"
     },
     "DriftDetection": {
       "kind": "property",
@@ -1347,6 +1544,10 @@
     "DynamicSecret": {
       "kind": "property",
       "resourceType": "K8s::Infisical::InfisicalDynamicSecret.dynamicSecret"
+    },
+    "Ec2SDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.ec2SDConfigs"
     },
     "EncodedCharacters": {
       "kind": "property",
@@ -1430,6 +1631,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.errors"
     },
+    "EurekaSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.eurekaSDConfigs"
+    },
     "Event": {
       "kind": "resource",
       "resourceType": "K8s::Core::Event",
@@ -1496,6 +1701,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::ExecAction"
     },
+    "Exemplars": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.exemplars"
+    },
     "Explainer": {
       "kind": "property",
       "resourceType": "K8s::KServe::InferenceService.explainer"
@@ -1507,6 +1716,10 @@
     "Failover": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.failover"
+    },
+    "FileSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.fileSDConfigs"
     },
     "Filter": {
       "kind": "property",
@@ -1727,6 +1940,10 @@
     "Gateway_Status": {
       "kind": "property",
       "resourceType": "K8s::Gateway::Gateway.status"
+    },
+    "GceSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.gceSDConfigs"
     },
     "GcsFaultToleranceOptions": {
       "kind": "property",
@@ -2052,6 +2269,10 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::PrometheusRule.groups"
     },
+    "GrpcServerTlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.grpcServerTlsConfig"
+    },
     "GrpcWeb": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.grpcWeb"
@@ -2240,6 +2461,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRepository.status"
     },
+    "HetznerSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.hetznerSDConfigs"
+    },
     "HighestRandomWeight": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.highestRandomWeight"
@@ -2267,6 +2492,10 @@
     "HostAlias": {
       "kind": "property",
       "resourceType": "K8s::Core::HostAlias"
+    },
+    "HttpSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.httpSDConfigs"
     },
     "IPAddress": {
       "kind": "resource",
@@ -2664,6 +2893,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.inheritedMetadata"
     },
+    "InhibitRule": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.inhibitRules"
+    },
     "InputStrategy": {
       "kind": "property",
       "resourceType": "K8s::Flux::ResourceSet.inputStrategy"
@@ -2687,6 +2920,10 @@
     "Inventory": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.inventory"
+    },
+    "IonosSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.ionosSDConfigs"
     },
     "Issuer": {
       "kind": "resource",
@@ -2787,6 +3024,14 @@
     "KubeProxy": {
       "kind": "property",
       "resourceType": "K8s::Controlplane::AWSManagedControlPlane.kubeProxy"
+    },
+    "KubernetesSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.kubernetesSDConfigs"
+    },
+    "KumaSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.kumaSDConfigs"
     },
     "Kustomization": {
       "kind": "resource",
@@ -2900,6 +3145,10 @@
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.lifecycleHooks"
     },
+    "LightSailSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.lightSailSDConfigs"
+    },
     "LimitRange": {
       "kind": "resource",
       "resourceType": "K8s::Core::LimitRange",
@@ -2915,6 +3164,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "Limits": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Alertmanager.limits"
+    },
+    "LinodeSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.linodeSDConfigs"
     },
     "Listener": {
       "kind": "property",
@@ -3180,6 +3437,54 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.mirroring"
     },
+    "MonitoringProbe": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::Probe",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "MonitoringProbe_Authorization": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.authorization"
+    },
+    "MonitoringProbe_BasicAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.basicAuth"
+    },
+    "MonitoringProbe_BearerTokenSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.bearerTokenSecret"
+    },
+    "MonitoringProbe_MetricRelabeling": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.metricRelabelings"
+    },
+    "MonitoringProbe_Oauth2": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.oauth2"
+    },
+    "MonitoringProbe_Param": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.params"
+    },
+    "MonitoringProbe_Prober": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.prober"
+    },
+    "MonitoringProbe_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.status"
+    },
+    "MonitoringProbe_Targets": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.targets"
+    },
+    "MonitoringProbe_TlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.tlsConfig"
+    },
     "MonitoringRoleRef": {
       "kind": "property",
       "resourceType": "K8s::Rds::DBInstance.monitoringRoleRef"
@@ -3232,6 +3537,10 @@
         "metadata:false"
       ]
     },
+    "MuteTimeInterval": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::AlertmanagerConfig.muteTimeIntervals"
+    },
     "NS": {
       "kind": "resource",
       "resourceType": "K8s::Core::Namespace",
@@ -3267,10 +3576,6 @@
     "NamespaceResourceWhitelist": {
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.namespaceResourceWhitelist"
-    },
-    "NamespaceSelector": {
-      "kind": "property",
-      "resourceType": "K8s::Monitoring::ServiceMonitor.namespaceSelector"
     },
     "NetPol": {
       "kind": "resource",
@@ -3340,6 +3645,10 @@
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.nodeRepairConfig"
     },
+    "NomadSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.nomadSDConfigs"
+    },
     "Notification": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.notification"
@@ -3392,6 +3701,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::ObjectReference"
     },
+    "ObjectStorageConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.objectStorageConfig"
+    },
     "ObjectStore": {
       "kind": "resource",
       "resourceType": "K8s::Cnpg::ObjectStore",
@@ -3419,6 +3732,10 @@
     "OidcProvider": {
       "kind": "property",
       "resourceType": "K8s::Flux::Receiver.oidcProviders"
+    },
+    "OpenstackSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.openstackSDConfigs"
     },
     "Operator": {
       "kind": "property",
@@ -3452,6 +3769,10 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.otherNames"
     },
+    "OvhcloudSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.ovhcloudSDConfigs"
+    },
     "OwnershipControls": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.ownershipControls"
@@ -3479,6 +3800,10 @@
         "metadata:false",
         "spec:false"
       ]
+    },
+    "Param": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.params"
     },
     "ParametersRef": {
       "kind": "property",
@@ -3615,6 +3940,38 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "PodMetricsEndpoint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PodMonitor.podMetricsEndpoints"
+    },
+    "PodMonitor": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::PodMonitor",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "PodMonitor_AttachMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PodMonitor.attachMetadata"
+    },
+    "PodMonitor_NamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PodMonitor.namespaceSelector"
+    },
+    "PodMonitor_PodMetricsEndpoint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PodMonitor.podMetricsEndpoints"
+    },
+    "PodMonitor_Selector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PodMonitor.selector"
+    },
+    "PodMonitor_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PodMonitor.status"
     },
     "PodSecurityContext": {
       "kind": "property",
@@ -3771,6 +4128,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::Probe"
     },
+    "Prober": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.prober"
+    },
     "Probes": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.probes"
@@ -3783,6 +4144,176 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.projectedVolumeTemplate"
     },
+    "Prometheus": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::Prometheus",
+      "props": [
+        "https:true",
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "PrometheusAgent": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::PrometheusAgent",
+      "props": [
+        "https:true",
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "PrometheusAgent_AdditionalArg": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.additionalArgs"
+    },
+    "PrometheusAgent_AdditionalScrapeConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.additionalScrapeConfigs"
+    },
+    "PrometheusAgent_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.affinity"
+    },
+    "PrometheusAgent_ApiserverConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.apiserverConfig"
+    },
+    "PrometheusAgent_ArbitraryFSAccessThroughSMs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.arbitraryFSAccessThroughSMs"
+    },
+    "PrometheusAgent_Container": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.containers"
+    },
+    "PrometheusAgent_DnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.dnsConfig"
+    },
+    "PrometheusAgent_ExcludedFromEnforcement": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.excludedFromEnforcement"
+    },
+    "PrometheusAgent_HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.hostAliases"
+    },
+    "PrometheusAgent_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.imagePullSecrets"
+    },
+    "PrometheusAgent_InitContainer": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.initContainers"
+    },
+    "PrometheusAgent_Otlp": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.otlp"
+    },
+    "PrometheusAgent_PersistentVolumeClaimRetentionPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.persistentVolumeClaimRetentionPolicy"
+    },
+    "PrometheusAgent_PodMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.podMetadata"
+    },
+    "PrometheusAgent_PodMonitorNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.podMonitorNamespaceSelector"
+    },
+    "PrometheusAgent_PodMonitorSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.podMonitorSelector"
+    },
+    "PrometheusAgent_ProbeNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.probeNamespaceSelector"
+    },
+    "PrometheusAgent_ProbeSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.probeSelector"
+    },
+    "PrometheusAgent_RemoteWrite": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.remoteWrite"
+    },
+    "PrometheusAgent_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.resources"
+    },
+    "PrometheusAgent_Runtime": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.runtime"
+    },
+    "PrometheusAgent_ScrapeClass": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.scrapeClasses"
+    },
+    "PrometheusAgent_ScrapeConfigNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.scrapeConfigNamespaceSelector"
+    },
+    "PrometheusAgent_ScrapeConfigSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.scrapeConfigSelector"
+    },
+    "PrometheusAgent_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.securityContext"
+    },
+    "PrometheusAgent_ServiceMonitorNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.serviceMonitorNamespaceSelector"
+    },
+    "PrometheusAgent_ServiceMonitorSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.serviceMonitorSelector"
+    },
+    "PrometheusAgent_ShardingStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.shardingStrategy"
+    },
+    "PrometheusAgent_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.status"
+    },
+    "PrometheusAgent_Storage": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.storage"
+    },
+    "PrometheusAgent_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.tolerations"
+    },
+    "PrometheusAgent_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.topologySpreadConstraints"
+    },
+    "PrometheusAgent_TracingConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.tracingConfig"
+    },
+    "PrometheusAgent_Tsdb": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.tsdb"
+    },
+    "PrometheusAgent_UpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.updateStrategy"
+    },
+    "PrometheusAgent_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.volumes"
+    },
+    "PrometheusAgent_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.volumeMounts"
+    },
+    "PrometheusAgent_Web": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusAgent.web"
+    },
     "PrometheusRule": {
       "kind": "resource",
       "resourceType": "K8s::Monitoring::PrometheusRule",
@@ -3794,6 +4325,210 @@
     "PrometheusRule_Group": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::PrometheusRule.groups"
+    },
+    "PrometheusRule_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusRule.status"
+    },
+    "Prometheus_AdditionalAlertManagerConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.additionalAlertManagerConfigs"
+    },
+    "Prometheus_AdditionalAlertRelabelConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.additionalAlertRelabelConfigs"
+    },
+    "Prometheus_AdditionalArg": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.additionalArgs"
+    },
+    "Prometheus_AdditionalScrapeConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.additionalScrapeConfigs"
+    },
+    "Prometheus_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.affinity"
+    },
+    "Prometheus_Alerting": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.alerting"
+    },
+    "Prometheus_ApiserverConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.apiserverConfig"
+    },
+    "Prometheus_ArbitraryFSAccessThroughSMs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.arbitraryFSAccessThroughSMs"
+    },
+    "Prometheus_Container": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.containers"
+    },
+    "Prometheus_DnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.dnsConfig"
+    },
+    "Prometheus_ExcludedFromEnforcement": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.excludedFromEnforcement"
+    },
+    "Prometheus_Exemplars": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.exemplars"
+    },
+    "Prometheus_HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.hostAliases"
+    },
+    "Prometheus_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.imagePullSecrets"
+    },
+    "Prometheus_InitContainer": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.initContainers"
+    },
+    "Prometheus_Otlp": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.otlp"
+    },
+    "Prometheus_PersistentVolumeClaimRetentionPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.persistentVolumeClaimRetentionPolicy"
+    },
+    "Prometheus_PodMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.podMetadata"
+    },
+    "Prometheus_PodMonitorNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.podMonitorNamespaceSelector"
+    },
+    "Prometheus_PodMonitorSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.podMonitorSelector"
+    },
+    "Prometheus_ProbeNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.probeNamespaceSelector"
+    },
+    "Prometheus_ProbeSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.probeSelector"
+    },
+    "Prometheus_PrometheusRulesExcludedFromEnforce": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.prometheusRulesExcludedFromEnforce"
+    },
+    "Prometheus_Query": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.query"
+    },
+    "Prometheus_RemoteRead": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.remoteRead"
+    },
+    "Prometheus_RemoteWrite": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.remoteWrite"
+    },
+    "Prometheus_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.resources"
+    },
+    "Prometheus_RuleNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.ruleNamespaceSelector"
+    },
+    "Prometheus_RuleSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.ruleSelector"
+    },
+    "Prometheus_Rules": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.rules"
+    },
+    "Prometheus_Runtime": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.runtime"
+    },
+    "Prometheus_ScrapeClass": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.scrapeClasses"
+    },
+    "Prometheus_ScrapeConfigNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.scrapeConfigNamespaceSelector"
+    },
+    "Prometheus_ScrapeConfigSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.scrapeConfigSelector"
+    },
+    "Prometheus_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.securityContext"
+    },
+    "Prometheus_ServiceMonitorNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.serviceMonitorNamespaceSelector"
+    },
+    "Prometheus_ServiceMonitorSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.serviceMonitorSelector"
+    },
+    "Prometheus_ShardRetentionPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.shardRetentionPolicy"
+    },
+    "Prometheus_ShardingStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.shardingStrategy"
+    },
+    "Prometheus_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.status"
+    },
+    "Prometheus_Storage": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.storage"
+    },
+    "Prometheus_Thanos": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.thanos"
+    },
+    "Prometheus_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.tolerations"
+    },
+    "Prometheus_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.topologySpreadConstraints"
+    },
+    "Prometheus_TracingConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.tracingConfig"
+    },
+    "Prometheus_Tsdb": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.tsdb"
+    },
+    "Prometheus_UpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.updateStrategy"
+    },
+    "Prometheus_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.volumes"
+    },
+    "Prometheus_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.volumeMounts"
+    },
+    "Prometheus_Web": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.web"
     },
     "Provider": {
       "kind": "resource",
@@ -3831,9 +4566,21 @@
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaDashboard.publicSharing"
     },
+    "PuppetDBSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.puppetDBSDConfigs"
+    },
     "Push": {
       "kind": "property",
       "resourceType": "K8s::Infisical::InfisicalPushSecret.push"
+    },
+    "Query": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.query"
+    },
+    "QueryConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.queryConfig"
     },
     "RateLimit": {
       "kind": "property",
@@ -3975,9 +4722,17 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::ReferenceGrant.to"
     },
+    "Relabeling": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.relabelings"
+    },
     "RemoteAccess": {
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.remoteAccess"
+    },
+    "RemoteRead": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.remoteRead"
     },
     "ReplacePath": {
       "kind": "property",
@@ -4228,6 +4983,10 @@
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.routeSelector"
     },
+    "Rules": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.rules"
+    },
     "RuntimeClass": {
       "kind": "resource",
       "resourceType": "K8s::Node::RuntimeClass",
@@ -4369,6 +5128,10 @@
       "kind": "property",
       "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.scaleDown"
     },
+    "ScalewaySDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.scalewaySDConfigs"
+    },
     "Scaling": {
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.scaling"
@@ -4400,6 +5163,134 @@
     "ScheduledBackup_Status": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ScheduledBackup.status"
+    },
+    "ScrapeConfig": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::ScrapeConfig",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ScrapeConfig_Authorization": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.authorization"
+    },
+    "ScrapeConfig_AzureSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.azureSDConfigs"
+    },
+    "ScrapeConfig_BasicAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.basicAuth"
+    },
+    "ScrapeConfig_ConsulSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.consulSDConfigs"
+    },
+    "ScrapeConfig_DigitalOceanSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.digitalOceanSDConfigs"
+    },
+    "ScrapeConfig_DnsSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.dnsSDConfigs"
+    },
+    "ScrapeConfig_DockerSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.dockerSDConfigs"
+    },
+    "ScrapeConfig_DockerSwarmSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.dockerSwarmSDConfigs"
+    },
+    "ScrapeConfig_Ec2SDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.ec2SDConfigs"
+    },
+    "ScrapeConfig_EurekaSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.eurekaSDConfigs"
+    },
+    "ScrapeConfig_FileSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.fileSDConfigs"
+    },
+    "ScrapeConfig_GceSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.gceSDConfigs"
+    },
+    "ScrapeConfig_HetznerSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.hetznerSDConfigs"
+    },
+    "ScrapeConfig_HttpSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.httpSDConfigs"
+    },
+    "ScrapeConfig_IonosSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.ionosSDConfigs"
+    },
+    "ScrapeConfig_KubernetesSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.kubernetesSDConfigs"
+    },
+    "ScrapeConfig_KumaSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.kumaSDConfigs"
+    },
+    "ScrapeConfig_LightSailSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.lightSailSDConfigs"
+    },
+    "ScrapeConfig_LinodeSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.linodeSDConfigs"
+    },
+    "ScrapeConfig_MetricRelabeling": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.metricRelabelings"
+    },
+    "ScrapeConfig_NomadSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.nomadSDConfigs"
+    },
+    "ScrapeConfig_Oauth2": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.oauth2"
+    },
+    "ScrapeConfig_OpenstackSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.openstackSDConfigs"
+    },
+    "ScrapeConfig_OvhcloudSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.ovhcloudSDConfigs"
+    },
+    "ScrapeConfig_PuppetDBSDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.puppetDBSDConfigs"
+    },
+    "ScrapeConfig_Relabeling": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.relabelings"
+    },
+    "ScrapeConfig_ScalewaySDConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.scalewaySDConfigs"
+    },
+    "ScrapeConfig_StaticConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.staticConfigs"
+    },
+    "ScrapeConfig_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.status"
+    },
+    "ScrapeConfig_TlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.tlsConfig"
     },
     "Sec": {
       "kind": "resource",
@@ -4446,10 +5337,6 @@
     "SecurityContext": {
       "kind": "property",
       "resourceType": "K8s::Core::SecurityContext"
-    },
-    "Selector": {
-      "kind": "property",
-      "resourceType": "K8s::Monitoring::ServiceMonitor.selector"
     },
     "SelfSubjectAccessReview": {
       "kind": "resource",
@@ -4596,6 +5483,10 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.selector"
     },
+    "ServiceMonitor_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.status"
+    },
     "ServicePort": {
       "kind": "property",
       "resourceType": "K8s::Core::ServicePort"
@@ -4648,6 +5539,10 @@
       "kind": "property",
       "resourceType": "K8s::KServe::ServingRuntime.workerSpec"
     },
+    "ShardRetentionPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.shardRetentionPolicy"
+    },
     "Sharding": {
       "kind": "property",
       "resourceType": "K8s::Flux::FluxInstance.sharding"
@@ -4687,6 +5582,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "StaticConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ScrapeConfig.staticConfigs"
     },
     "Status": {
       "kind": "resource",
@@ -4841,17 +5740,146 @@
       "kind": "property",
       "resourceType": "K8s::Eks::PodIdentityAssociation.targetRoleRef"
     },
+    "Targets": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Probe.targets"
+    },
     "Test": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.test"
     },
+    "Thanos": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::Prometheus.thanos"
+    },
+    "ThanosRuler": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::ThanosRuler",
+      "props": [
+        "https:true",
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ThanosRuler_AdditionalArg": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.additionalArgs"
+    },
+    "ThanosRuler_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.affinity"
+    },
+    "ThanosRuler_AlertRelabelConfigs": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.alertRelabelConfigs"
+    },
+    "ThanosRuler_AlertmanagersConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.alertmanagersConfig"
+    },
+    "ThanosRuler_Container": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.containers"
+    },
+    "ThanosRuler_DnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.dnsConfig"
+    },
+    "ThanosRuler_ExcludedFromEnforcement": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.excludedFromEnforcement"
+    },
+    "ThanosRuler_GrpcServerTlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.grpcServerTlsConfig"
+    },
+    "ThanosRuler_HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.hostAliases"
+    },
+    "ThanosRuler_ImagePullSecret": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.imagePullSecrets"
+    },
+    "ThanosRuler_InitContainer": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.initContainers"
+    },
+    "ThanosRuler_ObjectStorageConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.objectStorageConfig"
+    },
+    "ThanosRuler_PodMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.podMetadata"
+    },
+    "ThanosRuler_PrometheusRulesExcludedFromEnforce": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.prometheusRulesExcludedFromEnforce"
+    },
+    "ThanosRuler_QueryConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.queryConfig"
+    },
+    "ThanosRuler_RemoteWrite": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.remoteWrite"
+    },
+    "ThanosRuler_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.resources"
+    },
+    "ThanosRuler_RuleNamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.ruleNamespaceSelector"
+    },
+    "ThanosRuler_RuleSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.ruleSelector"
+    },
+    "ThanosRuler_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.securityContext"
+    },
+    "ThanosRuler_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.status"
+    },
+    "ThanosRuler_Storage": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.storage"
+    },
+    "ThanosRuler_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.tolerations"
+    },
+    "ThanosRuler_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.topologySpreadConstraints"
+    },
+    "ThanosRuler_TracingConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.tracingConfig"
+    },
+    "ThanosRuler_UpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.updateStrategy"
+    },
+    "ThanosRuler_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.volumes"
+    },
+    "ThanosRuler_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.volumeMounts"
+    },
+    "ThanosRuler_Web": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ThanosRuler.web"
+    },
     "TimeInterval": {
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaMuteTiming.time_intervals"
-    },
-    "TlsConfig": {
-      "kind": "property",
-      "resourceType": "K8s::Addons::HelmChartProxy.tlsConfig"
     },
     "To": {
       "kind": "property",

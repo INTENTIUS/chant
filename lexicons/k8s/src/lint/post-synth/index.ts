@@ -45,6 +45,12 @@ import { wk8602 } from "./wk8602";
 import { wk8603 } from "./wk8603";
 import { wk8604 } from "./wk8604";
 import { wk8605 } from "./wk8605";
+import { wk8606 } from "./wk8606";
+import { wk8701 } from "./wk8701";
+import { wk8702 } from "./wk8702";
+import { wk8703 } from "./wk8703";
+import { wk8704 } from "./wk8704";
+import { wk8705 } from "./wk8705";
 
 export const postSynthChecks: PostSynthCheck[] = [
   argo002,
@@ -92,4 +98,10 @@ export const postSynthChecks: PostSynthCheck[] = [
   wk8603,
   wk8604,
   wk8605,
+  wk8606,
+  wk8701,
+  wk8702,
+  wk8703,
+  wk8704,
+  wk8705,
 ];

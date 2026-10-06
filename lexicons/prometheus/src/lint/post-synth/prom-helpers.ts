@@ -5,9 +5,9 @@
  *
  * Documents are recognized by shape, not by which lexicon emitted them, so a
  * rule file that reaches the output some other way (a hand-written YAML
- * sidecar) is checked too. `PrometheusRule` manifests are not read here;
- * their groups are the same `RuleGroup`s and are checked where they are
- * declared.
+ * sidecar) is checked too. `PrometheusRule` manifests are not read here:
+ * `chant build` hands each lexicon's checks only that lexicon's output, so the
+ * k8s lexicon's WK8606 runs `prometheusRuleDiagnostics` (below) over them.
  */
 
 import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
@@ -134,4 +134,39 @@ export function routingDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[]
   if (ruleFiles.length === 0) return [];
   const files = ruleFiles.map((r) => r.config);
   return alertmanager.flatMap(({ source, config }) => validateSeverityRouting(files, config).map((i) => toDiagnostic(i, source)));
+}
+
+/**
+ * The rule-file checks (PROM101-PROM107, PROM211, PROM213-PROM219) over the
+ * groups of every `PrometheusRule` in the build, whichever lexicon emitted
+ * it. `spec.groups` is a rule file's `groups`, so `validateRuleFile` reads it
+ * as is. Findings keep their PROM ids and name the PrometheusRule's namespace
+ * and name. PROM212 (runbook URLs) stays opt-in and is not run here.
+ */
+export function prometheusRuleDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  const out: PostSynthDiagnostic[] = [];
+  for (const output of ctx.outputs.values()) {
+    const text = typeof output === "string" ? output : (output as SerializerResult).primary;
+    if (!text) continue;
+    let docs: unknown[];
+    try {
+      docs = loadAll(text);
+    } catch {
+      continue;
+    }
+    for (const raw of docs) {
+      const doc = raw as Record<string, any> | null;
+      if (!doc || typeof doc !== "object" || doc.kind !== "PrometheusRule") continue;
+      if (typeof doc.apiVersion !== "string" || !doc.apiVersion.startsWith("monitoring.coreos.com/")) continue;
+      const groups = doc.spec?.groups;
+      if (!Array.isArray(groups)) continue;
+      const name = String(doc.metadata?.name ?? "");
+      const source = `PrometheusRule ${doc.metadata?.namespace ? `${doc.metadata.namespace}/` : ""}${name}`;
+      for (const issue of validateRuleFile({ groups } as RuleFileConfig)) {
+        if (issue.code === "PROM212") continue;
+        out.push({ ...toDiagnostic(issue, source), ...(issue.subject ? {} : { entity: name }) });
+      }
+    }
+  }
+  return out;
 }

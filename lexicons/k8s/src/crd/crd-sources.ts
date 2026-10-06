@@ -199,17 +199,24 @@ const INFISICAL_OPERATOR_VERSION = "infisical-k8-operator/v0.11.7";
 const INFISICAL_CRD_BASE = `https://raw.githubusercontent.com/Infisical/kubernetes-operator/${INFISICAL_OPERATOR_VERSION}/config/crd/bases`;
 
 /**
- * Prometheus Operator CRDs — monitoring.coreos.com/v1
+ * Prometheus Operator CRDs — monitoring.coreos.com/v1 and v1alpha1
  *
  * Produces (the `monitoring.coreos.com` group maps to the `Monitoring`
  * namespace):
  *   K8s::Monitoring::ServiceMonitor  → apiVersion: monitoring.coreos.com/v1, kind: ServiceMonitor
  *   K8s::Monitoring::PrometheusRule  → apiVersion: monitoring.coreos.com/v1, kind: PrometheusRule
+ *   K8s::Monitoring::Prometheus / Alertmanager / PodMonitor / Probe / ThanosRuler
+ *                                    → apiVersion: monitoring.coreos.com/v1
+ *   K8s::Monitoring::PrometheusAgent / AlertmanagerConfig / ScrapeConfig
+ *                                    → apiVersion: monitoring.coreos.com/v1alpha1
+ *
+ * `Probe` is also the core container probe property type, so the CRD class is
+ * `MonitoringProbe` (priorityNames in codegen/naming.ts).
  *
  * Operator install: kube-prometheus-stack chart, or
  *   https://github.com/prometheus-operator/prometheus-operator
  */
-const PROM_OPERATOR_VERSION = "v0.79.2";
+const PROM_OPERATOR_VERSION = "v0.94.1";
 const PROM_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROM_OPERATOR_VERSION}/example/prometheus-operator-crd`;
 
 /**
@@ -538,6 +545,14 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: CERT_MANAGER_CRD_BUNDLE },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_servicemonitors.yaml` },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusrules.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheuses.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_alertmanagers.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_podmonitors.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_probes.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_thanosrulers.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusagents.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_alertmanagerconfigs.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_scrapeconfigs.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_clusters.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_scheduledbackups.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_backups.yaml` },

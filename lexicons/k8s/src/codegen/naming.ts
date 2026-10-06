@@ -80,6 +80,9 @@ const k8sNamingConfig: NamingConfig = {
     // Events (core vs events.k8s.io — the core version wins)
     "K8s::Core::Event": "Event",
 
+    // Prometheus Operator's Probe CRD would collide with the core Probe property type
+    "K8s::Monitoring::Probe": "MonitoringProbe",
+
     // Property types
     "K8s::Core::Container": "Container",
     "K8s::Core::ContainerPort": "ContainerPort",
