@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-grafana",
-  "version": "0.107.0",
+  "version": "0.107.1",
   "description": "Grafana lexicon for chant — typed dashboards, panels, queries and datasources, serialized to dashboard JSON and Grafana provisioning files",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -83,7 +83,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.107.0",
+    "@intentius/chant": "^0.107.1",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   }
