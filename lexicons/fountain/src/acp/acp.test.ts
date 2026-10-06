@@ -347,6 +347,7 @@ describe("chant acp", () => {
     expect(init.agentCapabilities).toMatchObject({
       loadSession: false,
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      sessionCapabilities: { resume: {} },
     });
 
     const session = (await client.peer.request("session/new", {
@@ -369,6 +370,60 @@ describe("chant acp", () => {
     await client.peer.request("initialize", {});
     await client.peer.request("session/new", { cwd: "/tmp/project-a" });
     expect(seen).toEqual(["/tmp/project-a"]);
+  });
+
+  // Fountain spawns `chant acp` once per turn and, from a conversation's
+  // second turn on, resumes the session the first turn opened. A fresh
+  // process has never seen that id, and must take it up rather than fail.
+  it("resumes a session another process opened, in the cwd the client sends", async () => {
+    const seen: string[] = [];
+    const host = stubHost({ records: okRecords });
+    const server = new AcpServer({
+      createHost: (cwd) => {
+        seen.push(cwd);
+        return host;
+      },
+    });
+    const client = connect(server);
+    await client.peer.request("initialize", {});
+
+    const result = await client.peer.request("session/resume", {
+      sessionId: "sess-from-turn-1",
+      cwd: "/tmp/project-b",
+      mcpServers: [],
+    });
+    expect(result).toEqual({});
+    expect(seen).toEqual(["/tmp/project-b"]);
+
+    await client.peer.request("session/prompt", {
+      sessionId: "sess-from-turn-1",
+      prompt: promptOf("chant run demo-op"),
+    });
+    expect(host.started).toEqual(["demo-op"]);
+  });
+
+  it("keeps a session this process already holds when it is resumed", async () => {
+    const seen: string[] = [];
+    const server = new AcpServer({
+      createHost: (cwd) => {
+        seen.push(cwd);
+        return stubHost();
+      },
+    });
+    const client = connect(server);
+    await client.peer.request("initialize", {});
+    const { sessionId } = (await client.peer.request("session/new", { cwd: "/tmp/project-a" })) as {
+      sessionId: string;
+    };
+    await client.peer.request("session/resume", { sessionId, cwd: "/tmp/project-a" });
+    expect(seen).toEqual(["/tmp/project-a"]);
+  });
+
+  it("refuses a session/resume with no sessionId", async () => {
+    const server = new AcpServer({ createHost: () => stubHost() });
+    const client = connect(server);
+    await client.peer.request("initialize", {});
+    await expect(client.peer.request("session/resume", { cwd: "/tmp/x" })).rejects.toThrow(/sessionId/);
   });
 
   it("rejects an unknown method with -32601", async () => {
