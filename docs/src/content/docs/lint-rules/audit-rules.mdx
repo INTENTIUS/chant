@@ -1340,6 +1340,42 @@ Fix the collector config the ConfigMap carries: each finding keeps its OTEL1xx i
 
 Set the node name variable from spec.nodeName with the downward API and mount the host paths hostmetrics and filelog read, read-only; OtelCollector adds them from the config.
 
+### WK8606
+
+**PrometheusRule groups fail the prometheus rule-file checks** — merge-worthy · guidance
+
+Fix the rule group the PrometheusRule carries: each finding keeps its PROM1xx or PROM2xx id and names the PrometheusRule. Change the declared RuleGroup, not the rendered YAML.
+
+### WK8701
+
+**PrometheusRule selected by no Prometheus or ThanosRuler** — merge-worthy · guidance
+
+Match the rule's labels and namespace with ruleSelector and ruleNamespaceSelector; null selects nothing, \{} selects all.
+
+### WK8702
+
+**Monitor selected by no Prometheus or PrometheusAgent** — merge-worthy · guidance
+
+Match the ServiceMonitor, PodMonitor, Probe or ScrapeConfig with the selector and namespace selector for its kind; null selects nothing, \{} selects all.
+
+### WK8703
+
+**AlertmanagerConfig selected by no Alertmanager** — merge-worthy · guidance
+
+Match the config's labels and namespace with alertmanagerConfigSelector and alertmanagerConfigNamespaceSelector; null selects nothing, \{} selects all.
+
+### WK8704
+
+**Monitor selects no Service or pod, or names a port that is not there** — merge-worthy · guidance
+
+Make the monitor's selector match the labels on the Service or pod template, and name a port the Service or container declares.
+
+### WK8705
+
+**Prometheus selects no monitor at all** — merge-worthy · guidance
+
+Set serviceMonitorSelector, podMonitorSelector, probeSelector and scrapeConfigSelector for the monitor kinds it should scrape; \{} selects all in the selected namespaces.
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.

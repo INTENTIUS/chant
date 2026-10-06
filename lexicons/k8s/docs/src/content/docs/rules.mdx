@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Kubernetes le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
     Edit lexicons/k8s/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Kubernetes lexicon provides **51** rules: 6 lint rules and 45 post-synth checks.
+The Kubernetes lexicon provides **57** rules: 6 lint rules and 51 post-synth checks.
 
 ## Lint Rules
 
@@ -70,3 +70,9 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WK8603` | OpenTelemetry Collector runs the k8s_cluster receiver in a DaemonSet or multi-replica workload without a k8s_leader_elector; every copy reports every cluster object. Sees one build root at a time (chant #1939). |
 | `WK8604` | OpenTelemetry Collector config in a ConfigMap fails the otel lexicon's config checks; findings are reported under their OTEL1xx ids, naming the ConfigMap and key. |
 | `WK8605` | OpenTelemetry Collector config reads the node (k8sattributes filtered to its node, kubeletstats, hostmetrics root_path, filelog) but its workload doesn't set the node name variable or mount the host paths. Sees one build root at a time (chant #1939). |
+| `WK8606` | A PrometheusRule's groups fail the prometheus lexicon's rule-file checks; findings are reported under their PROM ids, naming the PrometheusRule. |
+| `WK8701` | A PrometheusRule that no Prometheus or ThanosRuler in the build selects through ruleSelector and ruleNamespaceSelector is never evaluated. A null selector matches nothing, \{\} matches all. Silent when the build has no Prometheus or ThanosRuler. |
+| `WK8702` | A ServiceMonitor, PodMonitor, Probe or ScrapeConfig that no Prometheus or PrometheusAgent in the build selects is never scraped. A null selector matches nothing, \{\} matches all. Silent when the build has no Prometheus or PrometheusAgent. |
+| `WK8703` | An AlertmanagerConfig that no Alertmanager in the build selects through alertmanagerConfigSelector and alertmanagerConfigNamespaceSelector never routes an alert. A null selector matches nothing, \{\} matches all. Silent when the build has no Alertmanager. |
+| `WK8704` | A ServiceMonitor whose selector matches no Service in the build, or whose endpoints[].port names no port on the matched Services; the same for a PodMonitor against pod container ports. Needs no Prometheus in the build. Sees one build root at a time (chant #1939). |
+| `WK8705` | A Prometheus whose serviceMonitorSelector, podMonitorSelector, probeSelector and scrapeConfigSelector are all null selects no monitor, so the operator scrapes nothing from ServiceMonitors, PodMonitors, Probes or ScrapeConfigs. |

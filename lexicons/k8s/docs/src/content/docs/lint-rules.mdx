@@ -101,6 +101,19 @@ Checks that read each collector config together with the workload that runs it, 
 | WK8604 | A collector config in a ConfigMap fails the otel config checks (reported as OTEL101 to OTEL106, OTEL112 to OTEL127) |
 | WK8605 | A collector config reads the node (`k8sattributes` filtered to its node, `kubeletstats`, `hostmetrics` with `root_path`, `filelog`), but the container running it lacks the node name variable or a host mount it reads |
 
+### Prometheus Operator selection
+
+An operator accepts a PrometheusRule, monitor or AlertmanagerConfig that no Prometheus or Alertmanager selects and then ignores it without an error. WK8701 to WK8703 report those from the manifests in the build, by the operator's rules: a null object selector matches nothing, `{}` matches all; a null namespace selector matches only the selecting resource's own namespace. They are silent when the build has no Prometheus, ThanosRuler, PrometheusAgent or Alertmanager, since the stack is often installed separately. WK8606 runs the prometheus rule-file checks over each PrometheusRule's `spec.groups`.
+
+| Rule | Description |
+|------|-------------|
+| WK8606 | A PrometheusRule's groups fail the prometheus rule-file checks (reported under their PROM ids, naming the PrometheusRule) |
+| WK8701 | A PrometheusRule that no Prometheus or ThanosRuler selects through `ruleSelector` and `ruleNamespaceSelector` |
+| WK8702 | A ServiceMonitor, PodMonitor, Probe or ScrapeConfig that no Prometheus or PrometheusAgent selects |
+| WK8703 | An AlertmanagerConfig that no Alertmanager selects |
+| WK8704 | A ServiceMonitor whose `selector` matches no Service, or whose `endpoints[].port` names no port on it; the same for a PodMonitor against container ports. Needs no Prometheus in the build |
+| WK8705 | A Prometheus whose `serviceMonitorSelector`, `podMonitorSelector`, `probeSelector` and `scrapeConfigSelector` are all null |
+
 ### Argo CD
 
 Quality checks for the [Argo CD composites](/chant/lexicons/k8s/argo-composites/). ARGO001/ARGO004 are declarative (source AST); ARGO002/003/005 are post-synth (cross-resource / filesystem).
