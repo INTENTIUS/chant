@@ -34,7 +34,7 @@ const rule = (labels: Record<string, string> = { role: "alert" }, namespace = "m
   apiVersion: MON,
   kind: "PrometheusRule",
   metadata: meta("rules", namespace, labels),
-  spec: { groups: [{ name: "g", rules: [{ alert: "Down", expr: "up == 0", for: "5m" }] }] },
+  spec: { groups: [{ name: "g", rules: [{ alert: "Down", expr: "up == 0", for: "5m", labels: { severity: "critical" }, annotations: { summary: "Down", runbook_url: "https://runbooks.example.com/down" } }] }] },
 });
 
 describe("WK8701: PrometheusRule selected by no Prometheus or ThanosRuler", () => {

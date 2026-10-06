@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-06T20:45:48.271Z",
+  "generatedAt": "2026-10-06T20:56:03.719Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -424,6 +424,10 @@
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.analytics"
     },
+    "ApacheHttpd": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.apacheHttpd"
+    },
     "AppProject": {
       "kind": "resource",
       "resourceType": "K8s::Argo::AppProject",
@@ -549,9 +553,17 @@
       "kind": "property",
       "resourceType": "K8s::Argo::Application.syncPolicy"
     },
+    "AttachMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.attachMetadata"
+    },
     "AuthSecret": {
       "kind": "property",
       "resourceType": "K8s::K3s::HelmChart.authSecret"
+    },
+    "Autoscaler": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.autoscaler"
     },
     "AutoscalerOptions": {
       "kind": "property",
@@ -592,6 +604,10 @@
     "Backup_Status": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Backup.status"
+    },
+    "BasicAuth": {
+      "kind": "property",
+      "resourceType": "K8s::Traefik::Middleware.basicAuth"
     },
     "Bastion": {
       "kind": "property",
@@ -883,6 +899,22 @@
     "ClusterNetwork": {
       "kind": "property",
       "resourceType": "K8s::CAPI::Cluster.clusterNetwork"
+    },
+    "ClusterObservability": {
+      "kind": "resource",
+      "resourceType": "K8s::OpenTelemetry::ClusterObservability",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ClusterObservability_Exporter": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::ClusterObservability.exporter"
+    },
+    "ClusterObservability_Status": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::ClusterObservability.status"
     },
     "ClusterRef": {
       "kind": "property",
@@ -1178,6 +1210,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.compress"
     },
+    "Config": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.config"
+    },
     "ConfigMap": {
       "kind": "resource",
       "resourceType": "K8s::Core::ConfigMap",
@@ -1199,6 +1235,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "Configmap": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.configmaps"
     },
     "Configuration": {
       "kind": "property",
@@ -1413,6 +1453,10 @@
         "metadata:false"
       ]
     },
+    "DaemonSetUpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.daemonSetUpdateStrategy"
+    },
     "DataStore": {
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.dataStore"
@@ -1436,6 +1480,10 @@
     "DefaultGeneratedCert": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TLSStore.defaultGeneratedCert"
+    },
+    "Defaults": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.defaults"
     },
     "DeleteOptions": {
       "kind": "resource",
@@ -1476,6 +1524,14 @@
     "DeploymentStrategy": {
       "kind": "property",
       "resourceType": "K8s::Apps::DeploymentStrategy"
+    },
+    "DeploymentUpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.deploymentUpdateStrategy"
+    },
+    "Description": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.description"
     },
     "DestinationServiceAccount": {
       "kind": "property",
@@ -1536,6 +1592,10 @@
     "DockerSwarmSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.dockerSwarmSDConfigs"
+    },
+    "Dotnet": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.dotnet"
     },
     "DriftDetection": {
       "kind": "property",
@@ -1988,6 +2048,10 @@
     "GitRepository_Verify": {
       "kind": "property",
       "resourceType": "K8s::Flux::GitRepository.verify"
+    },
+    "Go": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.go"
     },
     "GrafanaAlertRuleGroup": {
       "kind": "resource",
@@ -2493,6 +2557,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::HostAlias"
     },
+    "HttpRoute": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.httpRoute"
+    },
     "HttpSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.httpSDConfigs"
@@ -2897,6 +2965,10 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::AlertmanagerConfig.inhibitRules"
     },
+    "InitContainerSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.initContainerSecurityContext"
+    },
     "InputStrategy": {
       "kind": "property",
       "resourceType": "K8s::Flux::ResourceSet.inputStrategy"
@@ -2912,6 +2984,70 @@
     "InstanceSidecarConfiguration": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.instanceSidecarConfiguration"
+    },
+    "Instrumentation": {
+      "kind": "resource",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Instrumentation_ApacheHttpd": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.apacheHttpd"
+    },
+    "Instrumentation_Defaults": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.defaults"
+    },
+    "Instrumentation_Dotnet": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.dotnet"
+    },
+    "Instrumentation_Env": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.env"
+    },
+    "Instrumentation_Exporter": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.exporter"
+    },
+    "Instrumentation_Go": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.go"
+    },
+    "Instrumentation_InitContainerSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.initContainerSecurityContext"
+    },
+    "Instrumentation_Java": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.java"
+    },
+    "Instrumentation_Nginx": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.nginx"
+    },
+    "Instrumentation_Nodejs": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.nodejs"
+    },
+    "Instrumentation_Python": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.python"
+    },
+    "Instrumentation_Resource": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.resource"
+    },
+    "Instrumentation_Sampler": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.sampler"
+    },
+    "Instrumentation_Status": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.status"
     },
     "IntelligentTiering": {
       "kind": "property",
@@ -2956,6 +3092,10 @@
     "Issuer_Venafi": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Issuer.venafi"
+    },
+    "Java": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.java"
     },
     "Job": {
       "kind": "resource",
@@ -3489,6 +3629,10 @@
       "kind": "property",
       "resourceType": "K8s::Rds::DBInstance.monitoringRoleRef"
     },
+    "Mtls": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.mtls"
+    },
     "MutatingAdmissionPolicy": {
       "kind": "resource",
       "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicy",
@@ -3577,6 +3721,10 @@
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.namespaceResourceWhitelist"
     },
+    "NamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.namespaceSelector"
+    },
     "NetPol": {
       "kind": "resource",
       "resourceType": "K8s::Networking::NetworkPolicy",
@@ -3621,6 +3769,10 @@
       "kind": "property",
       "resourceType": "K8s::Networking::NetworkPolicyPort"
     },
+    "Nginx": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.nginx"
+    },
     "Node": {
       "kind": "resource",
       "resourceType": "K8s::Core::Node",
@@ -3644,6 +3796,10 @@
     "NodeRepairConfig": {
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.nodeRepairConfig"
+    },
+    "Nodejs": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.nodejs"
     },
     "NomadSDConfig": {
       "kind": "property",
@@ -3732,6 +3888,226 @@
     "OidcProvider": {
       "kind": "property",
       "resourceType": "K8s::Flux::Receiver.oidcProviders"
+    },
+    "OpAMPBridge": {
+      "kind": "resource",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "OpAMPBridge_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.affinity"
+    },
+    "OpAMPBridge_Description": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.description"
+    },
+    "OpAMPBridge_Env": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.env"
+    },
+    "OpAMPBridge_EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.envFrom"
+    },
+    "OpAMPBridge_PodDnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.podDnsConfig"
+    },
+    "OpAMPBridge_PodSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.podSecurityContext"
+    },
+    "OpAMPBridge_Port": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.ports"
+    },
+    "OpAMPBridge_Proxy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.proxy"
+    },
+    "OpAMPBridge_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.resources"
+    },
+    "OpAMPBridge_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.securityContext"
+    },
+    "OpAMPBridge_Status": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.status"
+    },
+    "OpAMPBridge_Tls": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.tls"
+    },
+    "OpAMPBridge_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.tolerations"
+    },
+    "OpAMPBridge_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.topologySpreadConstraints"
+    },
+    "OpAMPBridge_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.volumes"
+    },
+    "OpAMPBridge_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.volumeMounts"
+    },
+    "OpenTelemetryCollector": {
+      "kind": "resource",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "OpenTelemetryCollector_AdditionalContainer": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.additionalContainers"
+    },
+    "OpenTelemetryCollector_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.affinity"
+    },
+    "OpenTelemetryCollector_Autoscaler": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.autoscaler"
+    },
+    "OpenTelemetryCollector_Config": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.config"
+    },
+    "OpenTelemetryCollector_Configmap": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.configmaps"
+    },
+    "OpenTelemetryCollector_DaemonSetUpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.daemonSetUpdateStrategy"
+    },
+    "OpenTelemetryCollector_DeploymentUpdateStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.deploymentUpdateStrategy"
+    },
+    "OpenTelemetryCollector_Env": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.env"
+    },
+    "OpenTelemetryCollector_EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.envFrom"
+    },
+    "OpenTelemetryCollector_HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.hostAliases"
+    },
+    "OpenTelemetryCollector_HttpRoute": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.httpRoute"
+    },
+    "OpenTelemetryCollector_Ingress": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.ingress"
+    },
+    "OpenTelemetryCollector_InitContainer": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.initContainers"
+    },
+    "OpenTelemetryCollector_Lifecycle": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.lifecycle"
+    },
+    "OpenTelemetryCollector_LivenessProbe": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.livenessProbe"
+    },
+    "OpenTelemetryCollector_NetworkPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.networkPolicy"
+    },
+    "OpenTelemetryCollector_Observability": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.observability"
+    },
+    "OpenTelemetryCollector_PersistentVolumeClaimRetentionPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.persistentVolumeClaimRetentionPolicy"
+    },
+    "OpenTelemetryCollector_PodDisruptionBudget": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.podDisruptionBudget"
+    },
+    "OpenTelemetryCollector_PodDnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.podDnsConfig"
+    },
+    "OpenTelemetryCollector_PodSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.podSecurityContext"
+    },
+    "OpenTelemetryCollector_Port": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.ports"
+    },
+    "OpenTelemetryCollector_ReadinessProbe": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.readinessProbe"
+    },
+    "OpenTelemetryCollector_ResizePolicy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.resizePolicy"
+    },
+    "OpenTelemetryCollector_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.resources"
+    },
+    "OpenTelemetryCollector_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.securityContext"
+    },
+    "OpenTelemetryCollector_SessionAffinityConfig": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.sessionAffinityConfig"
+    },
+    "OpenTelemetryCollector_StartupProbe": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.startupProbe"
+    },
+    "OpenTelemetryCollector_Status": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.status"
+    },
+    "OpenTelemetryCollector_TargetAllocator": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.targetAllocator"
+    },
+    "OpenTelemetryCollector_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.tolerations"
+    },
+    "OpenTelemetryCollector_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.topologySpreadConstraints"
+    },
+    "OpenTelemetryCollector_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.volumes"
+    },
+    "OpenTelemetryCollector_VolumeClaimTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.volumeClaimTemplates"
+    },
+    "OpenTelemetryCollector_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.volumeMounts"
     },
     "OpenstackSDConfig": {
       "kind": "property",
@@ -4314,6 +4690,10 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::PrometheusAgent.web"
     },
+    "PrometheusCR": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.prometheusCR"
+    },
     "PrometheusRule": {
       "kind": "resource",
       "resourceType": "K8s::Monitoring::PrometheusRule",
@@ -4554,6 +4934,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::Provider.secretRef"
     },
+    "Proxy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpAMPBridge.proxy"
+    },
     "ProxyProtocol": {
       "kind": "property",
       "resourceType": "K8s::Traefik::ServersTransportTCP.proxyProtocol"
@@ -4573,6 +4957,10 @@
     "Push": {
       "kind": "property",
       "resourceType": "K8s::Infisical::InfisicalPushSecret.push"
+    },
+    "Python": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.python"
     },
     "Query": {
       "kind": "property",
@@ -5116,6 +5504,10 @@
         "spec:false"
       ]
     },
+    "Sampler": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::Instrumentation.sampler"
+    },
     "Scale": {
       "kind": "resource",
       "resourceType": "K8s::Autoscaling::Scale",
@@ -5337,6 +5729,10 @@
     "SecurityContext": {
       "kind": "property",
       "resourceType": "K8s::Core::SecurityContext"
+    },
+    "Selector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.selector"
     },
     "SelfSubjectAccessReview": {
       "kind": "resource",
@@ -5567,6 +5963,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::ServersTransport.spiffe"
     },
+    "StartupProbe": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.startupProbe"
+    },
     "StatefulSet": {
       "kind": "resource",
       "resourceType": "K8s::Apps::StatefulSet",
@@ -5736,6 +6136,122 @@
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.taints"
     },
+    "TargetAllocator": {
+      "kind": "resource",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "TargetAllocator_AdditionalContainer": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.additionalContainers"
+    },
+    "TargetAllocator_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.affinity"
+    },
+    "TargetAllocator_Env": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.env"
+    },
+    "TargetAllocator_EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.envFrom"
+    },
+    "TargetAllocator_HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.hostAliases"
+    },
+    "TargetAllocator_InitContainer": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.initContainers"
+    },
+    "TargetAllocator_Lifecycle": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.lifecycle"
+    },
+    "TargetAllocator_LivenessProbe": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.livenessProbe"
+    },
+    "TargetAllocator_Mtls": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.mtls"
+    },
+    "TargetAllocator_NetworkPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.networkPolicy"
+    },
+    "TargetAllocator_Observability": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.observability"
+    },
+    "TargetAllocator_PodDisruptionBudget": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.podDisruptionBudget"
+    },
+    "TargetAllocator_PodDnsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.podDnsConfig"
+    },
+    "TargetAllocator_PodSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.podSecurityContext"
+    },
+    "TargetAllocator_Port": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.ports"
+    },
+    "TargetAllocator_PrometheusCR": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.prometheusCR"
+    },
+    "TargetAllocator_ReadinessProbe": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.readinessProbe"
+    },
+    "TargetAllocator_ResizePolicy": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.resizePolicy"
+    },
+    "TargetAllocator_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.resources"
+    },
+    "TargetAllocator_SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.securityContext"
+    },
+    "TargetAllocator_SessionAffinityConfig": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.sessionAffinityConfig"
+    },
+    "TargetAllocator_Status": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.status"
+    },
+    "TargetAllocator_Telemetry": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.telemetry"
+    },
+    "TargetAllocator_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.tolerations"
+    },
+    "TargetAllocator_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.topologySpreadConstraints"
+    },
+    "TargetAllocator_Volume": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.volumes"
+    },
+    "TargetAllocator_VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.volumeMounts"
+    },
     "TargetRoleRef": {
       "kind": "property",
       "resourceType": "K8s::Eks::PodIdentityAssociation.targetRoleRef"
@@ -5743,6 +6259,10 @@
     "Targets": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::Probe.targets"
+    },
+    "Telemetry": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::TargetAllocator.telemetry"
     },
     "Test": {
       "kind": "property",
@@ -5880,6 +6400,10 @@
     "TimeInterval": {
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaMuteTiming.time_intervals"
+    },
+    "TlsConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Addons::HelmChartProxy.tlsConfig"
     },
     "To": {
       "kind": "property",
@@ -6081,6 +6605,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "VolumeClaimTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.volumeClaimTemplates"
     },
     "VolumeMount": {
       "kind": "property",
