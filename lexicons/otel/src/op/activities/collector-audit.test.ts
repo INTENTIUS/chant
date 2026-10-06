@@ -64,10 +64,11 @@ describe("collectorAudit's pieces", () => {
   test("bumpPins moves only the two pin versions in define.ts", () => {
     const text = readFileSync(join(import.meta.dirname, "..", "..", "define.ts"), "utf8");
     const out = bumpPins(text, { collector: "v0.140.0", genai: "v1.50.0" });
-    expect(out).toContain('version: "v0.140.0"');
-    expect(out).toContain('version: "v1.50.0"');
-    expect(out).not.toContain(`version: "${COLLECTOR_PIN.version}"`);
-    // SEMCONV_PIN is left alone.
+    const block = (text: string, name: string) => new RegExp(`export const ${name}: SchemaPin = Object\\.freeze\\(\\{[^}]*\\}`).exec(text)![0];
+    expect(block(out, "COLLECTOR_PIN")).toContain('version: "v0.140.0"');
+    expect(block(out, "GENAI_SEMCONV_PIN")).toContain('version: "v1.50.0"');
+    // SEMCONV_PIN, and the custom-component pin in define.ts's doc comment, are left alone.
+    expect(block(out, "SEMCONV_PIN")).toBe(block(text, "SEMCONV_PIN"));
     const changed = out.split("\n").filter((l, i) => l !== text.split("\n")[i]);
     expect(changed).toHaveLength(2);
     expect(() => bumpPins("nothing", { collector: "v1.0.0" })).toThrow(/no COLLECTOR_PIN/);
