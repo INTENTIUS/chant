@@ -4,8 +4,8 @@
  * github → forgejo YAML is near-identical, so the migration itself is thin. The
  * differentiated value is the **compare**: classifying what survives the move
  * and what Forgejo silently drops. Most properties translate verbatim; the
- * useful findings are the keys the Forgejo runner ignores (`permissions`,
- * `continue-on-error` → `lost`) plus refs/labels that need attention
+ * useful findings are the keys the Forgejo runner ignores (`permissions` →
+ * `needs-review`, `continue-on-error` → `lost`) plus refs/labels that need attention
  * (unresolved `uses:`, unmapped runner labels → `needs-review`).
  *
  * Mirrors the gitlab lexicon's fate model (translated / approximated /
@@ -80,8 +80,8 @@ export function analyzeForgejoSecurity(
           sourceFile: file,
           category: "needs-review",
           rule: "MIG-FJ-PERMISSIONS",
-          note: `permissions: is kept, but only a Forgejo version that honours it enforces it (15 and later may). An older runner ignores it, so confirm the token scope in your Forgejo/runner and repository settings.`,
-          security: { property: "Least-privilege permissions", fate: "needs-review", severity: "warning", reestablish: "Forgejo runner/token settings on a version that ignores permissions" },
+          note: `permissions: is dropped, except id-token, which a job needs to request an OIDC token. The Forgejo runner does not enforce the scopes, so confirm the token scope in your Forgejo/runner and repository settings.`,
+          security: { property: "Least-privilege permissions", fate: "needs-review", severity: "warning", reestablish: "Forgejo runner/token settings" },
         });
         continue;
       }

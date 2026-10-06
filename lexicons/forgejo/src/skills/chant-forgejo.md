@@ -38,8 +38,9 @@ chant build src -o .forgejo/workflows/ci.yml
 
 ## What the dialect does on build
 
-- **Drops keys the Forgejo runner ignores** — `permissions` and
-  `continue-on-error` are removed (each emits a build warning).
+- **Drops keys the Forgejo runner ignores** — `continue-on-error` is removed
+  with a build warning. `permissions` is removed silently, except `id-token`,
+  which stays for OIDC.
 - **Maps runner labels** — `ubuntu-latest` → `docker` by default; override via
   `forgejo.runnerLabels` in `chant.config.ts`. Unmapped labels warn.
 - **Resolves `uses:` refs** — common `actions/*` rewrite under
@@ -53,7 +54,7 @@ chant migrate .github/workflows/ci.yml --to forgejo -o .forgejo/workflows/ci.yml
 ```
 
 `--validate` prints a **Security posture** report: what survives the move and
-what Forgejo silently drops (`permissions`/`continue-on-error` → lost,
+what Forgejo silently drops (`continue-on-error` → lost, `permissions` → needs-review,
 unresolved `uses:` / unmapped runner labels → needs-review). The same view is
 the `forgejo:compare` MCP tool.
 

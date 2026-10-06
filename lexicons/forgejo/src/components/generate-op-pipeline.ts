@@ -10,8 +10,8 @@
  * before emitting.
  *
  * One difference from the component generator: Forgejo Actions ignores
- * `permissions:` entirely (the dialect drops it wherever it appears, see
- * ../dialect.ts's `DROPPED_KEYS`), so this omits the section outright rather
+ * the workflow-level `permissions:` section (the dialect drops every scope
+ * but `id-token`, see ../dialect.ts), so this omits the section outright rather
  * than emitting a control the runner can't act on. The token a finding-mode
  * needs still rides the trigger step's `env:` (`GH_TOKEN`/`GITHUB_TOKEN`,
  * built by github's generator); actual write access on Forgejo is a property

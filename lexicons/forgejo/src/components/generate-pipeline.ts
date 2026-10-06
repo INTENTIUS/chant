@@ -16,9 +16,8 @@
  *    (default `docker`, the label a fresh `act_runner` exposes);
  *  - `uses:` refs (`actions/checkout@v4`, `actions/upload-artifact@v4`, …)
  *    rewritten to a Forgejo-resolvable form;
- *  - keys the Forgejo runner ignores (`permissions`, `continue-on-error`)
- *    dropped — the github generator emits none today, but the transform keeps
- *    the two dialects in lock-step if that changes.
+ *  - keys the Forgejo runner ignores (`continue-on-error`, and `permissions` bar `id-token`)
+ *    dropped (`permissions` keeps only `id-token`, which OIDC needs).
  *
  * The output path convention is `.forgejo/workflows/` (vs github's
  * `.github/workflows/`), set by the caller's `-o` flag — this module emits the

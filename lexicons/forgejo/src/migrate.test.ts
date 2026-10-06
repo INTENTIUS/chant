@@ -23,11 +23,29 @@ describe("github → forgejo transform", () => {
   test("emits forgejo YAML with the dialect applied", async () => {
     const { output } = await transform(GHA_WORKFLOW, { sourceFile: "ci.yml" });
     expect(output).toContain("runs-on: docker");
-    expect(output).toContain("permissions");
+    expect(output).not.toContain("permissions");
     expect(output).not.toContain("continue-on-error");
     expect(output).toContain("https://code.forgejo.org/actions/checkout@v4");
     // unmapped ref still present (passed through), surfaced in the compare
     expect(output).toContain("some-org/custom-action@v1");
+  });
+
+  test("keeps id-token from a job's permissions, for OIDC", async () => {
+    const { output } = await transform(
+      `on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - run: echo hi
+`,
+      { sourceFile: "deploy.yml" },
+    );
+    expect(output).toContain("id-token: write");
+    expect(output).not.toContain("contents: read");
   });
 
   test("classifies property fates (provenance + posture)", async () => {
