@@ -153,7 +153,18 @@ const k8sNamingConfig: NamingConfig = {
     "K8s::Networking::NetworkPolicy": ["NetPol"],
   },
 
-  priorityPropertyAliases: {},
+  // Names published before the Prometheus Operator CRDs (v0.94.1) added colliding
+  // property types stay with their original owners; the new CRDs' types are prefixed.
+  priorityPropertyAliases: {
+    "K8s::Monitoring::ServiceMonitor": {
+      AttachMetadata: "AttachMetadata",
+      NamespaceSelector: "NamespaceSelector",
+      Selector: "Selector",
+    },
+    "K8s::Traefik::Middleware": { BasicAuth: "BasicAuth" },
+    "K8s::Addons::HelmChartProxy": { TlsConfig: "TlsConfig" },
+    "K8s::S3::Bucket": { Lifecycle: "Lifecycle" },
+  },
 
   serviceAbbreviations: {
     Core: "Core",
