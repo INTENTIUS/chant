@@ -175,6 +175,7 @@ describe("YAML -> TypeScript -> YAML", () => {
       "getting-started/rules.yml",
       "k3d-stack/rules.yml",
       "k3d-stack/alertmanager.yml",
+      "observe-converge/rules.yml",
       "rules-from-data/rules.yml",
       "slo/rules.yml",
       "slo/alertmanager.yml",

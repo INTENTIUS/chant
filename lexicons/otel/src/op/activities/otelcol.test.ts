@@ -105,7 +105,7 @@ describe("otelcolValidate", () => {
 
   test("a binary that will not start says so", async () => {
     const exec: ExecRunner = async () => ({ code: null, stdout: "", stderr: "", error: "spawn otelcol-contrib ENOENT" });
-    await expect(otelcolValidate({ config: configFile(), _exec: exec })).rejects.toThrow(/could not run otelcol-contrib: spawn otelcol-contrib ENOENT/);
+    await expect(otelcolValidate({ config: configFile(), bin: "otelcol-contrib", _exec: exec })).rejects.toThrow(/could not run otelcol-contrib: spawn otelcol-contrib ENOENT/);
   });
 });
 
