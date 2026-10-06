@@ -93,7 +93,7 @@ describe("amtoolRoutesTest", () => {
 
   test("passes when the labels route to the expected receivers", async () => {
     const { exec: e, calls } = exec("oncall\n");
-    const r = await amtoolRoutesTest({ config: "/tmp/am.yml", labels: { severity: "page", slo: "checkout" }, expect: "oncall", _exec: e });
+    const r = await amtoolRoutesTest({ config: "/tmp/am.yml", labels: { severity: "page", slo: "checkout" }, expect: "oncall", bin: "amtool", _exec: e });
     expect(r.receivers).toEqual(["oncall"]);
     expect(calls[0]).toEqual(["amtool", "config", "routes", "test", "--config.file=/tmp/am.yml", "severity=page", "slo=checkout"]);
   });
