@@ -39,7 +39,7 @@ Any other path under a capability's prefix is a 404, and reaches no upstream.
 
 The box's steward reads its box block from `chant workspace status --json` and posts the capabilities to `POST /api/box/declaration` with the box's token. The body is `{ "capabilities": [{ "name", "broker", "scope" }] }`. It may hold up to 20 capabilities of up to 50 scope words each, in at most 32 KB. The broker keeps the entries whose `broker` is its word and answers 200 with what it kept and when: `{ "capabilities": [...], "at": "<ISO time>" }`. Each report replaces the last. A body that is not a report is a 400, and a token that is no box's is a 401 or 403.
 
-A report may also carry two optional fields ([#3508](https://github.com/INTENTIUS/chant/issues/3508), [ws-102](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-102-a-broker-report-names-a-box-s-listing-and-spend.md)), which studio's steward has sent since [studio#369](https://github.com/arugula-salad/studio/issues/369) and [studio#384](https://github.com/arugula-salad/studio/issues/384):
+A report may also carry two optional fields ([#3508](https://github.com/INTENTIUS/chant/issues/3508), [ws-102](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-102-a-broker-report-names-a-box-s-listing-and-spend.md)). Studio's steward has sent them since [studio#369](https://github.com/arugula-salad/studio/issues/369) and [studio#384](https://github.com/arugula-salad/studio/issues/384).
 
 | Field | Holds |
 |---|---|

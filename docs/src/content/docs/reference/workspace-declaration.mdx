@@ -253,9 +253,7 @@ A session bound to several members may write the files of any of them and the re
 ]
 ```
 
-A declaration that uses `members` sets `minReader` to `0.105.0` or newer.
-
-[`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its members, its scope and the spec.
+A declaration that uses `members` needs a `minReader` of `0.105.0` or higher, since an older chant does not know the field. [`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its members, its scope and the spec.
 
 ## Identity
 
@@ -471,7 +469,7 @@ A box runs its processes as services under a supervisor: sprite-env on a sprite,
 
 The services also follow rules the schema can't state. Each `needs` entry names a service of the same block, and the `needs` form no cycle. A block gives each name once, and one service at most sets `httpPort`. A declaration that breaks one can't be read (`declaration-invalid`), so [`check`](/chant/cli/workspace-check/#boxes) fails with `WSP001`.
 
-The fly lexicon reads the list with `box: true`, from the box block of the member whose directory holds the working directory. `spriteServicesObserve({ box: true })` observes the services for a [`ConvergeOp`](/chant/guide/converging-lifecycle/), `spriteServiceRestart({ box: true })` restarts one and waits for its `health`, and `spriteApplyServices({ box: true })` creates and replaces them through `sprite-env services`. chant reads `services` from 0.95.0 on, so a declaration that has them sets `minReader` to `"0.95.0"` or newer.
+The fly lexicon reads the list with `box: true`, from the box block of the member whose directory holds the working directory. `spriteServicesObserve({ box: true })` observes the services for a [`ConvergeOp`](/chant/guide/converging-lifecycle/), `spriteServiceRestart({ box: true })` restarts one and waits for its `health`, and `spriteApplyServices({ box: true })` creates and replaces them through `sprite-env services`. chant reads `services` from 0.95.0 on, and a declaration that has them needs `minReader` of `"0.95.0"` or higher.
 
 ### Factory
 
@@ -603,7 +601,7 @@ Uncommitted records, work branches and kept attempts sit on a box's disk until s
 | `on` | no | When chant pushes on its own: `save`, after each [`chant workspace wip save`](/chant/cli/workspace-wip/), and `release`, after a work lease is released. Both when omitted. `[]` leaves every push to `wip push`. A record write never pushes, because chant's record writes never run git. |
 | `every` | no | How often the host runs `chant workspace wip push` on a schedule of its own, such as `10m`. chant runs no scheduler. |
 
-At most one box block declares `replicate`, since a checkout's work in progress goes to one remote. chant pushes each ref under its own name and never forces a push. `status --json` prints the policy under the member's `box`, and its top-level `replication` says how far each ref is from the remote. A declaration that uses `replicate` sets `minReader` to `"0.103.0"` or later, the first chant that reads it.
+At most one box block declares `replicate`, since a checkout's work in progress goes to one remote. chant pushes each ref under its own name and never forces a push. `status --json` prints the policy under the member's `box`, and its top-level `replication` says how far each ref is from the remote. `replicate` is read from chant 0.103.0 on, so `minReader` must be at least `"0.103.0"` where it is used.
 
 ### Plantable
 
