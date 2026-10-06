@@ -143,7 +143,9 @@ A dependent is planned against the outputs its upstream has now. When the change
 
 An apply that fails partway leaves the members it applied in place. The generated apply job runs `pr-apply` with [`--resume .chant/pr-resume/pr-apply.json`](/chant/cli/components/#finishing-an-apply-that-failed-partway) and keeps that record in the CI cache, saved even when the job fails. Re-run the failed apply job and it restores the record, skips the members that applied and applies the rest under the approval it already has. The record is not part of the report artifact, since it holds the outputs the members read.
 
-The cache key names the environment, the member and the pushed commit: on GitHub and Forgejo `chant-apply-<env>-<commit>-<run>-<attempt>`, restored by the prefix up to the commit, and on GitLab `chant-apply-<env>-<commit>`. A push of another commit never restores it. The pull request and the gate digest are not in the key, because the job learns them only once it runs; `pr-apply` checks them against the record and refuses a record made for another pull request, gate, commit or digest, or one whose approval no longer stands. A refused record changes nothing: the apply plans every member, and the new digest needs a fresh approval.
+The cache key names the environment, the member and the pushed commit: on GitHub and Forgejo `chant-apply-<env>-<commit>-<run>-<attempt>`, restored by the prefix up to the commit, and on GitLab `chant-apply-<env>-<commit>`. In a workspace member the key starts `chant-apply.<member>.<env>` instead. A push of another commit never restores it. The pull request and the gate digest are not in the key, because the job learns them only once it runs; `pr-apply` checks them against the record and refuses a record made for another pull request, gate, commit or digest, or one whose approval no longer stands. A refused record changes nothing: the apply plans every member, and the new digest needs a fresh approval.
+
+The approved digest covers the change set's entries as well as each member's plan, so a record whose entries, holes or side effects are not the ones that were approved is refused like one for another digest. A member left to apply is checked against entries the approval binds, not against whatever the cache holds.
 
 The record survives a re-run when the cache does:
 
@@ -164,6 +166,8 @@ chant build --components --generate github --pr-loop --env prod
 ```
 
 The jobs run in the member's directory, so `.chant/pr` and every path in `chant.config.ts` read from there. The report artifact is kept from `<member dir>/.chant/pr`. On GitLab the file is `.gitlab/ci/chant-pr-<member>-<env>.gitlab-ci.yml`, its jobs are `<member>-plan` and `<member>-apply`, and each script starts with `cd <member dir>`.
+
+One apply runs at a time per member and environment, through the concurrency group (GitLab: resource group) `chant-apply.<member>.<env>`. A member name has no `.`, so no two members' groups meet: member `a` in environment `b-c` and member `a-b` in environment `c` apply side by side.
 
 The jobs pass `--member <name>` to `pr-plan` and `pr-apply`. The member's gate is recorded under `pr-<number>-<member>`, its note carries the member's name, and its statuses are `chant/plan/<member>` and `chant/apply/<member>`. A reviewer approves each member's plan on its own:
 

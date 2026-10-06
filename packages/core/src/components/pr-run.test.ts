@@ -24,7 +24,7 @@ import {
   resumePrSet,
   type PrPlanSet,
 } from "./pr-run";
-import { changeSetDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
+import { changeSetDigest, changeSetDocumentDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import type { PrApplyRecord } from "./fan-out-record";
 import type { FanOutPlan } from "./fan-out";
 import { computePlanDigest } from "../lifecycle/plan-digest";
@@ -140,7 +140,8 @@ describe("planPrSet", () => {
       ["a", "planned", 1],
       ["app", "planned", 0],
     ]);
-    expect(set.doc.digest).toBe(changeSetDigest(set.members.map((m) => ({ member: m.member, planDigest: m.planDigest }))));
+    expect(set.doc.digest).toBe(changeSetDocumentDigest(set.doc));
+    expect(set.doc.digest).not.toBe(changeSetDigest(set.members.map((m) => ({ member: m.member, planDigest: m.planDigest }))));
     expect(set.failed).toBe(false);
   });
 
@@ -398,6 +399,15 @@ describe("resuming an apply that failed partway (#3464)", () => {
       { ...record, changeSet: other },
       { ...record, digest: other.digest, changeSet: other },
       { ...record, changeSet: { ...set.doc, members: set.doc.members.map((m) => (m.member === "a" ? { ...m, planDigest: "jcs1-sha256:" + "1".repeat(64) } : m)) } },
+      // The digest binds the entries (#3555): an entry or a hole planted in the record does not resume.
+      {
+        ...record,
+        changeSet: {
+          ...set.doc,
+          entries: [...set.doc.entries, { member: "a", lexicon: "terraform", planner: "tofu" as const, address: "aws_vpc.planted", type: "aws_vpc", action: "create" as const, attributes: [] }],
+        },
+      },
+      { ...record, changeSet: { ...set.doc, members: set.doc.members.map((m) => (m.member === "a" ? { ...m, holes: [{ address: "data.planted", reason: "unobserved" }] } : m)) } },
     ]) {
       w.planned.length = 0;
       const resumed = await resumePrSet({ components: ESTATE, plan, registry: w.registry, env: "prod", record: forged, completed: first.run.completed });

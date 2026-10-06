@@ -25,6 +25,7 @@ import { describe, expect, test } from "vitest";
 import {
   CHANGE_SET_SCHEMA_ID,
   changeSetDigest,
+  changeSetDocumentDigest,
   composeChangeSet,
   lifecyclePlanPart,
   reconcilePlanPart,
@@ -166,11 +167,20 @@ describe("the digest", () => {
   const warden = () => reconcilePlanPart({ member: "warden", plan: wardenPlan() });
   const tofu = () => read(TF_DIR, "tofu.part.golden.json") as ChangeSetPart;
 
-  test("is the set digest over { member, planDigest }, whatever order the parts come in", () => {
+  test("binds the set digest over { member, planDigest }, the members' status and holes, the entries and the side effects, whatever order the parts come in", () => {
     const doc = composeChangeSet([lifecycle(), warden(), tofu()]);
     expect(composeChangeSet([tofu(), warden(), lifecycle()])).toEqual(doc);
     const pairs = doc.members.map((m) => ({ member: m.member, planDigest: m.planDigest }));
-    expect(doc.digest).toBe(computePlanDigest("change-set", pairs));
+    expect(changeSetDigest(doc.members)).toBe(computePlanDigest("change-set", pairs));
+    expect(doc.digest).toBe(
+      computePlanDigest("change-set-document", {
+        set: computePlanDigest("change-set", pairs),
+        members: doc.members.map((m) => ({ member: m.member, status: m.status, holes: m.holes })),
+        entries: doc.entries,
+        sideEffects: [],
+      }),
+    );
+    expect(doc.digest).toBe(changeSetDocumentDigest({ ...doc, entries: [...doc.entries].reverse() }));
     expect(doc.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
     expect(verifyChangeSetDigest(doc)).toBe(true);
     expect(verifyChangeSetDigest({ ...doc, digest: changeSetDigest(doc.members.slice(1)) })).toBe(false);
@@ -182,8 +192,29 @@ describe("the digest", () => {
     const moved = wardenPlan();
     moved.entries[0] = { ...moved.entries[0], after: { privacy: "closed", description: "Release engineers" } };
     expect(composeChangeSet([lifecycle(), reconcilePlanPart({ member: "warden", plan: moved })]).digest).not.toBe(base);
-    // A wave is a subset of members: its digest is the same function over them.
-    expect(changeSetDigest([lifecycle().member])).toBe(composeChangeSet([lifecycle()]).digest);
+    // A wave is a subset of members: its digest is the set digest over them, which the document's digest binds.
+    expect(changeSetDigest([lifecycle().member])).toBe(computePlanDigest("change-set", [{ member: "delivery", planDigest: lifecycle().member.planDigest }]));
+    expect(changeSetDigest([lifecycle().member])).not.toBe(composeChangeSet([lifecycle()]).digest);
+  });
+
+  test("moves when an entry, a hole, a member's status or a side effect does, so a document with edited entries does not verify (#3555)", () => {
+    const doc = composeChangeSet([lifecycle(), warden()]);
+    const [first, ...rest] = doc.entries;
+    const edited = [
+      { ...doc, entries: rest },
+      { ...doc, entries: [{ ...first, action: "no-op" as const }, ...rest] },
+      { ...doc, entries: [{ ...first, attributes: [...first.attributes, { path: "planted", after: "x" }] }, ...rest] },
+      { ...doc, entries: [...doc.entries, { ...first, address: `${first.address}-planted` }] },
+      { ...doc, members: doc.members.map((m) => ({ ...m, holes: [...m.holes, { address: "planted", reason: "unobserved" }] })) },
+      { ...doc, members: doc.members.map((m, i) => (i === 0 ? { ...m, status: "failed" as const } : m)) },
+      { ...doc, sideEffects: [{ member: doc.members[0].member, address: "action.aws_lambda_invoke.planted", type: "aws_lambda_invoke" }] },
+    ];
+    expect(verifyChangeSetDigest(doc)).toBe(true);
+    for (const e of edited) {
+      expect(changeSetDocumentDigest(e)).not.toBe(doc.digest);
+      expect(verifyChangeSetDigest(e)).toBe(false);
+    }
+    expect(verifyChangeSetDigest({ ...doc, members: [...doc.members, doc.members[0]] })).toBe(false);
   });
 
   test("leaves provisional members out, so approving the document never covers them", () => {

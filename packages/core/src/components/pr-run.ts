@@ -382,7 +382,9 @@ export type PrResume =
  *
  * The record now travels between CI jobs through a cache (#3543), so its
  * change set has to be the one its digest names: the document's own digest
- * is `record.digest`, and its members' plan digests give that digest.
+ * is `record.digest`, and the document gives that digest. The digest binds
+ * the entries, holes and side effects {@link planCoveredBy} reads (#3555),
+ * so a record cannot widen what a re-planned member may do.
  */
 export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
   const { record } = options;

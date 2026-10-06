@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
+import { prApplyGroup, prApplyRecordKey } from "@intentius/chant/components/pr-pipeline";
 import { generateGithubPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -133,15 +134,25 @@ describe("the GitHub pull-request workflow", () => {
     expect(plan.run).toBe('chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge github --member network');
     const apply = mdoc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
     expect(apply.run).toContain("--member network");
-    expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply-network-prod", "cancel-in-progress": false });
+    expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply.network.prod", "cancel-in-progress": false });
     // The record path is relative to the member for --resume and to the repository for the cache.
     expect(apply.run).toContain("--resume .chant/pr-resume/pr-apply.json");
     const restore = mdoc.jobs.apply.steps.find((s) => s.uses === "actions/cache/restore@v4")!;
-    expect(restore.with).toMatchObject({ path: "infra/network/.chant/pr-resume/pr-apply.json", "restore-keys": "chant-apply-network-prod-${{ github.sha }}-" });
+    expect(restore.with).toMatchObject({ path: "infra/network/.chant/pr-resume/pr-apply.json", "restore-keys": "chant-apply.network.prod-${{ github.sha }}-" });
     for (const job of Object.values(mdoc.jobs)) {
       const keep = job.steps.find((s) => s.uses?.startsWith("actions/upload-artifact"))!;
       expect(keep.with?.path).toBe("infra/network/.chant/pr");
     }
+  });
+
+  test("no two member and environment pairs share an apply group or record key", () => {
+    expect(prApplyGroup("b-c", "a")).toBe("chant-apply.a.b-c");
+    expect(prApplyGroup("c", "a-b")).toBe("chant-apply.a-b.c");
+    expect(prApplyGroup("b-c", "a")).not.toBe(prApplyGroup("c", "a-b"));
+    expect(prApplyRecordKey("b-c", "abc", "a")).not.toBe(prApplyRecordKey("c", "abc", "a-b"));
+    // A single project's group never looks like a member's.
+    expect(prApplyGroup("a-b-c")).toBe("chant-apply-a-b-c");
+    expect(prApplyGroup("a.b-c")).not.toBe(prApplyGroup("b-c", "a"));
   });
 
   test("a member at the workspace root keeps the root's paths but its own names", () => {

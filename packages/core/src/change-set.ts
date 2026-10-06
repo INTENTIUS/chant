@@ -19,12 +19,19 @@
  * Every member carries the plan digest a gate on that member alone binds
  * (#2300): `terraformPlanDigest` for a terraform-family root, and here
  * `computePlanDigest("lifecycle-plan", …)` and `computePlanDigest(
- * "reconcile-plan", …)`. The document's digest is {@link changeSetDigest}
- * over the sorted `{ member, planDigest }` pairs, the set digest #3049
- * describes, so a wave's digest is the same function over the wave's
- * members. The entries and the summary are derived from the plans those
- * digests cover and are not hashed again: a change to how chant projects a
- * plan into entries does not expire an approval.
+ * "reconcile-plan", …)`. {@link changeSetDigest} over the sorted `{ member,
+ * planDigest }` pairs is the set digest #3049 describes, and a wave's digest
+ * is that function over the wave's members.
+ *
+ * The document's digest is {@link changeSetDocumentDigest}: the set digest,
+ * each member's status and holes, the entries and the side effects. An
+ * approval of the document binds what it says as well as the plans it came
+ * from, so a pull request's apply that resumes from a record (#3464) can
+ * check a re-planned member against the record's entries without trusting
+ * whoever wrote the record. The summary is computed from the entries and is
+ * not hashed. A change to how chant projects a plan into entries moves the
+ * document's digest, so an approval given under one chant does not carry to
+ * an apply under a chant that projects the same plan differently.
  *
  * ## The import graph
  *
@@ -192,6 +199,9 @@ function entryKey(e: ChangeSetEntry): string {
   return `${e.member}\u0000${e.address}\u0000${e.deposed ?? ""}\u0000${e.action}`;
 }
 
+const bySideEffect = (a: ChangeSetSideEffect, b: ChangeSetSideEffect): number =>
+  byString(a.member, b.member) || byString(a.address, b.address) || byString(a.trigger ?? "", b.trigger ?? "");
+
 /**
  * The set digest over members' plan digests: `computePlanDigest("change-set",
  * …)` over `{ member, planDigest }` sorted by member. Order-independent,
@@ -210,6 +220,27 @@ export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "me
     if (pairs[i - 1].member === pairs[i].member) throw new Error(`the change set names member ${pairs[i].member} twice`);
   }
   return computePlanDigest("change-set", pairs);
+}
+
+/**
+ * The document's digest: `computePlanDigest("change-set-document", …)` over
+ * the set digest ({@link changeSetDigest}), each member's name, status and
+ * holes, the entries and the side effects. Members are sorted by name and
+ * entries and side effects by the keys {@link composeChangeSet} sorts them by,
+ * so order makes no difference.
+ *
+ * A provisional member is left out, with its entries and side effects, as
+ * the set digest leaves it out: no approval of the document covers it.
+ */
+export function changeSetDocumentDigest(doc: Pick<ChangeSetDocument, "members" | "entries" | "sideEffects">): string {
+  const provisional = new Set(doc.members.filter((m) => m.provisional === true).map((m) => m.member));
+  const members = doc.members
+    .filter((m) => !provisional.has(m.member))
+    .map((m) => ({ member: m.member, status: m.status, holes: m.holes }))
+    .sort((a, b) => byString(a.member, b.member));
+  const entries = doc.entries.filter((e) => !provisional.has(e.member)).sort((a, b) => byString(entryKey(a), entryKey(b)));
+  const sideEffects = (doc.sideEffects ?? []).filter((s) => !provisional.has(s.member)).sort(bySideEffect);
+  return computePlanDigest("change-set-document", { set: changeSetDigest(doc.members), members, entries, sideEffects });
 }
 
 /** The summary of a set of members and entries. */
@@ -275,8 +306,8 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
   entries.sort((a, b) => byString(entryKey(a), entryKey(b)));
   const sideEffects: ChangeSetSideEffect[] = parts
     .flatMap((p) => (p.sideEffects ?? []).map((s) => ({ member: p.member.member, ...s })))
-    .sort((a, b) => byString(a.member, b.member) || byString(a.address, b.address) || byString(a.trigger ?? "", b.trigger ?? ""));
-  const digest = changeSetDigest(members);
+    .sort(bySideEffect);
+  const digest = changeSetDocumentDigest({ members, entries, sideEffects });
   return {
     $schema: CHANGE_SET_SCHEMA_ID,
     contract: CHANGE_SET_CONTRACT,
@@ -289,9 +320,17 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
   };
 }
 
-/** Whether a document's digest is the one its members' plan digests give. */
-export function verifyChangeSetDigest(doc: Pick<ChangeSetDocument, "digest" | "members">): boolean {
-  return changeSetDigest(doc.members) === doc.digest;
+/**
+ * Whether a document's digest is the one its members, entries and side
+ * effects give ({@link changeSetDocumentDigest}). A document that names a
+ * member twice has no digest and is not verified.
+ */
+export function verifyChangeSetDigest(doc: Pick<ChangeSetDocument, "digest" | "members" | "entries" | "sideEffects">): boolean {
+  try {
+    return changeSetDocumentDigest(doc) === doc.digest;
+  } catch {
+    return false;
+  }
 }
 
 // ── chant lifecycle plan ───────────────────────────────────────────────────────

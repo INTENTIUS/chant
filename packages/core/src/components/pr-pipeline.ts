@@ -138,9 +138,16 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
 /**
  * The concurrency group (GitHub, Forgejo) or resource group (GitLab) that
  * keeps one apply at a time per environment, and per member in a workspace.
+ *
+ * A member's group is `chant-apply.<member>.<env>`. Member names hold only
+ * lower-case letters, digits and `-`, so the first `.` ends the member and no
+ * two member and environment pairs share a group: member `a` with environment
+ * `b-c` is `chant-apply.a.b-c`, and member `a-b` with environment `c` is
+ * `chant-apply.a-b.c`. The `.` after `chant-apply` keeps a member's groups
+ * apart from a single project's `chant-apply-<env>`.
  */
 export function prApplyGroup(env: string, member?: string): string {
-  return member ? `chant-apply-${member}-${env}` : `chant-apply-${env}`;
+  return member ? `chant-apply.${member}.${env}` : `chant-apply-${env}`;
 }
 
 /**

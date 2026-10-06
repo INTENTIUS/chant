@@ -1,7 +1,7 @@
 {
   "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
   "contract": 1,
-  "digest": "jcs1-sha256:5724486f4166eb1db89bba1d5807aaf1dc592726af2ecaf47da782e8d246cafb",
+  "digest": "jcs1-sha256:4399c474b6828f8d2f270dcca5350dee051e158dd875ef4e67a461649f8842cb",
   "members": [
     {
       "member": "estates/e01",

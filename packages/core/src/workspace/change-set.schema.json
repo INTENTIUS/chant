@@ -26,7 +26,7 @@
     "digest": {
       "type": "string",
       "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
-      "description": "computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member, provisional members left out. What a gate over the whole run binds."
+      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries and the side effects, provisional members and their entries left out. What a gate over the whole run binds."
     },
     "members": {
       "type": "array",
