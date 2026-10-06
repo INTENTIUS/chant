@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Ingress } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface AlbIngressHost {
   /** Hostname (e.g., "api.example.com"). */
@@ -48,7 +49,7 @@ export interface AlbIngressProps {
   namespace?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    ingress?: Partial<Record<string, unknown>>;
+    ingress?: MemberDefaults<"Ingress">;
   };
 }
 

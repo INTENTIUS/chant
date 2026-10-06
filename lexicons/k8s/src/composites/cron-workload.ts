@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { CronJob, ServiceAccount, Role, RoleBinding } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 import { validateCronJobSchedule } from "./cron-schedule";
 
@@ -42,10 +43,10 @@ export interface CronWorkloadProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    cronJob?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    role?: Partial<Record<string, unknown>>;
-    roleBinding?: Partial<Record<string, unknown>>;
+    cronJob?: MemberDefaults<"CronJob">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    role?: MemberDefaults<"Role">;
+    roleBinding?: MemberDefaults<"RoleBinding">;
   };
 }
 

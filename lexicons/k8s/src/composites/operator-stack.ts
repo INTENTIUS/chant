@@ -76,6 +76,7 @@ import { Composite, mergeDefaults } from "@intentius/chant";
 import { classifyOpVerbClass } from "@intentius/chant/op";
 import type { OpConfig, OpVerbClass } from "@intentius/chant/op";
 import { Namespace, CronJob, ServiceAccount, Role, RoleBinding } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import { validateCronJobSchedule } from "./cron-schedule";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -136,11 +137,11 @@ export interface OperatorStackConfig {
   labels?: Record<string, string>;
   /** Per-member-kind defaults for fine-grained overrides, applied to every host's member of that kind. */
   defaults?: {
-    namespace?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    role?: Partial<Record<string, unknown>>;
-    roleBinding?: Partial<Record<string, unknown>>;
-    cronJob?: Partial<Record<string, unknown>>;
+    namespace?: MemberDefaults<"Namespace">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    role?: MemberDefaults<"Role">;
+    roleBinding?: MemberDefaults<"RoleBinding">;
+    cronJob?: MemberDefaults<"CronJob">;
   };
 }
 

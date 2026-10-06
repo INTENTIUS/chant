@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Ingress } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface AgicIngressHost {
   /** Hostname (e.g., "api.example.com"). */
@@ -45,7 +46,7 @@ export interface AgicIngressProps {
   namespace?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    ingress?: Partial<Record<string, unknown>>;
+    ingress?: MemberDefaults<"Ingress">;
   };
 }
 

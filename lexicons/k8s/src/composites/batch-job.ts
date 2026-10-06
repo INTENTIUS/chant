@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, ServiceAccount, Role, RoleBinding } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 /** Parse a K8s memory string (e.g. "256Mi", "1Gi") to bytes for comparison. */
@@ -72,10 +73,10 @@ export interface BatchJobProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    job?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    role?: Partial<Record<string, unknown>>;
-    roleBinding?: Partial<Record<string, unknown>>;
+    job?: MemberDefaults<"Job">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    role?: MemberDefaults<"Role">;
+    roleBinding?: MemberDefaults<"RoleBinding">;
   };
 }
 

@@ -23,6 +23,7 @@ import {
   GitRepository as GitRepositoryResource,
   Kustomization as KustomizationResource,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -63,7 +64,7 @@ export interface FluxGitSourceOptions {
   fluxNamespace?: string;
   /** Extra labels applied to the GitRepository. */
   labels?: Record<string, string>;
-  defaults?: { gitRepository?: Partial<Record<string, unknown>> };
+  defaults?: { gitRepository?: MemberDefaults<"GitRepository"> };
 }
 
 export type FluxGitSourceResult = {
@@ -171,7 +172,7 @@ export interface FluxAppForOptions {
   fluxNamespace?: string;
   /** Extra labels applied to the Kustomization. */
   labels?: Record<string, string>;
-  defaults?: { kustomization?: Partial<Record<string, unknown>> };
+  defaults?: { kustomization?: MemberDefaults<"Kustomization"> };
 }
 
 export type FluxAppForResult = {

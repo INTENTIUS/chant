@@ -18,6 +18,7 @@ import { mergeDefaults } from "@intentius/chant";
 import type { CollectorConfig } from "@intentius/chant-lexicon-otel";
 import { canonicalTypeOf, type ComponentKind } from "@intentius/chant-lexicon-otel/model";
 import { Role, RoleBinding } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 /** One RBAC rule, as a Role or ClusterRole lists it. */
 export interface CollectorPolicyRule {
@@ -111,8 +112,8 @@ export interface NamespacedRolesOptions {
   /** The ServiceAccount every RoleBinding binds. */
   serviceAccount: { name: string; namespace: string };
   /** Defaults laid over each Role and each RoleBinding. */
-  roleDefaults?: Partial<Record<string, unknown>>;
-  roleBindingDefaults?: Partial<Record<string, unknown>>;
+  roleDefaults?: MemberDefaults<"Role">;
+  roleBindingDefaults?: MemberDefaults<"RoleBinding">;
 }
 
 /**

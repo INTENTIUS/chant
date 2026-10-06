@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Deployment, Service } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface SidecarContainer {
@@ -78,8 +79,8 @@ export interface SidecarAppProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
   };
 }
 

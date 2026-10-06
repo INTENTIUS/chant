@@ -39,6 +39,7 @@ import {
   Role,
   RoleBinding,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import { collectorConfigMap, collectorContainer } from "./otel-collector-agent";
 import { namespacedRoles, type CollectorPolicyRule } from "./otel-collector-rbac";
 import {
@@ -89,16 +90,16 @@ export interface OtelCollectorGatewayProps {
   memoryLimit?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    headlessService?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
-    podDisruptionBudget?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    leaseRole?: Partial<Record<string, unknown>>;
-    leaseRoleBinding?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    headlessService?: MemberDefaults<"Service">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    configMap?: MemberDefaults<"ConfigMap">;
+    podDisruptionBudget?: MemberDefaults<"PodDisruptionBudget">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    leaseRole?: MemberDefaults<"Role">;
+    leaseRoleBinding?: MemberDefaults<"RoleBinding">;
   };
 }
 
