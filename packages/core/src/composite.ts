@@ -134,6 +134,16 @@ export function Composite<P, M extends CompositeFactoryMembers = CompositeMember
       }
     }
 
+    // chant#3608 — every member records the composite that built it, here,
+    // when the instance is made. A member destructured from the call
+    // (`export const { vpc } = VpcDefault({})`) is never expanded, so this is
+    // the only trace that a composite wrote it; `collectEntities` reads it
+    // through {@link compositeOfMember}. A nested instance recorded its own
+    // members first and the first record is kept, so a member keeps its
+    // innermost composite. Kept off the provenance record so the composite
+    // `expandComposite` records for an instance exported whole is unchanged.
+    markCompositeMembers(members, compositeName);
+
     // Define `members` and `_definition` as non-enumerable so spreading a
     // composite instance (`...someComposite`) only exposes the actual member
     // resources, not the framework's bookkeeping properties. Without this, a
@@ -154,6 +164,33 @@ export function Composite<P, M extends CompositeFactoryMembers = CompositeMember
   CompositeRegistry.register(definition as CompositeDefinition<unknown>);
 
   return definition;
+}
+
+/** Non-enumerable, symbol-keyed: invisible to serializers, spreads and comparisons, like provenance. */
+const COMPOSITE_MEMBER_OF = Symbol.for("chant.composite.memberOf");
+
+/** Record `compositeName` on each declarable member, descending into nested instances. First record wins. */
+function markCompositeMembers(members: object, compositeName: string): void {
+  for (const member of Object.values(members)) {
+    if (isCompositeInstance(member)) {
+      markCompositeMembers(member.members, compositeName);
+    } else if (
+      isDeclarable(member) &&
+      Object.isExtensible(member) &&
+      !Object.prototype.hasOwnProperty.call(member, COMPOSITE_MEMBER_OF)
+    ) {
+      Object.defineProperty(member, COMPOSITE_MEMBER_OF, { value: compositeName, enumerable: false, configurable: true });
+    }
+  }
+}
+
+/**
+ * chant#3608 — the composite whose call built `entity`, or `undefined` for an
+ * entity no chant composite built.
+ */
+export function compositeOfMember(entity: object): string | undefined {
+  const name = (entity as Record<symbol, unknown>)[COMPOSITE_MEMBER_OF];
+  return typeof name === "string" ? name : undefined;
 }
 
 /**

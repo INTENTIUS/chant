@@ -453,3 +453,73 @@ describe("foldProject provenance for host composites (chant#3608)", () => {
     expect(provenance.side.fields.name).toEqual({ kind: "composite-parameter", composite: "Outer", parameters: ["name"] });
   });
 });
+
+/**
+ * chant#3608 — a member destructured from a chant composite the build CALLS
+ * rather than interprets. A lexicon composite is the common case
+ * (`export const { namespace, resourceQuota } = NamespaceEnv({...})`, as the
+ * ray-kuberay-gke example writes it): nothing in the build says which
+ * argument produced which field, so every field is `unknown`, and before this
+ * every one of them read as `direct`.
+ */
+describe("a member destructured from a called chant composite is unknown (chant#3608)", () => {
+  const K8S = "@intentius/chant-lexicon-k8s";
+  let srcDir: string;
+  let file: string;
+  let warn: typeof console.warn;
+
+  beforeAll(async () => {
+    // NamespaceEnv warns about a quota with no LimitRange defaults; not this test's concern.
+    warn = console.warn;
+    console.warn = () => {};
+    const dir = join(repoRoot, ".cache", `chant-3608-${process.pid}`);
+    await rm(dir, { recursive: true, force: true });
+    srcDir = join(await (async () => (await mkdir(dir, { recursive: true }), realpath(dir)))(), "src");
+    await mkdir(srcDir, { recursive: true });
+    file = join(srcDir, "namespace.ts");
+    await writeFile(
+      file,
+      `import { NamespaceEnv } from ${JSON.stringify(K8S)};\n` +
+        `import { propagate } from ${JSON.stringify(compositePath)};\n` +
+        'export const { namespace, resourceQuota } = NamespaceEnv({ name: "ray-system", cpuQuota: "8" });\n' +
+        'export const shared = propagate(NamespaceEnv({ name: "shared", cpuQuota: "4" }), { metadata: { labels: { team: "data" } } });\n',
+    );
+  });
+
+  afterAll(async () => {
+    console.warn = warn;
+    await rm(dirname(srcDir), { recursive: true, force: true });
+  });
+
+  const unknown = { kind: "unknown", reason: "composite-not-interpreted" };
+
+  /** Every field of every named record is unknown, and the record names the composite. */
+  function expectAllUnknown(provenance: FoldProvenance, names: string[]): void {
+    for (const name of names) {
+      const record = provenance[name];
+      expect(record, name).toBeDefined();
+      expect(record.composite, name).toBe("NamespaceEnv");
+      expect(Object.keys(record.fields).length, name).toBeGreaterThan(0);
+      for (const [path, origin] of Object.entries(record.fields)) expect(origin, `${name}.${path}`).toEqual(unknown);
+    }
+  }
+
+  test.each([{}, { executing: true }, { sandbox: true }])("foldProject and build() agree, %o", async (mode) => {
+    const verdict = (await foldProject([file], [], { lexicons: ["k8s"], ...mode })).get(file)!;
+    expect(verdict.verdict).toBe("fold");
+    const fromFold = verdict.foldProvenance!;
+    expectAllUnknown(fromFold, ["namespace", "resourceQuota", "sharedNamespace", "sharedResourceQuota"]);
+    // The propagated key, written by the composite and by the shared props, stays unknown.
+    expect(fromFold.sharedNamespace.fields["metadata.name"]).toEqual(unknown);
+
+    const built = await build(srcDir, [namesSerializer], undefined, { fold: true, lexicons: ["k8s"], ...mode });
+    expect(built.errors).toEqual([]);
+    for (const name of ["namespace", "resourceQuota"]) expect(built.foldProvenance[name], name).toEqual(fromFold[name]);
+  });
+
+  test("the run path reports them unknown too", async () => {
+    const built = await build(srcDir, [namesSerializer], undefined, {});
+    expect(built.errors).toEqual([]);
+    expectAllUnknown(built.foldProvenance, ["namespace", "resourceQuota", "sharedNamespace", "sharedResourceQuota"]);
+  });
+});

@@ -1,6 +1,6 @@
 import { basename, dirname, relative, resolve } from "node:path";
 import { isDeclarable, type Declarable } from "../declarable";
-import { isCompositeInstance, expandComposite } from "../composite";
+import { isCompositeInstance, expandComposite, compositeOfMember } from "../composite";
 import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
 import { setProvenance, type EntityProvenance } from "../provenance";
@@ -43,6 +43,16 @@ function stackPrefix(file: string, buildRoot: string | undefined): string {
  */
 const AUTHORED_ROOT: EntityProvenance["paths"] = { "": { kind: "authored" } };
 
+/**
+ * The record for an entity exported on its own. chant#3608: one destructured
+ * from a composite call also names that composite, so fold provenance reads
+ * its unattributed paths as `unknown` rather than as the file's own `direct`.
+ */
+function authoredProvenance(entity: Declarable, file: string): EntityProvenance {
+  const composite = compositeOfMember(entity);
+  return { sourceFile: file, ...(composite ? { composite } : {}), paths: AUTHORED_ROOT };
+}
+
 /** One entity to be placed into the map, produced by {@link enumerateEntries}. */
 interface PendingEntry {
   /** The un-disambiguated map key this entity would take (export name, indexed
@@ -82,12 +92,12 @@ function enumerateEntries(
     for (const [rawName, value] of sortedExports) {
       const name = exportKey(rawName, file);
       if (isDeclarable(value)) {
-        entries.push({ bareKey: name, value, file, provenance: { sourceFile: file, paths: AUTHORED_ROOT } });
+        entries.push({ bareKey: name, value, file, provenance: authoredProvenance(value, file) });
       } else if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
           const item = value[i];
           if (isDeclarable(item)) {
-            entries.push({ bareKey: `${name}_${i}`, value: item, file, provenance: { sourceFile: file, paths: AUTHORED_ROOT } });
+            entries.push({ bareKey: `${name}_${i}`, value: item, file, provenance: authoredProvenance(item, file) });
           } else if (isCompositeInstance(item)) {
             const indexedName = `${name}_${i}`;
             for (const [expandedName, entity] of expandComposite(indexedName, item)) {
