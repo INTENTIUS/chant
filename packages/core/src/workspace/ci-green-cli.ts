@@ -3,14 +3,14 @@
  *
  *   ci last-green [--json]               the newest commit on the branch with a green tag and no revoked tag
  *   ci tick [--dry-run] [--forge github] tag the commits that turned green, revoke the ones that turned red
- *   ci workflow [--workflow <name>]... [--output <file>]
+ *   ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
  *                                        write the root CI file that runs the tick
  *
  * `last-green --json` prints `ci-last-green.schema.json`. The tick and the
  * workflow print text.
  */
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
@@ -22,7 +22,7 @@ import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaratio
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
-const USAGE = "chant ci last-green [--json] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>]";
+const USAGE = "chant ci last-green [--json] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]";
 
 export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
   const doc = lastGreen({ cwd: process.cwd() });
@@ -83,9 +83,13 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const base = member ? member.memberRoot : root;
     const parts = ["chant", "ci", "workflow", ...extra.flatMap((w) => ["--workflow", w])];
     if (ctx.args.output) parts.push("--output", relative(base, target).split(sep).join("/"));
+    if (ctx.args.ciChant) parts.push("--chant", ctx.args.ciChant);
+    if (ctx.args.ciInstall) parts.push("--install", ctx.args.ciInstall);
     const command = parts.map(shellArg).join(" ");
     const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
-    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot });
+    // The install runs in the workspace root, so its lockfile there keys setup-node's npm cache.
+    const npmLock = ctx.args.ciInstall && existsSync(join(root, "package-lock.json")) ? (workspaceRoot === "." ? "package-lock.json" : `${workspaceRoot}/package-lock.json`) : undefined;
+    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock });
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
     console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}, and every 15 minutes.`);

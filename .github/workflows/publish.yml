@@ -50,8 +50,13 @@ jobs:
   # version fields and has no run of its own, the run checked is its parent's
   # (scripts/publish-verify-ci.sh). Each `npm publish` below still re-runs the
   # package's prepack under CHANT_RELEASE_GATE, so the build and the release
-  # gate run on what ships. The job keeps the name `test` so `publish` and
+  # gate run on what ships. The job keeps the id `test` so `publish` and
   # `untag` read its result as before.
+  #
+  # #3573: its check run is named release-gate. The tag sits on a bump commit
+  # on main, where chant.yml's required `test` also runs, and ci.green judges
+  # a phase by check-run name, keeping the newest run of each name. Two runs
+  # named `test` would let this gate's verdict stand in for the suite's.
   #
   # #3027: the run it checks may still be queued or running when the tag
   # lands, so the script waits for it (up to 45 minutes, or 5 for a run to
@@ -60,6 +65,7 @@ jobs:
   # sits above the script's own so a slow CI ends as `timeout`, not as a
   # cancelled job.
   test:
+    name: release-gate
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 55

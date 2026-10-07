@@ -478,6 +478,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       const name = args[++i];
       if (!name || name.startsWith("-")) throw new Error("--workflow needs a workflow's name: --workflow <name>");
       result.ciWorkflows = [...(result.ciWorkflows ?? []), name];
+    } else if (arg === "--chant") {
+      // `chant ci workflow --chant <command>` (#3573): what the tick step runs chant with.
+      result.ciChant = args[++i];
+      if (!result.ciChant || result.ciChant.startsWith("-")) throw new Error("--chant needs the command that runs chant, such as \"npx tsx packages/core/src/cli/main.ts\": --chant <command>");
+    } else if (arg === "--install") {
+      // `chant ci workflow --install <command>` (#3573): a step before the tick that installs what --chant runs.
+      result.ciInstall = args[++i];
+      if (!result.ciInstall || result.ciInstall.startsWith("-")) throw new Error("--install needs the install command, such as \"npm install\": --install <command>");
     } else if (arg === "--verdict") {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];
@@ -864,8 +872,11 @@ CI:
                         and revoke a green one that now fails ci/revoked/<sha>.
                         Reads check runs from the forge, pushes the tags.
   ci workflow [--workflow <name>]... [--output <file>]  Write
+              [--chant <command>] [--install <command>]
                         .github/workflows/chant-ci-green.yml, which runs the
                         tick when a required workflow completes and every 15m.
+                        --chant replaces the npx @intentius/chant pin the tick
+                        runs; --install adds a step before it.
 
 Change sets:
   change-set summary <file>  The grouped plan summary of a change-set

@@ -27,6 +27,28 @@
       "member": "docs"
     }
   ],
+  "ci": {
+    "green": {
+      "branch": "main",
+      "window": "24h",
+      "phases": {
+        "check": [
+          "check"
+        ],
+        "test": [
+          "test"
+        ],
+        "validate": [
+          "validate"
+        ]
+      },
+      "require": [
+        "check",
+        "test",
+        "validate"
+      ]
+    }
+  },
   "members": [
     {
       "name": "docs",
