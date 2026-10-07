@@ -24,7 +24,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { expandServiceCommand, inStartOrder, boxServices, type BoxServiceDeclaration } from "./box-services";
+import { serviceCommandArgv, inStartOrder, boxServices, type BoxServiceDeclaration } from "./box-services";
 import { findSpriteEnv } from "./sprite-service-converge";
 import { resolveSpritesEndpoint, defaultSpritesHttp, type SpritesHttp } from "./sprites";
 import { logProgress } from "./progress";
@@ -363,18 +363,28 @@ export function listedServiceDiffers(listed: ListedService, declared: BoxService
   return null;
 }
 
-/** The arguments of `sprite-env services create` for a declared service. Pure. */
-export function spriteEnvCreateArgs(s: BoxServiceDeclaration, cmd: string): string[] {
+/**
+ * The arguments of `sprite-env services create` for a declared service.
+ * `argv` is the command from {@link serviceCommandArgv}: its first word is
+ * `--cmd`, the rest `--args` (comma-separated), as sprite-env and upstream
+ * Sprites take them; neither runs `--cmd` through a shell. A string is split
+ * on whitespace. With a `duration`, sprite-env streams the service's output
+ * for that long and fails the create if the service exits in it, so
+ * `--no-stream` (which returns as soon as the service is defined) is passed
+ * only without one. Pure.
+ */
+export function spriteEnvCreateArgs(s: BoxServiceDeclaration, argv: string | readonly string[]): string[] {
+  const [cmd, ...rest] = typeof argv === "string" ? argv.trim().split(/\s+/) : argv;
   return [
     "services",
     "create",
     s.name,
     "--cmd",
     cmd,
+    ...(rest.length > 0 ? ["--args", rest.join(",")] : []),
     ...(s.needs.length > 0 ? ["--needs", s.needs.join(",")] : []),
     ...(s.httpPort !== null ? ["--http-port", String(s.httpPort)] : []),
-    ...(s.duration !== null ? ["--duration", s.duration] : []),
-    "--no-stream",
+    ...(s.duration !== null ? ["--duration", s.duration] : ["--no-stream"]),
   ];
 }
 
@@ -400,7 +410,7 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
   const only = args.only ? new Set(args.only) : null;
   const targets = inStartOrder(declared).filter((s) => (only ? only.has(s.name) : !s.optional));
   // Expand every command before changing anything, so a missing variable fails the step with nothing half-applied.
-  const commands = new Map(targets.map((s) => [s.name, expandServiceCommand(s.name, s.cmd)]));
+  const commands = new Map(targets.map((s) => [s.name, serviceCommandArgv(s.name, s.cmd)]));
 
   const bin = findSpriteEnv(args.spriteEnv);
   if (!bin) throw new Error("spriteApplyServices: no sprite-env on PATH or in /.sprite/bin, and no sprite id to reach the Sprites API with");
@@ -414,12 +424,36 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
   };
   const live = new Map(parseServiceDefinitions(await spriteEnv(["services", "list"])).map((s) => [s.name, s]));
 
+  // The supervisor gives one service the HTTP port and refuses a second holder
+  // (409) while the first still has it. So a service whose listed port is not
+  // the declared one is replaced first, before any service is defined with a
+  // port: when the port moves from one service to another, the old holder has
+  // let go of it by the time the new one asks. One whose declared needs are not
+  // all defined yet can't be created early and waits for its turn below.
+  const released = new Set<string>();
+  for (const s of targets) {
+    const cur = live.get(s.name);
+    if (!cur || cur.httpPort === undefined || cur.httpPort === null || cur.httpPort === s.httpPort) continue;
+    if (!s.needs.every((n) => live.has(n))) continue;
+    const argv = commands.get(s.name)!;
+    const why = listedServiceDiffers(cur, s, argv.join(" "));
+    await spriteEnv(["services", "delete", s.name]);
+    await spriteEnv(spriteEnvCreateArgs(s, argv));
+    logProgress(`services: replaced ${s.name} (${why}) first, to free the HTTP port`);
+    released.add(s.name);
+  }
+
   const services: { name: string; action: ServiceApplyAction }[] = [];
   for (const s of targets) {
-    const cmd = commands.get(s.name)!;
+    if (released.has(s.name)) {
+      services.push({ name: s.name, action: "replaced" });
+      continue;
+    }
+    const argv = commands.get(s.name)!;
+    const cmd = argv.join(" ");
     const cur = live.get(s.name);
     if (!cur) {
-      await spriteEnv(spriteEnvCreateArgs(s, cmd));
+      await spriteEnv(spriteEnvCreateArgs(s, argv));
       logProgress(`services: created ${s.name}`);
       services.push({ name: s.name, action: "created" });
       continue;
@@ -427,7 +461,7 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
     const why = listedServiceDiffers(cur, s, cmd);
     if (why) {
       await spriteEnv(["services", "delete", s.name]);
-      await spriteEnv(spriteEnvCreateArgs(s, cmd));
+      await spriteEnv(spriteEnvCreateArgs(s, argv));
       logProgress(`services: replaced ${s.name} (${why})`);
       services.push({ name: s.name, action: "replaced" });
       continue;

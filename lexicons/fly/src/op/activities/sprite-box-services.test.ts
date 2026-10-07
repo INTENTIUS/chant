@@ -23,7 +23,7 @@ import { convergeTick } from "@intentius/chant/op/activities";
 import { readConvergeLedger } from "@intentius/chant/lifecycle/converge-ledger";
 import { spriteApplyServices, listedServiceDiffers, parseServiceDefinitions, spriteEnvCreateArgs } from "./sprite-config";
 import { spriteServiceRestart, spriteServicesObserve } from "./sprite-service-converge";
-import { expandServiceCommand } from "./box-services";
+import { expandServiceCommand, serviceCommandArgv } from "./box-services";
 import { spriteServicesObserve as observeStep, spriteServiceRestart as restartStep } from "../builders";
 
 let root: string;
@@ -48,23 +48,29 @@ const fail = (m) => { console.error("sprite-env: " + m); process.exit(1); };
 if (verb === "list") {
   const out = readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => {
     const s = JSON.parse(readFileSync(join(dir, f), "utf8"));
-    return { name: s.name, cmd: s.cmd, args: [], needs: s.needs, http_port: s.httpPort, state: { name: s.name, status: s.status } };
+    return { name: s.name, cmd: s.cmd, args: s.args, needs: s.needs, http_port: s.httpPort, state: { name: s.name, status: s.status } };
   });
   console.log(JSON.stringify(out));
 } else if (verb === "create") {
   if (existsSync(file(name))) fail("service " + name + " already exists");
-  const s = { name, cmd: null, needs: [], httpPort: 0, status: "running" };
+  const s = { name, cmd: null, args: [], needs: [], httpPort: 0, status: "running" };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--no-stream") continue;
     const v = rest[++i];
     if (a === "--cmd") s.cmd = v;
+    else if (a === "--args") s.args = v.split(",");
     else if (a === "--needs") s.needs = v.split(",");
     else if (a === "--http-port") s.httpPort = Number(v);
     else if (a === "--duration") s.duration = v;
     else fail("unknown option " + a);
   }
   for (const n of s.needs) if (!existsSync(file(n))) fail("service " + name + " needs " + n + ", which does not exist");
+  if (s.httpPort > 0) {
+    for (const f of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+      if (JSON.parse(readFileSync(join(dir, f), "utf8")).httpPort > 0) fail("another service already has an HTTP port configured (409)");
+    }
+  }
   writeFileSync(file(name), JSON.stringify(s));
 } else if (verb === "delete") {
   if (!existsSync(file(name))) fail("no service " + name);
@@ -195,12 +201,21 @@ describe("the sprite-env listing and create line (#2880)", () => {
     expect(listedServiceDiffers({ name: "door", status: "running", cmd: "/h/d.sh", needs: [], httpPort: 8080 }, declared, "/h/d.sh")).toMatch(/^needs/);
     expect(listedServiceDiffers({ name: "door", status: "running", cmd: "/h/d.sh", needs: ["hud"], httpPort: null }, declared, "/h/d.sh")).toMatch(/^httpPort/);
     expect(listedServiceDiffers({ name: "door", status: "running" }, declared, "/h/d.sh")).toBeNull();
-    expect(spriteEnvCreateArgs({ ...declared, duration: "2s" }, "/h/d.sh")).toEqual(["services", "create", "door", "--cmd", "/h/d.sh", "--needs", "hud", "--http-port", "8080", "--duration", "2s", "--no-stream"]);
+    expect(spriteEnvCreateArgs({ ...declared, duration: "2s" }, "/h/d.sh")).toEqual(["services", "create", "door", "--cmd", "/h/d.sh", "--needs", "hud", "--http-port", "8080", "--duration", "2s"]);
+    expect(spriteEnvCreateArgs(declared, ["node", "/h/preview.mjs", "--port", "5173"])).toEqual(["services", "create", "door", "--cmd", "node", "--args", "/h/preview.mjs,--port,5173", "--needs", "hud", "--http-port", "8080", "--no-stream"]);
   });
 
   test("${VAR} expands from the environment, and an unset one fails naming it", () => {
     expect(expandServiceCommand("app", "${HOME}/box/run.sh --port ${PORT}", { HOME: "/home/sprite", PORT: "5173" })).toBe("/home/sprite/box/run.sh --port 5173");
     expect(() => expandServiceCommand("app", "${NOPE}/run.sh", {})).toThrow("service app's cmd names ${NOPE}, which is not set in this process's environment");
+  });
+
+  test("a cmd with arguments splits on whitespace into the executable and its arguments, expanding each word (sandpit#6)", () => {
+    expect(serviceCommandArgv("app", "node ${HOME}/box/app/steward/preview.mjs", { HOME: "/home/sprite" })).toEqual(["node", "/home/sprite/box/app/steward/preview.mjs"]);
+    expect(serviceCommandArgv("app", "  npm   --prefix app start ", {})).toEqual(["npm", "--prefix", "app", "start"]);
+    expect(serviceCommandArgv("app", "${BIN} --root ${ROOT}", { BIN: "/opt/x", ROOT: "/a b" })).toEqual(["/opt/x", "--root", "/a b"]);
+    expect(() => serviceCommandArgv("app", "node a.js --hosts a,b", {})).toThrow('service app\'s cmd has the argument "a,b"');
+    expect(() => serviceCommandArgv("app", "   ", {})).toThrow("service app's cmd is empty");
   });
 });
 
@@ -212,8 +227,8 @@ describe("spriteApplyServices({ box: true }) through sprite-env (#2880)", () => 
     expect(first.services).toEqual([{ name: "app", action: "created" }, { name: "hud", action: "created" }]);
     expect(first).toMatchObject({ applied: ["app", "hud"], started: [] });
     expect(takeCalls()).toEqual([
-      "services create app --cmd /home/sprite/box/run-app.sh --duration 3s --no-stream",
-      "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --http-port 8080 --duration 3s --no-stream",
+      "services create app --cmd /home/sprite/box/run-app.sh --duration 3s",
+      "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --http-port 8080 --duration 3s",
     ]);
 
     const second = await spriteApplyServices({ box: true, start: true });
@@ -224,8 +239,50 @@ describe("spriteApplyServices({ box: true }) through sprite-env (#2880)", () => 
     declare([SERVICES()[0], { ...SERVICES()[1], cmd: "${BOX_HOME}/run-hud.sh" }, SERVICES()[2]]);
     const third = await spriteApplyServices({ box: true, start: true });
     expect(third.services).toEqual([{ name: "app", action: "left" }, { name: "hud", action: "replaced" }]);
-    expect(takeCalls()).toEqual(["services delete hud", "services create hud --cmd /home/sprite/box/run-hud.sh --needs app --http-port 8080 --duration 3s --no-stream"]);
+    expect(takeCalls()).toEqual(["services delete hud", "services create hud --cmd /home/sprite/box/run-hud.sh --needs app --http-port 8080 --duration 3s"]);
     expect((listed().get("hud") as { cmd: string }).cmd).toBe("/home/sprite/box/run-hud.sh");
+  });
+
+  test("a cmd with arguments goes to sprite-env as --cmd and --args, and the listing it makes reads back as converged (sandpit#6)", async () => {
+    declare([{ name: "app", cmd: "node ${BOX_HOME}/preview.mjs --port 5173", duration: "3s", health: health("app") }]);
+    rmSync(join(state, "app.json"), { force: true });
+    takeCalls();
+    expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "app", action: "created" }]);
+    expect(takeCalls()).toEqual(["services create app --cmd node --args /home/sprite/box/preview.mjs,--port,5173 --duration 3s"]);
+    expect(listed().get("app")).toMatchObject({ cmd: "node", args: ["/home/sprite/box/preview.mjs", "--port", "5173"] });
+    expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "app", action: "left" }]);
+    expect(takeCalls()).toEqual([]);
+    rmSync(join(state, "app.json"), { force: true });
+    declare(SERVICES());
+  });
+
+  test("a moved httpPort is let go by its old holder before the new holder is defined with it", async () => {
+    await spriteApplyServices({ box: true });
+    takeCalls();
+    // app comes first in start order, so without the release app would be
+    // defined with the port while hud still holds it, and the supervisor refuses that.
+    const { httpPort: _moved, ...hudWithoutPort } = SERVICES()[1];
+    declare([{ ...SERVICES()[0], httpPort: 8080 }, hudWithoutPort, SERVICES()[2]]);
+    const moved = await spriteApplyServices({ box: true });
+    expect(moved.services).toEqual([{ name: "app", action: "replaced" }, { name: "hud", action: "replaced" }]);
+    expect(takeCalls()).toEqual([
+      "services delete hud",
+      "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --duration 3s",
+      "services delete app",
+      "services create app --cmd /home/sprite/box/run-app.sh --http-port 8080 --duration 3s",
+    ]);
+    expect((listed().get("app") as { http_port: number }).http_port).toBe(8080);
+    expect((listed().get("hud") as { http_port: number }).http_port).toBe(0);
+
+    // And back again: app lets go first this time.
+    declare(SERVICES());
+    expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "app", action: "replaced" }, { name: "hud", action: "replaced" }]);
+    expect(takeCalls()).toEqual([
+      "services delete app",
+      "services create app --cmd /home/sprite/box/run-app.sh --duration 3s",
+      "services delete hud",
+      "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --http-port 8080 --duration 3s",
+    ]);
   });
 
   test("start starts a defined service that is stopped; without start it is left", async () => {

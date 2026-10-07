@@ -231,7 +231,7 @@ export {
   spriteEnvCreateArgs,
 } from "./sprite-config";
 // A box's declared services (#2880), read from its box block with `box: true`.
-export { boxServices, expandServiceCommand, inStartOrder } from "./box-services";
+export { boxServices, expandServiceCommand, inStartOrder, serviceCommandArgv } from "./box-services";
 export type { BoxServiceDeclaration } from "./box-services";
 export type {
   NetworkRule,

@@ -13,7 +13,7 @@
 /** One declared service, as the declaration states it (core's `BoxService`, less its pointer). */
 export interface BoxServiceDeclaration {
   name: string;
-  /** As written: `${VAR}` references are expanded by {@link expandServiceCommand}. */
+  /** As written: split into argv and `${VAR}`-expanded by {@link serviceCommandArgv}. */
   cmd: string;
   needs: string[];
   httpPort: number | null;
@@ -53,6 +53,26 @@ export function expandServiceCommand(name: string, cmd: string, env: NodeJS.Proc
     if (value === undefined) throw new Error(`service ${name}'s cmd names \${${v}}, which is not set in this process's environment`);
     return value;
   });
+}
+
+/**
+ * A service's command as the supervisor runs it: the executable and its
+ * arguments. The declared `cmd` is split on whitespace, with no quoting or
+ * other shell syntax (a command that needs it belongs in a script), and each
+ * word is then expanded by {@link expandServiceCommand}, so a variable whose
+ * value has a space stays one word. sprite-env takes the arguments as one
+ * comma-separated `--args`, so an argument with a comma in it is refused
+ * here rather than split there. Pure.
+ */
+export function serviceCommandArgv(name: string, cmd: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const words = cmd.trim().split(/\s+/).filter((w) => w !== "");
+  if (words.length === 0) throw new Error(`service ${name}'s cmd is empty`);
+  const argv = words.map((w) => expandServiceCommand(name, w, env));
+  const comma = argv.slice(1).find((a) => a.includes(","));
+  if (comma !== undefined) {
+    throw new Error(`service ${name}'s cmd has the argument ${JSON.stringify(comma)}, and sprite-env's --args is comma-separated, so it can't carry a comma; run the command from a script`);
+  }
+  return argv;
 }
 
 /**

@@ -499,10 +499,10 @@ A box runs its processes as services under a supervisor: sprite-env on a sprite,
 | Field | Required | Value |
 |---|---|---|
 | `services[].name` | yes | The service's name in the supervisor, in the kind-name grammar. A box names each service once. |
-| `services[].cmd` | yes | The command the supervisor runs (`sprite-env services create --cmd`). Each `${VAR}` in it is expanded from the environment of the process that applies the list, so the declaration holds no machine path. |
+| `services[].cmd` | yes | The command the supervisor runs. It is split on whitespace, with no quoting or other shell syntax: the first word is the executable (`sprite-env services create --cmd`) and the rest its arguments (`--args`, comma-separated, so an argument can't hold a comma). Each `${VAR}` in it is expanded from the environment of the process that applies the list, word by word, so the declaration holds no machine path. A command that needs a shell belongs in a script. |
 | `services[].needs` | no | Services of the same block that start first (`--needs`). |
 | `services[].httpPort` | no | The port the supervisor routes the sprite's URL to (`--http-port`). One service of a box at most sets it. |
-| `services[].duration` | no | How long the service must stay up after a create or start, such as `3s` (`--duration`). |
+| `services[].duration` | no | How long the service must stay up after a create or start, such as `3s` (`--duration`). Without one, the create passes `--no-stream` and returns once the service is defined. |
 | `services[].health` | no | A URL that answers 200 while the service works. Without one, the supervisor's state decides. |
 | `services[].optional` | no | `true` for a service something else creates by name, such as a site a release Op makes. An apply creates it only when its `only` names it, and an observer skips it while the supervisor has no such service. |
 
