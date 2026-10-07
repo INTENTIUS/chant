@@ -1,0 +1,338 @@
+[
+  {
+    "lexicon": "aws",
+    "file": "aws/SQS__SQSStandardQueue.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SQS/SQSStandardQueue.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/SQS__SQSFIFOQueue.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SQS/SQSFIFOQueue.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/SNS__SNSTopic.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SNS/SNSTopic.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/DynamoDB__DynamoDB_Table.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/DynamoDB/DynamoDB_Table.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/DynamoDB__DynamoDB_Secondary_Indexes.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/DynamoDB/DynamoDB_Secondary_Indexes.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/S3__compliant-bucket.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/compliant-bucket.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/S3__compliant-static-website.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/compliant-static-website.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/S3__S3_LambdaTrigger.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/S3_LambdaTrigger.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/Lambda__LambdaSample.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/Lambda/LambdaSample.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/VPC__FindInMapAZs.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/VPC/FindInMapAZs.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/VPC__VPC_With_Managed_NAT_And_Private_Subnet.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/VPC/VPC_With_Managed_NAT_And_Private_Subnet.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/EC2__EIP_With_Association.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EIP_With_Association.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/EC2__EC2InstanceWithSecurityGroupSample.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EC2InstanceWithSecurityGroupSample.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/RDS__RDS_MySQL_With_Read_Replica.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_MySQL_With_Read_Replica.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/RDS__RDS_with_DBParameterGroup.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_with_DBParameterGroup.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/APIGateway__apigateway_lambda_integration.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/APIGateway/apigateway_lambda_integration.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/ElasticLoadBalancing__ELBStickinessSample.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/ElasticLoadBalancing/ELBStickinessSample.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/CloudWatch__CloudWatch_Dashboard_NAT_FlowLogs.json",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/CloudWatch/CloudWatch_Dashboard_NAT_FlowLogs.json",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/AutoScaling__AutoScalingRollingUpdates.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/AutoScaling/AutoScalingRollingUpdates.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "aws",
+    "file": "aws/ECS__ECS_Schedule_Example.yaml",
+    "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/ECS/ECS_Schedule_Example.yaml",
+    "repository": "awslabs/aws-cloudformation-templates",
+    "commit": "a0f43bc6d20813052892546f445037cf84c75b54",
+    "license": "Apache-2.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/controllers__nginx-deployment.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/nginx-deployment.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/controllers__daemonset.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/daemonset.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/controllers__frontend.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/frontend.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/controllers__job.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/job.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/controllers__statefulset.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/statefulset.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/controllers__hpa-rs.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/hpa-rs.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__deployment.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/deployment.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__guestbook__frontend-deployment.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/guestbook/frontend-deployment.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__guestbook__redis-leader-service.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/guestbook/redis-leader-service.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__mysql__mysql-statefulset.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/mysql/mysql-statefulset.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__mysql__mysql-services.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/mysql/mysql-services.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__zookeeper__zookeeper.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/zookeeper/zookeeper.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__cassandra__cassandra-statefulset.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/cassandra/cassandra-statefulset.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__web__web.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/web/web.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/application__php-apache.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/php-apache.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/configmap__immutable-configmap.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/configmap/immutable-configmap.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/pods__simple-pod.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/pods/simple-pod.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/pods__init-containers.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/pods/init-containers.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/pods__pod-with-node-affinity.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/pods/pod-with-node-affinity.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/service__networking__minimal-ingress.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/service/networking/minimal-ingress.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/service__networking__network-policy-allow-all-egress.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/service/networking/network-policy-allow-all-egress.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  },
+  {
+    "lexicon": "k8s",
+    "file": "k8s/policy__quota.yaml",
+    "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/policy/quota.yaml",
+    "repository": "kubernetes/website",
+    "commit": "53e4b4173a78318e618db32d554e6c65dcec10b8",
+    "license": "CC-BY-4.0"
+  }
+]

@@ -1,0 +1,891 @@
+{
+  "date": "2026-10-07",
+  "chantVersion": "0.108.1",
+  "commit": "5c45caae2",
+  "summary": {
+    "aws": {
+      "inputs": 20,
+      "identical": 0,
+      "different": 3,
+      "importFailed": 1,
+      "buildFailed": 16,
+      "reasonCounts": {
+        "field-dropped": 3,
+        "section-dropped": 3,
+        "intrinsic-form": 1
+      },
+      "reasonScopes": {
+        "section-dropped": [
+          "Description",
+          "Metadata"
+        ],
+        "field-dropped": [
+          "Parameters",
+          "Resources"
+        ],
+        "intrinsic-form": [
+          "Outputs"
+        ]
+      },
+      "failureCounts": {
+        "output-of-a-bare-Ref": 3,
+        "generated-source-does-not-compile": 1,
+        "Sub-embeds-a-resource": 4,
+        "generated-file-references-missing-name": 8,
+        "unknown-yaml-tag": 1
+      }
+    },
+    "k8s": {
+      "inputs": 22,
+      "identical": 19,
+      "different": 2,
+      "importFailed": 0,
+      "buildFailed": 1,
+      "reasonCounts": {
+        "api-version-changed": 1,
+        "empty-value-collapsed": 1
+      },
+      "reasonScopes": {
+        "api-version-changed": [],
+        "empty-value-collapsed": []
+      },
+      "failureCounts": {
+        "build-check-error": 1
+      }
+    }
+  },
+  "entries": [
+    {
+      "file": "aws/SQS__SQSStandardQueue.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SQS/SQSStandardQueue.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "output-of-a-bare-Ref"
+      ],
+      "detail": "main.ts - error: stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string"
+    },
+    {
+      "file": "aws/SQS__SQSFIFOQueue.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SQS/SQSFIFOQueue.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "generated-source-does-not-compile"
+      ],
+      "detail": "main.ts - error: Transform failed with 2 errors:"
+    },
+    {
+      "file": "aws/SNS__SNSTopic.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SNS/SNSTopic.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "output-of-a-bare-Ref"
+      ],
+      "detail": "main.ts - error: stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string"
+    },
+    {
+      "file": "aws/DynamoDB__DynamoDB_Table.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/DynamoDB/DynamoDB_Table.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [
+        {
+          "reason": "section-dropped",
+          "path": "Description",
+          "before": "AWS CloudFormation Sample Template DynamoDB_Table: This template demonstrates the creation of a DynamoDB table.  **WARNING** This template creates an Amazon DynamoDB table. You will be billed for the AWS resources used if you create a stack from this template."
+        },
+        {
+          "reason": "section-dropped",
+          "path": "Metadata",
+          "before": {
+            "License": "Apache-2.0"
+          }
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementName.AllowedPattern",
+          "before": "[a-zA-Z0-9]*"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementName.ConstraintDescription",
+          "before": "must contain only alphanumberic characters"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementName.MaxLength",
+          "before": "2048"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementName.MinLength",
+          "before": "1"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementType.AllowedPattern",
+          "before": "[S|N]"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementType.ConstraintDescription",
+          "before": "must be either S or N"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementType.MaxLength",
+          "before": "1"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.HashKeyElementType.MinLength",
+          "before": "1"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.ReadCapacityUnits.ConstraintDescription",
+          "before": "must be between 5 and 10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.ReadCapacityUnits.MaxValue",
+          "before": "10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.ReadCapacityUnits.MinValue",
+          "before": "5"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.WriteCapacityUnits.ConstraintDescription",
+          "before": "must be between 5 and 10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.WriteCapacityUnits.MaxValue",
+          "before": "10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.WriteCapacityUnits.MinValue",
+          "before": "5"
+        }
+      ],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "different",
+      "reasons": [
+        "field-dropped",
+        "section-dropped"
+      ]
+    },
+    {
+      "file": "aws/DynamoDB__DynamoDB_Secondary_Indexes.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/DynamoDB/DynamoDB_Secondary_Indexes.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [
+        {
+          "reason": "section-dropped",
+          "path": "Description",
+          "before": "AWS CloudFormation Sample Template DynamoDB_Secondary_Indexes: Create a DynamoDB table with local and global secondary indexes. **WARNING** This template creates an Amazon DynamoDB table. You will be billed for the AWS resources used if you create a stack from this template."
+        },
+        {
+          "reason": "section-dropped",
+          "path": "Metadata",
+          "before": {
+            "License": "Apache-2.0"
+          }
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.ReadCapacityUnits.ConstraintDescription",
+          "before": "must be between 5 and 10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.ReadCapacityUnits.MaxValue",
+          "before": "10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.ReadCapacityUnits.MinValue",
+          "before": "5"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.WriteCapacityUnits.ConstraintDescription",
+          "before": "must be between 5 and 10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.WriteCapacityUnits.MaxValue",
+          "before": "10000"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.WriteCapacityUnits.MinValue",
+          "before": "5"
+        }
+      ],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "different",
+      "reasons": [
+        "field-dropped",
+        "section-dropped"
+      ]
+    },
+    {
+      "file": "aws/S3__compliant-bucket.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/compliant-bucket.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "Sub-embeds-a-resource"
+      ],
+      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+    },
+    {
+      "file": "aws/S3__compliant-static-website.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/compliant-static-website.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "index.ts - error: The requested module './storage' does not provide an export named 'cloudFrontLogsBucket'"
+    },
+    {
+      "file": "aws/S3__S3_LambdaTrigger.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/S3_LambdaTrigger.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "compute.ts - error: LambdaIAMRole is not defined"
+    },
+    {
+      "file": "aws/Lambda__LambdaSample.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/Lambda/LambdaSample.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "Sub-embeds-a-resource"
+      ],
+      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+    },
+    {
+      "file": "aws/VPC__FindInMapAZs.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/VPC/FindInMapAZs.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "index.ts - error: The requested module './other' does not provide an export named 'defaultPrivateRoute1'"
+    },
+    {
+      "file": "aws/VPC__VPC_With_Managed_NAT_And_Private_Subnet.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/VPC/VPC_With_Managed_NAT_And_Private_Subnet.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "index.ts - error: The requested module './other' does not provide an export named 'elasticIP0'"
+    },
+    {
+      "file": "aws/EC2__EIP_With_Association.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EIP_With_Association.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "index.ts - error: The requested module './other' does not provide an export named 'eC2Instance'"
+    },
+    {
+      "file": "aws/EC2__EC2InstanceWithSecurityGroupSample.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EC2InstanceWithSecurityGroupSample.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "output-of-a-bare-Ref"
+      ],
+      "detail": "main.ts - error: stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string"
+    },
+    {
+      "file": "aws/RDS__RDS_MySQL_With_Read_Replica.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_MySQL_With_Read_Replica.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "Sub-embeds-a-resource"
+      ],
+      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+    },
+    {
+      "file": "aws/RDS__RDS_with_DBParameterGroup.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_with_DBParameterGroup.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [
+        {
+          "reason": "section-dropped",
+          "path": "Description",
+          "before": "Sample template showing how to create an Amazon RDS Database Instance with a\nDBParameterGroup. **WARNING** This template creates an Amazon Relational\nDatabase Service database instance. You will be billed for the AWS\nresources used if you create a stack from this template.\n"
+        },
+        {
+          "reason": "section-dropped",
+          "path": "Metadata",
+          "before": {
+            "License": "Apache-2.0",
+            "cfn-lint": {
+              "config": {
+                "regions": [
+                  "us-east-1",
+                  "us-west-2"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "reason": "intrinsic-form",
+          "path": "Outputs.JDBCConnectionString.Value",
+          "before": {
+            "Fn::Join": [
+              "",
+              [
+                "jdbc:mysql://",
+                {
+                  "Fn::GetAtt": [
+                    "MyDB",
+                    "Endpoint.Address"
+                  ]
+                },
+                ":",
+                {
+                  "Fn::GetAtt": [
+                    "MyDB",
+                    "Endpoint.Port"
+                  ]
+                },
+                "/",
+                {
+                  "Ref": "DBName"
+                }
+              ]
+            ]
+          },
+          "after": {
+            "Fn::Join": [
+              "",
+              [
+                "jdbc:mysql://",
+                {
+                  "Fn::GetAtt": [
+                    "MyDB",
+                    "Endpoint",
+                    "Address"
+                  ]
+                },
+                ":",
+                {
+                  "Fn::GetAtt": [
+                    "MyDB",
+                    "Endpoint",
+                    "Port"
+                  ]
+                },
+                "/",
+                {
+                  "Ref": "DBName"
+                }
+              ]
+            ]
+          }
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBName.AllowedPattern",
+          "before": "[a-zA-Z][a-zA-Z0-9]*"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBName.ConstraintDescription",
+          "before": "must begin with a letter and contain only alphanumeric characters."
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBName.MaxLength",
+          "before": "64"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBName.MinLength",
+          "before": "1"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBUser.AllowedPattern",
+          "before": "[a-zA-Z][a-zA-Z0-9]*"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBUser.ConstraintDescription",
+          "before": "must begin with a letter and contain only alphanumeric characters."
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBUser.MaxLength",
+          "before": "16"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBUser.MinLength",
+          "before": "1"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Parameters.DBUser.NoEcho",
+          "before": "true"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Resources.MyDB.DeletionPolicy",
+          "before": "Snapshot"
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Resources.MyDB.UpdateReplacePolicy",
+          "before": "Snapshot"
+        }
+      ],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "different",
+      "reasons": [
+        "field-dropped",
+        "intrinsic-form",
+        "section-dropped"
+      ]
+    },
+    {
+      "file": "aws/APIGateway__apigateway_lambda_integration.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/APIGateway/apigateway_lambda_integration.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "import-failed",
+      "reasons": [
+        "unknown-yaml-tag"
+      ],
+      "detail": "error: Failed to parse template: YAMLException: unknown tag !<!Rain::Embed> (108:41)"
+    },
+    {
+      "file": "aws/ElasticLoadBalancing__ELBStickinessSample.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/ElasticLoadBalancing/ELBStickinessSample.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source",
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "index.ts - error: The requested module './other' does not provide an export named 'eC2Instance1'"
+    },
+    {
+      "file": "aws/CloudWatch__CloudWatch_Dashboard_NAT_FlowLogs.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/CloudWatch/CloudWatch_Dashboard_NAT_FlowLogs.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "Sub-embeds-a-resource"
+      ],
+      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+    },
+    {
+      "file": "aws/AutoScaling__AutoScalingRollingUpdates.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/AutoScaling/AutoScalingRollingUpdates.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [
+        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source",
+        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      ],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "index.ts - error: The requested module './other' does not provide an export named 'describeHealthRole'"
+    },
+    {
+      "file": "aws/ECS__ECS_Schedule_Example.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/ECS/ECS_Schedule_Example.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "generated-file-references-missing-name"
+      ],
+      "detail": "compute.ts - error: ECSCluster is not defined"
+    },
+    {
+      "file": "k8s/controllers__nginx-deployment.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/nginx-deployment.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/controllers__daemonset.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/daemonset.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/controllers__frontend.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/frontend.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/controllers__job.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/job.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/controllers__statefulset.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/statefulset.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/controllers__hpa-rs.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/hpa-rs.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [
+        {
+          "reason": "api-version-changed",
+          "path": "HorizontalPodAutoscaler//frontend-scaler:.apiVersion",
+          "before": "autoscaling/v1",
+          "after": "autoscaling/v2"
+        }
+      ],
+      "importWarnings": [],
+      "status": "different",
+      "reasons": [
+        "api-version-changed"
+      ]
+    },
+    {
+      "file": "k8s/application__deployment.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/deployment.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__guestbook__frontend-deployment.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/guestbook/frontend-deployment.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__guestbook__redis-leader-service.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/guestbook/redis-leader-service.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__mysql__mysql-statefulset.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/mysql/mysql-statefulset.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "build-failed",
+      "reasons": [
+        "build-check-error"
+      ],
+      "detail": "error: [mysql] Container \"mysql\" in StatefulSet \"mysql\" has hardcoded value for sensitive env var \"MYSQL_ALLOW_EMPTY_PASSWORD\" — use secretKeyRef instead (k8s)"
+    },
+    {
+      "file": "k8s/application__mysql__mysql-services.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/mysql/mysql-services.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__zookeeper__zookeeper.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/zookeeper/zookeeper.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__cassandra__cassandra-statefulset.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/cassandra/cassandra-statefulset.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__web__web.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/web/web.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/application__php-apache.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/application/php-apache.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/configmap__immutable-configmap.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/configmap/immutable-configmap.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/pods__simple-pod.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/pods/simple-pod.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/pods__init-containers.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/pods/init-containers.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": true,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/pods__pod-with-node-affinity.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/pods/pod-with-node-affinity.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/service__networking__minimal-ingress.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/service/networking/minimal-ingress.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "k8s/service__networking__network-policy-allow-all-egress.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/service/networking/network-policy-allow-all-egress.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [
+        {
+          "reason": "empty-value-collapsed",
+          "path": "NetworkPolicy//allow-all-egress:.spec.egress",
+          "before": [
+            {}
+          ],
+          "after": null
+        }
+      ],
+      "importWarnings": [],
+      "status": "different",
+      "reasons": [
+        "empty-value-collapsed"
+      ]
+    },
+    {
+      "file": "k8s/policy__quota.yaml",
+      "lexicon": "k8s",
+      "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/policy/quota.yaml",
+      "license": "CC-BY-4.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    }
+  ]
+}
