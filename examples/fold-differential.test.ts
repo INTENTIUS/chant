@@ -366,6 +366,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/gitlab-aws-alb-infra",
   "examples/gitlab-aws-alb-services",
   "examples/k8s-aks-microservice",
+  "examples/k8s-drift-to-source",
   "examples/k8s-eks-microservice",
   "examples/k8s-gke-microservice",
   "examples/local-cloud-trio",

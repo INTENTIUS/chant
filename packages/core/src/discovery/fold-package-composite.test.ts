@@ -96,15 +96,28 @@ describe("lexicon-package and re-exported composites are interpreted (chant#3247
     expect(folded.errors).toEqual([]);
     expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 1, factoryInvocations: 0 });
     const fields = folded.foldProvenance.sinkAssignmentActivityLogSink!.fields;
+    // chant#3597 — where the call and each argument were written in main.ts.
+    const file = join(srcDir, "main.ts");
+    const lines = CALL_SINK.split("\n");
+    const line = lines.findIndex((l) => l.includes("ActivityLogSink({")) + 1;
+    const at = (needle: string) => ({ file, line, column: lines[line - 1].indexOf(needle) + 1 });
+    const call = at("ActivityLogSink({");
+    const written: Record<string, string> = {
+      location: 'location: "eastus"',
+      workspaceId: 'workspaceId: "/subscriptions/s/workspaces/logs"',
+    };
     const param = (...parameters: string[]) => ({
       kind: "composite-parameter",
       composite: "ActivityLogSink",
       instance: "sink",
       parameters,
+      call,
+      arguments: parameters.map((parameter) => ({ parameter, ...at(written[parameter]), text: written[parameter] })),
     });
     expect(fields.location).toEqual(param("location"));
     expect(fields["parameters.logAnalytics.value"]).toEqual(param("workspaceId"));
-    expect(fields.name).toEqual({ kind: "composite-literal", composite: "ActivityLogSink", instance: "sink" });
+    expect(fields.name).toEqual({ kind: "composite-literal", composite: "ActivityLogSink", instance: "sink", call });
+    expect(folded.foldProvenance.sinkAssignmentActivityLogSink!.compositeCall).toEqual(call);
 
     // Interpreting is not a second evaluation: the run path writes the same bytes.
     const run = await build(srcDir, [propsSerializer("azure")], undefined, { fold: false, lexicons: ["azure"] });

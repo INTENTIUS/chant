@@ -115,17 +115,28 @@ describe("foldProject reports fold provenance (chant#3598)", () => {
 
     const fromFold = main.foldProvenance!;
     expect(Object.keys(fromFold).sort()).toEqual(["logs", "webBucket"]);
+    // chant#3597 — the per-file record carries where the call and its
+    // arguments were written, as build()'s does.
+    const lines = MAIN.split("\n");
+    const webLine = lines.findIndex((l) => l.includes("WebService({")) + 1;
+    const columnOf = (needle: string) => lines[webLine - 1].indexOf(needle) + 1;
+    const call = { file: mainFile, line: webLine, column: columnOf("WebService({") };
+    expect(fromFold.webBucket.compositeCall).toEqual(call);
     expect(fromFold.webBucket.fields.BucketName).toEqual({
       kind: "composite-parameter",
       composite: "WebService",
       instance: "web",
       parameters: ["name"],
+      call,
+      arguments: [{ parameter: "name", file: mainFile, line: webLine, column: columnOf('name: "data"'), text: 'name: "data"' }],
     });
     expect(fromFold.webBucket.fields["VersioningConfiguration.Status"]).toEqual({
       kind: "composite-literal",
       composite: "WebService",
       instance: "web",
+      call,
     });
+    expect(fromFold.logs.compositeCall).toBeUndefined();
     expect(fromFold.logs.fields.BucketName).toEqual({ kind: "direct" });
     expect(fromFold.webBucket.sourceFile).toBe(mainFile);
 
@@ -256,19 +267,39 @@ describe("foldProject attributes a host composite instance exported whole (chant
     const provenance = verdict.foldProvenance!;
     expect(Object.keys(provenance).sort()).toEqual(["logs", "storeLogs"]);
 
+    // chant#3597 — where each call and its argument were written.
+    const at = (line: number, source: string, needle: string) => ({ file, line, column: source.indexOf(needle) + 1 });
+    const storeLine = 'export const store = Store({ name: "a" });';
+    const logsLine = 'export const { logs } = Store({ name: "b" });';
+    const storeCall = at(2, storeLine, "Store({");
     expect(provenance.storeLogs).toEqual({
       sourceFile: file,
       composite: "Store",
       instance: "store",
+      compositeCall: storeCall,
       fields: {
-        name: { kind: "composite-parameter", composite: "Store", instance: "store", parameters: ["name"] },
-        tier: { kind: "composite-literal", composite: "Store", instance: "store" },
+        name: {
+          kind: "composite-parameter",
+          composite: "Store",
+          instance: "store",
+          parameters: ["name"],
+          call: storeCall,
+          arguments: [{ parameter: "name", ...at(2, storeLine, 'name: "a"'), text: 'name: "a"' }],
+        },
+        tier: { kind: "composite-literal", composite: "Store", instance: "store", call: storeCall },
       },
     });
 
-
-    // The destructured member keeps the answer it had.
-    expect(provenance.logs.fields.name).toEqual({ kind: "composite-parameter", composite: "Store", parameters: ["name"] });
+    // The destructured member keeps the answer it had, with its own call's locations.
+    const logsCall = at(3, logsLine, "Store({");
+    expect(provenance.logs.compositeCall).toEqual(logsCall);
+    expect(provenance.logs.fields.name).toEqual({
+      kind: "composite-parameter",
+      composite: "Store",
+      parameters: ["name"],
+      call: logsCall,
+      arguments: [{ parameter: "name", ...at(3, logsLine, 'name: "b"'), text: 'name: "b"' }],
+    });
 
     for (const origin of Object.values(provenance.storeLogs.fields)) expect(origin.kind).not.toBe("direct");
 

@@ -18,6 +18,7 @@ import {
   classifyFieldOrigin,
   emittedFieldPaths,
   foldProvenanceOfEntity,
+  describeCompositeArguments,
   describeFoldFieldOrigin,
   resolveDeepDrift,
   resolveDriftedField,
@@ -76,7 +77,7 @@ describe("classifyFieldOrigin", () => {
   });
 
   test("a recorded composite literal says which composite fixes it", () => {
-    expect(classifyFieldOrigin({ kind: "composite-literal", composite: "WebService" }, composite)).toEqual({
+    expect(classifyFieldOrigin({ kind: "composite-literal", composite: "WebService" }, composite)).toMatchObject({
       kind: "composite-literal",
       composite: "WebService",
       instance: "web",
@@ -244,6 +245,126 @@ describe("resolveDriftedField", () => {
   });
 });
 
+describe("the drift report's origin line (#3597)", () => {
+  const call = { file: "/p/src/app.ts", line: 10, column: 20 };
+  const compositeProv: EntityProvenance = {
+    sourceFile: "/p/src/app.ts",
+    composite: "WebApp",
+    compositeInstance: "web",
+    compositeCall: call,
+  };
+  const base = { entity: "webDeployment", entityType: "Deployment", root: "/p", declared: 3, live: 5 };
+
+  test("a composite parameter names the call, the argument as written, and its file and line", () => {
+    const resolved = resolveDriftedField({
+      ...base,
+      path: "spec.replicas",
+      origin: {
+        kind: "composite-parameter",
+        composite: "WebApp",
+        parameters: ["replicas"],
+        arguments: [{ parameter: "replicas", file: "/p/src/app.ts", line: 12, column: 3, text: "replicas: 3" }],
+      },
+      provenance: compositeProv,
+    });
+    expect(resolved.summary).toBe(
+      "spec.replicas on Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:12",
+    );
+    expect(resolved.resolution.description).toContain("the `web` call of composite WebApp at src/app.ts:12");
+    // The origin object carries the locations, for --json.
+    expect(resolved.origin).toEqual({
+      kind: "composite-parameter",
+      composite: "WebApp",
+      instance: "web",
+      parameters: ["replicas"],
+      call,
+      arguments: [{ parameter: "replicas", file: "/p/src/app.ts", line: 12, column: 3, text: "replicas: 3" }],
+    });
+  });
+
+  test("a nested parameter is shown nested, and a parameter the call does not write says so", () => {
+    expect(describeCompositeArguments("WebService", [
+      { parameter: "iam.path", file: "/p/a.ts", line: 4, column: 9, text: 'path: "/x/"' },
+    ])).toBe('WebService({ iam: { path: "/x/" } })');
+
+    const resolved = resolveDriftedField({
+      ...base,
+      path: "spec.template.spec.containers[#web].image",
+      origin: {
+        kind: "composite-parameter",
+        composite: "WebApp",
+        parameters: ["image"],
+        arguments: [{ parameter: "image", ...call }],
+      },
+      provenance: compositeProv,
+    });
+    expect(resolved.summary).toBe(
+      "spec.template.spec.containers[#web].image on Deployment webDeployment comes from WebApp(...) " +
+        "at src/app.ts:10 (parameter image, not written at the call)",
+    );
+  });
+
+  test("a composite literal says the composite fixes it, at the call", () => {
+    const resolved = resolveDriftedField({
+      ...base,
+      path: "spec.strategy.type",
+      origin: { kind: "composite-literal", composite: "WebApp" },
+      provenance: compositeProv,
+    });
+    expect(resolved.summary).toBe(
+      "spec.strategy.type on Deployment webDeployment is fixed inside composite WebApp; " +
+        "no argument to the call at src/app.ts:10 moves it",
+    );
+    expect(resolved.resolution.description).toContain("fixed by the `web` call of composite WebApp at src/app.ts:10");
+  });
+
+  test("a direct declaration says direct, and the resolution is today's", () => {
+    const resolved = resolveDriftedField({
+      ...base,
+      entity: "worker",
+      path: "spec.replicas",
+      provenance: { sourceFile: "/p/src/app.ts" },
+    });
+    expect(resolved.origin).toEqual({ kind: "direct" });
+    expect(resolved.summary).toBe("spec.replicas on Deployment worker is declared directly in src/app.ts");
+    expect(resolved.resolution).toEqual({
+      kind: "edit-declaration",
+      sourceFile: "/p/src/app.ts",
+      description: "change the declared value of `spec.replicas` in src/app.ts from 3 to 5.",
+    });
+  });
+
+  test("an unknown origin says unknown and why, and never reads as direct", () => {
+    for (const [provenance, why] of [
+      [{ sourceFile: "/p/src/app.ts", composite: "WebApp", compositeInstance: "web" }, "did not interpret"],
+      [undefined, "recorded no provenance"],
+    ] as const) {
+      const resolved = resolveDriftedField({ ...base, path: "spec.replicas", ...(provenance ? { provenance } : {}) });
+      expect(resolved.origin.kind).toBe("unknown");
+      expect(resolved.summary).toMatch(/^spec\.replicas on Deployment webDeployment has an unknown origin: /);
+      expect(resolved.summary).toContain(why);
+      expect(resolved.summary).not.toContain("direct");
+      expect(resolved.resolution.kind).toBe("fall-back");
+    }
+  });
+
+  test("a file outside the project root is printed as recorded", () => {
+    const resolved = resolveDriftedField({
+      ...base,
+      root: "/elsewhere",
+      path: "spec.replicas",
+      origin: {
+        kind: "composite-parameter",
+        composite: "WebApp",
+        parameters: ["replicas"],
+        arguments: [{ parameter: "replicas", file: "/p/src/app.ts", line: 12, column: 3, text: "replicas: 3" }],
+      },
+      provenance: compositeProv,
+    });
+    expect(resolved.summary).toContain("at /p/src/app.ts:12");
+  });
+});
+
 describe("resolveDeepDrift", () => {
   test("reads the drifted list and nothing else", () => {
     const verdicts = resolveDeepDrift(
@@ -399,25 +520,25 @@ describe("fold provenance over a real composite build (#2161)", () => {
     // 1. A field the composite PARAMETERIZES, including a nested parameter
     //    path, one read through a body `const`, and one read from inside an
     //    array literal.
-    expect(result.foldProvenance.webBucket.fields.BucketName).toEqual({
+    expect(result.foldProvenance.webBucket.fields.BucketName).toMatchObject({
       kind: "composite-parameter",
       composite: "WebService",
       instance: "web",
       parameters: ["name"],
     });
-    expect(result.foldProvenance.webBucket.fields.Tags).toEqual({
+    expect(result.foldProvenance.webBucket.fields.Tags).toMatchObject({
       kind: "composite-parameter",
       composite: "WebService",
       instance: "web",
       parameters: ["tier"],
     });
-    expect(result.foldProvenance.webRole.fields.RoleName).toEqual({
+    expect(result.foldProvenance.webRole.fields.RoleName).toMatchObject({
       kind: "composite-parameter",
       composite: "WebService",
       instance: "web",
       parameters: ["name"],
     });
-    expect(result.foldProvenance.webRole.fields.Path).toEqual({
+    expect(result.foldProvenance.webRole.fields.Path).toMatchObject({
       kind: "composite-parameter",
       composite: "WebService",
       instance: "web",
@@ -425,12 +546,12 @@ describe("fold provenance over a real composite build (#2161)", () => {
     });
 
     // 2. A field the composite FIXES.
-    expect(result.foldProvenance.webBucket.fields["VersioningConfiguration.Status"]).toEqual({
+    expect(result.foldProvenance.webBucket.fields["VersioningConfiguration.Status"]).toMatchObject({
       kind: "composite-literal",
       composite: "WebService",
       instance: "web",
     });
-    expect(result.foldProvenance.webRole.fields.Description).toEqual({
+    expect(result.foldProvenance.webRole.fields.Description).toMatchObject({
       kind: "composite-literal",
       composite: "WebService",
       instance: "web",
@@ -506,6 +627,43 @@ describe("fold provenance over a real composite build (#2161)", () => {
 
     // A direct declaration: today's behaviour, unchanged and unremarked.
     expect(verdicts[3].resolution.kind).toBe("edit-declaration");
+  });
+
+  test("the build records where the composite call and each argument were written (#3597)", async () => {
+    const result = await build(srcDir, [namesSerializer], undefined, {
+      fold: true,
+      lexicons: [LEXICON_NAME],
+    });
+    expect(result.errors).toEqual([]);
+    const main = join(srcDir, "main.ts");
+    const lines = MAIN.split("\n");
+    const lineOf = (needle: string) => lines.findIndex((l) => l.includes(needle)) + 1;
+    const columnOf = (needle: string) => (lines.find((l) => l.includes(needle)) as string).indexOf(needle) + 1;
+    const call = { file: main, line: lineOf("WebService({"), column: columnOf("WebService({") };
+
+    expect(result.foldProvenance.webBucket.compositeCall).toEqual(call);
+    expect(result.foldProvenance.webRole.compositeCall).toEqual(call);
+    expect(result.foldProvenance.webBucket.fields.BucketName).toEqual({
+      kind: "composite-parameter",
+      composite: "WebService",
+      instance: "web",
+      parameters: ["name"],
+      call,
+      arguments: [{ parameter: "name", file: main, line: call.line, column: columnOf('name: "data"'), text: 'name: "data"' }],
+    });
+    expect(result.foldProvenance.webRole.fields.Path).toMatchObject({
+      arguments: [{ parameter: "iam.path", line: call.line, column: columnOf('path: "/service/"'), text: 'path: "/service/"' }],
+    });
+    expect(result.foldProvenance.webBucket.fields["VersioningConfiguration.Status"]).toEqual({
+      kind: "composite-literal",
+      composite: "WebService",
+      instance: "web",
+      call,
+    });
+
+    // A direct declaration and an uninterpreted composite record no call.
+    expect(result.foldProvenance.logs.compositeCall).toBeUndefined();
+    expect(result.foldProvenance.legacyBucket.compositeCall).toBeUndefined();
   });
 });
 
@@ -604,18 +762,23 @@ describe("fold provenance through a tagged template in a composite factory (#321
     const at = (parameters: string[]) => ({ kind: "composite-parameter", composite: "EventsTable", instance: "clicks", parameters });
     const fixed = { kind: "composite-literal", composite: "EventsTable", instance: "clicks" };
 
-    expect(events.fields.name).toEqual(at(["name"]));
-    expect(events.fields.ttl).toEqual(at(["ttlDays"]));
-    expect(events.fields.ddl).toEqual(at(["name", "ttlDays"]));
-    expect(events.fields.engine).toEqual(fixed);
-    expect(events.fields.orderBy).toEqual(fixed);
+    expect(events.fields.name).toMatchObject(at(["name"]));
+    expect(events.fields.ttl).toMatchObject(at(["ttlDays"]));
+    expect(events.fields.ddl).toMatchObject(at(["name", "ttlDays"]));
+    expect(events.fields.engine).toMatchObject(fixed);
+    expect(events.fields.orderBy).toMatchObject(fixed);
+    // #3597 — the argument behind a tag-fed field, where the call wrote it.
+    expect(events.fields.ttl).toMatchObject({ arguments: [{ parameter: "ttlDays", line: 6, text: "ttlDays: 30" }] });
+    expect(events.fields.ddl).toMatchObject({
+      arguments: [{ parameter: "name", text: 'name: "clicks"' }, { parameter: "ttlDays", text: "ttlDays: 30" }],
+    });
 
     // Through a body `const`; an interpolated literal string is fixed; an
     // interpolated sibling entity is wiring, so it governs nothing.
-    expect(rollup.fields.name).toEqual(at(["name"]));
-    expect(rollup.fields.engine).toEqual(fixed);
-    expect(rollup.fields.comment).toEqual(fixed);
-    expect(rollup.fields.ddl).toEqual(at(["name"]));
+    expect(rollup.fields.name).toMatchObject(at(["name"]));
+    expect(rollup.fields.engine).toMatchObject(fixed);
+    expect(rollup.fields.comment).toMatchObject(fixed);
+    expect(rollup.fields.ddl).toMatchObject(at(["name"]));
 
     expect(result.foldProvenance.audit.fields.ttl).toBeUndefined();
     expect(result.foldProvenance.audit.fields.name).toEqual({ kind: "direct" });

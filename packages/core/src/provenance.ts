@@ -33,6 +33,13 @@ export interface EntityProvenance {
    */
   compositeInstance?: string;
   /**
+   * Where the composite call that expanded this entity was written (chant
+   * #3597): the `WebApp({...})` expression, not the factory body. Recorded
+   * only when the fold interpreted the factory at a call it could see; the
+   * run path and a nested call made from already-folded values leave it unset.
+   */
+  compositeCall?: SourceLocation;
+  /**
    * Per-path origins within the entity's `props` (chant #1443). Read with
    * {@link originOfPath}, which does the prefix resolution these keys are
    * written for.
@@ -90,8 +97,45 @@ export type PathOrigin =
   | { kind: "authored" }
   | { kind: "composite"; composite: string; instance: string }
   | { kind: "build-param"; params: string[] }
-  | { kind: "composite-parameter"; composite: string; parameters: string[] }
+  | {
+      kind: "composite-parameter";
+      composite: string;
+      parameters: string[];
+      /**
+       * Where each parameter's argument was written at the composite call
+       * (chant #3597), in `parameters` order. Absent when the build did not
+       * see the call; see {@link ArgumentLocation} for the fallback.
+       */
+      arguments?: ArgumentLocation[];
+    }
   | { kind: "composite-literal"; composite: string };
+
+/**
+ * A place in a source file. `file` is absolute, as
+ * {@link EntityProvenance.sourceFile} is; `line` and `column` are 1-based, the
+ * way an editor and `file:line:column` print them.
+ */
+export interface SourceLocation {
+  file: string;
+  line: number;
+  column: number;
+}
+
+/**
+ * Where one composite parameter's argument was written at the call (chant
+ * #3597). When the call's argument object has a property at the parameter's
+ * path, the location is that property and `text` is the property as written
+ * (`replicas: 3`). When it does not (the parameter was left out, or arrived
+ * through a spread or a non-literal argument), the location is the call's own
+ * and `text` is absent: the call is the nearest place that governs it, and
+ * nothing claims a property that is not there.
+ */
+export interface ArgumentLocation extends SourceLocation {
+  /** The factory parameter path, as in `parameters` (`replicas`, `iam.path`). */
+  parameter: string;
+  /** The innermost property as written at the call, when one is. */
+  text?: string;
+}
 
 /** True when `prefix` addresses `path` or an ancestor of it, on a segment boundary. */
 function isPathPrefix(prefix: string, path: string): boolean {
@@ -114,6 +158,7 @@ export function setProvenance(entity: object, prov: EntityProvenance): void {
     existing.sourceFile ??= prov.sourceFile;
     existing.composite ??= prov.composite;
     existing.compositeInstance ??= prov.compositeInstance;
+    existing.compositeCall ??= prov.compositeCall;
     if (prov.paths) {
       existing.paths ??= {};
       for (const [path, origin] of Object.entries(prov.paths)) {

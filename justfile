@@ -236,6 +236,10 @@ adopt-alb-services-e2e:
 carve-emit-e2e:
     bash test/carve-emit-e2e.sh
 
+# Drift lands on the line you wrote: deploy examples/k8s-drift-to-source to a throwaway k3d cluster, `kubectl scale` it, and check `lifecycle diff --live` names the composite argument and its line (on-demand, needs Docker + k3d + kubectl). BREAK=1 scales the directly written Deployment and requires it attributed as direct.
+drift-to-source-e2e:
+    bash test/drift-to-source-e2e.sh
+
 # Run all smoke tests
 smoke: smoke-workspace smoke-npm
 

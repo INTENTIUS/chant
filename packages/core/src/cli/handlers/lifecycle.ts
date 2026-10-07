@@ -41,6 +41,7 @@ import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveO
 import { unknownEnvError, isProdLikeEnvironment } from "../../env";
 import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
+import { resolveBuildModes, resolveProjectBuildOptions } from "../build-options";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import { isObservableDeclarable } from "../../declarable";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
@@ -378,11 +379,22 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-  const diffBuildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve("."));
+  // The build `chant build` would produce for this project (#2002's one
+  // place), so the diff folds by default as `chant build` does. A run build
+  // cannot say which composite argument produced a field, so without this
+  // every composite field in the live diff read as unknown (#3597).
+  const projectRoot = resolve(".");
+  const diffBuildOptions = resolveProjectBuildOptions({
+    config,
+    configDir: projectRoot,
+    plugins,
+    modes: resolveBuildModes(config, { fold: args.fold, sandbox: args.sandbox }),
+    buildParams: declaredParams,
+  });
 
   try {
     for (const target of targets) {
-      const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams, buildRoots: diffBuildRoots });
+      const buildResult = await build(target.root, targetSerializers, undefined, diffBuildOptions);
       if (buildResult.errors.length > 0) {
         const label = target.stack ? `stack "${target.stack}"` : "project";
         console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
@@ -434,6 +446,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           baseline,
           updateBaseline: args.updateBaseline,
           ...(args.namespace ? { namespace: args.namespace } : {}),
+          projectRoot,
         });
         totalDrift += r.totalDrift;
         totalUnobserved += r.totalUnobserved;
@@ -687,6 +700,8 @@ interface LiveDiffArgs {
   /** `--namespace <ns>` (#1629): where to read entities that declare no
    * namespace of their own. */
   namespace?: string;
+  /** Directory source locations in the report are printed relative to (#3597). */
+  projectRoot?: string;
 }
 
 interface LiveDiffOutcome {
@@ -902,8 +917,8 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         if (args.json) {
           const entry = (byLexicon[lexiconName] ??= {});
           entry.deep = deep;
-          entry.reconcile = resolveDeepDrift(deep.drifted, provenanceOf);
-        } else renderDeepDiff(lexiconName, deep, provenanceOf);
+          entry.reconcile = resolveDeepDrift(deep.drifted, provenanceOf, { root: args.projectRoot });
+        } else renderDeepDiff(lexiconName, deep, provenanceOf, args.projectRoot);
         // Printed on stderr regardless of `--json` (#2162), same reason the
         // unobserved/disruption notices are: a shape with no column for
         // "suspicious" must not read as clean.
@@ -971,6 +986,7 @@ function renderDeepDiff(
   lexiconName: string,
   deep: DeepDiffResult,
   provenanceOf: (entity: string) => EntityProvenance | undefined = () => undefined,
+  projectRoot?: string,
 ): void {
   const drift = countPropertyDrift(deep);
   const unclaimedCount = countUnclaimed(deep);
@@ -1018,15 +1034,20 @@ function renderDeepDiff(
         // something today's behaviour would get wrong. A field the author
         // declared directly is left unremarked: editing it IS today's
         // behaviour, and saying so on every row would bury the two that matter.
-        const { resolution } = resolveDriftedField({
+        // #3597 — the line before the proposal names the composite call and
+        // the argument behind the field, with the file and line it was written on.
+        const { resolution, summary } = resolveDriftedField({
           entity: entity.name,
+          entityType: entity.type,
           path: change.path,
           ...("declared" in change ? { declared: change.declared } : {}),
           ...("live" in change ? { live: change.live } : {}),
           ...(change.origin ? { origin: change.origin } : {}),
           ...(provenance ? { provenance } : {}),
+          ...(projectRoot ? { root: projectRoot } : {}),
         });
         if (resolution.kind !== "edit-declaration") {
+          console.log(`        ${summary}`);
           console.log(`        ${resolution.description}`);
         }
       }

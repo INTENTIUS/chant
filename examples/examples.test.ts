@@ -46,6 +46,8 @@ import crdbTeardownOp from "./cockroachdb-multi-region-gke/ops/teardown.op";
 import { discoverComponents, listComponents, runComponents } from "@intentius/chant/components";
 import { resolve } from "path";
 import { existsSync, readFileSync, rmSync } from "fs";
+import { getProvenance, originOfPath } from "@intentius/chant/provenance";
+import { resolveDeepDrift } from "@intentius/chant/fold-provenance";
 
 /** Read an Op default export's name. */
 function opName(op: unknown): string {
@@ -2124,3 +2126,84 @@ describeExample(
     },
   },
 );
+
+// ── k8s-drift-to-source: the build records the line behind each field ──
+// The live half (deploy to k3d, `kubectl scale`, `chant lifecycle diff --live`)
+// is test/drift-to-source-e2e.sh. This half needs no cluster: it holds the
+// build's fold provenance, which is everything the diff reads to name the
+// composite argument and its line.
+
+describe("k8s-drift-to-source — fold provenance names the argument and line", () => {
+  const exampleDir = resolve(import.meta.dirname, "k8s-drift-to-source");
+  const srcDir = resolve(exampleDir, "src");
+  const appFile = resolve(srcDir, "app.ts");
+  const appLines = readFileSync(appFile, "utf-8").split("\n");
+  const lineOf = (needle: string) => appLines.findIndex((l) => l.includes(needle)) + 1;
+
+  const buildIt = async () =>
+    build(srcDir, [k8sSerializer], undefined, { ...(await declaredBuildOptions(srcDir)), fold: true, lexicons: ["k8s"] });
+
+  test("spec.replicas on the composite's Deployment is the replicas argument, on its line", async () => {
+    const result = await buildIt();
+    expect(result.errors).toEqual([]);
+    const web = result.foldProvenance.webDeployment;
+    expect(web.composite).toBe("WebApp");
+    expect(web.instance).toBe("web");
+    expect(web.compositeCall).toEqual({ file: appFile, line: lineOf("WebApp({"), column: 20 });
+    expect(web.fields["spec.replicas"]).toEqual({
+      kind: "composite-parameter",
+      composite: "WebApp",
+      instance: "web",
+      parameters: ["replicas"],
+      call: web.compositeCall,
+      arguments: [{ parameter: "replicas", file: appFile, line: lineOf("replicas: 3"), column: 3, text: "replicas: 3" }],
+    });
+    // A second field from an argument, written as shorthand at the call.
+    expect(web.fields["spec.template.spec.containers"]).toMatchObject({
+      kind: "composite-parameter",
+      parameters: ["image", "port"],
+      arguments: [
+        { parameter: "image", line: lineOf("  image,"), text: "image" },
+        { parameter: "port", line: lineOf("port: 8080"), text: "port: 8080" },
+      ],
+    });
+    // The Service's target port comes from `port`, on its own line.
+    expect(result.foldProvenance.webService.fields["spec.ports"]).toMatchObject({
+      parameters: ["port"],
+      arguments: [{ parameter: "port", line: lineOf("port: 8080"), text: "port: 8080" }],
+    });
+  });
+
+  test("the drift line a live diff prints, and the direct resource stays direct", async () => {
+    const result = await buildIt();
+    const provenanceOf = (name: string) => {
+      const entity = result.entities.get(name);
+      return entity ? getProvenance(entity) : undefined;
+    };
+    const verdicts = resolveDeepDrift(
+      [
+        {
+          name: "webDeployment",
+          type: "Deployment",
+          changes: [
+            {
+              path: "spec.replicas",
+              kind: "changed",
+              declared: 3,
+              live: 5,
+              origin: originOfPath(provenanceOf("webDeployment")?.paths, "spec.replicas"),
+            },
+          ],
+        },
+        { name: "worker", type: "Deployment", changes: [{ path: "spec.replicas", kind: "changed", declared: 2, live: 4 }] },
+      ] as never,
+      provenanceOf,
+      { root: exampleDir },
+    );
+    expect(verdicts[0].summary).toBe(
+      `spec.replicas on Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:${lineOf("replicas: 3")}`,
+    );
+    expect(verdicts[1].origin).toEqual({ kind: "direct" });
+    expect(verdicts[1].resolution.kind).toBe("edit-declaration");
+  });
+});
