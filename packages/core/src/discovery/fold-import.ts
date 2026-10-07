@@ -54,7 +54,9 @@ import {
   collectTagOrigins,
   type CompositeParamScope,
 } from "./param-deps";
-import { getInterpolationFields, setPathProvenance } from "../provenance";
+import { getInterpolationFields, getProvenance, setPathProvenance } from "../provenance";
+import { foldProvenanceOfEntities, type FoldProvenance } from "../fold-provenance";
+import { collectEntities } from "./collect";
 import { intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
@@ -4850,6 +4852,20 @@ export interface FoldProjectVerdict {
   readonly taintedBy?: { from: string; kind: TaintEdgeKind };
   /** The file's complete export namespace, present only when `verdict` is "fold". */
   readonly exports?: ReadonlyMap<string, unknown>;
+  /**
+   * chant#3598 — fold provenance for the entities this file contributes,
+   * keyed by entity name, in the shape `build()` reports as
+   * `BuildResult.foldProvenance`. Present only when `verdict` is "fold" and
+   * the folded files' entities could be collected (a duplicate entity name
+   * fails collection for the whole set, as it fails a build, and then no
+   * verdict carries it). A file that folds and declares nothing with
+   * properties carries `{}`.
+   *
+   * A "run" file has no entry: foldProject never executes one, so it has no
+   * entities to attribute. That holds under `sandbox` too, where nothing
+   * crosses the child-process wire because no child is started.
+   */
+  readonly foldProvenance?: FoldProvenance;
 }
 
 /**
@@ -4910,12 +4926,26 @@ export async function foldProject(
     })),
   );
 
+  const folded = files.filter((file) => attempts.get(file)?.ok === true && !plan.tainted.has(file));
+  const provenanceByFile = foldProvenanceByFile(
+    folded.map((file) => {
+      const attempt = attempts.get(file);
+      return { file, exports: attempt?.ok === true ? Object.fromEntries(attempt.exportedValues) : {} };
+    }),
+  );
+
   const out = new Map<string, FoldProjectVerdict>();
   for (const file of files) {
     const attempt = attempts.get(file)!;
     const tentative = attempt.ok ? "fold" : "run";
     if (attempt.ok && !plan.tainted.has(file)) {
-      out.set(file, { verdict: "fold", tentative, exports: attempt.exportedValues });
+      const foldProvenance = provenanceByFile?.get(file);
+      out.set(file, {
+        verdict: "fold",
+        tentative,
+        exports: attempt.exportedValues,
+        ...(foldProvenance ? { foldProvenance } : {}),
+      });
       continue;
     }
     out.set(file, {
@@ -4926,4 +4956,60 @@ export async function foldProject(
     });
   }
   return out;
+}
+
+/**
+ * chant#3598 — the folded files' fold provenance, split by declaring file.
+ *
+ * This is `build()`'s computation, not a second one: the same
+ * `collectEntities` over the same folded export namespaces `discover()` hands
+ * it, then `foldProvenanceOfEntities` with `getProvenance`. One call over the
+ * whole folded set rather than one per file, because composite expansion and
+ * cross-directory name disambiguation (#932) are decided over the set and an
+ * entity's name is part of what is being reported. The build root is the
+ * files' common directory, which is what `chant build <dir>` passes when every
+ * file sits under `<dir>`.
+ *
+ * Returns `undefined` when collection throws (a duplicate name), the case
+ * where a build has no entities either.
+ */
+function foldProvenanceByFile(
+  modules: Array<{ file: string; exports: Record<string, unknown> }>,
+): Map<string, FoldProvenance> | undefined {
+  if (modules.length === 0) return new Map();
+  let entities: Map<string, Declarable>;
+  try {
+    entities = collectEntities(modules, commonDirectory(modules.map((m) => m.file)));
+  } catch {
+    return undefined;
+  }
+
+  const byResolved = new Map<string, FoldProvenance>();
+  const out = new Map<string, FoldProvenance>();
+  for (const { file } of modules) {
+    const record: FoldProvenance = {};
+    byResolved.set(resolvePath(file), record);
+    out.set(file, record);
+  }
+
+  const all = foldProvenanceOfEntities(entities, getProvenance);
+  for (const [name, record] of Object.entries(all)) {
+    const sourceFile = getProvenance(entities.get(name) as Declarable)?.sourceFile;
+    const target = sourceFile === undefined ? undefined : byResolved.get(resolvePath(sourceFile));
+    if (target) target[name] = record;
+  }
+  return out;
+}
+
+/** The deepest directory every one of `files` sits under. */
+function commonDirectory(files: readonly string[]): string {
+  const split = files.map((file) => dirname(resolvePath(file)).split(sep));
+  const first = split[0];
+  let depth = first.length;
+  for (const parts of split.slice(1)) {
+    let i = 0;
+    while (i < depth && i < parts.length && parts[i] === first[i]) i++;
+    depth = i;
+  }
+  return first.slice(0, depth).join(sep) || sep;
 }
