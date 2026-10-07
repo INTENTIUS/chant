@@ -12,6 +12,8 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "../build";
@@ -195,5 +197,84 @@ describe("foldProject reports fold provenance (chant#3598)", () => {
         expect(origin).toEqual({ kind: "unknown", reason: "no-provenance" });
       }
     }
+  });
+});
+
+/**
+ * A host's composite registration form (chant#2442) returns the factory's own
+ * members object rather than a chant `CompositeInstance`. Exported whole, its
+ * members still have to be attributed: before this, they had no record at all
+ * while a destructured member did.
+ */
+describe("foldProject attributes a host composite instance exported whole (chant#3598)", () => {
+  let root: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "chant-3598-host-"));
+    const pkg = join(root, "node_modules", "@tsad", "shapes");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "@tsad/shapes", version: "0.0.0", type: "module", main: "index.js" }),
+    );
+    writeFileSync(
+      join(pkg, "index.js"),
+      [
+        "const MARK = Symbol.for('tsad.conformance.declarable');",
+        "export class Bucket {",
+        "  constructor(props = {}) {",
+        "    this.entityType = 'Bucket'; this.lexicon = 'shapes'; this.props = props;",
+        "    Object.defineProperty(this, MARK, { value: true, enumerable: false });",
+        "  }",
+        "}",
+        "export function Composite(factory, name) {",
+        "  const d = (props) => factory(props); d.compositeName = name; return d;",
+        "}",
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      join(root, "shapes.ts"),
+      'import { Bucket, Composite } from "@tsad/shapes";\n' +
+        'export const Store = Composite(({ name }) => ({ logs: new Bucket({ name, tier: "cold" }) }), "Store");\n',
+    );
+  });
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  test("a whole instance's members have records, as a destructured member does, and none is direct", async () => {
+    const file = join(root, "app.ts");
+    writeFileSync(
+      file,
+      'import { Store } from "./shapes";\n' +
+        'export const store = Store({ name: "a" });\n' +
+        'export const { logs } = Store({ name: "b" });\n',
+    );
+
+    const verdict = (await foldProject([file], [], { lexiconPackages: ["@tsad/shapes"], sandbox: true })).get(file)!;
+    expect(verdict.reason).toBeUndefined();
+    expect(verdict.verdict).toBe("fold");
+    const provenance = verdict.foldProvenance!;
+    expect(Object.keys(provenance).sort()).toEqual(["logs", "storeLogs"]);
+
+    expect(provenance.storeLogs).toEqual({
+      sourceFile: file,
+      composite: "Store",
+      instance: "store",
+      fields: {
+        name: { kind: "composite-parameter", composite: "Store", instance: "store", parameters: ["name"] },
+        tier: { kind: "composite-literal", composite: "Store", instance: "store" },
+      },
+    });
+
+
+    // The destructured member keeps the answer it had.
+    expect(provenance.logs.fields.name).toEqual({ kind: "composite-parameter", composite: "Store", parameters: ["name"] });
+
+    for (const origin of Object.values(provenance.storeLogs.fields)) expect(origin.kind).not.toBe("direct");
+
+    // The exports handed back are untouched: the instance is still the members object.
+    expect(JSON.parse(JSON.stringify(verdict.exports!.get("store")))).toEqual({
+      logs: { entityType: "Bucket", lexicon: "shapes", props: { name: "a", tier: "cold" } },
+    });
   });
 });
