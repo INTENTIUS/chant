@@ -66,6 +66,11 @@ if (verb === "list") {
     else fail("unknown option " + a);
   }
   for (const n of s.needs) if (!existsSync(file(n))) fail("service " + name + " needs " + n + ", which does not exist");
+  if (s.httpPort > 0) {
+    for (const f of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+      if (JSON.parse(readFileSync(join(dir, f), "utf8")).httpPort > 0) fail("another service already has an HTTP port configured (409)");
+    }
+  }
   writeFileSync(file(name), JSON.stringify(s));
 } else if (verb === "delete") {
   if (!existsSync(file(name))) fail("no service " + name);
@@ -249,6 +254,35 @@ describe("spriteApplyServices({ box: true }) through sprite-env (#2880)", () => 
     expect(takeCalls()).toEqual([]);
     rmSync(join(state, "app.json"), { force: true });
     declare(SERVICES());
+  });
+
+  test("a moved httpPort is let go by its old holder before the new holder is defined with it", async () => {
+    await spriteApplyServices({ box: true });
+    takeCalls();
+    // app comes first in start order, so without the release app would be
+    // defined with the port while hud still holds it, and the supervisor refuses that.
+    const { httpPort: _moved, ...hudWithoutPort } = SERVICES()[1];
+    declare([{ ...SERVICES()[0], httpPort: 8080 }, hudWithoutPort, SERVICES()[2]]);
+    const moved = await spriteApplyServices({ box: true });
+    expect(moved.services).toEqual([{ name: "app", action: "replaced" }, { name: "hud", action: "replaced" }]);
+    expect(takeCalls()).toEqual([
+      "services delete hud",
+      "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --duration 3s",
+      "services delete app",
+      "services create app --cmd /home/sprite/box/run-app.sh --http-port 8080 --duration 3s",
+    ]);
+    expect((listed().get("app") as { http_port: number }).http_port).toBe(8080);
+    expect((listed().get("hud") as { http_port: number }).http_port).toBe(0);
+
+    // And back again: app lets go first this time.
+    declare(SERVICES());
+    expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "app", action: "replaced" }, { name: "hud", action: "replaced" }]);
+    expect(takeCalls()).toEqual([
+      "services delete app",
+      "services create app --cmd /home/sprite/box/run-app.sh --duration 3s",
+      "services delete hud",
+      "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --http-port 8080 --duration 3s",
+    ]);
   });
 
   test("start starts a defined service that is stopped; without start it is left", async () => {

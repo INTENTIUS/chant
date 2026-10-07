@@ -424,8 +424,31 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
   };
   const live = new Map(parseServiceDefinitions(await spriteEnv(["services", "list"])).map((s) => [s.name, s]));
 
+  // The supervisor gives one service the HTTP port and refuses a second holder
+  // (409) while the first still has it. So a service whose listed port is not
+  // the declared one is replaced first, before any service is defined with a
+  // port: when the port moves from one service to another, the old holder has
+  // let go of it by the time the new one asks. One whose declared needs are not
+  // all defined yet can't be created early and waits for its turn below.
+  const released = new Set<string>();
+  for (const s of targets) {
+    const cur = live.get(s.name);
+    if (!cur || cur.httpPort === undefined || cur.httpPort === null || cur.httpPort === s.httpPort) continue;
+    if (!s.needs.every((n) => live.has(n))) continue;
+    const argv = commands.get(s.name)!;
+    const why = listedServiceDiffers(cur, s, argv.join(" "));
+    await spriteEnv(["services", "delete", s.name]);
+    await spriteEnv(spriteEnvCreateArgs(s, argv));
+    logProgress(`services: replaced ${s.name} (${why}) first, to free the HTTP port`);
+    released.add(s.name);
+  }
+
   const services: { name: string; action: ServiceApplyAction }[] = [];
   for (const s of targets) {
+    if (released.has(s.name)) {
+      services.push({ name: s.name, action: "replaced" });
+      continue;
+    }
     const argv = commands.get(s.name)!;
     const cmd = argv.join(" ");
     const cur = live.get(s.name);
