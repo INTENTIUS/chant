@@ -127,6 +127,7 @@ export default defineConfig({
 								{ label: 'Watch Mode', slug: 'configuration/watch' },
 								{ label: 'Ops', slug: 'guide/ops' },
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
+								{ label: 'Drift Back to Source', slug: 'guide/drift-to-source' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },

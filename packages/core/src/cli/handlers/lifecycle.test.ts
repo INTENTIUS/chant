@@ -1,9 +1,10 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
-import { sep } from "node:path";
+import { join, sep } from "node:path";
 import { createMockPlugin, staticDescribeResources, staticObservation, staticDeepObservation, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import { deepObservation } from "../../deep-observation";
 import { heldElsewhere } from "../../held-elsewhere";
+import { setProvenance } from "../../provenance";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
@@ -736,6 +737,110 @@ describe("runLifecycleDiff --live", () => {
       ], { updateBaseline: true });
       expect(writeBlobToPathMock).not.toHaveBeenCalled();
       expect(stderrBuf.join("\n")).toContain("nothing to accept");
+    });
+  });
+
+  // #3597 — a drifted field names where it came from: the composite argument
+  // and its line, the composite that fixes it, or an unknown origin and why.
+  describe("drift names its origin in source (#3597)", () => {
+    const app = join(process.cwd(), "src", "app.ts");
+    const call = { file: app, line: 10, column: 20 };
+    const names = ["webDeployment", "webService", "worker", "legacy"];
+
+    const runOriginDiff = async (args: Partial<ParsedArgs> = {}) => {
+      const build = makeBuildResult({ k8s: names });
+      const declare = (name: string, provenance?: Parameters<typeof setProvenance>[1]) => {
+        const entity = { lexicon: "k8s", entityType: "Deployment", props: { spec: { replicas: 3 } } };
+        if (provenance) setProvenance(entity, provenance);
+        build.entities.set(name, entity as never);
+      };
+      declare("webDeployment", {
+        sourceFile: app,
+        composite: "WebApp",
+        compositeInstance: "web",
+        compositeCall: call,
+        paths: {
+          "spec.replicas": {
+            kind: "composite-parameter",
+            composite: "WebApp",
+            parameters: ["replicas"],
+            arguments: [{ parameter: "replicas", file: app, line: 12, column: 3, text: "replicas: 3" }],
+          },
+        },
+      });
+      declare("webService", {
+        sourceFile: app,
+        composite: "WebApp",
+        compositeInstance: "web",
+        compositeCall: call,
+        paths: { "spec.replicas": { kind: "composite-literal", composite: "WebApp" } },
+      });
+      declare("worker", { sourceFile: app });
+      declare("legacy", { sourceFile: app, composite: "LegacyApp", compositeInstance: "legacy" });
+      buildMock.mockResolvedValue(build);
+      fetchLifecycleMock.mockResolvedValue(undefined);
+      readSnapshotMock.mockResolvedValue(null);
+      const live = Object.fromEntries(names.map((n) => [n, { type: "Deployment", properties: { spec: { replicas: 5 } } }]));
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "k8s",
+          describeResources: staticObservation(Object.fromEntries(names.map((n) => [n, meta({ type: "Deployment" })]))),
+          observeResourcesDeep: staticDeepObservation(live),
+        }),
+      ];
+      return runLifecycleDiff({
+        args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true, ...args }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      } as never);
+    };
+
+    test("the human report names the argument and line, the fixing composite, and an unknown origin", async () => {
+      await runOriginDiff();
+      const output = stdoutBuf.join("\n");
+      expect(output).toContain(
+        "spec.replicas on Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:12",
+      );
+      expect(output).toContain("change parameter `replicas` of the `web` call of composite WebApp at src/app.ts:12");
+      expect(output).toContain(
+        "spec.replicas on Deployment webService is fixed inside composite WebApp; no argument to the call at src/app.ts:10 moves it",
+      );
+      expect(output).toContain(
+        "spec.replicas on Deployment legacy has an unknown origin: expanded by a composite whose factory this build did not interpret",
+      );
+      // Direct keeps today's output: the row, and nothing under it.
+      expect(output).not.toContain("on Deployment worker");
+      const workerRow = output.split("\n").findIndex((l) => l.includes("- worker (Deployment)"));
+      expect(output.split("\n")[workerRow + 1]).toMatch(/^ {6}spec\.replicas: 3 → 5/);
+      expect(output.split("\n")[workerRow + 2] ?? "").not.toMatch(/^ {8}\S/);
+      // An unknown origin is never shown as a direct declaration.
+      expect(output).not.toMatch(/legacy.*declared directly/);
+    });
+
+    test("--json carries the origin object for every drifted field", async () => {
+      await runOriginDiff({ json: true });
+      const payload = JSON.parse(stdoutBuf.join("\n")) as {
+        lexicons: { k8s: { reconcile: Array<{ entity: string; origin: Record<string, unknown>; summary: string }> } };
+      };
+      const byEntity = Object.fromEntries(payload.lexicons.k8s.reconcile.map((r) => [r.entity, r]));
+      expect(byEntity.webDeployment.origin).toEqual({
+        kind: "composite-parameter",
+        composite: "WebApp",
+        instance: "web",
+        parameters: ["replicas"],
+        call,
+        arguments: [{ parameter: "replicas", file: app, line: 12, column: 3, text: "replicas: 3" }],
+      });
+      expect(byEntity.webService.origin).toEqual({ kind: "composite-literal", composite: "WebApp", instance: "web", call });
+      expect(byEntity.worker.origin).toEqual({ kind: "direct" });
+      expect(byEntity.legacy.origin).toEqual({ kind: "unknown", reason: "composite-not-interpreted" });
+      expect(byEntity.webDeployment.summary).toContain("at src/app.ts:12");
+    });
+
+    test("the diff builds the way `chant build` does, folding by default", async () => {
+      await runOriginDiff();
+      const options = buildMock.mock.calls[0][3] as { fold?: boolean };
+      expect(options.fold).toBe(true);
     });
   });
 

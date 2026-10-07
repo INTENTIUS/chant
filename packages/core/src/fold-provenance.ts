@@ -70,7 +70,14 @@
  */
 
 import { isResourceDeclarable, type Declarable } from "./declarable";
-import { originOfPath, type EntityProvenance, type PathOrigin } from "./provenance";
+import { relative, isAbsolute } from "node:path";
+import {
+  originOfPath,
+  type ArgumentLocation,
+  type EntityProvenance,
+  type PathOrigin,
+  type SourceLocation,
+} from "./provenance";
 import type { DeepEntityDrift, PropertyDrift } from "./lifecycle/deep-diff";
 
 /** Why a field's origin could not be determined. Both are facts about the BUILD, not about the field. */
@@ -97,8 +104,17 @@ export type UnknownOriginReason =
  * address and "the `api` call of `AutoscaledService`" is.
  */
 export type FoldFieldOrigin =
-  | { kind: "composite-parameter"; composite: string; instance?: string; parameters: string[] }
-  | { kind: "composite-literal"; composite: string; instance?: string }
+  | {
+      kind: "composite-parameter";
+      composite: string;
+      instance?: string;
+      parameters: string[];
+      /** Where the composite call was written (chant #3597), when the build saw it. */
+      call?: SourceLocation;
+      /** Where each parameter's argument was written at that call, in `parameters` order. */
+      arguments?: ArgumentLocation[];
+    }
+  | { kind: "composite-literal"; composite: string; instance?: string; call?: SourceLocation }
   | { kind: "direct" }
   | { kind: "unknown"; reason: UnknownOriginReason };
 
@@ -110,6 +126,11 @@ export interface EntityFoldProvenance {
   composite?: string;
   /** The composite call (export name) it belongs to, when one expanded it. */
   instance?: string;
+  /**
+   * Where that composite call was written (chant #3597), when the fold
+   * interpreted the factory at a call it saw as written.
+   */
+  compositeCall?: SourceLocation;
   /**
    * Emitted property path to origin, in sorted key order. Every path the entity
    * emits is present: a path with no attribution carries an `unknown` origin
@@ -178,6 +199,7 @@ export function classifyFieldOrigin(
 ): FoldFieldOrigin {
   if (!provenance) return { kind: "unknown", reason: "no-provenance" };
   const instance = provenance.compositeInstance;
+  const call = provenance.compositeCall;
 
   switch (origin?.kind) {
     case "composite-parameter":
@@ -186,9 +208,16 @@ export function classifyFieldOrigin(
         composite: origin.composite,
         ...(instance ? { instance } : {}),
         parameters: [...origin.parameters],
+        ...(call ? { call: { ...call } } : {}),
+        ...(origin.arguments ? { arguments: origin.arguments.map((a) => ({ ...a })) } : {}),
       };
     case "composite-literal":
-      return { kind: "composite-literal", composite: origin.composite, ...(instance ? { instance } : {}) };
+      return {
+        kind: "composite-literal",
+        composite: origin.composite,
+        ...(instance ? { instance } : {}),
+        ...(call ? { call: { ...call } } : {}),
+      };
     case "composite":
       // The coarse kind: a composite expanded this, and nothing said which
       // parameter. Not a parameter, not a fixed literal, and above all not a
@@ -224,6 +253,7 @@ export function foldProvenanceOfEntity(
     ...(provenance?.sourceFile ? { sourceFile: provenance.sourceFile } : {}),
     ...(provenance?.composite ? { composite: provenance.composite } : {}),
     ...(provenance?.compositeInstance ? { instance: provenance.compositeInstance } : {}),
+    ...(provenance?.compositeCall ? { compositeCall: { ...provenance.compositeCall } } : {}),
     fields,
   };
 }
@@ -278,9 +308,57 @@ function compositeCall(composite: string, instance: string | undefined): string 
   return instance ? `the \`${instance}\` call of composite ${composite}` : `composite ${composite}`;
 }
 
-/** `in src/app.infra.ts`, or nothing when the build recorded no file. */
-function inFile(sourceFile: string | undefined): string {
-  return sourceFile ? ` in ${sourceFile}` : "";
+/** A file as a report prints it: relative to `root` when it is inside it, otherwise as recorded. */
+function displayFile(file: string, root: string | undefined): string {
+  if (!root || !isAbsolute(file)) return file;
+  const rel = relative(root, file);
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : file;
+}
+
+/** `src/app.ts:12`, relative to `root` when it is inside it. */
+export function formatSourceLocation(location: SourceLocation, root?: string): string {
+  return `${displayFile(location.file, root)}:${location.line}`;
+}
+
+/** ` in src/app.infra.ts`, or nothing when the build recorded no file. */
+function inFile(sourceFile: string | undefined, root: string | undefined): string {
+  return sourceFile ? ` in ${displayFile(sourceFile, root)}` : "";
+}
+
+/**
+ * The composite call as the author wrote the arguments that govern a field:
+ * `WebApp({ replicas: 3 })`, or `WebApp({ iam: { path: "/service/" } })` for a
+ * nested parameter. Only arguments actually written at the call appear; when
+ * none is, the call is shown as `WebApp(...)`.
+ */
+export function describeCompositeArguments(composite: string, locations: readonly ArgumentLocation[]): string {
+  const written = locations.filter((a) => a.text !== undefined);
+  if (written.length === 0) return `${composite}(...)`;
+  const parts = written.map((a) => {
+    const outer = a.parameter.split(".").slice(0, -1);
+    return outer.reduceRight((inner, key) => `${key}: { ${inner} }`, a.text as string);
+  });
+  return `${composite}({ ${parts.join(", ")} })`;
+}
+
+/**
+ * Where a composite-parameter field was set, as `at src/app.ts:12`: the first
+ * argument written at the call, else the call, else the declaring file.
+ */
+function parameterSite(
+  origin: Extract<FoldFieldOrigin, { kind: "composite-parameter" }>,
+  sourceFile: string | undefined,
+  root: string | undefined,
+): string {
+  const written = origin.arguments?.find((a) => a.text !== undefined);
+  const location = written ?? origin.call ?? origin.arguments?.[0];
+  if (location) return ` at ${formatSourceLocation(location, root)}`;
+  return inFile(sourceFile, root);
+}
+
+/** ` at src/app.ts:10` for the composite call, else the declaring file. */
+function callSite(call: SourceLocation | undefined, sourceFile: string | undefined, root: string | undefined): string {
+  return call ? ` at ${formatSourceLocation(call, root)}` : inFile(sourceFile, root);
 }
 
 /** A value as a report prints it. */
@@ -327,6 +405,12 @@ export interface FieldReconcile {
   declared?: unknown;
   live?: unknown;
   origin: FoldFieldOrigin;
+  /**
+   * One line naming where the field came from (chant #3597):
+   * `spec.replicas on Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:12`.
+   * An `unknown` origin says so and why; it never reads as a direct declaration.
+   */
+  summary: string;
   resolution: DriftResolution;
 }
 
@@ -337,18 +421,48 @@ export interface FieldReconcile {
  * source declared, whose live value moved. Undeclared fields are held
  * elsewhere and never reach here, so the only question left is which of the
  * four origins produced the field.
+ *
+ * `entityType` names the resource in the summary line, and `root` (the
+ * project directory) makes the file names in it relative. Both are optional;
+ * without them the summary uses the entity name alone and absolute files.
  */
 export function resolveDriftedField(input: {
   entity: string;
+  entityType?: string;
   path: string;
   declared?: unknown;
   live?: unknown;
   origin?: PathOrigin;
   provenance?: EntityProvenance;
+  root?: string;
 }): FieldReconcile {
   const origin = classifyFieldOrigin(input.origin, input.provenance);
   const sourceFile = input.provenance?.sourceFile;
+  const root = input.root;
   const move = `${renderValue(input.declared)} to ${renderValue(input.live)}`;
+  const subject = `${input.path} on ${input.entityType ? `${input.entityType} ` : ""}${input.entity}`;
+
+  const summary = ((): string => {
+    switch (origin.kind) {
+      case "composite-parameter":
+        return (
+          `${subject} comes from ${describeCompositeArguments(origin.composite, origin.arguments ?? [])}` +
+          `${parameterSite(origin, sourceFile, root)}` +
+          (origin.arguments?.some((a) => a.text !== undefined)
+            ? ""
+            : ` (parameter ${origin.parameters.join(", ")}, not written at the call)`)
+        );
+      case "composite-literal":
+        return (
+          `${subject} is fixed inside composite ${origin.composite}; ` +
+          `no argument to the call${callSite(origin.call, sourceFile, root)} moves it`
+        );
+      case "direct":
+        return `${subject} is declared directly${inFile(sourceFile, root)}`;
+      case "unknown":
+        return `${subject} has an unknown origin: ${unknownOriginText(origin.reason)}`;
+    }
+  })();
 
   const resolution: DriftResolution = ((): DriftResolution => {
     switch (origin.kind) {
@@ -363,7 +477,7 @@ export function resolveDriftedField(input: {
           description:
             `change ${parameters.length === 1 ? "parameter" : "parameters"} ` +
             `${parameters.map((p) => `\`${p}\``).join(", ")} of ` +
-            `${compositeCall(origin.composite, origin.instance)}${inFile(sourceFile)} ` +
+            `${compositeCall(origin.composite, origin.instance)}${parameterSite(origin, sourceFile, root)} ` +
             `so \`${input.path}\` moves from ${move}. The composite stays.`,
         };
       }
@@ -375,14 +489,14 @@ export function resolveDriftedField(input: {
           ...(sourceFile ? { sourceFile } : {}),
           description:
             `refused: \`${input.path}\` is fixed by ${compositeCall(origin.composite, origin.instance)}` +
-            `${inFile(sourceFile)}, so no argument at the call site moves it. ` +
+            `${callSite(origin.call, sourceFile, root)}, so no argument at the call site moves it. ` +
             `Parameterize the field in composite ${origin.composite}, or stop using the composite here.`,
         };
       case "direct":
         return {
           kind: "edit-declaration",
           ...(sourceFile ? { sourceFile } : {}),
-          description: `change the declared value of \`${input.path}\`${inFile(sourceFile)} from ${move}.`,
+          description: `change the declared value of \`${input.path}\`${inFile(sourceFile, root)} from ${move}.`,
         };
       case "unknown":
         return {
@@ -391,7 +505,7 @@ export function resolveDriftedField(input: {
           ...(sourceFile ? { sourceFile } : {}),
           description:
             `origin unknown (${unknownOriginText(origin.reason)}), so falling back to changing the ` +
-            `declared value of \`${input.path}\`${inFile(sourceFile)} from ${move}.`,
+            `declared value of \`${input.path}\`${inFile(sourceFile, root)} from ${move}.`,
         };
     }
   })();
@@ -402,6 +516,7 @@ export function resolveDriftedField(input: {
     ...("declared" in input ? { declared: input.declared } : {}),
     ...("live" in input ? { live: input.live } : {}),
     origin,
+    summary,
     resolution,
   };
 }
@@ -420,6 +535,7 @@ export function resolveDriftedField(input: {
 export function resolveDeepDrift(
   drifted: readonly DeepEntityDrift[],
   provenanceOf: (entity: string) => EntityProvenance | undefined,
+  options: { root?: string } = {},
 ): FieldReconcile[] {
   const out: FieldReconcile[] = [];
   for (const entity of drifted) {
@@ -428,11 +544,13 @@ export function resolveDeepDrift(
       out.push(
         resolveDriftedField({
           entity: entity.name,
+          entityType: entity.type,
           path: change.path,
           ...("declared" in change ? { declared: change.declared } : {}),
           ...("live" in change ? { live: change.live } : {}),
           ...(change.origin ? { origin: change.origin } : {}),
           ...(provenance ? { provenance } : {}),
+          ...(options.root ? { root: options.root } : {}),
         }),
       );
     }

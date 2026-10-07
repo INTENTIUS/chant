@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-import type { PathOrigin } from "../provenance";
+import type { ArgumentLocation, PathOrigin, SourceLocation } from "../provenance";
 
 /**
  * Which build parameters an authored props expression READS, per path (chant
@@ -289,6 +289,61 @@ function readCompositeParameters(
 }
 
 /**
+ * The composite call an interpreted factory body was reached from (chant
+ * #3597): the `WebApp({ replicas: 3 })` expression in the author's source and
+ * the absolute path of the file it is written in. The node must come from a
+ * source file parsed with parent pointers, which is how `fold-import.ts`
+ * parses every file it interprets.
+ */
+export interface CompositeCallSite {
+  file: string;
+  node: ts.CallExpression;
+}
+
+/** A node's start as a 1-based {@link SourceLocation}. */
+export function sourceLocationOf(file: string, node: ts.Node): SourceLocation {
+  const sourceFile = node.getSourceFile();
+  const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  return { file, line: line + 1, column: character + 1 };
+}
+
+/**
+ * Where `parameter` was written at `call`: the property at that path in the
+ * call's object-literal argument, descending nested object literals segment by
+ * segment, or the call itself when there is no such property.
+ *
+ * The fallback covers a parameter the call leaves out, one that arrives through
+ * a spread, and an argument that is not an object literal. In each of those the
+ * call is the nearest place that governs the value, and no `text` is given,
+ * because no property at the call says what it is.
+ */
+export function argumentLocation(call: CompositeCallSite, parameter: string): ArgumentLocation {
+  const fallback: ArgumentLocation = { parameter, ...sourceLocationOf(call.file, call.node) };
+  const first = call.node.arguments[0];
+  if (!first) return fallback;
+  let object: ts.Expression = unwrap(first);
+  let found: ts.ObjectLiteralElementLike | undefined;
+  for (const segment of parameter.split(".")) {
+    if (!ts.isObjectLiteralExpression(object)) return fallback;
+    found = undefined;
+    // Last write wins, as it does when the object literal is evaluated.
+    for (const member of object.properties) {
+      if (ts.isShorthandPropertyAssignment(member) && member.name.text === segment) found = member;
+      else if (ts.isPropertyAssignment(member) && literalName(member.name) === segment) found = member;
+    }
+    if (!found) return fallback;
+    object = ts.isPropertyAssignment(found) ? unwrap(found.initializer) : found.name;
+  }
+  if (!found) return fallback;
+  return { parameter, ...sourceLocationOf(call.file, found), text: found.getText() };
+}
+
+/** {@link argumentLocation} for each of `parameters`, in order, or nothing when no call was seen. */
+function argumentLocations(call: CompositeCallSite | undefined, parameters: readonly string[]): ArgumentLocation[] | undefined {
+  return call ? parameters.map((parameter) => argumentLocation(call, parameter)) : undefined;
+}
+
+/**
  * Path → composite origin for one `new Type({...})` inside an interpreted
  * composite factory body (chant #2161).
  *
@@ -304,12 +359,16 @@ function readCompositeParameters(
  * something under here", while `composite-literal` would be a claim that every
  * key it brings is fixed. That claim is left unmade, and those paths come back
  * `unknown` from ../fold-provenance.ts instead.
+ *
+ * `call` (chant #3597), when the fold saw the composite call, adds where each
+ * parameter's argument was written there, in the same pass.
  */
 export function collectCompositeOrigins(
   props: ts.ObjectLiteralExpression,
   consts: ReadonlyMap<string, ts.Expression>,
   scope: CompositeParamScope,
   composite: string,
+  call?: CompositeCallSite,
 ): Record<string, PathOrigin> {
   const out: Record<string, PathOrigin> = {};
 
@@ -327,7 +386,7 @@ export function collectCompositeOrigins(
         existing && existing.kind === "composite-parameter"
           ? [...new Set([...existing.parameters, ...parameters])].sort()
           : parameters;
-      out[path] = { kind: "composite-parameter", composite, parameters: merged };
+      out[path] = compositeParameterOrigin(composite, merged, call);
       return;
     }
     if (spread) return;
@@ -384,6 +443,7 @@ export function collectTagOrigins(
   consts: ReadonlyMap<string, ts.Expression>,
   scope: CompositeParamScope,
   composite: string,
+  call?: CompositeCallSite,
 ): Record<string, PathOrigin> {
   const out: Record<string, PathOrigin> = {};
 
@@ -395,7 +455,7 @@ export function collectTagOrigins(
       const existing = out[path];
       const merged = new Set(existing?.kind === "composite-parameter" ? existing.parameters : []);
       for (const parameter of found) merged.add(parameter);
-      out[path] = { kind: "composite-parameter", composite, parameters: [...merged].sort() };
+      out[path] = compositeParameterOrigin(composite, [...merged].sort(), call);
     }
   });
 
@@ -405,4 +465,14 @@ export function collectTagOrigins(
     }
   }
   return out;
+}
+
+/** A `composite-parameter` origin, with its argument locations when the call was seen. */
+function compositeParameterOrigin(
+  composite: string,
+  parameters: string[],
+  call: CompositeCallSite | undefined,
+): PathOrigin {
+  const locations = argumentLocations(call, parameters);
+  return { kind: "composite-parameter", composite, parameters, ...(locations ? { arguments: locations } : {}) };
 }

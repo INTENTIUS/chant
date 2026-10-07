@@ -1,0 +1,118 @@
+---
+title: Drift Back to Source
+description: How chant reports a drifted field against the composite argument and source line that set it, with a k3d demo you can run
+diataxis: how-to
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When a deployed field drifts, `chant lifecycle diff --live` reports it on the line you wrote. If you scale a Deployment that came from a `WebApp(...)` call, the report quotes the argument that set the replica count and gives its file and line.
+
+```text
+PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+  - webDeployment (K8s::Apps::Deployment)
+      spec.replicas: 3 → 5 [from: composite WebApp parameter replicas]
+        spec.replicas on K8s::Apps::Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:11
+        change parameter `replicas` of the `web` call of composite WebApp at src/app.ts:11 so `spec.replicas` moves from 3 to 5. The composite stays.
+```
+
+That output is from the demo on this page. Line 11 of `src/app.ts` is `replicas: 3,` inside the `WebApp({ ... })` call. The rendered YAML for the Deployment has a `replicas: 3` too, but editing it would change nothing: the YAML is regenerated from the call on the next build.
+
+## Why chant can name the argument
+
+A composite takes a few arguments and expands to several resources. A tool that runs the factory function sees only what it returned, so the link between `replicas: 3` at the call and `spec.replicas` on the Deployment is gone by the time the resources exist.
+
+chant reads the factory instead of running it. When its body is a list of `const` declarations and a `return`, `chant build` interprets that body and keeps the expression each resource property was written as. Because `spec.replicas: props.replicas` reads the `replicas` parameter, the build records that parameter together with where the call wrote `replicas`. This record is build metadata and never reaches the YAML or JSON chant emits.
+
+The other direction, from existing templates and manifests into chant source, is measured on the import page under [How closely an import round-trips](/chant/cli/import/#how-closely-an-import-round-trips).
+
+## Run the demo
+
+The example is `examples/k8s-drift-to-source`. Its `WebApp` in `composites/web-app.ts` sets a Deployment's replica count, image and port from the arguments it is called with. The `worker` Deployment in `src/app.ts` is written out in full.
+
+The demo needs Docker and k3d, plus the `kubectl` and `jq` commands. Run it from a chant checkout with `just drift-to-source-e2e`.
+
+The script creates a k3d cluster with its own kubeconfig file, so your current kube context is left alone. It builds the example, applies it with `kubectl apply --server-side --field-manager=chant`, checks that a live diff right after the apply reports no property drift, runs `kubectl scale deployment web-app --replicas=5`, and runs the live diff again. It deletes the cluster when it finishes. The last two steps of a run print the following, with the report's UNCLAIMED section left out.
+
+```text
+== 4. kubectl scale deployment web-app --replicas=5
+SMOKE op=scale verdict=pass web-app scaled from 3 to 5 outside chant
+
+== 5. chant lifecycle diff local --live
+      PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+        - webDeployment (K8s::Apps::Deployment)
+            spec.replicas: 3 → 5 [from: composite WebApp parameter replicas]
+              spec.replicas on K8s::Apps::Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:11
+              change parameter `replicas` of the `web` call of composite WebApp at src/app.ts:11 so `spec.replicas` moves from 3 to 5. The composite stays.
+SMOKE op=names-argument verdict=pass spec.replicas on K8s::Apps::Deployment webDeployment comes from WebApp({ replicas: 3 }) at src/app.ts:11
+SMOKE op=json verdict=pass --json carries the origin: composite WebApp, argument 'replicas: 3' at line 11
+
+PASS: drift on spec.replicas is reported against WebApp({ replicas: 3 }) at src/app.ts:11.
+```
+
+`BREAK=1 just drift-to-source-e2e` scales the `worker` Deployment instead. Its replica count is written directly on the resource, so the run passes only if the diff reports it that way and names no composite. The same step under `BREAK=1` prints this, again without the UNCLAIMED section.
+
+```text
+== 5. chant lifecycle diff local --live
+      PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+        - worker (K8s::Apps::Deployment)
+            spec.replicas: 2 → 4 [from: authored]
+      --json origin: {"kind":"direct"}
+SMOKE op=direct verdict=caught worker spec.replicas is attributed as direct: no composite argument named for it
+
+CAUGHT: a field written directly on a resource is attributed as direct, never to a composite.
+```
+
+To run the same steps by hand against a cluster of your own, from `examples/k8s-drift-to-source`: `npm run build`, `npm run deploy`, `kubectl scale deployment web-app --replicas=5`, then `npm run diff`.
+
+## The four answers
+
+Every drifted field gets one of four origins, and the report says which:
+
+| Origin | What the report says | What it proposes |
+|---|---|---|
+| Composite parameter | `comes from WebApp({ replicas: 3 }) at src/app.ts:11` | Change that argument at the call. The composite stays. |
+| Composite literal | `is fixed inside composite WebApp; no argument to the call at src/app.ts:8 moves it` | Nothing at the call. Either add a parameter to the composite for that field, or stop using the composite there. |
+| Direct | The drift row as it has always looked, with `[from: authored]` when the build recorded it | Change the declared value. |
+| Unknown | `has an unknown origin:` and the reason | Change the declared value, and it says that is a fallback. |
+
+An unknown origin is reported as unknown. It is never shown as direct, because "change the declared value" on a field a composite produced would mean replacing the composite call with flat resources.
+
+A parameter can reach the call through a spread instead of a property. In that case the report gives the line of the call and says the parameter is not written there.
+
+## Read it as JSON
+
+`chant lifecycle diff <env> --live --json` carries one entry per drifted field under `lexicons.<lexicon>.reconcile`. Each has the one-line `summary` and the full `origin`:
+
+```json
+{
+  "kind": "composite-parameter",
+  "composite": "WebApp",
+  "instance": "web",
+  "parameters": ["replicas"],
+  "call": { "file": "/path/to/project/src/app.ts", "line": 8, "column": 20 },
+  "arguments": [
+    { "parameter": "replicas", "file": "/path/to/project/src/app.ts", "line": 11, "column": 3, "text": "replicas: 3" }
+  ]
+}
+```
+
+`call` is where the composite call starts. `arguments` lists, for each parameter in `parameters`, where its argument was written; `text` is absent when the call does not write it. Files are absolute in JSON and relative to the project in the text report.
+
+## When the origin is unknown
+
+The origin comes from interpreting the composite's body, so it is only available where that happens:
+
+- The composite body has to be in the subset `chant build` interprets: `const` declarations followed by one `return`, with no `if`, loop or `let`. A composite outside it is run instead, and its fields report `composite-not-interpreted`.
+- The diff builds the project the way `chant build` does, which folds by default. With `build.fold: false` in `chant.config.ts` or `--no-fold` on the command line every file runs instead, so composite fields report unknown.
+- A composite call the build reaches through a value it has already folded, such as `Checkout({ ... }).step` used as a property value, records which parameter set the field but no line.
+
+<Aside type="note">
+The report proposes an edit and does not make it. chant names the file, the call and the argument, and the change in your source is yours to make.
+</Aside>
+
+## Related
+
+- [Drift Detection](/chant/concepts/drift-detection/) explains snapshots, the diff categories, and accepted deviations.
+- [Composite Resources](/chant/guide/composite-resources/) covers writing composites.
+- [`chant lifecycle`](/chant/cli/lifecycle/) is the command reference.

@@ -1,0 +1,20 @@
+{
+  "name": "k8s-drift-to-source-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "deploy": "kubectl apply --server-side --field-manager=chant -f k8s.yaml",
+    "diff": "chant lifecycle diff local --live",
+    "teardown": "kubectl delete -f k8s.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-k8s": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

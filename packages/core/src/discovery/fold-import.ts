@@ -52,6 +52,8 @@ import {
   collectCompositeOrigins,
   collectParamDependencies,
   collectTagOrigins,
+  sourceLocationOf,
+  type CompositeCallSite,
   type CompositeParamScope,
 } from "./param-deps";
 import { getInterpolationFields, getProvenance, setPathProvenance, setProvenance } from "../provenance";
@@ -1481,6 +1483,13 @@ interface CompositeParamRecorder {
    * `fold()` sees them.
    */
   consts: Map<string, ts.Expression>;
+  /**
+   * chant #3597 — the composite call this body was reached from, when the
+   * fold saw it as written. A call made from already-folded values (the
+   * nested-value path, {@link resolveCompositeCall}) has no node, and its
+   * members record origins without locations.
+   */
+  call?: CompositeCallSite;
 }
 
 /** `{ value }` when `node`'s shape was recognized and resolved (value may itself be `undefined`/`null` — e.g. an optional composite member that wasn't created); `undefined` when the shape isn't one the live resolver understands (a plain literal, etc.) — callers fall back to the original, unchanged handling for that shape. */
@@ -1700,7 +1709,7 @@ async function resolveImportedCall(
 
   if (factory) {
     const args = await resolveCallArguments(node, calleeName, ctx);
-    const interpreted = await interpretCompositeFactory(factory, args, ctx);
+    const interpreted = await interpretCompositeFactory(factory, args, ctx, { file: ctx.file, node });
     if (interpreted) return interpreted.value;
     // Declined — the body's shape passed but something in it did not resolve
     // (an identifier the module's own imports don't reach, a constructor
@@ -2800,6 +2809,7 @@ function isLiteralPropertyNameNode(node: ts.PropertyName): boolean {
 function compositeParamRecorder(
   factory: InterpretableFactory,
   moduleConsts: ReadonlyMap<string, ts.Expression>,
+  call?: CompositeCallSite,
 ): CompositeParamRecorder {
   const whole = new Set<string>();
   const destructured = new Map<string, string>();
@@ -2830,7 +2840,7 @@ function compositeParamRecorder(
     }
   }
 
-  return { composite: factory.compositeName, scope: { whole, destructured }, consts };
+  return { composite: factory.compositeName, scope: { whole, destructured }, consts, ...(call ? { call } : {}) };
 }
 
 /**
@@ -2854,8 +2864,19 @@ function stampCompositeOrigins(entity: unknown, node: ts.NewExpression, ctx: Res
     }
   }
   if (!propsArg) return;
-  const origins = collectCompositeOrigins(propsArg, recorder.consts, recorder.scope, recorder.composite);
+  stampCompositeCall(entity, recorder);
+  const origins = collectCompositeOrigins(propsArg, recorder.consts, recorder.scope, recorder.composite, recorder.call);
   for (const [path, origin] of Object.entries(origins)) setPathProvenance(entity, path, origin);
+}
+
+/**
+ * chant #3597 — record where the composite call that expanded `entity` was
+ * written, beside the per-path origins and in the same pass. First writer
+ * wins, as for every provenance field, so the innermost call is kept.
+ */
+function stampCompositeCall(entity: object, recorder: CompositeParamRecorder): void {
+  if (!recorder.call) return;
+  setProvenance(entity, { compositeCall: sourceLocationOf(recorder.call.file, recorder.call.node) });
 }
 
 /**
@@ -2875,7 +2896,16 @@ function stampTagOrigins(entity: unknown, node: ts.TaggedTemplateExpression, ctx
   const interpolations = ts.isTemplateExpression(node.template)
     ? node.template.templateSpans.map((span) => span.expression)
     : [];
-  const origins = collectTagOrigins(interpolations, fields, entity.props, recorder.consts, recorder.scope, recorder.composite);
+  stampCompositeCall(entity, recorder);
+  const origins = collectTagOrigins(
+    interpolations,
+    fields,
+    entity.props,
+    recorder.consts,
+    recorder.scope,
+    recorder.composite,
+    recorder.call,
+  );
   for (const [path, origin] of Object.entries(origins)) setPathProvenance(entity, path, origin);
 }
 
@@ -2894,6 +2924,7 @@ async function interpretCompositeFactory(
   factory: InterpretableFactory,
   args: readonly unknown[],
   ctx: ResolveCtx,
+  call?: CompositeCallSite,
 ): Promise<{ value: unknown } | undefined> {
   // A `Composite()` factory takes exactly one props argument. Anything else at
   // the call site means the callee is being used as something this doesn't
@@ -2934,7 +2965,7 @@ async function interpretCompositeFactory(
     interpretDepth: ctx.interpretDepth + 1,
     // chant #2161 — set unconditionally, and NOT inherited from `ctx`: a nested
     // composite records its own parameters, never the enclosing one's.
-    compositeParams: compositeParamRecorder(factory, scope.consts),
+    compositeParams: compositeParamRecorder(factory, scope.consts, call),
   };
 
   const bind = (name: string, value: unknown): void => {

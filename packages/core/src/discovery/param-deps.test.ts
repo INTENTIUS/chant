@@ -1,7 +1,13 @@
 import * as ts from "typescript";
 import { describe, expect, test } from "vitest";
 import { collectConsts } from "../fold/fold";
-import { collectCompositeOrigins, collectParamDependencies, collectTagOrigins } from "./param-deps";
+import {
+  argumentLocation,
+  collectCompositeOrigins,
+  collectParamDependencies,
+  collectTagOrigins,
+  type CompositeCallSite,
+} from "./param-deps";
 import type { PathOrigin } from "../provenance";
 
 /**
@@ -290,5 +296,118 @@ describe("collectTagOrigins", () => {
         engine: { name: "Replacing", args: ["v"] },
       }),
     ).toEqual({ "engine.args": fromParam("version"), engine: fixed });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// chant #3597 — where the argument behind a parameter was written.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The first call expression in `source`, as a call site in `/p/src/app.ts`. */
+function callSiteOf(source: string): CompositeCallSite {
+  const file = ts.createSourceFile("/p/src/app.ts", source, ts.ScriptTarget.Latest, true);
+  let node: ts.CallExpression | undefined;
+  const visit = (n: ts.Node): void => {
+    if (!node && ts.isCallExpression(n)) node = n;
+    ts.forEachChild(n, visit);
+  };
+  visit(file);
+  if (!node) throw new Error("fixture has no call");
+  return { file: "/p/src/app.ts", node };
+}
+
+describe("argumentLocation (#3597)", () => {
+  const source = [
+    'import { WebApp } from "./web-app";',
+    "",
+    "export const web = WebApp({",
+    '  name: "web-app",',
+    "  replicas: 3,",
+    '  iam: { path: "/service/" },',
+    "  port,",
+    "});",
+  ].join("\n");
+
+  test("a top-level argument is the property as written, on its own line", () => {
+    expect(argumentLocation(callSiteOf(source), "replicas")).toEqual({
+      parameter: "replicas",
+      file: "/p/src/app.ts",
+      line: 5,
+      column: 3,
+      text: "replicas: 3",
+    });
+  });
+
+  test("a nested parameter path descends the argument's object literals", () => {
+    expect(argumentLocation(callSiteOf(source), "iam.path")).toEqual({
+      parameter: "iam.path",
+      file: "/p/src/app.ts",
+      line: 6,
+      column: 10,
+      text: 'path: "/service/"',
+    });
+  });
+
+  test("a shorthand property is written as its name", () => {
+    expect(argumentLocation(callSiteOf(source), "port")).toMatchObject({ line: 7, column: 3, text: "port" });
+  });
+
+  test("a parameter the call leaves out falls back to the call, and claims no text", () => {
+    expect(argumentLocation(callSiteOf(source), "image")).toEqual({
+      parameter: "image",
+      file: "/p/src/app.ts",
+      line: 3,
+      column: 20,
+    });
+    expect(argumentLocation(callSiteOf(source), "iam.role")).not.toHaveProperty("text");
+  });
+
+  test("an argument that is not an object literal falls back to the call", () => {
+    const location = argumentLocation(callSiteOf("export const web = WebApp(shared);"), "replicas");
+    expect(location).toEqual({ parameter: "replicas", file: "/p/src/app.ts", line: 1, column: 20 });
+  });
+
+  test("collectCompositeOrigins records the locations in the same pass, in parameter order", () => {
+    const call = callSiteOf(source);
+    const body = ts.createSourceFile(
+      "factory.ts",
+      "const f = (props) => new Thing({ spec: { replicas: props.replicas }, label: `${props.name}-${props.iam.path}`, kind: \"web\" });",
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    let props: ts.ObjectLiteralExpression | undefined;
+    const visit = (n: ts.Node): void => {
+      if (!props && ts.isNewExpression(n)) props = n.arguments?.find(ts.isObjectLiteralExpression);
+      ts.forEachChild(n, visit);
+    };
+    visit(body);
+    const origins = collectCompositeOrigins(
+      props as ts.ObjectLiteralExpression,
+      new Map(),
+      { whole: new Set(["props"]), destructured: new Map() },
+      "WebApp",
+      call,
+    );
+    expect(origins["spec.replicas"]).toEqual({
+      kind: "composite-parameter",
+      composite: "WebApp",
+      parameters: ["replicas"],
+      arguments: [{ parameter: "replicas", file: "/p/src/app.ts", line: 5, column: 3, text: "replicas: 3" }],
+    });
+    expect(origins.label).toMatchObject({
+      parameters: ["iam.path", "name"],
+      arguments: [
+        { parameter: "iam.path", line: 6, text: 'path: "/service/"' },
+        { parameter: "name", line: 4, text: 'name: "web-app"' },
+      ],
+    });
+    // A literal carries no location: nothing at the call moves it.
+    expect(origins.kind).toEqual({ kind: "composite-literal", composite: "WebApp" });
+  });
+
+  test("without a call site the origins are what they were", () => {
+    expect(compositeOriginsOf("return new Thing({ replicas: props.replicas });")).toEqual({
+      replicas: { kind: "composite-parameter", composite: "WebService", parameters: ["replicas"] },
+    });
   });
 });
