@@ -240,6 +240,47 @@ describe("the composites pass the lexicon's post-synth checks", () => {
 
 // ── Provenance (#3212) ─────────────────────────────────────────────────
 
+/**
+ * Where a composite call and each of its arguments were written (chant#3597),
+ * read off the fixture text: the call starts at `needle`, and an argument is the
+ * `name: value` property between it and the call's closing `})`. A parameter
+ * the call does not write is located at the call, with no text.
+ */
+function callSite(file: string, source: string, needle: string) {
+  const start = source.indexOf(needle);
+  if (start < 0) throw new Error(`fixture has no ${needle}`);
+  const end = source.indexOf("})", start);
+  const at = (offset: number) => {
+    const before = source.slice(0, offset).split("\n");
+    return { file, line: before.length, column: before[before.length - 1].length + 1 };
+  };
+  const call = at(start);
+  const argument = (parameter: string) => {
+    const m = new RegExp(`\\b${parameter}: (?:"[^"]*"|[\\w.]+)`).exec(source.slice(start, end));
+    return m ? { parameter, ...at(start + m.index), text: m[0] } : { parameter, ...call };
+  };
+  return { call, argument };
+}
+
+type CallSite = ReturnType<typeof callSite>;
+
+/** The origin a parameter-fed field records, locations included. */
+function paramAt(sites: Record<string, CallSite>) {
+  return (composite: string, instance: string, ...parameters: string[]) => ({
+    kind: "composite-parameter",
+    composite,
+    instance,
+    parameters,
+    call: sites[instance].call,
+    arguments: parameters.map((p) => sites[instance].argument(p)),
+  });
+}
+
+/** The origin a field the composite fixes records. */
+function fixedAt(sites: Record<string, CallSite>) {
+  return (composite: string, instance: string) => ({ kind: "composite-literal", composite, instance, call: sites[instance].call });
+}
+
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(thisDir, "../../../..");
 
@@ -292,13 +333,13 @@ describe("each field keeps its provenance when the composite is interpreted", ()
       intrinsics: sqlPlugin.intrinsics?.() ?? [],
     });
     expect(result.errors).toEqual([]);
-    const param = (composite: string, instance: string, ...parameters: string[]) => ({
-      kind: "composite-parameter",
-      composite,
-      instance,
-      parameters,
-    });
-    const fixed = (composite: string, instance: string) => ({ kind: "composite-literal", composite, instance });
+    const src = join(dir, "src");
+    const sites = {
+      events: callSite(join(src, "events.ts"), EVENTS, "EventsTable({"),
+      daily: callSite(join(src, "daily.ts"), DAILY, "RollupView({"),
+    };
+    const param = paramAt(sites);
+    const fixed = fixedAt(sites);
 
     const t = result.foldProvenance.eventsTable!.fields;
     expect(t.name).toEqual(param("EventsTable", "events", "name"));
@@ -609,13 +650,15 @@ describe("each Postgres field keeps its provenance when the composite is interpr
       intrinsics: sqlPlugin.intrinsics?.() ?? [],
     });
     expect(result.errors).toEqual([]);
-    const param = (composite: string, instance: string, ...parameters: string[]) => ({
-      kind: "composite-parameter",
-      composite,
-      instance,
-      parameters,
-    });
-    const fixed = (composite: string, instance: string) => ({ kind: "composite-literal", composite, instance });
+    const src = join(dir, "src");
+    const sites = {
+      users: callSite(join(src, "accounts.ts"), PG_ACCOUNTS, "SoftDeleteTable({"),
+      notes: callSite(join(src, "accounts.ts"), PG_ACCOUNTS, "TenantTable({"),
+      links: callSite(join(src, "links.ts"), PG_LINKS, "JoinTable({"),
+      sizes: callSite(join(src, "sizes.ts"), PG_SIZES, "RefreshedView({"),
+    };
+    const param = paramAt(sites);
+    const fixed = fixedAt(sites);
 
     const u = result.foldProvenance.usersTable!.fields;
     expect(u.name).toEqual(param("SoftDeleteTable", "users", "name"));
@@ -690,12 +733,13 @@ describe("a composite call whose argument is a same-file entity folds (#3325)", 
     const result = await build(join(dir, "src"), [sqlSerializer], undefined, { ...options, fold: true });
     expect(result.errors).toEqual([]);
     expect(result.foldDecisions.map((d) => [d.mode, d.reason])).toEqual([["fold", undefined]]);
-    const param = (composite: string, instance: string, ...parameters: string[]) => ({
-      kind: "composite-parameter",
-      composite,
-      instance,
-      parameters,
-    });
+    const file = join(dir, "src", "app.ts");
+    const sites = {
+      users: callSite(file, PG_ONE_FILE, "SoftDeleteTable({"),
+      notes: callSite(file, PG_ONE_FILE, "TenantTable({"),
+      links: callSite(file, PG_ONE_FILE, "JoinTable({"),
+    };
+    const param = paramAt(sites);
 
     const u = result.foldProvenance.usersTable!.fields;
     expect(u.name).toEqual(param("SoftDeleteTable", "users", "name"));
