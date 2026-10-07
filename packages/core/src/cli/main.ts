@@ -486,6 +486,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant ci workflow --install <command>` (#3573): a step before the tick that installs what --chant runs.
       result.ciInstall = args[++i];
       if (!result.ciInstall || result.ciInstall.startsWith("-")) throw new Error("--install needs the install command, such as \"npm install\": --install <command>");
+    } else if (arg === "--token-secret") {
+      // `chant ci workflow --token-secret <NAME>` (#3573): the secret the tick's tag push authenticates with.
+      result.ciTokenSecret = args[++i];
+      if (!result.ciTokenSecret || result.ciTokenSecret.startsWith("-")) throw new Error("--token-secret needs a repository secret's name, such as CI_GREEN_TOKEN: --token-secret <NAME>");
+    } else if (arg === "--app-id-var") {
+      // `chant ci workflow --app-id-var <VAR> --app-key-secret <NAME>` (#3573): a GitHub App token pushes the tags.
+      result.ciAppIdVar = args[++i];
+      if (!result.ciAppIdVar || result.ciAppIdVar.startsWith("-")) throw new Error("--app-id-var needs the Actions variable holding the App's id: --app-id-var <VAR>");
+    } else if (arg === "--app-key-secret") {
+      result.ciAppKeySecret = args[++i];
+      if (!result.ciAppKeySecret || result.ciAppKeySecret.startsWith("-")) throw new Error("--app-key-secret needs the secret holding the App's private key: --app-key-secret <NAME>");
     } else if (arg === "--verdict") {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];
@@ -873,10 +884,13 @@ CI:
                         Reads check runs from the forge, pushes the tags.
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
+              [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                         .github/workflows/chant-ci-green.yml, which runs the
                         tick when a required workflow completes and every 15m.
                         --chant replaces the npx @intentius/chant pin the tick
-                        runs; --install adds a step before it.
+                        runs; --install adds a step before it. --token-secret,
+                        or a GitHub App's id and key, pushes the tags with a
+                        token that may tag commits changing workflow files.
 
 Change sets:
   change-set summary <file>  The grouped plan summary of a change-set

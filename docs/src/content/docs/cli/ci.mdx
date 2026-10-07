@@ -10,6 +10,7 @@ diataxis: reference
 chant ci last-green [--json]
 chant ci tick [--dry-run] [--forge github]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
+                  [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
 ```
 
 `chant ci` records which commits of a branch passed CI as git tags, from the [`ci.green`](/chant/reference/workspace-declaration/#ci) block of the workspace declaration ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). A commit that passes every required phase gets `ci/green/<sha>`. A green commit that later fails one gets `ci/revoked/<sha>`. Anyone with a clone can then find the newest commit that passed, for example to freeze it and release from it.
@@ -48,6 +49,26 @@ Writes `.github/workflows/chant-ci-green.yml` (or `--output`), the root CI file 
 It finds the workflows to listen to by reading the other files in `.github/workflows/`. A job reports its `name` or its id as its check run, followed by ` (<matrix values>)` for a matrix job, and a workflow is kept when one of its jobs can report a check run that a required phase's pattern matches. It warns about each required pattern no job matches. `--workflow <name>` adds a workflow the scan can't see, such as one whose job names are built from expressions, and it is repeatable.
 
 The tick runs in the workspace root as `npx --yes @intentius/chant@<version> ci tick`, at the version that wrote the file. `--chant <command>` runs chant with another command instead, and `ci tick` is put after it. `--install <command>` adds a step before the tick that installs what that command needs, in the same directory. When the workspace root has a `package-lock.json`, the install step also gets setup-node's npm cache. Both flags go into the regenerate command in the header. The file's first line is the generated-file header naming the command. When the command runs in a member's directory, that member records the file as one it generates ([ws-042](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-042-root-ci-files.md)). Regenerate it after changing `ci.green` or the workflows it listens to.
+
+## Pushing tags to commits that change workflows
+
+By default the tick pushes its tags with the Actions token, `GITHUB_TOKEN`, which actions/checkout leaves in the clone. GitHub treats a new ref to a commit whose files under `.github/workflows/` differ from the default branch's as an update to those workflows. That needs the `workflows` permission, and the Actions token can never have it. So on a branch where a commit changes a workflow file, every push of that commit's tag fails with `refusing to allow a GitHub App to create or update workflow ... without workflows permission`, and `chant ci tick` says so in its error.
+
+Give the push a token that may update workflows, kept in a repository secret, and regenerate the workflow with it:
+
+```bash
+chant ci workflow --token-secret CI_GREEN_TOKEN
+```
+
+The checkout then uses `${{ secrets.CI_GREEN_TOKEN }}`, so the push does too. A fine-grained personal access token for the repository needs Contents read and write and Workflows read and write. The tick still reads check runs with the Actions token and the job's `checks: read`, because a fine-grained token can't call the Checks API.
+
+A GitHub App with Contents and Workflows write works too. Put its id in an Actions variable and its private key in a secret, and the workflow mints an installation token with actions/create-github-app-token before the checkout:
+
+```bash
+chant ci workflow --app-id-var CI_GREEN_APP_ID --app-key-secret CI_GREEN_APP_KEY
+```
+
+Regenerating keeps the token flags you passed, since the header records them. Leave them out and the file comes out byte for byte as 0.108.0 wrote it.
 
 ## chant's own repository
 

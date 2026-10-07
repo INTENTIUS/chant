@@ -400,6 +400,12 @@ export interface ParsedArgs {
   ciChant?: string;
   /** `chant ci workflow --install <command>` (#3573): a step before the tick that installs what `--chant` runs. */
   ciInstall?: string;
+  /** `chant ci workflow --token-secret <NAME>` (#3573): the repository secret the tick's tag push authenticates with. */
+  ciTokenSecret?: string;
+  /** `chant ci workflow --app-id-var <VAR>` (#3573): the Actions variable holding the GitHub App id whose token pushes the tags. */
+  ciAppIdVar?: string;
+  /** `chant ci workflow --app-key-secret <NAME>` (#3573): the secret holding that App's private key. */
+  ciAppKeySecret?: string;
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new

@@ -22,6 +22,16 @@
  * the workspace root has a `package-lock.json`. chant's own repository uses
  * both to run its source at the commit it checks out.
  *
+ * The tick pushes its tags with the credentials actions/checkout leaves in
+ * the clone, the Actions token by default. GitHub treats a new ref to a
+ * commit whose workflow files differ from the default branch's as an update
+ * to those workflows, and the Actions token can never hold the `workflows`
+ * permission, so it is refused there. `--token-secret <NAME>` checks out
+ * with `secrets.<NAME>` instead, and `--app-id-var <VAR> --app-key-secret
+ * <NAME>` mints a GitHub App token first and checks out with that. The
+ * tick's own `GITHUB_TOKEN`, which reads check runs, stays the Actions token:
+ * a fine-grained personal access token can't call the Checks API.
+ *
  * Like a member's pipelines (./member-pipeline.ts), the file starts with the
  * generated-file header naming the command, and the member whose directory
  * the command runs in records it in its generated-file record, so `WSP081`
@@ -143,7 +153,19 @@ export interface WorkflowInput {
   npmLock?: string;
   /** The workspace root relative to the repository root, `.` for the root itself. */
   workspaceRoot: string;
+  /** How the tag push authenticates, when not with the Actions token. */
+  push?: PushToken;
 }
+
+/**
+ * A token the checkout persists for the tick's `git push`: a repository
+ * secret, or a GitHub App's installation token minted from its id (an
+ * Actions variable) and private key (a secret).
+ */
+export type PushToken = { secret: string } | { appIdVar: string; appKeySecret: string };
+
+/** A secret or variable name GitHub accepts: letters, digits and underscores, not starting with a digit. */
+export const ACTIONS_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** The workflow's YAML, without the generated-file header. Deterministic: the same input writes the same bytes. */
 export function renderCiGreenWorkflow(input: WorkflowInput): string {
@@ -151,6 +173,19 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
   const where = input.workspaceRoot === "." ? [] : [`        working-directory: ${q(input.workspaceRoot)}`];
   const cache = input.install && input.npmLock ? ["          cache: npm", ...(input.npmLock === "package-lock.json" ? [] : [`          cache-dependency-path: ${q(input.npmLock)}`])] : [];
   const tick = input.chant ? q(`${input.chant} ci tick`) : `npx --yes @intentius/chant@${input.chantVersion} ci tick`;
+  const push = input.push;
+  const mint =
+    push && "appIdVar" in push
+      ? [
+          "      - name: Mint a GitHub App token that may push tags to commits that change workflows",
+          "        id: app-token",
+          "        uses: actions/create-github-app-token@v2",
+          "        with:",
+          `          app-id: \${{ vars.${push.appIdVar} }}`,
+          `          private-key: \${{ secrets.${push.appKeySecret} }}`,
+        ]
+      : [];
+  const token = !push ? [] : ["secret" in push ? `          token: \${{ secrets.${push.secret} }}` : "          token: ${{ steps.app-token.outputs.token }}"];
   const lines = [
     `name: ${CI_GREEN_WORKFLOW_NAME}`,
     "",
@@ -182,10 +217,12 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "    runs-on: ubuntu-latest",
     "    timeout-minutes: 15",
     "    steps:",
+    ...mint,
     "      - uses: actions/checkout@v6",
     "        with:",
     `          ref: ${q(green.branch)}`,
     "          fetch-depth: 0",
+    ...token,
     "      - uses: actions/setup-node@v6",
     "        with:",
     "          node-version: \"24\"",

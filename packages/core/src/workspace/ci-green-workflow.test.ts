@@ -115,6 +115,38 @@ describe("the workflows that hold required check runs (#3573)", () => {
   });
 });
 
+describe("the token the tick pushes its tags with (#3573)", () => {
+  const base = { green, workflows: ["ci"], chantVersion: "0.108.0", workspaceRoot: "." };
+
+  test("without one, checkout persists the Actions token and the tick reads check runs with it", () => {
+    const steps = (parseYAMLDocument(renderCiGreenWorkflow(base)) as Yaml).jobs.tick.steps;
+    expect(steps[0].with.token).toBeUndefined();
+    expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
+  });
+
+  test("--token-secret checks out with the secret, so the push uses it, and nothing else changes", () => {
+    const plain = renderCiGreenWorkflow(base);
+    const text = renderCiGreenWorkflow({ ...base, push: { secret: "CI_GREEN_TOKEN" } });
+    const steps = (parseYAMLDocument(text) as Yaml).jobs.tick.steps;
+    expect(steps[0]).toEqual({ uses: "actions/checkout@v6", with: { ref: "main", "fetch-depth": 0, token: "${{ secrets.CI_GREEN_TOKEN }}" } });
+    // Check runs are still read with the Actions token: a fine-grained token can't call the Checks API.
+    expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect((parseYAMLDocument(text) as Yaml).permissions).toEqual({ contents: "write", checks: "read" });
+    expect(text.replace("          token: ${{ secrets.CI_GREEN_TOKEN }}\n", "")).toBe(plain);
+  });
+
+  test("--app-id-var and --app-key-secret mint an App token before the checkout and check out with it", () => {
+    const steps = (parseYAMLDocument(renderCiGreenWorkflow({ ...base, push: { appIdVar: "CI_GREEN_APP_ID", appKeySecret: "CI_GREEN_APP_KEY" } })) as Yaml).jobs.tick.steps;
+    expect(steps[0]).toMatchObject({
+      id: "app-token",
+      uses: "actions/create-github-app-token@v2",
+      with: { "app-id": "${{ vars.CI_GREEN_APP_ID }}", "private-key": "${{ secrets.CI_GREEN_APP_KEY }}" },
+    });
+    expect(steps[1].with.token).toBe("${{ steps.app-token.outputs.token }}");
+    expect(steps[3].env.GITHUB_TOKEN).toBe("${{ github.token }}");
+  });
+});
+
 describe("chant ci workflow (#3573)", () => {
   test("writes the file with its header, records it on the member it ran in, and writes the same bytes twice", async () => {
     const root = scratchDir("chant-ci-workflow-");
@@ -175,6 +207,64 @@ describe("chant ci workflow (#3573)", () => {
     } finally {
       cwd.mockRestore();
       log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("--token-secret goes into the file and its header, and without it the bytes are what they were", async () => {
+    const root = scratchDir("chant-ci-workflow-");
+    git(root, "init", "-q");
+    writeFiles(root, { "chant.workspace.json": declaration([], { ci: { green: GREEN } }), ".github/workflows/ci.yml": CI, ".github/workflows/macos.yml": MACOS });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const file = join(root, CI_GREEN_WORKFLOW_FILE);
+      expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
+      const plain = readFileSync(file, "utf-8");
+      expect(plain).not.toMatch(/token:|secrets\./);
+
+      expect(await runCiWorkflow({ args: { ciTokenSecret: "CI_GREEN_TOKEN" } } as unknown as CommandContext)).toBe(0);
+      const withToken = readFileSync(file, "utf-8");
+      expect(withToken.split("\n")[0]).toBe(`# ${GENERATED_MARKER}. Regenerate with: chant ci workflow --token-secret CI_GREEN_TOKEN (in the workspace root)`);
+      const steps = (parseYAMLDocument(withToken) as Yaml).jobs.tick.steps;
+      expect(steps[0].with.token).toBe("${{ secrets.CI_GREEN_TOKEN }}");
+      expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
+
+      const app = { args: { ciAppIdVar: "CI_GREEN_APP_ID", ciAppKeySecret: "CI_GREEN_APP_KEY" } } as unknown as CommandContext;
+      expect(await runCiWorkflow(app)).toBe(0);
+      expect(readFileSync(file, "utf-8").split("\n")[0]).toBe(
+        `# ${GENERATED_MARKER}. Regenerate with: chant ci workflow --app-id-var CI_GREEN_APP_ID --app-key-secret CI_GREEN_APP_KEY (in the workspace root)`,
+      );
+
+      // Dropping the flag writes the bytes chant 0.108.0 wrote.
+      expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
+      expect(readFileSync(file, "utf-8")).toBe(plain);
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  test("refuses a half-given App, both kinds of token at once, and a name GitHub wouldn't accept", async () => {
+    const root = scratchDir("chant-ci-workflow-");
+    git(root, "init", "-q");
+    writeFiles(root, { "chant.workspace.json": declaration([], { ci: { green: GREEN } }), ".github/workflows/ci.yml": CI });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((s: unknown) => void errors.push(String(s)));
+    try {
+      const run = (args: Record<string, string>) => runCiWorkflow({ args } as unknown as CommandContext);
+      expect(await run({ ciAppIdVar: "APP_ID" })).toBe(1);
+      expect(errors.pop()).toMatch(/both the App's id and its key/);
+      expect(await run({ ciTokenSecret: "T", ciAppIdVar: "APP_ID", ciAppKeySecret: "APP_KEY" })).toBe(1);
+      expect(errors.pop()).toMatch(/one or the other/);
+      expect(await run({ ciTokenSecret: "ci-green token" })).toBe(1);
+      expect(errors.pop()).toMatch(/--token-secret takes a secret or variable name/);
+      expect(existsSync(join(root, CI_GREEN_WORKFLOW_FILE))).toBe(false);
+    } finally {
+      cwd.mockRestore();
       error.mockRestore();
     }
   });
