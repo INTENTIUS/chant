@@ -309,3 +309,147 @@ describe("foldProject attributes a host composite instance exported whole (chant
     });
   });
 });
+
+/**
+ * chant#3608 — the two cases the specification's F-Obs-Provenance fixtures
+ * found, against a host shaped like the conformance suite's `shapes` host: its
+ * registration form returns a `CompositeInstance` carrying the members, and it
+ * publishes a composite of its own (`Archive`) that a fold invokes rather than
+ * interprets.
+ */
+describe("foldProject provenance for host composites (chant#3608)", () => {
+  let root: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "chant-3608-host-"));
+    const pkg = join(root, "node_modules", "@tsad", "shapes-3608");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "@tsad/shapes-3608", version: "0.0.0", type: "module", main: "index.js" }),
+    );
+    writeFileSync(
+      join(pkg, "index.js"),
+      [
+        "const MARK = Symbol.for('tsad.conformance.declarable');",
+        "const COMPOSITE = Symbol.for('tsad.conformance.composite');",
+        "export class Bucket {",
+        "  constructor(props = {}, attributes = {}) {",
+        "    this.entityType = 'Bucket'; this.lexicon = 'shapes'; this.props = props; this.attributes = attributes;",
+        "    Object.defineProperty(this, MARK, { value: true, enumerable: false });",
+        "  }",
+        "}",
+        "class CompositeInstance { constructor() { this[COMPOSITE] = true; } }",
+        "export const Composite = (factory, name = 'anonymous') => {",
+        "  const definition = (props) => Object.assign(new CompositeInstance(), factory(props));",
+        "  return Object.assign(definition, { compositeName: name });",
+        "};",
+        "export const Archive = Composite((props) => ({ bucket: new Bucket({ name: props.name, versioned: true }) }), 'Archive');",
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      join(root, "inner.ts"),
+      'import { Bucket, Composite } from "@tsad/shapes-3608";\n' +
+        "export const Inner = Composite((props: { name: string }) => ({\n" +
+        '  bucket: new Bucket({ name: props.name, tier: "inner" }),\n' +
+        '}), "Inner");\n',
+    );
+    writeFileSync(
+      join(root, "outer.ts"),
+      'import { Bucket, Composite } from "@tsad/shapes-3608";\n' +
+        'import { Inner } from "./inner";\n' +
+        "export const Outer = Composite((props: { name: string }) => ({\n" +
+        "  main: Inner({ name: props.name }),\n" +
+        '  fixed: Inner({ name: "fixed" }),\n' +
+        "  side: new Bucket({ name: props.name }),\n" +
+        '}), "Outer");\n',
+    );
+  });
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  test("a host-published composite's members are unknown, whole or destructured, never direct", async () => {
+    mkdirSync(join(root, "archive"), { recursive: true });
+    const file = join(root, "archive", "app.ts");
+    writeFileSync(
+      file,
+      'import { Archive } from "@tsad/shapes-3608";\n' +
+        'export const archive = Archive({ name: "logs" });\n' +
+        'export const { bucket } = Archive({ name: "old" });\n',
+    );
+
+    const verdict = (await foldProject([file], [], { lexiconPackages: ["@tsad/shapes-3608"], sandbox: true })).get(file)!;
+    expect(verdict.reason).toBeUndefined();
+    expect(verdict.verdict).toBe("fold");
+    const provenance = verdict.foldProvenance!;
+    expect(Object.keys(provenance).sort()).toEqual(["archiveBucket", "bucket"]);
+
+    const unknown = { kind: "unknown", reason: "composite-not-interpreted" };
+    expect(provenance.archiveBucket).toEqual({
+      sourceFile: file,
+      composite: "Archive",
+      instance: "archive",
+      fields: { name: unknown, versioned: unknown },
+    });
+    expect(provenance.bucket.composite).toBe("Archive");
+    expect(provenance.bucket.fields).toEqual({ name: unknown, versioned: unknown });
+
+    // build() does not expand a host instance exported whole, so the
+    // destructured member is the one it can be held to.
+    const built = await build(join(root, "archive"), [namesSerializer], undefined, { fold: true });
+    expect(built.errors).toEqual([]);
+    expect(built.foldProvenance.bucket).toEqual(provenance.bucket);
+  });
+
+  test("a whole instance's nested composite members have records, and the innermost composite wins", async () => {
+    mkdirSync(join(root, "site"), { recursive: true });
+    const file = join(root, "site", "app.ts");
+    writeFileSync(
+      file,
+      'import { Outer } from "../outer";\n' +
+        'export const site = Outer({ name: "web" });\n' +
+        'export const { main, fixed, side } = Outer({ name: "api" });\n',
+    );
+
+    const verdict = (await foldProject([file], [], { lexiconPackages: ["@tsad/shapes-3608"], sandbox: true })).get(file)!;
+    expect(verdict.reason).toBeUndefined();
+    expect(verdict.verdict).toBe("fold");
+    const provenance = verdict.foldProvenance!;
+    expect(Object.keys(provenance).sort()).toEqual([
+      "fixedBucket",
+      "mainBucket",
+      "side",
+      "siteFixedBucket",
+      "siteMainBucket",
+      "siteSide",
+    ]);
+
+    const innerName = (instance?: string) => ({
+      kind: "composite-parameter",
+      composite: "Inner",
+      ...(instance ? { instance } : {}),
+      parameters: ["name"],
+    });
+    const innerTier = (instance?: string) => ({ kind: "composite-literal", composite: "Inner", ...(instance ? { instance } : {}) });
+
+    expect(provenance.siteMainBucket).toEqual({
+      sourceFile: file,
+      composite: "Inner",
+      instance: "site",
+      fields: { name: innerName("site"), tier: innerTier("site") },
+    });
+    expect(provenance.siteFixedBucket.fields).toEqual({ name: innerName("site"), tier: innerTier("site") });
+    expect(provenance.siteSide).toEqual({
+      sourceFile: file,
+      composite: "Outer",
+      instance: "site",
+      fields: { name: { kind: "composite-parameter", composite: "Outer", instance: "site", parameters: ["name"] } },
+    });
+
+    // The destructured form agrees, field for field, apart from the instance:
+    // `main` and `fixed` are host instances exported whole in their own right.
+    expect(provenance.mainBucket.fields).toEqual({ name: innerName("main"), tier: innerTier("main") });
+    expect(provenance.fixedBucket.fields).toEqual({ name: innerName("fixed"), tier: innerTier("fixed") });
+    expect(provenance.side.fields.name).toEqual({ kind: "composite-parameter", composite: "Outer", parameters: ["name"] });
+  });
+});

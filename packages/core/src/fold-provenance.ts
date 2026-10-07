@@ -224,6 +224,13 @@ export function classifyFieldOrigin(
       // direct declaration.
       return { kind: "unknown", reason: "composite-not-interpreted" };
     case "authored":
+      // chant#3608 — `authored` is the file's own root record, and it reaches
+      // a path only when nothing finer did. On an entity a composite wrote (a
+      // member destructured from a composite the fold invoked) that means the
+      // fold could not attribute the path, which is `unknown`, never `direct`.
+      return provenance.composite
+        ? { kind: "unknown", reason: "composite-not-interpreted" }
+        : { kind: "direct" };
     case "build-param":
       // A build parameter governs the expression the AUTHOR wrote in their own
       // source, so the declaration is still theirs to edit.
