@@ -224,7 +224,10 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *   claims provenance: one origin per emitted path of four kinds, the
  *   innermost writer wins, and an origin that cannot be determined is reported
  *   as unknown, never as direct. chant claims provenance, so this is the
- *   version whose obligations it takes on.
+ *   version whose obligations it takes on. 2.2 also widens two rules to what
+ *   chant already did: a call-bound local exported by name (`export { x }`)
+ *   resolves by F-Call as the single declarator does, and a same-file call's
+ *   result read inside an F-Call argument resolves once per file (#3329).
  *
  * `scripts/check-docs-citations.ts` refuses to run when this constant and the
  * rules it loads disagree, so this and the `@intentius/tsad-conformance`
