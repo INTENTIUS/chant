@@ -326,10 +326,26 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       git(top, ["push", "--quiet", remote, ...due.map((c) => `refs/tags/${c.made!.tag}`)]);
     } catch (err) {
       // The local tags stay until the next tick's fetch prunes the ones the remote lacks.
-      throw new Error(`could not push ${due.map((c) => c.made!.tag).join(", ")} to ${remote}: ${stderrOf(err)}`);
+      const stderr = stderrOf(err);
+      const cause = pushRefusalCause(stderr);
+      throw new Error(`could not push ${due.map((c) => c.made!.tag).join(", ")} to ${remote}: ${cause ? `${cause}\n` : ""}${stderr}`);
     }
   }
   return { branch: green.branch, window: green.window, ref: tracking, commits: planned, made: due.map((c) => c.made!.tag) };
+}
+
+/**
+ * Why the remote refused a tag push, when chant can tell. GitHub refuses a
+ * new ref to a commit whose workflow files differ from the default branch's
+ * unless the token may update workflows, and the Actions token never may.
+ */
+export function pushRefusalCause(stderr: string): string | null {
+  if (!/without [`']?workflows?[`']? (permission|scope)/i.test(stderr)) return null;
+  return (
+    "GitHub refused the tag push because the tagged commit changes workflow files, and GITHUB_TOKEN can't update workflows: " +
+    "regenerate the workflow with --token-secret <NAME>, naming a secret that holds a fine-grained token with Contents and Workflows read and write, " +
+    "or with --app-id-var <VAR> --app-key-secret <NAME> for a GitHub App's token"
+  );
 }
 
 /** A tagger for an annotated tag when git has none configured, as on a fresh CI runner. The environment's GIT_COMMITTER_* still win. */

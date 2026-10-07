@@ -5,10 +5,12 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { chmodSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import { parseDeclaration, type CiPhase } from "./declaration";
 import { cleanScratch, contract, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
-import { ciTick, evaluateCommit, evaluatePhase, latestAttempts, lastGreen, matchesCheckRun, windowMs, type LastGreenDocument } from "./ci-green";
+import { ciTick, pushRefusalCause, evaluateCommit, evaluatePhase, latestAttempts, lastGreen, matchesCheckRun, windowMs, type LastGreenDocument } from "./ci-green";
 import type { CheckRun, CiForge } from "./ci-green-forge";
 import { runCiLastGreen } from "./ci-green-cli";
 import lastGreenSchema from "./ci-last-green.schema.json";
@@ -280,6 +282,30 @@ describe("chant ci tick (#3573)", () => {
     expect(tick.made).toEqual([`ci/green/${a}`]);
     expect(remoteTags(origin)).toEqual([]);
     expect(git(root, "tag", "-l")).toBe("");
+  });
+
+  test("a push GitHub refuses for lack of the workflows permission names the cause and the flags that fix it", async () => {
+    const { root, origin } = workspace();
+    const a = commitAt(root, 1, "app/a.txt");
+    push(root);
+    // The bare origin refuses tags the way GitHub does when the tagged commit changes a workflow file.
+    const hook = join(origin, "hooks", "pre-receive");
+    writeFileSync(
+      hook,
+      "#!/bin/sh\necho 'refusing to allow a GitHub App to create or update workflow `.github/workflows/check.yml` without `workflows` permission' >&2\nexit 1\n",
+    );
+    chmodSync(hook, 0o755);
+    const tick = ciTick({ cwd: root, forge: fakeForge(new Map([[a, PASSING]])), now: NOW });
+    await expect(tick).rejects.toThrow(/could not push ci\/green\/[0-9a-f]+ to origin: GitHub refused the tag push because the tagged commit changes workflow files, and GITHUB_TOKEN can't update workflows: regenerate the workflow with --token-secret <NAME>/);
+    await expect(ciTick({ cwd: root, forge: fakeForge(new Map([[a, PASSING]])), now: NOW })).rejects.toThrow(/without `workflows` permission/);
+    expect(remoteTags(origin)).toEqual([]);
+  });
+
+  test("other push refusals get no workflows hint", () => {
+    expect(pushRefusalCause("! [remote rejected] ci/green/abc -> ci/green/abc (refusing to allow a GitHub App to create or update workflow .github/workflows/check.yml without workflows permission)")).toMatch(/--token-secret/);
+    expect(pushRefusalCause("refusing to allow an OAuth App to create or update workflow `.github/workflows/x.yml` without `workflow` scope")).toMatch(/--app-id-var/);
+    expect(pushRefusalCause("! [rejected] ci/green/abc -> ci/green/abc (already exists)")).toBeNull();
+    expect(pushRefusalCause("remote: Permission to o/r.git denied to github-actions[bot].")).toBeNull();
   });
 });
 

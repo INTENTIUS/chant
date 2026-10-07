@@ -4,6 +4,7 @@
  *   ci last-green [--json]               the newest commit on the branch with a green tag and no revoked tag
  *   ci tick [--dry-run] [--forge github] tag the commits that turned green, revoke the ones that turned red
  *   ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
+ *               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
  *                                        write the root CI file that runs the tick
  *
  * `last-green --json` prints `ci-last-green.schema.json`. The tick and the
@@ -17,12 +18,12 @@ import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
 import { ciTick, CiGreenError, formatTick, lastGreen } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
-import { CI_GREEN_WORKFLOW_FILE, ciGreenHeader, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
+import { ACTIONS_NAME, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
 import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
-const USAGE = "chant ci last-green [--json] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]";
+const USAGE = "chant ci last-green [--json] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]";
 
 export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
   const doc = lastGreen({ cwd: process.cwd() });
@@ -56,9 +57,23 @@ export async function runCiTick(ctx: CommandContext): Promise<number> {
   }
 }
 
+/** The push token the flags ask for, or none for the Actions token. Throws on a half-given or clashing pair. */
+function pushToken(args: CommandContext["args"]): PushToken | undefined {
+  const { ciTokenSecret: secret, ciAppIdVar: appIdVar, ciAppKeySecret: appKeySecret } = args;
+  for (const [flag, name] of [["--token-secret", secret], ["--app-id-var", appIdVar], ["--app-key-secret", appKeySecret]] as const) {
+    if (name !== undefined && !ACTIONS_NAME.test(name)) throw new Error(`${flag} takes a secret or variable name, letters, digits and underscores, not ${JSON.stringify(name)}`);
+  }
+  if (secret !== undefined && (appIdVar !== undefined || appKeySecret !== undefined)) throw new Error("--token-secret and --app-id-var/--app-key-secret each name the push token; pass one or the other");
+  if ((appIdVar === undefined) !== (appKeySecret === undefined)) throw new Error("a GitHub App token needs both the App's id and its key: --app-id-var <VAR> --app-key-secret <NAME>");
+  if (secret !== undefined) return { secret };
+  if (appIdVar !== undefined && appKeySecret !== undefined) return { appIdVar, appKeySecret };
+  return undefined;
+}
+
 export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
   const cwd = process.cwd();
   try {
+    const push = pushToken(ctx.args);
     const found = findWorkspaceRoot(cwd);
     if (!found) throw new WorkspaceReadError("declaration-missing", "no chant.workspace.json or .jsonc between this directory and the git root");
     const declaration = readDeclaration(workingTree(found.dir));
@@ -85,11 +100,13 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     if (ctx.args.output) parts.push("--output", relative(base, target).split(sep).join("/"));
     if (ctx.args.ciChant) parts.push("--chant", ctx.args.ciChant);
     if (ctx.args.ciInstall) parts.push("--install", ctx.args.ciInstall);
+    if (push && "secret" in push) parts.push("--token-secret", push.secret);
+    if (push && "appIdVar" in push) parts.push("--app-id-var", push.appIdVar, "--app-key-secret", push.appKeySecret);
     const command = parts.map(shellArg).join(" ");
     const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
     // The install runs in the workspace root, so its lockfile there keys setup-node's npm cache.
     const npmLock = ctx.args.ciInstall && existsSync(join(root, "package-lock.json")) ? (workspaceRoot === "." ? "package-lock.json" : `${workspaceRoot}/package-lock.json`) : undefined;
-    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock });
+    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push });
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
     console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}, and every 15 minutes.`);
