@@ -54,7 +54,9 @@ import {
   collectTagOrigins,
   type CompositeParamScope,
 } from "./param-deps";
-import { getInterpolationFields, setPathProvenance } from "../provenance";
+import { getInterpolationFields, getProvenance, setPathProvenance, setProvenance } from "../provenance";
+import { foldProvenanceOfEntities, type FoldProvenance } from "../fold-provenance";
+import { collectEntities } from "./collect";
 import { intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
@@ -2973,7 +2975,7 @@ async function interpretCompositeFactory(
     // rejecting it for not being chant's rather than for being malformed.
     // Chant's own form still goes through `Composite`, unchanged.
     const value = factory.hostForm
-      ? members
+      ? markHostCompositeInstance(members, factory.compositeName)
       : (Composite<void, CompositeMembers>(() => members as CompositeMembers, factory.compositeName))();
     executionCounts.factoryInterpretations += 1;
     return { value };
@@ -2985,6 +2987,33 @@ async function interpretCompositeFactory(
     if (err instanceof InterpretationDepthError) throw err;
     return undefined;
   }
+}
+
+/**
+ * chant#3598 — a host composite instance's own marker. Non-enumerable and
+ * symbol-keyed, like provenance, so nothing that serializes or compares the
+ * exports sees it. It carries the composite's name, which the members object
+ * otherwise has no record of once it is returned.
+ */
+const HOST_COMPOSITE_INSTANCE = Symbol.for("chant.fold.hostCompositeInstance");
+
+/** Mark `members` as the instance a host's composite produced, and return it unchanged. */
+function markHostCompositeInstance(members: Record<string, unknown>, compositeName: string): Record<string, unknown> {
+  if (Object.isExtensible(members) && !Object.prototype.hasOwnProperty.call(members, HOST_COMPOSITE_INSTANCE)) {
+    Object.defineProperty(members, HOST_COMPOSITE_INSTANCE, {
+      value: compositeName,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  return members;
+}
+
+/** The composite name a host composite instance was marked with, or `undefined` for any other value. */
+function hostCompositeName(value: unknown): string | undefined {
+  if (!isIndexableObject(value)) return undefined;
+  const name = (value as Record<symbol, unknown>)[HOST_COMPOSITE_INSTANCE];
+  return typeof name === "string" ? name : undefined;
 }
 
 /** Evaluate an admissible factory body's statements in order, binding each `const`, and return the `return` expression's value. */
@@ -4850,6 +4879,20 @@ export interface FoldProjectVerdict {
   readonly taintedBy?: { from: string; kind: TaintEdgeKind };
   /** The file's complete export namespace, present only when `verdict` is "fold". */
   readonly exports?: ReadonlyMap<string, unknown>;
+  /**
+   * chant#3598 — fold provenance for the entities this file contributes,
+   * keyed by entity name, in the shape `build()` reports as
+   * `BuildResult.foldProvenance`. Present only when `verdict` is "fold" and
+   * the folded files' entities could be collected (a duplicate entity name
+   * fails collection for the whole set, as it fails a build, and then no
+   * verdict carries it). A file that folds and declares nothing with
+   * properties carries `{}`.
+   *
+   * A "run" file has no entry: foldProject never executes one, so it has no
+   * entities to attribute. That holds under `sandbox` too, where nothing
+   * crosses the child-process wire because no child is started.
+   */
+  readonly foldProvenance?: FoldProvenance;
 }
 
 /**
@@ -4910,12 +4953,29 @@ export async function foldProject(
     })),
   );
 
+  const folded = files.filter((file) => attempts.get(file)?.ok === true && !plan.tainted.has(file));
+  const provenanceByFile = foldProvenanceByFile(
+    folded.map((file) => {
+      const attempt = attempts.get(file);
+      return {
+        file,
+        exports: attempt?.ok === true ? expandHostCompositeExports(Object.fromEntries(attempt.exportedValues)) : {},
+      };
+    }),
+  );
+
   const out = new Map<string, FoldProjectVerdict>();
   for (const file of files) {
     const attempt = attempts.get(file)!;
     const tentative = attempt.ok ? "fold" : "run";
     if (attempt.ok && !plan.tainted.has(file)) {
-      out.set(file, { verdict: "fold", tentative, exports: attempt.exportedValues });
+      const foldProvenance = provenanceByFile?.get(file);
+      out.set(file, {
+        verdict: "fold",
+        tentative,
+        exports: attempt.exportedValues,
+        ...(foldProvenance ? { foldProvenance } : {}),
+      });
       continue;
     }
     out.set(file, {
@@ -4926,4 +4986,101 @@ export async function foldProject(
     });
   }
   return out;
+}
+
+/**
+ * chant#3598 — the folded files' fold provenance, split by declaring file.
+ *
+ * This is `build()`'s computation, not a second one: the same
+ * `collectEntities` over the same folded export namespaces `discover()` hands
+ * it, then `foldProvenanceOfEntities` with `getProvenance`. One call over the
+ * whole folded set rather than one per file, because composite expansion and
+ * cross-directory name disambiguation (#932) are decided over the set and an
+ * entity's name is part of what is being reported. The build root is the
+ * files' common directory, which is what `chant build <dir>` passes when every
+ * file sits under `<dir>`.
+ *
+ * Returns `undefined` when collection throws (a duplicate name), the case
+ * where a build has no entities either.
+ */
+function foldProvenanceByFile(
+  modules: Array<{ file: string; exports: Record<string, unknown> }>,
+): Map<string, FoldProvenance> | undefined {
+  if (modules.length === 0) return new Map();
+  let entities: Map<string, Declarable>;
+  try {
+    entities = collectEntities(modules, commonDirectory(modules.map((m) => m.file)));
+  } catch {
+    return undefined;
+  }
+
+  const byResolved = new Map<string, FoldProvenance>();
+  const out = new Map<string, FoldProvenance>();
+  for (const { file } of modules) {
+    const record: FoldProvenance = {};
+    byResolved.set(resolvePath(file), record);
+    out.set(file, record);
+  }
+
+  const all = foldProvenanceOfEntities(entities, getProvenance);
+  for (const [name, record] of Object.entries(all)) {
+    const sourceFile = getProvenance(entities.get(name) as Declarable)?.sourceFile;
+    const target = sourceFile === undefined ? undefined : byResolved.get(resolvePath(sourceFile));
+    if (target) target[name] = record;
+  }
+  return out;
+}
+
+/**
+ * chant#3598 — a file's exports with every host composite instance replaced by
+ * its members, for {@link foldProvenanceByFile} only.
+ *
+ * A host's registration form (chant#2442) returns the members object the
+ * factory built, not a chant `CompositeInstance`, because wrapping it would run
+ * chant's member validation against the host's own entities. `collectEntities`
+ * expands only chant's instances, so an instance exported whole
+ * (`export const store = Store({...})`) contributed no entity and therefore no
+ * record, while a destructured member, a plain declarable export, did.
+ *
+ * The members are named and stamped the way `expandComposite` names and stamps
+ * a chant instance: `${exportName}${Member}`, with a whole-entity `composite`
+ * origin under the paths the fold already attributed. That origin is written
+ * before `collectEntities` adds its `authored` one, and the first writer wins,
+ * so a path the fold did not attribute is `unknown` rather than `direct`.
+ *
+ * Only a top-level export is expanded. A host instance nested in another
+ * composite's body or placed in an array does not fold today, so its file is
+ * `run` and has no record to give.
+ *
+ * The exports a caller receives in the verdict are the originals.
+ */
+function expandHostCompositeExports(exports: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(exports)) {
+    const compositeName = hostCompositeName(value);
+    if (compositeName === undefined) {
+      out[name] = value;
+      continue;
+    }
+    for (const [memberName, member] of Object.entries(value as Record<string, unknown>)) {
+      if (memberName.length === 0 || !isDeclarable(member)) continue;
+      setProvenance(member, { composite: compositeName, compositeInstance: name });
+      setPathProvenance(member, "", { kind: "composite", composite: compositeName, instance: name });
+      out[`${name}${memberName[0].toUpperCase()}${memberName.slice(1)}`] = member;
+    }
+  }
+  return out;
+}
+
+/** The deepest directory every one of `files` sits under. */
+function commonDirectory(files: readonly string[]): string {
+  const split = files.map((file) => dirname(resolvePath(file)).split(sep));
+  const first = split[0];
+  let depth = first.length;
+  for (const parts of split.slice(1)) {
+    let i = 0;
+    while (i < depth && i < parts.length && parts[i] === first[i]) i++;
+    depth = i;
+  }
+  return first.slice(0, depth).join(sep) || sep;
 }
