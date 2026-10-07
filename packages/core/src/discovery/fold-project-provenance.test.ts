@@ -432,25 +432,32 @@ describe("foldProject provenance for host composites (chant#3608)", () => {
     });
     const innerTier = (instance?: string) => ({ kind: "composite-literal", composite: "Inner", ...(instance ? { instance } : {}) });
 
-    expect(provenance.siteMainBucket).toEqual({
+    expect(provenance.siteMainBucket).toMatchObject({
       sourceFile: file,
       composite: "Inner",
       instance: "site",
       fields: { name: innerName("site"), tier: innerTier("site") },
     });
-    expect(provenance.siteFixedBucket.fields).toEqual({ name: innerName("site"), tier: innerTier("site") });
-    expect(provenance.siteSide).toEqual({
+    expect(provenance.siteFixedBucket.fields).toMatchObject({ name: innerName("site"), tier: innerTier("site") });
+    expect(provenance.siteSide).toMatchObject({
       sourceFile: file,
       composite: "Outer",
       instance: "site",
       fields: { name: { kind: "composite-parameter", composite: "Outer", instance: "site", parameters: ["name"] } },
     });
 
+    // chant#3597's locations follow the innermost writer too: a nested
+    // member's call is the `Inner(...)` call inside Outer's body, and a
+    // member Outer built itself points at the `Outer(...)` call in this file.
+    expect(provenance.siteMainBucket.fields.name).toMatchObject({ call: { file: join(root, "outer.ts"), line: 4 } });
+    expect(provenance.siteFixedBucket.fields.name).toMatchObject({ call: { file: join(root, "outer.ts"), line: 5 } });
+    expect(provenance.siteSide.fields.name).toMatchObject({ call: { file, line: 2 } });
+
     // The destructured form agrees, field for field, apart from the instance:
     // `main` and `fixed` are host instances exported whole in their own right.
-    expect(provenance.mainBucket.fields).toEqual({ name: innerName("main"), tier: innerTier("main") });
-    expect(provenance.fixedBucket.fields).toEqual({ name: innerName("fixed"), tier: innerTier("fixed") });
-    expect(provenance.side.fields.name).toEqual({ kind: "composite-parameter", composite: "Outer", parameters: ["name"] });
+    expect(provenance.mainBucket.fields).toMatchObject({ name: innerName("main"), tier: innerTier("main") });
+    expect(provenance.fixedBucket.fields).toMatchObject({ name: innerName("fixed"), tier: innerTier("fixed") });
+    expect(provenance.side.fields.name).toMatchObject({ kind: "composite-parameter", composite: "Outer", parameters: ["name"] });
   });
 });
 
