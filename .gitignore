@@ -42,3 +42,4 @@ lexicons/fountain/.init-template-*/
 # chant#2425 — the specification checkout the docs citation gate loads its
 # check from, until @intentius/tsad-conformance is on npm.
 .tsad/
+.import-roundtrip-tmp/
