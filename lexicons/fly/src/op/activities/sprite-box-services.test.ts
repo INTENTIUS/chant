@@ -247,8 +247,9 @@ describe("spriteApplyServices({ box: true }) through sprite-env (#2880)", () => 
     declare([{ name: "app", cmd: "node ${BOX_HOME}/preview.mjs --port 5173", duration: "3s", health: health("app") }]);
     rmSync(join(state, "app.json"), { force: true });
     takeCalls();
-    expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "app", action: "created" }]);
-    expect(takeCalls()).toEqual(["services create app --cmd node --args /home/sprite/box/preview.mjs,--port,5173 --duration 3s"]);
+    // hud, from the earlier tests, is not declared here, so the apply deletes it.
+    expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "hud", action: "deleted" }, { name: "app", action: "created" }]);
+    expect(takeCalls()).toEqual(["services delete hud", "services create app --cmd node --args /home/sprite/box/preview.mjs,--port,5173 --duration 3s"]);
     expect(listed().get("app")).toMatchObject({ cmd: "node", args: ["/home/sprite/box/preview.mjs", "--port", "5173"] });
     expect((await spriteApplyServices({ box: true })).services).toEqual([{ name: "app", action: "left" }]);
     expect(takeCalls()).toEqual([]);
@@ -283,6 +284,33 @@ describe("spriteApplyServices({ box: true }) through sprite-env (#2880)", () => 
       "services delete hud",
       "services create hud --cmd /home/sprite/box/run-daemon.sh --needs app --http-port 8080 --duration 3s",
     ]);
+  });
+
+  test("a full apply deletes the services the block does not declare, dependants first; only and prune: false leave them", async () => {
+    await spriteApplyServices({ box: true });
+    // Two services nobody declared, one needing the other, and an optional one that is declared.
+    const extra = (name: string, needs: string[]) =>
+      writeFileSync(join(state, `${name}.json`), JSON.stringify({ name, cmd: `/x/${name}.sh`, args: [], needs, httpPort: 0, status: "running" }));
+    extra("old-db", []);
+    extra("old-api", ["old-db"]);
+    extra("site", []);
+    takeCalls();
+
+    expect((await spriteApplyServices({ box: true, only: ["app"] })).services).toEqual([{ name: "app", action: "left" }]);
+    expect((await spriteApplyServices({ box: true, prune: false })).services).toEqual([{ name: "app", action: "left" }, { name: "hud", action: "left" }]);
+    expect(takeCalls()).toEqual([]);
+
+    const pruned = await spriteApplyServices({ box: true });
+    expect(pruned.services).toEqual([
+      { name: "old-api", action: "deleted" },
+      { name: "old-db", action: "deleted" },
+      { name: "app", action: "left" },
+      { name: "hud", action: "left" },
+    ]);
+    expect(pruned.applied).toEqual([]);
+    expect(takeCalls()).toEqual(["services delete old-api", "services delete old-db"]);
+    expect([...listed().keys()].sort()).toEqual(["app", "hud", "site"]);
+    rmSync(join(state, "site.json"));
   });
 
   test("start starts a defined service that is stopped; without start it is left", async () => {

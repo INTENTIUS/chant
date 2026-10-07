@@ -508,7 +508,7 @@ A box runs its processes as services under a supervisor: sprite-env on a sprite,
 
 The services also follow rules the schema can't state. Each `needs` entry names a service of the same block, and the `needs` form no cycle. A block gives each name once, and one service at most sets `httpPort`. A declaration that breaks one can't be read (`declaration-invalid`), so [`check`](/chant/cli/workspace-check/#boxes) fails with `WSP001`.
 
-The fly lexicon reads the list with `box: true`, from the box block of the member whose directory holds the working directory. `spriteServicesObserve({ box: true })` observes the services for a [`ConvergeOp`](/chant/guide/converging-lifecycle/), `spriteServiceRestart({ box: true })` restarts one and waits for its `health`, and `spriteApplyServices({ box: true })` creates and replaces them through `sprite-env services`. chant reads `services` from 0.95.0 on, and a declaration that has them needs `minReader` of `"0.95.0"` or higher.
+The fly lexicon reads the list with `box: true`, from the box block of the member whose directory holds the working directory. `spriteServicesObserve({ box: true })` observes the services for a [`ConvergeOp`](/chant/guide/converging-lifecycle/), `spriteServiceRestart({ box: true })` restarts one and waits for its `health`, and `spriteApplyServices({ box: true })` creates and replaces them through `sprite-env services`. A full apply (no `only`) also deletes each service the supervisor has that the block does not declare, so a service dropped from the list stops running; `prune: false` keeps them. chant reads `services` from 0.95.0 on, and a declaration that has them needs `minReader` of `"0.95.0"` or higher.
 
 ### Factory
 

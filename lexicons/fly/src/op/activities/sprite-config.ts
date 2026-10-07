@@ -144,6 +144,12 @@ export interface SpriteApplyServicesArgs {
   start?: boolean;
   /** Without `id`: restart each applied service that was already converged. Default: false. */
   restart?: boolean;
+  /**
+   * Without `id` and without `only`: delete each service the supervisor has
+   * that the box block does not declare (an `optional` one is declared), so a
+   * service dropped from the block stops running. Default: true.
+   */
+  prune?: boolean;
   /** Without `id`: the `sprite-env` binary. Default: the one on PATH, else /.sprite/bin/sprite-env. */
   spriteEnv?: string;
   endpoint?: string;
@@ -151,7 +157,7 @@ export interface SpriteApplyServicesArgs {
 }
 
 /** What an apply through sprite-env did to one service (#2880). */
-export type ServiceApplyAction = "created" | "replaced" | "restarted" | "started" | "left";
+export type ServiceApplyAction = "created" | "replaced" | "restarted" | "started" | "left" | "deleted";
 
 export interface SpriteApplyServicesResult {
   /** Names that were created or updated (converged services are skipped). */
@@ -161,7 +167,7 @@ export interface SpriteApplyServicesResult {
   /**
    * Without `id`: each service applied, in the order it was applied, with
    * what the apply did to it (#2880). `left` is a converged service that was
-   * not restarted or started.
+   * not restarted or started, `deleted` one the block does not declare (`prune`).
    */
   services?: { name: string; action: ServiceApplyAction }[];
 }
@@ -424,6 +430,23 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
   };
   const live = new Map(parseServiceDefinitions(await spriteEnv(["services", "list"])).map((s) => [s.name, s]));
 
+  // A full apply leaves the supervisor with the declared services only: one
+  // the block no longer declares is deleted, before anything is defined, so
+  // the HTTP port or a name it held is free. Dependants go before what they need.
+  const services: { name: string; action: ServiceApplyAction }[] = [];
+  if (!only && args.prune !== false) {
+    const undeclared = new Set([...live.keys()].filter((n) => !names.has(n)));
+    while (undeclared.size > 0) {
+      const needed = new Set([...undeclared].flatMap((n) => live.get(n)?.needs ?? []));
+      const next = [...undeclared].sort().find((n) => !needed.has(n)) ?? [...undeclared].sort()[0];
+      await spriteEnv(["services", "delete", next]);
+      logProgress(`services: deleted ${next}, which the box block does not declare`);
+      services.push({ name: next, action: "deleted" });
+      undeclared.delete(next);
+      live.delete(next);
+    }
+  }
+
   // The supervisor gives one service the HTTP port and refuses a second holder
   // (409) while the first still has it. So a service whose listed port is not
   // the declared one is replaced first, before any service is defined with a
@@ -443,7 +466,6 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
     released.add(s.name);
   }
 
-  const services: { name: string; action: ServiceApplyAction }[] = [];
   for (const s of targets) {
     if (released.has(s.name)) {
       services.push({ name: s.name, action: "replaced" });
@@ -486,6 +508,7 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
     }
   }
   const applied = services.filter((e) => e.action === "created" || e.action === "replaced").map((e) => e.name);
-  logProgress(`services: applied ${applied.length}/${targets.length} through sprite-env, started ${started.length}`);
+  const deleted = services.filter((e) => e.action === "deleted").length;
+  logProgress(`services: applied ${applied.length}/${targets.length} through sprite-env, started ${started.length}${deleted > 0 ? `, deleted ${deleted}` : ""}`);
   return { applied, started, services };
 }
