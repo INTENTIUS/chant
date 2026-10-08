@@ -37,10 +37,14 @@ export class SubIntrinsic implements Intrinsic {
   }
 
   toJSON(): { "Fn::Sub": string } {
-    const serialize = defaultInterpolationSerializer(
+    const base = defaultInterpolationSerializer(
       (name, attr) => `\${${name}.${attr}}`,
       (ref) => `\${${ref}}`,
     );
+    // A GetAtt written by name (`GetAtt("Db", "Endpoint.Address")`) has the
+    // `${Db.Endpoint.Address}` form inside a Sub, like an attribute reference.
+    const serialize = (value: unknown): string =>
+      value instanceof GetAttIntrinsic ? `\${${value.logicalName}.${value.attribute}}` : base(value);
     return { "Fn::Sub": buildInterpolatedString(this.templateParts, this.values, serialize) };
   }
 }
@@ -92,8 +96,8 @@ export function Ref(target: string | Declarable): RefIntrinsic {
  */
 export class GetAttIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
-  private logicalName: string;
-  private attribute: string;
+  readonly logicalName: string;
+  readonly attribute: string;
 
   constructor(logicalName: string, attribute: string) {
     this.logicalName = logicalName;

@@ -125,7 +125,7 @@ describe("with-conditions.json build roundtrip (#2069)", () => {
     expect(mainFile.content).toContain("new Condition(Equals(Ref(Cutover), \"true\"))");
     expect(mainFile.content).toContain("new Condition(Not(DoCutover))");
     expect(mainFile.content).toContain("{ Condition: DoCutover }");
-    expect(mainFile.content).toContain("stackOutput(Ref(Rule), { condition: DoCutover })");
+    expect(mainFile.content).toContain('stackOutput(Ref(Rule), { condition: DoCutover, lexicon: "aws" })');
 
     const dir = mkdtempSync(join(import.meta.dirname, "../../.roundtrip-tmp-"));
     try {

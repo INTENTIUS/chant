@@ -27,7 +27,12 @@ const cfnYamlTypes = [
   }),
   new yaml.Type("!GetAtt", {
     kind: "scalar",
-    construct: (data: string) => ({ "Fn::GetAtt": data.split(".") }),
+    // `!GetAtt Db.Endpoint.Address` names the attribute `Endpoint.Address`:
+    // the logical id ends at the first dot.
+    construct: (data: string) => {
+      const dot = data.indexOf(".");
+      return { "Fn::GetAtt": dot < 0 ? [data] : [data.slice(0, dot), data.slice(dot + 1)] };
+    },
   }),
   new yaml.Type("!GetAtt", {
     kind: "sequence",
@@ -305,9 +310,9 @@ export class CFParser extends BaseValueParser implements TemplateParser {
       if (Array.isArray(value) && value.length === 2) {
         return { __intrinsic: "GetAtt", logicalId: value[0], attribute: value[1] };
       }
-      if (typeof value === "string") {
-        const [logicalId, attribute] = value.split(".", 2);
-        return { __intrinsic: "GetAtt", logicalId, attribute };
+      if (typeof value === "string" && value.indexOf(".") > 0) {
+        const dot = value.indexOf(".");
+        return { __intrinsic: "GetAtt", logicalId: value.slice(0, dot), attribute: value.slice(dot + 1) };
       }
     }
 

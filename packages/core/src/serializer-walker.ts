@@ -22,6 +22,22 @@ export interface SerializerVisitor {
 }
 
 /**
+ * The attribute an `{__attrRef}` envelope names. A fold writes the envelope
+ * with the property it read (`db.Endpoint_Address`), and the property's own
+ * AttrRef carries the attribute (`Endpoint.Address`); they differ when the
+ * attribute has a dot. The envelope's name is kept when the entity or
+ * property is not found.
+ */
+function envelopeAttribute(entityName: string, property: string, entityNames: Map<Declarable, string>): string {
+  for (const [entity, name] of entityNames) {
+    if (name !== entityName) continue;
+    const held = (entity as unknown as Record<string, unknown>)[property];
+    return isAttrRefLike(held) ? held.attribute : property;
+  }
+  return property;
+}
+
+/**
  * Recursively walk a value, converting AttrRefs, Intrinsics, Declarables,
  * arrays, and objects using the provided visitor.
  */
@@ -100,7 +116,7 @@ export function walkValue(
   // Handle serialized AttrRef envelopes (produced by AttrRef.toJSON() inside intrinsics)
   if (typeof value === "object" && "__attrRef" in value) {
     const ref = (value as { __attrRef: { entity: string; attribute: string } }).__attrRef;
-    return visitor.attrRef(ref.entity, ref.attribute);
+    return visitor.attrRef(ref.entity, envelopeAttribute(ref.entity, ref.attribute, entityNames));
   }
 
   // Handle objects
