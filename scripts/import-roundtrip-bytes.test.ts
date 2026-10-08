@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { canonicalText, diffCanonical, failureClass, summarise } from "./import-roundtrip-bytes";
+import { canonicalText, diffCanonical, failureClass, measurementConfig, summarise } from "./import-roundtrip-bytes";
 
 const dir = join(import.meta.dirname, "..", "test", "import-roundtrip");
 
@@ -47,6 +47,15 @@ describe("difference classes", () => {
   test("failure classes", () => {
     expect(failureClass("stackOutput(ref): ref must be an attribute reference")).toBe("output-of-a-bare-Ref");
     expect(failureClass("LambdaIAMRole is not defined")).toBe("generated-file-references-missing-name");
+  });
+});
+
+describe("measurement config", () => {
+  test("builds with only the checks the inputs themselves trip turned off", () => {
+    expect(measurementConfig("aws")).toContain('lint: { rules: {"WAW049":"off","WAW021":"off","WAW039":"off","WAW042":"off"} }');
+    expect(measurementConfig("k8s")).toContain('lint: { rules: {"WK8005":"off"} }');
+    expect(measurementConfig("aws")).not.toContain("WAW019");
+    expect(measurementConfig("aws")).toContain("attribution: false");
   });
 });
 

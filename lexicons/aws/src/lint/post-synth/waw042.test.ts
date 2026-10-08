@@ -117,6 +117,34 @@ describe("WAW042: S3 Bucket Missing TLS-Only Policy", () => {
     expect(checkS3TlsOnlyPolicy(ctx)).toHaveLength(1);
   });
 
+  test("no diagnostic when the BucketPolicy names the bucket with the same Fn::Sub as its BucketName", () => {
+    const name = { "Fn::Sub": "${AppName}-${AWS::Region}-${AWS::AccountId}" };
+    const ctx = makeCtx({
+      Resources: {
+        MyBucket: { Type: "AWS::S3::Bucket", Properties: { BucketName: name } },
+        MyBucketPolicy: {
+          Type: "AWS::S3::BucketPolicy",
+          Properties: { Bucket: name, PolicyDocument: { Statement: [secureTransportDeny] } },
+        },
+      },
+    });
+    expect(checkS3TlsOnlyPolicy(ctx)).toHaveLength(0);
+  });
+
+  test("a policy naming a different bucket by Fn::Sub does not clear this one", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyBucket: { Type: "AWS::S3::Bucket", Properties: { BucketName: { "Fn::Sub": "${AppName}-data" } } },
+        MyBucketPolicy: {
+          Type: "AWS::S3::BucketPolicy",
+          Properties: { Bucket: { "Fn::Sub": "${AppName}-logs" }, PolicyDocument: { Statement: [secureTransportDeny] } },
+        },
+      },
+    });
+    const diags = checkS3TlsOnlyPolicy(ctx);
+    expect(diags.map((d) => d.entity)).toEqual(["MyBucket"]);
+  });
+
   test("a policy covering a different bucket does not clear this one", () => {
     const ctx = makeCtx({
       Resources: {
