@@ -179,7 +179,7 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * `spec/VERSION` in the specification repository carries the same string, and
  * the conformance adapter reads this one to fill its `specVersion` field.
  *
- * ## Why 2.2, and what each version since 1.0 asked for (chant#2445)
+ * ## Why 2.3, and what each version since 1.0 asked for (chant#2445)
  *
  * Raising this is the last step of adopting a rule set, so each version was
  * checked against what chant does rather than against whether the suite is
@@ -228,6 +228,13 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *   chant already did: a call-bound local exported by name (`export { x }`)
  *   resolves by F-Call as the single declarator does, and a same-file call's
  *   result read inside an F-Call argument resolves once per file (#3329).
+ * - **2.3** says a value host code produced, written at an export or into a
+ *   field, has an unknown origin and never a direct one. chant reports
+ *   `host-call` and `host-value` for resource fields since
+ *   typescript-as-data#248. 2.3 also lets `F-Host-Composite` interpret a
+ *   composite an active package publishes as TypeScript source, which chant
+ *   has done since #3247, and adds fixtures for a call result read inside an
+ *   argument, which chant passes since #3610.
  *
  * `scripts/check-docs-citations.ts` refuses to run when this constant and the
  * rules it loads disagree, so this and the `@intentius/tsad-conformance`
@@ -239,7 +246,7 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * Until chant#2470 the rules came from a commit `docs-check.yml` checked out;
  * now they come from the published package, so bumping it is what moves this.
  */
-export const SPEC_VERSION = "2.2";
+export const SPEC_VERSION = "2.3";
 
 /** The two EVL rule ids a shape violation can be attributed to. */
 export type SubsetRuleId = "EVL001" | "EVL003";
