@@ -179,7 +179,7 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * `spec/VERSION` in the specification repository carries the same string, and
  * the conformance adapter reads this one to fill its `specVersion` field.
  *
- * ## Why 1.6, and what each version since 1.0 asked for (chant#2445)
+ * ## Why 2.2, and what each version since 1.0 asked for (chant#2445)
  *
  * Raising this is the last step of adopting a rule set, so each version was
  * checked against what chant does rather than against whether the suite is
@@ -220,6 +220,14 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * - **1.8** added `ι = executing`, and chant carries it as of `0.72.3`
  *   (#2455) — `FoldProjectOptions.executing`, mutually exclusive with
  *   `sandbox`. `open` stays the default and stays strict (#2453).
+ * - **2.2** added obligations to `F-Obs-Provenance` for an implementation that
+ *   claims provenance: one origin per emitted path of four kinds, the
+ *   innermost writer wins, and an origin that cannot be determined is reported
+ *   as unknown, never as direct. chant claims provenance, so this is the
+ *   version whose obligations it takes on. 2.2 also widens two rules to what
+ *   chant already did: a call-bound local exported by name (`export { x }`)
+ *   resolves by F-Call as the single declarator does, and a same-file call's
+ *   result read inside an F-Call argument resolves once per file (#3329).
  *
  * `scripts/check-docs-citations.ts` refuses to run when this constant and the
  * rules it loads disagree, so this and the `@intentius/tsad-conformance`
@@ -231,7 +239,7 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  * Until chant#2470 the rules came from a commit `docs-check.yml` checked out;
  * now they come from the published package, so bumping it is what moves this.
  */
-export const SPEC_VERSION = "2.1";
+export const SPEC_VERSION = "2.2";
 
 /** The two EVL rule ids a shape violation can be attributed to. */
 export type SubsetRuleId = "EVL001" | "EVL003";
