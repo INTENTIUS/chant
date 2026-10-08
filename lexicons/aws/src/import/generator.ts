@@ -21,6 +21,9 @@ export class CFGenerator implements TypeScriptGenerator {
   /** Resource classes imported under another name, because a logical id in
    * the template is the class's own name (`InternetGateway`). */
   private classAliases: Map<string, string> = new Map();
+  /** Variable names for conditions ("c:<name>") and outputs ("o:<name>")
+   * whose template name is already a parameter's or resource's (#3604). */
+  private renames: Map<string, string> = new Map();
 
   constructor() {
     // Reverse lookup from the generated registry: resourceType → className.
@@ -49,6 +52,7 @@ export class CFGenerator implements TypeScriptGenerator {
     this.classAliases = this.computeClassAliases(ir);
     // Collect the set of imported class names so we can detect variable name conflicts
     const importedSymbols = this.collectImportedSymbols(ir);
+    this.renames = this.collisionRenames(ir, importedSymbols);
 
     // Generate imports
     lines.push(this.generateImports(ir));
@@ -254,6 +258,37 @@ export class CFGenerator implements TypeScriptGenerator {
   }
 
   /**
+   * A condition or output whose template name is a parameter's or resource's
+   * cannot be exported under that name too. It gets a suffixed variable
+   * (`EnableReadReplicaCondition`, `QueueNameOutput`), and the generated code
+   * passes the template name as its `name` option.
+   */
+  private collisionRenames(ir: TemplateIR, importedSymbols: Set<string>): Map<string, string> {
+    const renames = new Map<string, string>();
+    const taken = new Set<string>();
+    const varOf = (name: string) => this.safeVarName(name, importedSymbols);
+    for (const p of ir.parameters) taken.add(varOf(p.name));
+    for (const r of ir.resources) taken.add(varOf(r.logicalId));
+    const claim = (key: string, name: string, suffix: string) => {
+      let v = varOf(name);
+      if (taken.has(v)) {
+        v = `${name}${suffix}`;
+        for (let i = 2; taken.has(v); i++) v = `${name}${suffix}${i}`;
+        renames.set(key, v);
+      }
+      taken.add(v);
+    };
+    for (const c of ir.conditions ?? []) claim(`c:${c.name}`, c.name, "Condition");
+    for (const o of ir.outputs ?? []) claim(`o:${o.name}`, o.name, "Output");
+    return renames;
+  }
+
+  /** The variable a declared condition is exported as. */
+  private conditionVar(name: string, importedSymbols: Set<string>): string {
+    return this.renames.get(`c:${name}`) ?? this.safeVarName(name, importedSymbols);
+  }
+
+  /**
    * Generate import statements
    */
   private generateImports(ir: TemplateIR): string {
@@ -394,15 +429,18 @@ export class CFGenerator implements TypeScriptGenerator {
    */
   private conditionVarRef(name: string, ir: TemplateIR, importedSymbols: Set<string>): string {
     const declared = (ir.conditions ?? []).some((c) => c.name === name);
-    return declared ? this.safeVarName(name, importedSymbols) : JSON.stringify(name);
+    return declared ? this.conditionVar(name, importedSymbols) : JSON.stringify(name);
   }
 
   /**
    * Generate a condition declaration (#2069)
    */
   private generateCondition(condition: ConditionIR, ir: TemplateIR, importedSymbols: Set<string>): string {
-    const varName = this.safeVarName(condition.name, importedSymbols);
+    const varName = this.conditionVar(condition.name, importedSymbols);
     const exprStr = this.generateValue(condition.expression, ir, importedSymbols);
+    if (this.renames.has(`c:${condition.name}`)) {
+      return `export const ${varName} = new Condition(${exprStr}, { name: ${JSON.stringify(condition.name)} });`;
+    }
     return `export const ${varName} = new Condition(${exprStr});`;
   }
 
@@ -410,7 +448,7 @@ export class CFGenerator implements TypeScriptGenerator {
    * Generate an output declaration as stackOutput(...) (#2069)
    */
   private generateOutput(output: OutputIR, ir: TemplateIR, importedSymbols: Set<string>): string {
-    const varName = this.safeVarName(output.name, importedSymbols);
+    const varName = this.renames.get(`o:${output.name}`) ?? this.safeVarName(output.name, importedSymbols);
 
     // A bare Ref envelope becomes Ref(<var>) — stackOutput takes an intrinsic
     // or attribute reference, not the resource/parameter object itself.
@@ -434,6 +472,7 @@ export class CFGenerator implements TypeScriptGenerator {
     // has no entity to derive it from, and an output without one is dropped
     // at serialization.
     opts.push(`lexicon: "aws"`);
+    if (this.renames.has(`o:${output.name}`)) opts.push(`name: ${JSON.stringify(output.name)}`);
 
     return `export const ${varName} = stackOutput(${valueStr}, { ${opts.join(", ")} });`;
   }

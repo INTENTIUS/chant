@@ -2,7 +2,7 @@ import { INTRINSIC_MARKER, resolveIntrinsicValue, isIntrinsic, type Intrinsic } 
 import { buildInterpolatedString, defaultInterpolationSerializer } from "@intentius/chant/intrinsic-interpolation";
 import { type Declarable } from "@intentius/chant/declarable";
 import { getLogicalName } from "@intentius/chant/utils";
-import { isCondition, type Condition } from "./condition";
+import { conditionName, isCondition, type Condition } from "./condition";
 
 /**
  * An operand allowed where CloudFormation expects a condition (#2068): a
@@ -17,7 +17,7 @@ function resolveConditionOperand(operand: ConditionOperand): unknown {
     return { Condition: operand };
   }
   if (isCondition(operand)) {
-    return { Condition: getLogicalName(operand) };
+    return { Condition: conditionName(operand) };
   }
   return resolveIntrinsicValue(operand);
 }
@@ -133,7 +133,7 @@ export class IfIntrinsic implements Intrinsic {
   }
 
   toJSON(): { "Fn::If": [string, unknown, unknown] } {
-    const name = typeof this.conditionName === "string" ? this.conditionName : getLogicalName(this.conditionName);
+    const name = typeof this.conditionName === "string" ? this.conditionName : conditionName(this.conditionName);
     return { "Fn::If": [name, resolveIntrinsicValue(this.valueIfTrue), resolveIntrinsicValue(this.valueIfFalse)] };
   }
 }

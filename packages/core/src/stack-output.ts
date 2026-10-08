@@ -37,6 +37,10 @@ export interface StackOutput extends Declarable {
    * `Output.Condition`) — a condition name, or the condition Declarable
    * itself, resolved to its logical name at serialization (#2068/#2069). */
   readonly condition?: string | Declarable;
+  /** The output's key in the template, when it is not the export name. A
+   * template may use one key for an output and a parameter or resource; a
+   * module cannot export both under that name (#3604). */
+  readonly name?: string;
 }
 
 /** What a wrapping intrinsic's lexicon gets derived from: either a nested
@@ -112,7 +116,7 @@ export function isStackOutput(value: unknown): value is StackOutput {
  */
 export function stackOutput(
   ref: AttrRef | Intrinsic | string,
-  options?: { description?: string; exportName?: string; lexicon?: string; condition?: string | Declarable },
+  options?: { description?: string; exportName?: string; lexicon?: string; condition?: string | Declarable; name?: string },
 ): StackOutput {
   // Duck-type, not `instanceof` (chant #1137): AttrRef also implements
   // Intrinsic (a global-symbol marker), so `isIntrinsic(ref)` alone already
@@ -152,6 +156,7 @@ export function stackOutput(
     description: options?.description,
     exportName: options?.exportName,
     condition: options?.condition,
+    ...(options?.name !== undefined ? { name: options.name } : {}),
   };
 
   return output;

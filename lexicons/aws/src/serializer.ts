@@ -19,9 +19,9 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
-import { isAttrRefLike, getLogicalName } from "@intentius/chant/utils";
+import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
-import { isCondition } from "./condition";
+import { conditionName, isCondition } from "./condition";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { isTemplateTransform } from "./template-transform";
 import { isTemplateSection } from "./template-sections";
@@ -391,7 +391,7 @@ function serializeToTemplate(
       if (!template.Conditions) {
         template.Conditions = {};
       }
-      template.Conditions[name] = toCFValue(entity.expression, entityNames);
+      template.Conditions[entity.name ?? name] = toCFValue(entity.expression, entityNames);
     } else if (isChildProject(entity)) {
       // ChildProjectInstance → AWS::CloudFormation::Stack resource
       const childProject = entity as ChildProjectInstance;
@@ -445,7 +445,7 @@ function serializeToTemplate(
         // as well as a name string (#2068).
         if (attrs.Condition) {
           resource.Condition = isCondition(attrs.Condition)
-            ? entityNames.get(attrs.Condition) ?? getLogicalName(attrs.Condition)
+            ? conditionName(attrs.Condition, entityNames)
             : attrs.Condition as string;
         }
         if (attrs.DeletionPolicy) resource.DeletionPolicy = attrs.DeletionPolicy as string;
@@ -525,10 +525,11 @@ function serializeToTemplate(
       const condition = (stackOutput as { condition?: unknown }).condition;
       if (condition) {
         output.Condition = isCondition(condition)
-          ? entityNames.get(condition) ?? getLogicalName(condition)
+          ? conditionName(condition, entityNames)
           : condition as string;
       }
-      template.Outputs[name] = output;
+      // Read defensively, like exportName: the name option postdates older cores.
+      template.Outputs[(stackOutput as { name?: string }).name ?? name] = output;
     }
   }
 
