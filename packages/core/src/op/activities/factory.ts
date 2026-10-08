@@ -22,6 +22,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { FactoryClaim, FactoryContext, FactoryItem } from "../../workspace/factory-rules";
+import { liveRunEnv } from "../run-live";
 
 /** The run's work lease, as `workLeaseOutput()` hands it to a step. */
 export interface FactoryLease {
@@ -263,7 +264,8 @@ interface Ran {
 /** Run argv in cwd, without a shell, asynchronously. */
 function run(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<Ran> {
   return new Promise((settle) => {
-    const child = spawn(argv[0], argv.slice(1), { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+    // The run's activity file, as a shell step gets it, so a builder's lines reach its in-flight record (#3637).
+    const child = spawn(argv[0], argv.slice(1), { cwd, env: { ...process.env, ...liveRunEnv(), ...env }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b: Buffer) => (stdout += b.toString("utf8")));
