@@ -24,6 +24,7 @@ import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isCondition } from "./condition";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { isTemplateTransform } from "./template-transform";
+import { isTemplateSection } from "./template-sections";
 import { loadTaggableResources } from "./taggable";
 
 /**
@@ -57,12 +58,24 @@ interface CFParameter {
   AllowedValues?: unknown[];
   AllowedPattern?: string;
   ConstraintDescription?: string;
-  MaxLength?: number;
-  MaxValue?: number;
-  MinLength?: number;
-  MinValue?: number;
-  NoEcho?: boolean;
+  MaxLength?: number | string;
+  MaxValue?: number | string;
+  MinLength?: number | string;
+  MinValue?: number | string;
+  NoEcho?: boolean | string;
 }
+
+/** Parameter constraint options and the CloudFormation keys they emit as. */
+const PARAMETER_CONSTRAINT_KEYS = [
+  ["allowedValues", "AllowedValues"],
+  ["allowedPattern", "AllowedPattern"],
+  ["constraintDescription", "ConstraintDescription"],
+  ["minLength", "MinLength"],
+  ["maxLength", "MaxLength"],
+  ["minValue", "MinValue"],
+  ["maxValue", "MaxValue"],
+  ["noEcho", "NoEcho"],
+] as const;
 
 /**
  * CloudFormation resource
@@ -314,6 +327,22 @@ function serializeToTemplate(
     template.Transform = transforms;
   }
 
+  // Template-level Description and Metadata declarations. Declared Metadata
+  // keys come first; the ownership marker and receipt rows written above are
+  // chant's own and win on a key collision.
+  const declaredMetadata: Record<string, unknown> = {};
+  for (const [, entity] of entities) {
+    if (!isTemplateSection(entity)) continue;
+    if (entity.section === "Description") {
+      template.Description = entity.value as string;
+    } else {
+      Object.assign(declaredMetadata, toCFValue(entity.value, entityNames) as Record<string, unknown>);
+    }
+  }
+  if (Object.keys(declaredMetadata).length > 0) {
+    template.Metadata = { ...declaredMetadata, ...(template.Metadata ?? {}) };
+  }
+
   // Process entities
   for (const [name, entity] of entities) {
     // Skip StackOutput entities — they go in the Outputs section
@@ -327,7 +356,7 @@ function serializeToTemplate(
     }
 
     // Skip TemplateTransform entities — lifted to the top-level Transform above
-    if (isTemplateTransform(entity)) {
+    if (isTemplateTransform(entity) || isTemplateSection(entity)) {
       continue;
     }
 
@@ -346,6 +375,13 @@ function serializeToTemplate(
 
       if ("defaultValue" in entity && entity.defaultValue !== undefined) {
         param.Default = entity.defaultValue;
+      }
+
+      const constraints = (entity as { constraints?: Record<string, unknown> }).constraints;
+      if (constraints) {
+        for (const [option, key] of PARAMETER_CONSTRAINT_KEYS) {
+          if (constraints[option] !== undefined) (param as unknown as Record<string, unknown>)[key] = constraints[option];
+        }
       }
 
       template.Parameters[name] = param;

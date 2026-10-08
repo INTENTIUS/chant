@@ -36,10 +36,15 @@ export function hasIntrinsicInValue(value: unknown, name: string): boolean {
  */
 export function irUsesIntrinsic(ir: TemplateIR, name: string): boolean {
   for (const resource of ir.resources) {
-    if (hasIntrinsicInValue(resource.properties, name)) {
+    if (
+      hasIntrinsicInValue(resource.properties, name) ||
+      hasIntrinsicInValue(resource.metadata, name) ||
+      hasIntrinsicInValue(resource.attributes, name)
+    ) {
       return true;
     }
   }
+  if (hasIntrinsicInValue(ir.metadata, name)) return true;
   for (const condition of ir.conditions ?? []) {
     if (hasIntrinsicInValue(condition.expression, name)) {
       return true;

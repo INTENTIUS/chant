@@ -9,6 +9,8 @@ export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags"
 export type { DefaultTags, TagEntry } from "./default-tags";
 export { templateTransform, isTemplateTransform, TEMPLATE_TRANSFORM_MARKER } from "./template-transform";
 export type { TemplateTransform } from "./template-transform";
+export { templateDescription, templateMetadata, isTemplateSection, TEMPLATE_SECTION_MARKER } from "./template-sections";
+export type { TemplateSection } from "./template-sections";
 
 // Effect receipts (#1835, epic #1703): the aws materialization row
 // (`AWS::SSM::Parameter`, plain String, path derived from the ownership
