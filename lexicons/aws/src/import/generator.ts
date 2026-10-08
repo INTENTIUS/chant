@@ -11,8 +11,13 @@ import { join } from "path";
  * TypeScript code generator for CloudFormation templates
  */
 export class CFGenerator implements TypeScriptGenerator {
+  /** One `main.ts` holds the whole template. Split files would each need the
+   * parameters, conditions and resources the others declare. */
+  readonly ownsLayout = true;
   private typeToClass: Map<string, string>;
   private allClassNames: Set<string>;
+  /** resourceType -> (property name on the class -> CloudFormation attribute name) */
+  private attrsByType: Map<string, Record<string, string>>;
 
   constructor() {
     // Reverse lookup from the generated registry: resourceType → className.
@@ -21,10 +26,13 @@ export class CFGenerator implements TypeScriptGenerator {
     const meta = loadLexiconRegistry(join(import.meta.dirname, "../.."), "aws");
     this.typeToClass = new Map();
     this.allClassNames = new Set();
+    this.attrsByType = new Map();
     for (const [className, entry] of Object.entries(meta)) {
       if (entry.kind === "resource" && !className.includes("_")) {
         this.typeToClass.set(entry.resourceType, className);
         this.allClassNames.add(className);
+        // The aws registry also carries each class's attribute map.
+        this.attrsByType.set(entry.resourceType, (entry as { attrs?: Record<string, string> }).attrs ?? {});
       }
     }
   }
@@ -94,12 +102,17 @@ export class CFGenerator implements TypeScriptGenerator {
     if (ir.parameters.length > 0) symbols.add("Parameter");
     if ((ir.conditions ?? []).length > 0) symbols.add("Condition");
     if ((ir.outputs ?? []).length > 0) symbols.add("stackOutput");
-    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "GetAtt", "Equals", "And", "Or", "Not"] as const;
+    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "Equals", "And", "Or", "Not"] as const;
     for (const name of intrinsics) {
       if (irUsesIntrinsic(ir, name)) symbols.add(name);
     }
     // Outputs whose value is a Ref envelope render as Ref(<var>) (#2069)
     if ((ir.outputs ?? []).some((o) => hasIntrinsicInValue(o.value, "Ref"))) symbols.add("Ref");
+    // A Sub that names a parameter or resource renders it as Ref(<var>), and an
+    // attribute the class does not expose renders as GetAtt("<id>", "<attr>").
+    const uses = this.scanGeneratedIntrinsics(ir);
+    if (uses.ref) symbols.add("Ref");
+    if (uses.getAtt) symbols.add("GetAtt");
     if (this.needsAWSPseudo(ir)) symbols.add("AWS");
     for (const resource of ir.resources) {
       const parsed = this.parseResourceType(resource.type);
@@ -113,6 +126,75 @@ export class CFGenerator implements TypeScriptGenerator {
    */
   private safeVarName(name: string, importedSymbols: Set<string>): string {
     return importedSymbols.has(name) ? name + "_" : name;
+  }
+
+  /**
+   * The property on the generated class that reads `attribute` of the
+   * resource `logicalId`, or undefined when the class has none. A dotted
+   * CloudFormation attribute (`Endpoint.Address`) maps to its underscored
+   * property (`Endpoint_Address`).
+   */
+  private attrProperty(logicalId: string, attribute: string, ir: TemplateIR): string | undefined {
+    const resource = ir.resources.find((r) => r.logicalId === logicalId);
+    if (!resource || !this.parseResourceType(resource.type)) return undefined;
+    const attrs = this.attrsByType.get(resource.type) ?? {};
+    const key = Object.keys(attrs).find((k) => attrs[k] === attribute);
+    return key !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : undefined;
+  }
+
+  /**
+   * An attribute read: `<var>.<property>` when the class exposes the
+   * attribute, else `GetAtt("<id>", "<attr>")`. CloudFormation accepts
+   * GetAtt on some writable properties (`AWS::SQS::Queue` `QueueName`) that
+   * the class does not list, and reading those as a property gives
+   * undefined.
+   */
+  private attrExpr(logicalId: string, attribute: string, ir: TemplateIR, importedSymbols: Set<string>): string {
+    const prop = this.attrProperty(logicalId, attribute, ir);
+    if (prop !== undefined) return `${this.safeVarName(logicalId, importedSymbols)}.${prop}`;
+    return `GetAtt(${JSON.stringify(logicalId)}, ${JSON.stringify(attribute)})`;
+  }
+
+  /** Whether `name` is a parameter or resource the template declares. */
+  private isDeclaredName(name: string, ir: TemplateIR): boolean {
+    return ir.parameters.some((p) => p.name === name) || ir.resources.some((r) => r.logicalId === name);
+  }
+
+  /**
+   * Which of Ref and GetAtt the generated source calls beyond the IR's own
+   * Ref and GetAtt envelopes: Sub interpolations of a declared name, and
+   * attribute reads the class does not expose.
+   */
+  private scanGeneratedIntrinsics(ir: TemplateIR): { ref: boolean; getAtt: boolean } {
+    const uses = { ref: false, getAtt: false };
+    const visit = (value: unknown): void => {
+      if (value === null || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+        return;
+      }
+      const obj = value as Record<string, unknown>;
+      if (obj.__intrinsic === "GetAtt") {
+        if (this.attrProperty(obj.logicalId as string, obj.attribute as string, ir) === undefined) uses.getAtt = true;
+      } else if (obj.__intrinsic === "Sub") {
+        const variables = (obj.variables ?? {}) as Record<string, unknown>;
+        for (const m of (obj.template as string).matchAll(/\$\{([^}]+)\}/g)) {
+          const expr = m[1];
+          if (expr.startsWith("AWS::") || expr.startsWith("!") || expr in variables) continue;
+          const dot = expr.indexOf(".");
+          if (dot < 0) uses.ref = true;
+          else if (this.attrProperty(expr.slice(0, dot), expr.slice(dot + 1), ir) === undefined) uses.getAtt = true;
+        }
+      }
+      for (const v of Object.values(obj)) visit(v);
+    };
+    for (const r of ir.resources) visit(r.properties);
+    for (const c of ir.conditions ?? []) visit(c.expression);
+    for (const o of ir.outputs ?? []) {
+      visit(o.value);
+      visit(o.exportName);
+    }
+    return uses;
   }
 
   /**
@@ -281,15 +363,12 @@ export class CFGenerator implements TypeScriptGenerator {
     if (output.condition) {
       opts.push(`condition: ${this.conditionVarRef(output.condition, ir, importedSymbols)}`);
     }
-    // A literal output has no entity to derive its lexicon from.
-    if (typeof output.value === "string") {
-      opts.push(`lexicon: "aws"`);
-    }
+    // Every output names its lexicon. A literal, or a GetAtt written by name,
+    // has no entity to derive it from, and an output without one is dropped
+    // at serialization.
+    opts.push(`lexicon: "aws"`);
 
-    if (opts.length > 0) {
-      return `export const ${varName} = stackOutput(${valueStr}, { ${opts.join(", ")} });`;
-    }
-    return `export const ${varName} = stackOutput(${valueStr});`;
+    return `export const ${varName} = stackOutput(${valueStr}, { ${opts.join(", ")} });`;
   }
 
   /**
@@ -389,14 +468,7 @@ export class CFGenerator implements TypeScriptGenerator {
       }
 
       if (obj.__intrinsic === "GetAtt") {
-        const logicalId = obj.logicalId as string;
-        const attribute = obj.attribute as string;
-        const varName = this.safeVarName(logicalId, importedSymbols);
-        if (attribute.includes(".")) {
-          return `GetAtt(${varName}, "${attribute}")`;
-        }
-        const attrName = this.toPropName(attribute);
-        return `${varName}.${attrName}`;
+        return this.attrExpr(obj.logicalId as string, obj.attribute as string, ir, importedSymbols);
       }
 
       if (obj.__intrinsic === "Sub") {
@@ -486,33 +558,38 @@ export class CFGenerator implements TypeScriptGenerator {
     const regex = /\$\{([^}]+)\}/g;
     let match;
 
+    let literal = "";
     while ((match = regex.exec(template)) !== null) {
-      parts.push(template.slice(currentPos, match.index));
-
       const expr = match[1];
+      // `${!Literal}` is CloudFormation's escape for a literal `${Literal}`;
+      // it stays in the template text.
+      if (expr.startsWith("!")) {
+        literal += template.slice(currentPos, match.index + match[0].length);
+        currentPos = match.index + match[0].length;
+        continue;
+      }
+      parts.push(literal + template.slice(currentPos, match.index));
+      literal = "";
+
       if (expr.startsWith("AWS::")) {
         expressions.push(`AWS.${this.pseudoParamName(expr)}`);
       } else if (variables && expr in variables) {
         expressions.push(this.generateValue(variables[expr], ir, importedSymbols));
       } else if (expr.includes(".")) {
         const dotIdx = expr.indexOf(".");
-        const logicalId = expr.slice(0, dotIdx);
-        const attr = expr.slice(dotIdx + 1);
-        const varName = this.safeVarName(logicalId, importedSymbols);
-        if (attr.includes(".")) {
-          expressions.push(`GetAtt(${varName}, "${attr}")`);
-        } else {
-          const attrName = this.toPropName(attr);
-          expressions.push(`${varName}.${attrName}`);
-        }
+        expressions.push(this.attrExpr(expr.slice(0, dotIdx), expr.slice(dotIdx + 1), ir, importedSymbols));
+      } else if (this.isDeclaredName(expr, ir)) {
+        // A Declarable cannot be interpolated into Sub; Ref(<var>) serializes
+        // as `${Name}`.
+        expressions.push(`Ref(${this.safeVarName(expr, importedSymbols)})`);
       } else {
-        expressions.push(this.safeVarName(expr, importedSymbols));
+        expressions.push(`Ref(${JSON.stringify(expr)})`);
       }
 
       currentPos = match.index + match[0].length;
     }
 
-    parts.push(template.slice(currentPos));
+    parts.push(literal + template.slice(currentPos));
 
     if (expressions.length === 0) {
       return `Sub\`${escapePart(template)}\``;

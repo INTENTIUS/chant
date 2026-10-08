@@ -9,7 +9,7 @@ import {
 import { listInstalledLexicons } from "../plugins";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 describe("importCommand", () => {
@@ -269,7 +269,7 @@ describe("importCommand", () => {
     expect(content).toContain("Bucket");
   });
 
-  test("organizes resources by category for large templates", async () => {
+  test("writes a large CloudFormation template to one main.ts", async () => {
     const template = {
       AWSTemplateFormatVersion: "2010-09-09",
       Resources: {
@@ -289,8 +289,9 @@ describe("importCommand", () => {
     });
 
     expect(result.success).toBe(true);
-    // With 4 resources, should create separate files
-    expect(result.generatedFiles.length).toBeGreaterThan(1);
+    // The aws generator owns its layout: split files would each need the
+    // declarations the others hold.
+    expect(result.generatedFiles.map((f) => basename(f))).toEqual(["main.ts"]);
   });
 
   test("creates index.ts for organized imports", async () => {
