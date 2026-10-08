@@ -224,3 +224,38 @@ describe("what import used to drop", () => {
     expect(template.Resources).toEqual(original.Resources);
   });
 });
+
+describe("one name in two CloudFormation namespaces", () => {
+  test("an output named like a parameter or a resource, and a condition named like a parameter, come back under their names", async () => {
+    const original = {
+      Parameters: {
+        QueueName: { Type: "String" },
+        EnableReplica: { Type: "String", Default: "false" },
+      },
+      Conditions: {
+        EnableReplica: { "Fn::Equals": [{ Ref: "EnableReplica" }, "true"] },
+      },
+      Resources: {
+        MyQueue: { Type: "AWS::SQS::Queue", Properties: { QueueName: { Ref: "QueueName" } } },
+        Replica: {
+          Type: "AWS::SQS::Queue",
+          Condition: "EnableReplica",
+          Properties: { DelaySeconds: { "Fn::If": ["EnableReplica", 5, 0] } },
+        },
+      },
+      Outputs: {
+        QueueName: { Value: { "Fn::GetAtt": ["MyQueue", "QueueName"] } },
+        MyQueue: { Value: { Ref: "MyQueue" }, Condition: "EnableReplica" },
+      },
+    };
+    const { template, source } = await roundTrip(JSON.stringify(original));
+    expect(source).toContain('export const EnableReplicaCondition = new Condition(');
+    expect(source).toContain('name: "EnableReplica" })');
+    expect(source).toContain("export const QueueNameOutput = stackOutput(");
+    expect(source).toContain("export const MyQueueOutput = stackOutput(");
+    expect(template.Parameters).toEqual(original.Parameters);
+    expect(template.Conditions).toEqual(original.Conditions);
+    expect(template.Resources).toEqual(original.Resources);
+    expect(template.Outputs).toEqual(original.Outputs);
+  });
+});
