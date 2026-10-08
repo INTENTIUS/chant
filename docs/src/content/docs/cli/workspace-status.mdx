@@ -92,7 +92,8 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
     "choice": { "option": "a", "reason": "A review queue for the design team." },
     "answer": "a review queue for the design team",
     "decided_by": "alex",
-    "decided_on": "2026-09-26"
+    "decided_on": "2026-09-26",
+    "approved": true
   },
   "services": [
     { "name": "app", "cmd": "${HOME}/box/run-app.sh", "needs": [], "httpPort": null, "duration": "3s", "health": "http://127.0.0.1:5173/health", "optional": false },
@@ -118,7 +119,7 @@ Each member also has `fields`, the [fields its kind declares](/chant/reference/w
 
 A box block that declares [`replicate`](/chant/reference/workspace-declaration/#replicate) has it under the member's `box`, with every default filled in, and the document then has a top-level `replication` ([#3172](https://github.com/INTENTIUS/chant/issues/3172)). It lists each work branch, kept attempt, work-in-progress snapshot ref and the ledger branch, each with `replicated` and `ahead`, the commits the remote doesn't have yet. Like the rest of `status`, it reads local refs and never fetches. [`chant workspace wip`](/chant/cli/workspace-wip/) prints the same with each branch's snapshots.
 
-`intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). While the record is `proposed`, `choice`, `answer`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`.
+`intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). While the record is `proposed`, `choice`, `answer`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`. `approved` is `true` when the decision kind's [`approval`](/chant/reference/decision-kind/) rank for the record's state is above 0, the rule the factory's pick holds dispatch with, and `false` otherwise, with no record included ([#3609](https://github.com/INTENTIUS/chant/issues/3609)). With chant's decision kind, `decided`, `ratified` and `superseded` are approved and `proposed` and `withdrawn` are not. A reader that waits on the intent reads `approved` rather than a list of states, so a kind that ranks another state needs no change to the reader. It is a contract 1 addition.
 
 `services` lists the [services](/chant/reference/workspace-declaration/#services) the box block declares, in declaration order, or `[]` when it declares none ([#2880](https://github.com/INTENTIUS/chant/issues/2880)). Every field is present. A `needs` the block leaves out prints as `[]` and an `optional` as `false`, and the other fields print as `null`. `cmd` is as declared, with its `${VAR}` references left for the process that applies it. A reader has the declared services here before any converge tick. A steward's `ConvergeOp` that observes them reports each one's verdict in its `lastTick`.
 

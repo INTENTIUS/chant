@@ -543,7 +543,11 @@
         "choice": { "description": "The record's choice as written, such as { option, reason }, or null while the record is proposed." },
         "answer": { "type": ["string", "null"], "description": "The chosen option's label, from options[]'s entry whose id is choice.option, or null while no option is chosen (#2855). Added by chant 0.94.0." },
         "decided_by": { "type": ["string", "null"], "description": "Who decided it, or null while it is proposed." },
-        "decided_on": { "type": ["string", "null"], "description": "The day it was decided, or null while it is proposed." }
+        "decided_on": { "type": ["string", "null"], "description": "The day it was decided, or null while it is proposed." },
+        "approved": {
+          "type": "boolean",
+          "description": "Added in contract 1 by #3609. Whether the record's state counts as approved: the decision kind's approval rank for that state is above 0, the rule the factory's pick holds dispatch with. With chant's decision kind, decided, ratified and superseded are approved, and proposed and withdrawn are not. False when no decision record has the id, and for a kind that declares no approval ranks."
+        }
       }
     },
     "replication": {

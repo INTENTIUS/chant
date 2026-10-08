@@ -37,6 +37,12 @@ export interface BoxIntent {
   answer: string | null;
   decided_by: string | null;
   decided_on: string | null;
+  /**
+   * Whether the record's state counts as approved (#3609): the decision
+   * kind's `approval` rank for it is above 0, the rule the factory's pick
+   * holds dispatch with. False with no record, and for a kind with no ranks.
+   */
+  approved: boolean;
 }
 
 /** The decision record a box's intent names, as the checks read it. */
@@ -71,7 +77,7 @@ function answerOf(choice: unknown, options: unknown): string | null {
 
 /** The intent of `id` with no record: every field but the id null. */
 export function unresolvedIntent(id: string): BoxIntent {
-  return { id, state: null, question: null, choice: null, answer: null, decided_by: null, decided_on: null };
+  return { id, state: null, question: null, choice: null, answer: null, decided_by: null, decided_on: null, approved: false };
 }
 
 /**
@@ -96,6 +102,7 @@ export async function resolveBoxIntents(declaration: Declaration, root: string, 
     try {
       const read = await readRecordsFor({ kind: k.file, cwd: root, workGaps: false });
       const field = read.loaded.kind.constrains?.field ?? "constrains";
+      const approval = read.loaded.kind.approval ?? {};
       for (const r of read.result.records) {
         if (r.id === null || found.has(r.id)) continue;
         const data = r.data ?? {};
@@ -112,6 +119,7 @@ export async function resolveBoxIntents(declaration: Declaration, root: string, 
             answer: answerOf(data.choice, data.options),
             decided_by: str(data.decided_by),
             decided_on: str(data.decided_on),
+            approved: r.state !== null && (approval[r.state] ?? 0) > 0,
           },
         });
       }
