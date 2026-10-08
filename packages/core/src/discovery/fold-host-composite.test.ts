@@ -86,6 +86,29 @@ describe("a host's composite registration form (chant#2442)", () => {
     });
   });
 
+  test("a host composite's result read inside an argument folds (chant#3610)", async () => {
+    writeFileSync(
+      join(root, "shapes.ts"),
+      'import { Bucket, Composite } from "@tsad/shapes";\n' +
+        'export const Store = Composite(({ name }) => ({ bucket: new Bucket({ name }) }), "Store");\n' +
+        'export const Wrap = Composite(({ inner }) => ({ inner }), "Wrap");\n',
+    );
+    const file = app(
+      'import { Store, Wrap } from "./shapes";\n' +
+        'export const s = Store({ name: "a" });\n' +
+        "export const w = Wrap({ inner: s.bucket });\n",
+    );
+
+    const verdict = (
+      await foldProject([file], [], { lexiconPackages: ["@tsad/shapes"], sandbox: true })
+    ).get(file)!;
+
+    expect(verdict.verdict).toBe("fold");
+    const exports = Object.fromEntries(verdict.exports!) as Record<string, { bucket?: unknown; inner?: unknown }>;
+    // One instance per file: the argument reads the declarator's own result.
+    expect(exports.w.inner).toBe(exports.s.bucket);
+  });
+
   test("a factory outside the subset is still refused rather than invoked", async () => {
     // `S-FactoryParams`: two parameters is outside it, so interpretation
     // declines and the invocation arm refuses under the sandbox.
