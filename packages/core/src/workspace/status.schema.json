@@ -7,6 +7,7 @@
   "$defs": {
     "boxShip": {
       "type": "object",
+      "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds on this object, with its value as written." } },
       "additionalProperties": false,
       "required": ["op", "gate", "env", "bookkeeping", "serving", "pending"],
       "properties": {
@@ -170,6 +171,7 @@
     },
     "member": {
       "type": "object",
+      "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds on this object, with its value as written." } },
       "required": ["name", "dir", "kind", "fields", "environments", "compare", "readable", "gateLedger", "gates", "box", "stewards", "stewardReasons"],
       "properties": {
         "name": { "type": "string" },
@@ -587,6 +589,7 @@
     },
     "box": {
       "type": "object",
+      "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds on this object, with its value as written." } },
       "required": ["capabilities", "isolation", "intent", "services"],
       "properties": {
         "factory": {
@@ -685,6 +688,7 @@
     },
     "factory": {
       "type": "object",
+      "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds on this object, with its value as written." } },
       "required": ["builds", "check", "checks", "builders", "tiers", "builderFor", "publish"],
       "properties": {
         "builds": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "The members the factory builds, in declaration order. A work item a person asks for constrains member:<the first>." },
@@ -727,6 +731,7 @@
     },
     "listing": {
       "type": "object",
+      "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds on this object, with its value as written." } },
       "required": ["published", "title", "line", "cover"],
       "properties": {
         "published": { "type": "boolean", "description": "Whether the box is listed; true unless declared otherwise." },

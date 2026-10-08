@@ -945,7 +945,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     integrity: p.integrity ?? null,
   }));
 
-  return {
+  const declaration: Declaration = {
     name: obj.name as string,
     schema: obj.schema as number,
     minReader: (obj.minReader as string | undefined) ?? null,
@@ -965,6 +965,24 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     ci,
     file,
   };
+  written.set(declaration, raw);
+  return declaration;
+}
+
+/** Each parsed declaration's JSON as written, for its x- keys (#3595). */
+const written = new WeakMap<Declaration, unknown>();
+
+/**
+ * The `x-` keys of the object at `pointer` in the declaration as written
+ * (#3595), in file order: what a reader of `status --json` or `ls --json`
+ * gets back on the object the declaration holds them on. Empty when the
+ * pointer names no object, and for a declaration not read through
+ * {@link parseDeclaration}.
+ */
+export function extensionsAt(declaration: Declaration, pointer: string): Record<string, unknown> {
+  const value = valueAt(written.get(declaration), pointer);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([k]) => k.startsWith("x-")));
 }
 
 /**
