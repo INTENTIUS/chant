@@ -44,6 +44,7 @@
         "error": false,
         "workspace": {
           "type": "object",
+          "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds at the top level, with its value as written." } },
           "required": ["name", "root", "file", "schema", "minReader", "pins"],
           "properties": {
             "name": { "type": "string", "description": "The declared name. With the revision, it identifies the workspace." },
@@ -118,6 +119,7 @@
     },
     "member": {
       "type": "object",
+      "patternProperties": { "^x-": { "description": "Added in contract 1 by #3595. An x- key the declaration holds on this object, with its value as written." } },
       "required": ["name", "dir", "kind", "roles", "upstream", "because", "readable", "reason"],
       "properties": {
         "name": { "type": "string" },

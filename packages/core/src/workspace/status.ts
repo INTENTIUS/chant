@@ -48,7 +48,7 @@ import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
 import { loadKindRegistry, resolveMemberFields, type MemberFields } from "./kinds";
 import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
-import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
+import { declaredRecordKinds, extensionsAt, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { gateAdmissionFrom } from "./identity";
 import { scopeSource } from "./write-scope";
@@ -320,6 +320,18 @@ export interface StatusQuery {
   readStewards?: typeof readMemberStewards;
 }
 
+/** A factory view with the declaration's x- keys on it and on its check, publish and tiers (#3595). */
+function factoryWithX(view: FactoryView | null, pointer: string, x: (pointer: string) => Record<string, unknown>): FactoryView | null {
+  if (view === null) return null;
+  return {
+    ...view,
+    check: view.check === null ? null : { ...view.check, ...x(`${pointer}/check`) },
+    tiers: view.tiers.map((t, i) => ({ ...t, ...x(`${pointer}/tiers/${i}`) })),
+    publish: view.publish === null ? null : { ...view.publish, ...x(`${pointer}/publish`) },
+    ...x(pointer),
+  };
+}
+
 class StatusError extends Error {
   constructor(
     readonly code: StatusErrorCode,
@@ -500,6 +512,10 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       const own = await hasMemberLedger(m, found.dir);
       const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules);
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
+      // The declaration's x- keys go back on the objects that hold them (#3595).
+      const x = (pointer: string) => extensionsAt(declaration, pointer);
+      const bp = m.box?.pointer ?? "";
+      const withX = <T extends object>(view: T | null, pointer: string): T | null => (view === null ? null : { ...view, ...x(pointer) });
       members.push({
         name: m.name,
         dir: m.dir,
@@ -514,7 +530,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
           m.box === null
             ? null
             : {
-                capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })),
+                capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope], ...x(c.pointer) })),
                 isolation: isolation.get(m.name) ?? null,
                 intent: intents.get(m.name) ?? null,
                 services: m.box.services.map((s) => ({
@@ -525,15 +541,18 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                   duration: s.duration,
                   health: s.health,
                   optional: s.optional,
+                  ...x(s.pointer),
                 })),
-                factory: factoryView(m.box.factory, declaration.members),
-                listing: listingView(m.box.listing, coverBytes),
+                factory: factoryWithX(factoryView(m.box.factory, declaration.members), `${bp}/factory`, x),
+                listing: withX(listingView(m.box.listing, coverBytes), `${bp}/listing`),
                 publisher: m.box.publisher,
-                ship: await shipView(m, found.dir, read),
-                replicate: m.box.replicate === null ? null : (({ box: _box, ...rest }) => rest)(policyView(m.name, m.box.replicate)),
+                ship: withX(await shipView(m, found.dir, read), `${bp}/ship`),
+                replicate: withX(m.box.replicate === null ? null : (({ box: _box, ...rest }) => rest)(policyView(m.name, m.box.replicate)), `${bp}/replicate`),
+                ...x(bp),
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,
+        ...x(m.pointer),
       });
     }
     // Several members read from one flat ledger see the same records; say so.

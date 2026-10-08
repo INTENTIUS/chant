@@ -26,6 +26,7 @@ import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import {
   declaredDiagrams,
+  extensionsAt,
   readDeclaration,
   readerVersion,
   resolveGroups,
@@ -273,6 +274,8 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
         records: unloaded(m.records),
         generated: memberGenerated(m, tree, repoPrefix),
         agents: sessions.agents.filter((a) => a.members.includes(m.name)).map((a) => a.name),
+        // The member's x- keys, as declared (#3595).
+        ...extensionsAt(declaration, m.pointer),
       };
     });
     const lsGroups: LsGroup[] = groups.map((g) => ({
@@ -306,6 +309,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
         pins: declaration.pins,
         records: unloaded(declaration.records),
         agentsFrom: sessions.from,
+        ...extensionsAt(declaration, ""),
       },
       members,
       groups: lsGroups,
