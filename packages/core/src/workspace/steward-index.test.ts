@@ -86,7 +86,7 @@ describe("the steward index (#3636)", () => {
     expect(s.filePath.endsWith(join("ops", "steward.op.ts"))).toBe(true);
     expect(s.ops).toEqual([
       { name: "tick", schedule: { cron: "0 * * * *" }, labels: { Env: "box" }, workLease: null, changesCheckout: false },
-      { name: "build", schedule: null, workLease: { item: "W-001", kind: "work/work.kind.mjs" }, changesCheckout: true },
+      { name: "build", schedule: null, workLease: { kind: "work/work.kind.mjs" }, changesCheckout: true },
     ]);
     expect(index.otherOps).toEqual([{ name: "lonely", schedule: null, workLease: null, changesCheckout: false }]);
   });
