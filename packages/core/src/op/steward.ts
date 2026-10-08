@@ -352,7 +352,7 @@ export function readinessKeys(result: unknown): { ready: boolean; keys: string[]
 }
 
 /** The form a steward takes in `env` (`local` when none is named). */
-export function stewardFormFor(steward: StewardDeclaration, env: string = DEFAULT_STEWARD_ENV): StewardForm {
+export function stewardFormFor(steward: Pick<StewardDeclaration, "form">, env: string = DEFAULT_STEWARD_ENV): StewardForm {
   return steward.form.environments[env] ?? steward.form.default;
 }
 
