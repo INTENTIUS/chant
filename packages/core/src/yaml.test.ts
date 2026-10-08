@@ -26,6 +26,12 @@ describe("emitYAML", () => {
     expect(emitYAML([undefined, 1], 0)).toBe("\n- null\n- 1");
   });
 
+  test("an empty mapping in a list is an item, not nothing", () => {
+    expect(emitYAML([{}], 0)).toBe("\n- {}");
+    expect(emitYAML({ egress: [{}] }, 0)).toBe("\negress:\n  - {}");
+    expect(emitYAML([{ a: undefined }, { b: 1 }], 0)).toBe("\n- {}\n- b: 1");
+  });
+
   test("booleans", () => {
     expect(emitYAML(true, 0)).toBe("true");
     expect(emitYAML(false, 0)).toBe("false");
