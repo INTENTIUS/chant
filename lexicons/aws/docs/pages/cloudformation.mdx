@@ -91,9 +91,31 @@ Produces:
 }
 ```
 
+`Parameter` also takes the constraints CloudFormation checks a value against: `allowedValues`, `allowedPattern`, `constraintDescription`, `minLength`, `maxLength`, `minValue`, `maxValue` and `noEcho`. Each is emitted under its CloudFormation key, as written.
+
+```typescript
+export const dbName = new Parameter("String", {
+  allowedPattern: "[a-zA-Z][a-zA-Z0-9]*",
+  constraintDescription: "must begin with a letter",
+  minLength: 1,
+  maxLength: 64,
+});
+```
+
 Reference parameters with `Ref`:
 
 {{file:docs-snippets/src/parameter-cross-file-ref.ts}}
+
+## Template description and metadata
+
+`templateDescription(text)` sets the template's top-level `Description`. `templateMetadata(entries)` adds entries to its top-level `Metadata`, such as `AWS::CloudFormation::Interface`. Several `templateMetadata` declarations merge.
+
+```typescript
+import { templateDescription, templateMetadata } from "@intentius/chant-lexicon-aws";
+
+export const description = templateDescription("Web tier with an Application Load Balancer");
+export const metadata = templateMetadata({ "cfn-lint": { config: { ignore_checks: ["W3005"] } } });
+```
 
 ## Outputs
 
@@ -226,7 +248,21 @@ CloudFormation Mappings are a static lookup mechanism. In chant, use TypeScript 
 
 {{file:docs-snippets/src/mappings.ts}}
 
-For deploy-time region lookups, combine `AWS.Region` with `If` or use `Fn::Sub` with SSM parameter store references.
+For a lookup the deployment makes, declare a `Mapping` and read it with `FindInMap`. The serializer lifts each `Mapping` into the template's `Mappings` section. `chant import` writes both for a template that uses them.
+
+```typescript
+import { AWS, FindInMap, Instance, Mapping } from "@intentius/chant-lexicon-aws";
+
+export const RegionAmi = new Mapping({
+  "us-east-1": { Ami: "ami-12345678" },
+  "us-west-2": { Ami: "ami-87654321" },
+});
+
+export const mappedServer = new Instance({
+  ImageId: FindInMap(RegionAmi, AWS.Region, "Ami"),
+  InstanceType: "t3.micro",
+});
+```
 
 ## Nested stacks
 

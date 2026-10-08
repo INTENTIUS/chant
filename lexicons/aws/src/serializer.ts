@@ -22,6 +22,7 @@ import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { conditionName, isCondition } from "./condition";
+import { isMapping } from "./mapping";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { isTemplateTransform } from "./template-transform";
 import { isTemplateSection } from "./template-sections";
@@ -43,6 +44,7 @@ interface CFTemplate {
   Metadata?: Record<string, unknown>;
   Transform?: string | string[];
   Parameters?: Record<string, CFParameter>;
+  Mappings?: Record<string, unknown>;
   Conditions?: Record<string, unknown>;
   Resources: Record<string, CFResource>;
   Outputs?: Record<string, CFOutput>;
@@ -385,6 +387,12 @@ function serializeToTemplate(
       }
 
       template.Parameters[name] = param;
+    } else if (isMapping(entity)) {
+      // Mapping declarable -> Mappings section, read with FindInMap.
+      if (!template.Mappings) {
+        template.Mappings = {};
+      }
+      template.Mappings[entity.name ?? name] = toCFValue(entity.map, entityNames);
     } else if (isCondition(entity)) {
       // Condition declarable → Conditions section (#2068), lifted the way
       // Parameter is lifted into Parameters above.
@@ -552,7 +560,29 @@ function serializeToTemplate(
     template.Outputs = { ...template.Outputs, ...extraOutputs };
   }
 
+  refuseImportEnvelopes(template);
   return template;
+}
+
+/**
+ * Throw on an import IR envelope (`{ "__intrinsic": "FindInMap", ... }`) in
+ * the synthesized template. It is not CloudFormation, and a build that wrote
+ * one used to exit 0 with a template CloudFormation rejects.
+ */
+function refuseImportEnvelopes(value: unknown, path: string[] = []): void {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => refuseImportEnvelopes(item, [...path, String(i)]));
+    return;
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.__intrinsic === "string") {
+    throw new Error(
+      `${path.join(".")}: { __intrinsic: "${obj.__intrinsic}" } is an import envelope, not CloudFormation; ` +
+        `write the ${obj.__intrinsic} intrinsic instead`,
+    );
+  }
+  for (const [key, v] of Object.entries(obj)) refuseImportEnvelopes(v, [...path, key]);
 }
 
 /**

@@ -469,7 +469,21 @@ export const server = new Instance({
 });
 ```
 
-For deploy-time region lookups, combine `AWS.Region` with `If` or use `Fn::Sub` with SSM parameter store references.
+For a lookup the deployment makes, declare a `Mapping` and read it with `FindInMap`. The serializer lifts each `Mapping` into the template's `Mappings` section. `chant import` writes both for a template that uses them.
+
+```typescript
+import { AWS, FindInMap, Instance, Mapping } from "@intentius/chant-lexicon-aws";
+
+export const RegionAmi = new Mapping({
+  "us-east-1": { Ami: "ami-12345678" },
+  "us-west-2": { Ami: "ami-87654321" },
+});
+
+export const mappedServer = new Instance({
+  ImageId: FindInMap(RegionAmi, AWS.Region, "Ami"),
+  InstanceType: "t3.micro",
+});
+```
 
 ## Nested stacks
 

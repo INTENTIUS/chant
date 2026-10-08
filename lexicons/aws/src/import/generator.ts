@@ -21,8 +21,9 @@ export class CFGenerator implements TypeScriptGenerator {
   /** Resource classes imported under another name, because a logical id in
    * the template is the class's own name (`InternetGateway`). */
   private classAliases: Map<string, string> = new Map();
-  /** Variable names for conditions ("c:<name>") and outputs ("o:<name>")
-   * whose template name is already a parameter's or resource's (#3604). */
+  /** Variable names for mappings ("m:<name>"), conditions ("c:<name>") and
+   * outputs ("o:<name>") whose template name is already a parameter's or
+   * resource's (#3604). */
   private renames: Map<string, string> = new Map();
 
   constructor() {
@@ -73,6 +74,15 @@ export class CFGenerator implements TypeScriptGenerator {
       lines.push("");
     }
 
+    // Generate mappings
+    const mappings = this.mappings(ir);
+    for (const [name, map] of Object.entries(mappings)) {
+      lines.push(this.generateMapping(name, map, importedSymbols));
+    }
+    if (Object.keys(mappings).length > 0) {
+      lines.push("");
+    }
+
     // Generate conditions in dependency order ({ Condition: ... } references
     // point at earlier declarations) — #2069
     const conditions = ir.conditions ?? [];
@@ -114,9 +124,10 @@ export class CFGenerator implements TypeScriptGenerator {
   private collectImportedSymbols(ir: TemplateIR): Set<string> {
     const symbols = new Set<string>();
     if (ir.parameters.length > 0) symbols.add("Parameter");
+    if (Object.keys(this.mappings(ir)).length > 0) symbols.add("Mapping");
     if ((ir.conditions ?? []).length > 0) symbols.add("Condition");
     if ((ir.outputs ?? []).length > 0) symbols.add("stackOutput");
-    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "Equals", "And", "Or", "Not"] as const;
+    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "Equals", "And", "Or", "Not", "FindInMap", "ImportValue", "Cidr"] as const;
     for (const name of intrinsics) {
       if (irUsesIntrinsic(ir, name)) symbols.add(name);
     }
@@ -215,7 +226,25 @@ export class CFGenerator implements TypeScriptGenerator {
       ...ir.resources.map((r) => r.logicalId),
       ...(ir.conditions ?? []).map((c) => c.name),
       ...(ir.outputs ?? []).map((o) => o.name),
+      ...Object.keys(this.mappings(ir)),
     ]);
+  }
+
+  /** The template's Mappings section, as the parser carried it. */
+  private mappings(ir: TemplateIR): Record<string, Record<string, Record<string, unknown>>> {
+    return (ir.metadata?.mappings ?? {}) as Record<string, Record<string, Record<string, unknown>>>;
+  }
+
+  /** The variable a declared mapping is exported as. */
+  private mappingVar(name: string, importedSymbols: Set<string>): string {
+    return this.renames.get(`m:${name}`) ?? this.safeVarName(name, importedSymbols);
+  }
+
+  /** A mapping declaration. */
+  private generateMapping(name: string, map: Record<string, Record<string, unknown>>, importedSymbols: Set<string>): string {
+    const varName = this.mappingVar(name, importedSymbols);
+    const nameOpt = this.renames.has(`m:${name}`) ? `, { name: ${JSON.stringify(name)} }` : "";
+    return `export const ${varName} = new Mapping(${JSON.stringify(map, null, 2)}${nameOpt});`;
   }
 
   /**
@@ -278,6 +307,7 @@ export class CFGenerator implements TypeScriptGenerator {
       }
       taken.add(v);
     };
+    for (const m of Object.keys(this.mappings(ir))) claim(`m:${m}`, m, "Mapping");
     for (const c of ir.conditions ?? []) claim(`c:${c.name}`, c.name, "Condition");
     for (const o of ir.outputs ?? []) claim(`o:${o.name}`, o.name, "Output");
     return renames;
@@ -669,6 +699,34 @@ export class CFGenerator implements TypeScriptGenerator {
           return "GetAZs()";
         }
         return `GetAZs(${this.generateValue(region, ir, importedSymbols)})`;
+      }
+
+      if (obj.__intrinsic === "FindInMap") {
+        const mapName = obj.mapName;
+        const map = typeof mapName === "string" && mapName in this.mappings(ir)
+          ? this.mappingVar(mapName, importedSymbols)
+          : this.generateValue(mapName, ir, importedSymbols);
+        const first = this.generateValue(obj.firstKey, ir, importedSymbols);
+        const second = this.generateValue(obj.secondKey, ir, importedSymbols);
+        return `FindInMap(${map}, ${first}, ${second})`;
+      }
+
+      if (obj.__intrinsic === "ImportValue") {
+        return `ImportValue(${this.generateValue(obj.value, ir, importedSymbols)})`;
+      }
+
+      if (obj.__intrinsic === "Cidr") {
+        const args = [obj.ipBlock, obj.count, obj.cidrBits].map((v) => this.generateValue(v, ir, importedSymbols));
+        return `Cidr(${args.join(", ")})`;
+      }
+
+      // An intrinsic the parser read but the generator has no form for
+      // (Fn::Transform) is refused. Written as an object literal, it would
+      // build into a template CloudFormation cannot read.
+      if (typeof obj.__intrinsic === "string") {
+        throw new Error(
+          `chant import cannot generate Fn::${obj.__intrinsic} yet; the template uses it, so it is not imported`,
+        );
       }
 
       // Regular object — quote keys that aren't valid JS identifiers
