@@ -4,7 +4,8 @@
  * its Ops with their schedules, and each Op's last run.
  *
  * The steward itself is read from its declaration, the same `*.op.ts` files
- * `chant operator --steward` reads (`../op/discover.ts`), and only for a member
+ * `chant operator --steward` reads (`../op/discover.ts`), through the index
+ * kept per tree (`./steward-index.ts`, #3636), and only for a member
  * of kind `chant` that is a chant project of its own (a `chant.config.ts` or
  * `.json` in its directory), so a member never lists a parent project's
  * steward. Everything
@@ -47,8 +48,7 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { discoverOps, discoverStewards } from "../op/discover";
-import { stewardBesideFor, stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
+import { stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
 import { readConvergeLedger, type ConvergeTickRecord } from "../lifecycle/converge-ledger";
 import { leaseRef } from "../lifecycle/lease";
@@ -56,7 +56,7 @@ import { readBlobBySha, readRefSha } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { listWorkLeases } from "../lifecycle/work-lease";
 import { stewardWorkHolder } from "../op/work-lease-run";
-import type { OpConfig } from "../op/types";
+import { readStewardIndex, type IndexedOp, type IndexedSteward, type StewardIndex } from "./steward-index";
 import type { OpRunRecord } from "../op/runtime";
 import { readInFlightRun } from "../op/run-live";
 import { approveCommand } from "./status-gates";
@@ -342,19 +342,14 @@ async function readLeaseRef(leaseName: string, memberDir: string, now: string): 
 }
 
 /** An Op's `beside` entry (#2861): null for an Op run as one of the steward's turns. */
-async function besideOf(
-  declaration: Parameters<typeof stewardBesideFor>[0],
-  op: string,
-  memberDir: string,
-  now: string,
-): Promise<StatusStewardOp["beside"]> {
-  const beside = stewardBesideFor(declaration, op);
+async function besideOf(steward: IndexedSteward, op: string, memberDir: string, now: string): Promise<StatusStewardOp["beside"]> {
+  const beside = steward.beside.find((b) => b.op === op);
   if (!beside) return null;
-  return { ready: beside.ready !== null && beside.ready !== undefined, lease: await readLeaseRef(op, memberDir, now) };
+  return { ready: beside.ready, lease: await readLeaseRef(op, memberDir, now) };
 }
 
 /** The work leases `steward`'s turns of `op` hold, from the ledger of the Op's kind or the member's. */
-async function readHeldWorkLeases(steward: string, op: OpConfig, memberDir: string, now: string): Promise<StatusStewardWorkLease[]> {
+async function readHeldWorkLeases(steward: string, op: IndexedOp, memberDir: string, now: string): Promise<StatusStewardWorkLease[]> {
   try {
     const kind = op.workLease?.kind;
     const cwd = kind ? dirname(resolve(memberDir, kind)) : memberDir;
@@ -378,7 +373,7 @@ export async function readMemberStewards(
   now: string,
   kind = "chant",
   box: { capabilities: { name: string; broker: string | null }[] } | null = null,
-  deps: { readQuestions?: ReadQuestionStates } = {},
+  deps: { readQuestions?: ReadQuestionStates; readIndex?: (memberDir: string) => Promise<StewardIndex> } = {},
 ): Promise<MemberStewards> {
   const reasons: MemberStewards["reasons"] = [];
   // Read once per member, and only when a run stopped on a question.
@@ -386,19 +381,18 @@ export async function readMemberStewards(
   const questionStates = () => (states ??= (deps.readQuestions ?? readQuestionStates)(memberDir));
   if (kind !== "chant" || !isChantProject(memberDir)) return { stewards: [], reasons };
 
-  let discovered: Awaited<ReturnType<typeof discoverStewards>>;
+  let index: StewardIndex;
   try {
-    discovered = await discoverStewards({ cwd: memberDir });
+    index = await (deps.readIndex ?? readStewardIndex)(memberDir);
   } catch (err) {
     reasons.push({ code: "stewards-unreadable", message: err instanceof Error ? err.message.split("\n")[0] : String(err) });
     return { stewards: [], reasons };
   }
-  const { stewards: found, errors, conflicts } = discovered;
-  for (const message of errors) reasons.push({ code: "stewards-unreadable", message });
-  for (const message of conflicts) reasons.push({ code: "stewards-conflict", message });
+  for (const message of index.errors) reasons.push({ code: "stewards-unreadable", message });
+  for (const message of index.conflicts) reasons.push({ code: "stewards-conflict", message });
 
   const stewards: StatusSteward[] = [];
-  for (const { declaration, filePath } of [...found.values()].sort((a, b) => a.declaration.name.localeCompare(b.declaration.name))) {
+  for (const declaration of [...index.stewards].sort((a, b) => a.name.localeCompare(b.name))) {
     const ops: StatusStewardOp[] = [];
     const waiting: StatusSteward["waiting"] = [];
     for (const op of declaration.ops) {
@@ -467,11 +461,11 @@ export async function readMemberStewards(
     }
     stewards.push({
       name: declaration.name,
-      file: relative(realpathSync(memberDir), realpathSync(filePath)).split("\\").join("/"),
+      file: relative(realpathSync(memberDir), realpathSync(declaration.filePath)).split("\\").join("/"),
       form: stewardFormFor(declaration, env),
       forms: { default: declaration.form.default, environments: { ...declaration.form.environments } },
-      vault: typeof declaration.vault === "string" ? declaration.vault : null,
-      capabilities: (Array.isArray(declaration.capabilities) ? declaration.capabilities : []).map((name) => {
+      vault: declaration.vault,
+      capabilities: declaration.capabilities.map((name) => {
         const declared = box?.capabilities.find((c) => c.name === name);
         return { name, broker: declared?.broker ?? null, declared: declared !== undefined };
       }),
@@ -480,7 +474,7 @@ export async function readMemberStewards(
       waiting,
     });
   }
-  if (stewards.length > 0) await addUndeclaredWaits(memberDir, stewards, found, reasons, now, questionStates);
+  if (stewards.length > 0 && index.otherOps) await addUndeclaredWaits(memberDir, stewards, index.otherOps, reasons, now, questionStates);
   return { stewards, reasons };
 }
 
@@ -489,26 +483,20 @@ export async function readMemberStewards(
  * steward its record names. A steward's process can start an Op itself
  * with `CHANT_STEWARD` set (studio#137), and the run ledger then records
  * the run as the steward's though the declaration does not list the Op.
- * Import failures are left out here: `discoverStewards` read the same files
- * and reported them as `stewards-unreadable`.
+ * `ops` are the member's Ops no steward lists, from the index; import
+ * failures are left out there, as discovering the stewards reported them as
+ * `stewards-unreadable`.
  */
 async function addUndeclaredWaits(
   memberDir: string,
   stewards: StatusSteward[],
-  found: Awaited<ReturnType<typeof discoverStewards>>["stewards"],
+  ops: IndexedOp[],
   reasons: MemberStewards["reasons"],
   now: string,
   questionStates: () => Promise<Map<string, string> | null>,
 ): Promise<void> {
-  const declared = new Set([...found.values()].flatMap(({ declaration }) => declaration.ops.map((op) => op.name)));
-  let ops: OpConfig[];
-  try {
-    ops = [...(await discoverOps({ cwd: memberDir })).ops.values()].map((d) => d.config).filter((op) => !declared.has(op.name));
-  } catch {
-    return;
-  }
   const byName = new Map(stewards.map((s) => [s.name, s]));
-  for (const op of ops.sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const op of [...ops].sort((a, b) => a.name.localeCompare(b.name))) {
     const opEnv = runEnvOf(op);
     try {
       const newest = (await readRunLedger(opEnv, op.name, { cwd: memberDir })).records.at(-1);
