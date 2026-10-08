@@ -106,6 +106,7 @@ The origin comes from interpreting the composite's body, so it is only available
 - The composite body has to be in the subset `chant build` interprets: `const` declarations followed by one `return`, with no `if`, loop or `let`. A composite outside it is run instead, and its fields report `composite-not-interpreted`.
 - Composites a lexicon package ships follow the same rule, and many of them leave the subset. GitHub's `Checkout` uses `if`, so chant calls its factory. Every field it builds reports `composite-not-interpreted`.
 - The diff builds the project the way `chant build` does, which folds by default. With `build.fold: false` in `chant.config.ts` or `--no-fold` on the command line every file runs instead, so composite fields report unknown.
+- A field whose value host code produced reports `host-call` or `host-value`, even outside any composite. `host-call` covers a method call such as `"x".toUpperCase()` and a lexicon helper the build evaluates; `host-value` covers a value a lexicon package exports, such as `AWS.Region`. Your file wrote the call, not the value it returned.
 - A composite call the build reaches through a value it has already folded, such as `Checkout({ ... }).step` used as a property value, records which parameter set the field but no line.
 
 <Aside type="note">

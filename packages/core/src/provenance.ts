@@ -87,6 +87,12 @@ export interface EntityProvenance {
  *   expression for this path reads no parameter at all. The composite fixes
  *   this field, and no argument at the call site moves it.
  *
+ * - `host` — the authored expression for this path reads a value host code
+ *   produced (INTENTIUS/typescript-as-data#248): a method called on a real
+ *   receiver or an eager lexicon helper (`host-call`), or a value a lexicon
+ *   package exports (`host-value`). The author wrote the call, not the value,
+ *   so ./fold-provenance.ts answers `unknown` rather than `direct`.
+ *
  * The coarse `composite` and the two fine kinds are not alternatives. A build
  * records `composite` when it expanded a composite without interpreting its
  * body (the run path, an inadmissible factory), and that is why
@@ -108,7 +114,11 @@ export type PathOrigin =
        */
       arguments?: ArgumentLocation[];
     }
-  | { kind: "composite-literal"; composite: string };
+  | { kind: "composite-literal"; composite: string }
+  | { kind: "host"; reason: HostOriginReason };
+
+/** Which host code produced a value: a call it ran, or a value its package exports. */
+export type HostOriginReason = "host-call" | "host-value";
 
 /**
  * A place in a source file. `file` is absolute, as
@@ -270,6 +280,8 @@ export function describePathOrigin(origin: PathOrigin): string {
       return `composite ${origin.composite} parameter ${origin.parameters.join(", ")}`;
     case "composite-literal":
       return `composite ${origin.composite} literal`;
+    case "host":
+      return origin.reason;
   }
 }
 

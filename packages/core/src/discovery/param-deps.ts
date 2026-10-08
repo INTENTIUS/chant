@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-import type { ArgumentLocation, PathOrigin, SourceLocation } from "../provenance";
+import type { ArgumentLocation, HostOriginReason, PathOrigin, SourceLocation } from "../provenance";
 
 /**
  * Which build parameters an authored props expression READS, per path (chant
@@ -118,6 +118,94 @@ function readParams(
 }
 
 /**
+ * What a file binds to host code, for {@link hostReadOf} (INTENTIUS/typescript-as-data#248).
+ */
+export interface HostBindings {
+  /** Local names bound to a value a lexicon package exports. */
+  values: ReadonlySet<string>;
+  /** Local names of eager lexicon helpers: a call to one is evaluated by host code at fold time. */
+  eagerCalls: ReadonlySet<string>;
+}
+
+/**
+ * The first host read in `expr`, following this file's own top-level consts,
+ * or `undefined` when it reads none (INTENTIUS/typescript-as-data#248).
+ *
+ * A method called on a receiver is `host-call` whatever the receiver is, since
+ * fold calls the real method on it; so is a call to an eager lexicon helper. An
+ * identifier bound to a lexicon export is `host-value`. A call fold reduces to
+ * an envelope (an authoring helper, a call-form intrinsic) or evaluates itself
+ * (a project function) is not host code, and only its arguments are read.
+ *
+ * Syntactic, like {@link readParams}, so it over-reports in one place: both
+ * arms of a conditional are read although only one is taken. That errs toward
+ * `unknown`, which never licenses an edit `direct` would not.
+ */
+export function hostReadOf(
+  expr: ts.Expression,
+  consts: ReadonlyMap<string, ts.Expression>,
+  paramLocals: ReadonlySet<string>,
+  host: HostBindings,
+): HostOriginReason | undefined {
+  const followed = new Set<string>();
+  let found: HostOriginReason | undefined;
+
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
+        found = "host-call";
+        return;
+      }
+      if (ts.isIdentifier(callee) && !consts.has(callee.text) && host.eagerCalls.has(callee.text)) {
+        found = "host-call";
+        return;
+      }
+      for (const argument of node.arguments) visit(argument);
+      return;
+    }
+
+    if (ts.isPropertyAccessExpression(node)) {
+      // The member name is not a reference.
+      visit(node.expression);
+      return;
+    }
+
+    if (ts.isIdentifier(node)) {
+      if (paramLocals.has(node.text)) return;
+      const initializer = consts.get(node.text);
+      if (initializer) {
+        // A sibling resource is a reference to it, not a read of its props.
+        if (ts.isNewExpression(unwrap(initializer)) || followed.has(node.text)) return;
+        followed.add(node.text);
+        visit(initializer);
+        return;
+      }
+      if (host.values.has(node.text)) found = "host-value";
+      return;
+    }
+
+    if (ts.isPropertyAssignment(node)) {
+      visit(node.initializer);
+      return;
+    }
+
+    // A tag is an intrinsic the lexicon registered, and only its
+    // interpolations are read.
+    if (ts.isTaggedTemplateExpression(node)) {
+      visit(node.template);
+      return;
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(expr);
+  return found;
+}
+
+/**
  * Path → build-parameter origin for one resource's props object literal.
  *
  * Paths are dotted property names only, per `EntityProvenance.paths`: an object
@@ -129,16 +217,27 @@ function readParams(
  * A spread is attributed to the object it spreads INTO, at that object's own
  * path (the entity root for a top-level spread), since which keys it
  * contributes is not knowable here.
+ *
+ * With `host`, a path whose expression reads host code ({@link hostReadOf})
+ * is recorded `host` instead, and that outranks a build parameter it also
+ * reads: the value is what host code returned, whatever the parameter was.
  */
 export function collectParamDependencies(
   props: ts.ObjectLiteralExpression,
   consts: ReadonlyMap<string, ts.Expression>,
   paramLocals: ReadonlySet<string>,
+  host?: HostBindings,
 ): Record<string, PathOrigin> {
   const out: Record<string, PathOrigin> = {};
-  if (paramLocals.size === 0) return out;
+  if (paramLocals.size === 0 && !host) return out;
 
   const record = (path: string, expr: ts.Expression): void => {
+    if (out[path]?.kind === "host") return;
+    const reason = host ? hostReadOf(expr, consts, paramLocals, host) : undefined;
+    if (reason) {
+      out[path] = { kind: "host", reason };
+      return;
+    }
     const found = new Set<string>();
     readParams(expr, consts, paramLocals, found);
     if (found.size === 0) return;

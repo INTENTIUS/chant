@@ -55,6 +55,7 @@ import {
   sourceLocationOf,
   type CompositeCallSite,
   type CompositeParamScope,
+  type HostBindings,
 } from "./param-deps";
 import { getInterpolationFields, getProvenance, setPathProvenance, setProvenance } from "../provenance";
 import { foldProvenanceOfEntities, type FoldProvenance } from "../fold-provenance";
@@ -1380,6 +1381,13 @@ interface ResolveCtx {
    * failure as before #1020 — this is strictly additive.
    */
   externals: Map<string, unknown>;
+  /**
+   * INTENTIUS/typescript-as-data#248 — the names in {@link externals} a
+   * lexicon package's export supplied. A props expression that reads one is a
+   * `host-value` origin rather than the file's own `direct` one. Absent on a
+   * context that never records direct-entity provenance.
+   */
+  hostValues?: ReadonlySet<string>;
   /**
    * chant #1020 — for a `file`-local import name whose cross-file
    * resolution attempt failed, WHY (a located, human-readable reason —
@@ -3937,13 +3945,19 @@ function paramLocalNames(ctx: ResolveCtx): Set<string> {
 /**
  * chant #1443 — record which build parameters each of a resource's authored
  * property expressions reads, before fold substitutes them away. Best-effort
- * and additive: a file with no `params` import, or a constructor called with no
- * object literal, records nothing.
+ * and additive: a constructor called with no object literal records nothing.
+ *
+ * INTENTIUS/typescript-as-data#248 — and which of them read host code, a
+ * method call, an eager lexicon helper or a lexicon export, so fold provenance
+ * reports those `unknown` rather than `direct`.
  */
 function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: ResolveCtx): void {
   if (typeof entity !== "object" || entity === null) return;
   const paramLocals = paramLocalNames(ctx);
-  if (paramLocals.size === 0) return;
+  const host: HostBindings = {
+    values: ctx.hostValues ?? new Set(),
+    eagerCalls: new Set(ctx.intrinsics.filter((i) => intrinsicCallFoldsEagerly(i)).map((i) => i.name)),
+  };
   // The same argument `foldResource` treats as props: the first object literal.
   let propsArg: ts.ObjectLiteralExpression | undefined;
   for (const argument of node.arguments ?? []) {
@@ -3953,7 +3967,7 @@ function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: Re
     }
   }
   if (!propsArg) return;
-  for (const [path, origin] of Object.entries(collectParamDependencies(propsArg, ctx.consts, paramLocals))) {
+  for (const [path, origin] of Object.entries(collectParamDependencies(propsArg, ctx.consts, paramLocals, host))) {
     setPathProvenance(entity, path, origin);
   }
 }
@@ -4193,13 +4207,20 @@ async function buildExternals(
    * a path lexicon's are, never folded as project files.
    */
   extraLexiconRoots: readonly string[] = [],
-): Promise<{ externals: Map<string, unknown>; failures: Map<string, string>; liveSources: Set<string> }> {
+): Promise<{
+  externals: Map<string, unknown>;
+  failures: Map<string, string>;
+  liveSources: Set<string>;
+  /** Local names bound to a lexicon package's export (INTENTIUS/typescript-as-data#248). */
+  hostValues: Set<string>;
+}> {
   const lexiconRoots =
     extraLexiconRoots.length === 0 ? session.lexiconRoots : [...session.lexiconRoots, ...extraLexiconRoots];
   const externals = new Map<string, unknown>();
   const failures = new Map<string, string>();
   // chant #1044 — see `FoldFileResult.liveSources`.
   const liveSources = new Set<string>();
+  const hostValues = new Set<string>();
 
   for (const [localName, binding] of imports) {
     // chant #1064 — a named `params` import that resolves to chant-core's own
@@ -4276,6 +4297,7 @@ async function buildExternals(
       const lexiconExport = await resolveActiveLexiconExport(binding, file, session);
       if (lexiconExport) {
         externals.set(localName, lexiconExport.value);
+        hostValues.add(localName);
         continue;
       }
       // Every other bare specifier (a non-lexicon vendor package, a lexicon
@@ -4310,7 +4332,10 @@ async function buildExternals(
     // with no `liveSources` edge for the same reason.
     if (session.lexiconModules.has(targetPath)) {
       const lexiconExport = await resolveActiveLexiconExport(binding, file, session);
-      if (lexiconExport) externals.set(localName, lexiconExport.value);
+      if (lexiconExport) {
+        externals.set(localName, lexiconExport.value);
+        hostValues.add(localName);
+      }
       continue;
     }
     // chant#2590 — another file of a multi-file path lexicon is a lexicon
@@ -4328,7 +4353,10 @@ async function buildExternals(
     // constructor or composite resolves through the import path.
     if (inPathLexiconRoot(targetPath, extraLexiconRoots)) {
       const value = await packageDataExport(targetPath, binding.imported, session);
-      if (value) externals.set(localName, value.value);
+      if (value) {
+        externals.set(localName, value.value);
+        hostValues.add(localName);
+      }
       continue;
     }
     if (inPathLexiconRoot(targetPath, lexiconRoots)) continue;
@@ -4377,7 +4405,7 @@ async function buildExternals(
     }
   }
 
-  return { externals, failures, liveSources };
+  return { externals, failures, liveSources, hostValues };
 }
 
 /**
@@ -4453,7 +4481,12 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
     if (scan.declarators.length === 0) return { ok: false, reason: "no foldable resource exports" };
 
     const collected = collectImports(sourceFile);
-    const { externals, failures, liveSources } = await buildExternals(file, collected.named, collected.namespaces, session);
+    const { externals, failures, liveSources, hostValues } = await buildExternals(
+      file,
+      collected.named,
+      collected.namespaces,
+      session,
+    );
 
     const ctx: ResolveCtx = {
       file,
@@ -4464,6 +4497,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       memo: new Map(),
       intrinsics: session.intrinsics,
       externals,
+      hostValues,
       crossFileFailures: failures,
       importCache: session.importCache,
       resolvePathCache: session.resolvePathCache,

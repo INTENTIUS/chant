@@ -7,6 +7,7 @@ import {
   collectParamDependencies,
   collectTagOrigins,
   type CompositeCallSite,
+  type HostBindings,
 } from "./param-deps";
 import type { PathOrigin } from "../provenance";
 
@@ -14,7 +15,7 @@ import type { PathOrigin } from "../provenance";
  * Collect dependencies for the props of the file's single
  * `export const x = new Type({...})`, which is the shape every case here uses.
  */
-function depsOf(source: string, paramLocals = ["params"]): Record<string, PathOrigin> {
+function depsOf(source: string, paramLocals = ["params"], host?: HostBindings): Record<string, PathOrigin> {
   const file = ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, true);
   const consts = collectConsts(file);
   let props: ts.ObjectLiteralExpression | undefined;
@@ -32,7 +33,7 @@ function depsOf(source: string, paramLocals = ["params"]): Record<string, PathOr
     }
   }
   if (!props) throw new Error("fixture has no `const x = new Type({...})`");
-  return collectParamDependencies(props, consts, new Set(paramLocals));
+  return collectParamDependencies(props, consts, new Set(paramLocals), host);
 }
 
 const param = (...names: string[]): PathOrigin => ({ kind: "build-param", params: names });
@@ -409,5 +410,45 @@ describe("argumentLocation (#3597)", () => {
     expect(compositeOriginsOf("return new Thing({ replicas: props.replicas });")).toEqual({
       replicas: { kind: "composite-parameter", composite: "WebService", parameters: ["replicas"] },
     });
+  });
+});
+
+describe("collectParamDependencies with host bindings (typescript-as-data#248)", () => {
+  const host: HostBindings = { values: new Set(["AWS"]), eagerCalls: new Set(["matrix"]) };
+  const hostCall: PathOrigin = { kind: "host", reason: "host-call" };
+  const hostValue: PathOrigin = { kind: "host", reason: "host-value" };
+
+  test("a method call on a receiver is a host call, at its own path", () => {
+    const source = `export const x = new Thing({ name: "x".toUpperCase(), spec: { tag: [1, 2].join("-") }, fixed: "k" });`;
+    expect(depsOf(source, [], host)).toEqual({ name: hostCall, "spec.tag": hostCall });
+  });
+
+  test("an eager lexicon helper is a host call, and a project function is not", () => {
+    const source = `export const x = new Thing({ a: matrix("os"), b: helper("os") });`;
+    expect(depsOf(source, [], host)).toEqual({ a: hostCall });
+  });
+
+  test("a lexicon export is a host value, through a const and an operator", () => {
+    const source = [`const region = AWS.Region;`, "export const x = new Thing({ a: `${region}-x`, b: AWS });"].join("\n");
+    expect(depsOf(source, [], host)).toEqual({ a: hostValue, b: hostValue });
+  });
+
+  test("a host read outranks a build parameter the same expression reads", () => {
+    const source = `export const x = new Thing({ name: params.name.toUpperCase(), size: params.size });`;
+    expect(depsOf(source, ["params"], host)).toEqual({ name: hostCall, size: param("size") });
+  });
+
+  test("a sibling resource, a member name and a property key are not host reads", () => {
+    const source = [
+      `const logs = new Bucket({ name: "x".toUpperCase() });`,
+      `const AWS2 = 1;`,
+      `export const x = new Thing({ a: logs.Arn, b: { AWS: 1 }, c: thing.AWS });`,
+    ].join("\n");
+    expect(depsOf(source, [], host)).toEqual({});
+  });
+
+  test("a tag is not read, its interpolations are", () => {
+    const source = "export const x = new Thing({ a: Sub`${AWS.Region}`, b: Sub`plain` });";
+    expect(depsOf(source, [], { values: new Set(["AWS", "Sub"]), eagerCalls: new Set() })).toEqual({ a: hostValue });
   });
 });

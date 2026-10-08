@@ -80,7 +80,11 @@ import {
 } from "./provenance";
 import type { DeepEntityDrift, PropertyDrift } from "./lifecycle/deep-diff";
 
-/** Why a field's origin could not be determined. Both are facts about the BUILD, not about the field. */
+/**
+ * Why a field's origin could not be determined. The first two are facts about
+ * the BUILD; the host reasons are facts about the expression, and match the
+ * strings the specification's reference implementation reports.
+ */
 export type UnknownOriginReason =
   /**
    * A composite expanded the entity and this build did not interpret its body,
@@ -94,7 +98,15 @@ export type UnknownOriginReason =
    * composite make it" is answerable. A sandboxed child's entities arrive this
    * way: `discovery/entity-wire-codec.ts` drops build metadata over the wire.
    */
-  | "no-provenance";
+  | "no-provenance"
+  /**
+   * INTENTIUS/typescript-as-data#248: host code computed the value, by a method
+   * called on a real receiver (`"x".toUpperCase()`, `[1, 2].join("-")`) or an
+   * eager lexicon helper. The file wrote the call, not the value.
+   */
+  | "host-call"
+  /** A value a lexicon package exports, bound by an import (`AWS.Region`, `S3Actions.GetObject`). */
+  | "host-value";
 
 /**
  * What produced one emitted property path.
@@ -231,6 +243,10 @@ export function classifyFieldOrigin(
       return provenance.composite
         ? { kind: "unknown", reason: "composite-not-interpreted" }
         : { kind: "direct" };
+    case "host":
+      // INTENTIUS/typescript-as-data#248 — host code produced the value, so
+      // editing the declaration edits a call, not the value it returned.
+      return { kind: "unknown", reason: origin.reason };
     case "build-param":
       // A build parameter governs the expression the AUTHOR wrote in their own
       // source, so the declaration is still theirs to edit.
@@ -307,6 +323,10 @@ export function unknownOriginText(reason: UnknownOriginReason): string {
       return "expanded by a composite whose factory this build did not interpret";
     case "no-provenance":
       return "this build recorded no provenance for the entity";
+    case "host-call":
+      return "the value is what a host call returned";
+    case "host-value":
+      return "the value is one a host package exports";
   }
 }
 
