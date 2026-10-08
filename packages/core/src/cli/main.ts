@@ -1128,6 +1128,12 @@ Workspace (level 1, #2524):
                         doesn't read, or two boxes sharing a port. Judged by
                         the write scope at base. Prints the member-write
                         document; never commits
+  workspace box factory set <member> --from <file|-> [--by <principal>] [--dry-run]
+                        Change a box's factory (builds, check, checks,
+                        builders, tiers, publish) in the declaration, in
+                        place, such as where a planted box publishes. Judged
+                        by the write scope at base. Prints the
+                        box-factory-write document; never commits
   workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run]
                         Publish a built work item, or the records kept
                         uncommitted, through the publisher the box block names:

@@ -40,6 +40,7 @@ import { PATCH_ERROR_CODES } from "./patch";
 import { AGENT_ERROR_CODES } from "./agent-cli";
 import { SCOPE_FINDING_CODES, WRITE_SCOPE_CODES } from "./write-scope";
 import { PLANTABLE_REASON_CODES } from "./box-factory";
+import { BOX_FACTORY_ERROR_CODES } from "./box-factory-write";
 import { BOX_LISTING_ERROR_CODES } from "./box-listing";
 import { DECLARATION_WRITE_ERROR_CODES } from "./declaration-write";
 import { BOX_PUBLISH_ERROR_CODES } from "./box-publish";
@@ -110,6 +111,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   PLANTABLE_REASON_CODES,
   BOX_LISTING_ERROR_CODES,
   DECLARATION_WRITE_ERROR_CODES,
+  BOX_FACTORY_ERROR_CODES,
   BOX_PUBLISH_ERROR_CODES,
   WRITE_LOCK_ERROR_CODES,
   WIP_ERROR_CODES,
