@@ -530,3 +530,55 @@ describe("a member destructured from a called chant composite is unknown (chant#
     expectAllUnknown(built.foldProvenance, ["namespace", "resourceQuota", "sharedNamespace", "sharedResourceQuota"]);
   });
 });
+
+describe("a value host code produced is unknown, never direct (typescript-as-data#248)", () => {
+  let testDir: string;
+  let srcDir: string;
+  let file: string;
+
+  beforeAll(async () => {
+    const dir = join(repoRoot, ".cache", `chant-tsad-248-${process.pid}`);
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(join(dir, "src"), { recursive: true });
+    testDir = await realpath(dir);
+    srcDir = join(testDir, "src");
+    file = join(srcDir, "main.ts");
+    await writeFile(
+      file,
+      `
+  import { Bucket, AWS } from ${JSON.stringify(LEXICON)};
+  const upper = "logs".toUpperCase();
+  export const bucket = new Bucket({
+    BucketName: "x".toUpperCase(),
+    Tags: [{ Key: "n", Value: [1, 2].join("-") }],
+    ObjectLockEnabled: true,
+  });
+  export const logs = new Bucket({ BucketName: upper, AccelerateConfiguration: { AccelerationStatus: AWS.Region } });
+`,
+    );
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("a host call and a host value report unknown with the reference's reasons, as build() does", async () => {
+    const verdict = (await foldProject([file], [], { lexicons: [LEXICON_NAME] })).get(file)!;
+    expect(verdict.verdict).toBe("fold");
+    const fromFold = verdict.foldProvenance!;
+    expect(fromFold.bucket.fields).toEqual({
+      BucketName: { kind: "unknown", reason: "host-call" },
+      ObjectLockEnabled: { kind: "direct" },
+      Tags: { kind: "unknown", reason: "host-call" },
+    });
+    expect(fromFold.logs.fields).toEqual({
+      "AccelerateConfiguration.AccelerationStatus": { kind: "unknown", reason: "host-value" },
+      BucketName: { kind: "unknown", reason: "host-call" },
+    });
+
+    const built = await build(srcDir, [namesSerializer], undefined, { fold: true, lexicons: [LEXICON_NAME] });
+    expect(built.errors).toEqual([]);
+    expect(built.foldProvenance.bucket).toEqual(fromFold.bucket);
+    expect(built.foldProvenance.logs).toEqual(fromFold.logs);
+  });
+});

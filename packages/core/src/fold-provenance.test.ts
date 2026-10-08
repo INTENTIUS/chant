@@ -103,6 +103,17 @@ describe("classifyFieldOrigin", () => {
     });
   });
 
+  test("a host origin is unknown with that reason, never a direct declaration (typescript-as-data#248)", () => {
+    expect(classifyFieldOrigin({ kind: "host", reason: "host-call" }, authored)).toEqual({
+      kind: "unknown",
+      reason: "host-call",
+    });
+    expect(classifyFieldOrigin({ kind: "host", reason: "host-value" }, authored)).toEqual({
+      kind: "unknown",
+      reason: "host-value",
+    });
+  });
+
   test("no origin on an entity no composite expanded is a direct declaration", () => {
     expect(classifyFieldOrigin(undefined, authored)).toEqual({ kind: "direct" });
   });
