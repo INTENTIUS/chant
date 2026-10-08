@@ -4,7 +4,7 @@
  * `graph --intent` shows it for the box's files.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, REPO, repo } from "./__fixtures__/contract-repo";
@@ -134,18 +134,28 @@ describe("the box block's intent", () => {
 describe("a box planted as a question", () => {
   test("a proposed intent reports its question and no answer, and passes the checks", async () => {
     const root = workspace({ intent: "box-001" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["member:app"]) });
-    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "proposed", question: QUESTION, choice: null, answer: null, decided_by: null, decided_on: null });
+    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "proposed", question: QUESTION, choice: null, answer: null, decided_by: null, decided_on: null, approved: false });
     expect(await intentFindings(root)).toEqual([]);
   });
 
   test("a decided intent reports the answer and who gave it, and graph --intent shows it for the box's files", async () => {
     const root = workspace({ intent: "box-001" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "decided", ["member:app"]) });
-    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "decided", question: QUESTION, choice: CHOICE, answer: ANSWER, decided_by: "alex", decided_on: "2026-09-26" });
+    expect((await boxOf(root))?.intent).toEqual({ id: "box-001", state: "decided", question: QUESTION, choice: CHOICE, answer: ANSWER, decided_by: "alex", decided_on: "2026-09-26", approved: true });
     expect(await intentFindings(root)).toEqual([]);
     commitAll(root, "plant the box");
     const { doc } = await intentGraph({ cwd: root, region: "app" });
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.nodes.filter((n) => n.kind === "decision").map((n) => (n.kind === "decision" ? [n.record, n.state, n.decided_by] : []))).toEqual([["box-001", "decided", "alex"]]);
+  });
+
+  test("approved follows the decision kind's approval ranks, not the state's name (#3609)", async () => {
+    const records = { "decisions/box-001-what-app-is-for.md": decision("box-001", "decided", ["member:app"]) };
+    const root = workspace({ intent: "box-001" }, records);
+    const kind = join(root, "decisions", "decision.kind.mjs");
+    const text = readFileSync(kind, "utf-8");
+    expect(text).toContain("decided: 1,");
+    writeFileSync(kind, text.replace("decided: 1,", "decided: 0,"));
+    expect((await boxOf(root))?.intent).toMatchObject({ state: "decided", approved: false });
   });
 
   test("a decided intent whose choice names an option not in options[] reports a null answer", async () => {
@@ -157,7 +167,7 @@ describe("a box planted as a question", () => {
 
   test("an intent no decision record has fails WSP126, and status reports only its id", async () => {
     const root = workspace({ intent: "box-009" }, { "decisions/box-001-what-app-is-for.md": decision("box-001", "proposed", ["member:app"]) });
-    expect((await boxOf(root))?.intent).toEqual({ id: "box-009", state: null, question: null, choice: null, answer: null, decided_by: null, decided_on: null });
+    expect((await boxOf(root))?.intent).toEqual({ id: "box-009", state: null, question: null, choice: null, answer: null, decided_by: null, decided_on: null, approved: false });
     expect(await intentFindings(root)).toEqual([["WSP126", "error", "box-intent-unknown", "app"]]);
     const [d] = (await runDeclarationChecks(root)).diagnostics.filter((x) => x.ruleId === "WSP126");
     expect(d.message).toContain("no record of decisions/decision.kind.mjs has that id");
