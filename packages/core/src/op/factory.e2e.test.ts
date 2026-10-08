@@ -184,7 +184,7 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       // A builder that reports a run and a check that reports per criterion.
       writeFileSync(join(dir, "hooks", "builder2.cjs"), `${BUILDER}\nconsole.log(JSON.stringify({ ok: true, run: { id: "run-7" }, agent: "builder-small", chantAgent: "factory", records: ["contract:C-1"] }));\n`);
       writeFileSync(join(dir, "hooks", "check2.cjs"), `console.log(JSON.stringify({ criteria: { "AC-1": "pass", "AC-2": "fail" }, built: JSON.parse(process.env.FACTORY_BUILD).agent }));`);
-      writeFileSync(join(dir, "hooks", "after.cjs"), `require("node:fs").writeFileSync(require("node:path").join(process.env.FACTORY_FAIL_DIR, "after.json"), JSON.stringify({ outcome: process.env.FACTORY_OUTCOME, commit: process.env.FACTORY_COMMIT, reason: process.env.FACTORY_REASON, check: JSON.parse(process.env.FACTORY_CHECK) }));`);
+      writeFileSync(join(dir, "hooks", "after.cjs"), `require("node:fs").writeFileSync(require("node:path").join(process.env.FACTORY_FAIL_DIR, "after.json"), JSON.stringify({ outcome: process.env.FACTORY_OUTCOME, commit: process.env.FACTORY_COMMIT, reason: process.env.FACTORY_REASON, check: JSON.parse(process.env.FACTORY_CHECK), activity: process.env.CHANT_RUN_ACTIVITY ?? null }));`);
       // The prepare hook writes W-110 in the checkout and leaves it uncommitted; the others are taken out of the way.
       writeFileSync(
         join(dir, "hooks", "prepare.cjs"),
@@ -204,6 +204,8 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       expect(result.workLease).toMatchObject({ item: "W-110", outcome: "not_done" });
       const after = JSON.parse(readFileSync(join(dir, "after.json"), "utf-8"));
       expect(after).toMatchObject({ outcome: "not_done", reason: "criteria AC-2 have no passing evidence", check: { built: "builder-small" } });
+      // A hook gets the run's activity file, as a shell step does (#3637).
+      expect(after.activity).toMatch(/\.activity\.jsonl$/);
       // The attempt was committed with why, and the run kept that commit.
       expect(after.commit).toMatch(/^[0-9a-f]{40}$/);
       // The kept attempt holds the carried item with AC-1 ticked and AC-2 failed.
