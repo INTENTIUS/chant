@@ -130,3 +130,97 @@ describe("Fn::GetAtt", () => {
     });
   });
 });
+
+describe("what import used to drop", () => {
+  test("resource attributes come back: DependsOn, the policies, and Metadata with an intrinsic in it", async () => {
+    const original = {
+      Resources: {
+        MyQueue: {
+          Type: "AWS::SQS::Queue",
+          DeletionPolicy: "Retain",
+          UpdateReplacePolicy: "Retain",
+          Metadata: { Note: { "Fn::Sub": "${AWS::StackName}-queue" } },
+        },
+        MyDB: {
+          Type: "AWS::RDS::DBInstance",
+          DependsOn: ["MyQueue", "MyGroup"],
+          DeletionPolicy: "Snapshot",
+          UpdateReplacePolicy: "Snapshot",
+          Properties: { DBInstanceClass: "db.t3.micro", Engine: "mysql", StorageEncrypted: true, BackupRetentionPeriod: 7 },
+        },
+        MyGroup: {
+          Type: "AWS::AutoScaling::AutoScalingGroup",
+          DependsOn: "MyQueue",
+          CreationPolicy: { ResourceSignal: { Count: 1, Timeout: "PT15M" } },
+          UpdatePolicy: { AutoScalingRollingUpdate: { MinInstancesInService: 1 } },
+          Properties: { MinSize: "1", MaxSize: "2", AvailabilityZones: ["us-east-1a"] },
+        },
+      },
+    };
+    const { template, source } = await roundTrip(JSON.stringify(original));
+    expect(source).toContain("DependsOn: [MyQueue, MyGroup]");
+    expect(template.Resources).toEqual(original.Resources);
+  });
+
+  test("the template's Description and Metadata come back", async () => {
+    const original = {
+      Description: "A queue",
+      Metadata: { "cfn-lint": { config: { ignore_checks: ["W3005"] } }, Stack: { Ref: "AWS::StackName" } },
+      Resources: { MyQueue: { Type: "AWS::SQS::Queue" } },
+    };
+    const ir = parser.parse(JSON.stringify(original));
+    expect(ir.warnings).toBeUndefined();
+    const { template } = await roundTrip(JSON.stringify(original));
+    expect(template.Description).toBe(original.Description);
+    expect(template.Metadata).toEqual(original.Metadata);
+  });
+
+  test("parameter constraints come back as written", async () => {
+    const original = {
+      Parameters: {
+        Name: {
+          Type: "String",
+          AllowedPattern: "[a-z]+",
+          ConstraintDescription: "lower case",
+          MinLength: "1",
+          MaxLength: 64,
+          NoEcho: true,
+        },
+        Size: { Type: "Number", Default: 5, MinValue: 1, MaxValue: "10", AllowedValues: [1, 5, 10] },
+      },
+      Resources: { MyQueue: { Type: "AWS::SQS::Queue", Properties: { QueueName: { Ref: "Name" }, DelaySeconds: { Ref: "Size" } } } },
+    };
+    const { template } = await roundTrip(JSON.stringify(original));
+    expect(template.Parameters).toEqual(original.Parameters);
+  });
+
+  test("Fn::Select of a list parameter selects from the list, and the index is kept as written", async () => {
+    const original = {
+      Parameters: { Subnets: { Type: "List<AWS::EC2::Subnet::Id>" } },
+      Resources: {
+        MyInstance: { Type: "AWS::EC2::Instance", Properties: { SubnetId: { "Fn::Select": [0, { Ref: "Subnets" }] } } },
+        MyOther: {
+          Type: "AWS::EC2::Instance",
+          Properties: { SubnetId: { "Fn::Select": ["1", { Ref: "Subnets" }] }, AvailabilityZone: { "Fn::Select": [0, { "Fn::GetAZs": "" }] } },
+        },
+      },
+    };
+    const { template } = await roundTrip(JSON.stringify(original));
+    expect(template.Resources).toEqual(original.Resources);
+  });
+
+  test("a logical id that is a class name keeps its name", async () => {
+    const original = {
+      Resources: {
+        InternetGateway: { Type: "AWS::EC2::InternetGateway" },
+        Attachment: {
+          Type: "AWS::EC2::VPCGatewayAttachment",
+          Properties: { InternetGatewayId: { Ref: "InternetGateway" }, VpcId: "vpc-1" },
+        },
+      },
+    };
+    const { template, source } = await roundTrip(JSON.stringify(original));
+    expect(source).toContain("InternetGateway as InternetGatewayResource");
+    expect(template.Resources).toEqual(original.Resources);
+  });
+});

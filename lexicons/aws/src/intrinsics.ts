@@ -296,26 +296,27 @@ export function Join(delimiter: string, values: unknown[] | Intrinsic): JoinIntr
  */
 export class SelectIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
-  private index: number;
+  private index: number | string;
   private values: unknown[] | Intrinsic;
 
-  constructor(index: number, values: unknown[] | Intrinsic) {
+  constructor(index: number | string, values: unknown[] | Intrinsic) {
     this.index = index;
     this.values = values;
   }
 
-  toJSON(): { "Fn::Select": [string, unknown] } {
+  toJSON(): { "Fn::Select": [number | string, unknown] } {
     const resolvedValues = Array.isArray(this.values)
       ? this.values.map(resolveIntrinsicValue)
-      : (this.values as Intrinsic & { toJSON(): unknown }).toJSON();
-    return { "Fn::Select": [String(this.index), resolvedValues] };
+      : resolveIntrinsicValue(this.values);
+    return { "Fn::Select": [this.index, resolvedValues] };
   }
 }
 
 /**
- * Create a Select intrinsic
+ * Create a Select intrinsic. The index is emitted as written: CloudFormation
+ * accepts `0` and `"0"`.
  */
-export function Select(index: number, values: unknown[] | Intrinsic): SelectIntrinsic {
+export function Select(index: number | string, values: unknown[] | Intrinsic): SelectIntrinsic {
   return new SelectIntrinsic(index, values);
 }
 

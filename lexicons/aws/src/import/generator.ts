@@ -18,6 +18,9 @@ export class CFGenerator implements TypeScriptGenerator {
   private allClassNames: Set<string>;
   /** resourceType -> (property name on the class -> CloudFormation attribute name) */
   private attrsByType: Map<string, Record<string, string>>;
+  /** Resource classes imported under another name, because a logical id in
+   * the template is the class's own name (`InternetGateway`). */
+  private classAliases: Map<string, string> = new Map();
 
   constructor() {
     // Reverse lookup from the generated registry: resourceType → className.
@@ -43,12 +46,19 @@ export class CFGenerator implements TypeScriptGenerator {
   generate(ir: TemplateIR): GeneratedFile[] {
     const lines: string[] = [];
 
+    this.classAliases = this.computeClassAliases(ir);
     // Collect the set of imported class names so we can detect variable name conflicts
     const importedSymbols = this.collectImportedSymbols(ir);
 
     // Generate imports
     lines.push(this.generateImports(ir));
     lines.push("");
+
+    // Template-level Description and Metadata
+    const sections = this.generateTemplateSections(ir, importedSymbols);
+    if (sections.length > 0) {
+      lines.push(...sections, "");
+    }
 
     // Generate parameters
     for (const param of ir.parameters) {
@@ -116,8 +126,10 @@ export class CFGenerator implements TypeScriptGenerator {
     if (this.needsAWSPseudo(ir)) symbols.add("AWS");
     for (const resource of ir.resources) {
       const parsed = this.parseResourceType(resource.type);
-      if (parsed) symbols.add(parsed.resourceClass);
+      if (parsed) symbols.add(this.classAliases.get(parsed.resourceClass) ?? parsed.resourceClass);
     }
+    if (typeof ir.metadata?.description === "string") symbols.add("templateDescription");
+    if (ir.metadata?.templateMetadata !== undefined) symbols.add("templateMetadata");
     return symbols;
   }
 
@@ -188,13 +200,57 @@ export class CFGenerator implements TypeScriptGenerator {
       }
       for (const v of Object.values(obj)) visit(v);
     };
-    for (const r of ir.resources) visit(r.properties);
-    for (const c of ir.conditions ?? []) visit(c.expression);
-    for (const o of ir.outputs ?? []) {
-      visit(o.value);
-      visit(o.exportName);
-    }
+    for (const v of this.generatedValues(ir)) visit(v);
     return uses;
+  }
+
+  /** Every name the template declares: parameters, resources, conditions, outputs. */
+  private declaredNames(ir: TemplateIR): Set<string> {
+    return new Set([
+      ...ir.parameters.map((p) => p.name),
+      ...ir.resources.map((r) => r.logicalId),
+      ...(ir.conditions ?? []).map((c) => c.name),
+      ...(ir.outputs ?? []).map((o) => o.name),
+    ]);
+  }
+
+  /**
+   * A resource class whose name the template also uses for something it
+   * declares is imported under an alias (`InternetGateway as
+   * InternetGatewayResource`), so the declaration keeps its name. Suffixing
+   * the declaration instead would change its logical id.
+   */
+  private computeClassAliases(ir: TemplateIR): Map<string, string> {
+    const declared = this.declaredNames(ir);
+    const aliases = new Map<string, string>();
+    for (const resource of ir.resources) {
+      const cls = this.parseResourceType(resource.type)?.resourceClass;
+      if (!cls || !declared.has(cls) || aliases.has(cls)) continue;
+      let alias = `${cls}Resource`;
+      for (let i = 2; declared.has(alias) || this.allClassNames.has(alias); i++) alias = `${cls}Resource${i}`;
+      aliases.set(cls, alias);
+    }
+    return aliases;
+  }
+
+  /** `templateDescription(...)` and `templateMetadata(...)` for the template's own sections. */
+  private generateTemplateSections(ir: TemplateIR, importedSymbols: Set<string>): string[] {
+    const declared = this.declaredNames(ir);
+    const freeName = (base: string) => {
+      let v = base;
+      for (let i = 2; declared.has(v) || importedSymbols.has(v); i++) v = `${base}${i}`;
+      declared.add(v);
+      return v;
+    };
+    const lines: string[] = [];
+    if (typeof ir.metadata?.description === "string") {
+      lines.push(`export const ${freeName("description")} = templateDescription(${JSON.stringify(ir.metadata.description)});`);
+    }
+    if (ir.metadata?.templateMetadata !== undefined) {
+      const value = this.generateValue(ir.metadata.templateMetadata, ir, importedSymbols);
+      lines.push(`export const ${freeName("metadata")} = templateMetadata(${value});`);
+    }
+    return lines;
   }
 
   /**
@@ -204,7 +260,8 @@ export class CFGenerator implements TypeScriptGenerator {
     // Everything comes from the flat @intentius/chant-lexicon-aws package,
     // and the needed symbol set is exactly what collectImportedSymbols
     // computes for variable-name conflict detection.
-    const allImports = [...this.collectImportedSymbols(ir)];
+    const aliasOf = new Map([...this.classAliases].map(([cls, alias]) => [alias, cls]));
+    const allImports = [...this.collectImportedSymbols(ir)].map((s) => (aliasOf.has(s) ? `${aliasOf.get(s)} as ${s}` : s));
     if (allImports.length === 0) {
       return "";
     }
@@ -229,12 +286,17 @@ export class CFGenerator implements TypeScriptGenerator {
    * Check if AWS pseudo-parameters are used
    */
   private needsAWSPseudo(ir: TemplateIR): boolean {
-    for (const resource of ir.resources) {
-      if (this.hasAWSPseudo(resource.properties)) {
-        return true;
-      }
-    }
-    return false;
+    return this.generatedValues(ir).some((v) => this.hasAWSPseudo(v));
+  }
+
+  /** Every IR value the generator writes as source. */
+  private generatedValues(ir: TemplateIR): unknown[] {
+    return [
+      ...ir.resources.flatMap((r) => [r.properties, r.metadata, r.attributes]),
+      ...(ir.conditions ?? []).map((c) => c.expression),
+      ...(ir.outputs ?? []).flatMap((o) => [o.value, o.exportName]),
+      ir.metadata?.templateMetadata,
+    ];
   }
 
   /**
@@ -275,7 +337,12 @@ export class CFGenerator implements TypeScriptGenerator {
       (r) => r.logicalId,
       (r) => {
         const extraDeps = new Set<string>();
-        const deps = collectDependencies(r.properties, (obj) => {
+        // DependsOn names a resource that is generated as a variable reference.
+        const dependsOn = r.attributes?.DependsOn;
+        for (const d of Array.isArray(dependsOn) ? dependsOn : dependsOn !== undefined ? [dependsOn] : []) {
+          if (typeof d === "string" && resourceIds.has(d)) extraDeps.add(d);
+        }
+        const deps = collectDependencies({ properties: r.properties, metadata: r.metadata, attributes: r.attributes }, (obj) => {
           if (obj.__intrinsic === "Ref") {
             const name = obj.name as string;
             return name.startsWith("AWS::") ? null : name;
@@ -379,6 +446,9 @@ export class CFGenerator implements TypeScriptGenerator {
     const opts: string[] = [];
     if (param.description) opts.push(`description: ${JSON.stringify(param.description)}`);
     if (param.defaultValue !== undefined) opts.push(`defaultValue: ${JSON.stringify(param.defaultValue)}`);
+    for (const [key, value] of Object.entries(param.constraints ?? {})) {
+      opts.push(`${key.charAt(0).toLowerCase()}${key.slice(1)}: ${JSON.stringify(value)}`);
+    }
     if (opts.length > 0) {
       return `export const ${varName} = new Parameter("${param.type}", { ${opts.join(", ")} });`;
     }
@@ -395,13 +465,26 @@ export class CFGenerator implements TypeScriptGenerator {
       return `// Unsupported type: ${resource.type}\nexport const ${varName} = "${resource.logicalId}";`;
     }
     const varName = this.safeVarName(resource.logicalId, importedSymbols);
-    const { resourceClass } = parsed;
+    const resourceClass = this.classAliases.get(parsed.resourceClass) ?? parsed.resourceClass;
     const propsStr = this.generateProps(resource.properties, ir, importedSymbols);
 
-    // Resource-level Condition key → the attributes argument (#2069)
+    // Resource attributes -> the attributes argument: Condition (#2069),
+    // DependsOn, the policies, and Metadata.
+    const attrs: string[] = [];
     if (resource.condition) {
-      const condRef = this.conditionVarRef(resource.condition, ir, importedSymbols);
-      return `export const ${varName} = new ${resourceClass}(${propsStr}, { Condition: ${condRef} });`;
+      attrs.push(`Condition: ${this.conditionVarRef(resource.condition, ir, importedSymbols)}`);
+    }
+    for (const [key, value] of Object.entries(resource.attributes ?? {})) {
+      const valueStr = key === "DependsOn"
+        ? this.generateDependsOn(value, ir, importedSymbols)
+        : this.generateValue(value, ir, importedSymbols);
+      attrs.push(`${key}: ${valueStr}`);
+    }
+    if (resource.metadata !== undefined) {
+      attrs.push(`Metadata: ${this.generateValue(resource.metadata, ir, importedSymbols)}`);
+    }
+    if (attrs.length > 0) {
+      return `export const ${varName} = new ${resourceClass}(${propsStr}, { ${attrs.join(", ")} });`;
     }
 
     if (propsStr === "{}") {
@@ -409,6 +492,19 @@ export class CFGenerator implements TypeScriptGenerator {
     }
 
     return `export const ${varName} = new ${resourceClass}(${propsStr});`;
+  }
+
+  /**
+   * DependsOn as the variables of the resources it names, so the generated
+   * source references them. A name the template does not declare as a
+   * supported resource stays a string.
+   */
+  private generateDependsOn(value: unknown, ir: TemplateIR, importedSymbols: Set<string>): string {
+    const one = (d: unknown) =>
+      typeof d === "string" && ir.resources.some((r) => r.logicalId === d && this.parseResourceType(r.type))
+        ? this.safeVarName(d, importedSymbols)
+        : this.generateValue(d, ir, importedSymbols);
+    return Array.isArray(value) ? `[${value.map(one).join(", ")}]` : one(value);
   }
 
   /**
@@ -509,9 +605,12 @@ export class CFGenerator implements TypeScriptGenerator {
       }
 
       if (obj.__intrinsic === "Select") {
-        const index = obj.index as number;
-        const values = (obj.values as unknown[]).map((v) => this.generateValue(v, ir, importedSymbols));
-        return `Select(${index}, [${values.join(", ")}])`;
+        const index = JSON.stringify(obj.index);
+        if (Array.isArray(obj.values)) {
+          const values = obj.values.map((v) => this.generateValue(v, ir, importedSymbols));
+          return `Select(${index}, [${values.join(", ")}])`;
+        }
+        return `Select(${index}, ${this.generateValue(obj.source, ir, importedSymbols)})`;
       }
 
       if (obj.__intrinsic === "Split") {

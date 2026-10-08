@@ -137,13 +137,18 @@ describe("Join intrinsic", () => {
 describe("Select intrinsic", () => {
   test("selects from array", () => {
     const result = Select(0, ["a", "b", "c"]);
-    expect(result.toJSON()).toEqual({ "Fn::Select": ["0", ["a", "b", "c"]] });
+    expect(result.toJSON()).toEqual({ "Fn::Select": [0, ["a", "b", "c"]] });
+  });
+
+  test("keeps the index as written, number or string", () => {
+    expect(Select("0", ["a"]).toJSON()).toEqual({ "Fn::Select": ["0", ["a"]] });
+    expect(Select(2, Ref("Subnets")).toJSON()).toEqual({ "Fn::Select": [2, { Ref: "Subnets" }] });
   });
 
   test("selects with intrinsic array", () => {
     const result = Select(1, [Ref("A"), Ref("B")]);
     expect(result.toJSON()).toEqual({
-      "Fn::Select": ["1", [{ Ref: "A" }, { Ref: "B" }]],
+      "Fn::Select": [1, [{ Ref: "A" }, { Ref: "B" }]],
     });
   });
 });

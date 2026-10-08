@@ -9,6 +9,9 @@ export interface ParameterIR {
   readonly description?: string;
   readonly defaultValue?: unknown;
   readonly required?: boolean;
+  /** What the value is checked against, under the source format's own keys
+   * and as written (CloudFormation `AllowedValues`, `MinLength`, `NoEcho`). */
+  readonly constraints?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -22,6 +25,11 @@ export interface ResourceIR {
   /** Name of the condition gating this resource (CloudFormation `Condition`
    * key, or equivalent), when the source template declares one (#2069). */
   readonly condition?: string;
+  /** Resource-level attributes other than the condition, under the source
+   * format's own keys (CloudFormation `DependsOn`, `DeletionPolicy`,
+   * `UpdateReplacePolicy`, `UpdatePolicy`, `CreationPolicy`). Values are
+   * parsed value trees, like {@link properties}. */
+  readonly attributes?: Readonly<Record<string, unknown>>;
 }
 
 /**

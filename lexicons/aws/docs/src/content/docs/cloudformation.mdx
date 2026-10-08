@@ -116,6 +116,17 @@ Produces:
 }
 ```
 
+`Parameter` also takes the constraints CloudFormation checks a value against: `allowedValues`, `allowedPattern`, `constraintDescription`, `minLength`, `maxLength`, `minValue`, `maxValue` and `noEcho`. Each is emitted under its CloudFormation key, as written.
+
+```typescript
+export const dbName = new Parameter("String", {
+  allowedPattern: "[a-zA-Z][a-zA-Z0-9]*",
+  constraintDescription: "must begin with a letter",
+  minLength: 1,
+  maxLength: 64,
+});
+```
+
 Reference parameters with `Ref`:
 
 ```typescript title="parameter-cross-file-ref.ts"
@@ -131,6 +142,17 @@ export const crossRefBucket = new Bucket({
     RestrictPublicBuckets: true,
   },
 });
+```
+
+## Template description and metadata
+
+`templateDescription(text)` sets the template's top-level `Description`. `templateMetadata(entries)` adds entries to its top-level `Metadata`, such as `AWS::CloudFormation::Interface`. Several `templateMetadata` declarations merge.
+
+```typescript
+import { templateDescription, templateMetadata } from "@intentius/chant-lexicon-aws";
+
+export const description = templateDescription("Web tier with an Application Load Balancer");
+export const metadata = templateMetadata({ "cfn-lint": { config: { ignore_checks: ["W3005"] } } });
 ```
 
 ## Outputs
