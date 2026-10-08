@@ -8,12 +8,13 @@ diataxis: reference
 
 ```
 chant workspace box listing set <member> [--from <file|->] [--cover <image> [--cover-path <path>]] [--by <principal>] [--dry-run] [--json]
+chant workspace box factory set <member> --from <file|-> [--by <principal>] [--dry-run] [--json]
 chant workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run] [--json]
 ```
 
 ## Description
 
-The command has two verbs: `box listing set`, described first, and `box publish`, under [Publishing a box's work](#publishing-a-boxs-work).
+The command has three verbs: `box listing set`, described first, `box factory set`, under [The factory](#the-factory), and `box publish`, under [Publishing a box's work](#publishing-a-boxs-work).
 
 A box's listing is what a home site that lists boxes shows of it, such as its title and its cover picture. The listing lives on the member's [box block](/chant/reference/workspace-declaration/#listing) as `members[i].box.listing` in `chant.workspace.json` ([#3146](https://github.com/INTENTIUS/chant/issues/3146), [ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)). Under [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md) a tool writes the repo only through chant. A tool such as hud therefore changes a listing with this command and never edits the declaration itself ([#3308](https://github.com/INTENTIUS/chant/issues/3308)).
 
@@ -107,6 +108,20 @@ EOF
 | a declaration code | the declaration can't be read, as for any workspace read |
 
 The [writer conformance suite](/chant/reference/workspace-writer-conformance/) drives this command as its `box listing set` action, and its amnesia test reads the listing back through `status --json`.
+
+## The factory
+
+`box factory set <member> --from <file|->` changes the box's [factory](/chant/reference/workspace-declaration/#factory), `members[i].box.factory`, the same way `box listing set` changes its listing ([#3600](https://github.com/INTENTIUS/chant/issues/3600)). A template can't carry `factory.publish`, because its `repo` must be a real `owner/name` and every box planted from the template publishes to its own repository. Whoever plants a box knows that repository, and sets the target once the box is planted.
+
+```sh
+echo '{ "publish": { "repo": "alex/fern", "base": "main" } }' | chant workspace box factory set box --from -
+```
+
+The factory takes `builds`, `check`, `checks`, `builders`, `tiers`, `publish` and `x-` keys at its top level, and the object `--from` gives may hold any of them. Each one given replaces that field's whole value, `null` deletes the field, and the fields not given stay as they are. The write is refused with `write-input-invalid` for any other field, and when the declaration would no longer read, such as with a `repo` that is not `owner/name`. A box with no factory gets one, and then the fields must include `builds`. A member with no box block is refused with `factory-box-missing`, and an unknown one with `factory-member-unknown`.
+
+The write scope at base judges the write, as under [Who may write](#who-may-write). A protected declaration takes it when the entry's `except` names what changes, such as `/members/*/box/factory/publish`.
+
+The document printed follows `https://intentius.io/chant/schemas/workspace/box-factory-write/v1/box-factory-write.schema.json`. Its `member`, `declaration`, `paths`, `changed` and `dryRun` mean what they mean for the listing. `previous` and `factory` hold the factory before and after the write as [`status --json`](/chant/cli/workspace-status/#output) prints it, or `null` when there is none. Giving the same fields again changes nothing (`changed: false`), and chant never commits the change.
 
 ## Publishing a box's work
 

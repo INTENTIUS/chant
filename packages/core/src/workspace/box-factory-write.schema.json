@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/box-factory-write/v1/box-factory-write.schema.json",
+  "title": "chant workspace box factory set output",
+  "description": "What `chant workspace box factory set <member> --from <file|->` prints (#3600): the box's factory before and after, as `status --json` prints it, and the file the write changed, or the reason it wrote nothing. The write changes only the factory's own top-level properties, members[i].box.factory in the declaration, in place, keeping the file's formatting and comments. It never commits. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.110.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The factory was written, or would be with --dry-run, or already held what was given (changed false). Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "member",
+        "declaration",
+        "paths",
+        "changed",
+        "dryRun",
+        "previous",
+        "factory"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/box-factory-write/v1/box-factory-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote it."
+        },
+        "member": {
+          "type": "string",
+          "description": "The member whose box block holds the factory."
+        },
+        "declaration": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The declaration file, relative to the repository root (the working directory outside git), with / separators."
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "The sha256 of the declaration's bytes after the write, or as they would be with --dry-run."
+            }
+          }
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The declaration, relative to the repository root, when the write changed it or would with --dry-run; empty when the factory already held what was given."
+        },
+        "changed": {
+          "type": "boolean",
+          "description": "Whether the declaration changed: paths is not empty."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "True when --dry-run was given: nothing was written, and the document says what would have been."
+        },
+        "previous": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/factory"
+            }
+          ],
+          "description": "The factory before the write, as status --json prints it, or null when the box declared none."
+        },
+        "factory": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/factory"
+            }
+          ],
+          "description": "The factory after the write, as status --json prints it, or null when the box still declares none."
+        }
+      }
+    },
+    "factory": {
+      "type": "object",
+      "required": [
+        "builds",
+        "check",
+        "checks",
+        "builders",
+        "tiers",
+        "builderFor",
+        "publish"
+      ],
+      "properties": {
+        "builds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "The members the factory builds, in declaration order. A work item a person asks for constrains member:<the first>."
+        },
+        "check": {
+          "description": "The verdict command, run from the workspace root, and what it is; null when none is declared.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "run",
+                "kind"
+              ],
+              "properties": {
+                "run": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "test",
+                    "build",
+                    "lint",
+                    "plan",
+                    "conformance"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "checks": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where a work item's builder writes its check, from the workspace root, or null for the orchestrator's choice."
+        },
+        "builders": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member that declares the builder agents, or null."
+        },
+        "tiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tier",
+              "agent",
+              "kinds",
+              "session"
+            ],
+            "properties": {
+              "tier": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "kinds": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "session": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "description": "Which builder agent builds at which tier, as declared (#3152, ws-094), each { tier, agent, kinds, session } with kinds and session null when not declared; empty when none is. Added in contract 1 by chant 0.103.0."
+        },
+        "builderFor": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "agent",
+                "session"
+              ],
+              "properties": {
+                "agent": {
+                  "type": "string"
+                },
+                "session": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "description": "The builder for each member the factory builds, by tier (#3152): member name, then tier, then { agent, session }. For a member the entry naming its kind is used, else the tier's entry with no kinds; a tier with neither is left out. Added in contract 1 by chant 0.103.0."
+        },
+        "publish": {
+          "description": "Where a finished build is published, or null when the factory doesn't publish past the box.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "forge",
+                "repo",
+                "base",
+                "branchPrefix",
+                "head"
+              ],
+              "properties": {
+                "forge": {
+                  "const": "github"
+                },
+                "repo": {
+                  "type": "string",
+                  "description": "owner/name: where the pull request is opened."
+                },
+                "base": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The branch the pull request targets, or null for the repository's default branch."
+                },
+                "branchPrefix": {
+                  "type": "string",
+                  "description": "What the published branch's name starts with, before the work item's id. chant/work/ unless declared."
+                },
+                "head": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "owner/name of the fork the branch is pushed to, or null to push to repo."
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was written. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "member",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/box-factory-write/v1/box-factory-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "write-usage-invalid",
+                "write-input-invalid",
+                "factory-member-unknown",
+                "factory-box-missing",
+                "write-scope-member",
+                "write-scope-protected",
+                "write-scope-class-unknown",
+                "agent-unknown",
+                "principal-unidentified",
+                "write-lock-timeout",
+                "write-lock-not-held"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
