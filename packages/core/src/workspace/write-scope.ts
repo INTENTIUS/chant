@@ -404,6 +404,23 @@ export function scopedKind(source: ScopeSource, kindName: string, kindFile: stri
 }
 
 /**
+ * The agent sessions as `chant workspace agent` and the write paths read
+ * them (#3615): the declaration at base, else the working tree's. Null when
+ * neither has a declaration. Lighter than {@link scopeSource}: no trust
+ * policy and no principal classes.
+ */
+export function declaredSessions(cwd: string): { agents: AgentDeclaration[]; from: "base" | "working-tree" } | null {
+  const top = gitRoot(cwd);
+  const base = top ? resolveBase(top) : null;
+  if (base?.commit) {
+    const atBase = readAt(cwd, base.commit);
+    if (atBase) return { agents: atBase.declaration.agents, from: "base" };
+  }
+  const here = readAt(cwd);
+  return here ? { agents: here.declaration.agents, from: "working-tree" } : null;
+}
+
+/**
  * Refuse a record write outside the writer's scope (#2548): throws a
  * {@link WriteScopeError}. `agent` is the session the write names
  * (`CHANT_AGENT`), and `principal` who the write names as its author.

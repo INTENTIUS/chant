@@ -66,7 +66,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
     "schema": 1,
     "minReader": null,
     "pins": [],
-    "records": [{ "name": "decision", "path": "decisions/decision.kind.mjs", "kind": "decision", "reason": null, "acceptance": null }]
+    "records": [{ "name": "decision", "path": "decisions/decision.kind.mjs", "kind": "decision", "reason": null, "acceptance": null }],
+    "agentsFrom": "base"
   },
   "members": [
     {
@@ -86,7 +87,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "env": "production",
           "jobs": ["build", "Deploy to production"]
         }
-      ]
+      ],
+      "agents": ["aws-agent"]
     }
   ],
   "groups": [
@@ -137,6 +139,8 @@ Each member's `generated` lists the files it generates, sorted by path ([#3050](
 | `jobs` | for a forge CI file, the check names it declares: a GitHub, Forgejo or Gitea job's `name`, else its id, and a GitLab job's key. `null` for any other file, for a CI file missing from the tree read, and for one that can't be parsed |
 
 A forge CI file is one in `.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/` or `.gitlab/ci/`, or the root `.gitlab-ci.yml`. chant reads the file from the tree read, so `--at` gives the names at the revision, and runs nothing. A reader that requires checks, such as github-warden, takes them from `jobs`.
+
+Each member's `agents` lists the names of the [agent sessions](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) the declaration binds to it, through `agents[].member` or `agents[].members`, in declaration order, and is `[]` when none is ([#3615](https://github.com/INTENTIUS/chant/issues/3615)). A session bound to several members is listed on each. A tool that starts an agent for a member sets `CHANT_AGENT` to one of these names, and needs no parse of the declaration, `.json` or `.jsonc`. The sessions are read where [`chant workspace agent`](/chant/cli/workspace-agent/) and the write paths read them: the declaration at the base revision (`origin/HEAD`, `main` or `master`), else the working tree's, so a session added in the working tree is listed once it reaches base. Under `--at` they are read at that revision. `workspace.agentsFrom` says which: `base`, `working-tree` or `at`. Both fields are contract 1 additions.
 
 `diagrams` is one flat array for every declared [diagram artifact](/chant/reference/workspace-declaration/#diagrams), a contract 1 addition from [#2764](https://github.com/INTENTIUS/chant/issues/2764). `member` on each entry says who declares it, `null` for the workspace's own. `name`, `title`, `source`, `render` and `renderer` come straight off the declaration. `source` and `render` are paths from the workspace root. `render` is `null` for a `mermaid` or `excalidraw` diagram that commits no render, which a reader draws from its source. chant loads nothing to print this and runs no renderer. A missing source or render, or one that drifted, is `chant workspace check`'s job: it reports those as `WSP131` to `WSP133`.
 

@@ -41,6 +41,7 @@ import { memberGenerated, type LsGenerated } from "./ls-generated";
 import { loadKindRegistry, probeKind, type KindRegistry } from "./kinds";
 import type { WorkspaceTree } from "./tree";
 import { handToRootChant, locateWorkspace } from "./which-chant";
+import { declaredSessions } from "./write-scope";
 import type { DeclaredKindReasonCode } from "./declared-kinds";
 
 /** The version of the `ls` output this chant writes. */
@@ -113,6 +114,8 @@ export interface LsMember {
   records: LsRecordKind[];
   /** The files the member generates, and the job names inside its forge CI files (#3050). */
   generated: LsGenerated[];
+  /** The agent sessions bound to the member, in declaration order (#3615); empty when none is. */
+  agents: string[];
 }
 
 /**
@@ -167,6 +170,12 @@ export type LsDocument =
         pins: Declaration["pins"];
         /** The workspace's own record kinds, from the top-level `records` (#2680). */
         records: LsRecordKind[];
+        /**
+         * Where the members' `agents` were read (#3615): the declaration at
+         * base, else the working tree's, as `chant workspace agent` reads
+         * them; under `--at`, the declaration at that revision.
+         */
+        agentsFrom: "base" | "working-tree" | "at";
       };
       members: LsMember[];
       groups: LsGroup[];
@@ -247,6 +256,9 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
     const kinds = query.kinds ?? loadKindRegistry(declaration.pins, rootOnDisk).registry;
     const groups = resolveGroups(declaration, tree);
     const repoPrefix = isAbsolute(located.root) ? "." : located.root;
+    // Sessions are read where the write paths read them, at base (#3615); a
+    // listing at a revision reads them there, so it describes one commit.
+    const sessions = at !== null ? { agents: declaration.agents, from: "at" as const } : (declaredSessions(query.cwd) ?? { agents: declaration.agents, from: "working-tree" as const });
     const members: LsMember[] = declaration.members.map((m) => {
       const reason = memberReason(m, tree, kinds);
       return {
@@ -260,6 +272,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
         reason,
         records: unloaded(m.records),
         generated: memberGenerated(m, tree, repoPrefix),
+        agents: sessions.agents.filter((a) => a.members.includes(m.name)).map((a) => a.name),
       };
     });
     const lsGroups: LsGroup[] = groups.map((g) => ({
@@ -292,6 +305,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
         minReader: declaration.minReader,
         pins: declaration.pins,
         records: unloaded(declaration.records),
+        agentsFrom: sessions.from,
       },
       members,
       groups: lsGroups,

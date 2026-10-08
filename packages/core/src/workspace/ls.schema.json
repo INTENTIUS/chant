@@ -71,6 +71,10 @@
               "description": "Added in contract 1 by #2680. The workspace's own record kinds, from the declaration's top-level records, in file order.",
               "type": "array",
               "items": { "$ref": "#/$defs/recordKind" }
+            },
+            "agentsFrom": {
+              "description": "Added in contract 1 by #3615. Where the members' agents were read: base, the declaration at the base revision (origin/HEAD, main or master), as chant workspace agent and the write paths read it; working-tree, when there is no base or no declaration at it; at, the declaration at the --at revision.",
+              "enum": ["base", "working-tree", "at"]
             }
           }
         },
@@ -142,6 +146,11 @@
           "description": "Added in contract 1 by #3050. The files the member generates, from its declared generated entries and from the record `chant build --components --generate` and `chant run --generate` write, sorted by path. A hand-written entry is not listed.",
           "type": "array",
           "items": { "$ref": "#/$defs/generatedFile" }
+        },
+        "agents": {
+          "description": "Added in contract 1 by #3615. The names of the agent sessions the declaration binds to the member (agents[].member or agents[].members), in declaration order, read where workspace.agentsFrom says. Empty when none is. A session bound to several members is listed on each.",
+          "type": "array",
+          "items": { "type": "string" }
         },
         "reason": {
           "oneOf": [
