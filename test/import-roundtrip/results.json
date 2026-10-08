@@ -1,57 +1,52 @@
 {
-  "date": "2026-10-07",
-  "chantVersion": "0.108.1",
-  "commit": "5c45caae2",
+  "date": "2026-10-08",
+  "chantVersion": "0.109.0",
+  "commit": "865d17791",
   "summary": {
     "aws": {
       "inputs": 20,
-      "identical": 0,
-      "different": 3,
+      "identical": 9,
+      "different": 10,
       "importFailed": 1,
-      "buildFailed": 16,
+      "buildFailed": 0,
       "reasonCounts": {
-        "field-dropped": 3,
         "section-dropped": 3,
-        "intrinsic-form": 1
+        "field-dropped": 1,
+        "field-added": 3,
+        "value-changed": 1,
+        "intrinsic-form": 3
       },
       "reasonScopes": {
         "section-dropped": [
-          "Description",
-          "Metadata"
+          "Conditions",
+          "Mappings"
         ],
         "field-dropped": [
-          "Parameters",
+          "Resources"
+        ],
+        "field-added": [
+          "AWSTemplateFormatVersion"
+        ],
+        "value-changed": [
           "Resources"
         ],
         "intrinsic-form": [
-          "Outputs"
+          "Resources"
         ]
       },
       "failureCounts": {
-        "output-of-a-bare-Ref": 3,
-        "generated-source-does-not-compile": 1,
-        "Sub-embeds-a-resource": 4,
-        "generated-file-references-missing-name": 8,
         "unknown-yaml-tag": 1
       }
     },
     "k8s": {
       "inputs": 22,
-      "identical": 19,
-      "different": 2,
+      "identical": 22,
+      "different": 0,
       "importFailed": 0,
-      "buildFailed": 1,
-      "reasonCounts": {
-        "api-version-changed": 1,
-        "empty-value-collapsed": 1
-      },
-      "reasonScopes": {
-        "api-version-changed": [],
-        "empty-value-collapsed": []
-      },
-      "failureCounts": {
-        "build-check-error": 1
-      }
+      "buildFailed": 0,
+      "reasonCounts": {},
+      "reasonScopes": {},
+      "failureCounts": {}
     }
   },
   "entries": [
@@ -61,15 +56,18 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SQS/SQSStandardQueue.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      "differences": [
+        {
+          "reason": "section-dropped",
+          "path": "Mappings",
+          "before": {}
+        }
       ],
-      "status": "build-failed",
+      "importWarnings": [],
+      "status": "different",
       "reasons": [
-        "output-of-a-bare-Ref"
-      ],
-      "detail": "main.ts - error: stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string"
+        "section-dropped"
+      ]
     },
     {
       "file": "aws/SQS__SQSFIFOQueue.yaml",
@@ -77,15 +75,18 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SQS/SQSFIFOQueue.yaml",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      "differences": [
+        {
+          "reason": "section-dropped",
+          "path": "Mappings",
+          "before": {}
+        }
       ],
-      "status": "build-failed",
+      "importWarnings": [],
+      "status": "different",
       "reasons": [
-        "generated-source-does-not-compile"
-      ],
-      "detail": "main.ts - error: Transform failed with 2 errors:"
+        "section-dropped"
+      ]
     },
     {
       "file": "aws/SNS__SNSTopic.json",
@@ -93,15 +94,29 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/SNS/SNSTopic.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      "differences": [
+        {
+          "reason": "section-dropped",
+          "path": "Conditions",
+          "before": {}
+        },
+        {
+          "reason": "section-dropped",
+          "path": "Mappings",
+          "before": {}
+        },
+        {
+          "reason": "field-dropped",
+          "path": "Resources.SNSTopic.Properties",
+          "before": {}
+        }
       ],
-      "status": "build-failed",
+      "importWarnings": [],
+      "status": "different",
       "reasons": [
-        "output-of-a-bare-Ref"
-      ],
-      "detail": "main.ts - error: stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string"
+        "field-dropped",
+        "section-dropped"
+      ]
     },
     {
       "file": "aws/DynamoDB__DynamoDB_Table.json",
@@ -109,98 +124,10 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/DynamoDB/DynamoDB_Table.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [
-        {
-          "reason": "section-dropped",
-          "path": "Description",
-          "before": "AWS CloudFormation Sample Template DynamoDB_Table: This template demonstrates the creation of a DynamoDB table.  **WARNING** This template creates an Amazon DynamoDB table. You will be billed for the AWS resources used if you create a stack from this template."
-        },
-        {
-          "reason": "section-dropped",
-          "path": "Metadata",
-          "before": {
-            "License": "Apache-2.0"
-          }
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementName.AllowedPattern",
-          "before": "[a-zA-Z0-9]*"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementName.ConstraintDescription",
-          "before": "must contain only alphanumberic characters"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementName.MaxLength",
-          "before": "2048"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementName.MinLength",
-          "before": "1"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementType.AllowedPattern",
-          "before": "[S|N]"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementType.ConstraintDescription",
-          "before": "must be either S or N"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementType.MaxLength",
-          "before": "1"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.HashKeyElementType.MinLength",
-          "before": "1"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.ReadCapacityUnits.ConstraintDescription",
-          "before": "must be between 5 and 10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.ReadCapacityUnits.MaxValue",
-          "before": "10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.ReadCapacityUnits.MinValue",
-          "before": "5"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.WriteCapacityUnits.ConstraintDescription",
-          "before": "must be between 5 and 10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.WriteCapacityUnits.MaxValue",
-          "before": "10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.WriteCapacityUnits.MinValue",
-          "before": "5"
-        }
-      ],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
-      ],
-      "status": "different",
-      "reasons": [
-        "field-dropped",
-        "section-dropped"
-      ]
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "aws/DynamoDB__DynamoDB_Secondary_Indexes.yaml",
@@ -208,58 +135,10 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/DynamoDB/DynamoDB_Secondary_Indexes.yaml",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [
-        {
-          "reason": "section-dropped",
-          "path": "Description",
-          "before": "AWS CloudFormation Sample Template DynamoDB_Secondary_Indexes: Create a DynamoDB table with local and global secondary indexes. **WARNING** This template creates an Amazon DynamoDB table. You will be billed for the AWS resources used if you create a stack from this template."
-        },
-        {
-          "reason": "section-dropped",
-          "path": "Metadata",
-          "before": {
-            "License": "Apache-2.0"
-          }
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.ReadCapacityUnits.ConstraintDescription",
-          "before": "must be between 5 and 10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.ReadCapacityUnits.MaxValue",
-          "before": "10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.ReadCapacityUnits.MinValue",
-          "before": "5"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.WriteCapacityUnits.ConstraintDescription",
-          "before": "must be between 5 and 10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.WriteCapacityUnits.MaxValue",
-          "before": "10000"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.WriteCapacityUnits.MinValue",
-          "before": "5"
-        }
-      ],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
-      ],
-      "status": "different",
-      "reasons": [
-        "field-dropped",
-        "section-dropped"
-      ]
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "aws/S3__compliant-bucket.json",
@@ -267,13 +146,18 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/compliant-bucket.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "Sub-embeds-a-resource"
+      "differences": [
+        {
+          "reason": "field-added",
+          "path": "AWSTemplateFormatVersion",
+          "after": "2010-09-09"
+        }
       ],
-      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+      "importWarnings": [],
+      "status": "different",
+      "reasons": [
+        "field-added"
+      ]
     },
     {
       "file": "aws/S3__compliant-static-website.yaml",
@@ -281,13 +165,18 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/compliant-static-website.yaml",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "generated-file-references-missing-name"
+      "differences": [
+        {
+          "reason": "field-added",
+          "path": "AWSTemplateFormatVersion",
+          "after": "2010-09-09"
+        }
       ],
-      "detail": "index.ts - error: The requested module './storage' does not provide an export named 'cloudFrontLogsBucket'"
+      "importWarnings": [],
+      "status": "different",
+      "reasons": [
+        "field-added"
+      ]
     },
     {
       "file": "aws/S3__S3_LambdaTrigger.json",
@@ -295,13 +184,21 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/S3/S3_LambdaTrigger.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "generated-file-references-missing-name"
+      "differences": [
+        {
+          "reason": "value-changed",
+          "path": "Resources.S3BucketNotification.DependsOn",
+          "before": [
+            "LambdaInvokePermission"
+          ],
+          "after": "LambdaInvokePermission"
+        }
       ],
-      "detail": "compute.ts - error: LambdaIAMRole is not defined"
+      "importWarnings": [],
+      "status": "different",
+      "reasons": [
+        "value-changed"
+      ]
     },
     {
       "file": "aws/Lambda__LambdaSample.yaml",
@@ -311,11 +208,8 @@
       "sourceHasComments": false,
       "differences": [],
       "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "Sub-embeds-a-resource"
-      ],
-      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "aws/VPC__FindInMapAZs.yaml",
@@ -323,15 +217,18 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/VPC/FindInMapAZs.yaml",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      "differences": [
+        {
+          "reason": "field-added",
+          "path": "AWSTemplateFormatVersion",
+          "after": "2010-09-09"
+        }
       ],
-      "status": "build-failed",
+      "importWarnings": [],
+      "status": "different",
       "reasons": [
-        "generated-file-references-missing-name"
-      ],
-      "detail": "index.ts - error: The requested module './other' does not provide an export named 'defaultPrivateRoute1'"
+        "field-added"
+      ]
     },
     {
       "file": "aws/VPC__VPC_With_Managed_NAT_And_Private_Subnet.json",
@@ -339,115 +236,45 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/VPC/VPC_With_Managed_NAT_And_Private_Subnet.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
-      ],
-      "status": "build-failed",
-      "reasons": [
-        "generated-file-references-missing-name"
-      ],
-      "detail": "index.ts - error: The requested module './other' does not provide an export named 'elasticIP0'"
-    },
-    {
-      "file": "aws/EC2__EIP_With_Association.json",
-      "lexicon": "aws",
-      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EIP_With_Association.json",
-      "license": "Apache-2.0",
-      "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
-      ],
-      "status": "build-failed",
-      "reasons": [
-        "generated-file-references-missing-name"
-      ],
-      "detail": "index.ts - error: The requested module './other' does not provide an export named 'eC2Instance'"
-    },
-    {
-      "file": "aws/EC2__EC2InstanceWithSecurityGroupSample.yaml",
-      "lexicon": "aws",
-      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EC2InstanceWithSecurityGroupSample.yaml",
-      "license": "Apache-2.0",
-      "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
-      ],
-      "status": "build-failed",
-      "reasons": [
-        "output-of-a-bare-Ref"
-      ],
-      "detail": "main.ts - error: stackOutput(ref): ref must be an attribute reference, an intrinsic wrapping one, or a literal string"
-    },
-    {
-      "file": "aws/RDS__RDS_MySQL_With_Read_Replica.json",
-      "lexicon": "aws",
-      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_MySQL_With_Read_Replica.json",
-      "license": "Apache-2.0",
-      "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
-      ],
-      "status": "build-failed",
-      "reasons": [
-        "Sub-embeds-a-resource"
-      ],
-      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
-    },
-    {
-      "file": "aws/RDS__RDS_with_DBParameterGroup.yaml",
-      "lexicon": "aws",
-      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_with_DBParameterGroup.yaml",
-      "license": "Apache-2.0",
-      "sourceHasComments": false,
       "differences": [
         {
-          "reason": "section-dropped",
-          "path": "Description",
-          "before": "Sample template showing how to create an Amazon RDS Database Instance with a\nDBParameterGroup. **WARNING** This template creates an Amazon Relational\nDatabase Service database instance. You will be billed for the AWS\nresources used if you create a stack from this template.\n"
-        },
-        {
-          "reason": "section-dropped",
-          "path": "Metadata",
+          "reason": "intrinsic-form",
+          "path": "Resources.PrivateSubnet0.Properties.AvailabilityZone",
           "before": {
-            "License": "Apache-2.0",
-            "cfn-lint": {
-              "config": {
-                "regions": [
-                  "us-east-1",
-                  "us-west-2"
-                ]
+            "Fn::Select": [
+              0,
+              {
+                "Fn::GetAZs": null
               }
-            }
+            ]
+          },
+          "after": {
+            "Fn::Select": [
+              0,
+              {
+                "Fn::GetAZs": ""
+              }
+            ]
           }
         },
         {
           "reason": "intrinsic-form",
-          "path": "Outputs.JDBCConnectionString.Value",
+          "path": "Resources.PrivateSubnet0.Properties.Tags[2].Value",
           "before": {
             "Fn::Join": [
               "",
               [
-                "jdbc:mysql://",
                 {
-                  "Fn::GetAtt": [
-                    "MyDB",
-                    "Endpoint.Address"
-                  ]
+                  "Ref": "VPCName"
                 },
-                ":",
+                "-private-",
                 {
-                  "Fn::GetAtt": [
-                    "MyDB",
-                    "Endpoint.Port"
+                  "Fn::Select": [
+                    0,
+                    {
+                      "Fn::GetAZs": null
+                    }
                   ]
-                },
-                "/",
-                {
-                  "Ref": "DBName"
                 }
               ]
             ]
@@ -456,95 +283,258 @@
             "Fn::Join": [
               "",
               [
-                "jdbc:mysql://",
                 {
-                  "Fn::GetAtt": [
-                    "MyDB",
-                    "Endpoint",
-                    "Address"
-                  ]
+                  "Ref": "VPCName"
                 },
-                ":",
+                "-private-",
                 {
-                  "Fn::GetAtt": [
-                    "MyDB",
-                    "Endpoint",
-                    "Port"
+                  "Fn::Select": [
+                    0,
+                    {
+                      "Fn::GetAZs": ""
+                    }
                   ]
-                },
-                "/",
-                {
-                  "Ref": "DBName"
                 }
               ]
             ]
           }
         },
         {
-          "reason": "field-dropped",
-          "path": "Parameters.DBName.AllowedPattern",
-          "before": "[a-zA-Z][a-zA-Z0-9]*"
+          "reason": "intrinsic-form",
+          "path": "Resources.PrivateSubnet1.Properties.AvailabilityZone",
+          "before": {
+            "Fn::Select": [
+              1,
+              {
+                "Fn::GetAZs": null
+              }
+            ]
+          },
+          "after": {
+            "Fn::Select": [
+              1,
+              {
+                "Fn::GetAZs": ""
+              }
+            ]
+          }
         },
         {
-          "reason": "field-dropped",
-          "path": "Parameters.DBName.ConstraintDescription",
-          "before": "must begin with a letter and contain only alphanumeric characters."
+          "reason": "intrinsic-form",
+          "path": "Resources.PrivateSubnet1.Properties.Tags[2].Value",
+          "before": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "VPCName"
+                },
+                "-private-",
+                {
+                  "Fn::Select": [
+                    1,
+                    {
+                      "Fn::GetAZs": null
+                    }
+                  ]
+                }
+              ]
+            ]
+          },
+          "after": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "VPCName"
+                },
+                "-private-",
+                {
+                  "Fn::Select": [
+                    1,
+                    {
+                      "Fn::GetAZs": ""
+                    }
+                  ]
+                }
+              ]
+            ]
+          }
         },
         {
-          "reason": "field-dropped",
-          "path": "Parameters.DBName.MaxLength",
-          "before": "64"
+          "reason": "intrinsic-form",
+          "path": "Resources.PublicSubnet0.Properties.AvailabilityZone",
+          "before": {
+            "Fn::Select": [
+              0,
+              {
+                "Fn::GetAZs": null
+              }
+            ]
+          },
+          "after": {
+            "Fn::Select": [
+              0,
+              {
+                "Fn::GetAZs": ""
+              }
+            ]
+          }
         },
         {
-          "reason": "field-dropped",
-          "path": "Parameters.DBName.MinLength",
-          "before": "1"
+          "reason": "intrinsic-form",
+          "path": "Resources.PublicSubnet0.Properties.Tags[2].Value",
+          "before": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "VPCName"
+                },
+                "-public-",
+                {
+                  "Fn::Select": [
+                    0,
+                    {
+                      "Fn::GetAZs": null
+                    }
+                  ]
+                }
+              ]
+            ]
+          },
+          "after": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "VPCName"
+                },
+                "-public-",
+                {
+                  "Fn::Select": [
+                    0,
+                    {
+                      "Fn::GetAZs": ""
+                    }
+                  ]
+                }
+              ]
+            ]
+          }
         },
         {
-          "reason": "field-dropped",
-          "path": "Parameters.DBUser.AllowedPattern",
-          "before": "[a-zA-Z][a-zA-Z0-9]*"
+          "reason": "intrinsic-form",
+          "path": "Resources.PublicSubnet1.Properties.AvailabilityZone",
+          "before": {
+            "Fn::Select": [
+              1,
+              {
+                "Fn::GetAZs": null
+              }
+            ]
+          },
+          "after": {
+            "Fn::Select": [
+              1,
+              {
+                "Fn::GetAZs": ""
+              }
+            ]
+          }
         },
         {
-          "reason": "field-dropped",
-          "path": "Parameters.DBUser.ConstraintDescription",
-          "before": "must begin with a letter and contain only alphanumeric characters."
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.DBUser.MaxLength",
-          "before": "16"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.DBUser.MinLength",
-          "before": "1"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Parameters.DBUser.NoEcho",
-          "before": "true"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Resources.MyDB.DeletionPolicy",
-          "before": "Snapshot"
-        },
-        {
-          "reason": "field-dropped",
-          "path": "Resources.MyDB.UpdateReplacePolicy",
-          "before": "Snapshot"
+          "reason": "intrinsic-form",
+          "path": "Resources.PublicSubnet1.Properties.Tags[2].Value",
+          "before": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "VPCName"
+                },
+                "-public-",
+                {
+                  "Fn::Select": [
+                    1,
+                    {
+                      "Fn::GetAZs": null
+                    }
+                  ]
+                }
+              ]
+            ]
+          },
+          "after": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "VPCName"
+                },
+                "-public-",
+                {
+                  "Fn::Select": [
+                    1,
+                    {
+                      "Fn::GetAZs": ""
+                    }
+                  ]
+                }
+              ]
+            ]
+          }
         }
       ],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source"
-      ],
+      "importWarnings": [],
       "status": "different",
       "reasons": [
-        "field-dropped",
-        "intrinsic-form",
-        "section-dropped"
+        "intrinsic-form"
       ]
+    },
+    {
+      "file": "aws/EC2__EIP_With_Association.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EIP_With_Association.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "aws/EC2__EC2InstanceWithSecurityGroupSample.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/EC2/EC2InstanceWithSecurityGroupSample.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "aws/RDS__RDS_MySQL_With_Read_Replica.json",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_MySQL_With_Read_Replica.json",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
+    },
+    {
+      "file": "aws/RDS__RDS_with_DBParameterGroup.yaml",
+      "lexicon": "aws",
+      "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/RDS/RDS_with_DBParameterGroup.yaml",
+      "license": "Apache-2.0",
+      "sourceHasComments": false,
+      "differences": [],
+      "importWarnings": [],
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "aws/APIGateway__apigateway_lambda_integration.yaml",
@@ -566,16 +556,23 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/ElasticLoadBalancing/ELBStickinessSample.json",
       "license": "Apache-2.0",
       "sourceHasComments": false,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source",
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      "differences": [
+        {
+          "reason": "intrinsic-form",
+          "path": "Resources.ElasticLoadBalancer.Properties.AvailabilityZones",
+          "before": {
+            "Fn::GetAZs": null
+          },
+          "after": {
+            "Fn::GetAZs": ""
+          }
+        }
       ],
-      "status": "build-failed",
+      "importWarnings": [],
+      "status": "different",
       "reasons": [
-        "generated-file-references-missing-name"
-      ],
-      "detail": "index.ts - error: The requested module './other' does not provide an export named 'eC2Instance1'"
+        "intrinsic-form"
+      ]
     },
     {
       "file": "aws/CloudWatch__CloudWatch_Dashboard_NAT_FlowLogs.json",
@@ -585,11 +582,8 @@
       "sourceHasComments": false,
       "differences": [],
       "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "Sub-embeds-a-resource"
-      ],
-      "detail": "error: Cannot embed Declarable directly in Sub template. Use AttrRef instead."
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "aws/AutoScaling__AutoScalingRollingUpdates.yaml",
@@ -597,16 +591,33 @@
       "source": "https://github.com/awslabs/aws-cloudformation-templates/blob/a0f43bc6d20813052892546f445037cf84c75b54/AutoScaling/AutoScalingRollingUpdates.yaml",
       "license": "Apache-2.0",
       "sourceHasComments": true,
-      "differences": [],
-      "importWarnings": [
-        "Template section \"Metadata\" is not carried by import — it is dropped from the generated source",
-        "Template section \"Mappings\" is not carried by import — it is dropped from the generated source"
+      "differences": [
+        {
+          "reason": "intrinsic-form",
+          "path": "Resources.ElasticLoadBalancer.Properties.AvailabilityZones",
+          "before": {
+            "Fn::GetAZs": null
+          },
+          "after": {
+            "Fn::GetAZs": ""
+          }
+        },
+        {
+          "reason": "intrinsic-form",
+          "path": "Resources.WebServerGroup.Properties.AvailabilityZones",
+          "before": {
+            "Fn::GetAZs": null
+          },
+          "after": {
+            "Fn::GetAZs": ""
+          }
+        }
       ],
-      "status": "build-failed",
+      "importWarnings": [],
+      "status": "different",
       "reasons": [
-        "generated-file-references-missing-name"
-      ],
-      "detail": "index.ts - error: The requested module './other' does not provide an export named 'describeHealthRole'"
+        "intrinsic-form"
+      ]
     },
     {
       "file": "aws/ECS__ECS_Schedule_Example.yaml",
@@ -616,11 +627,8 @@
       "sourceHasComments": true,
       "differences": [],
       "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "generated-file-references-missing-name"
-      ],
-      "detail": "compute.ts - error: ECSCluster is not defined"
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "k8s/controllers__nginx-deployment.yaml",
@@ -683,19 +691,10 @@
       "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/controllers/hpa-rs.yaml",
       "license": "CC-BY-4.0",
       "sourceHasComments": false,
-      "differences": [
-        {
-          "reason": "api-version-changed",
-          "path": "HorizontalPodAutoscaler//frontend-scaler:.apiVersion",
-          "before": "autoscaling/v1",
-          "after": "autoscaling/v2"
-        }
-      ],
+      "differences": [],
       "importWarnings": [],
-      "status": "different",
-      "reasons": [
-        "api-version-changed"
-      ]
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "k8s/application__deployment.yaml",
@@ -738,11 +737,8 @@
       "sourceHasComments": true,
       "differences": [],
       "importWarnings": [],
-      "status": "build-failed",
-      "reasons": [
-        "build-check-error"
-      ],
-      "detail": "error: [mysql] Container \"mysql\" in StatefulSet \"mysql\" has hardcoded value for sensitive env var \"MYSQL_ALLOW_EMPTY_PASSWORD\" — use secretKeyRef instead (k8s)"
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "k8s/application__mysql__mysql-services.yaml",
@@ -860,21 +856,10 @@
       "source": "https://github.com/kubernetes/website/blob/53e4b4173a78318e618db32d554e6c65dcec10b8/content/en/examples/service/networking/network-policy-allow-all-egress.yaml",
       "license": "CC-BY-4.0",
       "sourceHasComments": false,
-      "differences": [
-        {
-          "reason": "empty-value-collapsed",
-          "path": "NetworkPolicy//allow-all-egress:.spec.egress",
-          "before": [
-            {}
-          ],
-          "after": null
-        }
-      ],
+      "differences": [],
       "importWarnings": [],
-      "status": "different",
-      "reasons": [
-        "empty-value-collapsed"
-      ]
+      "status": "identical",
+      "reasons": []
     },
     {
       "file": "k8s/policy__quota.yaml",

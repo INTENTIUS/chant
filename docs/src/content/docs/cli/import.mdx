@@ -123,49 +123,44 @@ A lexicon opts into being an `--agents` target by implementing
 
 ## How closely an import round-trips
 
-The table below measures how often an import followed by a build gives back the template you started with, using 20 CloudFormation templates from the awslabs/aws-cloudformation-templates repository and 22 Kubernetes manifests from the Kubernetes documentation examples. Each was run through `chant import` and then `chant build`, and the original and the rebuilt document were compared after canonical ordering. The run was on 2026-10-07 with chant 0.108.1, and the results follow.
+The table below measures how often an import followed by a build gives back the template you started with, using 20 CloudFormation templates from the awslabs/aws-cloudformation-templates repository and 22 Kubernetes manifests from the Kubernetes documentation examples. Each was run through `chant import` and then `chant build`, and the original and the rebuilt document were compared after canonical ordering. The run was on 2026-10-08 with chant 0.109.0, and the results follow.
 
 | Target | Inputs | Byte-identical | Differ | Import or build failed |
 |--------|--------|----------------|--------|------------------------|
-| CloudFormation | 20 | 0 | 3 | 17 |
-| Kubernetes | 22 | 19 (86%) | 2 | 1 |
+| CloudFormation | 20 | 9 | 10 | 1 |
+| Kubernetes | 22 | 22 | 0 | 0 |
 
 Canonical ordering means each file is parsed, every mapping has its keys sorted, and the document is printed as JSON with two-space indent. Arrays keep their order. CloudFormation short-form tags such as `!Sub` and `!GetAtt` are rewritten to their long form first. A Kubernetes file with several documents has them sorted by kind, namespace and name. Comments, quoting and indentation disappear when the file is parsed, so they are outside the measure. The build ran with telemetry attribution off, since that stamps `OTEL_*` environment variables onto workloads that the original never had.
 
+Some inputs contain what a post-synth check reports as an error. With those checks on, the build stops before there is anything to compare, so the measurement turns them off. A normal build still reports them as errors.
+
+| Check | What the input contains |
+|-------|-------------------------|
+| WAW049 | EC2 ingress open to 0.0.0.0/0 on port 80 |
+| WAW021, WAW039 | an RDS instance without encryption or backups |
+| WAW042 | an S3 bucket without a TLS-only bucket policy |
+| WK8005 | a literal value in a sensitive environment variable |
+
 ### Kubernetes
 
-Of the 22 manifests, 19 come back identical. The other three:
-
-| Manifest | What changed |
-|----------|--------------|
-| `controllers/hpa-rs.yaml` | `apiVersion` moved from `autoscaling/v1` to `autoscaling/v2`; nothing else in the document changed |
-| `service/networking/network-policy-allow-all-egress.yaml` | `spec.egress: [{}]`, which allows all egress, was emitted as `null` |
-| `application/mysql/mysql-statefulset.yaml` | the build stopped on the check for a hard-coded value in a sensitive environment variable, so no output was produced |
+All 22 manifests come back identical.
 
 ### CloudFormation
 
-None of the 20 templates came back identical. Seventeen did not get as far as a comparison:
+Nine of the 20 templates come back identical. `apigateway_lambda_integration.yaml` does not import, because it uses `!Rain::Embed`, a directive for the Rain preprocessor. It is not CloudFormation, and import does not read it. Run the template through `rain pkg` first.
 
-| Reason | Templates |
-|--------|-----------|
-| The generated source names something defined in another generated file or not at all (`ECSCluster is not defined`, a missing export from `./other`) | 8 |
-| A `Fn::Sub` template refers to a resource directly, which the build refuses | 4 |
-| An output of a bare `Ref` (`stackOutput(Ref(queue))`) is rejected | 3 |
-| The generated source does not compile | 1 |
-| The template uses a YAML tag the parser does not know (`!Rain::Embed`) | 1 |
+The other ten build and differ from the original in these ways:
 
-The three that built differ from the original in these ways:
-
-| Difference | Where |
-|------------|-------|
-| `Description` and `Metadata` are dropped | top level, all three |
-| Parameter constraints are dropped (`AllowedPattern`, `ConstraintDescription`, `MinLength`, `MaxLength`, `MinValue`, `MaxValue`) | `Parameters`, all three |
-| `DeletionPolicy` and `UpdateReplacePolicy` are dropped | `Resources`, one |
-| `!GetAtt MyDB.Endpoint.Address` is emitted as a three-element `Fn::GetAtt` list instead of `["MyDB", "Endpoint.Address"]` | `Outputs`, one |
+| Difference | Templates |
+|------------|-----------|
+| `Fn::GetAZs: null` comes back as `Fn::GetAZs: ""`, which means the same region | 3 |
+| `AWSTemplateFormatVersion` is added when the original has none | 3 |
+| An empty section (`Mappings: {}`, `Conditions: {}`) or empty `Properties: {}` is dropped | 3 |
+| A `DependsOn` list of one item comes back as a string | 1 |
 
 ### Repeating the measurement
 
-The inputs, their upstream URLs and licenses, and the latest results are in `test/import-roundtrip/`. `npx tsx scripts/import-roundtrip-bytes.ts` re-runs every input through the CLI and rewrites `results.json` and `results.md` there; it takes about a minute and needs the lexicons built.
+The inputs, their upstream URLs and licenses, and the latest results are in `test/import-roundtrip/`. `npx tsx scripts/import-roundtrip-bytes.ts` re-runs every input through the CLI and rewrites `results.json` and `results.md` there, with the five checks above turned off. It takes about a minute and needs the lexicons built.
 
 ## Usage
 
