@@ -59,6 +59,7 @@ exit: 0
           "$ref": "deployment.uid"
         }
       },
+      "compositeParent": "WebApp",
       "sourceLoc": {
         "file": "src/web.ts"
       }
@@ -102,6 +103,7 @@ exit: 0
           "$ref": "pdb.uid"
         }
       },
+      "compositeParent": "WebApp",
       "sourceLoc": {
         "file": "src/web.ts"
       }
@@ -133,6 +135,7 @@ exit: 0
           "$ref": "service.uid"
         }
       },
+      "compositeParent": "WebApp",
       "sourceLoc": {
         "file": "src/web.ts"
       }
@@ -150,6 +153,13 @@ exit: 0
         "reconcile"
       ],
       "k8s": [
+        "deployment",
+        "pdb",
+        "service"
+      ]
+    },
+    "byComposite": {
+      "WebApp": [
         "deployment",
         "pdb",
         "service"
