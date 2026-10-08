@@ -309,3 +309,224 @@ describe("foldProject attributes a host composite instance exported whole (chant
     });
   });
 });
+
+/**
+ * chant#3608 — the two cases the specification's F-Obs-Provenance fixtures
+ * found, against a host shaped like the conformance suite's `shapes` host: its
+ * registration form returns a `CompositeInstance` carrying the members, and it
+ * publishes a composite of its own (`Archive`) that a fold invokes rather than
+ * interprets.
+ */
+describe("foldProject provenance for host composites (chant#3608)", () => {
+  let root: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "chant-3608-host-"));
+    const pkg = join(root, "node_modules", "@tsad", "shapes-3608");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "@tsad/shapes-3608", version: "0.0.0", type: "module", main: "index.js" }),
+    );
+    writeFileSync(
+      join(pkg, "index.js"),
+      [
+        "const MARK = Symbol.for('tsad.conformance.declarable');",
+        "const COMPOSITE = Symbol.for('tsad.conformance.composite');",
+        "export class Bucket {",
+        "  constructor(props = {}, attributes = {}) {",
+        "    this.entityType = 'Bucket'; this.lexicon = 'shapes'; this.props = props; this.attributes = attributes;",
+        "    Object.defineProperty(this, MARK, { value: true, enumerable: false });",
+        "  }",
+        "}",
+        "class CompositeInstance { constructor() { this[COMPOSITE] = true; } }",
+        "export const Composite = (factory, name = 'anonymous') => {",
+        "  const definition = (props) => Object.assign(new CompositeInstance(), factory(props));",
+        "  return Object.assign(definition, { compositeName: name });",
+        "};",
+        "export const Archive = Composite((props) => ({ bucket: new Bucket({ name: props.name, versioned: true }) }), 'Archive');",
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      join(root, "inner.ts"),
+      'import { Bucket, Composite } from "@tsad/shapes-3608";\n' +
+        "export const Inner = Composite((props: { name: string }) => ({\n" +
+        '  bucket: new Bucket({ name: props.name, tier: "inner" }),\n' +
+        '}), "Inner");\n',
+    );
+    writeFileSync(
+      join(root, "outer.ts"),
+      'import { Bucket, Composite } from "@tsad/shapes-3608";\n' +
+        'import { Inner } from "./inner";\n' +
+        "export const Outer = Composite((props: { name: string }) => ({\n" +
+        "  main: Inner({ name: props.name }),\n" +
+        '  fixed: Inner({ name: "fixed" }),\n' +
+        "  side: new Bucket({ name: props.name }),\n" +
+        '}), "Outer");\n',
+    );
+  });
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  test("a host-published composite's members are unknown, whole or destructured, never direct", async () => {
+    mkdirSync(join(root, "archive"), { recursive: true });
+    const file = join(root, "archive", "app.ts");
+    writeFileSync(
+      file,
+      'import { Archive } from "@tsad/shapes-3608";\n' +
+        'export const archive = Archive({ name: "logs" });\n' +
+        'export const { bucket } = Archive({ name: "old" });\n',
+    );
+
+    const verdict = (await foldProject([file], [], { lexiconPackages: ["@tsad/shapes-3608"], sandbox: true })).get(file)!;
+    expect(verdict.reason).toBeUndefined();
+    expect(verdict.verdict).toBe("fold");
+    const provenance = verdict.foldProvenance!;
+    expect(Object.keys(provenance).sort()).toEqual(["archiveBucket", "bucket"]);
+
+    const unknown = { kind: "unknown", reason: "composite-not-interpreted" };
+    expect(provenance.archiveBucket).toEqual({
+      sourceFile: file,
+      composite: "Archive",
+      instance: "archive",
+      fields: { name: unknown, versioned: unknown },
+    });
+    expect(provenance.bucket.composite).toBe("Archive");
+    expect(provenance.bucket.fields).toEqual({ name: unknown, versioned: unknown });
+
+    // build() does not expand a host instance exported whole, so the
+    // destructured member is the one it can be held to.
+    const built = await build(join(root, "archive"), [namesSerializer], undefined, { fold: true });
+    expect(built.errors).toEqual([]);
+    expect(built.foldProvenance.bucket).toEqual(provenance.bucket);
+  });
+
+  test("a whole instance's nested composite members have records, and the innermost composite wins", async () => {
+    mkdirSync(join(root, "site"), { recursive: true });
+    const file = join(root, "site", "app.ts");
+    writeFileSync(
+      file,
+      'import { Outer } from "../outer";\n' +
+        'export const site = Outer({ name: "web" });\n' +
+        'export const { main, fixed, side } = Outer({ name: "api" });\n',
+    );
+
+    const verdict = (await foldProject([file], [], { lexiconPackages: ["@tsad/shapes-3608"], sandbox: true })).get(file)!;
+    expect(verdict.reason).toBeUndefined();
+    expect(verdict.verdict).toBe("fold");
+    const provenance = verdict.foldProvenance!;
+    expect(Object.keys(provenance).sort()).toEqual([
+      "fixedBucket",
+      "mainBucket",
+      "side",
+      "siteFixedBucket",
+      "siteMainBucket",
+      "siteSide",
+    ]);
+
+    const innerName = (instance?: string) => ({
+      kind: "composite-parameter",
+      composite: "Inner",
+      ...(instance ? { instance } : {}),
+      parameters: ["name"],
+    });
+    const innerTier = (instance?: string) => ({ kind: "composite-literal", composite: "Inner", ...(instance ? { instance } : {}) });
+
+    expect(provenance.siteMainBucket).toMatchObject({
+      sourceFile: file,
+      composite: "Inner",
+      instance: "site",
+      fields: { name: innerName("site"), tier: innerTier("site") },
+    });
+    expect(provenance.siteFixedBucket.fields).toMatchObject({ name: innerName("site"), tier: innerTier("site") });
+    expect(provenance.siteSide).toMatchObject({
+      sourceFile: file,
+      composite: "Outer",
+      instance: "site",
+      fields: { name: { kind: "composite-parameter", composite: "Outer", instance: "site", parameters: ["name"] } },
+    });
+
+    // chant#3597's locations follow the innermost writer too: a nested
+    // member's call is the `Inner(...)` call inside Outer's body, and a
+    // member Outer built itself points at the `Outer(...)` call in this file.
+    expect(provenance.siteMainBucket.fields.name).toMatchObject({ call: { file: join(root, "outer.ts"), line: 4 } });
+    expect(provenance.siteFixedBucket.fields.name).toMatchObject({ call: { file: join(root, "outer.ts"), line: 5 } });
+    expect(provenance.siteSide.fields.name).toMatchObject({ call: { file, line: 2 } });
+
+    // The destructured form agrees, field for field, apart from the instance:
+    // `main` and `fixed` are host instances exported whole in their own right.
+    expect(provenance.mainBucket.fields).toMatchObject({ name: innerName("main"), tier: innerTier("main") });
+    expect(provenance.fixedBucket.fields).toMatchObject({ name: innerName("fixed"), tier: innerTier("fixed") });
+    expect(provenance.side.fields.name).toMatchObject({ kind: "composite-parameter", composite: "Outer", parameters: ["name"] });
+  });
+});
+
+/**
+ * chant#3608 — a member destructured from a chant composite the build CALLS
+ * rather than interprets. A lexicon composite is the common case
+ * (`export const { namespace, resourceQuota } = NamespaceEnv({...})`, as the
+ * ray-kuberay-gke example writes it): nothing in the build says which
+ * argument produced which field, so every field is `unknown`, and before this
+ * every one of them read as `direct`.
+ */
+describe("a member destructured from a called chant composite is unknown (chant#3608)", () => {
+  const K8S = "@intentius/chant-lexicon-k8s";
+  let srcDir: string;
+  let file: string;
+  let warn: typeof console.warn;
+
+  beforeAll(async () => {
+    // NamespaceEnv warns about a quota with no LimitRange defaults; not this test's concern.
+    warn = console.warn;
+    console.warn = () => {};
+    const dir = join(repoRoot, ".cache", `chant-3608-${process.pid}`);
+    await rm(dir, { recursive: true, force: true });
+    srcDir = join(await (async () => (await mkdir(dir, { recursive: true }), realpath(dir)))(), "src");
+    await mkdir(srcDir, { recursive: true });
+    file = join(srcDir, "namespace.ts");
+    await writeFile(
+      file,
+      `import { NamespaceEnv } from ${JSON.stringify(K8S)};\n` +
+        `import { propagate } from ${JSON.stringify(compositePath)};\n` +
+        'export const { namespace, resourceQuota } = NamespaceEnv({ name: "ray-system", cpuQuota: "8" });\n' +
+        'export const shared = propagate(NamespaceEnv({ name: "shared", cpuQuota: "4" }), { metadata: { labels: { team: "data" } } });\n',
+    );
+  });
+
+  afterAll(async () => {
+    console.warn = warn;
+    await rm(dirname(srcDir), { recursive: true, force: true });
+  });
+
+  const unknown = { kind: "unknown", reason: "composite-not-interpreted" };
+
+  /** Every field of every named record is unknown, and the record names the composite. */
+  function expectAllUnknown(provenance: FoldProvenance, names: string[]): void {
+    for (const name of names) {
+      const record = provenance[name];
+      expect(record, name).toBeDefined();
+      expect(record.composite, name).toBe("NamespaceEnv");
+      expect(Object.keys(record.fields).length, name).toBeGreaterThan(0);
+      for (const [path, origin] of Object.entries(record.fields)) expect(origin, `${name}.${path}`).toEqual(unknown);
+    }
+  }
+
+  test.each([{}, { executing: true }, { sandbox: true }])("foldProject and build() agree, %o", async (mode) => {
+    const verdict = (await foldProject([file], [], { lexicons: ["k8s"], ...mode })).get(file)!;
+    expect(verdict.verdict).toBe("fold");
+    const fromFold = verdict.foldProvenance!;
+    expectAllUnknown(fromFold, ["namespace", "resourceQuota", "sharedNamespace", "sharedResourceQuota"]);
+    // The propagated key, written by the composite and by the shared props, stays unknown.
+    expect(fromFold.sharedNamespace.fields["metadata.name"]).toEqual(unknown);
+
+    const built = await build(srcDir, [namesSerializer], undefined, { fold: true, lexicons: ["k8s"], ...mode });
+    expect(built.errors).toEqual([]);
+    for (const name of ["namespace", "resourceQuota"]) expect(built.foldProvenance[name], name).toEqual(fromFold[name]);
+  });
+
+  test("the run path reports them unknown too", async () => {
+    const built = await build(srcDir, [namesSerializer], undefined, {});
+    expect(built.errors).toEqual([]);
+    expectAllUnknown(built.foldProvenance, ["namespace", "resourceQuota", "sharedNamespace", "sharedResourceQuota"]);
+  });
+});
