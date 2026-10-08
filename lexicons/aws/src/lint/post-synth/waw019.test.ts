@@ -31,6 +31,38 @@ describe("WAW019: Security Group Unrestricted Ingress", () => {
     expect(diags[0].severity).toBe("error");
   });
 
+  test("ports written as strings are read as numbers", () => {
+    // CloudFormation accepts FromPort: "80"; port 80 is not sensitive.
+    const ctx = makeCtx({
+      Resources: {
+        MySG: {
+          Type: "AWS::EC2::SecurityGroup",
+          Properties: {
+            SecurityGroupIngress: [
+              { IpProtocol: "tcp", FromPort: "80", ToPort: "80", CidrIp: "0.0.0.0/0" },
+              { IpProtocol: "tcp", FromPort: "22", ToPort: "22", CidrIp: "10.0.0.0/8" },
+            ],
+          },
+        },
+      },
+    });
+    expect(checkUnrestrictedIngress(ctx)).toHaveLength(0);
+  });
+
+  test("a sensitive port written as a string is still flagged", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MySG: {
+          Type: "AWS::EC2::SecurityGroup",
+          Properties: {
+            SecurityGroupIngress: [{ IpProtocol: "tcp", FromPort: "22", ToPort: "22", CidrIp: "0.0.0.0/0" }],
+          },
+        },
+      },
+    });
+    expect(checkUnrestrictedIngress(ctx)).toHaveLength(1);
+  });
+
   test("flags SG with ::/0 on port 3389", () => {
     const ctx = makeCtx({
       Resources: {

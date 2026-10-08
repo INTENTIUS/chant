@@ -205,6 +205,30 @@ async function chant(cwd: string, args: string[]): Promise<{ ok: boolean; out: s
   }
 }
 
+/**
+ * Error-severity checks the measurement builds with off, by lexicon. Each one
+ * fires on what the source input really contains, so with it on the input
+ * never reaches the comparison and the run measures the input, not import:
+ *
+ *   WAW049  EC2 ingress open to 0.0.0.0/0 on port 80 (AutoScaling, ECS, ELB)
+ *   WAW021  RDS instance without StorageEncrypted (RDS read replica)
+ *   WAW039  RDS instance without a backup retention period (RDS read replica)
+ *   WAW042  S3 bucket without a TLS-only bucket policy (S3_LambdaTrigger)
+ *   WK8005  a literal value in a sensitive env var (mysql-statefulset)
+ *
+ * A normal build keeps them as errors.
+ */
+export const WAIVED_CHECKS: Record<"aws" | "k8s", readonly string[]> = {
+  aws: ["WAW049", "WAW021", "WAW039", "WAW042"],
+  k8s: ["WK8005"],
+};
+
+/** The chant.config.ts each measured input builds with. */
+export function measurementConfig(lexicon: "aws" | "k8s"): string {
+  const rules = Object.fromEntries(WAIVED_CHECKS[lexicon].map((id) => [id, "off"]));
+  return `export default { lexicons: ["${lexicon}"], telemetry: { attribution: false }, lint: { rules: ${JSON.stringify(rules)} } };\n`;
+}
+
 export interface Entry {
   file: string;
   lexicon: "aws" | "k8s";
@@ -242,10 +266,7 @@ async function measureOne(p: { lexicon: "aws" | "k8s"; file: string; source: str
   const input = join(dir, inputName);
   copyFileSync(join(fixtureRoot, p.file), input);
   const original = readFileSync(input, "utf-8");
-  writeFileSync(
-    join(dir, "chant.config.ts"),
-    `export default { lexicons: ["${p.lexicon}"], telemetry: { attribution: false } };\n`,
-  );
+  writeFileSync(join(dir, "chant.config.ts"), measurementConfig(p.lexicon));
   const base = {
     file: p.file,
     lexicon: p.lexicon,
@@ -338,6 +359,10 @@ function markdown(meta: any, entries: Entry[]): string {
     const x = s[lex];
     lines.push(`| ${lex === "aws" ? "CloudFormation" : "Kubernetes"} | ${x.inputs} | ${x.identical} | ${x.different} | ${x.importFailed} | ${x.buildFailed} |`);
   }
+  lines.push(
+    "",
+    `Built with these checks off, because the inputs themselves trip them: ${WAIVED_CHECKS.aws.join(", ")} (CloudFormation), ${WAIVED_CHECKS.k8s.join(", ")} (Kubernetes).`,
+  );
   lines.push("", "## Per input", "", "| Input | Result | Reasons |", "|---|---|---|");
   for (const e of entries) {
     const res = e.status;
