@@ -1119,6 +1119,15 @@ Workspace (level 1, #2524):
                         and comments; --cover copies a PNG, JPEG or WebP into
                         the repository. Judged by the write scope at base.
                         Prints the box-listing-write document; never commits
+  workspace member add <name> --from <file|-> [--by <principal>] [--dry-run]
+  workspace member remove <name> [--by <principal>] [--dry-run]
+  workspace host set <name> --from <file|-> [--by <principal>] [--dry-run]
+                        Add or remove a member's entry, or add or replace a
+                        host's, in the declaration, in place, keeping its
+                        formatting and comments. Refuses a declaration that
+                        doesn't read, or two boxes sharing a port. Judged by
+                        the write scope at base. Prints the member-write
+                        document; never commits
   workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run]
                         Publish a built work item, or the records kept
                         uncommitted, through the publisher the box block names:
@@ -1850,6 +1859,9 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
   // #3308 — a box's listing, written through chant so a tool never edits the declaration itself (ws-074).
   { name: "workspace box", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/box-cli")).runWorkspaceBox(ctx) },
+  // #3596 — a declaration's members and hosts, written through chant so a lobby never edits the declaration itself (ws-074).
+  { name: "workspace member", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/declaration-write-cli")).runWorkspaceMember(ctx) },
+  { name: "workspace host", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/declaration-write-cli")).runWorkspaceHost(ctx) },
   // #3173 — the working tree's write lock, held across chant calls for a batch of writes (ws-089).
   { name: "workspace lock", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/write-lock-cli")).runWorkspaceLock(ctx) },
   // #3172 — work in progress under refs/chant/wip/<branch>, replicated under the box's policy (ws-085).

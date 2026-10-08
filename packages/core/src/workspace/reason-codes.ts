@@ -260,6 +260,9 @@ export const REASONS = {
   "listing-member-unknown": "box listing set names a member the declaration does not declare.",
   "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
   "listing-cover-invalid": "The cover can't be read, is not a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's.",
+  // A declaration's members and hosts written through chant (member add|remove, host set, #3596): why the write was refused. Nothing is written.
+  "member-exists": "member add names a member the declaration already has, with an entry other than the one given.",
+  "member-unknown": "member remove names a member the declaration does not declare.",
   // A box's work published through chant (box publish, #3165, ws-088): why the call printed no result.
   "publish-member-unknown": "box publish names a member the declaration does not declare.",
   "publish-none": "box publish names a member whose box block names no publisher, or which declares no box block.",

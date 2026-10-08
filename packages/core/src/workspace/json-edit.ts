@@ -140,3 +140,74 @@ export function removeProperty(text: string, jsonc: boolean, objectPointer: stri
   const comma = skipTrivia(text, prev.end);
   return text.slice(0, comma) + text.slice(child.end);
 }
+
+/**
+ * Add `value` to the end of the array at `arrayPointer` (#3596), indented
+ * like the element before it, or on its own line in an empty array. An array
+ * on one line stays on one line. Throws a {@link JsonEditError} when there is
+ * no array at the pointer.
+ */
+export function appendElement(text: string, jsonc: boolean, arrayPointer: string, value: unknown): string {
+  const r = parse(text, jsonc);
+  const arr = valueAt(r.value, arrayPointer);
+  if (!Array.isArray(arr)) throw new JsonEditError(`there is no array at ${arrayPointer || "the root"}`);
+  const { eol, unit } = style(text);
+  const span = r.span(arrayPointer)!;
+  const parentIndent = lineIndent(text, span.key ?? span.start);
+  if (arr.length === 0) {
+    // Inside the brackets, after anything already there, such as a comment.
+    const indent = parentIndent + unit;
+    const inside = text.slice(span.start + 1, span.end - 1).replace(/\s+$/, "");
+    return `${text.slice(0, span.start)}[${inside}${eol}${indent}${render(value, indent, unit, eol)}${eol}${parentIndent}]${text.slice(span.end)}`;
+  }
+  const last = r.span(`${arrayPointer}/${arr.length - 1}`)!;
+  const next = skipTrivia(text, last.end);
+  const trailingComma = text[next] === ",";
+  if (lineStart(text, last.start) === lineStart(text, span.start)) {
+    const entry = JSON.stringify(value);
+    return trailingComma ? `${text.slice(0, next + 1)} ${entry},${text.slice(next + 1)}` : `${text.slice(0, last.end)}, ${entry}${text.slice(last.end)}`;
+  }
+  const indent = lineIndent(text, last.start);
+  const after = trailingComma ? next + 1 : last.end;
+  const eolAt = text.indexOf("\n", after);
+  const lineEnd = eolAt < 0 ? text.length : text[eolAt - 1] === "\r" ? eolAt - 1 : eolAt;
+  const at = /^[ \t]*(\/\/.*)?$/.test(text.slice(after, lineEnd)) ? lineEnd : after;
+  const entry = `${eol}${indent}${render(value, indent, unit, eol)}`;
+  if (trailingComma) return `${text.slice(0, at)}${entry},${text.slice(at)}`;
+  return `${text.slice(0, last.end)},${text.slice(last.end, at)}${entry}${text.slice(at)}`;
+}
+
+/** Replace the element at `index` of the array at `arrayPointer` with `value` (#3596). Throws a {@link JsonEditError} when there is none. */
+export function setElement(text: string, jsonc: boolean, arrayPointer: string, index: number, value: unknown): string {
+  const r = parse(text, jsonc);
+  const arr = valueAt(r.value, arrayPointer);
+  if (!Array.isArray(arr) || index < 0 || index >= arr.length) throw new JsonEditError(`there is no element ${index} in an array at ${arrayPointer || "the root"}`);
+  const { eol, unit } = style(text);
+  const span = r.span(arrayPointer)!;
+  const child = r.span(`${arrayPointer}/${index}`)!;
+  const value_ = lineStart(text, child.start) === lineStart(text, span.start) ? JSON.stringify(value) : render(value, lineIndent(text, child.start), unit, eol);
+  return text.slice(0, child.start) + value_ + text.slice(child.end);
+}
+
+/** Remove the element at `index` of the array at `arrayPointer`, with the comma that went with it (#3596). Throws a {@link JsonEditError} when there is none. */
+export function removeElement(text: string, jsonc: boolean, arrayPointer: string, index: number): string {
+  const r = parse(text, jsonc);
+  const arr = valueAt(r.value, arrayPointer);
+  if (!Array.isArray(arr) || index < 0 || index >= arr.length) throw new JsonEditError(`there is no element ${index} in an array at ${arrayPointer || "the root"}`);
+  const child = r.span(`${arrayPointer}/${index}`)!;
+  const next = skipTrivia(text, child.end);
+  if (text[next] === "," || arr.length === 1) {
+    const start = lineStart(text, child.start);
+    const ownLine = /^[ \t]*$/.test(text.slice(start, child.start));
+    // The only element may have no comma after it.
+    let to = text[next] === "," ? next + 1 : child.end;
+    const eolAt = text.indexOf("\n", to);
+    if (ownLine && /^[ \t\r]*$/.test(text.slice(to, eolAt < 0 ? text.length : eolAt))) to = eolAt < 0 ? text.length : eolAt + 1;
+    else while (text[to] === " ") to++;
+    return text.slice(0, ownLine ? start : child.start) + text.slice(to);
+  }
+  // The last element, with no trailing comma: remove from the comma after the one before it.
+  const prev = r.span(`${arrayPointer}/${index - 1}`)!;
+  const comma = skipTrivia(text, prev.end);
+  return text.slice(0, comma) + text.slice(child.end);
+}
