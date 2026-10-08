@@ -127,6 +127,10 @@ export function emitYAML(value: unknown, indent: number): string {
               lines.push(`${prefix}  ${key}: ${emitted}`);
             }
           }
+        } else {
+          // An empty mapping is still an item: `egress: [{}]` allows all
+          // egress, and dropping it leaves an empty list.
+          lines.push(`${prefix}- {}`);
         }
       } else {
         lines.push(`${prefix}- ${emitYAML(item, indent + 1).trimStart()}`);

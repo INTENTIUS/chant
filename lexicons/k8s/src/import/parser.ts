@@ -77,6 +77,22 @@ const GVK_TYPE_MAP: Record<string, string> = {
  * Resolve apiVersion + kind to a K8s type name.
  * Falls back to constructing from the apiVersion group.
  */
+/**
+ * `<apiVersion>/<kind>` keys that map to a type another key maps to first.
+ * The build writes the first key's apiVersion for that type, so a document
+ * written against a later key (`autoscaling/v1` HorizontalPodAutoscaler)
+ * keeps its own apiVersion as a property.
+ */
+const ALIASED_GVKS: ReadonlySet<string> = (() => {
+  const firstForType = new Set<string>();
+  const aliased = new Set<string>();
+  for (const [key, type] of Object.entries(GVK_TYPE_MAP)) {
+    if (firstForType.has(type)) aliased.add(key);
+    else firstForType.add(type);
+  }
+  return aliased;
+})();
+
 function resolveTypeName(apiVersion: string, kind: string): string {
   // Try exact match
   const key = `${apiVersion}/${kind}`;
@@ -192,7 +208,8 @@ export class K8sParser implements TemplateParser {
     // Extract the user-configurable properties (skip apiVersion, kind)
     const properties: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(doc)) {
-      if (key === "apiVersion" || key === "kind") continue;
+      if (key === "kind") continue;
+      if (key === "apiVersion" && !ALIASED_GVKS.has(`${apiVersion}/${kind}`)) continue;
       properties[key] = value;
     }
 
