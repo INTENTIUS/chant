@@ -1923,16 +1923,22 @@ async function resolveCallArguments(
   const args: unknown[] = [];
   for (const argNode of node.arguments) {
     const live = await resolveLiveValue(argNode, ctx);
-    if (live === undefined) await resolveSameFileCallReferences(argNode, ctx);
-    // chant #1039 — a folded (non-live) argument may itself contain a
-    // registered intrinsic tagged template; revive it into the real value
-    // before the composite factory actually runs on it (see the "Intrinsic
-    // revival" section below `resolveResourceEntity` uses the same way).
-    args.push(
-      live !== undefined
-        ? live.value
-        : await reviveFoldedValue(fold(argNode, ctx.consts, ctx.intrinsics, ctx.externals), ctx, helperArgs),
-    );
+    if (live !== undefined) {
+      args.push(live.value);
+      continue;
+    }
+    // chant#3610 — the bindings hold for this argument only, so a read of the
+    // same name outside any argument still refuses, whatever the declarator order.
+    const bound = await resolveSameFileCallReferences(argNode, ctx);
+    try {
+      // chant #1039 — a folded (non-live) argument may itself contain a
+      // registered intrinsic tagged template; revive it into the real value
+      // before the composite factory actually runs on it (see the "Intrinsic
+      // revival" section below `resolveResourceEntity` uses the same way).
+      args.push(await reviveFoldedValue(fold(argNode, ctx.consts, ctx.intrinsics, ctx.externals), ctx, helperArgs));
+    } finally {
+      for (const name of bound) ctx.externals.delete(name);
+    }
   }
   return args;
 }
@@ -1954,8 +1960,12 @@ async function resolveCallArguments(
  * resolution that fails, or gives anything but a Declarable or a composite
  * instance, is left alone too, so the reference rejects with the message it
  * always had. Inside a factory body `locals` is empty, so nothing here applies.
+ *
+ * chant#3610 — returns the names it bound, which the caller removes from
+ * `externals` once the argument has folded. A host composite's instance
+ * counts as a composite instance here, as it does everywhere else.
  */
-async function resolveSameFileCallReferences(node: ts.Node, ctx: ResolveCtx): Promise<void> {
+async function resolveSameFileCallReferences(node: ts.Node, ctx: ResolveCtx): Promise<string[]> {
   const names = new Set<string>();
   const visit = (n: ts.Node): void => {
     if (ts.isIdentifier(n)) {
@@ -1971,6 +1981,7 @@ async function resolveSameFileCallReferences(node: ts.Node, ctx: ResolveCtx): Pr
     ts.forEachChild(n, visit);
   };
   visit(node);
+  const bound: string[] = [];
   for (const name of names) {
     let resolved: LiveResolution;
     try {
@@ -1978,10 +1989,17 @@ async function resolveSameFileCallReferences(node: ts.Node, ctx: ResolveCtx): Pr
     } catch {
       continue;
     }
-    if (resolved && (isDeclarable(resolved.value) || isCompositeInstance(resolved.value))) {
+    if (
+      resolved &&
+      (isDeclarable(resolved.value) ||
+        isCompositeInstance(resolved.value) ||
+        hostCompositeName(resolved.value) !== undefined)
+    ) {
       ctx.externals.set(name, resolved.value);
+      bound.push(name);
     }
   }
+  return bound;
 }
 
 /** A same-file `const name = Callee(...)` that `fold()` would refuse as a function call used as a value. */

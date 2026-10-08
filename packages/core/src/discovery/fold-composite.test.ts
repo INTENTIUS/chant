@@ -353,6 +353,28 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect(JSON.parse(folded).readersReader.props.Description).toEqual({ GetAtt: ["webBucket", "Arn"] });
   });
 
+  test("a same-file call result read in an argument is bound for that argument only (chant#3610)", async () => {
+    await writeComposite(
+      ADMISSIBLE_BODY,
+      `export const Reader = Composite((props) => {
+        const reader = new Role({ RoleName: props.name, Description: props.bucket.Arn });
+        return { reader };
+      }, "Reader");`,
+    );
+    // `plain` reads `web` outside any argument. Under F-Call step 6 that read
+    // does not resolve, whichever declarator comes first, so the file runs.
+    await writeMain(`
+      import { Reader, WebApp } from "../composites";
+      export const web = WebApp({ name: "data" });
+      export const readers = Reader({ name: "readers", bucket: web.bucket });
+      export const plain = { inner: web.bucket };
+    `);
+
+    const result = await build(srcDir, [specSerializer], undefined, { fold: true, lexicons: [LEXICON_NAME] });
+
+    expect(result.foldDecisions.map((d) => d.mode)).toEqual(["run"]);
+  });
+
   test("provenance is stamped from the source's own composite name", async () => {
     await writeComposite(ADMISSIBLE_BODY);
     await writeMain(CALL_WEBAPP);
