@@ -259,3 +259,64 @@ describe("one name in two CloudFormation namespaces", () => {
     expect(template.Outputs).toEqual(original.Outputs);
   });
 });
+
+describe("Mappings and Fn::FindInMap", () => {
+  test("a template's Mappings, and FindInMap reads of them, come back", async () => {
+    const original = {
+      Parameters: { InstanceType: { Type: "String", Default: "t3.micro" } },
+      Mappings: {
+        RegionMap: { "us-east-1": { AZs: ["us-east-1a", "us-east-1b"] } },
+        TypeArch: { "t3.micro": { Arch: "HVM64" } },
+        ArchAmi: { "us-east-1": { HVM64: "ami-123" } },
+      },
+      Resources: {
+        MySubnet: {
+          Type: "AWS::EC2::Subnet",
+          Properties: {
+            VpcId: "vpc-1",
+            CidrBlock: { "Fn::Select": [0, { "Fn::Cidr": ["10.0.0.0/16", 4, 8] }] },
+            AvailabilityZone: { "Fn::Select": [0, { "Fn::FindInMap": ["RegionMap", { Ref: "AWS::Region" }, "AZs"] }] },
+          },
+        },
+        MyInstance: {
+          Type: "AWS::EC2::Instance",
+          Properties: {
+            ImageId: {
+              "Fn::FindInMap": ["ArchAmi", { Ref: "AWS::Region" }, { "Fn::FindInMap": ["TypeArch", { Ref: "InstanceType" }, "Arch"] }],
+            },
+            SubnetId: { "Fn::ImportValue": { "Fn::Sub": "${AWS::StackName}-SubnetId" } },
+          },
+        },
+      },
+    };
+    const ir = parser.parse(JSON.stringify(original));
+    expect(ir.warnings).toBeUndefined();
+    const { template, source } = await roundTrip(JSON.stringify(original));
+    expect(source).toContain("export const RegionMap = new Mapping(");
+    expect(source).toContain('FindInMap(ArchAmi, AWS.Region, FindInMap(TypeArch, Ref(InstanceType), "Arch"))');
+    expect(template.Mappings).toEqual(original.Mappings);
+    expect(template.Resources).toEqual(original.Resources);
+  });
+
+  test("a mapping named like a resource keeps its name", async () => {
+    const original = {
+      Mappings: { Config: { a: { b: "queue-name" } } },
+      Resources: {
+        Config: { Type: "AWS::SQS::Queue", Properties: { QueueName: { "Fn::FindInMap": ["Config", "a", "b"] } } },
+      },
+    };
+    const { template, source } = await roundTrip(JSON.stringify(original));
+    expect(source).toContain('export const ConfigMapping = new Mapping(');
+    expect(template.Mappings).toEqual(original.Mappings);
+    expect(template.Resources).toEqual(original.Resources);
+  });
+
+  test("an intrinsic import cannot write is refused at import, not written as an object", () => {
+    const original = {
+      Resources: {
+        MyQueue: { Type: "AWS::SQS::Queue", Properties: { Tags: { "Fn::Transform": { Name: "AWS::Include", Parameters: {} } } } },
+      },
+    };
+    expect(() => generator.generate(parser.parse(JSON.stringify(original)))).toThrow(/cannot generate Fn::Transform/);
+  });
+});

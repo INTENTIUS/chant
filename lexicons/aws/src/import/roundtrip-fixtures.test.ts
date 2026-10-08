@@ -154,10 +154,10 @@ describe("with-conditions.json build roundtrip (#2069)", () => {
 
   test("a section import cannot carry is named in a warning, never dropped silently", () => {
     const template = JSON.parse(readFileSync(join(roundtripDir, "with-conditions.json"), "utf-8"));
-    template.Mappings = { RegionMap: { "us-east-1": { AMI: "ami-123" } } };
+    template.Rules = { Region: { Assertions: [{ Assert: { "Fn::Equals": [{ Ref: "AWS::Region" }, "us-east-1"] } }] } };
     const ir = parser.parse(JSON.stringify(template));
     expect(ir.warnings).toEqual([
-      'Template section "Mappings" is not carried by import — it is dropped from the generated source',
+      'Template section "Rules" is not carried by import — it is dropped from the generated source',
     ]);
   });
 });

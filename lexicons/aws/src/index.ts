@@ -3,6 +3,8 @@ export { Parameter } from "./parameter";
 
 // Condition (#2068) — the Conditions-section declarable
 export { Condition, isCondition, CONDITION_ENTITY_TYPE } from "./condition";
+// Mapping — the Mappings-section declarable, read with FindInMap
+export { Mapping, isMapping, MAPPING_ENTITY_TYPE } from "./mapping";
 
 // Default Tags
 export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
@@ -127,6 +129,12 @@ export {
   AndIntrinsic,
   OrIntrinsic,
   NotIntrinsic,
+  FindInMap,
+  FindInMapIntrinsic,
+  ImportValue,
+  ImportValueIntrinsic,
+  Cidr,
+  CidrIntrinsic,
 } from "./intrinsics";
 export type { ConditionOperand } from "./intrinsics";
 

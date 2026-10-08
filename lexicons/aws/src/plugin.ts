@@ -118,6 +118,9 @@ export const awsPlugin: LexiconPlugin = {
       { name: "And", description: "Fn::And — condition conjunction", isTag: false, foldsAsCall: true },
       { name: "Or", description: "Fn::Or — condition disjunction", isTag: false, foldsAsCall: true },
       { name: "Not", description: "Fn::Not — condition negation", isTag: false, foldsAsCall: true },
+      { name: "FindInMap", description: "Fn::FindInMap — value from a declared mapping", isTag: false, foldsAsCall: true },
+      { name: "ImportValue", description: "Fn::ImportValue — value another stack exports", isTag: false, foldsAsCall: true },
+      { name: "Cidr", description: "Fn::Cidr — CIDR blocks from an address block", isTag: false, foldsAsCall: true },
     ];
   },
 

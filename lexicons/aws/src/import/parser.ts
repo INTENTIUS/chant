@@ -121,6 +121,7 @@ interface CFTemplate {
   AWSTemplateFormatVersion?: string;
   Description?: string;
   Metadata?: Record<string, unknown>;
+  Mappings?: Record<string, Record<string, Record<string, unknown>>>;
   Parameters?: Record<string, CFParameter>;
   Conditions?: Record<string, unknown>;
   Resources?: Record<string, CFResource>;
@@ -211,6 +212,7 @@ export class CFParser extends BaseValueParser implements TemplateParser {
         version: template.AWSTemplateFormatVersion ?? "2010-09-09",
         description: template.Description,
         ...(template.Metadata !== undefined ? { templateMetadata: this.parseValue(template.Metadata) } : {}),
+        ...(template.Mappings !== undefined ? { mappings: template.Mappings } : {}),
       },
     };
   }
@@ -223,6 +225,7 @@ export class CFParser extends BaseValueParser implements TemplateParser {
     "AWSTemplateFormatVersion",
     "Description",
     "Metadata",
+    "Mappings",
     "Parameters",
     "Conditions",
     "Resources",
@@ -420,9 +423,15 @@ export class CFParser extends BaseValueParser implements TemplateParser {
 
     if (key === "Fn::FindInMap") {
       const mapValue = value as unknown[];
+      if (!Array.isArray(mapValue) || mapValue.length !== 3) {
+        throw new Error(
+          `Fn::FindInMap takes [MapName, TopLevelKey, SecondLevelKey]; this one has ${JSON.stringify(value)} ` +
+            "(a fourth DefaultValue argument needs AWS::LanguageExtensions, which import does not carry)",
+        );
+      }
       return {
         __intrinsic: "FindInMap",
-        mapName: mapValue[0],
+        mapName: this.parseValue(mapValue[0]),
         firstKey: this.parseValue(mapValue[1]),
         secondKey: this.parseValue(mapValue[2]),
       };

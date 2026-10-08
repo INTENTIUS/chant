@@ -284,7 +284,6 @@ describe("CFParser conditions and outputs (#2069)", () => {
       }),
     );
     expect(ir.warnings).toEqual([
-      'Template section "Mappings" is not carried by import — it is dropped from the generated source',
       'Template section "Rules" is not carried by import — it is dropped from the generated source',
     ]);
   });

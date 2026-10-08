@@ -3,6 +3,7 @@ import { buildInterpolatedString, defaultInterpolationSerializer } from "@intent
 import { type Declarable } from "@intentius/chant/declarable";
 import { getLogicalName } from "@intentius/chant/utils";
 import { conditionName, isCondition, type Condition } from "./condition";
+import { isMapping, mappingName, type Mapping } from "./mapping";
 
 /**
  * An operand allowed where CloudFormation expects a condition (#2068): a
@@ -401,4 +402,87 @@ export class GetAZsIntrinsic implements Intrinsic {
  */
 export function GetAZs(region?: string | Intrinsic): GetAZsIntrinsic {
   return new GetAZsIntrinsic(region);
+}
+
+/**
+ * Fn::FindInMap intrinsic function
+ * Reads the value under two keys of a declared mapping.
+ */
+export class FindInMapIntrinsic implements Intrinsic {
+  readonly [INTRINSIC_MARKER] = true as const;
+  private mapName: string | Mapping;
+  private topLevelKey: unknown;
+  private secondLevelKey: unknown;
+
+  constructor(mapName: string | Mapping, topLevelKey: unknown, secondLevelKey: unknown) {
+    this.mapName = mapName;
+    this.topLevelKey = topLevelKey;
+    this.secondLevelKey = secondLevelKey;
+  }
+
+  toJSON(): { "Fn::FindInMap": [string, unknown, unknown] } {
+    const name = isMapping(this.mapName) ? mappingName(this.mapName) : (this.mapName as string);
+    return {
+      "Fn::FindInMap": [name, resolveIntrinsicValue(this.topLevelKey), resolveIntrinsicValue(this.secondLevelKey)],
+    };
+  }
+}
+
+/**
+ * Create a FindInMap intrinsic. The mapping is the `Mapping` declarable, or
+ * its name. Either key may be a literal or a value intrinsic
+ * (`FindInMap(regionMap, AWS.Region, "AMI")`).
+ */
+export function FindInMap(mapName: string | Mapping, topLevelKey: unknown, secondLevelKey: unknown): FindInMapIntrinsic {
+  return new FindInMapIntrinsic(mapName, topLevelKey, secondLevelKey);
+}
+
+/**
+ * Fn::ImportValue intrinsic function
+ * Reads a value another stack exports.
+ */
+export class ImportValueIntrinsic implements Intrinsic {
+  readonly [INTRINSIC_MARKER] = true as const;
+  private sharedValue: unknown;
+
+  constructor(sharedValue: unknown) {
+    this.sharedValue = sharedValue;
+  }
+
+  toJSON(): { "Fn::ImportValue": unknown } {
+    return { "Fn::ImportValue": resolveIntrinsicValue(this.sharedValue) };
+  }
+}
+
+/** Create an ImportValue intrinsic. The export name is a string or a value intrinsic (`Sub`). */
+export function ImportValue(sharedValue: unknown): ImportValueIntrinsic {
+  return new ImportValueIntrinsic(sharedValue);
+}
+
+/**
+ * Fn::Cidr intrinsic function
+ * Splits an address block into `count` CIDR blocks of `cidrBits` host bits.
+ */
+export class CidrIntrinsic implements Intrinsic {
+  readonly [INTRINSIC_MARKER] = true as const;
+  private ipBlock: unknown;
+  private count: unknown;
+  private cidrBits: unknown;
+
+  constructor(ipBlock: unknown, count: unknown, cidrBits: unknown) {
+    this.ipBlock = ipBlock;
+    this.count = count;
+    this.cidrBits = cidrBits;
+  }
+
+  toJSON(): { "Fn::Cidr": [unknown, unknown, unknown] } {
+    return {
+      "Fn::Cidr": [resolveIntrinsicValue(this.ipBlock), resolveIntrinsicValue(this.count), resolveIntrinsicValue(this.cidrBits)],
+    };
+  }
+}
+
+/** Create a Cidr intrinsic. Each argument is a literal or a value intrinsic, written as the template writes it. */
+export function Cidr(ipBlock: unknown, count: unknown, cidrBits: unknown): CidrIntrinsic {
+  return new CidrIntrinsic(ipBlock, count, cidrBits);
 }
