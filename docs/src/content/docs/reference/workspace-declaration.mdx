@@ -254,7 +254,7 @@ A session bound to several members may write the files of any of them and the re
 ]
 ```
 
-A declaration that uses `members` needs a `minReader` of `0.105.0` or higher, since an older chant does not know the field. [`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its members, its scope and the spec.
+A declaration that uses `members` needs a `minReader` of `0.105.0` or higher, since an older chant does not know the field. [`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its members, its scope and the spec. [`chant workspace ls --json`](/chant/cli/workspace-ls/#output) lists the sessions bound to each member in its `agents`, read from the same declaration, so a tool that starts an agent for a member reads the names there ([#3615](https://github.com/INTENTIUS/chant/issues/3615)).
 
 ## Identity
 

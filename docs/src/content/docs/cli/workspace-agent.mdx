@@ -25,7 +25,7 @@ An agent that resumes runs this and reads nothing else. It needs no memory of an
 
 The session and its scope come from the declaration at base (`origin/HEAD`, `main` or `master`). The [record writes](/chant/cli/workspace-records/#writing-records) and [`check --changes`](/chant/cli/workspace-check/#write-scope) read them there too. Without a declaration at base, the working tree's declaration is used. `workspace.scopeFrom` says which one was read. The spec is read in the working tree, since that is what the agent works on. Without a name, the command prints the session `CHANT_AGENT` names.
 
-Whatever runs the agent sets `CHANT_AGENT=<name>` in its environment. The record writes and the MCP record tools then refuse a write outside the session's scope. A commit the agent makes carries a `Chant-Agent: <name>` trailer, so `check --changes` judges it as the session.
+Whatever runs the agent sets `CHANT_AGENT=<name>` in its environment. It finds the names bound to a member in that member's `agents` in [`chant workspace ls --json`](/chant/cli/workspace-ls/#output), read from the same declaration ([#3615](https://github.com/INTENTIUS/chant/issues/3615)). The record writes and the MCP record tools then refuse a write outside the session's scope. A commit the agent makes carries a `Chant-Agent: <name>` trailer, so `check --changes` judges it as the session.
 
 ```
 $ chant workspace agent app

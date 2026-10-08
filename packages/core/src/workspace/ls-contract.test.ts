@@ -352,3 +352,56 @@ describe("chant workspace ls: generated files and job names (#3050)", () => {
     expect(doc.members[0].generated).toEqual([{ path: ".github/workflows/x.yml", command: "c", env: null, jobs: null }]);
   });
 });
+
+describe("chant workspace ls: each member's agent sessions (#3615)", () => {
+  const jsonc = (agents: unknown[]) =>
+    [
+      "// the lobby's declaration",
+      "{",
+      '  "name": "acme", "schema": 1,',
+      '  "members": [{ "name": "app", "dir": "app", "kind": "other", "because": "b" }, { "name": "design", "dir": "design", "kind": "other", "because": "b" }, { "name": "docs", "dir": "docs", "kind": "other", "because": "b" },],',
+      `  "agents": ${JSON.stringify(agents)},`,
+      "}",
+    ].join("\n");
+  const sessions = (doc: LsDocument) => Object.fromEntries(result(doc).members.map((m) => [m.name, m.agents]));
+
+  test("reads a .jsonc declaration in the working tree when there is no base", () => {
+    const root = repo({
+      "chant.workspace.jsonc": jsonc([
+        { name: "app-agent", member: "app" },
+        { name: "factory", members: ["app", "design"] },
+      ]),
+      "app/a.txt": "",
+      "design/d.txt": "",
+      "docs/d.txt": "",
+    });
+    const doc = listWorkspace({ cwd: root });
+    expectValid(doc);
+    expect(sessions(doc)).toEqual({ app: ["app-agent", "factory"], design: ["factory"], docs: [] });
+    expect(result(doc).workspace.agentsFrom).toBe("working-tree");
+  });
+
+  test("reads them at base, as workspace agent does, and at the revision under --at", () => {
+    const root = repo({
+      "chant.workspace.jsonc": jsonc([{ name: "app-agent", member: "app" }]),
+      "app/a.txt": "",
+      "design/d.txt": "",
+      "docs/d.txt": "",
+    });
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    git(root, "branch", "-M", "main");
+    // A session added in the working tree binds nothing until it reaches base.
+    writeFileSync(join(root, "chant.workspace.jsonc"), jsonc([{ name: "app-agent", member: "app" }, { name: "docs-agent", member: "docs" }]));
+    const doc = listWorkspace({ cwd: join(root, "docs") });
+    expectValid(doc);
+    expect(sessions(doc)).toEqual({ app: ["app-agent"], design: [], docs: [] });
+    expect(result(doc).workspace.agentsFrom).toBe("base");
+    git(root, "commit", "-q", "-am", "two");
+    const at = listWorkspace({ cwd: root, at: "HEAD~1" });
+    expectValid(at);
+    expect(sessions(at)).toEqual({ app: ["app-agent"], design: [], docs: [] });
+    expect(result(at).workspace.agentsFrom).toBe("at");
+    expect(sessions(listWorkspace({ cwd: root }))).toEqual({ app: ["app-agent"], design: [], docs: ["docs-agent"] });
+  });
+});
