@@ -391,7 +391,7 @@ function serializeToTemplate(
       if (!template.Conditions) {
         template.Conditions = {};
       }
-      template.Conditions[conditionName(entity)] = toCFValue(entity.expression, entityNames);
+      template.Conditions[entity.name ?? name] = toCFValue(entity.expression, entityNames);
     } else if (isChildProject(entity)) {
       // ChildProjectInstance → AWS::CloudFormation::Stack resource
       const childProject = entity as ChildProjectInstance;
