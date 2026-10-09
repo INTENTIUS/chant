@@ -51,6 +51,7 @@ On ClickHouse, a user with `SELECT` on the project's databases and `readonly = 1
 | an object the project did not create, beside the owned ones | nothing; the diff reads only declared objects | `false` |
 | an owned object's property changed out of band (`ALTER TABLE ... MODIFY TTL`, a column default) | `PROPERTY DRIFT`, the property's declared and live values | `true` |
 | an owned object dropped | `MISSING`, the object and the address that was read | `true` |
+| a Postgres table's columns in another order than the declaration's, such as a column a `PostgresMigrationOp` rename added last | nothing; columns are compared by name, since Postgres cannot move a column without rewriting the table | `false` |
 
 The diff compares the server with what the checkout declares, not with what was last applied, so a change merged but not yet applied reads as drift too.
 

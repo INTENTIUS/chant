@@ -61,7 +61,7 @@ The Op's own Plan phase classifies the column's change again, against the server
 |---|---|
 | Build | `chant build` (the project's `build` script); `build: false` skips it |
 | Plan | classifies the column's change against the server, refuses what the Op does not make, and reports how far the migration has got (`MigrationState`: `migrate`, `switched` or `done`) |
-| Expand | adds the new column, nullable and with no default, which is a catalog change: the declared name for a rename, `<column>__chant_new` for a type change |
+| Expand | adds the new column, nullable and with no default, which is a catalog change: the declared name for a rename, `<column>__chant_new` for a type change. Postgres adds it last, and keeps it there; the plan and `chant lifecycle diff --live` match columns by name, so the declaration can keep the column where the old one was |
 | Dual write | a `BEFORE INSERT OR UPDATE` trigger that keeps the new column written: both ways for a rename, so a writer naming either column fills both; from the old column through the `using` expression for a type change |
 | Backfill | fills the rows that were there before the trigger, one range of the primary key per batch, each batch and its receipt in one transaction |
 | Carry over | makes what uses the old column again on the new one, while writes go on: each index, a key's included, built `CONCURRENTLY` under a working name; each check and foreign key, other tables' that reference the column included, added `NOT VALID` and then validated |
