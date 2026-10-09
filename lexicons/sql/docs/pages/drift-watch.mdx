@@ -1,0 +1,83 @@
+---
+title: "Watching a Server for Drift"
+description: "A WatchOp with a schedule reads a ClickHouse or Postgres server as a read-only user and reports owned objects changed or dropped out of band; generateOpsPipeline renders it for GitHub, GitLab and Forgejo"
+diataxis: how-to
+order: 3
+---
+
+A `WatchOp` over a `sql` environment runs `chant lifecycle diff <env> --live` on a schedule and records the run's `Drift` outcome. It works the same way for ClickHouse and Postgres. The example the lexicon ships, `examples/drift-watch`, is a ClickHouse project with one.
+
+## Declare the watch
+
+```typescript
+// ops/schema-watch.op.ts
+import { WatchOp } from "@intentius/chant/op";
+
+const { op } = WatchOp({ name: "schema-watch", env: "prod", schedule: "17 * * * *" });
+
+export default op;
+```
+
+`env` selects `sql.profiles.prod`. The watch only reads, so give that profile a user that can only read:
+
+```typescript
+// chant.config.ts
+export default {
+  lexicons: ["sql"],
+  ownership: { stack: "shop", env: "prod" },
+  sql: {
+    dialect: "clickhouse",
+    profiles: {
+      prod: {
+        url: "https://clickhouse.example.com:8443",
+        user: { env: "CLICKHOUSE_READER_USER" },
+        password: { env: "CLICKHOUSE_READER_PASSWORD" },
+        databases: ["shop"],
+      },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+On ClickHouse, a user with `SELECT` on the project's databases and `readonly = 1` is enough. On Postgres, a role that can log in, with `USAGE` on the project's schemas and `default_transaction_read_only = on`; the catalogs it reads are readable by every role.
+
+## What it reports
+
+`chant run schema-watch` prints the diff and the outcome:
+
+| On the server | The diff | `Drift` |
+|---|---|---|
+| what the build declares, as applied | `No drift detected` | `false` |
+| an object the project did not create, beside the owned ones | nothing; the diff reads only declared objects | `false` |
+| an owned object's property changed out of band (`ALTER TABLE ... MODIFY TTL`, a column default) | `PROPERTY DRIFT`, the property's declared and live values | `true` |
+| an owned object dropped | `MISSING`, the object and the address that was read | `true` |
+
+The diff compares the server with what the checkout declares, not with what was last applied, so a change merged but not yet applied reads as drift too.
+
+## Render it to CI
+
+`generateOpsPipeline` renders the watch as a scheduled job on the Op's own cron. Pass the reader's credentials as the job's variables and nothing else:
+
+```typescript
+import { generateOpsPipeline } from "@intentius/chant/op";
+
+await generateOpsPipeline(
+  [{
+    name: "schema-watch",
+    variables: {
+      CLICKHOUSE_READER_USER: "chant_reader",
+      CLICKHOUSE_READER_PASSWORD: "${{ secrets.CLICKHOUSE_READER_PASSWORD }}",
+    },
+  }],
+  "github",
+  { beforeScript: ["npm ci", 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"'] },
+);
+```
+
+| Forge | Schedule | Repository token |
+|---|---|---|
+| GitHub | `on.schedule` | `permissions: contents: read` |
+| Forgejo | `on.schedule` | the runner's own; Forgejo reads no `permissions:` block, so none is written |
+| GitLab | a Pipeline Schedule with `CHANT_SCHEDULED_OP=schema-watch`, noted at the top of the file | the job's own `CI_JOB_TOKEN`; no other token is added |
+
+On GitLab, name the secret as a CI/CD variable (`$CLICKHOUSE_READER_PASSWORD`). `chant run` calls `chant lifecycle` itself, so `chant` has to be on the job's path, which the `beforeScript` above sees to; on GitLab, `export PATH="$PWD/node_modules/.bin:$PATH"` does the same.
