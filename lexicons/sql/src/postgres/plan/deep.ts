@@ -108,11 +108,22 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
   if (d.kind === "table") {
     const declaredColumns = (declared.columns as unknown[] | undefined) ?? [];
     const liveColumns = (live.columns as unknown[] | undefined) ?? [];
-    out.columns = liveColumns.map((c, i) => {
+    // Columns are matched by name and listed in the declaration's order, the
+    // live columns the declaration does not name after them. Postgres keeps a
+    // table's columns in the order they were added, and no ALTER moves one: a
+    // column renamed by expand and contract is last on the server and where
+    // the old one was in the declaration (INTENTIUS/sql-yodeler#47). The plan
+    // compares columns by name too, so an order the server cannot be brought
+    // to is not drift.
+    const read = liveColumns.map((c, i) => {
       const lc = l.columns[i];
       const dc = lc ? d.columns.find((x) => x.name === lc.name) : undefined;
-      return lc && dc && columnShape(lc) === columnShape(dc) ? declaredColumns[dc.position] : c;
+      return { at: dc?.position, value: lc && dc && columnShape(lc) === columnShape(dc) ? declaredColumns[dc.position] : c };
     });
+    out.columns = [
+      ...read.filter((c) => c.at !== undefined).sort((a, b) => a.at! - b.at!),
+      ...read.filter((c) => c.at === undefined),
+    ].map((c) => c.value);
   }
   if (d.kind === "table" || d.kind === "domain") {
     // A constraint the declaration says the same as the server is the declaration's (its name included or left out).

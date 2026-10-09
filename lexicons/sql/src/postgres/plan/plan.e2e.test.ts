@@ -91,6 +91,32 @@ describe.skipIf(!enabled)("planning the getting-started example against a server
     expect((await planPgAgainstServer("e2e", file, profile("star"))).changes.map((c) => `${c.field}: ${c.before} -> ${c.after}`)).toEqual([]);
   }, 600_000);
 
+  test("a column renamed by expand and contract, last on the server, plans and reads back with no drift (sql-yodeler#47)", async () => {
+    const admin = await server!.connect();
+    await admin.query("CREATE DATABASE renamed");
+    await admin.end();
+    const orders = pg.table`CREATE TABLE public.orders (
+      id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      email text NOT NULL, -- previously: customer_email
+      status text DEFAULT 'placed'::text NOT NULL,
+      refunded_at timestamp with time zone
+    )`;
+    const out = sqlSerializer.serialize(new Map<string, unknown>([["orders", orders]]) as never) as SerializerResult;
+    const file = join(dir, "renamed.json");
+    writeFileSync(file, out.primary);
+    const client = await server!.connect("renamed");
+    await client.query(
+      "CREATE TABLE public.orders (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, customer_email text NOT NULL, status text DEFAULT 'placed'::text NOT NULL, refunded_at timestamp with time zone);" +
+        "ALTER TABLE public.orders ADD COLUMN email text; UPDATE public.orders SET email = customer_email; ALTER TABLE public.orders ALTER COLUMN email SET NOT NULL; ALTER TABLE public.orders DROP COLUMN customer_email",
+    );
+    expect((await planPgAgainstServer("e2e", file, profile("renamed"))).changes).toEqual([]);
+
+    const props = (orders as unknown as { props: Record<string, unknown> }).props;
+    const deep = await observeResourcesDeep({ environment: "e2e", entityNames: ["orders"], entities: new Map([["orders", { entityType: "Postgres::Table", props }]]), ...profile("renamed") });
+    expect(deep.resources.orders!.properties.columns).toEqual(props.columns);
+    await client.end();
+  }, 600_000);
+
   test("a serial table plans with no changes after apply; serial to bigserial is integer to bigint, unqualified", async () => {
     const admin = await server!.connect();
     await admin.query("CREATE DATABASE serials");
