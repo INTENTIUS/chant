@@ -1,0 +1,122 @@
+{
+  "commit": "8ae159c4e33577163f63769e7bf2b6c5003d9a28",
+  "digest": {
+    "dependencies": {
+      "analytics": [],
+      "dailyActive": [
+        "analytics"
+      ],
+      "dailyActiveMv": [
+        "analytics",
+        "dailyActive",
+        "events"
+      ],
+      "events": [
+        "analytics"
+      ],
+      "schema-apply": [],
+      "users": [
+        "analytics"
+      ],
+      "watch": []
+    },
+    "deployOrder": [
+      "sql"
+    ],
+    "lexiconVersions": {},
+    "outputs": {},
+    "resources": {
+      "analytics": {
+        "lexicon": "sql",
+        "propsHash": "813129ad02a008084455fafcd691cac42da177c9c4c1afb2d69df4f99e612b9a",
+        "type": "ClickHouse::Database"
+      },
+      "dailyActive": {
+        "lexicon": "sql",
+        "propsHash": "cdf5ad2db857c184053c319ea74b41581550352b0eca368d7293af88fc49fda3",
+        "type": "ClickHouse::Table"
+      },
+      "dailyActiveMv": {
+        "lexicon": "sql",
+        "propsHash": "d9edc10321c0ad6f79204bdbf306a11f0207bc9888293ee943478634c7a43e8f",
+        "type": "ClickHouse::MaterializedView"
+      },
+      "events": {
+        "lexicon": "sql",
+        "propsHash": "5325f21d53db80373456fdeb0c919a27b31437d22c87762f8f10e5654900c319",
+        "type": "ClickHouse::Table"
+      },
+      "schema-apply": {
+        "lexicon": "chant",
+        "propsHash": "1712434054585e9ab2c6d933da2c71535ac230dbc96209a68f18f8da1663da3b",
+        "type": "Chant::Op"
+      },
+      "users": {
+        "lexicon": "sql",
+        "propsHash": "8df0f647e82e4ffd888797c61373a3c2136cd636e469faa2af3ac212629f438f",
+        "type": "ClickHouse::Table"
+      },
+      "watch": {
+        "lexicon": "chant",
+        "propsHash": "3fe9f6b231171f550ef8b418ea081f4baa1c820ccc96fa28294c1051efdd88e3",
+        "type": "Chant::Op"
+      }
+    }
+  },
+  "environment": "dev",
+  "lexicon": "sql",
+  "resources": {
+    "analytics": {
+      "attributes": {
+        "comment": "Product analytics",
+        "engine": "Atomic",
+        "uuid": "11f5c2f2-879f-4cdb-ad29-a8d53df40d3a"
+      },
+      "ownership": "owned",
+      "physicalId": "11f5c2f2-879f-4cdb-ad29-a8d53df40d3a",
+      "status": "Atomic",
+      "type": "ClickHouse::Database"
+    },
+    "dailyActive": {
+      "attributes": {
+        "engine": "AggregatingMergeTree",
+        "uuid": "7d4b5d14-fd97-4eed-9e7e-ae70d9100ad7"
+      },
+      "ownership": "owned",
+      "physicalId": "7d4b5d14-fd97-4eed-9e7e-ae70d9100ad7",
+      "status": "AggregatingMergeTree",
+      "type": "ClickHouse::Table"
+    },
+    "dailyActiveMv": {
+      "attributes": {
+        "engine": "MaterializedView",
+        "uuid": "95d6fd6f-6361-416f-8c8c-3759bd3c433e"
+      },
+      "ownership": "owned",
+      "physicalId": "95d6fd6f-6361-416f-8c8c-3759bd3c433e",
+      "status": "MaterializedView",
+      "type": "ClickHouse::MaterializedView"
+    },
+    "events": {
+      "attributes": {
+        "engine": "MergeTree",
+        "uuid": "3b4a134e-24ca-48ec-b623-00af108a4d66"
+      },
+      "ownership": "owned",
+      "physicalId": "3b4a134e-24ca-48ec-b623-00af108a4d66",
+      "status": "MergeTree",
+      "type": "ClickHouse::Table"
+    },
+    "users": {
+      "attributes": {
+        "engine": "ReplacingMergeTree",
+        "uuid": "0d2281e4-5bd2-493b-ab8f-b20b9961a758"
+      },
+      "ownership": "owned",
+      "physicalId": "0d2281e4-5bd2-493b-ab8f-b20b9961a758",
+      "status": "ReplacingMergeTree",
+      "type": "ClickHouse::Table"
+    }
+  },
+  "timestamp": "2026-10-09T05:02:23.314Z"
+}
