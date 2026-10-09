@@ -165,6 +165,10 @@ smoke-build-examples:
 smoke-npm-registry:
     ./test/smoke.sh npm-registry
 
+# sql lexicon from the registry against `chant emulator up --lexicon sql`, both dialects (#3641; local only, needs Docker). version: a version or dist-tag; SQL_SMOKE_DB names the database and schema it drops and recreates
+smoke-sql-registry version="latest":
+    ./test/smoke.sh sql-registry {{version}}
+
 # Run a chant-generated GitLab pipeline in Docker (gitlab-ci-local; on-demand, needs Docker)
 gitlab-runtime-e2e:
     bash test/gitlab-runtime-e2e.sh
