@@ -127,7 +127,9 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
   if (before.comment !== after.comment) out.push(change(key, "comment", "SQLCH203", before.comment, after.comment));
 
   if (before.kind === "database") {
-    if (before.engine !== after.engine) out.push(change(key, "engine", "SQLCH232", before.engine, after.engine));
+    // A declaration with no ENGINE takes the server's default database engine
+    // (Atomic; Replicated on Cloud), whatever the server says it is (#3645).
+    if (after.engine !== undefined && before.engine !== after.engine) out.push(change(key, "engine", "SQLCH232", before.engine, after.engine));
     return;
   }
 

@@ -120,6 +120,7 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
     clickhouseReceiptStore(run.target.endpoint, identity, {
       ...(run.runId ? { runId: run.runId } : {}),
       ...(o.replicated ? { replicatedIn: n.database } : {}),
+      ...(run.target.topology ? { topology: run.target.topology } : {}),
       ...(run.replicaTimeoutMs !== undefined ? { replicaTimeoutMs: run.replicaTimeoutMs } : {}),
     });
   const recorded = await receipts.readAll(receiptAddress(identity, `rebuild/${n.key}/`));

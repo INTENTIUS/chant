@@ -85,6 +85,8 @@ export interface SchemaStatements {
   dialect: "clickhouse" | "postgres";
   /** ClickHouse: the database a bare name means. */
   defaultDatabase?: string;
+  /** ClickHouse: the topology the statements are rendered for, in its string form (`single`, `cluster:<name>`, `replicated`, `cloud`). */
+  topology?: string;
   /** Postgres: the schema a bare name means; the applier sets `search_path` to it. */
   defaultSchema?: string;
   /** Postgres: the major the changes were classified for. */

@@ -61,3 +61,19 @@ export {
 } from "./clickhouse/rebuild/op";
 export type { DualWrite } from "./clickhouse/rebuild/observe";
 export { RECEIPTS_DATABASE, RECEIPTS_TABLE } from "./clickhouse/rebuild/receipts";
+export {
+  DEFAULT_REPLICA_NAME,
+  DEFAULT_REPLICA_PATH,
+  onClusterClause,
+  parseTopology,
+  renderEngine,
+  renderFor,
+  renderStatement,
+  renderSteps,
+  replicatedDatabasePath,
+  topologyLabel,
+  toTopology,
+  type EngineClause,
+  type Topology,
+  type TopologyKind,
+} from "./clickhouse/topology";

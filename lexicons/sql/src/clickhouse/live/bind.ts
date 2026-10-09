@@ -7,6 +7,7 @@
 import type { ChantConfig } from "@intentius/chant/config";
 import type { UnobservedReason } from "@intentius/chant/observation";
 import { ClickHouseQueryError, clickhouseQuery, type ClickHouseEndpoint } from "../http";
+import { parseTopology, toTopology, type Topology } from "../topology";
 
 export interface ClickHouseTarget {
   endpoint: ClickHouseEndpoint;
@@ -15,6 +16,13 @@ export interface ClickHouseTarget {
   /** The databases in scope; undefined is every database but the server's own. */
   databases?: string[];
   defaultDatabase: string;
+  /**
+   * The topology the environment runs (`sql.profiles.<env>.topology`, or
+   * `CLICKHOUSE_TOPOLOGY`): what the applier, the plan and the rebuild
+   * render their statements for (`../topology.ts`). Undefined: statements
+   * as declared.
+   */
+  topology?: Topology;
 }
 
 export interface UnresolvedTarget {
@@ -29,7 +37,9 @@ export const isUnresolvedTarget = (v: ClickHouseTarget | UnresolvedTarget): v is
  *
  * 1. `sql.profiles.<environment>`. A profile naming a credential variable that
  *    is not set is `no-credentials`: the profile said how to authenticate.
- * 2. `CLICKHOUSE_URL`, with `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD` when set.
+ * 2. `CLICKHOUSE_URL`, with `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD` when set,
+ *    and `CLICKHOUSE_TOPOLOGY` (`single`, `cluster:<name>`, `replicated`,
+ *    `cloud`).
  * 3. Otherwise `no-binding`.
  */
 export function resolveClickHouseTarget(input: {
@@ -54,6 +64,7 @@ export function resolveClickHouseTarget(input: {
       source,
       ...(profile.databases ? { databases: profile.databases } : {}),
       defaultDatabase: profile.defaultDatabase ?? "default",
+      ...(profile.topology !== undefined ? { topology: toTopology(profile.topology) } : {}),
     };
   }
   const url = env.CLICKHOUSE_URL;
@@ -69,6 +80,7 @@ export function resolveClickHouseTarget(input: {
     },
     source: "env CLICKHOUSE_URL",
     defaultDatabase: "default",
+    ...(env.CLICKHOUSE_TOPOLOGY ? { topology: parseTopology(env.CLICKHOUSE_TOPOLOGY) } : {}),
   };
 }
 

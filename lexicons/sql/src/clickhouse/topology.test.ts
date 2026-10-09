@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { canonicalObject } from "./plan/normalize";
+import { diffSchemas } from "./plan/diff";
 import type { Change } from "./plan/diff";
 import { alterSteps, createStatement, dropStatement, type DeclaredObject } from "./apply/statements";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "./entities";
@@ -272,5 +273,37 @@ describe("the applier's own statements", () => {
     expect(renderStatement(create, SINGLE)).toBe(create);
     const steps = alterSteps(table, [added]);
     expect(renderSteps(steps, SINGLE)).toEqual(steps);
+  });
+});
+
+describe("the classifier compares the engine a topology runs", () => {
+  const declared = "CREATE TABLE db.t (id UInt64, v UInt64) ENGINE = ReplacingMergeTree(v) ORDER BY id";
+  const changes = (live: string, topology: Topology) =>
+    diffSchemas([{ key: "t", canonical: canonicalObject(live) }], [{ key: "t", canonical: canonicalObject(renderStatement(declared, topology)) }]).changes;
+
+  test("a cluster's table, as the server prints it, is the rendered declaration", () => {
+    expect(changes("CREATE TABLE db.t (`id` UInt64, `v` UInt64) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', v) ORDER BY id", CLUSTER)).toEqual([]);
+  });
+
+  test("a Replicated database's table, printed with the default path and replica, is the declaration with none", () => {
+    expect(changes("CREATE TABLE db.t (`id` UInt64, `v` UInt64) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', v) ORDER BY id", REPLICATED)).toEqual([]);
+  });
+
+  test("Cloud's Shared engine is the plain family it was declared as", () => {
+    expect(changes("CREATE TABLE db.t (`id` UInt64, `v` UInt64) ENGINE = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', v) ORDER BY id", CLOUD)).toEqual([]);
+  });
+
+  test("a database declared with no engine takes whatever the server's default is, so a single node's Atomic is no change", () => {
+    const db = (live: string, declared: string) => diffSchemas([{ key: "d", canonical: canonicalObject(live) }], [{ key: "d", canonical: canonicalObject(declared) }]).changes;
+    const declaredForCluster = "CREATE DATABASE d ON CLUSTER main ENGINE = Replicated('/clickhouse/databases/d', '{shard}', '{replica}')";
+    expect(db("CREATE DATABASE d\nENGINE = Atomic", renderStatement(declaredForCluster, SINGLE))).toEqual([]);
+    expect(db("CREATE DATABASE d\nENGINE = Replicated('/clickhouse/databases/d', '{shard}', '{replica}')", renderStatement("CREATE DATABASE d", REPLICATED))).toEqual([]);
+    expect(db("CREATE DATABASE d\nENGINE = Atomic", "CREATE DATABASE d ENGINE = Lazy(60)")).toEqual([expect.objectContaining({ rule: "SQLCH232" })]);
+  });
+
+  test("the engine a topology does not run is still a change", () => {
+    expect(changes("CREATE TABLE db.t (`id` UInt64, `v` UInt64) ENGINE = ReplacingMergeTree(v) ORDER BY id", CLUSTER)).toEqual([
+      expect.objectContaining({ field: "engine", rule: "SQLCH223", class: "rebuild" }),
+    ]);
   });
 });

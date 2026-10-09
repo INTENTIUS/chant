@@ -45,6 +45,7 @@ import type { ChantConfig } from "@intentius/chant/config";
 import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
 import { POSTGRES_PROVIDERS } from "./postgres/providers/types";
 import { POSTGRES_MAJORS } from "./spec/postgres-pin";
+import { parseTopology } from "./clickhouse/topology";
 
 const envRef = z.strictObject({ env: z.string() });
 
@@ -52,6 +53,27 @@ const envRef = z.strictObject({ env: z.string() });
 const providerName = z.enum(POSTGRES_PROVIDERS, {
   error: () => `expected a Postgres provider (${POSTGRES_PROVIDERS.join(", ")})`,
 });
+
+/** A ClickHouse topology, in its string form or its object form (`./clickhouse/topology.ts`). */
+const topologySchema = z.union([
+  z.string().refine(
+    (v) => {
+      try {
+        parseTopology(v);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { error: "expected single, cluster:<name>, replicated, replicated:<cluster> or cloud" },
+  ),
+  z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("single") }),
+    z.strictObject({ kind: z.literal("cluster"), cluster: z.string().min(1), replicaPath: z.string().optional(), replicaName: z.string().optional() }),
+    z.strictObject({ kind: z.literal("replicated"), cluster: z.string().min(1).optional() }),
+    z.strictObject({ kind: z.literal("cloud") }),
+  ]),
+]);
 
 export const sqlProfileSchema = z.strictObject({
   /**
@@ -73,6 +95,17 @@ export const sqlProfileSchema = z.strictObject({
   databases: z.array(z.string()).optional(),
   /** The database an unqualified declaration is created in. `default` when omitted. */
   defaultDatabase: z.string().optional(),
+  /**
+   * ClickHouse: the topology this environment runs, which the applier, the
+   * plan and the rebuild migration render every statement for: `single`,
+   * `cluster:<name>` (`ON CLUSTER`, `Replicated*MergeTree` with a Keeper
+   * path), `replicated` (a `Replicated` database; `replicated:<cluster>`
+   * creates the databases on that cluster) or `cloud`. The object form sets
+   * a cluster's Keeper path and replica name:
+   * `{ kind: "cluster", cluster: "main", replicaPath, replicaName }`. When
+   * omitted, statements are sent as declared.
+   */
+  topology: topologySchema.optional(),
   /**
    * Postgres: the schemas this environment's schema lives in. Import and
    * observation read these and nothing else; when omitted, every schema except

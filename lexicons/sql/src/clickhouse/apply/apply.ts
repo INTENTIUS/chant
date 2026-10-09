@@ -51,6 +51,7 @@ import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities"
 import { carriesMarker, isChantManaged } from "../ownership";
 import { planStatements, sqlString, type DeclaredObject, type DropStatement, type Step } from "./statements";
 import { waitForMutations } from "./mutations";
+import { renderFor, type Topology } from "../topology";
 
 export type { FailedObject } from "../../core/apply";
 
@@ -58,15 +59,20 @@ export type { FailedObject } from "../../core/apply";
  * The objects a `chant build` output declares, in creation order. Takes the
  * sql lexicon's primary output, or a multi-lexicon output holding it under
  * `sql` (the shared core's reader).
+ *
+ * With a `topology`, each declaration is rendered for it first
+ * (`../topology.ts`): the engine and `ON CLUSTER` it runs with there, which
+ * is what the changes compare and every `CREATE` sends.
  */
-export function declaredObjects(json: string, defaultDatabase = "default"): DeclaredObject[] {
+export function declaredObjects(json: string, defaultDatabase = "default", topology?: Topology): DeclaredObject[] {
   return readBuildObjects(json, "clickhouse", (o) => {
-    const canonical = canonicalObject(o.ddl, defaultDatabase);
+    const ddl = renderFor(o.ddl, topology);
+    const canonical = canonicalObject(ddl, defaultDatabase);
     return {
       exportName: o.export,
       type: o.type as ClickHouseEntityType,
       key: canonical.database !== undefined ? `${canonical.database}.${canonical.name}` : canonical.name,
-      ddl: o.ddl,
+      ddl,
       canonical,
       dependsOn: o.dependsOn,
     };
@@ -165,6 +171,7 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
     current: live,
     allowDestructive: opts.prune === true,
     carriesMarker: (key) => carriesMarker(liveByKey.get(key)?.comment, opts.marker),
+    ...(target.topology ? { topology: target.topology } : {}),
     ...(opts.marker ? { marker: opts.marker } : {}),
   });
 

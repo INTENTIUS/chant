@@ -23,6 +23,7 @@ import type { Change } from "../plan/diff";
 import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "../plan/rules";
 import { stampedComment } from "../ownership";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
+import { renderFor, type Topology } from "../topology";
 
 /** A backquoted identifier. */
 export const ident = (name: string): string => `\`${name.replace(/`/g, "``")}\``;
@@ -442,6 +443,13 @@ export interface StatementPlanInput {
   allowDestructive?: boolean;
   /** Whether the current object (by its key in `current`) carries the marker already; one that does not is restamped. Default: it does. */
   carriesMarker?: (currentKey: string) => boolean;
+  /**
+   * The topology every statement is rendered for (`../topology.ts`): `ON
+   * CLUSTER` and the engine. The declarations should be rendered for it too
+   * (`declaredObjects(json, db, topology)`), so the changes compare the
+   * engine the topology runs. Default: the statements as declared.
+   */
+  topology?: Topology;
 }
 
 export interface StatementPlan {
@@ -463,6 +471,17 @@ const DROP_ORDER: Record<string, number> = { materializedView: 0, view: 1, table
  * both see it.
  */
 export function planStatements(input: StatementPlanInput): StatementPlan {
+  const plan = planDeclared(input);
+  if (!input.topology) return plan;
+  const topology = input.topology;
+  const render = (step: Step): Step => ({ ...step, sql: renderFor(step.sql, topology) });
+  return {
+    objects: plan.objects.map((o) => (o.verdict === "create" || o.verdict === "alter" ? { ...o, steps: o.steps.map(render) } : o)),
+    drops: plan.drops.map((d) => ({ ...d, step: render(d.step) })),
+  };
+}
+
+function planDeclared(input: StatementPlanInput): StatementPlan {
   const keyOf = input.keyOf ?? ((o: DeclaredObject) => o.key);
   const byObject = new Map<string, Change[]>();
   for (const c of input.changes) byObject.set(c.object, [...(byObject.get(c.object) ?? []), c]);
