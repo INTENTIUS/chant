@@ -126,7 +126,7 @@ The field is optional and purely diagnostic: verdicts are unchanged, and a lexic
 
 #### The declared definition of a missing entity
 
-Each missing entity's row also carries `[definition <sha256 hex>]`, a fingerprint of its declared type and build props (#3652). A missing entity is what applying the diff would create, and `ApplyOp`'s gate binds the digest of this output: with the name alone, an approval for "create events" stood after `events` was edited, as long as `events` did not exist yet. With the fingerprint, editing what would be created changes the plan digest, and the gate refuses the old approval with "is approved, but not for this plan".
+Each missing entity's row also carries `[definition <sha256 hex>]`, a fingerprint of its declared type and build props (#3652). A missing entity is what applying the diff would create, and `ApplyOp`'s gate binds the digest of this output: with the name alone, an approval for "create events" stood after `events` was edited, as long as `events` did not exist yet. With the fingerprint, editing what would be created changes the plan digest, and the next run stops at the gate and names both the approved digest and the new one.
 
 ```
 MISSING (declared, provider reports not in cloud):
