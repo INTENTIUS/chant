@@ -7,6 +7,9 @@
  *   table, keeps the old table, and drops it at the second gate.
  * - A failure: rows that land in the old table after the backfill fail the
  *   verification, and onFailure drops the new table.
+ * - Rows dated after the cut-over (sql-yodeler#45): the ones the table held
+ *   before the view are copied by the backfill, the ones written during the
+ *   rebuild arrive through the view, and the swap leaves none behind.
  * - An interrupted backfill: stopped after three partitions, then killed
  *   between a partition's INSERT and its receipt, then resumed: the receipts
  *   skip what was copied, the half-copied partition is cleared first, and the
@@ -174,7 +177,7 @@ describe.skipIf(!enabled)("a sorting-key change, rebuilt through its gates", () 
     expect(outcome(r, "RebuildState")).toBe("rebuild");
     expect(outcome(r, "VerifiedRows")).toBe(1600);
     expect(outcome(r, "VerifiedPartitions")).toBe(4);
-    expect(String(outcome(r, "Verification"))).toMatch(/4 partition\(s\), 1600 row\(s\) before the cut-over/);
+    expect(String(outcome(r, "Verification"))).toMatch(/4 partition\(s\), 1600 row\(s\) \(1600 of them before the cut-over/);
     expect(await count("shop.events__chant_new")).toBe(1600);
     expect(await exists("shop", "events__chant_dual")).toBe(true);
     // Nothing visible to a plan or an apply: the working objects are left out.
@@ -232,6 +235,108 @@ describe.skipIf(!enabled)("a sorting-key change, rebuilt through its gates", () 
     const done = await runOp(config(), ledger.port);
     expect(done.status).toBe("ok");
     expect(outcome(done, "RebuildState")).toBe("done");
+  }, 300_000);
+});
+
+describe.skipIf(!enabled)("rows dated after the cut-over that the table already held (sql-yodeler#45)", () => {
+  const bookingsDdl = (orderBy: string) => `CREATE TABLE shop.bookings
+(
+  id UInt64,
+  kind LowCardinality(String),
+  at DateTime
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(at)
+ORDER BY ${orderBy}`;
+  const V1: Obj = { export: "bookings", type: "ClickHouse::Table", dependsOn: ["shop"], ddl: bookingsDdl("(kind, at)") };
+  const V2: Obj = { ...V1, ddl: bookingsDdl("(kind, id)") };
+  const config = (): ClickHouseRebuildOpConfig => ({
+    name: "rebuild-bookings",
+    env: "e2e",
+    table: "shop.bookings",
+    dualWrite: { mode: "materialized-view", cutoverColumn: "at", cutoverDelay: "2s" },
+    build: false,
+    path: dir,
+    output: "bookings-v2.json",
+    retain: "0s",
+    stack: MARKER.stack,
+    ownershipEnv: MARKER.env,
+  });
+
+  test("every row is copied and compared, those written during the rebuild too, and the swap leaves none behind", async () => {
+    await clickhouseApply({ buildPath: join(dir, writeBuild("bookings-v1.json", [DB, V1])), environment: "e2e" }, undefined, deps());
+    // 600 rows seven hours apart, from four months ago to about two months
+    // ahead, with an identical pair among the future ones.
+    await q(
+      "INSERT INTO shop.bookings SELECT number, ['view','cart','buy'][number % 3 + 1], toStartOfHour(now()) - toIntervalDay(120) + toIntervalHour(number * 7) FROM numbers(600)",
+    );
+    await q("INSERT INTO shop.bookings VALUES (599, 'buy', toStartOfHour(now()) - toIntervalDay(120) + toIntervalHour(599 * 7))");
+    const future = Number((await q<{ n: string }>("SELECT count() AS n FROM shop.bookings WHERE at > now() + 60"))[0]!.n);
+    expect(future).toBeGreaterThan(150);
+    writeBuild("bookings-v2.json", [DB, V2]);
+
+    const ledger = new Ledger();
+    const first = await runOp(config(), ledger.port);
+    expect(first.status).toBe("gated");
+    expect(first.gate).toMatchObject({ gate: "approve-rebuild-bookings" });
+    expect(outcome(first, "VerifiedRows")).toBe(601);
+    expect(await count("shop.bookings__chant_new")).toBe(601);
+
+    // Written during the rebuild, after the cut-over: through the view.
+    await q("INSERT INTO shop.bookings VALUES (1000, 'buy', now() + toIntervalDay(40)), (1001, 'cart', now())");
+    const again = await runOp(config(), ledger.port);
+    expect(again.status).toBe("gated");
+    expect(outcome(again, "VerifiedRows")).toBe(603);
+    // The rows before the cut-over are what the approval binds; later rows do not change it.
+    expect(again.gate!.planDigest).toBe(first.gate!.planDigest);
+
+    ledger.approveLast();
+    await q("INSERT INTO shop.bookings VALUES (1002, 'view', now() + toIntervalDay(70))");
+    const swapped = await runOp(config(), ledger.port);
+    expect(swapped.status).toBe("gated");
+    expect(swapped.gate).toMatchObject({ gate: "approve-rebuild-bookings-drop" });
+    expect(await showCreate("shop.bookings")).toMatch(/ORDER BY \(kind, id\)/);
+    expect(await count("shop.bookings")).toBe(604);
+    expect(await count("shop.bookings__chant_old")).toBe(604);
+    const diff = await q("SELECT * FROM shop.bookings__chant_old EXCEPT ALL SELECT * FROM shop.bookings");
+    expect(diff).toEqual([]);
+  }, 300_000);
+
+  test("a row that reaches the old table alone after the verification stops the swap", async () => {
+    const clicksDdl = (orderBy: string) => `CREATE TABLE shop.visits
+(
+  id UInt64,
+  at DateTime
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(at)
+ORDER BY ${orderBy}`;
+    const W1: Obj = { export: "visits", type: "ClickHouse::Table", dependsOn: ["shop"], ddl: clicksDdl("at") };
+    const W2: Obj = { ...W1, ddl: clicksDdl("(id, at)") };
+    await clickhouseApply({ buildPath: join(dir, writeBuild("visits-v1.json", [DB, W1])), environment: "e2e" }, undefined, deps());
+    await q("INSERT INTO shop.visits SELECT number, now() - toIntervalDay(number % 90) FROM numbers(300)");
+    writeBuild("visits-v2.json", [DB, W2]);
+    const args = {
+      table: "shop.visits",
+      buildPath: "visits-v2.json",
+      environment: "e2e",
+      dualWrite: { mode: "materialized-view" as const, cutoverColumn: "at", cutoverDelay: "2s" },
+      stack: MARKER.stack,
+      ownershipEnv: MARKER.env,
+      cwd: dir,
+    };
+    await rebuildActivities.clickhouseRebuildCreate(args, undefined, deps());
+    await rebuildActivities.clickhouseRebuildDualWrite(args, undefined, deps());
+    await rebuildActivities.clickhouseRebuildBackfill(args, undefined, deps());
+    expect(await rebuildActivities.clickhouseRebuildVerify(args, undefined, deps())).toMatchObject({ rows: 300 });
+
+    // Late: a time well before the cut-over, written after the verification.
+    await q("INSERT INTO shop.visits VALUES (9999, now() - toIntervalDay(30))");
+    await expect(rebuildActivities.clickhouseRebuildSwap(args, undefined, deps())).rejects.toThrow(/does not match the old one in 1 partition/);
+    expect(await showCreate("shop.visits")).toMatch(/ORDER BY at/);
+    expect(await count("shop.visits")).toBe(301);
+    expect(await count("shop.visits__chant_new")).toBe(300);
+    await rebuildActivities.clickhouseRebuildCompensate(args, undefined, deps());
   }, 300_000);
 });
 
