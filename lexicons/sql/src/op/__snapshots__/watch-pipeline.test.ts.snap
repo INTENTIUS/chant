@@ -1,0 +1,93 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generateOpsPipeline renders the sql drift watch (#3642) > Forgejo: the Op's own cron and the reader's credentials; the runner's token takes no permissions block 1`] = `
+"name: schema-watch
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: schema-watch
+  cancel-in-progress: false
+
+jobs:
+  schema-watch:
+    runs-on: docker
+    container: node:22-slim
+    env:
+      CLICKHOUSE_READER_USER: chant_reader
+      CLICKHOUSE_READER_PASSWORD: '\${{ secrets.CLICKHOUSE_READER_PASSWORD }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+      - run: npm ci
+      - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: chant run schema-watch
+        env:
+          GITHUB_TOKEN: '\${{ github.token }}'
+"
+`;
+
+exports[`generateOpsPipeline renders the sql drift watch (#3642) > GitHub: the Op's own cron, a read-only token and the reader's credentials 1`] = `
+"name: schema-watch
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: schema-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  schema-watch:
+    runs-on: ubuntu-latest
+    container: node:22-slim
+    env:
+      CLICKHOUSE_READER_USER: chant_reader
+      CLICKHOUSE_READER_PASSWORD: '\${{ secrets.CLICKHOUSE_READER_PASSWORD }}'
+    steps:
+      - uses: actions/checkout@v7
+      - run: npm ci
+      - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: chant run schema-watch
+        env:
+          GITHUB_TOKEN: '\${{ github.token }}'
+"
+`;
+
+exports[`generateOpsPipeline renders the sql drift watch (#3642) > GitLab: a schedule-only job with the reader's credentials and no token of its own 1`] = `
+"# chant Ops (#927, #2084, #2293) — one job per Op under stage "ops", each
+# selected by its own rules:. A merge_request_event or push job needs no
+# setup; its rule fires on the event itself.
+#
+# GitLab has no in-file cron. Create one Pipeline Schedule per cron Op
+# below (Settings > CI/CD > Schedules): set its cron to the value noted
+# here and its CHANT_SCHEDULED_OP CI/CD variable to the Op's name, so only
+# that job runs on that schedule.
+#
+#   schema-watch: cron "17 * * * *", CHANT_SCHEDULED_OP="schema-watch", finding-mode report
+
+stages:
+  - ops
+
+schema-watch:
+  stage: ops
+  image: node:22-slim
+  resource_group: schema-watch
+  variables:
+    CLICKHOUSE_READER_USER: chant_reader
+    CLICKHOUSE_READER_PASSWORD: '$CLICKHOUSE_READER_PASSWORD'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "schema-watch"'
+  script:
+    - npm ci
+    - export PATH="$PWD/node_modules/.bin:$PATH"
+    - chant run schema-watch
+"
+`;
