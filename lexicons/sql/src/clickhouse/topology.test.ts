@@ -263,7 +263,7 @@ describe("the applier's own statements", () => {
     const create = renderStatement(createStatement(table, marker), CLUSTER);
     expect(create).toMatch(/^CREATE TABLE db\.events ON CLUSTER `main` \(id UInt64, x UInt8\) ENGINE = ReplicatedMergeTree\('\/clickhouse\/tables\/\{uuid\}\/\{shard\}', '\{replica\}'\) ORDER BY id COMMENT '/);
     const steps = renderSteps(alterSteps(table, [added]), CLUSTER);
-    expect(steps).toEqual([{ sql: "ALTER TABLE `db`.`events` ON CLUSTER `main` ADD COLUMN x UInt8 AFTER `id`", rewrite: false }]);
+    expect(steps).toEqual([{ sql: "ALTER TABLE `db`.`events` ON CLUSTER `main` ADD COLUMN x UInt8 AFTER `id`", rewrite: false, rule: "SQLCH201", class: "metadata" }]);
     expect(renderStatement(dropStatement(CLICKHOUSE_ENTITY_TYPES.table, "db", "events"), CLUSTER)).toBe("DROP TABLE `db`.`events` ON CLUSTER `main` SYNC");
   });
 
