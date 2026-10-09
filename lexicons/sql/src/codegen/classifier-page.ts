@@ -53,6 +53,23 @@ The plan only reports. [\`clickhouseApply\`](../applying/) makes the metadata-on
 
 \`chant migrate\` plays no part in any of this. It translates a file from one lexicon's format into another's, such as a GitHub Actions workflow into GitLab CI, and does not run schema migrations.
 
+## Statements for a migration file
+
+\`chant sql diff base.json head.json --statements\` prints the statements that take the base schema to the head one, offline: each one the applier would send for the same change, after a comment naming its object, rule and class. \`--json\` prints them as one document, which \`diffStatements(before, after)\` from \`@intentius/chant-lexicon-sql\` also returns:
+
+\`\`\`sql
+-- events (analytics.events): SQLCH201 metadata
+ALTER TABLE \`analytics\`.\`events\` ADD COLUMN region String DEFAULT 'eu' AFTER \`user_id\`;
+
+-- events (analytics.events): SQLCH210 rewrite, waits for its mutation
+ALTER TABLE \`analytics\`.\`events\` MODIFY COLUMN \`kind\` LowCardinality(String);
+
+-- sessions (analytics.sessions): SQLCH220 made by ClickHouseRebuildOp, not a statement:
+--   export const { op } = ClickHouseRebuildOp({ name: "rebuild-analytics-sessions", env: "<env>", table: "analytics.sessions", dualWrite: { mode: "materialized-view", cutoverColumn: "ts" } });
+\`\`\`
+
+A rebuild is never DDL: it is a step naming \`ClickHouseRebuildOp\`, or for a view or a database, which the Op does not rebuild, a manual step. A column or object drop is a statement marked destructive. Each \`CREATE\` carries the project's ownership marker, as the applier stamps it. The command exits 2 when a step is not a statement. Two things the applier asks the server are left out: whether a difference is formatting only, and whether a database is empty before it is dropped.
+
 ## Identity and renames
 
 An object is identified by its export name between two builds, so a changed name in the SQL under the same export is a rename. Against a server, which has no export names, an object is identified by \`database.name\`; a declaration renamed since the server last saw it says so with \`-- previously: <old name>\` before its CREATE.

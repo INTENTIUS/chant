@@ -26,11 +26,11 @@ import { isTrivia, tokenizeText, type Token } from "../tokens";
 import { parseStatements, type CommentNode } from "../parser";
 import { quoteIdent } from "../keywords";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../entity-types";
-import { addConstraintRule } from "../plan/diff";
+import { addConstraintRule, matchPgObjects } from "../plan/diff";
 import type { PgChange } from "../plan/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "../plan/rules";
 import { canonicalOptions, sameConstraint, type CanonicalConstraint, type CanonicalKind } from "../plan/normalize";
-import type { PgDiffObject } from "../plan/schema";
+import type { PgDiffObject, PgSchemaObject } from "../plan/schema";
 import { migrationTarget } from "../migrate/handoff";
 import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, KeyDef, SequenceProps, TableProps } from "../entities";
 
@@ -600,4 +600,147 @@ export function refusalDetail(changes: readonly PgChange[], name: string, declar
         (ops.length < changes.length ? " The other changes have no migration Op yet: make them by hand as expand and contract." : "")
       : "No migration Op makes this change yet: make it by hand as expand and contract (add the new, write both, backfill, move readers, then drop the old).";
   return `${name} needs expand and contract, which no in-place statement makes, so nothing was sent for it. ${lines.join(" ")} ${instead}`;
+}
+
+// ── A schema's statements ──────────────────────────────────────────────
+
+/**
+ * What one declared object takes, as the applier and the offline renderer
+ * (`../../migration-statements.ts`) both see it:
+ *
+ * - `create` or `alter`: the statements, in the order they run. An `alter`
+ *   with none is an object already as declared.
+ * - `foreign`: another tool keeps the object; it is not chant's to change.
+ * - `refused`: a change only expand and contract makes; nothing is sent for
+ *   the object, and `detail` names the migration Op where one makes it.
+ * - `unsupported`: a change with no in-place statement; nothing is sent.
+ * - `withheld`: a column drop, which destroys data, in a plan not allowed to
+ *   delete.
+ */
+export type PgObjectStatements =
+  | { verdict: "create" | "alter"; obj: DeclaredPgObject; changes: PgChange[]; steps: PgStep[]; live?: PgDiffObject }
+  | { verdict: "foreign"; obj: DeclaredPgObject; changes: PgChange[]; live: PgDiffObject; detail: string }
+  | { verdict: "refused"; obj: DeclaredPgObject; changes: PgChange[]; refused: PgChange[]; live?: PgDiffObject; detail: string }
+  | { verdict: "unsupported"; obj: DeclaredPgObject; changes: PgChange[]; unsupported: UnsupportedChange[]; live: PgDiffObject; detail: string }
+  | { verdict: "withheld"; obj: DeclaredPgObject; changes: PgChange[]; withheld: PgChange[]; live?: PgDiffObject; detail: string };
+
+/** An object the declarations no longer hold, and the `DROP` for it. */
+export interface PgDropStatement {
+  /** The key the changes name it by. */
+  key: string;
+  kind: CanonicalKind;
+  schema?: string;
+  name: string;
+  step: PgStep;
+}
+
+export interface PgStatementPlanInput {
+  /** The declared objects in creation order, in the canonical form the changes were found for. */
+  declared: readonly DeclaredPgObject[];
+  /** The classified changes from the current schema to the declared one. */
+  changes: readonly PgChange[];
+  /** The current schema, keyed as the changes key objects. */
+  current: readonly PgSchemaObject[];
+  /** How the changes key a declared object: its qualified key against a server (the default), its export name between two builds. */
+  keyOf?: (obj: DeclaredPgObject) => string;
+  /** The major the statements are for. */
+  major: number;
+  /** The marker every created object and restamped comment carries. */
+  marker?: OwnershipMarker;
+  /** Column drops are planned, not withheld. Default: off. */
+  allowDestructive?: boolean;
+  /** Whether the current object carries the marker already; one that does not is restamped. Default: it does. */
+  carriesMarker?: (live: PgDiffObject, currentKey: string) => boolean;
+  /** The comment an extension's control file sets, kept under the trailer when the declaration sets none. */
+  extensionComment?: (name: string) => string | undefined;
+}
+
+export interface PgStatementPlan {
+  /** One entry per declared object, in creation order. */
+  objects: PgObjectStatements[];
+  /** The objects the declarations no longer hold, in drop order: views first, a schema last. */
+  drops: PgDropStatement[];
+}
+
+/** Drop order: what reads from a table before the table, types after the tables using them, a schema last. */
+const DROP_ORDER: Record<CanonicalKind, number> = { materializedView: 0, view: 1, index: 2, table: 3, sequence: 4, domain: 5, enum: 6, extension: 7, schema: 8 };
+
+/**
+ * The statements that take the current schema to the declared one, from the
+ * classified changes between them. Pure: nothing is read or sent. The applier
+ * (`./apply.ts`) groups the steps into transactions and runs them;
+ * `diffStatements` (`../../migration-statements.ts`) renders the same steps
+ * for a migration file.
+ */
+export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
+  const keyOf = input.keyOf ?? ((o: DeclaredPgObject) => o.key);
+  const byObject = new Map<string, PgChange[]>();
+  for (const c of input.changes) byObject.set(c.object, [...(byObject.get(c.object) ?? []), c]);
+  const currentByKey = new Map(input.current.map((o) => [o.key, o.canonical]));
+  const matched = new Map<string, string>();
+  for (const m of matchPgObjects(input.current, input.declared.map((o) => ({ key: keyOf(o), canonical: o.canonical })))) {
+    if (m.kind === "matched") matched.set(m.after.key, m.before.key);
+  }
+
+  const recreatedRelations = new Set<string>();
+  const objects = input.declared.map((obj): PgObjectStatements => {
+    const key = keyOf(obj);
+    const currentKey = matched.get(key);
+    const live = currentKey !== undefined ? currentByKey.get(currentKey) : undefined;
+    const mine = byObject.get(key) ?? [];
+    const withLive = live ? { live } : {};
+
+    if (live?.foreign) return { verdict: "foreign", obj, changes: mine, live, detail: `${live.foreign} keeps ${obj.name}; it is not chant's to change` };
+    const refused = mine.filter(isRefused);
+    if (refused.length > 0) return { verdict: "refused", obj, changes: mine, refused, ...withLive, detail: refusalDetail(refused, obj.name, obj.canonical) };
+    const destructive = mine.filter(isDestructive);
+    if (destructive.length > 0 && !input.allowDestructive) {
+      return {
+        verdict: "withheld",
+        obj,
+        changes: mine,
+        withheld: destructive,
+        ...withLive,
+        detail: `drops ${destructive.map((c) => c.field).join(", ")}, which destroys the data in it; an apply that may delete (prune, ApplyOp delete "owned-only" or "gated") makes it`,
+      };
+    }
+
+    // An index on a materialized view this plan recreates went with the view, so it is created again.
+    const onRecreated = obj.canonical.kind === "index" && recreatedRelations.has(String(obj.canonical.fields.table));
+    if (!live || onRecreated) {
+      const base = obj.canonical.kind === "extension" && !live ? input.extensionComment?.(obj.canonical.name) : undefined;
+      // An index on a table that exists is built under the scan timeout (SQLPG240, SQLPG241); one on a new table is part of the create.
+      const how = mine.find((c) => c.rule === "SQLPG200" || c.rule === "SQLPG240" || c.rule === "SQLPG241");
+      const steps = createSteps(obj, input.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}) });
+      return { verdict: "create", obj, changes: mine, steps, ...withLive };
+    }
+
+    const altered = alterSteps(obj, live, mine, { ...(input.marker ? { marker: input.marker } : {}), major: input.major });
+    if (altered.unsupported.length > 0) {
+      return {
+        verdict: "unsupported",
+        obj,
+        changes: mine,
+        unsupported: altered.unsupported,
+        live,
+        detail: `${obj.name}: ${altered.unsupported.map((u) => `${u.change.rule} ${u.change.field}: ${u.why}`).join("; ")}. Nothing was sent for it.`,
+      };
+    }
+    const steps = altered.steps;
+    if (mine.some((c) => c.rule === "SQLPG252")) recreatedRelations.add(`${obj.canonical.schema}.${obj.canonical.name}`);
+    const stamp = commentStatement(obj, input.marker);
+    if (!steps.some((s) => s.sql === stamp) && !(input.carriesMarker?.(live, currentKey!) ?? true)) steps.push(step(stamp, "metadata", "SQLPG216"));
+    return { verdict: "alter", obj, changes: mine, steps, live };
+  });
+
+  const drops: PgDropStatement[] = [];
+  for (const c of input.changes) {
+    if (!((c.rule === "SQLPG270" || c.rule === "SQLPG242") && c.after === undefined)) continue;
+    const o = currentByKey.get(c.object);
+    if (!o || o.foreign) continue;
+    const schema = o.kind === "schema" || o.kind === "extension" ? undefined : o.schema;
+    drops.push({ key: c.object, kind: o.kind, ...(schema !== undefined ? { schema } : {}), name: o.name, step: dropStatement(o.kind, schema, o.name) });
+  }
+  drops.sort((a, b) => DROP_ORDER[a.kind] - DROP_ORDER[b.kind]);
+  return { objects, drops };
 }
