@@ -85,6 +85,9 @@ const DRIFT_HEADERS = [
   "ORPHAN",
   "DISAPPEARED",
   "DRIFTED",
+  // An owned resource whose live properties differ from its declaration (the
+  // deep read): a sql table's TTL changed out of band, say (#3642).
+  "PROPERTY DRIFT",
   "ARTIFACTS ADDED",
   "ARTIFACTS REMOVED",
   "ARTIFACTS CHANGED",
