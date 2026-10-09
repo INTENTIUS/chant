@@ -55,9 +55,10 @@ export type DualWrite =
       /**
        * A materialized view on the old table writes every row whose
        * `cutoverColumn` is at or after the cut-over into the new table; the
-       * backfill copies the rows before it. The cut-over is the server's time
-       * when the view is made plus `cutoverDelay` (default `1m`), and the
-       * backfill starts once it has passed. The column must be a time
+       * backfill copies the rows before it, and the rows at or after it that
+       * the table held before the view was made. The cut-over is the server's
+       * time when the view is made plus `cutoverDelay` (default `1m`), rounded
+       * up to a whole second, and the backfill starts once it has passed. The column must be a time
        * (`Date`, `DateTime`, `DateTime64`) that rows arrive in order of, give
        * or take the delay; a row that arrives later than that is caught by
        * the verification, which then fails the run.

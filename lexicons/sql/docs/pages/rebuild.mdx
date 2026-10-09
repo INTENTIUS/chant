@@ -49,9 +49,9 @@ The Op's own Plan phase classifies the table's change again, against the server,
 | Create | the new table, `events__chant_new`, from the declaration, once the old table's unfinished mutations are done |
 | Dual write | a materialized view from the old table to the new one, or a gate for the application to stop writing |
 | Backfill | `INSERT ... SELECT` per partition of the old table, each with a receipt |
-| Verify | row counts and checksums per partition, old against new |
+| Verify | row counts and checksums per partition, every row of the old table against the new |
 | Approve | a gate bound to the plan and the verification |
-| Swap | `EXCHANGE TABLES`, then recreate the materialized views that read the table |
+| Swap | compare the tables again, then `EXCHANGE TABLES` and recreate the materialized views that read the table |
 | Retain | the old table stays as `events__chant_old` until `retain` (default `7d`) has passed |
 | Approve drop | a gate bound to that old table |
 | Drop | the old table, once its date has passed |
@@ -65,13 +65,17 @@ The objects the rebuild makes carry chant's [ownership marker](../applying/#the-
 
 `dualWrite` decides how rows written during the rebuild reach the new table.
 
-`{ mode: "materialized-view", cutoverColumn: "ts" }` keeps writes flowing. The Op creates `events__chant_dual`, a materialized view on the old table that writes every row whose `ts` is at or after a cut-over into the new table. The cut-over is the server's time when the view is created plus `cutoverDelay` (default `1m`), and the backfill copies the rows before it once that time has passed. The cut-over column has to be a time that rows arrive in order of, give or take the delay. A row that arrives later than that, with a time before the cut-over, is in neither half; the verification finds it and the run fails rather than swap a table missing it. ClickHouse's [backfilling guide](https://clickhouse.com/docs/data-modeling/backfilling) describes the same split.
+`{ mode: "materialized-view", cutoverColumn: "ts" }` keeps writes flowing. The Op creates `events__chant_dual`, a materialized view on the old table that writes every row whose `ts` is at or after a cut-over into the new table. The cut-over is the server's time when the view is created plus `cutoverDelay` (default `1m`), rounded up to a whole second, and the backfill copies the rows before it once that time has passed. The cut-over column has to be a time that rows arrive in order of, give or take the delay. A row that arrives later than that, with a time before the cut-over, is in neither half; the verification finds it and the run fails rather than swap a table missing it. ClickHouse's [backfilling guide](https://clickhouse.com/docs/data-modeling/backfilling) describes the same split.
+
+The view sees only rows inserted after it was created. Rows the table already held with a `ts` at or after the cut-over (a booking next month, an expiry date) are the backfill's too: for each partition it copies the rows at or after the cut-over that the new table does not have yet, row for row, so those the view wrote are not copied twice. A row the view was still committing when the backfill read both tables can end up copied by both; the backfill looks for rows the new table holds more often than the old one, deletes them and copies them again.
 
 `{ mode: "app" }` is for a table with no such column. The Dual write phase is a gate, `<name>-writes-stopped`, and approving it says the application has stopped writing to the old table (paused, or buffering). The backfill then copies every row, and writes resume against the table's own name after the swap, where the new table now is.
 
 ## The gates
 
-The swap gate's approval is for one plan and one verification. Its digest covers the definitions on both sides, the classified changes, the columns copied, the dual-write mode and, per partition, the row count and checksum the Verify phase read. A run that verifies different numbers needs a fresh approval. The run record carries the verification as outcomes (`Verification`, `VerifiedPartitions`, `VerifiedRows`), which `chant run status` and `chant operator log` show:
+The Verify phase compares every row of the old table with the new one, per partition: the rows before the cut-over, those the old table held after it, and those the view has written since. The old table is read first, and a difference is read again up to five times, a second apart, before it fails the run, so a row the view is still committing is not taken for a missing one. The Swap phase runs the same comparison once more just before the `EXCHANGE`, and fails rather than swap when they differ, so a row that reached the old table alone after the verification is not left behind in `events__chant_old`.
+
+The swap gate's approval is for one plan and one verification. Its digest covers the definitions on both sides, the classified changes, the columns copied, the dual-write mode and, per partition, the row count and checksum of the rows before the cut-over (every row in app mode). Rows at or after the cut-over keep arriving through the view, so they are compared but not bound: an approval stays valid while writes go on, and a run that verifies different numbers before the cut-over needs a fresh approval. The run record carries the verification as outcomes (`Verification`, `VerifiedPartitions`, `VerifiedRows`), which `chant run status` and `chant operator log` show:
 
 ```bash
 chant run rebuild-shop-events                              # gated: approve-rebuild-shop-events
@@ -100,7 +104,7 @@ They live there, not on the `chant/lifecycle` branch, because a receipt has to g
 
 A run stopped during the backfill (Ctrl-C, a killed job, a lost machine) is not a failure: it runs no onFailure, and the next run resumes at the first partition without a receipt. A run killed between a partition's `INSERT` and its receipt leaves rows with no receipt. The next run finds them, deletes them (waiting for that mutation in `system.mutations`) and copies the partition once more, so no row is in the new table twice. Each partition's copy runs under a query id made from the new table and the partition, and a copy the server is still running from a run whose client went away is killed first.
 
-A step that fails is a failure. The backfill step retries three times, and the Verify step fails on any difference. onFailure then drops `events__chant_new` and `events__chant_dual`, only when their comments name this rebuild and carry this project's marker, and the next run starts again from a new table. After the `EXCHANGE`, onFailure touches nothing: the next run finishes the swap.
+A step that fails is a failure. The backfill step retries three times, and the Verify and Swap steps fail on any difference. onFailure then drops `events__chant_new` and `events__chant_dual`, only when their comments name this rebuild and carry this project's marker, and the next run starts again from a new table. After the `EXCHANGE`, onFailure touches nothing: the next run finishes the swap.
 
 ## Background rewrites
 

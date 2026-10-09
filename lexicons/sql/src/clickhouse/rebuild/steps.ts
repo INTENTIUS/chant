@@ -16,6 +16,7 @@ import { createStatement, ident, qualifiedIdent, renamedDeclaration, sqlString, 
 import { waitForMutations } from "../apply/mutations";
 import { renderFor } from "../topology";
 import { DDL_SETTINGS, syncReplicaWithin } from "./replicas";
+import { assertSameRows } from "./verify";
 import {
   changesBetween,
   observeRebuild,
@@ -155,7 +156,8 @@ export interface DualWriteResult {
  * old table that writes every row at or after the cut-over into the new
  * table. The cut-over is the server's time now plus the delay, kept in the
  * view's own comment (`cutover=`), so a later run and the backfill read it
- * back from the server. App mode creates nothing; its gate is the Op's.
+ * back from the server. The rows at or after the cut-over that the old table
+ * already held are the backfill's (`./backfill.ts`). App mode creates nothing; its gate is the Op's.
  */
 export async function startDualWrite(run: RebuildRun): Promise<DualWriteResult> {
   const o = await observe(run);
@@ -172,7 +174,10 @@ export async function startDualWrite(run: RebuildRun): Promise<DualWriteResult> 
         `(copied: ${o.copied.map((c) => c.name).join(", ")})`,
     );
   }
-  const cutover = (await serverNow(run.target)) + parseDuration(run.dualWrite.cutoverDelay ?? "1m");
+  // On a whole second: a DateTime column holds whole seconds, and a row written
+  // during the cut-over's second would otherwise carry a time before it and
+  // reach the old table after the backfill has started.
+  const cutover = Math.ceil(((await serverNow(run.target)) + parseDuration(run.dualWrite.cutoverDelay ?? "1m")) / 1000) * 1000;
   const iso = new Date(cutover).toISOString();
   const select = o.copied.map((c) => (c.source === c.name ? ident(c.name) : `${ident(c.source)} AS ${ident(c.name)}`)).join(", ");
   const comment = stampedComment(`chant rebuild of ${o.names.key}: rows at or after the cut-over`, run.marker, working(o.names.key, "dual", { cutover: iso }));
@@ -205,8 +210,9 @@ export interface SwapResult {
 }
 
 /**
- * Swap the new table in: `EXCHANGE TABLES`, then drop the dual-write view,
- * rename the old table (now under the new table's name) to `t__chant_old`
+ * Swap the new table in: compare every row of the two tables once more, as
+ * the verification does, and stop on any difference; then `EXCHANGE TABLES`,
+ * drop the dual-write view, rename the old table (now under the new table's name) to `t__chant_old`
  * with its retention date, recreate the materialized views that read the
  * table, and stamp the table's own comment as declared.
  *
@@ -238,6 +244,10 @@ export async function swapTables(run: RebuildRun): Promise<SwapResult> {
   }
   if (!o.exchanged) {
     if (!o.newTable) throw new RebuildRefusal(`${n.key}: there is no new table to swap in`);
+    // The new table holds every row the old one does, or nothing is swapped
+    // (sql-yodeler#45): rows that reached the old table alone since the
+    // verification would stay behind in it.
+    await assertSameRows(run, o);
     await q(run, `EXCHANGE TABLES ${n.table} AND ${n.newTable}`);
   }
   // The dual-write view now reads the new table by name; drop it before
