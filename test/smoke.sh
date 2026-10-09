@@ -5,12 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 usage() {
-  echo "Usage: $0 [workspace|npm|npm-registry|build-examples|smoke-aws|smoke-eks|smoke-gke|smoke-aks|smoke-all|all]"
+  echo "Usage: $0 [workspace|npm|npm-registry|sql-registry [version]|build-examples|smoke-aws|smoke-eks|smoke-gke|smoke-aks|smoke-all|all]"
   echo ""
   echo "BUILD VERIFICATION:"
   echo "  workspace       — Workspace smoke tests (Node.js)"
   echo "  npm             — npm install smoke tests (npm pack)"
   echo "  npm-registry    — Registry smoke tests (install from npmjs.com @latest)"
+  echo "  sql-registry    — sql lexicon from the registry against its emulator, both dialects"
+  echo "                    (version or dist-tag, default latest; SQL_SMOKE_DB names its database)"
   echo "  build-examples  — Build all examples in Docker"
   echo ""
   echo "DEPLOYMENT SMOKE TESTS (verify example npm scripts work in Docker):"
@@ -122,6 +124,30 @@ run_npm_registry() {
     "$PROJECT_DIR"
 }
 
+run_sql_registry() {
+  # #3641: install chant and the sql lexicon from the registry, then build,
+  # plan, apply and import against `chant emulator up --lexicon sql`. A
+  # dist-tag is resolved here so the image's install layer is keyed on the
+  # version it installs.
+  local version="${1:-latest}"
+  if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    version=$(npm view "@intentius/chant-lexicon-sql@$version" version)
+  fi
+  echo "Running sql registry smoke tests (@intentius/chant-lexicon-sql@$version)..."
+  docker build \
+    -f "$SCRIPT_DIR/Dockerfile.smoke-sql-registry" \
+    --build-arg "CHANT_VERSION=$version" \
+    -t chant-smoke-sql-registry \
+    "$PROJECT_DIR"
+  # The socket lets `chant emulator up` reach the host's daemon. The host
+  # network lets its readiness probe reach the servers on localhost, where it
+  # publishes them, and the test reach them at their bridge addresses.
+  docker run --rm --network host \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -e SQL_SMOKE_DB -e SQL_SMOKE_CLICKHOUSE -e SQL_SMOKE_POSTGRES -e SQL_SMOKE_KEEP \
+    chant-smoke-sql-registry
+}
+
 run_build_examples() {
   echo "Building smoke image..."
   docker build -f "$SCRIPT_DIR/Dockerfile.smoke" -t chant-smoke-workspace "$PROJECT_DIR"
@@ -150,6 +176,9 @@ case "${1:-workspace}" in
     ;;
   npm-registry)
     run_npm_registry
+    ;;
+  sql-registry)
+    run_sql_registry "${2:-latest}"
     ;;
   build-examples)
     run_build_examples
