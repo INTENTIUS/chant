@@ -11,6 +11,8 @@ import {
   type HeldEntitySet,
 } from "./change-set";
 import type { ResourceMetadata } from "../lexicon";
+import { declaredDefinitions, definitionDigest } from "./digest";
+import { lifecyclePlanPart } from "../change-set";
 
 const meta = (over: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
   type: "Fake::Resource",
@@ -636,5 +638,42 @@ describe("ChangeSet.held (#2162)", () => {
     const cs = set([entry({ action: "noop" })]);
     expect(renderChangeSet(cs)).not.toContain("HELD");
     expect(renderChangeSetMarkdown(cs)).not.toContain("HELD");
+  });
+});
+
+// #3652: a create carries no deltas, so the plan named what it would create
+// by name alone and its digest stood still when the declaration changed.
+describe("a create's declared definition (#3652)", () => {
+  const plan = (columns: Record<string, unknown>) =>
+    buildChangeSet("dev", {
+      declared: new Set(["events", "users"]),
+      observedNow: { users: meta() },
+      observedThen: undefined,
+      definitions: declaredDefinitions([
+        ["events", { entityType: "PG::Table", props: { columns } }],
+        ["users", { entityType: "PG::Table", props: { columns: { id: "int" } } }],
+      ]),
+    });
+
+  test("rides the create, and only the create", () => {
+    const cs = plan({ id: "int" });
+    const events = cs.entries.find((e) => e.name === "events")!;
+    const users = cs.entries.find((e) => e.name === "users")!;
+    expect(events.action).toBe("create");
+    expect(events.definition).toBe(definitionDigest("PG::Table", { columns: { id: "int" } }));
+    expect(users.action).toBe("noop");
+    expect(users.definition).toBeUndefined();
+  });
+
+  test("moves the lifecycle plan's digest when the created object's props change, and only then", () => {
+    const digest = (cs: ChangeSet) => lifecyclePlanPart({ member: "db", plan: cs }).member.planDigest;
+    expect(digest(plan({ id: "int" }))).toBe(digest(plan({ id: "int" })));
+    expect(digest(plan({ id: "int" }))).not.toBe(digest(plan({ id: "int", kind: "text" })));
+  });
+
+  test("is left off when the caller passes no definitions", () => {
+    const cs = buildChangeSet("dev", { declared: new Set(["events"]), observedNow: {}, observedThen: undefined });
+    expect(cs.entries[0].action).toBe("create");
+    expect("definition" in cs.entries[0]).toBe(false);
   });
 });
