@@ -93,7 +93,8 @@ const DRIFT_HEADERS = [
   "ARTIFACTS CHANGED",
 ];
 
-function detectDrift(output: string): boolean {
+/** True when a `chant lifecycle diff` render carries any of {@link DRIFT_HEADERS}' sections. */
+export function detectDrift(output: string): boolean {
   return DRIFT_HEADERS.some((h) => output.includes(`${h} (`) || output.includes(`\n${h}`));
 }
 
