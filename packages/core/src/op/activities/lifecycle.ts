@@ -36,8 +36,8 @@ export interface LifecycleDiffResult {
   exitCode: number;
   /**
    * True when the diff output contains any drift indicators
-   * (MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers from
-   * `chant lifecycle diff --live`).
+   * (MISSING / ORPHAN / DRIFTED / DISAPPEARED / PROPERTY DRIFT section
+   * headers from `chant lifecycle diff --live`).
    */
   drifted: boolean;
   /**
@@ -118,7 +118,7 @@ function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
  * Uses fastIdempotent profile.
  *
  * The `drifted` field is computed by scanning the output for any of the
- * MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers documented in
+ * MISSING / ORPHAN / DRIFTED / DISAPPEARED / PROPERTY DRIFT section headers documented in
  * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
  * on a WatchOp activity step to surface drift as the run's `Drift` outcome.
  */
