@@ -15,8 +15,9 @@ each a subpath of the one package: ClickHouse at
 \`@intentius/chant-lexicon-sql/clickhouse\` and Postgres at
 \`@intentius/chant-lexicon-sql/postgres\`. A declaration is the database's own
 \`CREATE\` statement in a tagged template, and an interpolated object or
-column stays a reference. The package is not on npm yet; each dialect's
-Getting Started page runs it from a checkout of the chant repository.
+column stays a reference. Install it with
+\`npm install --save-dev @intentius/chant @intentius/chant-lexicon-sql\`; each
+dialect's Getting Started page runs the example the lexicon ships.
 
 \`\`\`ts
 import { database, table, view } from "@intentius/chant-lexicon-sql/clickhouse";
