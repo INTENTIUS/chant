@@ -106,17 +106,7 @@
       "physicalId": "3b4a134e-24ca-48ec-b623-00af108a4d66",
       "status": "MergeTree",
       "type": "ClickHouse::Table"
-    },
-    "users": {
-      "attributes": {
-        "engine": "ReplacingMergeTree",
-        "uuid": "0d2281e4-5bd2-493b-ab8f-b20b9961a758"
-      },
-      "ownership": "owned",
-      "physicalId": "0d2281e4-5bd2-493b-ab8f-b20b9961a758",
-      "status": "ReplacingMergeTree",
-      "type": "ClickHouse::Table"
     }
   },
-  "timestamp": "2026-10-09T05:03:28.507Z"
+  "timestamp": "2026-10-09T05:03:53.875Z"
 }
