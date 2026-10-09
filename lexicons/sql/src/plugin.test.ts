@@ -39,6 +39,15 @@ describe("the sql config namespace", () => {
     expect(sqlConfigSchema.safeParse({ provider: "heroku" }).success).toBe(false);
   });
 
+  test("a profile takes a ClickHouse topology in its string or object form (#3645)", () => {
+    for (const topology of ["single", "cluster:main", "cluster:{cluster}", "replicated", "replicated:all", "cloud", { kind: "cluster", cluster: "main", replicaPath: "/ch/{shard}/{table}" }, { kind: "replicated" }]) {
+      expect(sqlConfigSchema.safeParse({ profiles: { prod: { url: "http://x:8123", topology } } }).success, JSON.stringify(topology)).toBe(true);
+    }
+    for (const topology of ["cluster", "sharded", { kind: "cluster" }, { kind: "single", cluster: "x" }]) {
+      expect(sqlConfigSchema.safeParse({ profiles: { prod: { url: "http://x:8123", topology } } }).success, JSON.stringify(topology)).toBe(false);
+    }
+  });
+
   test("accepts a list of dialects", () => {
     expect(sqlConfigSchema.safeParse({ dialect: ["clickhouse"] }).success).toBe(true);
     expect(sqlConfigSchema.safeParse({ dialect: ["clickhouse", "postgres"] }).success).toBe(true);

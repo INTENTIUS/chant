@@ -8,23 +8,24 @@ import { canonicalObject } from "./normalize";
 import type { SchemaObject } from "./diff";
 import type { ClickHouseTarget } from "../live/bind";
 import { readLiveSchema } from "../live/catalog";
+import { renderFor, type Topology } from "../topology";
 
 interface OutputDoc {
   dialect?: string;
   objects?: Array<{ export: string; ddl: string }>;
 }
 
-/** The objects a `chant build` output holds, keyed by export name. */
-export function schemaFromBuildOutput(json: string, defaultDatabase = "default"): SchemaObject[] {
+/** The objects a `chant build` output holds, keyed by export name; with a `topology`, each declaration as rendered for it (`../topology.ts`). */
+export function schemaFromBuildOutput(json: string, defaultDatabase = "default", topology?: Topology): SchemaObject[] {
   const doc = JSON.parse(json) as OutputDoc;
   if (doc.dialect !== "clickhouse" || !Array.isArray(doc.objects)) {
     throw new Error("not a sql lexicon build output: expected { dialect: \"clickhouse\", objects: [...] }");
   }
-  return doc.objects.map((o) => ({ key: o.export, canonical: canonicalObject(o.ddl, defaultDatabase) }));
+  return doc.objects.map((o) => ({ key: o.export, canonical: canonicalObject(renderFor(o.ddl, topology), defaultDatabase) }));
 }
 
-export function schemaFromBuildFile(path: string, defaultDatabase = "default"): SchemaObject[] {
-  return schemaFromBuildOutput(readFileSync(path, "utf-8"), defaultDatabase);
+export function schemaFromBuildFile(path: string, defaultDatabase = "default", topology?: Topology): SchemaObject[] {
+  return schemaFromBuildOutput(readFileSync(path, "utf-8"), defaultDatabase, topology);
 }
 
 /**

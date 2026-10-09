@@ -20,6 +20,7 @@ import { bindClickHouse, classifyClickHouseFailure, type BindOptions } from "../
 import { readLiveSchema, type LiveObject } from "../live/catalog";
 import { database, table, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
 import { canonicalObject, type CanonicalColumn, type CanonicalObject } from "./normalize";
+import { renderFor } from "../topology";
 
 type Props = Record<string, unknown>;
 
@@ -109,7 +110,7 @@ export async function observeResourcesDeep(
     const o = byKey.get(`${db ?? ""}.${String(props.name)}`);
     if (!o) continue;
     try {
-      const d = canonicalObject(String(props.ddl), target.defaultDatabase);
+      const d = canonicalObject(renderFor(String(props.ddl), target.topology), target.defaultDatabase);
       const l = canonicalObject(o.statement, target.defaultDatabase);
       resources[name] = {
         type: o.type,

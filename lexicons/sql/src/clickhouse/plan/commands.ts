@@ -4,7 +4,7 @@
  * says `"dialect": "postgres"`) or a Postgres binding goes to
  * `../../postgres/plan/commands.ts`.
  *
- *     chant sql diff <before.json> <after.json> [--json] [--statements]
+ *     chant sql diff <before.json> <after.json> [--json] [--statements] [--topology <topology>]
  *     chant sql plan <env> <build.json> [--json]
  *
  * `diff` is offline: it compares two `chant build` outputs, say a pull
@@ -19,6 +19,12 @@
  * each one the applier would send, with its change's rule and class, and a
  * refused change as the Op that makes it (`../../migration-statements.ts`).
  * The marker in each `CREATE` is the project's `ownership` config's.
+ *
+ * `--topology` (`single`, `cluster:<name>`, `replicated`, `replicated:<cluster>`,
+ * `cloud`; `../topology.ts`) renders a ClickHouse diff's declarations and
+ * statements for that topology: `ON CLUSTER` and the engine. `--statements`
+ * renders for `single` without it; the plain diff compares the declarations as
+ * written. `plan` takes the topology from `sql.profiles.<env>.topology`.
  */
 
 import type { CommandGroup, CommandGroupContext } from "@intentius/chant/cli/command-group";
@@ -29,6 +35,7 @@ import { dropFormattingOnly } from "./server-format";
 import { bindClickHouse } from "../live/bind";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
 import { readFileSync } from "node:fs";
+import { parseTopology, type Topology } from "../topology";
 
 /** The dialect a build output names. */
 function outputDialect(path: string): string | undefined {
@@ -39,12 +46,28 @@ function outputDialect(path: string): string | undefined {
   }
 }
 
-function split(args: string[]): { positional: string[]; json: boolean; statements: boolean } {
-  return { positional: args.filter((a) => !a.startsWith("--")), json: args.includes("--json"), statements: args.includes("--statements") };
+interface DiffArgs {
+  positional: string[];
+  json: boolean;
+  statements: boolean;
+  /** `--topology <t>` or `--topology=<t>`, as written. */
+  topology?: string;
+}
+
+function split(args: string[]): DiffArgs {
+  const positional: string[] = [];
+  let topology: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--topology") topology = args[++i] ?? "";
+    else if (a.startsWith("--topology=")) topology = a.slice("--topology=".length);
+    else if (!a.startsWith("--")) positional.push(a);
+  }
+  return { positional, json: args.includes("--json"), statements: args.includes("--statements"), ...(topology !== undefined ? { topology } : {}) };
 }
 
 /** `chant sql diff --statements`: the statements between two builds, as SQL with comments or as JSON. Exits 2 when a step is an Op or manual. */
-async function runDiffStatements(before: string, after: string, json: boolean): Promise<number> {
+async function runDiffStatements(before: string, after: string, json: boolean, topology: Topology | undefined): Promise<number> {
   const { diffStatements, renderStatements } = await import("../../migration-statements");
   const { resolveOwnershipMarker } = await import("../../core/apply");
   let marker;
@@ -56,7 +79,7 @@ async function runDiffStatements(before: string, after: string, json: boolean): 
     console.error(err instanceof Error ? err.message : String(err));
     return 1;
   }
-  const doc = diffStatements(readFileSync(before, "utf-8"), readFileSync(after, "utf-8"), marker ? { marker } : {});
+  const doc = diffStatements(readFileSync(before, "utf-8"), readFileSync(after, "utf-8"), { ...(marker ? { marker } : {}), ...(topology ? { topology } : {}) });
   console.log(json ? JSON.stringify(doc, null, 2) : renderStatements(doc));
   return doc.refused ? 2 : 0;
 }
@@ -67,18 +90,25 @@ function emit(diff: SchemaDiff, json: boolean, title: string): number {
 }
 
 export async function runDiff(ctx: CommandGroupContext): Promise<number> {
-  const { positional, json, statements } = split(ctx.rawArgs);
+  const { positional, json, statements, topology: topologyArg } = split(ctx.rawArgs);
   if (positional.length !== 2) {
-    console.error("usage: chant sql diff <before.json> <after.json> [--json] [--statements]");
+    console.error("usage: chant sql diff <before.json> <after.json> [--json] [--statements] [--topology <topology>]");
     return 1;
   }
-  if (statements) return runDiffStatements(positional[0]!, positional[1]!, json);
+  let topology: Topology | undefined;
+  try {
+    topology = topologyArg !== undefined ? parseTopology(topologyArg) : undefined;
+  } catch (err) {
+    console.error(`--topology: ${(err as Error).message}`);
+    return 1;
+  }
+  if (statements) return runDiffStatements(positional[0]!, positional[1]!, json, topology);
   if (outputDialect(positional[1]!) === "postgres") {
     const { diffPgBuildFiles, emitPg, projectMajor } = await import("../../postgres/plan/commands");
     return emitPg(diffPgBuildFiles(positional[0]!, positional[1]!, await projectMajor()), json, `${positional[0]} -> ${positional[1]}`);
   }
-  const after = schemaFromBuildFile(positional[1]!);
-  const diff = diffSchemas(schemaFromBuildFile(positional[0]!), after);
+  const after = schemaFromBuildFile(positional[1]!, "default", topology);
+  const diff = diffSchemas(schemaFromBuildFile(positional[0]!, "default", topology), after);
   const rebuildOps = rebuildOpSuggestions(diff, new Map(after.map((o) => [o.key, o.canonical])), "<env>");
   return emit(rebuildOps.length > 0 ? { ...diff, rebuildOps } : diff, json, `${positional[0]} -> ${positional[1]}`);
 }
@@ -86,7 +116,7 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
 /** The declared objects against the server, keys and labels by `database.name`. */
 export async function planAgainstServer(environment: string, buildFile: string, options: Parameters<typeof bindClickHouse>[0] = {}): Promise<SchemaDiff> {
   const target = await bindClickHouse({ ...options, environment });
-  const declared = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase));
+  const declared = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase, target.topology));
   const databases = new Set(declared.map((o) => o.canonical.database ?? o.canonical.name));
   const live = await schemaFromServer(target, databases);
   const diff = diffSchemas(live, declared);
@@ -119,7 +149,7 @@ export const sqlCommands: CommandGroup = {
   name: "sql",
   description: "Schema changes, classified: between two builds, or a build and a live server",
   commands: [
-    { name: "diff", description: "Classify the change between two chant build outputs (offline); --statements prints the statements it takes", handler: runDiff },
+    { name: "diff", description: "Classify the change between two chant build outputs (offline); --statements prints the statements it takes, --topology renders them for single, cluster:<name>, replicated or cloud", handler: runDiff },
     { name: "plan", description: "Classify the change from an environment's server to a chant build output", handler: runPlan },
   ],
 };

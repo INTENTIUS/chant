@@ -14,6 +14,7 @@ import type { ClickHouseTarget } from "../live/bind";
 import { carriesMarker, readTrailerPairs, REBUILD_TRAILER_KEY, stampedComment } from "../ownership";
 import { createStatement, ident, qualifiedIdent, renamedDeclaration, sqlString, type DeclaredObject } from "../apply/statements";
 import { waitForMutations } from "../apply/mutations";
+import { renderFor } from "../topology";
 import { DDL_SETTINGS, syncReplicaWithin } from "./replicas";
 import {
   changesBetween,
@@ -60,12 +61,14 @@ export const utcLiteral = (ms: number): string => `toDateTime64(${sqlString(sqlU
 export const observe = (run: RebuildRun): Promise<RebuildObservation> => observeRebuild(run.target, run.declared, run.marker);
 
 /**
- * One DDL statement. In a Replicated database it goes on without the
- * replicas that are down, which run it from the database's log when they
- * come back (`./replicas.ts`).
+ * One DDL statement, rendered for the environment's topology when it names
+ * one (`../topology.ts`: `ON CLUSTER` and the engine). In a Replicated
+ * database it goes on without the replicas that are down, which run it from
+ * the database's log when they come back (`./replicas.ts`).
  */
-const q = (run: RebuildRun, sql: string) => {
+const q = (run: RebuildRun, statement: string) => {
   run.signal?.throwIfAborted();
+  const sql = renderFor(statement, run.target.topology);
   run.log(sql);
   return clickhouseQuery(run.target.endpoint, sql, { settings: DDL_SETTINGS, ...(run.signal ? { signal: run.signal } : {}) });
 };
@@ -373,7 +376,7 @@ export async function compensate(run: Pick<RebuildRun, "target" | "declared" | "
     const row = rows.find((r) => r.name === name);
     const pairs = readTrailerPairs(row?.comment);
     if (!row || pairs?.get(REBUILD_TRAILER_KEY) !== n.key || pairs.get("role") !== role || !carriesMarker(row.comment, run.marker)) continue;
-    const sql = `DROP ${what} ${qualifiedIdent(n.database, name)} SYNC`;
+    const sql = renderFor(`DROP ${what} ${qualifiedIdent(n.database, name)} SYNC`, run.target.topology);
     run.log(sql);
     await clickhouseQuery(run.target.endpoint, sql, { settings: DDL_SETTINGS });
     dropped.push(`${n.database}.${name}`);

@@ -59,7 +59,7 @@ export async function rebuildRun(args: ClickHouseRebuildArgs, signal: AbortSigna
   const config = deps.config ?? (await loadConfig(cwd));
   const marker = resolveMarker(args, config);
   const target = await bindClickHouse({ ...(args.environment !== undefined ? { environment: args.environment } : {}), config: config ?? {}, ...(deps.env ? { env: deps.env } : {}) });
-  const declared = declaredTable(declaredObjects(readFileSync(resolve(cwd, args.buildPath), "utf8"), target.defaultDatabase), args.table);
+  const declared = declaredTable(declaredObjects(readFileSync(resolve(cwd, args.buildPath), "utf8"), target.defaultDatabase, target.topology), args.table);
   const runId = currentOpRun()?.runId;
   return {
     target,

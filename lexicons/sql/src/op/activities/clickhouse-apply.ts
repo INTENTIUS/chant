@@ -84,7 +84,7 @@ export async function clickhouseApply(args: ClickHouseApplyArgs, signal?: AbortS
     if (!(err instanceof ClickHouseBindingError)) throw err;
     return refused(declaredObjects(json), err.unresolved.reason, err.unresolved.detail);
   }
-  const declared = declaredObjects(json, target.defaultDatabase);
+  const declared = declaredObjects(json, target.defaultDatabase, target.topology);
   let outcome: ClickHouseApplyOutcome;
   try {
     outcome = await applyClickHouse(target, declared, {

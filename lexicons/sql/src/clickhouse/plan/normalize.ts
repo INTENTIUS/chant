@@ -275,8 +275,17 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
     // `ENGINE = ReplicatedMergeTree` with no Keeper path and replica name is
     // printed back with the server's defaults filled in; the two say the same.
     if (/^Replicated.*MergeTree$/.test(engine.name) && args[0] === DEFAULT_REPLICA_PATH && args[1] === DEFAULT_REPLICA_NAME) args = args.slice(2);
-    obj.engineName = engine.name;
-    obj.engine = args.length ? `${engine.name}(${args.join(", ")})` : engine.name;
+    // ClickHouse Cloud turns a declared MergeTree-family engine into its
+    // `Shared*` one and prints it back with the path and replica it chose
+    // (#3645, `../topology.ts`): the declaration said the plain family.
+    let name = engine.name;
+    const shared = /^Shared(\w*MergeTree)$/.exec(name);
+    if (shared) {
+      name = shared[1]!;
+      if (/^'.*'$/s.test(args[0] ?? "") && /^'.*'$/s.test(args[1] ?? "")) args = args.slice(2);
+    }
+    obj.engineName = name;
+    obj.engine = args.length ? `${name}(${args.join(", ")})` : name;
   }
   const comment = stringValue(spanText(tokens, node.comment));
   if (comment !== undefined && comment !== "") obj.comment = comment;

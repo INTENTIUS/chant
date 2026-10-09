@@ -50,6 +50,7 @@ import { clickhouseQuery, type ClickHouseEndpoint } from "../http";
 import { ident, sqlString } from "../apply/statements";
 import { CLICKHOUSE_COMMENT_OWNERSHIP_KEYS, RECEIPTS_TRAILER_KEY } from "../ownership";
 import { DDL_SETTINGS, syncReplicaWithin } from "./replicas";
+import { renderFor, type Topology } from "../topology";
 
 /** The database the receipts live in. Its comment marks it as chant's, so schema reads leave it out. */
 export const RECEIPTS_DATABASE = "chant_receipts";
@@ -79,22 +80,31 @@ export type ClickHouseReceiptStore = SqlReceiptStore;
  * project's ownership stack and env, which every address starts with.
  * `replicatedIn` names a Replicated database to keep them in instead, and
  * `replicaTimeoutMs` how long a read waits for this replica to catch up there.
+ * `topology` is the environment's (`../topology.ts`): the database and table
+ * are created for it, `ON CLUSTER` and a `Replicated*` engine on a cluster.
+ * In a Replicated database they are created for that database whatever it says.
  */
 export function clickhouseReceiptStore(
   endpoint: ClickHouseEndpoint,
   identity: { stack?: string; env?: string },
-  opts: { runId?: string; replicatedIn?: string; replicaTimeoutMs?: number } = {},
+  opts: { runId?: string; replicatedIn?: string; replicaTimeoutMs?: number; topology?: Topology } = {},
 ): ClickHouseReceiptStore {
   const where = receiptsTable(opts.replicatedIn);
+  const topology: Topology | undefined = opts.replicatedIn ? { kind: "replicated" } : opts.topology;
   const TABLE = `${ident(where.database)}.${ident(where.name)}`;
   let ensured = false;
   const ensure = async () => {
     if (ensured) return;
-    if (!opts.replicatedIn) await clickhouseQuery(endpoint, `CREATE DATABASE IF NOT EXISTS ${ident(RECEIPTS_DATABASE)} COMMENT ${sqlString(COMMENT)}`);
+    if (!opts.replicatedIn) {
+      await clickhouseQuery(endpoint, renderFor(`CREATE DATABASE IF NOT EXISTS ${ident(RECEIPTS_DATABASE)} COMMENT ${sqlString(COMMENT)}`, topology), { settings: DDL_SETTINGS });
+    }
     await clickhouseQuery(
       endpoint,
-      `CREATE TABLE IF NOT EXISTS ${TABLE} (address String, effect String, expectation String, run_id String, written_at DateTime64(3) DEFAULT now64(3)) ` +
-        `ENGINE = ${opts.replicatedIn ? "ReplicatedReplacingMergeTree" : "ReplacingMergeTree"}(written_at) ORDER BY address COMMENT ${sqlString(COMMENT)}`,
+      renderFor(
+        `CREATE TABLE IF NOT EXISTS ${TABLE} (address String, effect String, expectation String, run_id String, written_at DateTime64(3) DEFAULT now64(3)) ` +
+          `ENGINE = ReplacingMergeTree(written_at) ORDER BY address COMMENT ${sqlString(COMMENT)}`,
+        topology,
+      ),
       { settings: DDL_SETTINGS },
     );
     ensured = true;

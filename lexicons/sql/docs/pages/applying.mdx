@@ -68,6 +68,31 @@ The declared comment is kept and the trailer goes after it. It is set in the `CR
 
 With `delete: "owned-only"` or `"gated"`, the apply drops the tables, views and databases in the declared databases that the build no longer declares, views before tables and databases last, but only those whose comment carries this project's marker, stack and env both. A table made by hand, or one another chant project stamped, is never touched. A database that still holds an object the prune does not drop is kept. A project with no `ownership.stack` cannot tell its objects from another project's, so a prune reports its candidates as `not-prunable` and drops nothing.
 
+## Topology
+
+One source can run on a single node, a cluster, a `Replicated` database or ClickHouse Cloud. Name the topology on the environment's profile, and the applier renders every statement for it before sending it:
+
+```typescript
+// chant.config.ts
+sql: {
+  profiles: {
+    dev: { url: "http://localhost:8123", topology: "single" },
+    prod: { url: "https://ch.internal:8443", topology: "cluster:main" },
+  },
+},
+```
+
+| Topology | `ON CLUSTER` | MergeTree-family engine | `CREATE DATABASE` |
+|---|---|---|---|
+| `single` | removed | the plain family; a `Replicated*` engine loses its Keeper path | a declared `Replicated` engine is removed |
+| `cluster:<name>` | added after the object's name, or at the end of `RENAME` and `EXCHANGE` | `Replicated*` with `'/clickhouse/tables/{uuid}/{shard}', '{replica}'`, or the path the source declares | `ON CLUSTER`; a `Replicated` engine is removed |
+| `replicated` | removed: a Replicated database refuses it | `Replicated*` with no Keeper path, which a Replicated database also refuses | `ENGINE = Replicated('/clickhouse/databases/<name>', '{shard}', '{replica}')`; `replicated:<cluster>` sends it `ON CLUSTER` |
+| `cloud` | removed | the plain family, which Cloud turns into its `Shared*` engine | a declared `Replicated` engine is removed |
+
+The object form sets a cluster's Keeper path and replica name: `topology: { kind: "cluster", cluster: "main", replicaPath: "/clickhouse/tables/{shard}/{database}/{table}", replicaName: "{replica}" }`. Without a profile, `CLICKHOUSE_TOPOLOGY` takes the string form. An environment that names no topology gets its statements as declared.
+
+The declarations are rendered before they are compared, so a table declared `MergeTree` and running as `ReplicatedMergeTree` on a cluster is no change. A server prints a replicated engine with its default Keeper path filled in, and Cloud prints a `Shared*` engine; both compare equal to the declaration. The plan (`chant sql plan`), the deep diff and the [rebuild migration](../rebuild/) render for the same topology. `chant sql diff --statements --topology <topology>` renders the statements for a migration file the same way, and takes `single` when the flag is left out.
+
 ## A local server
 
 `chant emulator up --lexicon sql` starts the pinned `clickhouse/clickhouse-server` (the image and digest the types come from) on port 8123, and the pinned Postgres server beside it; `--json` reports the ClickHouse one as `CLICKHOUSE_URL`, which the binding reads when no profile names a server.

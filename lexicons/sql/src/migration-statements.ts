@@ -34,6 +34,7 @@ import type { OwnershipMarker } from "@intentius/chant/ownership";
 import { statementChange, type ManualStep, type MigrationStep, type SchemaStatements, type StepObject } from "./core/statements";
 import { declaredObjects as clickhouseDeclared } from "./clickhouse/apply/apply";
 import { planStatements, type DeclaredObject } from "./clickhouse/apply/statements";
+import { topologyLabel, type Topology } from "./clickhouse/topology";
 import { diffSchemas, type Change } from "./clickhouse/plan/diff";
 import { rebuildOpSuggestions } from "./clickhouse/plan/rebuild-handoff";
 import { declaredObjects as postgresDeclared } from "./postgres/apply/apply";
@@ -54,6 +55,13 @@ export interface DiffStatementsOptions {
   env?: string;
   /** ClickHouse: the database a bare name means. Default: `default`. */
   defaultDatabase?: string;
+  /**
+   * ClickHouse: the topology to render the statements for
+   * (`./clickhouse/topology.ts`): `ON CLUSTER` and the engine, on both
+   * builds' declarations before they are compared, so the steps are the ones
+   * the applier sends to an environment with that topology. Default: `single`.
+   */
+  topology?: Topology;
   /** Postgres: the schema a bare name means. Default: `public`. */
   defaultSchema?: string;
   /** Postgres: the major to classify for. Default: the newer build's `postgresMajor`, else the older's, else the newest pinned. */
@@ -93,8 +101,9 @@ const at = (object: string, type: string, name: string): StepObject => ({ object
 function clickhouseStatements(beforeJson: string, afterJson: string, options: DiffStatementsOptions): SchemaStatements {
   const defaultDatabase = options.defaultDatabase ?? "default";
   const env = options.env ?? "<env>";
-  const before = clickhouseDeclared(beforeJson, defaultDatabase);
-  const after = clickhouseDeclared(afterJson, defaultDatabase);
+  const topology: Topology = options.topology ?? { kind: "single" };
+  const before = clickhouseDeclared(beforeJson, defaultDatabase, topology);
+  const after = clickhouseDeclared(afterJson, defaultDatabase, topology);
   const keyed = (objs: readonly DeclaredObject[]) => objs.map((o) => ({ key: o.exportName, canonical: o.canonical }));
   const diff = diffSchemas(keyed(before), keyed(after));
   const plan = planStatements({
@@ -103,6 +112,7 @@ function clickhouseStatements(beforeJson: string, afterJson: string, options: Di
     current: new Map(before.map((o) => [o.exportName, o.canonical])),
     keyOf: (o) => o.exportName,
     allowDestructive: true,
+    topology,
     ...(options.marker ? { marker: options.marker } : {}),
   });
   const declaredByExport = new Map(after.map((o) => [o.exportName, o.canonical]));
@@ -156,7 +166,7 @@ function clickhouseStatements(beforeJson: string, afterJson: string, options: Di
       ...(change?.destructive ? { destructive: true } : {}),
     });
   }
-  return { dialect: "clickhouse", defaultDatabase, steps, refused: steps.some((s) => s.kind !== "statement"), hints: diff.hints };
+  return { dialect: "clickhouse", defaultDatabase, topology: topologyLabel(topology), steps, refused: steps.some((s) => s.kind !== "statement"), hints: diff.hints };
 }
 
 // ── Postgres ───────────────────────────────────────────────────────────

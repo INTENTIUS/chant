@@ -449,3 +449,29 @@ export function renderStatement(sql: string, topology: Topology): string {
 export function renderSteps<S extends { sql: string }>(steps: readonly S[], topology: Topology): S[] {
   return steps.map((s) => ({ ...s, sql: renderStatement(s.sql, topology) }));
 }
+
+/**
+ * A statement for a topology that may not be configured: with none, the
+ * statement as the source wrote it. The applier, the plan and the rebuild
+ * migration render only when an environment names its topology
+ * (`sql.profiles.<env>.topology`, `CLICKHOUSE_TOPOLOGY`), so a project that
+ * names none sends what it declared, as before.
+ */
+export const renderFor = (sql: string, topology: Topology | undefined): string => (topology ? renderStatement(sql, topology) : sql);
+
+/** A topology from its string form or its object form (`sql.profiles.<env>.topology`). */
+export function toTopology(value: string | Topology): Topology {
+  return typeof value === "string" ? parseTopology(value) : value;
+}
+
+/** The topology's string form, as `parseTopology` reads it. Replica path options are not part of it. */
+export function topologyLabel(topology: Topology): string {
+  switch (topology.kind) {
+    case "cluster":
+      return `cluster:${topology.cluster}`;
+    case "replicated":
+      return topology.cluster ? `replicated:${topology.cluster}` : "replicated";
+    default:
+      return topology.kind;
+  }
+}

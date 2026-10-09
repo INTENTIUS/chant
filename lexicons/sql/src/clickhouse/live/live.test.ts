@@ -65,6 +65,16 @@ describe("binding an environment to a server", () => {
     expect(isUnresolvedTarget(t) && t.reason).toBe("no-credentials");
   });
 
+  test("the topology comes from the profile, or CLICKHOUSE_TOPOLOGY, and is undefined when neither names one (#3645)", () => {
+    const profile = (topology: unknown) =>
+      resolveClickHouseTarget({ environment: "prod", config: { sql: { profiles: { prod: { url: "http://ch:8123", topology } } } } as never, env: {} });
+    expect(profile("cluster:main")).toMatchObject({ topology: { kind: "cluster", cluster: "main" } });
+    expect(profile({ kind: "replicated", cluster: "all" })).toMatchObject({ topology: { kind: "replicated", cluster: "all" } });
+    expect(resolveClickHouseTarget({ env: { CLICKHOUSE_URL: "http://ch:8123", CLICKHOUSE_TOPOLOGY: "cloud" } })).toMatchObject({ topology: { kind: "cloud" } });
+    expect("topology" in resolveClickHouseTarget({ env: { CLICKHOUSE_URL: "http://ch:8123" } })).toBe(false);
+    expect(() => resolveClickHouseTarget({ env: { CLICKHOUSE_URL: "http://ch:8123", CLICKHOUSE_TOPOLOGY: "sharded" } })).toThrow(/unknown topology/);
+  });
+
   test("no profile and no CLICKHOUSE_URL is no-binding", () => {
     const t = resolveClickHouseTarget({ environment: "dev", config: {}, env: {} });
     expect(isUnresolvedTarget(t) && t.reason).toBe("no-binding");

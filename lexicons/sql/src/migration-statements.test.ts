@@ -9,6 +9,7 @@ import { postgresApply } from "./op/activities/postgres-apply";
 import { runDiff } from "./clickhouse/plan/commands";
 import { writableClickHouse, type WritableServer } from "./clickhouse/testing/writable-server";
 import { writablePostgres } from "./postgres/testing/writable-server";
+import type { Topology } from "./clickhouse/topology";
 
 interface Obj {
   export: string;
@@ -111,7 +112,7 @@ describe("ClickHouse", () => {
   });
 
   test("two identical builds take no steps", () => {
-    expect(diffStatements(CH_BEFORE, CH_BEFORE)).toEqual({ dialect: "clickhouse", defaultDatabase: "default", steps: [], refused: false, hints: [] });
+    expect(diffStatements(CH_BEFORE, CH_BEFORE)).toEqual({ dialect: "clickhouse", defaultDatabase: "default", topology: "single", steps: [], refused: false, hints: [] });
   });
 
   test("the applier sends the same statements for the same change", async () => {
@@ -261,5 +262,123 @@ describe("chant sql diff --statements", () => {
     expect(r.code).toBe(0);
     expect(r.out).toBe(renderStatements(diffStatements(PG_BEFORE, after)));
     expect(r.out).toContain("ALTER TABLE app.users ADD COLUMN name text DEFAULT 'none' NOT NULL;");
+  });
+});
+
+// ── ClickHouse topologies (#3645) ──────────────────────────────────────
+
+describe("ClickHouse statements per topology", () => {
+  const EMPTY = build("clickhouse", []);
+  const MV: Obj = {
+    export: "counts",
+    type: "ClickHouse::MaterializedView",
+    dependsOn: ["events"],
+    ddl: "CREATE MATERIALIZED VIEW analytics.counts ENGINE = SummingMergeTree ORDER BY kind AS SELECT kind, count() AS n FROM analytics.events GROUP BY kind",
+  };
+  const FIRST = build("clickhouse", [DB, EVENTS, SESSIONS, OLD, MV]);
+  const TOPOLOGIES: Array<[string, Topology]> = [
+    ["single", { kind: "single" }],
+    ["cluster:main", { kind: "cluster", cluster: "main" }],
+    ["replicated", { kind: "replicated" }],
+    ["cloud", { kind: "cloud" }],
+  ];
+  const created = (t: Topology) => sqlOf(diffStatements(EMPTY, FIRST, { marker: MARKER, topology: t })).map((s) => s.replace(/ COMMENT '[^']*\[chant[^']*'$/, ""));
+  const R = "'/clickhouse/tables/{uuid}/{shard}', '{replica}'";
+
+  test("single is the default, and the declarations as written", () => {
+    expect(diffStatements(EMPTY, FIRST, { marker: MARKER })).toEqual(diffStatements(EMPTY, FIRST, { marker: MARKER, topology: { kind: "single" } }));
+    expect(created({ kind: "single" })).toEqual([
+      "CREATE DATABASE analytics ENGINE = Atomic",
+      "CREATE TABLE analytics.events (ts DateTime, user_id UInt64, kind String) ENGINE = MergeTree ORDER BY (ts, user_id)",
+      "CREATE TABLE analytics.sessions (id UInt64, ts DateTime) ENGINE = MergeTree ORDER BY id",
+      "CREATE TABLE analytics.old (a UInt8) ENGINE = MergeTree ORDER BY a",
+      "CREATE MATERIALIZED VIEW analytics.counts ENGINE = SummingMergeTree ORDER BY kind AS SELECT kind, count() AS n FROM analytics.events GROUP BY kind",
+    ]);
+    expect(diffStatements(EMPTY, FIRST).topology).toBe("single");
+  });
+
+  test("a cluster creates everything ON CLUSTER, with Replicated engines and their Keeper path", () => {
+    expect(created({ kind: "cluster", cluster: "main" })).toEqual([
+      "CREATE DATABASE analytics ON CLUSTER `main` ENGINE = Atomic",
+      `CREATE TABLE analytics.events ON CLUSTER \`main\` (ts DateTime, user_id UInt64, kind String) ENGINE = ReplicatedMergeTree(${R}) ORDER BY (ts, user_id)`,
+      `CREATE TABLE analytics.sessions ON CLUSTER \`main\` (id UInt64, ts DateTime) ENGINE = ReplicatedMergeTree(${R}) ORDER BY id`,
+      `CREATE TABLE analytics.old ON CLUSTER \`main\` (a UInt8) ENGINE = ReplicatedMergeTree(${R}) ORDER BY a`,
+      `CREATE MATERIALIZED VIEW analytics.counts ON CLUSTER \`main\` ENGINE = ReplicatedSummingMergeTree(${R}) ORDER BY kind AS SELECT kind, count() AS n FROM analytics.events GROUP BY kind`,
+    ]);
+    expect(diffStatements(EMPTY, FIRST, { topology: { kind: "cluster", cluster: "main" } }).topology).toBe("cluster:main");
+  });
+
+  test("a Replicated database: the database Replicated, its tables Replicated with no path, no ON CLUSTER", () => {
+    expect(created({ kind: "replicated" })).toEqual([
+      "CREATE DATABASE analytics ENGINE = Replicated('/clickhouse/databases/analytics', '{shard}', '{replica}')",
+      "CREATE TABLE analytics.events (ts DateTime, user_id UInt64, kind String) ENGINE = ReplicatedMergeTree ORDER BY (ts, user_id)",
+      "CREATE TABLE analytics.sessions (id UInt64, ts DateTime) ENGINE = ReplicatedMergeTree ORDER BY id",
+      "CREATE TABLE analytics.old (a UInt8) ENGINE = ReplicatedMergeTree ORDER BY a",
+      "CREATE MATERIALIZED VIEW analytics.counts ENGINE = ReplicatedSummingMergeTree ORDER BY kind AS SELECT kind, count() AS n FROM analytics.events GROUP BY kind",
+    ]);
+  });
+
+  test("Cloud takes the plain family", () => {
+    expect(created({ kind: "cloud" })).toEqual(created({ kind: "single" }));
+  });
+
+  test("a source written for a cluster renders back to plain DDL for a single node", () => {
+    const clustered = build("clickhouse", [
+      { ...EVENTS, ddl: `CREATE TABLE analytics.events ON CLUSTER prod (ts DateTime, user_id UInt64, kind String) ENGINE = ReplicatedMergeTree('/t/{shard}/events', '{replica}') ORDER BY (ts, user_id)` },
+    ]);
+    expect(sqlOf(diffStatements(EMPTY, clustered))[0]).toMatch(/^CREATE TABLE analytics\.events \(ts DateTime, user_id UInt64, kind String\) ENGINE = MergeTree\(\) ORDER BY \(ts, user_id\) COMMENT /);
+  });
+
+  test("the changes between two builds: ON CLUSTER on every ALTER and DROP on a cluster, as written elsewhere", () => {
+    const base = sqlOf(diffStatements(CH_BEFORE, CH_AFTER, { marker: MARKER }));
+    for (const t of [{ kind: "replicated" }, { kind: "cloud" }] as Topology[]) expect(sqlOf(diffStatements(CH_BEFORE, CH_AFTER, { marker: MARKER, topology: t }))).toEqual(base);
+    expect(sqlOf(diffStatements(CH_BEFORE, CH_AFTER, { marker: MARKER, topology: { kind: "cluster", cluster: "main" } }))).toEqual([
+      "ALTER TABLE `analytics`.`events` ON CLUSTER `main` ADD COLUMN region String DEFAULT 'eu' AFTER `user_id`",
+      "ALTER TABLE `analytics`.`events` ON CLUSTER `main` MODIFY COLUMN `kind` LowCardinality(String)",
+      "CREATE VIEW analytics.by_kind ON CLUSTER `main` AS SELECT kind, count() AS n FROM analytics.events GROUP BY kind COMMENT '[chant managed-by=chant stack=shop env=prod]'",
+      "DROP TABLE `analytics`.`old` ON CLUSTER `main` SYNC",
+    ]);
+  });
+
+  test("an engine the topology changes is no change: a cluster's Replicated engine compares equal to the declared MergeTree", () => {
+    for (const [, t] of TOPOLOGIES) expect(diffStatements(FIRST, FIRST, { topology: t }).steps).toEqual([]);
+  });
+
+  test.each(TOPOLOGIES)("the applier sends the same statements as the offline renderer for %s", async (label, t) => {
+    const s = await writableClickHouse();
+    servers.push(s);
+    const deps = { config, env: { CLICKHOUSE_URL: s.url, CLICKHOUSE_TOPOLOGY: label }, log: () => undefined };
+    await clickhouseApply({ buildPath: buildFile(FIRST), environment: "test" }, undefined, deps);
+    expect(s.writes).toEqual(sqlOf(diffStatements(EMPTY, FIRST, { marker: MARKER, topology: t })));
+    // Applied again: nothing to send, the engines it created compare equal to the declarations rendered for it.
+    s.writes.length = 0;
+    await clickhouseApply({ buildPath: buildFile(FIRST), environment: "test" }, undefined, deps);
+    expect(s.writes).toEqual([]);
+    const after = build("clickhouse", [DB, EVENTS_V2, SESSIONS_RESORTED, BY_KIND, MV]);
+    await clickhouseApply({ buildPath: buildFile(after), environment: "test", prune: true }, undefined, deps);
+    expect(s.writes).toEqual(sqlOf(diffStatements(FIRST, after, { marker: MARKER, topology: t })));
+  });
+
+  test("chant sql diff --statements --topology renders for that topology", async () => {
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
+    try {
+      expect(await runDiff({ verb: "diff", rawArgs: [buildFile(EMPTY), buildFile(FIRST), "--statements", "--json", "--topology", "cluster:main"] })).toBe(0);
+      expect(await runDiff({ verb: "diff", rawArgs: [buildFile(EMPTY), buildFile(FIRST), "--statements", "--json", "--topology=replicated"] })).toBe(0);
+    } finally {
+      log.mockRestore();
+    }
+    expect(JSON.parse(lines[0]!)).toEqual(diffStatements(EMPTY, FIRST, { topology: { kind: "cluster", cluster: "main" } }));
+    expect(JSON.parse(lines[1]!)).toEqual(diffStatements(EMPTY, FIRST, { topology: { kind: "replicated" } }));
+  });
+
+  test("chant sql diff refuses a topology it does not know", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect(await runDiff({ verb: "diff", rawArgs: [buildFile(EMPTY), buildFile(FIRST), "--statements", "--topology", "sharded"] })).toBe(1);
+      expect(err.mock.calls[0]![0]).toMatch(/--topology: unknown topology "sharded"/);
+    } finally {
+      err.mockRestore();
+    }
   });
 });
