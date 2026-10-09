@@ -2,6 +2,8 @@ import { describe, test, expect } from "vitest";
 import { computeBuildDigest, diffDigests, hashProps } from "./digest";
 import type { BuildResult } from "../build";
 import type { BuildDigest } from "./types";
+import { AttrRef } from "../attrref";
+import { LOGICAL_NAME_SYMBOL } from "../utils";
 
 function makeBuildResult(entitiesByLexicon: Record<string, Array<{ name: string; type: string; props: unknown }>>): BuildResult {
   const entities = new Map();
@@ -36,6 +38,30 @@ describe("hashProps", () => {
 
   test("produces different hashes for different props", () => {
     expect(hashProps({ a: 1 })).not.toBe(hashProps({ a: 2 }));
+  });
+
+  // #3642: a sql index's `columns` holds AttrRefs the build never names, and
+  // their toJSON throws, so a snapshot of the project failed.
+  describe("an AttrRef the build did not name", () => {
+    const parent = { [LOGICAL_NAME_SYMBOL]: "orders" };
+
+    test("hashes instead of throwing, as the envelope named by its parent", () => {
+      const nested = { columns: [new AttrRef(parent, "status")] };
+      expect(() => JSON.stringify(nested)).toThrow(/logical name not set/);
+      const named = new AttrRef({}, "status");
+      named._setLogicalName("orders");
+      expect(hashProps(nested)).toBe(hashProps({ columns: [named] }));
+    });
+
+    test("tells two attributes apart", () => {
+      expect(hashProps({ c: [new AttrRef(parent, "status")] })).not.toBe(hashProps({ c: [new AttrRef(parent, "amount")] }));
+    });
+
+    test("hashes a named AttrRef as it always has", () => {
+      const ref = new AttrRef({}, "arn");
+      ref._setLogicalName("bucket");
+      expect(hashProps({ a: ref })).toBe(hashProps({ a: { __attrRef: { entity: "bucket", attribute: "arn" } } }));
+    });
   });
 });
 

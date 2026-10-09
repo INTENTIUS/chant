@@ -47,6 +47,10 @@ export default defineConfig({
                   "label": "How-to guides",
                   "items": [
                         {
+                              "label": "Watching a Server for Drift",
+                              "slug": "drift-watch"
+                        },
+                        {
                               "label": "ClickHouse",
                               "items": [
                                     {

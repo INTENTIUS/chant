@@ -9,6 +9,7 @@ import type { Declarable } from "../declarable";
 import type { BuildDigest, ResourceDigest, DigestDiff } from "./types";
 import { canonicalJson } from "../effect-receipt";
 import { contentDigest } from "../content-digest";
+import { isAttrRefLike, LOGICAL_NAME_SYMBOL } from "../utils";
 
 /**
  * Hash an entity's props deterministically: bare hex SHA-256 over their
@@ -18,8 +19,32 @@ import { contentDigest } from "../content-digest";
  * hashes rather than throwing.
  */
 export function hashProps(props: unknown): string {
-  const plain: unknown = JSON.parse(JSON.stringify(props) ?? "null");
+  const plain: unknown = JSON.parse(JSON.stringify(namedRefs(props)) ?? "null");
   return contentDigest(canonicalJson(plain)).slice("sha256:".length);
+}
+
+/**
+ * `props` with each AttrRef that has no logical name of its own written as
+ * the envelope its `toJSON` gives, named by its parent's logical name. The
+ * build names only an entity's top-level AttrRefs; one held in a record,
+ * such as a sql table's `columns`, is never named, and `toJSON` throws on
+ * it (chant#3642). Plain objects and arrays are walked; anything else is
+ * left for `JSON.stringify`, so a named AttrRef hashes as it always has.
+ */
+function namedRefs(value: unknown): unknown {
+  if (isAttrRefLike(value)) {
+    if (value.getLogicalName()) return value;
+    const parent = value.parent.deref() as Record<symbol, unknown> | undefined;
+    const entity = parent?.[LOGICAL_NAME_SYMBOL];
+    return { __attrRef: { entity: typeof entity === "string" ? entity : null, attribute: value.attribute } };
+  }
+  if (Array.isArray(value)) return value.map(namedRefs);
+  if (value !== null && typeof value === "object") {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, namedRefs(v)]));
+  }
+  return value;
 }
 
 /**
