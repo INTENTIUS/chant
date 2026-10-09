@@ -48,6 +48,25 @@ function namedRefs(value: unknown): unknown {
 }
 
 /**
+ * The fingerprint of one entity's declared definition (#3652): its type and
+ * its build props, hashed by {@link hashProps}. A live diff and a lifecycle
+ * plan print it beside each create, so the plan digest a gate binds moves
+ * when what would be created changes, not only when its name does.
+ */
+export function definitionDigest(entityType: string, props: unknown): string {
+  return hashProps({ type: entityType, props: props ?? {} });
+}
+
+/** {@link definitionDigest} for every entity in `entities`, keyed by name. */
+export function declaredDefinitions(
+  entities: Iterable<readonly [string, { entityType: string; props?: unknown }]>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, entity] of entities) out[name] = definitionDigest(entity.entityType, entity.props);
+  return out;
+}
+
+/**
  * Compute a full build digest from a BuildResult.
  */
 export function computeBuildDigest(buildResult: BuildResult): BuildDigest {

@@ -104,7 +104,7 @@ export function detectDrift(output: string): boolean {
  * what the change set is *of*: the same rows against `staging` are not an
  * approval to apply against `prod`.
  */
-function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
+export function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
   return computePlanDigest("lifecycle-diff", {
     env: args.env,
     live: args.live === true,

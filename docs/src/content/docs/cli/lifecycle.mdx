@@ -124,6 +124,17 @@ In `--json`, the addresses arrive as `resources.queried` per lexicon — a `name
 
 The field is optional and purely diagnostic: verdicts are unchanged, and a lexicon that reports no addresses simply omits it. `lifecycle plan --json` carries the same address per entry as `queried` on the change set (a `create`'s address is the one the provider confirmed absent). The k8s lexicon is the first implementer.
 
+#### The declared definition of a missing entity
+
+Each missing entity's row also carries `[definition <sha256 hex>]`, a fingerprint of its declared type and build props (#3652). A missing entity is what applying the diff would create, and `ApplyOp`'s gate binds the digest of this output: with the name alone, an approval for "create events" stood after `events` was edited, as long as `events` did not exist yet. With the fingerprint, editing what would be created changes the plan digest, and the gate refuses the old approval with "is approved, but not for this plan".
+
+```
+MISSING (declared, provider reports not in cloud):
+  - events [queried http://127.0.0.1:8123 yodel.events] [definition 3f9c…]
+```
+
+In `--json` the fingerprints arrive as `resources.definitions`, a `name → fingerprint` map over the missing entities. `lifecycle plan --json` carries the same fingerprint as `definition` on each `create` entry, so a change-set part's plan digest covers it too.
+
 #### `--namespace <ns>` — where to read scope-less entities
 
 The address above is also the fix's starting point. When an object's namespace is stamped by a controller rather than declared — a GitOps estate where one project declares the `Kustomization` with `spec.targetNamespace` and another declares the bare objects — the read falls through to `default` and reports a running estate as absent. `--namespace <ns>` replaces that fallback:
@@ -357,6 +368,7 @@ The AWS lexicon is the first implementer, reading the CloudFormation Registry sc
 | `action`, `evidence`, `ownership` | The classification and the three-way evidence behind it, as in the table above. |
 | `deltas` | Attribute-level changes, on `update`. |
 | `queried` | The resolved read address, when the lexicon reported one (#1620). |
+| `definition` | On a `create`, the fingerprint of the declared type and build props (#3652), so the plan's digest moves when what it would create does. |
 | `runtimeOwner` | The declared entity a `runtime` entry's owner chain resolves to. |
 | `unobservedReason`, `unobservedDetail` | Why an `unobserved` entry could not be read. |
 | `disruption` | How much applying an `update` costs, from the lexicon that owns the spec. Present on every `update` and on nothing else. `unknown` means nobody could say. |

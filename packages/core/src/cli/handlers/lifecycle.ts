@@ -18,8 +18,8 @@ import {
   type DeviationToAccept,
   type ObservationBaseline,
 } from "../../lifecycle/observation-baseline";
-import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
-import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
+import { computeBuildDigest, declaredDefinitions, diffDigests } from "../../lifecycle/digest";
+import { diffLive, diffLiveArtifacts, diffSnapshots, missingRow, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet, type HeldEntitySet } from "../../lifecycle/change-set";
 import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
 import { annotateDisruption, disruptionNotices } from "../../lifecycle/disruption";
@@ -876,7 +876,17 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       });
       const observedNow = observed.resources;
       const observedThen = prevSnapshot?.resources;
-      const diff = diffLive({ declared, observedNow, observedThen, unobserved: observed.unobserved, queried: observed.queried });
+      const diff = diffLive({
+        declared,
+        observedNow,
+        observedThen,
+        unobserved: observed.unobserved,
+        queried: observed.queried,
+        // What each create would create (#3652), so the diff, and the plan
+        // digest ApplyOp's gate binds to it, moves when a missing entity's
+        // declaration does.
+        definitions: declaredDefinitions(entities),
+      });
       // Unobserved entities are deliberately NOT drift: a hole in the read is
       // not a change in the cloud. They are reported separately (#1089) so a
       // "no drift detected" line can never be built on top of a failed read.
@@ -1128,10 +1138,7 @@ function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiff
   if (diff.missing.length > 0) {
     console.log(formatBold("\nMISSING (declared, provider reports not in cloud):"));
     for (const name of diff.missing) {
-      // The address the read actually went to (#1620) — the line between "not
-      // there" and "looked in the wrong place" (a defaulted namespace, say).
-      const queried = diff.queried?.[name];
-      console.log(`  - ${name}${queried ? ` [queried ${queried}]` : ""}`);
+      console.log(missingRow(diff, name));
     }
   }
   if (diff.orphan.length > 0) {
@@ -1415,6 +1422,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // The resolved read address rides every entry, not just unobserved
         // ones — the diff path already passes it (#1620); plan lost it.
         queried: observed.queried,
+        // A create carries its declaration's fingerprint (#3652), so the
+        // plan's digest moves when what it would create does.
+        definitions: declaredDefinitions(entities),
       }, {
         // Attribution survives the flat merge below (#1674).
         lexicon: lexiconName,
