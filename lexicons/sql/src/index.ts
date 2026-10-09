@@ -19,3 +19,18 @@ export { database, table, view, literal } from "./clickhouse/entities";
 // `@intentius/chant-lexicon-sql/postgres` is Postgres's. Declarations import
 // them from the dialect subpath.
 export { schema, index, sequence, type, domain, extension } from "./postgres/entities";
+
+// A schema change's statements between two builds, rendered offline for a
+// migration file (#3644); also at `@intentius/chant-lexicon-sql/migration-statements`.
+export {
+  diffStatements,
+  renderStatements,
+  type DiffStatementsOptions,
+  type ManualStep,
+  type MigrationStep,
+  type OpStep,
+  type SchemaStatements,
+  type StatementChange,
+  type StatementStep,
+  type StepObject,
+} from "./migration-statements";

@@ -4,7 +4,7 @@
  * says `"dialect": "postgres"`) or a Postgres binding goes to
  * `../../postgres/plan/commands.ts`.
  *
- *     chant sql diff <before.json> <after.json> [--json]
+ *     chant sql diff <before.json> <after.json> [--json] [--statements]
  *     chant sql plan <env> <build.json> [--json]
  *
  * `diff` is offline: it compares two `chant build` outputs, say a pull
@@ -14,6 +14,11 @@
  * rebuild, which a plan refuses to make in place, and 0 otherwise; for each
  * refused table they name the `ClickHouseRebuildOp` to run instead
  * (`rebuildOps` in `--json`, `./rebuild-handoff.ts`).
+ *
+ * `diff --statements` prints the statements instead, for a migration file:
+ * each one the applier would send, with its change's rule and class, and a
+ * refused change as the Op that makes it (`../../migration-statements.ts`).
+ * The marker in each `CREATE` is the project's `ownership` config's.
  */
 
 import type { CommandGroup, CommandGroupContext } from "@intentius/chant/cli/command-group";
@@ -34,8 +39,26 @@ function outputDialect(path: string): string | undefined {
   }
 }
 
-function split(args: string[]): { positional: string[]; json: boolean } {
-  return { positional: args.filter((a) => !a.startsWith("--")), json: args.includes("--json") };
+function split(args: string[]): { positional: string[]; json: boolean; statements: boolean } {
+  return { positional: args.filter((a) => !a.startsWith("--")), json: args.includes("--json"), statements: args.includes("--statements") };
+}
+
+/** `chant sql diff --statements`: the statements between two builds, as SQL with comments or as JSON. Exits 2 when a step is an Op or manual. */
+async function runDiffStatements(before: string, after: string, json: boolean): Promise<number> {
+  const { diffStatements, renderStatements } = await import("../../migration-statements");
+  const { resolveOwnershipMarker } = await import("../../core/apply");
+  let marker;
+  try {
+    const { loadChantConfig } = await import("@intentius/chant/config");
+    const config = await loadChantConfig(process.cwd()).then((r) => r.config).catch(() => undefined);
+    marker = resolveOwnershipMarker({}, config, "chant sql diff --statements");
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+  const doc = diffStatements(readFileSync(before, "utf-8"), readFileSync(after, "utf-8"), marker ? { marker } : {});
+  console.log(json ? JSON.stringify(doc, null, 2) : renderStatements(doc));
+  return doc.refused ? 2 : 0;
 }
 
 function emit(diff: SchemaDiff, json: boolean, title: string): number {
@@ -44,11 +67,12 @@ function emit(diff: SchemaDiff, json: boolean, title: string): number {
 }
 
 export async function runDiff(ctx: CommandGroupContext): Promise<number> {
-  const { positional, json } = split(ctx.rawArgs);
+  const { positional, json, statements } = split(ctx.rawArgs);
   if (positional.length !== 2) {
-    console.error("usage: chant sql diff <before.json> <after.json> [--json]");
+    console.error("usage: chant sql diff <before.json> <after.json> [--json] [--statements]");
     return 1;
   }
+  if (statements) return runDiffStatements(positional[0]!, positional[1]!, json);
   if (outputDialect(positional[1]!) === "postgres") {
     const { diffPgBuildFiles, emitPg, projectMajor } = await import("../../postgres/plan/commands");
     return emitPg(diffPgBuildFiles(positional[0]!, positional[1]!, await projectMajor()), json, `${positional[0]} -> ${positional[1]}`);
@@ -95,7 +119,7 @@ export const sqlCommands: CommandGroup = {
   name: "sql",
   description: "Schema changes, classified: between two builds, or a build and a live server",
   commands: [
-    { name: "diff", description: "Classify the change between two chant build outputs (offline)", handler: runDiff },
+    { name: "diff", description: "Classify the change between two chant build outputs (offline); --statements prints the statements it takes", handler: runDiff },
     { name: "plan", description: "Classify the change from an environment's server to a chant build output", handler: runPlan },
   ],
 };

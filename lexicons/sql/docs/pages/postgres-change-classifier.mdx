@@ -30,6 +30,23 @@ chant sql plan prod schema.json        # a build output against the prod server
 
 Both read the build's `dialect` and exit 2 when a change can only be made as expand and contract. `--json` prints the changes, the hints, the refused changes and the migration Op suggestions as one document. `chant sql diff` compares a pull request's base and head builds with no server. `chant sql plan` reads the server `sql.profiles.<env>` binds (else `POSTGRES_URL`), in the profile's `schemas` when it lists them, otherwise in the default schema and every schema the build declares an object in. Where the normalization rules leave an expression different, it asks that server: the declared view, or the table's column types, defaults, generated expressions and checks, are created as temporary objects in a transaction that is always rolled back, and read back with the same printers, so a view's `SELECT *` and the server's added parentheses are not reported as changes.
 
+## Statements for a migration file
+
+`chant sql diff base.json head.json --statements` prints the statements that take the base schema to the head one, offline: each one the applier would send for the same change, after a comment naming its object, rule and class, and whether it has to run outside a transaction block. `--json` prints them as one document, which `diffStatements(before, after)` from `@intentius/chant-lexicon-sql` also returns, each statement with `transactional` set:
+
+```sql
+-- users (app.users): SQLPG201 metadata
+ALTER TABLE app.users ADD COLUMN name text DEFAULT 'none' NOT NULL;
+
+-- usersEmail (app.users_email_idx): SQLPG240 concurrently, outside a transaction
+CREATE INDEX CONCURRENTLY users_email_idx ON app.users (email);
+
+-- orders (app.orders): SQLPG205 made by PostgresMigrationOp, not a statement:
+--   export const { op } = PostgresMigrationOp({ name: "migrate-app-orders-reference", env: "<env>", table: "app.orders", column: "reference" });
+```
+
+A column rename or a type change across kinds is never DDL: it is a step naming `PostgresMigrationOp`, one per column. Any other expand-and-contract change, and the refused table's other changes, which the applier also holds back, are a manual step. A column or object drop is a statement marked destructive. Statements use the default schema for a bare name, as the applier sets `search_path`. The command exits 2 when a step is not a statement. What the applier asks the server is left out: its normalization of expressions the rules leave different, and an extension's own comment.
+
 ## Which major
 
 Two rules change class across the supported majors: a STORED generated column's expression (SQLPG212) is a rewrite from 17 and expand and contract before it, and a table's access method (SQLPG226) is a rewrite from 15 and expand and contract before it.

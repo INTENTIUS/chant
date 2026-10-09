@@ -68,7 +68,7 @@
 
 import type { OwnershipMarker } from "@intentius/chant/ownership";
 import type { ApplyRef } from "@intentius/chant/apply";
-import { SqlApplyError, changesByObject, dependencyFailedDetail, missingDependencies, readBuildObjects, type SqlApplyOutcome } from "../../core/apply";
+import { SqlApplyError, dependencyFailedDetail, missingDependencies, readBuildObjects, type SqlApplyOutcome } from "../../core/apply";
 import { carriesMarker, isChantManaged } from "../../core/ownership";
 import { PostgresQueryError, type PostgresClient } from "../live/client";
 import type { PostgresTarget } from "../live/bind";
@@ -83,18 +83,7 @@ import type { PostgresEntityType } from "../entity-types";
 import type { PgChangeClass } from "../plan/rules";
 import type { CanonicalKind } from "../plan/normalize";
 import { quoteIdent } from "../keywords";
-import {
-  alterSteps,
-  commentStatement,
-  createSteps,
-  dropStatement,
-  isDestructive,
-  isRefused,
-  refusalDetail,
-  scansRows,
-  type DeclaredPgObject,
-  type PgStep,
-} from "./statements";
+import { planPgStatements, scansRows, type DeclaredPgObject, type PgDropStatement, type PgStep } from "./statements";
 
 /** The timeouts a statement runs with, in milliseconds; 0 is no limit. */
 export interface PostgresApplyTimeouts {
@@ -195,19 +184,6 @@ export interface PostgresApplyOptions {
   serverNormalize?: typeof serverNormalized;
 }
 
-/** Drop order: what reads from a table before the table, types after the tables using them, a schema last. */
-const DROP_ORDER: Record<CanonicalKind, number> = {
-  materializedView: 0,
-  view: 1,
-  index: 2,
-  table: 3,
-  sequence: 4,
-  domain: 5,
-  enum: 6,
-  extension: 7,
-  schema: 8,
-};
-
 const SQLSTATE_LOCK_NOT_AVAILABLE = "55P03";
 const SQLSTATE_QUERY_CANCELED = "57014";
 const SQLSTATE_DEPENDENT_OBJECTS = "2BP01";
@@ -273,82 +249,52 @@ export async function applyPostgres(
     ...(opts.readLive ? { readLive: opts.readLive } : {}),
     ...(opts.serverNormalize ? { serverNormalize: opts.serverNormalize } : {}),
   });
-  const byObject = changesByObject(plan.diff.changes);
   const normalizedByKey = new Map(plan.declared.map((o) => [o.key, o.canonical]));
-  const liveByKey = new Map(plan.live.map((o) => [o.key, o.canonical]));
   const liveRawByKey = new Map(plan.liveObjects.map((o) => [qualifiedKey(liveCanonicalAddress(o)), o]));
-  const matchedLive = new Map<string, string>();
-  for (const m of matchPgObjects(plan.live, plan.declared)) if (m.kind === "matched") matchedLive.set(m.after.key, m.before.key);
+  const objects = declared.map((original) => ({ ...original, canonical: { ...original.canonical, ...normalizedByKey.get(original.key) } }));
+  const matchedLive = new Set<string>();
+  for (const m of matchPgObjects(plan.live, plan.declared)) if (m.kind === "matched") matchedLive.add(m.after.key);
 
   // An extension's own comment stays under the trailer when the declaration sets none.
-  const extensionComments = await extensionDefaults(client, declared.filter((o) => o.canonical.kind === "extension" && !matchedLive.has(o.key)).map((o) => o.canonical.name));
+  const extensionComments = await extensionDefaults(client, objects.filter((o) => o.canonical.kind === "extension" && !matchedLive.has(o.key)).map((o) => o.canonical.name));
 
   // ── Each object's statements, or its verdict when it has none to send. ──
+  const statements = planPgStatements({
+    declared: objects,
+    changes: plan.diff.changes,
+    current: plan.live,
+    major: plan.major ?? POSTGRES_LATEST_MAJOR,
+    allowDestructive: opts.prune === true,
+    carriesMarker: (_live, key) => carriesMarker(liveRawByKey.get(key)?.comment, opts.marker),
+    extensionComment: (name) => extensionComments.get(name),
+    ...(opts.marker ? { marker: opts.marker } : {}),
+  });
+
   const units: Unit[] = [];
   const onServer = new Set<string>();
   const exportNames = new Set(declared.map((o) => o.exportName));
-  const recreatedRelations = new Set<string>();
-  for (const original of declared) {
-    const obj = { ...original, canonical: { ...original.canonical, ...normalizedByKey.get(original.key) } };
+  for (const entry of statements.objects) {
+    const obj = entry.obj;
     const ref = { kind: obj.type, name: obj.name };
-    const liveKey = matchedLive.get(obj.key);
-    const live = liveKey !== undefined ? liveByKey.get(liveKey) : undefined;
-    const liveRaw = liveKey !== undefined ? liveRawByKey.get(liveKey) : undefined;
-    const mine = byObject.get(obj.key) ?? [];
-
-    if (live?.foreign) {
-      onServer.add(obj.exportName);
-      outcome.notAttempted.push({ ...ref, reason: "filtered", detail: `${live.foreign} keeps ${obj.name}; it is not chant's to change` });
-      continue;
-    }
-    const refused = mine.filter(isRefused);
-    if (refused.length > 0) {
-      if (live) onServer.add(obj.exportName);
-      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: refusalDetail(refused, obj.name, obj.canonical) });
-      continue;
-    }
-    const destructive = mine.filter(isDestructive);
-    if (destructive.length > 0 && !opts.prune) {
-      onServer.add(obj.exportName);
-      outcome.notAttempted.push({
-        ...ref,
-        reason: "filtered",
-        detail: `drops ${destructive.map((c) => c.field).join(", ")}, which destroys the data in it; an apply that may delete (prune, ApplyOp delete "owned-only" or "gated") makes it`,
-      });
-      continue;
-    }
-
-    // An index on a materialized view this apply recreates went with the view, so it is created again.
-    const onRecreated = obj.canonical.kind === "index" && recreatedRelations.has(String(obj.canonical.fields.table));
-    const created = !live || onRecreated;
-    let steps: PgStep[];
-    if (created) {
-      const base = obj.canonical.kind === "extension" ? extensionComments.get(obj.canonical.name) : undefined;
-      // An index on a table that exists is built under the scan timeout (SQLPG240, SQLPG241); one on a new table is part of the create.
-      const how = mine.find((c) => c.rule === "SQLPG200" || c.rule === "SQLPG240" || c.rule === "SQLPG241");
-      steps = createSteps(obj, opts.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}) });
-    } else {
-      const altered = alterSteps(obj, live, mine, { ...(opts.marker ? { marker: opts.marker } : {}), major: plan.major ?? POSTGRES_LATEST_MAJOR });
-      if (altered.unsupported.length > 0) {
+    const liveRaw = entry.live ? liveRawByKey.get(qualifiedKey(entry.live)) : undefined;
+    switch (entry.verdict) {
+      case "foreign":
+      case "withheld":
+      case "unsupported":
         onServer.add(obj.exportName);
-        outcome.notAttempted.push({
-          ...ref,
-          reason: "unsupported-kind",
-          detail: `${obj.name}: ${altered.unsupported.map((u) => `${u.change.rule} ${u.change.field}: ${u.why}`).join("; ")}. Nothing was sent for it.`,
-        });
+        outcome.notAttempted.push({ ...ref, reason: entry.verdict === "unsupported" ? "unsupported-kind" : "filtered", detail: entry.detail });
         continue;
-      }
-      steps = altered.steps;
-      if (mine.some((c) => c.rule === "SQLPG252")) recreatedRelations.add(`${obj.canonical.schema}.${obj.canonical.name}`);
-      const stamp = commentStatement(obj, opts.marker);
-      if (!steps.some((s) => s.sql === stamp) && !carriesMarker(liveRaw?.comment, opts.marker)) steps.push({ sql: stamp, class: "metadata", transactional: true, rule: "SQLPG216" });
+      case "refused":
+        if (entry.live) onServer.add(obj.exportName);
+        outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: entry.detail });
+        continue;
     }
-    if (steps.length === 0) {
+    if (entry.steps.length === 0) {
       onServer.add(obj.exportName);
       outcome.applied.push({ ...ref, action: "unchanged", ...(liveRaw ? { physicalId: liveRaw.oid } : {}), statements: [] });
       continue;
     }
-    units.push({ obj, ref, created: !live, ...(liveRaw ? { physicalId: liveRaw.oid } : {}), steps, ran: [], pending: [], done: 0, state: "planned" });
+    units.push({ obj, ref, created: !entry.live, ...(liveRaw ? { physicalId: liveRaw.oid } : {}), steps: entry.steps, ran: [], pending: [], done: 0, state: "planned" });
   }
 
   // ── Run them, grouped into transactions. ──
@@ -482,7 +428,7 @@ export async function applyPostgres(
   }
   await commit();
 
-  if (opts.prune) await prune(client, plan.diff.changes, liveRawByKey, opts, timeouts, outcome, log);
+  if (opts.prune) await prune(client, statements.drops, liveRawByKey, opts, timeouts, outcome, log);
   if (outcome.failed.length > 0) throw new PostgresApplyError(outcome);
   return outcome;
 }
@@ -529,21 +475,17 @@ async function dropInvalidIndex(client: PostgresClient, index: string, log: (lin
 
 async function prune(
   client: PostgresClient,
-  changes: readonly PgChange[],
+  drops: readonly PgDropStatement[],
   liveRawByKey: Map<string, LivePgObject>,
   opts: PostgresApplyOptions,
   timeouts: PostgresApplyTimeouts,
   outcome: PostgresApplyOutcome,
   log: (line: string) => void,
 ): Promise<void> {
-  const orphans = changes
-    .filter((c) => (c.rule === "SQLPG270" || c.rule === "SQLPG242") && c.after === undefined)
-    .map((c) => liveRawByKey.get(c.object))
-    .filter((o): o is LivePgObject => o !== undefined && !o.foreign)
-    .map((o) => ({ raw: o, address: liveCanonicalAddress(o) }))
-    .sort((a, b) => DROP_ORDER[a.address.kind] - DROP_ORDER[b.address.kind]);
-
-  for (const { raw, address } of orphans) {
+  for (const drop of drops) {
+    const raw = liveRawByKey.get(drop.key);
+    if (!raw || raw.foreign) continue;
+    const address = liveCanonicalAddress(raw);
     const ref = { kind: raw.type, name: refName(address) };
     if (!isChantManaged(raw.comment)) continue; // not chant's: never touched, never reported
     if (!opts.marker?.stack) {
@@ -555,7 +497,7 @@ async function prune(
       continue;
     }
     if (!carriesMarker(raw.comment, opts.marker)) continue; // another stack's or env's
-    const s = dropStatement(address.kind, address.schema, address.name);
+    const s = drop.step;
     const t = { lockTimeoutMs: timeouts.lockTimeoutMs, statementTimeoutMs: scansRows(s.class) ? timeouts.scanTimeoutMs : timeouts.statementTimeoutMs };
     try {
       opts.signal?.throwIfAborted();

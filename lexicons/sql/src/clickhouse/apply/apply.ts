@@ -36,7 +36,6 @@ import type { OwnershipMarker } from "@intentius/chant/ownership";
 import type { ApplyRef } from "@intentius/chant/apply";
 import {
   SqlApplyError,
-  changesByObject,
   dependencyFailedDetail,
   missingDependencies,
   readBuildObjects,
@@ -50,19 +49,7 @@ import { diffSchemas, type Change } from "../plan/diff";
 import { dropFormattingOnly } from "../plan/server-format";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
 import { carriesMarker, isChantManaged } from "../ownership";
-import {
-  alterSteps,
-  commentStatement,
-  createStatement,
-  dropStatement,
-  isDestructiveAlter,
-  isRebuild,
-  refusalDetail,
-  sqlString,
-  stepsSetComment,
-  type DeclaredObject,
-  type Step,
-} from "./statements";
+import { planStatements, sqlString, type DeclaredObject, type DropStatement, type Step } from "./statements";
 import { waitForMutations } from "./mutations";
 
 export type { FailedObject } from "../../core/apply";
@@ -117,14 +104,6 @@ export class ClickHouseApplyError extends SqlApplyError<ClickHouseApplyOutcome> 
 
 const liveKey = (o: LiveObject) => (o.database !== undefined ? `${o.database}.${o.name}` : o.name);
 
-/** Drop order: what reads from a table before the table, a database last. */
-const DROP_ORDER: Record<string, number> = {
-  [CLICKHOUSE_ENTITY_TYPES.materializedView]: 0,
-  [CLICKHOUSE_ENTITY_TYPES.view]: 1,
-  [CLICKHOUSE_ENTITY_TYPES.table]: 2,
-  [CLICKHOUSE_ENTITY_TYPES.database]: 3,
-};
-
 /**
  * The server's objects in the databases the declarations use, as the diff
  * compares them. The `default` database itself is never part of a schema.
@@ -160,7 +139,6 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
   const { objects: liveObjects, canonical: live } = await liveSchema(target, declared);
   const liveByKey = new Map(liveObjects.map((o) => [liveKey(o), o]));
   const changes = await plannedChanges(target, declared, live);
-  const byObject = changesByObject(changes);
 
   const outcome: ClickHouseApplyOutcome = { target: target.endpoint.url, source: target.source, applied: [], pruned: [], notAttempted: [], failed: [] };
   /** Export names whose object is on the server. */
@@ -181,35 +159,33 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
     }
   };
 
-  for (const obj of declared) {
+  const plan = planStatements({
+    declared,
+    changes,
+    current: live,
+    allowDestructive: opts.prune === true,
+    carriesMarker: (key) => carriesMarker(liveByKey.get(key)?.comment, opts.marker),
+    ...(opts.marker ? { marker: opts.marker } : {}),
+  });
+
+  for (const entry of plan.objects) {
+    const obj = entry.obj;
     const ref = { kind: obj.type, name: obj.key };
-    const mine = byObject.get(obj.key) ?? [];
-    const created = mine.some((c) => c.rule === "SQLCH200");
-    const renamedFrom = mine.find((c) => c.rule === "SQLCH230" || c.rule === "SQLCH231")?.before;
+    const renamedFrom = entry.changes.find((c) => c.rule === "SQLCH230" || c.rule === "SQLCH231")?.before;
     const liveObject = liveByKey.get(renamedFrom ?? obj.key);
-    const liveCanonical = live.get(renamedFrom ?? obj.key);
 
-    const refused = mine.filter(isRebuild);
-    if (refused.length > 0) {
+    if (entry.verdict === "rebuild") {
       if (liveObject) onServer.add(obj.exportName);
-      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: refusalDetail(refused, obj.key, obj.type) });
+      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: entry.detail });
       continue;
     }
-    const destructive = mine.filter(isDestructiveAlter);
-    if (destructive.length > 0 && !opts.prune) {
+    if (entry.verdict === "withheld") {
       onServer.add(obj.exportName);
-      outcome.notAttempted.push({
-        ...ref,
-        reason: "filtered",
-        detail: `drops ${destructive.map((c) => c.field).join(", ")}, which destroys the data in it; an apply that may delete (prune, ApplyOp delete "owned-only" or "gated") makes it`,
-      });
+      outcome.notAttempted.push({ ...ref, reason: "filtered", detail: entry.detail });
       continue;
     }
-
-    const restamp = !created && !stepsSetComment(obj, mine) && (mine.some((c) => c.field === "comment") || !carriesMarker(liveObject?.comment, opts.marker));
-    const steps: Step[] = created
-      ? [{ sql: createStatement(obj, opts.marker), rewrite: false }]
-      : [...alterSteps(obj, mine, { ...(liveCanonical ? { live: liveCanonical } : {}), ...(opts.marker ? { marker: opts.marker } : {}) }), ...(restamp ? [{ sql: commentStatement(obj, opts.marker), rewrite: false }] : [])];
+    const created = entry.verdict === "create";
+    const steps = entry.steps;
 
     if (steps.length === 0) {
       onServer.add(obj.exportName);
@@ -235,26 +211,22 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
     }
   }
 
-  if (opts.prune) await prune(target, changes, liveByKey, opts, outcome, log);
+  if (opts.prune) await prune(target, plan.drops, liveByKey, opts, outcome, log);
   if (outcome.failed.length > 0) throw new ClickHouseApplyError(outcome);
   return outcome;
 }
 
 async function prune(
   target: ClickHouseTarget,
-  changes: readonly Change[],
+  drops: readonly DropStatement[],
   liveByKey: Map<string, LiveObject>,
   opts: ClickHouseApplyOptions,
   outcome: ClickHouseApplyOutcome,
   log: (line: string) => void,
 ): Promise<void> {
-  const orphans = changes
-    .filter((c) => c.rule === "SQLCH250")
-    .map((c) => liveByKey.get(c.object))
-    .filter((o): o is LiveObject => o !== undefined)
-    .sort((a, b) => (DROP_ORDER[a.type] ?? 9) - (DROP_ORDER[b.type] ?? 9));
-
-  for (const o of orphans) {
+  for (const drop of drops) {
+    const o = liveByKey.get(drop.key);
+    if (!o) continue;
     const ref = { kind: o.type, name: liveKey(o) };
     if (!isChantManaged(o.comment)) continue; // not chant's: never touched, never reported
     if (!opts.marker?.stack) {
@@ -275,7 +247,7 @@ async function prune(
           continue;
         }
       }
-      const sql = dropStatement(o.type, o.database, o.name);
+      const sql = drop.step.sql;
       opts.signal?.throwIfAborted();
       log(sql);
       await clickhouseQuery(target.endpoint, sql);
