@@ -174,6 +174,38 @@ export const activeUsers = view\`CREATE VIEW app.active_users AS SELECT id FROM 
   });
 });
 
+describe("SQL that is not schema, in a build of the project root (#3713)", () => {
+  const dirs: string[] = [];
+  afterAll(async () => {
+    for (const d of dirs) await rm(d, { recursive: true, force: true });
+  });
+
+  test("a .sql file under a migrations directory, at any depth, is not read", async () => {
+    const dir = await project("migrations", {
+      "app.ts": `import { schema, table } from "@intentius/chant-lexicon-sql/postgres";\nexport const app = schema\`CREATE SCHEMA app\`;\nexport const users = table\`CREATE TABLE app.users (id bigint)\`;\n`,
+    });
+    dirs.push(dir);
+    await mkdir(join(dir, "src", "migrations", "20261010T0000-add-email"), { recursive: true });
+    await writeFile(join(dir, "src", "migrations", "20261010T0000-add-email", "migration.sql"), "ALTER TABLE app.users ADD COLUMN email text;\n");
+    await mkdir(join(dir, "src", "prisma", "migrations", "0001_init"), { recursive: true });
+    await writeFile(join(dir, "src", "prisma", "migrations", "0001_init", "migration.sql"), "CREATE TABLE app.users (id bigint);\n");
+    const { errors, doc } = await buildProject(dir);
+    expect(errors).toEqual([]);
+    expect(doc!.applyOrder).toEqual(["app", "users"]);
+  });
+
+  test("a file named migrations.sql, or in a directory that only starts with the word, is still read", async () => {
+    const dir = await project("not-migrations", { "app.ts": `import { schema } from "@intentius/chant-lexicon-sql/postgres";\nexport const app = schema\`CREATE SCHEMA app\`;\n` });
+    dirs.push(dir);
+    await writeFile(join(dir, "src", "migrations.sql"), "CREATE TABLE app.a (id bigint);\n");
+    await mkdir(join(dir, "src", "migrations-old"), { recursive: true });
+    await writeFile(join(dir, "src", "migrations-old", "b.sql"), "CREATE TABLE app.b (id bigint);\n");
+    const { errors, doc } = await buildProject(dir);
+    expect(errors).toEqual([]);
+    expect([...doc!.applyOrder].sort()).toEqual(["a", "app", "b"]);
+  });
+});
+
 describe("references between a file's objects", () => {
   test("a bare name where SQL names an object is a reference, and a cycle is an error", async () => {
     const { sqlFileEntities } = await import("./sql-files");

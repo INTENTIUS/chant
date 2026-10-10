@@ -53,7 +53,26 @@ src/users.sql: a statement chant cannot read as declarations:
   - not a statement that declares an object: DROP TABLE app.old_users
 ```
 
-A `.sql` file that is not schema (seed data, a query, a migration) is kept out of the build by an `exclude` glob, or by a `-- chant-discovery-skip` line at its top.
+## SQL that is not schema
+
+The build reads every `.sql` file under the directory it builds. `chant build src` builds `src/`. `chant lifecycle diff`, and the Plan phase of an `ApplyOp`, build `sourceDir` from `chant.config.ts`, or the project root when it is unset. A project that keeps other SQL beside its schema sets `sourceDir`, so those builds read the schema and nothing else:
+
+```ts
+// chant.config.ts
+export default {
+  lexicons: ["sql"],
+  sourceDir: "src",
+  sql: { dialect: "postgres", profiles: { /* ... */ } },
+};
+```
+
+Wherever the build walks, these files are left out:
+
+- A file under a directory named `migrations`, at any depth: versioned migrations (`migrations/<id>/migration.sql`) and an ORM's generated ones (`prisma/migrations/...`). They hold `ALTER` statements, and `CREATE`s of objects declared elsewhere.
+- A file whose first lines carry `-- chant-discovery-skip`, for seed data or queries.
+- A file an `exclude` glob in `chant.config.ts` matches.
+
+Any other `.sql` file in the walk is read as schema. A DDL dump that another tool turns into declarations (an ORM's schema, read into `src/` by a generator) is a duplicate of those declarations, and the build fails naming both. Keep it outside `sourceDir`, or mark it.
 
 ## References and order
 
