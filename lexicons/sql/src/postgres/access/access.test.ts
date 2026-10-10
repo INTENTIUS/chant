@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "vitest";
 import { func, grant, policy, role, schema, table } from "../entities";
-import { diffObject, keyedByQualifiedName, pgSchemaFromLive, type PgSchemaObject } from "../plan/schema";
+import { diffObject, keyedByQualifiedName, pgSchemaFromBuildOutput, pgSchemaFromLive, type PgSchemaObject } from "../plan/schema";
 import { diffPgSchemas, matchPgObjects } from "../plan/diff";
 import { accessScoped } from "../plan/commands";
 import { alterSteps } from "../apply/statements";
@@ -20,6 +20,31 @@ const orders = table`
   CREATE TABLE ${app}.orders (id bigint PRIMARY KEY, tenant text NOT NULL, note text);
   ALTER TABLE ${app}.orders ENABLE ROW LEVEL SECURITY;
   ALTER TABLE ${app}.orders FORCE ROW LEVEL SECURITY`;
+
+describe("a grant on an interpolated routine (#3707)", () => {
+  const f = func`CREATE FUNCTION ${app}.total(n int, OUT t bigint) LANGUAGE sql AS 'select 1'`;
+  const buildOf = (objects: Array<{ export: string; entity: { entityType: string; props: unknown } }>) =>
+    JSON.stringify({
+      dialect: "postgres",
+      postgresMajor: 18,
+      objects: objects.map((o) => ({ export: o.export, type: o.entity.entityType, ddl: (o.entity.props as { ddl: string }).ddl })),
+    });
+
+  test("its statement names the routine with its parameter types", () => {
+    expect(grant`GRANT EXECUTE ON FUNCTION ${f} TO ${reader}`.props).toMatchObject({ ddl: "GRANT EXECUTE ON FUNCTION app.total(int) TO app_reader", objectNames: ["app.total(int)"] });
+    // Types written after the reference are kept, not doubled.
+    expect((grant`GRANT EXECUTE ON FUNCTION ${f}(int) TO ${reader}`.props as { ddl: string }).ddl).toBe("GRANT EXECUTE ON FUNCTION app.total(int) TO app_reader");
+  });
+
+  test("against a build from before the grant, it plans as one naming the signature does", () => {
+    const before = pgSchemaFromBuildOutput(buildOf([{ export: "app", entity: app }, { export: "total", entity: f }]));
+    const plan = (g: { entityType: string; props: unknown }) =>
+      diffPgSchemas(before, pgSchemaFromBuildOutput(buildOf([{ export: "app", entity: app }, { export: "total", entity: f }, { export: "run", entity: g }])), { major: 18 }).changes.map((c) => [c.object, c.rule, c.after]);
+    const interpolated = plan(grant`GRANT EXECUTE ON FUNCTION ${f} TO ${reader}`);
+    expect(interpolated).toEqual(plan(grant`GRANT EXECUTE ON FUNCTION app.total(int) TO app_reader`));
+    expect(interpolated.map(([, rule]) => rule)).toContain("SQLPG296");
+  });
+});
 
 describe("the tags", () => {
   test("a table's row-level security, a policy, a role", () => {
