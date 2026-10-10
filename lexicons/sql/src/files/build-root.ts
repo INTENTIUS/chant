@@ -8,7 +8,11 @@
  * git-ignored paths, child projects and the project's `exclude` globs are
  * left out. A file whose first lines carry `-- chant-discovery-skip` (or the
  * `/* chant-discovery-skip *\/` form) is not read, for SQL that is not schema:
- * seed data, a migration, a query.
+ * seed data, a migration, a query. Nor is a file under a `migrations`
+ * directory (#3713): versioned migrations and an ORM's generated migrations
+ * are `ALTER`s and repeated `CREATE`s of objects declared elsewhere, and a
+ * build of the project root, as `chant lifecycle diff` and an ApplyOp's plan
+ * run with no `sourceDir`, walks into them.
  *
  * The dialect is the declarations': a project whose templates are Postgres
  * reads its files as Postgres. With no templates it is `sql.dialect`, and
@@ -16,7 +20,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { BuildRootContext, BuildRootContribution } from "@intentius/chant/lexicon";
 import { findSourceFiles, hasDiscoveryMarkerSync } from "@intentius/chant/discovery/files";
@@ -34,6 +38,14 @@ export function isSqlSourceFile(name: string, full: string): boolean {
   if (!name.endsWith(".sql")) return false;
   if (hasDiscoveryMarkerSync(full)) return false;
   return !SQL_SKIP_MARKER.test(readHead(full, 1024));
+}
+
+/** A directory whose `.sql` files are migrations, never declarations. */
+export const MIGRATIONS_DIR = "migrations";
+
+/** Whether `file` sits under a {@link MIGRATIONS_DIR} directory below `sourceDir`. */
+export function inMigrationsDir(sourceDir: string, file: string): boolean {
+  return relative(sourceDir, file).split(sep).slice(0, -1).includes(MIGRATIONS_DIR);
 }
 
 /** The dialect the project's `.sql` files are read as. */
@@ -54,7 +66,7 @@ export function filesDialect(entities: ReadonlyMap<string, Declarable> | undefin
 /** The `buildRoots` contribution: every `.sql` file's declarations, or nothing when the source directory holds none. */
 export async function sqlFilesBuildRoot(ctx: BuildRootContext): Promise<BuildRootContribution> {
   const sourceDir = ctx.sourceDir ?? resolve(ctx.projectRoot, typeof ctx.config.sourceDir === "string" ? ctx.config.sourceDir : ".");
-  const files = (await findSourceFiles(sourceDir, isSqlSourceFile)).sort();
+  const files = (await findSourceFiles(sourceDir, isSqlSourceFile)).filter((f) => !inMigrationsDir(sourceDir, f)).sort();
   if (files.length === 0) return { entities: new Map() };
   const dialect = filesDialect(ctx.entities, ctx.config);
   const sources = files.map((f) => ({ origin: relative(ctx.projectRoot, f) || f, ddl: readFileSync(f, "utf8") }));
