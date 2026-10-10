@@ -468,6 +468,14 @@ export interface StatementPlanInput {
    * engine the topology runs. Default: the statements as declared.
    */
   topology?: Topology;
+  /**
+   * The versioned path (#3717): a user whose password is the environment's
+   * is taken to exist by the time the statements run, so its declared
+   * clauses are set with `ALTER USER` and its password left alone, where an
+   * apply against a server withholds it until the environment creates it.
+   * Default: off.
+   */
+  environmentCreatesUsers?: boolean;
 }
 
 export interface StatementPlan {
@@ -510,7 +518,7 @@ export const ACCESS_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /** What a user, role, row policy or grantee's grants take (`../access.ts`). */
-function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalObject | undefined, deferred: DeferredDefaultRoles): ObjectStatements {
+function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalObject | undefined, deferred: DeferredDefaultRoles, environmentCreatesUsers: boolean): ObjectStatements {
   const kind = obj.canonical.kind;
   const name = obj.canonical.name;
   if (kind === "grants") {
@@ -532,6 +540,14 @@ function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalOb
   if (mine.some((c) => c.rule === "SQLCH200")) {
     const method = obj.canonical.access?.identified?.split(" ")[0];
     if (kind === "user" && (method === undefined || !SECRETLESS.has(method))) {
+      if (environmentCreatesUsers) {
+        // #3717: the environment created the user with its password; the declared clauses are chant's to set.
+        const clauses = accessClauseText(obj.ddl);
+        const steps = USER_CLAUSES.filter((f) => clauses[f] !== undefined && !(f === "defaultRole" && deferred.has(name))).map((f) =>
+          stepFor(alterAccessField("user", name, f, obj.canonical.access ?? {}, clauses), "SQLCH271"),
+        );
+        return { verdict: "alter", obj, changes: mine, steps };
+      }
       return {
         verdict: "withheld",
         obj,
@@ -557,15 +573,26 @@ function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalOb
   return { verdict: "alter", obj, changes: mine, steps };
 }
 
+/** A user's clauses the versioned path sets with `ALTER USER` (#3717), in order; `DEFAULT ROLE` last, since it names roles the user must hold. */
+const USER_CLAUSES = ["host", "validUntil", "defaultDatabase", "grantees", "settings", "defaultRole"] as const;
+
 /** The `ALTER USER ... DEFAULT ROLE` of each user whose grants the build also declares, by user: it runs after them. */
 type DeferredDefaultRoles = Map<string, { step: Step; change: Change }>;
 
-function deferredDefaultRoles(declared: readonly DeclaredObject[], byObject: ReadonlyMap<string, Change[]>, keyOf: (o: DeclaredObject) => string): DeferredDefaultRoles {
+function deferredDefaultRoles(
+  declared: readonly DeclaredObject[],
+  byObject: ReadonlyMap<string, Change[]>,
+  keyOf: (o: DeclaredObject) => string,
+  environmentCreatesUsers: boolean,
+): DeferredDefaultRoles {
   const out: DeferredDefaultRoles = new Map();
   const grantees = new Set(declared.filter((o) => o.canonical.kind === "grants").map((o) => o.canonical.name));
   for (const o of declared) {
     if (o.canonical.kind !== "user" || !grantees.has(o.canonical.name)) continue;
-    const change = (byObject.get(keyOf(o)) ?? []).find((c) => c.rule === "SQLCH271" && c.field === "defaultRole");
+    const mine = byObject.get(keyOf(o)) ?? [];
+    // A user the environment creates (#3717) gets its declared DEFAULT ROLE after its grants too.
+    const created = environmentCreatesUsers && o.canonical.access?.defaultRole !== undefined ? mine.find((c) => c.rule === "SQLCH200") : undefined;
+    const change = created ?? mine.find((c) => c.rule === "SQLCH271" && c.field === "defaultRole");
     if (!change) continue;
     out.set(o.canonical.name, { step: stepFor(alterAccessField("user", o.canonical.name, "defaultRole", o.canonical.access ?? {}, accessClauseText(o.ddl)), "SQLCH271"), change });
   }
@@ -576,12 +603,12 @@ function planDeclared(input: StatementPlanInput): StatementPlan {
   const keyOf = input.keyOf ?? ((o: DeclaredObject) => o.key);
   const byObject = new Map<string, Change[]>();
   for (const c of input.changes) byObject.set(c.object, [...(byObject.get(c.object) ?? []), c]);
-  const deferred = deferredDefaultRoles(input.declared, byObject, keyOf);
+  const deferred = deferredDefaultRoles(input.declared, byObject, keyOf, input.environmentCreatesUsers === true);
 
   const objects: ObjectStatements[] = input.declared.map((obj): ObjectStatements => {
     const key = keyOf(obj);
     const mine = byObject.get(key) ?? [];
-    if (ACCESS_TYPES.has(obj.type)) return accessStatements(obj, mine, input.current.get(key), deferred);
+    if (ACCESS_TYPES.has(obj.type)) return accessStatements(obj, mine, input.current.get(key), deferred, input.environmentCreatesUsers === true);
     const refused = mine.filter(isRebuild);
     if (refused.length > 0) return { verdict: "rebuild", obj, changes: mine, refused, detail: refusalDetail(refused, obj.key, obj.type) };
     const destructive = mine.filter(isDestructiveAlter);

@@ -112,6 +112,8 @@ function clickhouseStatements(beforeJson: string, afterJson: string, options: Di
     current: new Map(before.map((o) => [o.exportName, o.canonical])),
     keyOf: (o) => o.exportName,
     allowDestructive: true,
+    // A user whose password is the environment's exists by the time a migration runs: the GRANTs to it need it too (#3717).
+    environmentCreatesUsers: true,
     topology,
     ...(options.marker ? { marker: options.marker } : {}),
   });

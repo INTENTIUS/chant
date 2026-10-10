@@ -111,6 +111,39 @@ describe("ClickHouse", () => {
     expect((d.steps[0] as { detail: string }).detail).toMatch(/drop and create this object instead/);
   });
 
+  test("a user the environment creates gets its declared clauses with ALTER USER, its password left alone (#3717)", () => {
+    const reader: Obj = { export: "reader", type: "ClickHouse::Role", ddl: "CREATE ROLE reader" };
+    const app: Obj = {
+      export: "app",
+      type: "ClickHouse::User",
+      dependsOn: ["reader", "analytics"],
+      ddl: "CREATE USER app HOST LOCAL DEFAULT ROLE reader DEFAULT DATABASE analytics SETTINGS max_memory_usage = 1000000000",
+    };
+    const readerToApp: Obj = { export: "readerToApp", type: "ClickHouse::Grant", dependsOn: ["reader", "app"], ddl: "GRANT reader TO app" };
+    const d = diffStatements(build("clickhouse", [DB]), build("clickhouse", [DB, reader, app, readerToApp]));
+    const sql = sqlOf(d);
+    expect(sql).toEqual([
+      "CREATE ROLE reader",
+      "ALTER USER `app` HOST LOCAL",
+      "ALTER USER `app` DEFAULT DATABASE analytics",
+      "ALTER USER `app` SETTINGS max_memory_usage = 1000000000",
+      "GRANT `reader` TO `app`",
+      // A default role must be held first.
+      "ALTER USER `app` DEFAULT ROLE reader",
+    ]);
+    expect(sql.join("\n")).not.toMatch(/CREATE USER|IDENTIFIED/);
+    expect(d.steps.filter((s) => s.object === "app").map((s) => (s as StatementStep).rule)).toEqual(["SQLCH271", "SQLCH271", "SQLCH271"]);
+
+    // Without grants to it, the default role is set with the rest.
+    const alone = sqlOf(diffStatements(build("clickhouse", [DB, reader]), build("clickhouse", [DB, reader, app])));
+    expect(alone).toEqual([
+      "ALTER USER `app` HOST LOCAL",
+      "ALTER USER `app` DEFAULT DATABASE analytics",
+      "ALTER USER `app` SETTINGS max_memory_usage = 1000000000",
+      "ALTER USER `app` DEFAULT ROLE reader",
+    ]);
+  });
+
   test("two identical builds take no steps", () => {
     expect(diffStatements(CH_BEFORE, CH_BEFORE)).toEqual({ dialect: "clickhouse", defaultDatabase: "default", topology: "single", steps: [], refused: false, hints: [] });
   });
