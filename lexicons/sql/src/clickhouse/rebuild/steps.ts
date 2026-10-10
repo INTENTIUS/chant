@@ -42,6 +42,8 @@ export interface RebuildRun {
   mutationTimeoutMs?: number;
   /** In a Replicated database, how long a step waits for this replica to fetch what the others wrote. Default: two minutes. */
   replicaTimeoutMs?: number;
+  /** How long the backfill waits, once the cut-over has passed, for writes into the old table begun before it. Default: ten minutes. */
+  cutoverTimeoutMs?: number;
   log: (line: string) => void;
   signal?: AbortSignal;
   /** The run's id, recorded on the receipts it writes. */
@@ -181,7 +183,7 @@ export async function startDualWrite(run: RebuildRun): Promise<DualWriteResult> 
   // On a whole second: a DateTime column holds whole seconds, and a row written
   // during the cut-over's second would otherwise carry a time before it and
   // reach the old table after the backfill has started.
-  const cutover = Math.ceil(((await serverNow(run.target)) + parseDuration(run.dualWrite.cutoverDelay ?? "1m")) / 1000) * 1000;
+  const cutover = Math.ceil(((await serverNow(run.target)) + parseDuration(run.dualWrite.cutoverDelay ?? CUTOVER_DELAY)) / 1000) * 1000;
   const iso = new Date(cutover).toISOString();
   const select = o.copied.map((c) => (c.source === c.name ? ident(c.name) : `${ident(c.source)} AS ${ident(c.name)}`)).join(", ");
   const comment = stampedComment(`chant rebuild of ${o.names.key}: rows at or after the cut-over`, run.marker, working(o.names.key, "dual", { cutover: iso }));
@@ -193,12 +195,145 @@ export async function startDualWrite(run: RebuildRun): Promise<DualWriteResult> 
   return { state: o.state, mode, cutover: iso, created: true };
 }
 
+/** How far after the dual-write view is made the cut-over falls, unless `cutoverDelay` says otherwise. */
+export const CUTOVER_DELAY = "5s";
+
 /** The cut-over in milliseconds, from the dual-write view; undefined in app mode. */
 export function cutoverOf(run: RebuildRun, o: RebuildObservation): number | undefined {
   if (run.dualWrite.mode === "app") return undefined;
   const iso = o.dual?.pairs?.get("cutover");
   if (!iso) throw new RebuildRefusal(`${o.names.key}: the dual-write view ${o.names.database}.${o.names.dualName} is not there; the Dual write phase makes it`);
   return Date.parse(iso);
+}
+
+/**
+ * What the backfill waits on before it reads the rows before the cut-over.
+ * The default reads the server (`serverCutoverProbe`); a test passes its own.
+ */
+export interface CutoverProbe {
+  /** The server's clock, in milliseconds. */
+  now(): Promise<number>;
+  /**
+   * The writes into the old table begun before `cutover` that have not
+   * finished: INSERTs still running, and asynchronous inserts still queued.
+   * Each is named by its query id.
+   */
+  pendingWrites(cutover: number): Promise<string[]>;
+}
+
+/** How long the backfill waits, once the cut-over has passed, for the writes begun before it. Default: ten minutes. */
+export const CUTOVER_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * Wait until no row before the cut-over is still to arrive in the old table,
+ * then return. Two conditions, both polled: the server's clock has passed
+ * the cut-over (until then a row can still be written with a time before
+ * it), and every write into the old table that began before the cut-over has
+ * finished (a long INSERT, or an asynchronous insert still in its buffer,
+ * can carry such rows after the clock has passed). The second wait is
+ * bounded by `timeoutMs`; past it the step stops naming the writes, rather
+ * than copy without their rows. A row whose time lags further behind its
+ * write than `cutoverDelay` is neither: the verification finds it.
+ */
+export async function waitForCutover(
+  run: Pick<RebuildRun, "log" | "signal">,
+  cutover: number,
+  probe: CutoverProbe,
+  opts: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const at = new Date(cutover).toISOString();
+  for (;;) {
+    const now = await probe.now();
+    if (now > cutover) break;
+    run.log(`-- waiting ${Math.ceil((cutover - now) / 1000)}s for the cut-over at ${at}`);
+    await sleep(Math.min(cutover - now + 50, 10_000), run.signal);
+  }
+  const timeoutMs = opts.timeoutMs ?? CUTOVER_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  let pollMs = opts.pollMs ?? 100;
+  let logged = "";
+  for (;;) {
+    const pending = await probe.pendingWrites(cutover);
+    if (pending.length === 0) return;
+    if (Date.now() >= deadline) {
+      throw new RebuildRefusal(
+        `writes into the old table begun before the cut-over at ${at} are still running after ${Math.round(timeoutMs / 1000)}s: ${pending.join(", ")}. ` +
+          `Let them finish, or stop them, and run again; cutoverTimeout sets how long the backfill waits.`,
+      );
+    }
+    const line = pending.join(", ");
+    if (line !== logged) run.log(`-- waiting for writes begun before the cut-over at ${at}: ${line}`);
+    logged = line;
+    await sleep(pollMs, run.signal);
+    pollMs = Math.min(pollMs * 2, 2_000);
+  }
+}
+
+/** The table an `INSERT INTO` statement writes to, or undefined for anything else (`INSERT INTO FUNCTION` included). */
+export function insertTarget(query: string, currentDatabase: string): { database: string; name: string } | undefined {
+  const text = query.replace(/^(?:\s+|--[^\n]*\n|\/\*[\s\S]*?\*\/)*/, "");
+  const part = "(`(?:[^`\\\\]|\\\\.)+`|\"(?:[^\"\\\\]|\\\\.)+\"|[A-Za-z_][A-Za-z0-9_]*)";
+  const m = new RegExp(`^INSERT\\s+INTO\\s+(?:TABLE\\s+)?${part}(?:\\s*\\.\\s*${part})?`, "i").exec(text);
+  if (!m || /^FUNCTION$/i.test(m[1]!)) return undefined;
+  const unquote = (s: string) => (/^[`"]/.test(s) ? s.slice(1, -1).replace(/\\(.)/g, "$1") : s);
+  return m[2] !== undefined ? { database: unquote(m[1]!), name: unquote(m[2]) } : { database: currentDatabase, name: unquote(m[1]!) };
+}
+
+/**
+ * The probe against the server. On a cluster of shards it reads every
+ * server's queries and buffers, and in a Replicated database every
+ * replica's, since a write can be running on any of them. A server that
+ * cannot be reached is left out rather than failing the wait.
+ */
+export function serverCutoverProbe(run: RebuildRun, o: Pick<RebuildObservation, "names" | "replicated">): CutoverProbe {
+  const { database, name } = o.names;
+  const cluster = run.sharding?.cluster ?? (o.replicated ? database : undefined);
+  const from = (table: string) => (cluster ? `clusterAllReplicas(${sqlString(cluster)}, system.${table})` : `system.${table}`);
+  // A server that cannot be reached runs no write the backfill could miss
+  // from here: its parts reach this one by replication, which the backfill
+  // waits for (`syncReplica`), or the verification finds them missing. So an
+  // unreachable replica or shard is skipped, as every other step goes on
+  // with the live ones; `clusterAllReplicas` counts each replica as a shard.
+  const opts = { ...(cluster ? { settings: { skip_unavailable_shards: "1" } } : {}), ...(run.signal ? { signal: run.signal } : {}) };
+  return {
+    now: () => serverNow(run.target),
+    async pendingWrites(cutover) {
+      const running = await clickhouseQuery<{ query_id: string; query: string; current_database: string; elapsed: number; now: string | number }>(
+        run.target.endpoint,
+        `SELECT query_id, query, current_database, elapsed, toUnixTimestamp64Milli(now64(3)) AS now FROM ${from("processes")} WHERE query_kind = 'Insert'`,
+        opts,
+      );
+      const queued = await clickhouseQuery<{ ids: string[] }>(
+        run.target.endpoint,
+        `SELECT entries.query_id AS ids FROM ${from("asynchronous_inserts")} ` +
+          `WHERE database = ${sqlString(database)} AND table = ${sqlString(name)} AND toUnixTimestamp64Milli(first_update) < ${cutover}`,
+        opts,
+      );
+      const ids = running
+        .filter((r) => {
+          const t = insertTarget(r.query, r.current_database);
+          return t?.database === database && t.name === name && Number(r.now) - Number(r.elapsed) * 1000 < cutover;
+        })
+        .map((r) => r.query_id);
+      for (const r of queued) ids.push(...r.ids);
+      return [...new Set(ids)];
+    },
+  };
+}
+
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
 }
 
 // ── swap ───────────────────────────────────────────────────────────────

@@ -105,6 +105,13 @@ export interface ClickHouseRebuildOpConfig {
    * of the step waits this long. Default: `2m`.
    */
   replicaTimeout?: string;
+  /**
+   * Materialized-view mode: how long the backfill waits, once the cut-over
+   * has passed, for INSERTs into the old table begun before it to finish and
+   * for asynchronous inserts queued before it to be flushed, before it stops
+   * naming them. Default: `10m`.
+   */
+  cutoverTimeout?: string;
   /** Ownership stack. Default: `ownership.stack` in `chant.config.ts`. */
   stack?: string;
   /** Ownership env. Default: `ownership.env` in `chant.config.ts`. */
@@ -124,6 +131,7 @@ export interface ClickHouseRebuildArgs {
   retain?: string;
   mutationTimeout?: string;
   replicaTimeout?: string;
+  cutoverTimeout?: string;
   stack?: string;
   ownershipEnv?: string;
   cwd?: string;
@@ -158,6 +166,7 @@ export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHou
     ...(config.retain ? { retain: config.retain } : {}),
     ...(config.mutationTimeout ? { mutationTimeout: config.mutationTimeout } : {}),
     ...(config.replicaTimeout ? { replicaTimeout: config.replicaTimeout } : {}),
+    ...(config.cutoverTimeout ? { cutoverTimeout: config.cutoverTimeout } : {}),
     ...(config.stack ? { stack: config.stack } : {}),
     ...(config.ownershipEnv ? { ownershipEnv: config.ownershipEnv } : {}),
     ...(config.path && config.path !== "." ? { cwd: config.path } : {}),

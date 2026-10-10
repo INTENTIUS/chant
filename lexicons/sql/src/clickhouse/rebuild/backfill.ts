@@ -71,7 +71,7 @@ import { RebuildRefusal, type RebuildObservation } from "./observe";
 import { DDL_SETTINGS } from "./replicas";
 import { shardPartitions, sourcePartitionExpression, sourcePartitions } from "./partitions";
 import { rowHash } from "./verify";
-import { cutoverOf, observe, serverNow, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
+import { cutoverOf, observe, serverCutoverProbe, syncReplica, utcLiteral, waitForCutover, waitOn, type CutoverProbe, type RebuildRun } from "./steps";
 import { intoShard, onShard, onShardServers, shardTable, SHARD_DELETE_SETTINGS, SHARD_INSERT_SETTINGS, type Shard } from "./shards";
 import { renderFor } from "../topology";
 
@@ -118,6 +118,8 @@ export interface BackfillDeps {
   receipts?: ClickHouseReceiptStore;
   /** Called after each partition is copied and its receipt written, with its shard on a cluster of shards; a test interrupts the backfill here. */
   afterPartition?: (partition: string, shard?: number) => void | Promise<void>;
+  /** What the wait for the cut-over reads. Default: the server's clock, queries and insert buffers. */
+  cutoverProbe?: CutoverProbe;
 }
 
 export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promise<BackfillResult> {
@@ -128,16 +130,8 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
   const n = o.names;
   const cutover = cutoverOf(run, o);
 
-  if (cutover !== undefined) {
-    // Rows before the cut-over are the backfill's; wait until the server's
-    // clock has passed it, so none of them is still to arrive.
-    for (;;) {
-      const now = await serverNow(run.target);
-      if (now > cutover) break;
-      run.log(`-- waiting ${Math.ceil((cutover - now) / 1000)}s for the cut-over at ${new Date(cutover).toISOString()}`);
-      await sleep(Math.min(cutover - now + 50, 10_000), run.signal);
-    }
-  }
+  // Rows before the cut-over are the backfill's; wait until none of them is still to arrive.
+  if (cutover !== undefined) await waitForCutover(run, cutover, deps.cutoverProbe ?? serverCutoverProbe(run, o), run.cutoverTimeoutMs !== undefined ? { timeoutMs: run.cutoverTimeoutMs } : {});
   await waitOn(run, n.database, n.name);
   await syncReplica(run, o, n.database, n.name);
 
@@ -334,18 +328,4 @@ async function copyAfterCutover(run: RebuildRun, o: RebuildObservation, later: L
     await insert();
   }
   return repaired;
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
-  });
 }
