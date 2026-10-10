@@ -49,10 +49,10 @@ export class MutationFailedError extends Error {
 }
 
 /** The table's mutations that are not done. */
-export async function pendingMutations(endpoint: ClickHouseEndpoint, database: string, table: string): Promise<PendingMutation[]> {
+export async function pendingMutations(endpoint: ClickHouseEndpoint, database: string, table: string, source = "system.mutations"): Promise<PendingMutation[]> {
   return clickhouseQuery<PendingMutation>(
     endpoint,
-    `SELECT mutation_id, command, latest_fail_reason FROM system.mutations ` +
+    `SELECT mutation_id, command, latest_fail_reason FROM ${source} ` +
       `WHERE database = ${sqlString(database)} AND table = ${sqlString(table)} AND NOT is_done ORDER BY create_time`,
   );
 }
@@ -63,6 +63,12 @@ export interface WaitOptions {
   /** First poll interval; it doubles up to two seconds. Default: 100ms. */
   intervalMs?: number;
   signal?: AbortSignal;
+  /**
+   * Where the mutations are listed. Default: `system.mutations`, this
+   * server's. A rebuild across the shards of a cluster waits on every
+   * server's, `clusterAllReplicas('<cluster>', system.mutations)` (#3663).
+   */
+  source?: string;
 }
 
 /**
@@ -78,7 +84,7 @@ export async function waitForMutations(endpoint: ClickHouseEndpoint, database: s
   const name = `${database}.${table}`;
   for (;;) {
     opts.signal?.throwIfAborted();
-    const pending = await pendingMutations(endpoint, database, table);
+    const pending = await pendingMutations(endpoint, database, table, opts.source);
     for (const m of pending) seen.add(m.mutation_id);
     if (pending.length === 0) return [...seen];
     const failing = pending.find((m) => m.latest_fail_reason);

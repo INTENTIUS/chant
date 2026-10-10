@@ -15,6 +15,7 @@ import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "../live/bind";
 import { ident, sqlString } from "../apply/statements";
 import type { CopiedColumn, RebuildNames } from "./observe";
+import type { Sharding } from "./shards";
 
 /** The old table's active partitions, by id. */
 export async function sourcePartitions(target: ClickHouseTarget, names: RebuildNames): Promise<string[]> {
@@ -24,6 +25,16 @@ export async function sourcePartitions(target: ClickHouseTarget, names: RebuildN
       `GROUP BY partition_id ORDER BY partition_id`,
   );
   return rows.map((r) => r.partition_id);
+}
+
+/** The old table's active partitions on each shard of a cluster (#3663), through this server. */
+export async function shardPartitions(run: { target: ClickHouseTarget }, sharding: Sharding, database: string, table: string): Promise<Array<{ shard: number; partition: string }>> {
+  const rows = await clickhouseQuery<{ shard: number | string; partition_id: string }>(
+    run.target.endpoint,
+    `SELECT _shard_num AS shard, partition_id FROM cluster(${sqlString(sharding.cluster)}, system.parts) ` +
+      `WHERE database = ${sqlString(database)} AND table = ${sqlString(table)} AND active GROUP BY shard, partition_id ORDER BY shard, partition_id`,
+  );
+  return rows.map((r) => ({ shard: Number(r.shard), partition: r.partition_id }));
 }
 
 /** Rename the columns an expression names, old name to new, leaving function names and qualified names alone. */

@@ -28,6 +28,8 @@ export const { op } = ClickHouseRebuildOp({
 
 Options: `name`, `env`, `table`, `dualWrite` (required); `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `retain` (default `7d`), `gate` (the swap gate: `gate`, `timeout`, `description`, `approval`), `dropGate`, `writesGate` (app mode), `backfillTimeout` (default `6h`), `mutationTimeout` (default `10m`), `replicaTimeout` (default `2m`, Replicated databases only), `stack`, `ownershipEnv`.
 
+On a `cluster:<name>` topology with more than one shard, the backfill and the verification work per shard through the profile's server, with a receipt per shard and partition; each shard needs its own `{shard}` macro.
+
 Run as one step of a change approved elsewhere: `gates: "outer"` leaves out the swap gate, the drop gate and the Drop phase (verification and the swap's own comparison still run; the old table is kept), and `onFailure: "keep"` leaves out onFailure, so a failed run's next run resumes the backfill from its receipts. Set them rather than editing the Op's phases.
 
 Pick the dual-write mode:

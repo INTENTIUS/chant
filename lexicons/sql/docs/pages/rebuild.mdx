@@ -133,6 +133,17 @@ The Create phase waits until `system.mutations` lists nothing unfinished for the
 
 In ClickHouse 26.8 a materialized view follows its source table by name, so after the `EXCHANGE` the views that read `shop.events` already read the new table. The Swap phase detaches and attaches each of them, which makes the server analyze its query against the new table's columns and types: a view the new definition breaks fails the swap there, with the old table still kept, instead of on the next insert. A view with an inner table keeps its data, which dropping and creating it would not. Inserts that land while a view is detached are not passed to it, so in materialized-view mode, where writes go on through the swap, that window is one `DETACH` and one `ATTACH` long. The Swap phase reports the views as the `Dependents` outcome.
 
+## On a cluster of shards
+
+With `topology: "cluster:<name>"` on the profile, the new table, the dual-write view, the swap and the drop run `ON CLUSTER`, so every server gets them. When the cluster has more than one shard, each shard holds its own rows, and the backfill and the verification work shard by shard. All of it goes through the profile's server:
+
+- A shard's rows are read with `cluster('<name>', shop, events)` and `_shard_num = <n>`, one replica per shard. They are written back to the same shard with `INSERT INTO FUNCTION cluster('<name>', shop, events__chant_new, <key>)`, where the constant sharding key lands on that shard. The insert runs in the foreground, so the statement returns once the shard has the rows.
+- The unit of work is a partition on one shard, and each has its own receipt, `<stack>/<env>/rebuild/shop.events/shard<n>/<partition>`. A rerun after a failure on one shard skips every partition that any shard already copied.
+- Rows that a cut-off copy left on one shard are deleted with an `ALTER TABLE ... ON CLUSTER ... DELETE` whose condition, `getMacro('shard') = '<macro>'`, holds on that shard's servers only. Each shard needs its own `{shard}` macro, which the cluster's Keeper paths already use. The Op refuses a cluster without one.
+- The verification compares every row of every shard, partition by partition per shard (`shard<n>/<partition>`). A shard that the copy missed is therefore a difference, and nothing is swapped.
+
+With one shard nothing changes: its replicas replicate what is written on any of them.
+
 ## On a Replicated database
 
 A database on the [`Replicated` engine](https://clickhouse.com/docs/engines/database-engines/replicated) (the one ClickHouse's Kubernetes operator makes) is Atomic on each replica, and it runs every DDL statement on all of them through Keeper. The rebuild runs there as it does on one server: the new table, the dual-write view, the `EXCHANGE TABLES`, the views' `DETACH` and `ATTACH` and the drop each reach every replica, and `chant run` can talk to any one of them, or to a different one on each run. The e2e test runs it on two replicas of the pinned server with Keeper, moving between them from run to run.

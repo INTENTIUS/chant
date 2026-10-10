@@ -42,6 +42,11 @@
  * either finds nothing that replica alone has and returns, or stops the step
  * naming it (`./replicas.ts`).
  *
+ * On a cluster of more than one shard (#3663) the unit is a partition on one
+ * shard: read from that shard, written back to it, cleared on it alone, with
+ * its own receipt (`./shards.ts`), so a rerun after a failure on one shard
+ * skips what every shard already copied.
+ *
  * In materialized-view mode a partition is copied in two parts
  * (INTENTIUS/sql-yodeler#45). The rows before the cut-over are copied as
  * above. The rows at or after it are the view's only when they were written
@@ -64,9 +69,11 @@ import { ident, sqlString } from "../apply/statements";
 import { clickhouseReceiptStore, receiptAddress, type ClickHouseReceiptStore } from "./receipts";
 import { RebuildRefusal, type RebuildObservation } from "./observe";
 import { DDL_SETTINGS } from "./replicas";
-import { sourcePartitionExpression, sourcePartitions } from "./partitions";
+import { shardPartitions, sourcePartitionExpression, sourcePartitions } from "./partitions";
 import { rowHash } from "./verify";
 import { cutoverOf, observe, serverNow, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
+import { intoShard, onShard, onShardServers, shardTable, SHARD_DELETE_SETTINGS, SHARD_INSERT_SETTINGS, type Shard } from "./shards";
+import { renderFor } from "../topology";
 
 export interface BackfillResult {
   state: RebuildObservation["state"];
@@ -83,11 +90,11 @@ export interface BackfillResult {
 }
 
 /** The effect a partition's copy is, and its receipt's address suffix. */
-export const partitionEffect = (key: string, partition: string): string => `rebuild/${key}/${partition}`;
+export const partitionEffect = (key: string, partition: string, shard?: Shard): string => (shard ? `rebuild/${key}/shard${shard.num}/${partition}` : `rebuild/${key}/${partition}`);
 
-/** The receipt's expected value for one partition's copy. */
-export function partitionExpectation(o: RebuildObservation, partition: string, cutover: number | undefined): string {
-  const effect = partitionEffect(o.names.key, partition);
+/** The receipt's expected value for one partition's copy, on one shard of a cluster when `shard` is given. */
+export function partitionExpectation(o: RebuildObservation, partition: string, cutover: number | undefined, shard?: Shard): string {
+  const effect = partitionEffect(o.names.key, partition, shard);
   return receiptExpectation(
     EffectReceipt(effect, {
       effect,
@@ -96,6 +103,7 @@ export function partitionExpectation(o: RebuildObservation, partition: string, c
         table: o.names.key,
         newTable: o.newTable!.uuid,
         partition,
+        ...(shard ? { shard: shard.num } : {}),
         copied: o.copied,
         cutover: cutover === undefined ? null : new Date(cutover).toISOString(),
         // The rows at or after the cut-over the old table held are copied too (sql-yodeler#45); a receipt from before that copied fewer.
@@ -108,8 +116,8 @@ export function partitionExpectation(o: RebuildObservation, partition: string, c
 export interface BackfillDeps {
   /** The receipt store. Default: the receipts table on the target server. */
   receipts?: ClickHouseReceiptStore;
-  /** Called after each partition is copied and its receipt written; a test interrupts the backfill here. */
-  afterPartition?: (partition: string) => void | Promise<void>;
+  /** Called after each partition is copied and its receipt written, with its shard on a cluster of shards; a test interrupts the backfill here. */
+  afterPartition?: (partition: string, shard?: number) => void | Promise<void>;
 }
 
 export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promise<BackfillResult> {
@@ -140,6 +148,12 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
   const columns = o.copied.map((c) => ident(c.name)).join(", ");
   const select = o.copied.map((c) => ident(c.source)).join(", ");
   const later = cutColumn && cutover !== undefined ? await laterRowsCopy(run, o, cutColumn, cutover, fromOld) : undefined;
+  const sharding = run.sharding;
+  // The old and new tables as one shard's rows (#3663, `./shards.ts`), or as this server's.
+  const oldFrom = (shard?: Shard) => (shard && sharding ? `${shardTable(sharding, n.database, n.name)} WHERE ${onShard(shard)} AND` : `${n.table} WHERE`);
+  const newFrom = (shard?: Shard) => (shard && sharding ? `${shardTable(sharding, n.database, n.newName)} WHERE ${onShard(shard)} AND` : `${n.newTable} WHERE`);
+  const into = (shard?: Shard) => (shard && sharding ? intoShard(sharding, shard, n.database, n.newName) : n.newTable);
+  const insertSettings = sharding ? SHARD_INSERT_SETTINGS : {};
 
   const identity = { ...(run.marker?.stack ? { stack: run.marker.stack } : {}), ...(run.marker?.env ? { env: run.marker.env } : {}) };
   const receipts =
@@ -152,21 +166,31 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
     });
   const recorded = await receipts.readAll(receiptAddress(identity, `rebuild/${n.key}/`));
 
-  const partitions = await sourcePartitions(run.target, n);
-  result.partitions = partitions.length;
-  for (const p of partitions) {
+  // The unit of work: a partition of the old table, on each shard of a cluster that has more than one.
+  const units: Array<{ shard?: Shard; partition: string }> = sharding
+    ? (await shardPartitions(run, sharding, n.database, n.name)).map((u) => ({ shard: sharding.shards.find((x) => x.num === u.shard)!, partition: u.partition }))
+    : (await sourcePartitions(run.target, n)).map((partition) => ({ partition }));
+  result.partitions = units.length;
+  for (const { shard, partition: p } of units) {
     run.signal?.throwIfAborted();
-    const effect = partitionEffect(n.key, p);
-    const expectation = partitionExpectation(o, p, cutover);
+    const effect = partitionEffect(n.key, p, shard);
+    const expectation = partitionExpectation(o, p, cutover, shard);
     if (recorded.get(receiptAddress(identity, effect)) === expectation) {
       result.skipped++;
       continue;
     }
 
-    const queryId = `chant-rebuild-${o.newTable.uuid}-${p}`;
+    const queryId = `chant-rebuild-${o.newTable.uuid}-${shard ? `shard${shard.num}-` : ""}${p}`;
     const laterQueryId = `${queryId}-after`;
     const killWhere = `query_id IN (${sqlString(queryId)}, ${sqlString(laterQueryId)})`;
-    if (o.replicated) {
+    if (sharding) {
+      // The copy reads and writes every shard from this server; what it started on the others goes with it.
+      await clickhouseQuery(
+        run.target.endpoint,
+        `KILL QUERY ON CLUSTER ${sqlString(sharding.cluster)} WHERE ${killWhere} OR initial_query_id IN (${sqlString(queryId)}, ${sqlString(laterQueryId)}) SYNC`,
+        { settings: DDL_SETTINGS },
+      );
+    } else if (o.replicated) {
       // On every replica that answers: the copy may be running on another one
       // than this run's. A replica that is down is skipped once Keeper sees it
       // inactive; nothing of its can be running a copy that still writes,
@@ -179,24 +203,28 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
       await clickhouseQuery(run.target.endpoint, `KILL QUERY WHERE ${killWhere} SYNC`);
     }
     const mine = `${fromOld} = ${sqlString(p)}${targetRange}`;
-    const [left] = await clickhouseQuery<{ n: string | number }>(run.target.endpoint, `SELECT count() AS n FROM ${n.newTable} WHERE ${mine}`);
+    const where = shard ? `partition ${p} on shard ${shard.num}` : `partition ${p}`;
+    const [left] = await clickhouseQuery<{ n: string | number }>(run.target.endpoint, `SELECT count() AS n FROM ${newFrom(shard)} ${mine}`);
     if (Number(left?.n ?? 0) > 0) {
-      run.log(`-- partition ${p}: ${left!.n} row(s) from a copy that did not finish; deleting them before copying again`);
-      const sql = `ALTER TABLE ${n.newTable} DELETE WHERE ${mine}`;
+      run.log(`-- ${where}: ${left!.n} row(s) from a copy that did not finish; deleting them before copying again`);
+      const sql =
+        shard && sharding
+          ? renderFor(`ALTER TABLE ${n.newTable} DELETE WHERE ${onShardServers(shard)} AND ${mine}`, run.target.topology)
+          : `ALTER TABLE ${n.newTable} DELETE WHERE ${mine}`;
       run.log(sql);
-      await clickhouseQuery(run.target.endpoint, sql);
+      await clickhouseQuery(run.target.endpoint, sql, shard && sharding ? { settings: { ...DDL_SETTINGS, ...SHARD_DELETE_SETTINGS } } : {});
       await waitOn(run, n.database, n.newName);
       result.cleared++;
     }
 
-    const sql = `INSERT INTO ${n.newTable} (${columns}) SELECT ${select} FROM ${n.table} WHERE _partition_id = ${sqlString(p)}${sourceRange}`;
+    const sql = `INSERT INTO ${into(shard)} (${columns}) SELECT ${select} FROM ${oldFrom(shard)} _partition_id = ${sqlString(p)}${sourceRange}`;
     run.log(sql);
-    await clickhouseQuery(run.target.endpoint, sql, { queryId, settings: { async_insert: "0", insert_deduplicate: "0" }, ...(run.signal ? { signal: run.signal } : {}) });
-    if (later) result.repaired += await copyAfterCutover(run, o, later, p, laterQueryId);
+    await clickhouseQuery(run.target.endpoint, sql, { queryId, settings: { async_insert: "0", insert_deduplicate: "0", ...insertSettings }, ...(run.signal ? { signal: run.signal } : {}) });
+    if (later) result.repaired += await copyAfterCutover(run, o, later, p, laterQueryId, shard);
     // The receipt, last, on success only.
     await receipts.write({ name: effect, effect, flavor: "hash", inputs: {} }, expectation);
     result.copied++;
-    await deps.afterPartition?.(p);
+    await deps.afterPartition?.(p, shard?.num);
   }
   run.log(`-- backfill of ${n.key}: ${result.partitions} partition(s), ${result.copied} copied, ${result.skipped} already copied, ${result.cleared} cleared first${result.repaired > 0 ? `, ${result.repaired} row(s) after the cut-over copied twice and repaired` : ""}`);
   return result;
@@ -206,13 +234,14 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
 interface LaterRows {
   /**
    * Per distinct row (by its hash), the old table's copies past the number
-   * the new table holds, into the new table.
+   * the new table holds, into the new table. On a cluster of shards, one
+   * shard's rows into the same shard.
    */
-  copy: (partition: string) => string;
+  copy: (partition: string, shard?: Shard) => string;
   /** The hashes of the rows the new table holds more copies of than the old one. */
-  extras: (partition: string) => string;
+  extras: (partition: string, shard?: Shard) => string;
   /** Delete every copy of those rows from the new table. */
-  drop: (partition: string, hashes: readonly string[]) => string;
+  drop: (partition: string, hashes: readonly string[], shard?: Shard) => string;
 }
 
 /** The most extra rows one partition's repair deletes and copies again; past that the verification decides. */
@@ -245,19 +274,28 @@ async function laterRowsCopy(
   const columns = o.copied.map((c) => ident(c.name)).join(", ");
   const aliases = o.copied.map((_, i) => `__chant_c${i}`);
   const fromOldSide = o.copied.map((c, i) => `${ident(c.source)} AS ${aliases[i]}`).join(", ");
-  const oldRows = (p: string) => `FROM ${n.table} WHERE _partition_id = ${sqlString(p)} AND ${ident(cut.source)} >= ${utcLiteral(cutover)}`;
-  const newRows = (p: string) => `FROM ${n.newTable} WHERE ${fromOld} = ${sqlString(p)} AND ${ident(cut.name)} >= ${utcLiteral(cutover)}`;
+  const sharding = run.sharding;
+  const on = (shard?: Shard) => (shard && sharding ? ` AND ${onShard(shard)}` : "");
+  const oldTable = (shard?: Shard) => (shard && sharding ? shardTable(sharding, n.database, n.name) : n.table);
+  const newTable = (shard?: Shard) => (shard && sharding ? shardTable(sharding, n.database, n.newName) : n.newTable);
+  const oldRows = (p: string, shard?: Shard) => `FROM ${oldTable(shard)} WHERE _partition_id = ${sqlString(p)} AND ${ident(cut.source)} >= ${utcLiteral(cutover)}${on(shard)}`;
+  const newRows = (p: string, shard?: Shard) => `FROM ${newTable(shard)} WHERE ${fromOld} = ${sqlString(p)} AND ${ident(cut.name)} >= ${utcLiteral(cutover)}${on(shard)}`;
   return {
-    copy: (p) =>
-      `INSERT INTO ${n.newTable} (${columns}) SELECT ${aliases.join(", ")} FROM (` +
-      `SELECT ${fromOldSide}, ${oldHash} AS __chant_h, row_number() OVER (PARTITION BY __chant_h) AS __chant_k ${oldRows(p)}` +
-      `) AS old_rows LEFT JOIN (SELECT ${newHash} AS __chant_h, count() AS __chant_n ${newRows(p)} GROUP BY __chant_h) AS new_rows ` +
+    copy: (p, shard) =>
+      `INSERT INTO ${shard && sharding ? intoShard(sharding, shard, n.database, n.newName) : n.newTable} (${columns}) SELECT ${aliases.join(", ")} FROM (` +
+      `SELECT ${fromOldSide}, ${oldHash} AS __chant_h, row_number() OVER (PARTITION BY __chant_h) AS __chant_k ${oldRows(p, shard)}` +
+      `) AS old_rows LEFT JOIN (SELECT ${newHash} AS __chant_h, count() AS __chant_n ${newRows(p, shard)} GROUP BY __chant_h) AS new_rows ` +
       `USING (__chant_h) WHERE __chant_k > ifNull(__chant_n, 0)`,
-    extras: (p) =>
-      `SELECT toString(__chant_h) AS h FROM (SELECT ${newHash} AS __chant_h, count() AS __chant_n ${newRows(p)} GROUP BY __chant_h) AS new_rows ` +
-      `LEFT JOIN (SELECT ${oldHash} AS __chant_h, count() AS __chant_o ${oldRows(p)} GROUP BY __chant_h) AS old_rows ` +
+    extras: (p, shard) =>
+      `SELECT toString(__chant_h) AS h FROM (SELECT ${newHash} AS __chant_h, count() AS __chant_n ${newRows(p, shard)} GROUP BY __chant_h) AS new_rows ` +
+      `LEFT JOIN (SELECT ${oldHash} AS __chant_h, count() AS __chant_o ${oldRows(p, shard)} GROUP BY __chant_h) AS old_rows ` +
       `USING (__chant_h) WHERE __chant_n > ifNull(__chant_o, 0) LIMIT ${REPAIR_LIMIT + 1}`,
-    drop: (p, hashes) => `ALTER TABLE ${n.newTable} DELETE WHERE ${fromOld} = ${sqlString(p)} AND ${ident(cut.name)} >= ${utcLiteral(cutover)} AND ${newHash} IN (${hashes.join(", ")})`,
+    drop: (p, hashes, shard) => {
+      const where = `${fromOld} = ${sqlString(p)} AND ${ident(cut.name)} >= ${utcLiteral(cutover)} AND ${newHash} IN (${hashes.join(", ")})`;
+      return shard && sharding
+        ? renderFor(`ALTER TABLE ${n.newTable} DELETE WHERE ${onShardServers(shard)} AND ${where}`, run.target.topology)
+        : `ALTER TABLE ${n.newTable} DELETE WHERE ${where}`;
+    },
   };
 }
 
@@ -269,23 +307,28 @@ async function laterRowsCopy(
  * table and the difference copied again, a few rounds at most. What is left
  * after that, the verification finds. Returns the rows repaired.
  */
-async function copyAfterCutover(run: RebuildRun, o: RebuildObservation, later: LaterRows, p: string, queryId: string): Promise<number> {
+async function copyAfterCutover(run: RebuildRun, o: RebuildObservation, later: LaterRows, p: string, queryId: string, shard?: Shard): Promise<number> {
   const n = o.names;
+  const sharded = shard !== undefined && run.sharding !== undefined;
   const insert = async () => {
-    const sql = later.copy(p);
+    const sql = later.copy(p, shard);
     run.log(sql);
-    await clickhouseQuery(run.target.endpoint, sql, { queryId, settings: { async_insert: "0", insert_deduplicate: "0" }, ...(run.signal ? { signal: run.signal } : {}) });
+    await clickhouseQuery(run.target.endpoint, sql, {
+      queryId,
+      settings: { async_insert: "0", insert_deduplicate: "0", ...(sharded ? SHARD_INSERT_SETTINGS : {}) },
+      ...(run.signal ? { signal: run.signal } : {}),
+    });
   };
   await insert();
   let repaired = 0;
   for (let round = 0; round < REPAIR_ROUNDS; round++) {
     await syncReplica(run, o, n.database, n.newName);
-    const extras = (await clickhouseQuery<{ h: string }>(run.target.endpoint, later.extras(p))).map((r) => r.h);
+    const extras = (await clickhouseQuery<{ h: string }>(run.target.endpoint, later.extras(p, shard))).map((r) => r.h);
     if (extras.length === 0 || extras.length > REPAIR_LIMIT) break;
     run.log(`-- partition ${p}: ${extras.length} row(s) after the cut-over in the new table more often than in the old one; deleting them and copying again`);
-    const sql = later.drop(p, extras);
+    const sql = later.drop(p, extras, shard);
     run.log(sql);
-    await clickhouseQuery(run.target.endpoint, sql);
+    await clickhouseQuery(run.target.endpoint, sql, sharded ? { settings: { ...DDL_SETTINGS, ...SHARD_DELETE_SETTINGS } } : {});
     await waitOn(run, n.database, n.newName);
     repaired += extras.length;
     await insert();

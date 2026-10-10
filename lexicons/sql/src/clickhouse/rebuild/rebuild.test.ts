@@ -20,6 +20,8 @@ import * as contractsModule from "../../op/activity-contracts";
 import * as activitiesModule from "../../op/activities";
 import { ClickHouseRebuildOp, type ClickHouseRebuildOpConfig } from "./op";
 import { copiedColumns } from "./observe";
+import { partitionEffect } from "./backfill";
+import { intoShard, onShard, onShardServers, shardTable } from "./shards";
 import { renameColumns, sourcePartitionExpression } from "./partitions";
 import { canonicalObject } from "../plan/normalize";
 import { diffSchemas } from "../plan/diff";
@@ -220,5 +222,21 @@ describe("the plan hands a rebuild to the Op", () => {
     const after = [{ key: "clicks", canonical: canonicalObject(noTime("(url, id)")) }];
     const diff = diffSchemas([{ key: "clicks", canonical: canonicalObject(noTime("id")) }], after);
     expect(rebuildOpSuggestions(diff, new Map(after.map((o) => [o.key, o.canonical])), "<env>")[0]!.dualWrite).toEqual({ mode: "app" });
+  });
+});
+
+describe("a rebuild across the shards of a cluster (#3663)", () => {
+  const sharding = { cluster: "main", shards: [{ num: 1, macro: "s1", slot: 0 }, { num: 2, macro: "s2", slot: 1 }] };
+  const shard2 = sharding.shards[1]!;
+
+  test("each (shard, partition) is its own receipt; one shard keeps the address it always had", () => {
+    expect(partitionEffect("shop.events", "202602")).toBe("rebuild/shop.events/202602");
+    expect(partitionEffect("shop.events", "202602", shard2)).toBe("rebuild/shop.events/shard2/202602");
+  });
+
+  test("a shard is read through the cluster, written back with its own sharding key, and cleared by its own macro", () => {
+    expect(`SELECT * FROM ${shardTable(sharding, "shop", "events")} WHERE ${onShard(shard2)}`).toBe("SELECT * FROM cluster('main', `shop`, `events`) WHERE _shard_num = 2");
+    expect(intoShard(sharding, shard2, "shop", "events__chant_new")).toBe("FUNCTION cluster('main', `shop`, `events__chant_new`, 1)");
+    expect(onShardServers(shard2)).toBe("getMacro('shard') = 's2'");
   });
 });

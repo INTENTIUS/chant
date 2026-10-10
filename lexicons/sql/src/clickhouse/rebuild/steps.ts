@@ -17,6 +17,7 @@ import { waitForMutations } from "../apply/mutations";
 import { renderFor } from "../topology";
 import { DDL_SETTINGS, syncReplicaWithin } from "./replicas";
 import { assertSameRows } from "./verify";
+import type { Sharding } from "./shards";
 import {
   changesBetween,
   observeRebuild,
@@ -45,6 +46,8 @@ export interface RebuildRun {
   signal?: AbortSignal;
   /** The run's id, recorded on the receipts it writes. */
   runId?: string;
+  /** On a cluster of more than one shard, its shards: the backfill and the verification work shard by shard (`./shards.ts`). */
+  sharding?: Sharding;
 }
 
 /** The server's clock, in milliseconds: the cut-over and the retention are the server's times, not this machine's. */
@@ -76,6 +79,7 @@ const q = (run: RebuildRun, statement: string) => {
 
 export async function waitOn(run: RebuildRun, database: string, table: string): Promise<void> {
   const ids = await waitForMutations(run.target.endpoint, database, table, {
+    ...(run.sharding ? { source: `clusterAllReplicas(${sqlString(run.sharding.cluster)}, system.mutations)` } : {}),
     ...(run.mutationTimeoutMs !== undefined ? { timeoutMs: run.mutationTimeoutMs } : {}),
     ...(run.signal ? { signal: run.signal } : {}),
   });
