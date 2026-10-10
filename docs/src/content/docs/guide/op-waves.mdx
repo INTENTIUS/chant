@@ -37,6 +37,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
 | `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
+| `resume` | `{ "schedule": "<cron>" }` renders a scheduled job that resumes waiting waves whose approval arrived ([Resume the waiting job](#resume-the-waiting-job)) |
 
 The commands are argv templates. `{op}`, `{target}`, `{wave}` and `{plan}` are filled in per run. The plan command writes JSON:
 
@@ -80,7 +81,37 @@ A waiting wave applies nothing and exits 3. It records a pending fact on `chant/
 chant approve migrations migrations-wave-3 --plan jcs1-sha256:...
 ```
 
-Approve it, then re-run the failed job (GitHub and Forgejo call it re-running failed jobs, GitLab calls it a retry). The wave plans again and applies once it finds the approval for its digest.
+Approve it, then start the job again: by hand in the forge (GitHub and Forgejo call it re-running failed jobs, GitLab calls it a retry), or with `--resume` as the next section shows. The wave plans again and applies once it finds the approval for its digest.
+
+## Resume the waiting job
+
+A push to `chant/lifecycle` starts no pipeline, so an approval alone leaves the job stopped. When the wave job runs in CI, its pending fact records where it runs: the forge, the run, and on GitLab the job. `--resume` uses that to start the job again after recording the approval:
+
+```bash
+chant approve migrations migrations-wave-3 --plan jcs1-sha256:... --resume
+```
+
+The approval is recorded and pushed first. If the push does not land, nothing is resumed, because the resumed job would not find the approval. A gate with a quorum is resumed only once the quorum is met.
+
+| Forge | What `--resume` asks | Least access its token needs |
+|---|---|---|
+| GitHub | re-run the failed jobs of the run (`POST /repos/{repo}/actions/runs/{run}/rerun-failed-jobs`); the waves after it run too | `actions: write`: a fine-grained token with Actions read and write, or a job's `GITHUB_TOKEN` granted it |
+| GitLab | retry the waiting job (`POST /projects/{id}/jobs/{job}/retry`); the jobs it skipped run after it | a project or personal access token with the `api` scope, as a member with the Developer role. `CI_JOB_TOKEN` cannot retry jobs |
+| Forgejo | dispatch the workflow again on its branch (`POST /repos/{repo}/actions/workflows/{file}/dispatches`), since Forgejo has no API to re-run a run | a token with the `write:repository` scope |
+
+The token is read from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN` or `GH_TOKEN` on GitHub and Forgejo, else `GITLAB_TOKEN` on GitLab. On GitHub and GitLab the run resumes at the commit that waited. A Forgejo dispatch runs the whole workflow at the branch's head, so the waves before the gate run again. Their plans are empty because their runs already applied, so they wait for nothing. Their `apply` command still runs again and has to be safe to repeat.
+
+Resuming approves nothing. The resumed job decides the gate again from the ledger. A run that is still going, that succeeded, or that was resumed already (a later GitHub attempt, a newer GitLab job of the same name, a Forgejo run of the workflow created after the approval) is left alone.
+
+### On a schedule
+
+With `"resume": { "schedule": "*/10 * * * *" }` in the spec, the rendered pipeline gets a job that runs `chant run resume --op <name>` on that schedule. It resumes every waiting wave of the spec whose approval has arrived, so an approval needs no `--resume` and no second step.
+
+| Forge | The resume job |
+|---|---|
+| GitHub | `<name>-resume.yml`, on the cron, with `permissions: { contents: read, actions: write }` and the job's own token |
+| GitLab | `<name>-resume` in the same file, run only in scheduled pipelines. Create a pipeline schedule with the cron, and set `CHANT_FORGE_TOKEN` to a project access token as in the table above |
+| Forgejo | `<name>-resume.yml`, on the cron, with the `CHANT_FORGE_TOKEN` secret |
 
 ## Where the policy is read from
 

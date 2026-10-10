@@ -9,10 +9,16 @@
  * decision as an artifact, which GitLab hands each share job through `needs:`.
  * A wave's `environment` is the job's own `environment:`; protect it in the
  * project settings to put a reviewer in front of the job as well.
+ *
+ * With `resume` on the spec (#3683), a `<name>-resume` job runs `chant run
+ * resume --op <name>` in scheduled pipelines only: create a pipeline schedule
+ * with the spec's cron. It retries a waiting wave's job once its approval
+ * arrived, with `CHANT_FORGE_TOKEN` (a project access token with the `api`
+ * scope and the Developer role; the job token cannot retry jobs).
  */
 
 import { emitYAMLEntry } from "@intentius/chant/yaml";
-import { opWaveJobs, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 
 /** The default image: it carries git, which the runner needs to read the base commit. */
@@ -31,6 +37,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const rules = branches.map((branch) => ({ if: `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "${branch}"` }));
 
   const stages = spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`);
+  if (spec.resume) stages.push("resume");
   const sections: string[] = [emitYAMLEntry("stages", stages)];
   if (options.variables && Object.keys(options.variables).length > 0) sections.push(emitYAMLEntry("variables", options.variables));
   for (const job of jobs) {
@@ -60,10 +67,23 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       }),
     );
   }
+  if (spec.resume) {
+    sections.push(
+      emitYAMLEntry(`${spec.name}-resume`, {
+        stage: "resume",
+        image,
+        rules: [{ if: '$CI_PIPELINE_SOURCE == "schedule"' }],
+        script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec).join(" ")],
+      }),
+    );
+  }
   const header = [
     `# chant Op waves "${spec.name}" (#3679): one stage per wave, each needing the one before.`,
     "# A wave that waits at its gate exits 3 and stops the waves after it; approve the",
     "# digest it prints, then retry the job.",
+    ...(spec.resume
+      ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
+      : []),
   ];
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
   return { files: [{ name, yaml: header.join("\n") + "\n\n" + sections.join("\n\n") + "\n" }], jobs };

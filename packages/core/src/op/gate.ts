@@ -52,6 +52,7 @@ import { sortedJsonReplacer } from "../utils";
 import type { GateApprover, ResolvedGateApproval } from "./gate-approval";
 import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
 import { parseDuration } from "./duration";
+import { resolveGateRunLocator } from "./gate-resume";
 
 /**
  * What appending a pending fact learned about reaching the remote.
@@ -505,6 +506,8 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   }
 
   const url = resolveApprovalUrl();
+  // #3683: in CI, where this job runs, so an approval can start it again.
+  const resume = resolveGateRunLocator();
   const { record, pushed, pushWarning } = await port.appendPending({
     op: input.op,
     gate: input.gate,
@@ -515,6 +518,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.description ? { description: input.description } : {}),
     ...(input.runId ? { runId: input.runId } : {}),
     ...(url ? { url } : {}),
+    ...(resume ? { resume } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
     ...(env !== undefined ? { environment: env } : {}),
     ...(input.approval ? { approval: input.approval } : {}),

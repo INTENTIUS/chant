@@ -381,7 +381,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
     } else if (arg === "--resume") {
-      result.resume = args[++i];
+      // `chant approve <op> <gate> --resume` (#3683) takes no value; the
+      // fan-out and pull-request apply take the attempt file they resume.
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith("-")) result.resumeRun = true;
+      else result.resume = args[++i];
     } else if (arg === "--local") {
       result.local = true;
     } else if (arg === "--json") {
@@ -922,6 +926,9 @@ Ops:
                         waves spec (#3679): the job a generated waves
                         pipeline runs. --decide plans and decides only;
                         --share <i> applies one share of a decided wave
+  run resume [--op <name>]  Start again each CI job that waits at a gate an
+                        approval now answers, through the forge's API
+                        (#3683); approves nothing. --dry-run lists them
   run --generate <provider>  Write one CI pipeline file per scheduled Op for
                         github, gitlab or forgejo (#2533), from every Op that
                         declares a schedule or from --spec <file.json>.
@@ -976,7 +983,10 @@ Ops:
                         counts only an approval sealed by a key the signers
                         file at base lists for --actor. --relayed-by
                         <principal> records who carried the approval to chant
-                        for --actor (a follower, a bot); --sign covers it
+                        for --actor (a follower, a bot); --sign covers it.
+                        --resume then starts the CI job that waits at the
+                        gate again (GitHub re-run, GitLab retry, Forgejo
+                        dispatch) with CHANT_FORGE_TOKEN
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -1829,6 +1839,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "run cancel", handler: runOpCancel },
   { name: "run log", handler: runOpLog },
   { name: "run wave", handler: runOpWaveCommand },
+  // #3683 — start the CI jobs that wait at gates whose approval arrived. Imported on first use.
+  { name: "run resume", handler: async (ctx) => (await import("./handlers/gate-resume")).runResumeCommand(ctx) },
   { name: "run", handler: runOp },
 
   { name: "operator status", handler: runOperatorStatus },

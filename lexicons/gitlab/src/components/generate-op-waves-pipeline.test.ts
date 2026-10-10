@@ -26,4 +26,14 @@ describe("generateGitlabOpWavesPipeline", () => {
     expect(yaml).toContain("- .chant/op-waves/migrations/wave-2.json");
     expect(yaml).toContain("environment:\n    name: production");
   });
+
+  test("resume renders a job that runs only in scheduled pipelines (#3683)", () => {
+    const { files } = generateGitlabOpWavesPipeline({ ...spec, resume: { schedule: "*/10 * * * *" } }, { specFile: "waves.json" });
+    const yaml = files[0]!.yaml;
+    expect(yaml).toContain(`${spec.name}-resume:`);
+    expect(yaml).toContain('$CI_PIPELINE_SOURCE == "schedule"');
+    expect(yaml).toContain(`chant run resume --op ${spec.name}`);
+    expect(yaml).toContain('give the schedule the cron "*/10 * * * *"');
+    expect(generateGitlabOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml).not.toContain("resume");
+  });
 });

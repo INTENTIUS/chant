@@ -14,6 +14,7 @@ chant run approve <op> <gate> [flags]
 chant run cancel <name> [flags]
 chant run log <name> [flags]
 chant run wave --spec <file> --wave <k> [--decide | --share <i>] [--base <ref>]
+chant run resume [--op <name>] [--dry-run] [--json]
 chant run --components <name|all> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 ```
@@ -190,6 +191,17 @@ chant run wave --spec waves.json --wave 3 --share 1
 ```
 
 The wave's runs are planned with the spec's `plan` command, and its gate policy is read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. `--json` prints the decision and which runs applied.
+
+### `run resume`
+
+Starts again each CI job that waits at a gate an approval now answers, through the forge's API: a GitHub re-run, a GitLab job retry, or a Forgejo workflow dispatch. It reads every gate ledger on `chant/lifecycle`, or `--op`'s alone, and approves nothing. A rendered [Op waves](/chant/guide/op-waves/#on-a-schedule) pipeline runs it on a schedule when the spec sets `resume`.
+
+```bash
+chant run resume --op migrations
+chant run resume --dry-run
+```
+
+A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
 
 ### `run --components <name|all>`
 

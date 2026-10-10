@@ -137,8 +137,9 @@ chant approve fountain-apply rollout-gate --actor github:alice --relayed-by gith
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
 | `--env <env>` | the newest pending fact's environment | For a component gate: which environment's pending fact to approve. The resolution records that environment and its plan digest ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). Ignored for an Op gate |
+| `--resume` | — | After the approval is pushed, start the CI job that waits at the gate again: a GitHub re-run, a GitLab job retry, or a Forgejo workflow dispatch, with `CHANT_FORGE_TOKEN` ([Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job), [#3683](https://github.com/INTENTIUS/chant/issues/3683)). Put it after the op and gate |
 
-Recording a resolution does not resume a run that already stopped. Nothing is parked waiting for it. The run read the ledger, found nothing standing, and exited 3 after writing the pending fact. Run the Op again and it reads the resolution you just wrote and walks through the gate, or let the merged PR the note points at carry the change itself.
+Recording a resolution does not resume a run that already stopped. Nothing is parked waiting for it. The run read the ledger, found nothing standing, and exited 3 after writing the pending fact. Run the Op again and it reads the resolution you just wrote and walks through the gate, or let the merged PR the note points at carry the change itself. When the run was a CI job, `--resume` (or a scheduled [`chant run resume`](/chant/cli/run/#run-resume)) starts that job again for you.
 
 ## See also
 

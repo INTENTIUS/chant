@@ -30,4 +30,15 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(yaml).toContain("name: migrations-wave-2-decision");
     expect(yaml).toContain("environment:\n      name: production");
   });
+
+  test("resume renders a scheduled workflow that re-runs approved waves with actions: write (#3683)", () => {
+    const { files } = generateGithubOpWavesPipeline({ ...spec, resume: { schedule: "*/10 * * * *" } }, { specFile: "waves.json" });
+    expect(files.map((f) => f.name)).toEqual([`${spec.name}.yml`, `${spec.name}-resume.yml`]);
+    const yaml = files[1]!.yaml;
+    expect(yaml).toContain("- cron: '*/10 * * * *'");
+    expect(yaml).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
+    expect(yaml).toContain(`run: chant run resume --op ${spec.name}`);
+    expect(yaml).toContain("GITHUB_TOKEN: '${{ github.token }}'");
+    expect(generateGithubOpWavesPipeline(spec, { specFile: "waves.json" }).files).toHaveLength(1);
+  });
 });
