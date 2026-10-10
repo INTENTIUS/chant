@@ -116,6 +116,13 @@ export const sqlProfileSchema = z.strictObject({
   /** Postgres: the schema an unqualified declaration is created in. `public` when omitted. */
   defaultSchema: z.string().optional(),
   /**
+   * Postgres: the schema `effect()` receipts are kept in, as
+   * `<schema>.__chant_receipts`. When omitted they are in
+   * `chant_receipts.receipts`, a schema chant creates; name an existing schema
+   * on a server where the role cannot `CREATE SCHEMA`.
+   */
+  receiptsSchema: z.string().optional(),
+  /**
    * The managed service this environment's Postgres runs on, when it differs
    * from `sql.provider`. Import reads the provider's own roles, schemas and
    * extensions as foreign.

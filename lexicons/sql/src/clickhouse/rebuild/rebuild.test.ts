@@ -96,12 +96,12 @@ describe("ClickHouseRebuildOp", () => {
     }
   });
 
-  test("every rebuild step is an activity the sql lexicon exports, and none is a receipt activity", () => {
+  test("every rebuild step is an activity the sql lexicon exports, and the receipt activities are only fallbacks", () => {
     const exported = new Set(Object.entries(activitiesModule).filter(([, v]) => typeof v === "function").map(([k]) => k));
     const steps = propsOf(BASE).phases.flatMap((p) => p.steps).filter((s) => s.kind === "activity" && (s as { fn: string }).fn.startsWith("clickhouseRebuild"));
     for (const s of steps) expect(exported.has((s as { fn: string }).fn)).toBe(true);
-    expect(exported.has("receiptRead")).toBe(false);
-    expect(exported.has("receiptWrite")).toBe(false);
+    // The receipt activities are exported for effect() steps only as fallbacks (#3657), so they never take over another lexicon's receipt row.
+    expect((activitiesModule as { ACTIVITY_FALLBACKS?: readonly string[] }).ACTIVITY_FALLBACKS).toEqual(["receiptRead", "receiptWrite", "receiptStaleness"]);
   });
 });
 

@@ -21,12 +21,10 @@
  *
  * The store implements core's `ReceiptStore` seam
  * (`@intentius/chant/op/receipt-store`), as the sql lexicon's shared
- * `SqlReceiptStore` (`../../core/receipts.ts`). It is not exported as the
- * `receiptRead` / `receiptWrite` activities: those names are global to a
- * run, and a project that also configures aws or k8s would have its
- * `effect()` steps read ClickHouse instead of SSM or a ConfigMap. The backfill
- * activity reaches the store directly, the way the fly lexicon's release
- * component reaches its own.
+ * `SqlReceiptStore` (`../../core/receipts.ts`). The backfill activity
+ * reaches the store directly, the way the fly lexicon's release component
+ * reaches its own. The same table holds the receipts of a sql project's
+ * `effect()` steps (`../../receipts.ts`), under their own addresses.
  *
  * Write discipline: the backfill writes a partition's receipt after the
  * partition's copy succeeded, last, and nothing else writes one.

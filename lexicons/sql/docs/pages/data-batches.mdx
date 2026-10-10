@@ -1,0 +1,102 @@
+---
+title: "Data Batches with Receipts"
+description: "An Op of effect() batches in a sql project: sqlExec runs each batch's SQL on the environment's server, and each batch's receipt is a row of chant_receipts.receipts on that server, so a rerun skips the batches that finished"
+diataxis: how-to
+order: 4
+---
+
+A data change too big for one statement (filling a new column, rewriting a month of rows at a time) runs as an Op whose steps are [`effect()`](/chant/concepts/effect-receipts/) batches. Each batch has a receipt. `chant run` reads a batch's receipt before running it, skips the batch when the receipt is there, and writes the receipt last, only when every step of the batch succeeded. A run that fails or is stopped part way leaves the finished batches' receipts, so the next run starts at the first batch without one.
+
+In a project that uses only the `sql` lexicon, the receipts are rows on the database server the environment names. It works the same way for ClickHouse and Postgres.
+
+## Declare the batches
+
+```typescript
+// ops/fill-country.op.ts
+import { EffectReceipt } from "@intentius/chant";
+import { Op, activity, effect, phase } from "@intentius/chant/op";
+
+const months = ["202601", "202602", "202603"];
+
+const batch = (m: string) =>
+  effect(EffectReceipt(`country-${m}`, { effect: `country/${m}`, flavor: "existence" }), [
+    activity(
+      "sqlExec",
+      { sql: `ALTER TABLE shop.orders UPDATE country = 'NL' WHERE toYYYYMM(ts) = ${m}`, settings: { mutations_sync: 1 } },
+      "atMostOnce",
+    ),
+  ]);
+
+export default Op({
+  name: "fill-country",
+  overview: "Fill orders.country one month at a time",
+  phases: [phase("Fill", months.map(batch))],
+});
+```
+
+`sqlExec` runs its `sql` on the environment's server: `{ sql, settings?, environment? }`. On ClickHouse `settings` go with the query. On Postgres the SQL runs on a connection of its own, with the role's default `search_path`, as one implicit transaction. Any other activity works as a batch's step too.
+
+A batch that was running when a run stopped runs again, whole. Make each batch safe to run twice: an `UPDATE` that sets the same values, or a delete of the batch's rows before its insert.
+
+## Run it
+
+```bash
+chant run fill-country --env prod
+```
+
+`--env` picks `sql.profiles.prod`, the server both the batches' SQL and their receipts go to. With no `--env`, a literal `ownership.env` names the environment, and with no profile for it, `CLICKHOUSE_URL` or `POSTGRES_URL` (chosen by `sql.dialect`) names the server.
+
+A run that fails at the second month leaves the first month's receipt. Fix what failed and run it again: the first month is skipped, and the run goes on from the second.
+
+## Where the receipts are
+
+| Dialect | Table | Created |
+|---|---|---|
+| ClickHouse | `chant_receipts.receipts` | on the first receipt written, the database and the table, for the profile's `topology` (`ON CLUSTER` on a cluster, a `Replicated` database in the replicated topology) |
+| Postgres | `chant_receipts.receipts` | on the first receipt written, the schema and the table |
+
+Each receipt is a row addressed `<stack>/<env>/<effect>`: `ownership.stack`, the environment, and the receipt's `effect`. Read them with any client:
+
+```sql
+SELECT address, expectation, run_id, written_at FROM chant_receipts.receipts
+WHERE address LIKE 'shop/prod/country/%'
+```
+
+On ClickHouse a receipt written again is a new row, and the latest one counts (`argMax(expectation, written_at)`); on Postgres it replaces the old row. The [rebuild migration](../rebuild/) keeps its partition receipts in the same ClickHouse table, under its own addresses.
+
+The database or schema and the table carry chant's ownership trailer with the `receipts` key in their comment, so plans, imports and prunes leave them out. A Postgres role that cannot `CREATE SCHEMA` (some managed services restrict it) can keep the receipts in a schema that already exists instead: set `receiptsSchema` on the profile, and they go in `<schema>.__chant_receipts`.
+
+```typescript
+profiles: {
+  prod: { url: "postgres://db.internal:5432/shop", password: { env: "PG_PASSWORD" }, receiptsSchema: "app" },
+},
+```
+
+To run a batch again, delete its receipt row.
+
+## With aws or k8s in the same project
+
+The receipt activities, `receiptRead`, `receiptWrite` and `receiptStaleness`, are named the same in every lexicon that keeps receipts. The sql lexicon provides them only when no other configured lexicon does. A project that lists `aws` or `k8s` beside `sql` keeps its `effect()` receipts in that lexicon's row (an SSM parameter, a ConfigMap), whichever order `lexicons` lists them in, and `sqlExec` still runs the SQL.
+
+## From your own code
+
+A tool that runs an Op of `effect()` batches itself, with its own activities, binds the same store with `sqlReceiptStore` (or `sqlReceiptActivities`) from `@intentius/chant-lexicon-sql/receipts`:
+
+```typescript
+import { receiptActivities } from "@intentius/chant/op/receipt-store";
+import { sqlReceiptActivities, sqlReceiptStore } from "@intentius/chant-lexicon-sql/receipts";
+
+// The environment's server, from chant.config.ts:
+const receipts = sqlReceiptActivities({ environment: "prod" });
+
+// A ClickHouse server the tool has already bound:
+const onClickHouse = sqlReceiptActivities({ environment: "prod", stack: "shop", clickhouse: { endpoint } });
+
+// A Postgres connection the tool holds: a receipt written while a batch's
+// transaction is open commits or rolls back with it.
+const store = sqlReceiptStore({ environment: "prod", stack: "shop", postgres: client, schema: "app" });
+await store.ensure(); // before the first transaction, so the table is not created inside one
+const onPostgres = receiptActivities(store);
+```
+
+Pass the result's `receiptRead`, `receiptWrite` and `receiptStaleness` with the tool's activities. `store.location()` says where the receipts are and the address they start with.

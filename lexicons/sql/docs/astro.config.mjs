@@ -51,6 +51,10 @@ export default defineConfig({
                               "slug": "drift-watch"
                         },
                         {
+                              "label": "Data Batches with Receipts",
+                              "slug": "data-batches"
+                        },
+                        {
                               "label": "ClickHouse",
                               "items": [
                                     {
