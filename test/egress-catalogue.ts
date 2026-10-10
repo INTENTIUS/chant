@@ -611,6 +611,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The handlers of `chant approve --resume` and `chant run resume` (#3683) pass an injected `fetch` through to `resumeGateRun`; they open no connection of their own.",
   },
   {
+    file: "packages/core/src/op/gate-review.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge that hosts the merged pull request: `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
+    why: "A `pr-review` wave gate (#3684): `chant run wave` finds the pull request that merged the applied commit and reads its reviews, its author and the reviewers' access. Only a wave whose approval mode is `pr-review` reaches it, and the client takes an injected `fetch`, so no unit test opens a socket.",
+  },
+  {
     file: "packages/core/src/workspace/ci-green-forge.ts",
     primitives: ["fetch"],
     phase: "ci",
