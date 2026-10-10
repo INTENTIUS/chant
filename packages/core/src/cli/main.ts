@@ -920,6 +920,8 @@ Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
                         [--work <id>] [--holder <name>]: the work item an Op
                         with a work lease runs under, and who holds it
+                        --fail-on-drift: exit 2 when the run completes and
+                        its Drift outcome is true (WatchOp failOn: "drift")
   run list              List all Ops with the runtime's state for each
   run status <name>     Show the runtime's state for one Op's latest run
   run approve <op> <gate>  Record a gate's resolution and wake the runtime

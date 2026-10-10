@@ -334,3 +334,12 @@ describe("neverOverMcp (chant#3447)", () => {
     expect(opConfigFromIR(buildOpIR({ ...base, neverOverMcp: true })).neverOverMcp).toBe(true);
   });
 });
+
+describe("failOn (chant#3675)", () => {
+  it("survives the IR round trip, and is absent when not declared", () => {
+    const base = { name: "prod-watch", overview: "watch", phases: [] };
+    expect(buildOpIR({ ...base, failOn: "drift" }).failOn).toBe("drift");
+    expect(buildOpIR(base)).not.toHaveProperty("failOn");
+    expect(opConfigFromIR(buildOpIR({ ...base, failOn: "drift" })).failOn).toBe("drift");
+  });
+});

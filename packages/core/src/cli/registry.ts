@@ -504,6 +504,10 @@ export interface ParsedArgs {
    * `chant search "<q>" --check-live|--check-snapshot --fail-on-drift`
    * (#1268) — exit non-zero when the scoped check finds drift, so it is usable
    * as a CI gate. Meaningless without one of the two flags above.
+   *
+   * `chant run <op> --fail-on-drift` (#3675) — exit 2 instead of 0 when the
+   * run completes and its `Drift` outcome is true, the same as the Op
+   * declaring `failOn: "drift"`. A failed run still returns 1, a gated one 3.
    */
   failOnDrift?: boolean;
 

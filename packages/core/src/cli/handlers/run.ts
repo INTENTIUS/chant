@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, InvalidChantConfigError, type ChantConfig } from "../../config";
 import { discoverOps, discoverStewards } from "../../op/discover";
 import { stewardWorkHolder } from "../../op/work-lease-run";
-import type { OpConfig } from "../../op/types";
+import { DRIFT_EXIT_CODE, type OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
 import { approveCommand, describeGateMismatch, gateIsSealed } from "../../op/gate";
@@ -66,6 +66,40 @@ function resolveGatedExitCode(ctx: CommandContext): number | undefined {
     return undefined;
   }
   return raw;
+}
+
+/**
+ * Whether a settled run's records carry a true `Drift` outcome (#3675) — the
+ * one `lifecycleDiff` surfaces through `outcomeAttribute` on a WatchOp,
+ * ApplyOp, ReconcileOp or ConvergeOp step.
+ */
+export function runFoundDrift(records: readonly StepRecord[] | undefined): boolean {
+  for (const record of records ?? []) {
+    const outcomes = record.outcomes ?? (record.outcome ? [record.outcome] : []);
+    if (outcomes.some((o) => o.name === "Drift" && o.value === true)) return true;
+  }
+  return false;
+}
+
+/**
+ * The exit code for a completed run (#3675): 0, or {@link DRIFT_EXIT_CODE}
+ * when the run found drift and either `--fail-on-drift` or the Op's own
+ * `failOn: "drift"` asked for drift to fail the job. Says why on stderr when
+ * it remaps, since every step in the run succeeded.
+ */
+export function completedRunExitCode(
+  opName: string,
+  config: Pick<OpConfig, "failOn">,
+  failOnDriftFlag: boolean | undefined,
+  records: readonly StepRecord[] | undefined,
+): number {
+  if (!(failOnDriftFlag || config.failOn === "drift")) return 0;
+  if (!runFoundDrift(records)) return 0;
+  const why = failOnDriftFlag ? "--fail-on-drift" : `the Op declares failOn: "drift"`;
+  console.error(formatWarning({
+    message: `Op "${opName}" found drift; exiting ${DRIFT_EXIT_CODE} because ${why}`,
+  }));
+  return DRIFT_EXIT_CODE;
 }
 
 /**
@@ -1185,7 +1219,10 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
       }
       return gatedExit;
     }
-    return status.state === "completed" ? 0 : 1;
+    if (status.state !== "completed") return 1;
+    // A completed run that found drift exits 2 when asked to (#3675), so a
+    // scheduled drift job turns red without a script that reads the ledger.
+    return completedRunExitCode(opName, config, ctx.args.failOnDrift, status.result?.records ?? status.records);
   } catch (err) {
     if (err instanceof OpRunFailure) {
       const sealed = err.result.gate ? await gateIsSealed(err.result.gate.gate) : false;

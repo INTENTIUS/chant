@@ -95,7 +95,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     );
   }
   const header = [
-    `# chant Op waves "${spec.name}" (#3679): one stage per wave, each needing the one before.`,
+    `# chant Op waves "${spec.name}": one stage per wave, each needing the one before.`,
     "# A wave that waits at its gate exits 3 and stops the waves after it; approve the",
     "# digest it prints, then retry the job.",
     ...(spec.resume
