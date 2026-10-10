@@ -24,6 +24,14 @@
  * later than the cut-over delay, with a time before the cut-over) stop the
  * swap too, rather than stay behind in the old table.
  *
+ * A table whose engine collapses rows that share a sorting key when parts
+ * merge (Summing, Replacing, Aggregating, Collapsing, VersionedCollapsing,
+ * Coalescing and Graphite, replicated or not), rebuilt into such an engine,
+ * is read under `FINAL` on both sides (#3674). The old table can hold unmerged parts with several rows for
+ * one key, which the copy inserts in one block and the new table collapses
+ * as it writes them, so the raw counts differ although the data is the same.
+ * Under `FINAL` both sides are compared as merged.
+ *
  * On a cluster of more than one shard (#3663) every shard is read, through
  * the profile's server, and each partition is compared per shard
  * (`shard<n>/<partition>`), so a shard the copy missed is a difference.
@@ -44,6 +52,7 @@ import { rebuildPlanSubject, RebuildRefusal, type RebuildObservation } from "./o
 import { sourcePartitionExpression } from "./partitions";
 import { cutoverOf, observe, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
 import { shardTable } from "./shards";
+import { collapsesRows } from "./engines";
 
 export interface PartitionCheck {
   partition: string;
@@ -70,15 +79,24 @@ export class RebuildVerificationError extends Error {
   constructor(
     readonly table: string,
     readonly mismatches: Mismatch[],
+    /** The engine, when it collapses rows and the tables were compared under FINAL (#3674). */
+    readonly collapsingEngine?: string,
   ) {
     const shown = mismatches
       .slice(0, 10)
       .map((m) => `${m.partition}: old ${m.old ? `${m.old.rows} rows, checksum ${m.old.checksum}` : "none"}, new ${m.new ? `${m.new.rows} rows, checksum ${m.new.checksum}` : "none"}`)
       .join("; ");
+    const lateWrite =
+      `in materialized-view mode a row written to the old table later than the cut-over delay, with a time before the cut-over, ` +
+      `and in app mode a write the application did not stop`;
     super(
-      `${table}: the new table does not match the old one in ${mismatches.length} partition(s): ${shown}${mismatches.length > 10 ? "; ..." : ""}. ` +
-        `Nothing was swapped. In materialized-view mode a row written to the old table later than the cut-over delay, with a time before the cut-over, is the usual cause; ` +
-        `in app mode, a write the application did not stop.`,
+      `${table}: the new table does not match the old one in ${mismatches.length} partition(s): ${shown}${mismatches.length > 10 ? "; ..." : ""}. Nothing was swapped. ` +
+        (collapsingEngine
+          ? `${table} is a ${collapsingEngine}, which collapses rows that share a sorting key when parts merge, and both tables were compared under FINAL. ` +
+            `They still differ when the new table collapses the copied rows by its sorting key differently from how the old one merges them: ` +
+            `run OPTIMIZE TABLE ${table} FINAL, drop the new table if the Op kept it, and run the rebuild again, so the copy reads merged rows. ` +
+            `The other causes are ${lateWrite}.`
+          : `The usual cause is ${lateWrite}.`),
     );
     this.name = "RebuildVerificationError";
   }
@@ -103,7 +121,7 @@ async function compareTables(
   run: RebuildRun,
   o: RebuildObservation,
   opts: { attempts?: number; intervalMs?: number } = {},
-): Promise<{ old: SideCounts; new: SideCounts; mismatches: Mismatch[] }> {
+): Promise<{ old: SideCounts; new: SideCounts; mismatches: Mismatch[]; collapsingEngine?: string }> {
   if (!o.newTable) throw new RebuildRefusal(`${o.names.key}: the new table is not there yet; the Create phase makes it`);
   const n = o.names;
   const cutover = cutoverOf(run, o);
@@ -127,8 +145,11 @@ async function compareTables(
 
   // Across the shards of a cluster (#3663), every shard's rows, each partition counted per shard as `shard<n>/<partition>`.
   const sharding = run.sharding;
-  const read = async (table: string, name: string, partition: string, hash: string, before: string): Promise<SideCounts> => {
-    const from = sharding ? shardTable(sharding, n.database, name) : table;
+  // Tables whose engines collapse rows by sorting key are read as merged (#3674). Only when both do: a collapsing
+  // table rebuilt into a plain MergeTree keeps every row it copies, and is compared row for row.
+  const final = collapsesRows(o.live.engine) && collapsesRows(o.newTable.engine);
+  const read = async (table: string, name: string, partition: string, hash: string, before: string, final: boolean): Promise<SideCounts> => {
+    const from = `${sharding ? shardTable(sharding, n.database, name) : table}${final ? " FINAL" : ""}`;
     const key = sharding ? `concat('shard', toString(_shard_num), '/', ${partition})` : partition;
     const rows = await clickhouseQuery<{ p: string; rows: string | number; checksum: string; brows: string | number; bchecksum: string }>(
       run.target.endpoint,
@@ -150,10 +171,12 @@ async function compareTables(
     await syncReplica(run, o, n.database, n.name);
     await syncReplica(run, o, n.database, n.newName);
     // The old table first: a row the view has yet to commit in the new one is read as missing there, never the other way round.
-    const before = await read(n.table, n.name, "_partition_id", oldHash, oldBefore);
-    const after = await read(n.newTable, n.newName, fromOld, newHash, newBefore);
+    const before = await read(n.table, n.name, "_partition_id", oldHash, oldBefore, final);
+    const after = await read(n.newTable, n.newName, fromOld, newHash, newBefore, final);
     const mismatches = differences(before.all, after.all);
-    if (mismatches.length === 0 || attempt >= attempts) return { old: before, new: after, mismatches };
+    if (mismatches.length === 0 || attempt >= attempts) {
+      return { old: before, new: after, mismatches, ...(final ? { collapsingEngine: o.live.engine } : {}) };
+    }
     run.log(`-- ${n.key}: ${mismatches.length} partition(s) differ (${mismatches.map((m) => m.partition).slice(0, 5).join(", ")}); reading again (${attempt}/${attempts})`);
     await sleep(opts.intervalMs ?? COMPARE_INTERVAL_MS, run.signal);
   }
@@ -179,8 +202,8 @@ export const rowHash = (columns: readonly string[]): string => `cityHash64(toStr
  * {@link RebuildVerificationError} when it does not, so nothing is swapped.
  */
 export async function assertSameRows(run: RebuildRun, o: RebuildObservation): Promise<void> {
-  const { mismatches } = await compareTables(run, o);
-  if (mismatches.length > 0) throw new RebuildVerificationError(o.names.key, mismatches);
+  const { mismatches, collapsingEngine } = await compareTables(run, o);
+  if (mismatches.length > 0) throw new RebuildVerificationError(o.names.key, mismatches, collapsingEngine);
 }
 
 export async function verifyRebuild(run: RebuildRun): Promise<VerifyResult> {
@@ -188,7 +211,7 @@ export async function verifyRebuild(run: RebuildRun): Promise<VerifyResult> {
   if (o.state !== "rebuild") return { state: o.state, partitions: 0, rows: 0, verification: [], summary: `nothing to verify: ${o.state}` };
   const cutover = cutoverOf(run, o);
   const compared = await compareTables(run, o);
-  if (compared.mismatches.length > 0) throw new RebuildVerificationError(o.names.key, compared.mismatches);
+  if (compared.mismatches.length > 0) throw new RebuildVerificationError(o.names.key, compared.mismatches, compared.collapsingEngine);
 
   const all = [...compared.old.all.values()];
   const rows = all.reduce((s, v) => s + v.rows, 0);
@@ -196,7 +219,8 @@ export async function verifyRebuild(run: RebuildRun): Promise<VerifyResult> {
   const verification = [...compared.old.before.values()].sort((x, y) => x.partition.localeCompare(y.partition));
   const bound = verification.reduce((s, v) => s + v.rows, 0);
   const range = cutover !== undefined ? ` (${bound} of them before the cut-over at ${new Date(cutover).toISOString()})` : "";
-  const summary = `${o.names.key}: ${all.length} partition(s), ${rows} row(s)${range}, counts and checksums equal in the old and new tables`;
+  const merged = compared.collapsingEngine ? `, read under FINAL (${compared.collapsingEngine})` : "";
+  const summary = `${o.names.key}: ${all.length} partition(s), ${rows} row(s)${range}, counts and checksums equal in the old and new tables${merged}`;
   run.log(`-- ${summary}`);
   return {
     state: o.state,

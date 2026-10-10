@@ -24,6 +24,8 @@ import { partitionEffect } from "./backfill";
 import { insertTarget, waitForCutover, type CutoverProbe } from "./steps";
 import { intoShard, onShard, onShardServers, shardTable } from "./shards";
 import { renameColumns, sourcePartitionExpression } from "./partitions";
+import { collapsesRows } from "./engines";
+import { RebuildVerificationError } from "./verify";
 import { canonicalObject } from "../plan/normalize";
 import { diffSchemas } from "../plan/diff";
 import { renderDiff } from "../plan/report";
@@ -223,6 +225,34 @@ describe("the plan hands a rebuild to the Op", () => {
     const after = [{ key: "clicks", canonical: canonicalObject(noTime("(url, id)")) }];
     const diff = diffSchemas([{ key: "clicks", canonical: canonicalObject(noTime("id")) }], after);
     expect(rebuildOpSuggestions(diff, new Map(after.map((o) => [o.key, o.canonical])), "<env>")[0]!.dualWrite).toEqual({ mode: "app" });
+  });
+});
+
+describe("a table whose engine collapses rows by sorting key (#3674)", () => {
+  test("the collapsing MergeTree engines are read under FINAL, replicated or shared too; the others are not", () => {
+    for (const e of ["SummingMergeTree", "ReplacingMergeTree", "AggregatingMergeTree", "CollapsingMergeTree", "VersionedCollapsingMergeTree", "ReplicatedSummingMergeTree", "SharedReplacingMergeTree"]) {
+      expect(collapsesRows(e), e).toBe(true);
+    }
+    for (const e of ["MergeTree", "ReplicatedMergeTree", "Log", "Distributed", undefined]) expect(collapsesRows(e), String(e)).toBe(false);
+  });
+
+  test("a difference on such a table names the engine and the OPTIMIZE that merges it, not only a late write", () => {
+    const mismatch = [{ partition: "all", old: { partition: "all", rows: 3, checksum: "1" }, new: { partition: "all", rows: 1, checksum: "2" } }];
+    const collapsing = new RebuildVerificationError("db.daily", mismatch, "SummingMergeTree").message;
+    expect(collapsing).toMatch(/Nothing was swapped\. db\.daily is a SummingMergeTree, .*compared under FINAL/);
+    expect(collapsing).toContain("run OPTIMIZE TABLE db.daily FINAL");
+    const plain = new RebuildVerificationError("db.events", mismatch).message;
+    expect(plain).not.toMatch(/FINAL/);
+    expect(plain).toMatch(/The usual cause is in materialized-view mode a row written to the old table later than the cut-over delay/);
+  });
+
+  test("the plan's hand-off says so for such a table", () => {
+    const ddl = (o: string) => `CREATE TABLE db.daily (day Date, total Decimal(18, 2), n UInt64) ENGINE = SummingMergeTree ORDER BY ${o}`;
+    const after = [{ key: "daily", canonical: canonicalObject(ddl("(day, n)")) }];
+    const diff = diffSchemas([{ key: "daily", canonical: canonicalObject(ddl("day")) }], after);
+    const ops = rebuildOpSuggestions(diff, new Map(after.map((o) => [o.key, o.canonical])), "prod");
+    expect(ops[0]!.note).toMatch(/^db\.daily is a SummingMergeTree: when the old table's engine collapses rows too, the Verify phase reads both tables under FINAL/);
+    expect(renderDiff({ ...diff, rebuildOps: ops })).toContain(`  Note: ${ops[0]!.note}`);
   });
 });
 
