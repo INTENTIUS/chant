@@ -54,7 +54,7 @@ Three readers turn the cadence into something that fires on its own. The [github
 The two phases run in order on each tick:
 
 1. **`Snapshot`** — calls the `lifecycleSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
-2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
+2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`. A diff that exits non-zero, a build error among them, fails the step: it returns no result and no plan digest, so an `ApplyOp` gate never sees a digest of an error.
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
@@ -121,7 +121,7 @@ phase("Diff", [
 
 The run reads `drifted` off the activity's return value and folds it into the record's `outcomes` as `Drift`, so `chant run prod-watch --json` prints it and every later reader of the ledger sees the same field.
 
-`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the exit code (`from: "exitCode"`) or the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
+`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
 
 ## Choosing a schedule
 

@@ -32,7 +32,7 @@ export interface LifecycleDiffArgs {
 export interface LifecycleDiffResult {
   /** Combined stdout + stderr from the chant command. */
   output: string;
-  /** Process exit code (0 = success). */
+  /** Process exit code: always 0, since a diff that exits non-zero throws (#3712). */
   exitCode: number;
   /**
    * True when the diff output contains any drift indicators
@@ -121,18 +121,27 @@ export function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): st
  * MISSING / ORPHAN / DRIFTED / DISAPPEARED / PROPERTY DRIFT section headers documented in
  * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
  * on a WatchOp activity step to surface drift as the run's `Drift` outcome.
+ *
+ * A diff that exits non-zero (#3712) fails the step and yields no digest.
+ * Its output is an error, not a change set: every failed run printed the
+ * same lines, so a digest over them was one an approval matched whatever
+ * the declarations had become since.
  */
 export async function lifecycleDiff(args: LifecycleDiffArgs, signal?: AbortSignal): Promise<LifecycleDiffResult> {
   const liveFlag = args.live ? " --live" : "";
+  const command = `chant lifecycle diff ${args.env}${liveFlag}`;
+  let stdout: string;
+  let stderr: string;
   try {
-    const { stdout, stderr } = await execAsync(`chant lifecycle diff ${args.env}${liveFlag}`, { signal });
-    const output = `${stdout}${stderr}`.trim();
-    if (output) console.log(output);
-    return { output, exitCode: 0, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
+    ({ stdout, stderr } = await execAsync(command, { signal }));
   } catch (err) {
     const e = err as { code?: number; stdout?: string; stderr?: string };
     const output = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
     if (output) console.error(output);
-    return { output, exitCode: e.code ?? 1, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
+    const message = `${command} failed (exit ${String(e.code ?? 1)}); no plan to digest${output ? `:\n${output}` : ""}`;
+    throw new Error(message);
   }
+  const output = `${stdout}${stderr}`.trim();
+  if (output) console.log(output);
+  return { output, exitCode: 0, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
 }
