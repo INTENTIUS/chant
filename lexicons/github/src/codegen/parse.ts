@@ -175,7 +175,7 @@ function extractEntity(
       resource: {
         typeName: entity.typeName,
         description: entity.description,
-        properties: buildFallbackProperties(entity.typeName),
+        properties: addCommentProperty(entity.typeName, buildFallbackProperties(entity.typeName)),
         attributes: [],
         deprecatedProperties: [],
       },
@@ -197,6 +197,7 @@ function extractEntity(
       }
     }
   }
+  addCommentProperty(entity.typeName, properties);
 
   return {
     resource: {
@@ -499,6 +500,29 @@ const PROPERTY_OVERRIDES: Record<string, Record<string, string>> = {
     matrix: "Record<string, any>",
   },
 };
+
+// ── Comments ──────────────────────────────────────────────────────
+
+/**
+ * Entities that carry a `comment`: not a workflow key, but `# ...` lines the
+ * serializer writes above the entry (above `name:` for a workflow, the file's
+ * header), so the reasons a hand-written workflow keeps as YAML comments
+ * reach the rendered file (#3667).
+ */
+const COMMENTED_ENTITIES: Record<string, string> = {
+  "GitHub::Actions::Workflow": "YAML comment lines written at the top of the file, above `name:`. Not a workflow key; each line of the string becomes a `#` line",
+  "GitHub::Actions::Job": "YAML comment lines written above the job's key. Not a job key; each line of the string becomes a `#` line",
+  "GitHub::Actions::ReusableWorkflowCallJob": "YAML comment lines written above the job's key. Not a job key; each line of the string becomes a `#` line",
+  "GitHub::Actions::Step": "YAML comment lines written above the step. Not a step key; each line of the string becomes a `#` line",
+};
+
+function addCommentProperty(typeName: string, properties: ParsedProperty[]): ParsedProperty[] {
+  const description = COMMENTED_ENTITIES[typeName];
+  if (description && !properties.some((p) => p.name === "comment")) {
+    properties.push({ name: "comment", tsType: "string", required: false, description, constraints: {} });
+  }
+  return properties;
+}
 
 // ── Fallback properties ───────────────────────────────────────────
 
