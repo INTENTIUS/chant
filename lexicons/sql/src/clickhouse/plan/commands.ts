@@ -11,7 +11,9 @@
  * request's base and head, and needs no server. `plan` compares a build with
  * the server `sql.profiles.<env>` binds and asks that server's formatter about
  * expressions the rules leave different. Both exit 2 when a change needs a
- * rebuild, which a plan refuses to make in place, and 0 otherwise; for each
+ * rebuild, which a plan refuses to make in place, and `plan` also when the
+ * declared databases hold an object it cannot read, a dictionary (#3653),
+ * which it names; 0 otherwise. For each
  * refused table they name the `ClickHouseRebuildOp` to run instead
  * (`rebuildOps` in `--json`, `./rebuild-handoff.ts`).
  *
@@ -33,6 +35,7 @@ import { renderDiff } from "./report";
 import { keyedByQualifiedName, schemaFromBuildFile, schemaFromServer } from "./schema";
 import { dropFormattingOnly } from "./server-format";
 import { bindClickHouse } from "../live/bind";
+import { readUnreadableObjects } from "../live/catalog";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
 import { readFileSync } from "node:fs";
 import { parseTopology, type Topology } from "../topology";
@@ -86,7 +89,7 @@ async function runDiffStatements(before: string, after: string, json: boolean, t
 
 function emit(diff: SchemaDiff, json: boolean, title: string): number {
   console.log(json ? JSON.stringify(diff, null, 2) : renderDiff(diff, { title }));
-  return diff.rebuilds.length > 0 ? 2 : 0;
+  return diff.rebuilds.length > 0 || (diff.unreadable?.length ?? 0) > 0 ? 2 : 0;
 }
 
 export async function runDiff(ctx: CommandGroupContext): Promise<number> {
@@ -119,6 +122,7 @@ export async function planAgainstServer(environment: string, buildFile: string, 
   const declared = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase, target.topology));
   const databases = new Set(declared.map((o) => o.canonical.database ?? o.canonical.name));
   const live = await schemaFromServer(target, databases);
+  const unreadable = (await readUnreadableObjects(target, databases)).map((u) => ({ object: `${u.database}.${u.name}`, type: u.type, reason: u.reason }));
   const diff = diffSchemas(live, declared);
   const changes = await dropFormattingOnly(target.endpoint, diff.changes);
   const rebuildOps = rebuildOpSuggestions(
@@ -128,7 +132,13 @@ export async function planAgainstServer(environment: string, buildFile: string, 
   );
   const label = new Map(declared.map((o) => [o.key, `${o.exportName} (${o.key})`]));
   const relabel = changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
-  return { changes: relabel, rebuilds: relabel.filter((c) => c.class === "rebuild"), hints: diff.hints, ...(rebuildOps.length > 0 ? { rebuildOps } : {}) };
+  return {
+    changes: relabel,
+    rebuilds: relabel.filter((c) => c.class === "rebuild"),
+    hints: diff.hints,
+    ...(rebuildOps.length > 0 ? { rebuildOps } : {}),
+    ...(unreadable.length > 0 ? { unreadable } : {}),
+  };
 }
 
 export async function runPlan(ctx: CommandGroupContext): Promise<number> {
