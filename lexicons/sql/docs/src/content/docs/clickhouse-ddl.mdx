@@ -1,6 +1,6 @@
 ---
 title: "Declaring ClickHouse Tables and Views"
-description: "ClickHouse databases, tables, views and materialized views as SQL-shaped tagged templates: the four tags, materialized views, and what each kind of interpolation means"
+description: "ClickHouse databases, tables, views, materialized views and dictionaries as SQL-shaped tagged templates: the tags, materialized views, dictionaries, and what each kind of interpolation means"
 diataxis: how-to
 ---
 
@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/sql/docs/pages/clickhouse-ddl.mdx instead; changes here are overwritten. */}
 
 
-A ClickHouse object is declared as its own DDL, inside a `database`, `table` or `view` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:
+A ClickHouse object is declared as its own DDL, inside a `database`, `table`, `view` or `dictionary` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:
 
 ```ts
 import { database, table, view } from "@intentius/chant-lexicon-sql/clickhouse";
@@ -42,6 +42,7 @@ export const byKind = view`
 | `table` | `CREATE TABLE` | `ClickHouse::Table` |
 | `view` | `CREATE VIEW` | `ClickHouse::View` |
 | `view` | `CREATE MATERIALIZED VIEW` | `ClickHouse::MaterializedView` |
+| `dictionary` | `CREATE DICTIONARY` | `ClickHouse::Dictionary` |
 
 Each template holds exactly one statement of its tag's kind. `OR REPLACE`, `IF NOT EXISTS` and `ON CLUSTER` are read, and so are a `COMMENT` on the object and on each column.
 
@@ -80,6 +81,32 @@ The other forms parse too:
 - `DEFINER` and `SQL SECURITY` are read. SQLCH116 flags `SQL SECURITY DEFINER` with no `DEFINER`.
 
 A plain view stores nothing, and changing its query is metadata only (SQLCH240). Changing a materialized view's query is metadata only too (SQLCH241); changing its `TO` target is a rebuild (SQLCH242).
+
+## Dictionaries
+
+A dictionary is a key-value lookup that ClickHouse loads from a source and keeps in memory. Declare it with the `dictionary` tag:
+
+```ts
+import { dictionary } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const ratesDict = dictionary`
+  CREATE DICTIONARY ${analytics}.rates_dict (
+    code  String,
+    rate  Float64 DEFAULT 1
+  )
+  PRIMARY KEY code
+  SOURCE(CLICKHOUSE(TABLE 'rates' DB 'analytics'))
+  LAYOUT(COMPLEX_KEY_HASHED())
+  LIFETIME(MIN 0 MAX 300)`;
+```
+
+The tag reads each attribute (type, `DEFAULT`, `EXPRESSION`, and the `HIERARCHICAL`, `BIDIRECTIONAL`, `INJECTIVE` and `IS_OBJECT_ID` flags), `PRIMARY KEY`, `SOURCE`, `LAYOUT`, `LIFETIME`, `RANGE`, `SETTINGS` and `COMMENT`. A dictionary has no source, layout or key by default, so the tag refuses one without them. Its attributes are columns: `${ratesDict.columns.rate}` is a reference like a table's column.
+
+The source names its table as strings (`TABLE 'rates' DB 'analytics'`), since the server takes no other form there, so it makes no dependency. A dictionary loads lazily, so it may be created before its source table.
+
+The server prints a dictionary back its own way: the source's and the layout's key words upper case, `LIFETIME(300)` as `LIFETIME(MIN 0 MAX 300)`, a `PASSWORD` as `'[HIDDEN]'`. A plan compares the declaration and the server's copy with these undone. A changed comment is metadata only (SQLCH203). Any other change is SQLCH245: the applier sends `CREATE OR REPLACE DICTIONARY`, and the dictionary loads again from its source. A prune drops a dictionary chant created before the tables it reads.
+
+A password written in the source is part of the declaration and of the build output. Use a named collection on the server instead (`SOURCE(CLICKHOUSE(NAME rates_source))`) to keep it out of the project.
 
 ## Interpolations
 

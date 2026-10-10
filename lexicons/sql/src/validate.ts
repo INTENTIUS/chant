@@ -25,6 +25,7 @@ const REQUIRED_ENTITIES = [
   "Table",
   "View",
   "MaterializedView",
+  "Dictionary",
   "PostgresSchema",
   "PostgresTable",
   "PostgresIndex",

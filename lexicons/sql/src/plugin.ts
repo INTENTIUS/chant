@@ -97,6 +97,7 @@ export const sqlPlugin: LexiconPlugin = {
         isTag: true,
         description: "A CREATE VIEW or CREATE MATERIALIZED VIEW, parsed into a view entity with its lineage",
       },
+      { name: "dictionary", isTag: true, description: "A ClickHouse CREATE DICTIONARY, parsed into a dictionary entity with its attributes, key, source and layout" },
       { name: "schema", isTag: true, description: "A Postgres CREATE SCHEMA, parsed into a schema entity" },
       { name: "index", isTag: true, description: "A Postgres CREATE INDEX, parsed into an index entity" },
       { name: "sequence", isTag: true, description: "A Postgres CREATE SEQUENCE, parsed into a sequence entity" },

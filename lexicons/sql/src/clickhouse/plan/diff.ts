@@ -17,7 +17,7 @@
  */
 
 import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "./rules";
-import type { CanonicalObject } from "./normalize";
+import type { CanonicalColumn, CanonicalObject } from "./normalize";
 import type { RebuildOpSuggestion } from "./rebuild-handoff";
 import { MERGE_TREE_SETTINGS } from "../../generated/clickhouse";
 import { classifiedChange, type ChangeSet, type ClassifiedChange } from "../../core/classifier";
@@ -33,8 +33,9 @@ export interface SchemaDiff extends ChangeSet<Change> {
   /** For each table refused as a rebuild, the rebuild migration Op to run instead (`./rebuild-handoff.ts`). */
   rebuildOps?: RebuildOpSuggestion[];
   /**
-   * Objects on the server, in the declared databases, that chant cannot read
-   * (#3653): a plan names each one and fails rather than leave it out.
+   * Objects on the server, in the declared databases, whose definition chant
+   * cannot read (#3653): a plan names each one and fails rather than leave
+   * it out.
    */
   unreadable?: UnreadableEntry[];
 }
@@ -145,6 +146,11 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
     return;
   }
 
+  if (before.kind === "dictionary") {
+    diffDictionary(key, before, after, out);
+    return;
+  }
+
   if (before.kind === "view") {
     if (before.select !== after.select) out.push(change(key, "select", "SQLCH240", before.select, after.select));
     return;
@@ -190,6 +196,23 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
   diffMap(key, "indexes", before.indexes, after.indexes, "SQLCH204", out);
   diffMap(key, "projections", before.projections, after.projections, "SQLCH214", out);
   diffMap(key, "constraints", before.constraints, after.constraints, "SQLCH215", out);
+}
+
+/** A dictionary: every change but its comment replaces it (SQLCH245). */
+function diffDictionary(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[]): void {
+  const attribute = (c: CanonicalColumn) =>
+    [c.type, c.defaultExpr !== undefined ? `DEFAULT ${c.defaultExpr}` : "", c.expression !== undefined ? `EXPRESSION ${c.expression}` : "", c.flags ?? ""].filter(Boolean).join(" ");
+  const b = new Map(before.columns.map((c) => [c.name, attribute(c)]));
+  const a = new Map(after.columns.map((c) => [c.name, attribute(c)]));
+  for (const name of new Set([...b.keys(), ...a.keys()])) {
+    if (b.get(name) !== a.get(name)) out.push(change(key, `columns.${name}`, "SQLCH245", b.get(name), a.get(name)));
+  }
+  const order = (o: CanonicalObject) => o.columns.map((c) => c.name).join(", ");
+  if (order(before) !== order(after) && [...a.keys()].every((n) => b.has(n)) && a.size === b.size) out.push(change(key, "columns.order", "SQLCH245", order(before), order(after)));
+  for (const f of ["primaryKey", "dataSource", "layout", "lifetime", "range"] as const) {
+    if (before[f] !== after[f]) out.push(change(key, f, "SQLCH245", before[f], after[f]));
+  }
+  for (const name of changedEntries(before.settings, after.settings)) out.push(change(key, `settings.${name}`, "SQLCH245", before.settings[name], after.settings[name]));
 }
 
 /**

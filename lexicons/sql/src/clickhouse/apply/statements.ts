@@ -137,7 +137,7 @@ export function createStatement(
   } else {
     sql = `${statementBody(tokens)} COMMENT ${literal}`;
   }
-  if (opts.orReplace && node.statement === "view" && !node.orReplace) {
+  if (opts.orReplace && (node.statement === "view" || node.statement === "dictionary") && !node.orReplace) {
     sql = sql.replace(/^(\s*(?:--[^\n]*\n\s*)*)CREATE\s+/i, "$1CREATE OR REPLACE ");
   }
   return sql;
@@ -154,7 +154,7 @@ export function commentStatement(obj: DeclaredObject, marker: OwnershipMarker | 
 /** The `DROP` for an object a prune removes. `SYNC` so the name is free when it returns. */
 export function dropStatement(type: string, database: string | undefined, name: string): string {
   if (type === CLICKHOUSE_ENTITY_TYPES.database) return `DROP DATABASE ${ident(name)} SYNC`;
-  const what = type === CLICKHOUSE_ENTITY_TYPES.table ? "TABLE" : "VIEW";
+  const what = type === CLICKHOUSE_ENTITY_TYPES.table ? "TABLE" : type === CLICKHOUSE_ENTITY_TYPES.dictionary ? "DICTIONARY" : "VIEW";
   return `DROP ${what} ${qualifiedIdent(database, name)} SYNC`;
 }
 
@@ -388,7 +388,12 @@ export function alterSteps(obj: DeclaredObject, changes: readonly Change[], opts
   for (const c of changes.filter((x) => x.rule === "SQLCH230")) {
     const from = splitQualified(c.before!);
     const to = splitQualified(c.after!);
-    steps.push(stepFor(`RENAME TABLE ${qualifiedIdent(from.database, from.name)} TO ${qualifiedIdent(to.database, to.name)}`, "SQLCH230"));
+    const what = obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary ? "DICTIONARY" : "TABLE";
+    steps.push(stepFor(`RENAME ${what} ${qualifiedIdent(from.database, from.name)} TO ${qualifiedIdent(to.database, to.name)}`, "SQLCH230"));
+  }
+  // A dictionary is replaced whole, its comment and marker with it.
+  if (obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary && changes.some((c) => c.rule === "SQLCH245")) {
+    steps.push(stepFor(createStatement(obj, opts.marker, { orReplace: true }), "SQLCH245"));
   }
   if (obj.type === CLICKHOUSE_ENTITY_TYPES.table) steps.push(...tableSteps(obj, changes, opts.live));
   else if (obj.type === CLICKHOUSE_ENTITY_TYPES.view || obj.type === CLICKHOUSE_ENTITY_TYPES.materializedView) steps.push(...viewSteps(obj, changes, opts.marker));
@@ -397,7 +402,10 @@ export function alterSteps(obj: DeclaredObject, changes: readonly Change[], opts
 
 /** Whether the steps for these changes already set the object's comment (a plain view replaced whole). */
 export function stepsSetComment(obj: DeclaredObject, changes: readonly Change[]): boolean {
-  return obj.type === CLICKHOUSE_ENTITY_TYPES.view && changes.some((c) => c.rule === "SQLCH240");
+  return (
+    (obj.type === CLICKHOUSE_ENTITY_TYPES.view && changes.some((c) => c.rule === "SQLCH240")) ||
+    (obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary && changes.some((c) => c.rule === "SQLCH245"))
+  );
 }
 
 // ── a schema's statements ─────────────────────────────────────────────
@@ -459,8 +467,8 @@ export interface StatementPlan {
   drops: DropStatement[];
 }
 
-/** Drop order: what reads from a table before the table, a database last. */
-const DROP_ORDER: Record<string, number> = { materializedView: 0, view: 1, table: 2, database: 3 };
+/** Drop order: what reads from a table before the table (a dictionary before its source), a database last. */
+const DROP_ORDER: Record<string, number> = { materializedView: 0, view: 1, dictionary: 2, table: 3, database: 4 };
 
 /**
  * The statements that take the current schema to the declared one, from the

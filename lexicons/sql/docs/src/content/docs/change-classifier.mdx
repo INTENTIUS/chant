@@ -27,7 +27,7 @@ chant sql plan prod schema.json        # a build output against the prod server
 
 Both exit 2 when a change needs a rebuild. `chant sql diff` compares a pull request's base and head builds with no server. `chant sql plan` reads the server `sql.profiles.<env>` binds, and asks that server's formatter about any expression the normalization rules leave different, so the server's own rewriting (`INTERVAL 1 DAY` as `toIntervalDay(1)`, `a+b*2` as `a + (b * 2)`) is not reported as a change.
 
-`chant sql plan` also exits 2 when a declared database holds an object chant cannot read yet, a dictionary. It names each one under `Refused` (`unreadable` in `--json`) instead of leaving it out, and `chant lifecycle diff --live` reports each one as unobserved. A table with the `Dictionary` engine is a table, and is read.
+`chant sql plan` also exits 2 when a declared database holds an object whose definition it cannot read. It names each one under `Refused` (`unreadable` in `--json`) instead of leaving it out. Dictionaries are read and planned like the other objects: any change but a comment replaces one (SQLCH245).
 
 ## After the plan
 
@@ -72,7 +72,7 @@ Without the hint the change is a drop and an add, and the report points out a dr
 
 | Id | Class | Change | Restriction |
 |---|---|---|---|
-| SQLCH200 | create | Create an object | A new database, table or view is created; nothing existing changes. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create) |
+| SQLCH200 | create | Create an object | A new database, table, view or dictionary is created; nothing existing changes. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create) |
 | SQLCH201 | metadata only | Add a column | ADD COLUMN only changes metadata: parts written before it read the column's default until they are merged or the column is materialized. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/alter/column#add-column) |
 | SQLCH202 | metadata only | Drop a column | DROP COLUMN removes the column's data from every part; it is not undone. A column in a key cannot be dropped (SQLCH213 covers that case). [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/alter/column#drop-column) |
 | SQLCH203 | metadata only | Change a comment | COMMENT COLUMN and MODIFY COMMENT change metadata only. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/alter/comment) |
@@ -104,4 +104,5 @@ Without the hint the change is a drop and an add, and the report points out a dr
 | SQLCH242 | rebuild | Change a materialized view's target | A materialized view's TO target is fixed at creation; the view is dropped and created again, and inserts into its source in between are not seen. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create/view) |
 | SQLCH243 | rebuild | Change a materialized view's own storage | A materialized view without TO keeps its rows in an inner table whose engine and keys are fixed like any table's. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create/view) |
 | SQLCH244 | metadata only | Change a refreshable view's schedule | ALTER TABLE ... MODIFY REFRESH changes the schedule of a refreshable materialized view. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/alter/view) |
+| SQLCH245 | metadata only | Change a dictionary | A dictionary stores no data of its own: CREATE OR REPLACE DICTIONARY replaces its attributes, key, source, layout, lifetime or range, and it loads again from its source. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create/dictionary) |
 | SQLCH250 | drop | Drop an object | DROP removes the object and, for a table, its data; it is not undone. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/drop) |

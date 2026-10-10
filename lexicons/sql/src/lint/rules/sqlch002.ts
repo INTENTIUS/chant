@@ -41,7 +41,7 @@ function keyColumns(tokens: Token[], span: Span): Array<{ name: string; token: T
 }
 
 function allowsNullableKey(tokens: Token[], node: CreateNode): boolean {
-  if (node.statement === "database" || !node.settings) return false;
+  if (node.statement === "database" || node.statement === "dictionary" || !node.settings) return false;
   const s = node.settings.find((x) => x.key === "allow_nullable_key");
   if (!s) return false;
   const v = tokens.slice(s.value.from, s.value.to).map((t) => t.text).join("").trim().toLowerCase().replace(/'/g, "");
@@ -74,7 +74,7 @@ export const sqlch002: LintRule = {
         if (err instanceof SqlSyntaxError) continue; // SQLCH001 reports it
         throw err;
       }
-      if (node.statement === "database" || allowsNullableKey(tokens, node)) continue;
+      if (node.statement === "database" || node.statement === "dictionary" || allowsNullableKey(tokens, node)) continue;
       const nullable = new Set(node.columns.filter((c) => c.name && isNullable(tokens, c)).map((c) => c.name));
       if (nullable.size === 0) continue;
       const reported = new Set<string>();

@@ -1,7 +1,7 @@
 /**
- * Reading a live server's schema: the databases and the tables, views and
- * materialized views in them, from `system.databases`, `system.tables` and
- * `SHOW CREATE`.
+ * Reading a live server's schema: the databases and the tables, views,
+ * materialized views and dictionaries in them, from `system.databases`,
+ * `system.tables` and `SHOW CREATE`.
  */
 
 import { clickhouseQuery } from "../http";
@@ -16,7 +16,7 @@ export interface LiveObject {
   type: ClickHouseEntityType;
   database?: string;
   name: string;
-  /** The engine `system.tables` / `system.databases` report: `MergeTree`, `View`, `MaterializedView`, `Atomic`. */
+  /** The engine `system.tables` / `system.databases` report: `MergeTree`, `View`, `MaterializedView`, `Atomic`, `Dictionary`. */
   engine: string;
   uuid?: string;
   /** The object's comment as the server holds it, chant's ownership trailer included (`../ownership.ts`). */
@@ -38,9 +38,10 @@ export function entityTypeOfEngine(engine: string): ClickHouseEntityType {
 /**
  * Every object in the target's databases, sorted by database then name.
  * A materialized view's inner table (`.inner_id.<uuid>`, `.inner.<name>`)
- * belongs to its view and is left out, as are temporary tables and
- * dictionaries, which `readUnreadableObjects` names instead (#3653). A table
- * with the `Dictionary` engine is a table and is read.
+ * belongs to its view and is left out, as are temporary tables. A
+ * dictionary is read (#3682) from `system.tables`, where a reader granted
+ * `SELECT` on the database sees it without a grant on `system.dictionaries`;
+ * a table with the `Dictionary` engine is a table.
  *
  * So are chant's own working objects (`../ownership.ts`
  * `isChantWorkingObject`): a rebuild migration's new, dual-write and retained
@@ -57,10 +58,9 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   const databases = await q<{ name: string; engine: string; uuid: string; comment: string }>(
     `SELECT name, engine, toString(uuid) AS uuid, comment FROM system.databases WHERE name ${scope} ORDER BY name`,
   );
-  const tables = await q<{ database: string; name: string; engine: string; uuid: string; comment: string }>(
-    `SELECT database, name, engine, toString(uuid) AS uuid, comment FROM system.tables ` +
+  const tables = await q<{ database: string; name: string; engine: string; uuid: string; comment: string; dictionary: number }>(
+    `SELECT database, name, engine, toString(uuid) AS uuid, comment, startsWith(create_table_query, 'CREATE DICTIONARY') AS dictionary FROM system.tables ` +
       `WHERE database ${scope} AND NOT is_temporary AND name NOT LIKE '.inner%' ` +
-      `AND NOT startsWith(create_table_query, 'CREATE DICTIONARY') ` +
       `ORDER BY database, name`,
   );
 
@@ -85,7 +85,7 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   for (const t of tables) {
     if (working.has(t.database) || isChantWorkingObject(t.comment)) continue;
     out.push({
-      type: entityTypeOfEngine(t.engine),
+      type: Number(t.dictionary) === 1 ? CLICKHOUSE_ENTITY_TYPES.dictionary : entityTypeOfEngine(t.engine),
       database: t.database,
       name: t.name,
       engine: t.engine,
@@ -97,36 +97,3 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   return out;
 }
 
-/** An object in the target's databases that chant cannot read yet. */
-export interface UnreadableObject {
-  /** The entity type it would be: `ClickHouse::Dictionary`. */
-  type: string;
-  database: string;
-  name: string;
-  /** Why it is not read, for the plan's refusal. */
-  reason: string;
-}
-
-/**
- * The objects in the target's databases that chant does not read (#3653):
- * the dictionaries. A plan that left them out would neither list them nor
- * say it could not read them, so `chant sql plan` names each one and fails,
- * and `chant lifecycle diff --live` reports each one as unobserved. Limited
- * to `databases` when given; chant's own working databases are left out.
- */
-export async function readUnreadableObjects(target: ClickHouseTarget, databases?: ReadonlySet<string>): Promise<UnreadableObject[]> {
-  const q = <T>(sql: string) => clickhouseQuery<T>(target.endpoint, sql);
-  const scope = target.databases
-    ? `IN (${target.databases.map(quote).join(", ")})`
-    : `NOT IN (${[...SYSTEM_DATABASES].map(quote).join(", ")})`;
-  const working = new Set(
-    (await q<{ name: string; comment: string }>(`SELECT name, comment FROM system.databases WHERE name ${scope}`)).filter((d) => isChantWorkingObject(d.comment)).map((d) => d.name),
-  );
-  // `system.tables`, not `system.dictionaries`: a reader granted SELECT on the database sees it without a grant on the system table.
-  const dictionaries = await q<{ database: string; name: string }>(
-    `SELECT database, name FROM system.tables WHERE database ${scope} AND startsWith(create_table_query, 'CREATE DICTIONARY') ORDER BY database, name`,
-  );
-  return dictionaries
-    .filter((d) => !working.has(d.database) && (!databases || databases.has(d.database)))
-    .map((d) => ({ type: "ClickHouse::Dictionary", database: d.database, name: d.name, reason: "a dictionary, which chant does not read or declare yet" }));
-}

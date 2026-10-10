@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import { canonicalObject } from "./normalize";
-import type { SchemaObject } from "./diff";
+import type { SchemaObject, UnreadableEntry } from "./diff";
 import type { ClickHouseTarget } from "../live/bind";
 import { readLiveSchema } from "../live/catalog";
 import { renderFor, type Topology } from "../topology";
@@ -43,15 +43,23 @@ export function keyedByQualifiedName(objects: readonly SchemaObject[]): Array<Sc
 /**
  * What the server holds, keyed by `database.name`, limited to the databases
  * the declarations use (and the target's scope). The `default` database is
- * left out, as import leaves it out.
+ * left out, as import leaves it out. An object whose definition chant cannot
+ * read is not left out silently (#3653): it goes in `unreadable`, when
+ * given, and otherwise fails the read.
  */
-export async function schemaFromServer(target: ClickHouseTarget, databases?: ReadonlySet<string>): Promise<SchemaObject[]> {
+export async function schemaFromServer(target: ClickHouseTarget, databases?: ReadonlySet<string>, unreadable?: UnreadableEntry[]): Promise<SchemaObject[]> {
   const live = await readLiveSchema(target);
-  return live
-    .filter((o) => !(o.type === "ClickHouse::Database" && o.name === "default"))
-    .filter((o) => !databases || databases.has(o.database ?? o.name))
-    .map((o) => ({
-      key: o.database ? `${o.database}.${o.name}` : o.name,
-      canonical: canonicalObject(o.statement, target.defaultDatabase),
-    }));
+  const out: SchemaObject[] = [];
+  for (const o of live) {
+    if (o.type === "ClickHouse::Database" && o.name === "default") continue;
+    if (databases && !databases.has(o.database ?? o.name)) continue;
+    const key = o.database ? `${o.database}.${o.name}` : o.name;
+    try {
+      out.push({ key, canonical: canonicalObject(o.statement, target.defaultDatabase) });
+    } catch (err) {
+      if (!unreadable) throw err;
+      unreadable.push({ object: key, type: o.type, reason: `its definition does not parse: ${(err as Error).message}` });
+    }
+  }
+  return out;
 }

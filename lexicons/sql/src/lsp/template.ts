@@ -145,11 +145,11 @@ export function declarations(content: string, fileName = "file.ts"): Declared[] 
       const columns =
         node.statement === "database"
           ? []
-          : node.columns.map((c) => ({
+          : (node.statement === "dictionary" ? node.attributes : node.columns).map((c) => ({
               name: c.name || spanText(found, tokens, c.nameSpan, source) || "",
               ...(spanText(found, tokens, c.type, source) ? { type: spanText(found, tokens, c.type, source)! } : {}),
             }));
-      const engine = node.engine?.name || spanText(found, tokens, node.engine?.nameSpan, source);
+      const engine = node.statement === "dictionary" ? undefined : node.engine?.name || spanText(found, tokens, node.engine?.nameSpan, source);
       out.push({
         name: decl.name.text,
         tag: found.tag,

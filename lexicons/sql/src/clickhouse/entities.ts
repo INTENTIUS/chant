@@ -1,6 +1,7 @@
 /**
- * The ClickHouse entities: `database`, `table` and `view` tagged templates that
- * parse their DDL at fold time into one Declarable each (chant #3196, #3197).
+ * The ClickHouse entities: `database`, `table`, `view` and `dictionary` (#3682)
+ * tagged templates that parse their DDL at fold time into one Declarable each
+ * (chant #3196, #3197).
  *
  * ```ts
  * import { table, view } from "@intentius/chant-lexicon-sql/clickhouse";
@@ -54,6 +55,7 @@ export const CLICKHOUSE_ENTITY_TYPES = {
   table: "ClickHouse::Table",
   view: "ClickHouse::View",
   materializedView: "ClickHouse::MaterializedView",
+  dictionary: "ClickHouse::Dictionary",
 } as const;
 
 export type ClickHouseEntityType = (typeof CLICKHOUSE_ENTITY_TYPES)[keyof typeof CLICKHOUSE_ENTITY_TYPES];
@@ -136,6 +138,36 @@ export interface ViewProps extends CommonProps, StorageProps {
   ifNotExists?: boolean;
 }
 
+/** One attribute of a dictionary, as declared. */
+export interface DictionaryAttributeDef {
+  name: string;
+  type: string;
+  /** The value for a key the source does not have: `DEFAULT expr`. */
+  default?: string;
+  /** `EXPRESSION expr`: what the source computes the attribute from. */
+  expression?: string;
+  /** `HIERARCHICAL`, `BIDIRECTIONAL`, `INJECTIVE`, `IS_OBJECT_ID`, as written. */
+  flags?: string[];
+}
+
+export interface DictionaryProps extends CommonProps {
+  /** The attributes, key columns included. */
+  columns: DictionaryAttributeDef[];
+  /** The key columns: `PRIMARY KEY id`. */
+  primaryKey: string;
+  /** What is inside `SOURCE(...)`: `CLICKHOUSE(TABLE 'rates' DB 'shop')`. */
+  dataSource: string;
+  /** What is inside `LAYOUT(...)`: `HASHED()`. */
+  layout: string;
+  /** What is inside `LIFETIME(...)`: `300`, `MIN 0 MAX 300`. */
+  lifetime?: string;
+  /** What is inside `RANGE(...)`, for a range layout. */
+  range?: string;
+  settings?: Record<string, string>;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+}
+
 /**
  * A string as a quoted, escaped ClickHouse string literal. An interpolated
  * plain string is SQL text; wrap it in `literal()` when it is a value.
@@ -174,6 +206,12 @@ export interface ClickHouseTable extends ClickHouseRelation {
 export interface ClickHouseView extends ClickHouseRelation {
   readonly entityType: "ClickHouse::View" | "ClickHouse::MaterializedView";
   readonly props: ViewProps;
+}
+
+/** A dictionary: its attributes are columns `dictGet` reads, so SQL can reference them. */
+export interface ClickHouseDictionary extends ClickHouseRelation {
+  readonly entityType: "ClickHouse::Dictionary";
+  readonly props: DictionaryProps;
 }
 
 function makeEntity(
@@ -303,7 +341,7 @@ function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
   return pieces.length >= 2 ? { database: pieces[pieces.length - 2], name: pieces[pieces.length - 1]! } : { name: pieces[0] ?? "" };
 }
 
-type Expect = "database" | "table" | "view";
+type Expect = "database" | "table" | "view" | "dictionary";
 
 function build(tag: Expect, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
   const parts = templateParts(strings);
@@ -318,7 +356,8 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
   const ctx: Ctx = { d: CLICKHOUSE_TEMPLATES, tokens, values, fed: values.map(() => new Set<string>()) };
   for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
   if (node.statement !== tag) {
-    const holds = node.statement === "database" ? "CREATE DATABASE" : node.statement === "table" ? "CREATE TABLE" : "CREATE VIEW";
+    const holds =
+      node.statement === "database" ? "CREATE DATABASE" : node.statement === "table" ? "CREATE TABLE" : node.statement === "dictionary" ? "CREATE DICTIONARY" : "CREATE VIEW";
     throw new SqlTemplateError(tag, `holds a ${holds}; use the ${node.statement} tag`, 0, 0);
   }
   const { database, name } = qualified(ctx, node.name);
@@ -375,6 +414,35 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
     return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.table, sqlName, props, columns.map((c) => c.name), dependsOn));
   }
 
+  if (node.statement === "dictionary") {
+    const columns: DictionaryAttributeDef[] = node.attributes.map((a) => {
+      for (const span of [a.nameSpan, a.type, a.default, a.expression]) feed(ctx, span, "columns");
+      return strip({
+        name: a.name || req(text(ctx, a.nameSpan)),
+        type: req(text(ctx, a.type)),
+        default: text(ctx, a.default),
+        expression: text(ctx, a.expression),
+        flags: a.flags.length > 0 ? a.flags : undefined,
+      });
+    });
+    const settings = text(ctx, node.settings, "settings");
+    const props: DictionaryProps = strip({
+      ...common,
+      orReplace: node.orReplace,
+      ifNotExists: node.ifNotExists,
+      columns,
+      primaryKey: req(text(ctx, node.primaryKey, "primaryKey")),
+      dataSource: req(text(ctx, node.source, "dataSource")),
+      layout: req(text(ctx, node.layout, "layout")),
+      lifetime: text(ctx, node.lifetime, "lifetime"),
+      range: text(ctx, node.range, "range"),
+      settings: settings === undefined ? undefined : dictionarySettings(settings),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.dictionary, sqlName, props, columns.map((c) => c.name), dependsOn));
+  }
+
   const lin = lineage<ClickHouseObject>(ctx, node.select);
   let to: ClickHouseObject | string | undefined;
   if (node.to) {
@@ -406,6 +474,26 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
   return done(makeEntity(type, sqlName, props, outputs, dependsOn));
 }
 
+/** `a = 1, b = 'x'` as a record of each setting's value as written. */
+function dictionarySettings(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let depth = 0;
+  let cur = "";
+  const flush = () => {
+    const at = cur.indexOf("=");
+    if (at > 0) out[cur.slice(0, at).trim()] = cur.slice(at + 1).trim();
+    cur = "";
+  };
+  for (const ch of text) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) flush();
+    else cur += ch;
+  }
+  flush();
+  return out;
+}
+
 /** `` database`CREATE DATABASE ...` ``: one ClickHouse database, parsed at build time. */
 export function database(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseDatabase {
   return build("database", strings, values) as ClickHouseDatabase;
@@ -422,4 +510,13 @@ export function table(strings: TemplateStringsArray, ...values: unknown[]): Clic
  */
 export function view(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseView {
   return build("view", strings, values) as ClickHouseView;
+}
+
+/**
+ * `` dictionary`CREATE DICTIONARY ...` ``: one dictionary, its attributes,
+ * key, source, layout and lifetime, parsed at build time (#3682). Its
+ * attributes are columns: `${rates.columns.rate}`.
+ */
+export function dictionary(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseDictionary {
+  return build("dictionary", strings, values) as ClickHouseDictionary;
 }
