@@ -248,8 +248,12 @@ export interface ParsedArgs {
    * <name>`, which generates one CI job per wave.
    */
   waveGate?: string;
-  /** `chant components fan-out --wave <n>` (#3049) — run wave `n` of a `--wave-gate` fan-out and no other. */
+  /** `chant components fan-out --wave <n>` (#3049) — run wave `n` of a `--wave-gate` fan-out and no other. Also `chant run wave --wave <k>` (#3679). */
   wave?: number;
+  /** `chant run wave --decide` (#3679) — plan a wide wave and decide its gate, applying nothing. */
+  decide?: boolean;
+  /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
+  share?: number;
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**

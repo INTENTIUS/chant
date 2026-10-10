@@ -49,8 +49,19 @@ export type {
 } from "./receipt-store";
 export { discoverOps } from "./discover";
 export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
-export { generateOpsPipeline, withOpSchedules } from "./generate-pipeline";
-export type { GenerateOpsPipelineResult } from "./generate-pipeline";
+export { generateOpsPipeline, generateOpWavesPipeline, withOpSchedules } from "./generate-pipeline";
+export type { GenerateOpsPipelineResult, GenerateOpWavesPipelineResult } from "./generate-pipeline";
+export {
+  OP_WAVE_DEFAULT_APPLY,
+  OP_WAVE_GATE_POLICIES,
+  assertOpWavesSpec,
+  opWaveJobs,
+  opWaveRecordPath,
+  opWaveShare,
+} from "./op-waves";
+export type { OpWave, OpWaveGatePolicy, OpWaveJob, OpWaveRun, OpWavesSpec } from "./op-waves";
+export { opWaveNeedsApproval, parseOpWavesSpec, readOpWavePolicy, runOpWave } from "./op-waves-run";
+export type { OpWaveDecision, OpWaveMember, OpWavePlanFile, RunOpWaveOptions, RunOpWaveResult } from "./op-waves-run";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
 export type { ActivityFn } from "./activity-registry";
 export { loadActivityContracts, mergeActivityContracts } from "./activity-contract-registry";

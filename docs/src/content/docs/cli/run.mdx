@@ -13,6 +13,7 @@ chant run status <name> [flags]
 chant run approve <op> <gate> [flags]
 chant run cancel <name> [flags]
 chant run log <name> [flags]
+chant run wave --spec <file> --wave <k> [--decide | --share <i>] [--base <ref>]
 chant run --components <name|all> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 ```
@@ -178,6 +179,18 @@ chant run log alb-deploy
 chant run log alb-deploy --on fountain --limit 10
 ```
 
+### `run wave`
+
+Plans, gates and applies one wave of an [Op waves](/chant/guide/op-waves/) spec. It is the command each job of a pipeline rendered from that spec runs, and it can be run by hand from the repository root.
+
+```bash
+chant run wave --spec waves.json --wave 2
+chant run wave --spec waves.json --wave 3 --decide
+chant run wave --spec waves.json --wave 3 --share 1
+```
+
+The wave's runs are planned with the spec's `plan` command, and its gate policy is read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. `--json` prints the decision and which runs applied.
+
 ### `run --components <name|all>`
 
 Run a discovered [component](/chant/components/orchestration/)'s `deploy` composition on the same in-process executor an Op uses. `all` runs every discovered component in dependency order (parallel-safe waves); a single name runs just that component.
@@ -217,7 +230,7 @@ On a successful run, `chant run --components` auto-emits one immutable release r
 
 ### `run --generate <provider>`
 
-Writes one CI pipeline file per scheduled Op for `github`, `gitlab` or `forgejo`. It is the Op counterpart to [`chant build --components --generate`](/chant/cli/build/#generate-mode-ci-pipelines-from-components), and the command-line form of `generateOpsPipeline` from `@intentius/chant/op`. The [Ops guide](/chant/guide/ops/#scheduling-an-op) covers what each provider's generator emits.
+Writes one CI pipeline file per scheduled Op for `github`, `gitlab` or `forgejo`. A `--spec` file that holds an Op waves spec (a `waves` key) renders one pipeline of gated waves instead; see [Op Waves](/chant/guide/op-waves/). It is the Op counterpart to [`chant build --components --generate`](/chant/cli/build/#generate-mode-ci-pipelines-from-components), and the command-line form of `generateOpsPipeline` from `@intentius/chant/op`. The [Ops guide](/chant/guide/ops/#scheduling-an-op) covers what each provider's generator emits.
 
 ```bash
 chant run --generate github
@@ -279,7 +292,11 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--on <lexicon>` | Which runtime hosts the run: a configured lexicon with an `opRuntime`, or `local`. When omitted, `run.on` in `chant.config.ts` decides, and the built-in local runtime runs the Op when that is unset too (every `run` subcommand) |
 | `--components` | Target a component instead of an Op (`run --components`) |
 | `--generate <provider>` | Write one CI pipeline file per scheduled Op for `github`, `gitlab` or `forgejo` (`run --generate`) |
-| `--spec <file>` | JSON Op specs to generate instead of every Op with a `schedule` (`run --generate`) |
+| `--spec <file>` | JSON Op specs to generate instead of every Op with a `schedule` (`run --generate`), or the Op waves spec (`run --generate`, `run wave`) |
+| `--wave <k>` | The wave to run, from 1 (`run wave`) |
+| `--decide` | Plan the wave and decide its gate without applying it (`run wave`) |
+| `--share <i>` | Apply share `i` of a decided wide wave (`run wave`) |
+| `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
 | `--output <dir>` | Where generated pipeline files go, instead of the forge's own directory (`run --generate`) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
@@ -306,7 +323,8 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 |------|---------|
 | 0 | Success (the run completed, or the command succeeded) |
 | 1 | Error (the run failed, the Op was not found, the runtime was unreachable) |
-| 3 | Gated: the run stopped at an unapproved gate and recorded the pending fact |
+| 3 | Gated: the run stopped at an unapproved gate and recorded the pending fact. For `run wave`, the wave waits for an approval of its set digest |
+| 4 | `run wave --share`: a run's plan moved since its wave was decided, so it was not applied |
 | `--gated-exit <code>` | The gated outcome only, remapped to `<code>`. 0 and 1 keep their meanings above for every other outcome |
 
 ## See Also
