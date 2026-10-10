@@ -197,6 +197,7 @@ The build pipeline writes each entry in `files` alongside the primary output fil
 | Field | Type | What it does |
 |---|---|---|
 | `verbatimFiles` | `string[]` | Basenames from `files` that must reach disk byte-for-byte. The build's additional-file writer otherwise round-trips a file through `JSON.parse` and key-sorts it, which corrupts committed ciphertext or pre-formatted YAML (chant #1937) |
+| `secretFiles` | `string[]` | Basenames from `files` that hold a secret, such as committed ciphertext. A build with no `--output` refuses rather than print them. A file in `verbatimFiles` but not here, like the sql lexicon's DDL, prints to stderr like any other additional file (chant #3738) |
 | `warnings` | `string[]` | Non-fatal diagnostics, collected into the build's `warnings` array. A dialect dropping keys the target ignores reports them here |
 
 ## Child Projects
