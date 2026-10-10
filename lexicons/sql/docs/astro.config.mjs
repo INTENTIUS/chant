@@ -72,6 +72,10 @@ export default defineConfig({
                                     {
                                           "label": "Rebuilding a Table",
                                           "slug": "rebuild"
+                                    },
+                                    {
+                                          "label": "Access Control",
+                                          "slug": "clickhouse-access"
                                     }
                               ]
                         },

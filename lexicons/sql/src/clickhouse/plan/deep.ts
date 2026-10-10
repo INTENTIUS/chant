@@ -22,11 +22,11 @@
 import { deepObservation, type DeepObservationResult, type DeepResourceObservation, type DeepNormalizationHooks } from "@intentius/chant/deep-observation";
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "../live/bind";
-import { readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
+import { accessOf, readLiveAccess, readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
 import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
-import { database, dictionary, func, table, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
+import { database, dictionary, func, policy, role, table, user, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
 import { canonicalObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
 import { renderFor } from "../topology";
 
@@ -49,7 +49,13 @@ function liveProps(o: LiveObject): Props {
           ? dictionary
           : o.type === CLICKHOUSE_ENTITY_TYPES.function
             ? func
-            : view;
+            : o.type === CLICKHOUSE_ENTITY_TYPES.user
+              ? user
+              : o.type === CLICKHOUSE_ENTITY_TYPES.role
+                ? role
+                : o.type === CLICKHOUSE_ENTITY_TYPES.rowPolicy
+                  ? policy
+                  : view;
   const strings = Object.assign([o.statement], { raw: [o.statement] }) as unknown as TemplateStringsArray;
   return { ...(tag(strings).props as unknown as Props) };
 }
@@ -73,6 +79,15 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   adopt("engine", same("engine"));
   for (const k of ["orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl", "comment", "select", "refresh", "dataSource", "layout", "lifetime", "range"] as const) adopt(k, same(k));
   adopt("settings", same("settings"));
+  // A user's, role's or row policy's fields, compared as `../access.ts` reads them.
+  if (d.kind === "user" || d.kind === "role" || d.kind === "rowPolicy") {
+    for (const k of ["identified", "host", "validUntil", "defaultRole", "defaultDatabase", "grantees", "settings", "as", "for", "using", "to"]) {
+      adopt(k, d.access?.[k] === l.access?.[k]);
+    }
+    adopt("table", d.table === l.table);
+    // A user's authentication is the environment's unless the declaration says it.
+    if (d.kind === "user" && declared.identified === undefined) delete out.identified;
+  }
   // A function's parameters and expression are one lambda: the same lambda is the declaration's words.
   adopt("params", d.kind === "function" && same("lambda"));
   adopt("body", d.kind === "function" && same("lambda"));
@@ -95,6 +110,9 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   }
   return out;
 }
+
+/** The entity types that belong to no database. */
+const GLOBAL_TYPES: ReadonlySet<string> = new Set([CLICKHOUSE_ENTITY_TYPES.database, CLICKHOUSE_ENTITY_TYPES.function, CLICKHOUSE_ENTITY_TYPES.user, CLICKHOUSE_ENTITY_TYPES.role]);
 
 /** Whether the server's formatter prints two expressions the same. A formatter that cannot parse them says no. */
 async function sameExpression(target: ClickHouseTarget, a: string, b: string): Promise<boolean> {
@@ -189,7 +207,7 @@ export async function observeResourcesDeep(
   let live: LiveObject[];
   try {
     target = await bindClickHouse(options);
-    live = await readLiveSchema(target);
+    live = [...(await readLiveSchema(target)), ...(await readLiveAccess(target, accessOf(options.entities, target.defaultDatabase)))];
   } catch (err) {
     const why = classifyClickHouseFailure(err);
     for (const name of options.entityNames) {
@@ -215,10 +233,20 @@ export async function observeResourcesDeep(
       unobserved[name] = { type: entity?.entityType ?? "", reason: "unsupported-kind" };
       continue;
     }
+    if (entity.entityType === CLICKHOUSE_ENTITY_TYPES.grant) {
+      unobserved[name] = {
+        type: entity.entityType,
+        reason: "unsupported-kind",
+        detail: "a grant is compared as part of its grantees' grants, which chant sql plan reports (SQLCH273, SQLCH274)",
+      };
+      continue;
+    }
     const props = entity.props;
-    const isDb = entity.entityType === CLICKHOUSE_ENTITY_TYPES.database || entity.entityType === CLICKHOUSE_ENTITY_TYPES.function;
+    const isDb = GLOBAL_TYPES.has(entity.entityType);
     const db = isDb ? undefined : typeof props.database === "string" ? props.database : target.defaultDatabase;
-    const o = byKey.get(objectKey({ type: entity.entityType, ...(db !== undefined ? { database: db } : {}), name: String(props.name) }));
+    const o = byKey.get(
+      objectKey({ type: entity.entityType, ...(db !== undefined ? { database: db } : {}), name: String(props.name), ...(typeof props.table === "string" ? { table: props.table } : {}) }),
+    );
     if (!o) continue;
     try {
       const d = canonicalObject(renderFor(String(props.ddl), target.topology), target.defaultDatabase);
@@ -238,6 +266,11 @@ export async function observeResourcesDeep(
       let l = canonicalObject(o.statement, target.defaultDatabase);
       // The server prints a function's expression its own way (`k*x + b` as `((k * x) + b)`): its formatter says whether the two are one.
       if (d.kind === "function" && d.lambda !== l.lambda && (await sameExpression(target, d.lambda ?? "", l.lambda ?? ""))) l = { ...l, lambda: d.lambda! };
+      // A row policy's condition, the same way.
+      const using = d.access?.using;
+      if (d.kind === "rowPolicy" && using !== undefined && using !== l.access?.using && (await sameExpression(target, using, l.access?.using ?? ""))) {
+        l = { ...l, access: { ...l.access, using } };
+      }
       resources[name] = {
         type: o.type,
         physicalId,

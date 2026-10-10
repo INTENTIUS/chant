@@ -1,14 +1,18 @@
 import type { LintContext, LintDiagnostic, LintRule } from "@intentius/chant/lint/rule";
 import { parseCreate } from "../../clickhouse/parser";
+import { parseAccess } from "../../clickhouse/access";
 import { SqlSyntaxError } from "../../clickhouse/tokens";
 import { findTemplates, templatePosition, tokensOf } from "./templates";
+
+const ACCESS_TAGS = new Set(["user", "role", "policy", "grant"]);
+const ACCESS_STATEMENT: Record<string, string> = { user: "CREATE USER", role: "CREATE ROLE", rowPolicy: "CREATE ROW POLICY", grant: "GRANT" };
 
 const STATEMENT: Record<string, string> = { database: "CREATE DATABASE", table: "CREATE TABLE", view: "CREATE VIEW", dictionary: "CREATE DICTIONARY", function: "CREATE FUNCTION" };
 /** The tag a statement belongs in: `func` for a function, the statement's own name otherwise. */
 const tagOf = (statement: string): string => (statement === "function" ? "func" : statement);
 
 /**
- * SQLCH001: the DDL in a `database`, `table`, `view`, `dictionary` or `func` template does not parse, or holds another statement than its tag.
+ * SQLCH001: the DDL in a ClickHouse template (`database`, `table`, `view`, `dictionary`, `func`, `user`, `role`, `policy`, `grant`) does not parse, or holds another statement than its tag.
  *
  * The same parse runs when the build calls the tag, and fails the build there.
  * This rule reports it in the editor and in `chant lint`, at the token, before
@@ -29,6 +33,22 @@ export const sqlch001: LintRule = {
       let tokens;
       try {
         tokens = tokensOf(found);
+        if (ACCESS_TAGS.has(found.tag)) {
+          const node = parseAccess(tokens);
+          const tag = node.statement === "rowPolicy" ? "policy" : node.statement;
+          if (tag !== found.tag || node.revoke) {
+            out.push({
+              ruleId: "SQLCH001",
+              severity: "error",
+              message: node.revoke
+                ? `${found.tag}\`...\` holds a REVOKE; declare the grants a grantee keeps, and a plan revokes the rest`
+                : `${found.tag}\`...\` holds a ${ACCESS_STATEMENT[node.statement]}; use the ${tag} tag`,
+              file: context.filePath,
+              ...templatePosition(source, found, 0, 0),
+            });
+          }
+          continue;
+        }
         const node = parseCreate(tokens);
         if (tagOf(node.statement) !== found.tag) {
           out.push({

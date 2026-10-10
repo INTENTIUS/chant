@@ -44,6 +44,8 @@ export const byKind = view`
 | `dictionary` | `CREATE DICTIONARY` | `ClickHouse::Dictionary` |
 | `func` | `CREATE FUNCTION` | `ClickHouse::Function` |
 
+Users, roles, row policies and grants have tags of their own: see [Access Control](../clickhouse-access/).
+
 Each template holds exactly one statement of its tag's kind. `OR REPLACE`, `IF NOT EXISTS` and `ON CLUSTER` are read, and so are a `COMMENT` on the object and on each column.
 
 A table's definition is read clause by clause: columns with type, `DEFAULT`, `MATERIALIZED`, `ALIAS` or `EPHEMERAL` expression, codec, TTL and comment; the engine and its arguments; `ORDER BY`, `PRIMARY KEY`, `PARTITION BY` and `SAMPLE BY`; the table TTL; `SETTINGS`; skip indexes, projections and constraints. Expressions are kept as written. `CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` cannot be declared this way, because the table's columns would come from somewhere else.

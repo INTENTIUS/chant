@@ -146,6 +146,28 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
     return;
   }
 
+  if (before.kind === "user" || before.kind === "role" || before.kind === "rowPolicy") {
+    const rule = before.kind === "user" ? "SQLCH271" : before.kind === "role" ? "SQLCH270" : "SQLCH272";
+    const b = before.access ?? {};
+    const a = after.access ?? {};
+    const order = ["identified", "host", "validUntil", "defaultRole", "defaultDatabase", "grantees", "settings", "as", "for", "using", "to"];
+    const fields = [...new Set([...Object.keys(b), ...Object.keys(a)])].sort((x, y) => order.indexOf(x) - order.indexOf(y));
+    for (const field of fields) {
+      // A user's authentication is compared only when the declaration says it.
+      if (before.kind === "user" && field === "identified" && a.identified === undefined) continue;
+      if (b[field] !== a[field]) out.push(change(key, field, rule, b[field], a[field]));
+    }
+    return;
+  }
+
+  if (before.kind === "grants") {
+    const b = before.access ?? {};
+    const a = after.access ?? {};
+    for (const atom of Object.keys(b)) if (!(atom in a)) out.push(change(key, `grants.${atom}`, "SQLCH274", atom, undefined));
+    for (const atom of Object.keys(a)) if (!(atom in b)) out.push(change(key, `grants.${atom}`, "SQLCH273", undefined, atom));
+    return;
+  }
+
   if (before.kind === "function") {
     if (before.lambda !== after.lambda) out.push(change(key, "lambda", "SQLCH260", before.lambda, after.lambda));
     return;
@@ -230,8 +252,8 @@ export function diffSchemas(before: readonly SchemaObject[], after: readonly Sch
   const hints: string[] = [];
   const matches = matchByIdentity(before, after, {
     qualified,
-    // A function cannot be renamed: one under a new name is a create.
-    previously: (o) => (o.kind === "function" ? undefined : o.previously),
+    // A function, a user, a role, a row policy and a grantee's grants are not renamed: one under a new name is a create.
+    previously: (o) => (o.kind === "function" || o.kind === "user" || o.kind === "role" || o.kind === "rowPolicy" || o.kind === "grants" ? undefined : o.previously),
     previousNames: (o, prev) => [prev, `${o.database}.${prev}`],
   });
   for (const m of matches) {

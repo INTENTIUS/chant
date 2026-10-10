@@ -10,7 +10,7 @@ import type { McpResourceContribution, McpToolContribution } from "@intentius/ch
 import { createCatalogResource, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { sqlSerializer } from "../serializer";
 import { catalogIndex } from "../lsp/catalog";
-import { database, dictionary, func, table, view } from "../clickhouse/entities";
+import { database, dictionary, func, grant, policy, role, table, user, view } from "../clickhouse/entities";
 import { SqlSyntaxError } from "../clickhouse/tokens";
 import { existsSync, readFileSync } from "fs";
 import { diffSchemas } from "../clickhouse/plan/diff";
@@ -122,12 +122,12 @@ const searchTool: McpToolContribution = {
 const parseTool: McpToolContribution = {
   name: "parse-ddl",
   description:
-    "Parse one CREATE statement the way its tag does (dialect clickhouse, the default: table, view, database, dictionary, func; dialect postgres: schema, table, index, view, sequence, type, domain, extension), and return the entity it builds (columns, engine, keys, settings, and for a view its lineage). A statement that does not parse comes back as the error with its line and column, the same one SQLCH001 (ClickHouse) or SQLPG001 (Postgres) reports. The statement is plain DDL: there are no interpolations.",
+    "Parse one CREATE statement the way its tag does (dialect clickhouse, the default: table, view, database, dictionary, func, user, role, policy, grant; dialect postgres: schema, table, index, view, sequence, type, domain, extension), and return the entity it builds (columns, engine, keys, settings, and for a view its lineage). A statement that does not parse comes back as the error with its line and column, the same one SQLCH001 (ClickHouse) or SQLPG001 (Postgres) reports. The statement is plain DDL: there are no interpolations.",
   inputSchema: {
     type: "object",
     properties: {
       dialect: dialectProp,
-      tag: { type: "string", enum: [...new Set(["table", "view", "database", "dictionary", "func", ...POSTGRES_TAGS])], description: "The tag the statement belongs in (ClickHouse: table, view, database, dictionary, func; Postgres: " + POSTGRES_TAGS.join(", ") + ")" },
+      tag: { type: "string", enum: [...new Set(["table", "view", "database", "dictionary", "func", "user", "role", "policy", "grant", ...POSTGRES_TAGS])], description: "The tag the statement belongs in (ClickHouse: table, view, database, dictionary, func, user, role, policy, grant; Postgres: " + POSTGRES_TAGS.join(", ") + ")" },
       ddl: { type: "string", description: "The CREATE statement" },
     },
     required: ["tag", "ddl"],
@@ -136,8 +136,8 @@ const parseTool: McpToolContribution = {
     const ddl = String(params.ddl ?? "");
     const tag = String(params.tag);
     if (asDialect(params.dialect) === "postgres") return postgresParse(tag, ddl, position);
-    const build = tag === "table" ? table : tag === "view" ? view : tag === "database" ? database : tag === "dictionary" ? dictionary : tag === "func" ? func : undefined;
-    if (!build) throw new Error("tag must be table, view, database, dictionary or func");
+    const build = tag === "table" ? table : tag === "view" ? view : tag === "database" ? database : tag === "dictionary" ? dictionary : tag === "func" ? func : tag === "user" ? user : tag === "role" ? role : tag === "policy" ? policy : tag === "grant" ? grant : undefined;
+    if (!build) throw new Error("tag must be table, view, database, dictionary, func, user, role, policy or grant");
     const strings = Object.assign([ddl], { raw: [ddl] }) as unknown as TemplateStringsArray;
     try {
       const entity = build(strings);
@@ -276,7 +276,7 @@ export function sqlMcpResources(): McpResourceContribution[] {
     createCatalogResource(
       new URL("../plugin.ts", import.meta.url).href,
       "SQL Entity Catalog",
-      "The entity kinds the sql lexicon declares (database, table, view, materialized view, dictionary, function)",
+      "The entity kinds the sql lexicon declares (database, table, view, materialized view, dictionary, function, user, role, row policy, grant)",
       "lexicon-sql.json",
       "sql",
     ),

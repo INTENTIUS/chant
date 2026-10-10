@@ -35,10 +35,11 @@ import { isTrivia, tokenizeText, type Token } from "../tokens";
 import { parseCreate, unquote, type ColumnNode, type CreateNode, type DictionaryAttributeNode, type DictionaryNode, type Span } from "../parser";
 import { MERGE_TREE_SETTINGS, TYPE_FAMILIES } from "../../generated/clickhouse";
 import { previouslyIn, splitTopLevel as splitTop } from "../../core/normalize";
+import { accessCanonical, grantsCanonical, isAccessStatement } from "../access";
 
 export { previouslyIn } from "../../core/normalize";
 
-export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary" | "function";
+export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary" | "function" | "user" | "role" | "rowPolicy" | "grants";
 
 export interface CanonicalColumn {
   name: string;
@@ -88,6 +89,13 @@ export interface CanonicalObject {
   range?: string;
   /** A function's lambda, `( x , y ) -> expr`. */
   lambda?: string;
+  /** A row policy's table. */
+  table?: string;
+  /**
+   * A user's, role's or row policy's fields (`../access.ts`), each absent at
+   * the server's default; a grantee's grants, by atom.
+   */
+  access?: Record<string, string>;
   /** `-- previously: <name>` before the statement: the object's previous name. */
   previously?: string;
 }
@@ -252,6 +260,22 @@ const stringValue = (s: string | undefined) =>
  * database an unqualified name is created in.
  */
 export function canonicalObject(ddl: string, defaultDatabase = "default"): CanonicalObject {
+  if (isAccessStatement(ddl)) {
+    if (/^\s*(?:--[^\n]*\n\s*)*(GRANT|REVOKE)\b/i.test(ddl)) throw new Error("a grant is compared as its grantee's grants: grantsObject(ddl, grantee)");
+    const a = accessCanonical(ddl, defaultDatabase);
+    return {
+      kind: a.kind,
+      ...(a.database !== undefined ? { database: a.database } : {}),
+      name: a.name,
+      ...(a.table !== undefined ? { table: a.table } : {}),
+      access: a.fields,
+      columns: [],
+      settings: {},
+      indexes: {},
+      projections: {},
+      constraints: {},
+    };
+  }
   const tokens = tokenizeText(ddl, 0);
   const node = parseCreate(tokens);
   const nameParts = tokens
@@ -500,9 +524,27 @@ function quotedIdentifier(arg: string): string {
  * a database's name, and `function <name>` for a function, which belongs to
  * no database and must not meet a database of the same name.
  */
-export function objectKey(o: { kind?: ObjectKind; type?: string; database?: string; name: string }): string {
-  if (o.kind === "function" || o.type === "ClickHouse::Function") return `function ${o.name}`;
+export function objectKey(o: { kind?: ObjectKind; type?: string; database?: string; name: string; table?: string }): string {
+  const kind = o.kind ?? KIND_OF_TYPE[o.type ?? ""];
+  if (kind === "function") return `function ${o.name}`;
+  if (kind === "user") return `user ${o.name}`;
+  if (kind === "role") return `role ${o.name}`;
+  if (kind === "grants") return `grants ${o.name}`;
+  if (kind === "rowPolicy") return `row policy ${o.name} ON ${o.database}.${o.table}`;
   return o.database !== undefined ? `${o.database}.${o.name}` : o.name;
+}
+
+const KIND_OF_TYPE: Record<string, ObjectKind> = {
+  "ClickHouse::Function": "function",
+  "ClickHouse::User": "user",
+  "ClickHouse::Role": "role",
+  "ClickHouse::RowPolicy": "rowPolicy",
+  "ClickHouse::Grant": "grants",
+};
+
+/** A grantee's grants, from grant statements (one or more, on their own lines), as a plan compares them. */
+export function grantsObject(ddl: string, grantee: string, defaultDatabase = "default"): CanonicalObject {
+  return { kind: "grants", name: grantee, access: grantsCanonical(ddl, grantee, defaultDatabase), columns: [], settings: {}, indexes: {}, projections: {}, constraints: {} };
 }
 
 /**
@@ -511,7 +553,13 @@ export function objectKey(o: { kind?: ObjectKind; type?: string; database?: stri
  * databases the declarations use and the functions they declare, nothing
  * else.
  */
-export function scopeOf(o: { kind?: ObjectKind; type?: string; database?: string; name: string }): string {
-  if (o.kind === "function" || o.type === "ClickHouse::Function") return objectKey(o);
+export function scopeOf(o: { kind?: ObjectKind; type?: string; database?: string; name: string; table?: string }): string {
+  const kind = o.kind ?? KIND_OF_TYPE[o.type ?? ""];
+  if (kind === "function" || kind === "user" || kind === "role" || kind === "grants") return objectKey(o);
   return o.database ?? o.name;
+}
+
+/** A live object's canonical form: a grantee's grants from its `SHOW GRANTS` lines, anything else from its `SHOW CREATE`. */
+export function liveCanonical(o: { type: string; name: string; statement: string }, defaultDatabase = "default"): CanonicalObject {
+  return o.type === "ClickHouse::Grant" ? grantsObject(o.statement, o.name, defaultDatabase) : canonicalObject(o.statement, defaultDatabase);
 }

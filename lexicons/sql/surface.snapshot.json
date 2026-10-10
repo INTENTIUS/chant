@@ -14,6 +14,10 @@
       "kind": "resource",
       "resourceType": "ClickHouse::Function"
     },
+    "Grant": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::Grant"
+    },
     "MaterializedView": {
       "kind": "resource",
       "resourceType": "ClickHouse::MaterializedView"
@@ -82,9 +86,21 @@
       "kind": "resource",
       "resourceType": "Postgres::View"
     },
+    "Role": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::Role"
+    },
+    "RowPolicy": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::RowPolicy"
+    },
     "Table": {
       "kind": "resource",
       "resourceType": "ClickHouse::Table"
+    },
+    "User": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::User"
     },
     "View": {
       "kind": "resource",

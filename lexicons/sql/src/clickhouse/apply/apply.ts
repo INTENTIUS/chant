@@ -43,8 +43,9 @@ import {
 } from "../../core/apply";
 import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "../live/bind";
-import { readLiveSchema, type LiveObject } from "../live/catalog";
-import { canonicalObject, objectKey, scopeOf, type CanonicalObject } from "../plan/normalize";
+import { declaredAccess, readLiveAccess, readLiveSchema, type LiveObject } from "../live/catalog";
+import { canonicalObject, grantsObject, liveCanonical, objectKey, scopeOf, type CanonicalObject } from "../plan/normalize";
+import { grantsByGrantee } from "../access";
 import { diffSchemas, type Change } from "../plan/diff";
 import { dropFormattingOnly } from "../plan/server-format";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
@@ -65,18 +66,25 @@ export type { FailedObject } from "../../core/apply";
  * is what the changes compare and every `CREATE` sends.
  */
 export function declaredObjects(json: string, defaultDatabase = "default", topology?: Topology): DeclaredObject[] {
-  return readBuildObjects(json, "clickhouse", (o) => {
-    const ddl = renderFor(o.ddl, topology);
-    const canonical = canonicalObject(ddl, defaultDatabase);
-    return {
-      exportName: o.export,
-      type: o.type as ClickHouseEntityType,
-      key: objectKey(canonical),
-      ddl,
-      canonical,
-      dependsOn: o.dependsOn,
-    };
-  });
+  const objects = readBuildObjects(json, "clickhouse", (o) => o);
+  const declared: DeclaredObject[] = objects
+    .filter((o) => o.type !== CLICKHOUSE_ENTITY_TYPES.grant)
+    .map((o) => {
+      const ddl = renderFor(o.ddl, topology);
+      const canonical = canonicalObject(ddl, defaultDatabase);
+      return { exportName: o.export, type: o.type as ClickHouseEntityType, key: objectKey(canonical), ddl, canonical, dependsOn: o.dependsOn };
+    });
+  // Grants are compared per grantee (`../access.ts`), once every other object exists, and wait for the
+  // grantee when the build declares it: a user the environment has still to create gets none.
+  const principals = new Map(declared.filter((o) => o.canonical.kind === "user" || o.canonical.kind === "role").map((o) => [o.canonical.name, o.exportName]));
+  for (const g of grantsByGrantee(objects)) {
+    const canonical = grantsObject(g.ddl, g.grantee, defaultDatabase);
+    const key = objectKey(canonical);
+    const grantee = principals.get(g.grantee);
+    const dependsOn = grantee !== undefined && !g.dependsOn.includes(grantee) ? [...g.dependsOn, grantee] : g.dependsOn;
+    declared.push({ exportName: key, type: CLICKHOUSE_ENTITY_TYPES.grant, key, ddl: g.ddl, canonical, dependsOn });
+  }
+  return declared;
 }
 
 /** The plan axis: one ref per declared object, by its kind and its name on the server. */
@@ -116,10 +124,10 @@ const liveKey = (o: LiveObject) => objectKey(o);
  */
 async function liveSchema(target: ClickHouseTarget, declared: readonly DeclaredObject[]): Promise<{ objects: LiveObject[]; canonical: Map<string, CanonicalObject> }> {
   const scope = new Set(declared.map((o) => scopeOf(o.canonical)));
-  const objects = (await readLiveSchema(target))
+  const objects = [...(await readLiveSchema(target)), ...(await readLiveAccess(target, declaredAccess(declared.map((o) => o.canonical))))]
     .filter((o) => !(o.type === CLICKHOUSE_ENTITY_TYPES.database && o.name === "default"))
     .filter((o) => scope.has(scopeOf(o)));
-  return { objects, canonical: new Map(objects.map((o) => [liveKey(o), canonicalObject(o.statement, target.defaultDatabase)])) };
+  return { objects, canonical: new Map(objects.map((o) => [liveKey(o), liveCanonical(o, target.defaultDatabase)])) };
 }
 
 /**
@@ -187,7 +195,8 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
       continue;
     }
     if (entry.verdict === "withheld") {
-      onServer.add(obj.exportName);
+      // A user the environment has still to create is not on the server, so nothing that needs it is attempted.
+      if (liveObject) onServer.add(obj.exportName);
       outcome.notAttempted.push({ ...ref, reason: "filtered", detail: entry.detail });
       continue;
     }
