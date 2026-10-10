@@ -20,7 +20,8 @@
  * A profile is keyed by chant environment, as `grafana.profiles.<env>` is:
  * the server `chant import --from <env>`, `chant lifecycle diff <env> --live`
  * and `plan` read. Credentials are named by their environment variable, never
- * written in the config. An environment with no profile falls back to
+ * written in the config, or minted as a short-lived token (`password:
+ * { token: "rds-iam" }`; `./token-source.ts`). An environment with no profile falls back to
  * `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`, or for
  * Postgres `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. A profile
  * whose `url` is `postgres://` or `postgresql://` is a Postgres server.
@@ -46,6 +47,7 @@ import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
 import { POSTGRES_PROVIDERS } from "./postgres/providers/types";
 import { POSTGRES_MAJORS } from "./spec/postgres-pin";
 import { parseTopology } from "./clickhouse/topology";
+import { tokenSourceSchema } from "./token-source";
 
 const envRef = z.strictObject({ env: z.string() });
 
@@ -85,8 +87,15 @@ export const sqlProfileSchema = z.strictObject({
   url: z.string(),
   /** The user, named by its environment variable. `default` when omitted. */
   user: envRef.optional(),
-  /** The password, named by its environment variable. */
-  password: envRef.optional(),
+  /**
+   * The password, named by its environment variable, or a token source that
+   * mints a short-lived one when a connection needs it (#3685):
+   * `{ token: "rds-iam" }`, `{ token: "cloud-sql-iam" }`, `{ token: "entra" }`
+   * (Postgres), or `{ token: "command", command: ["./mint.sh"] }`, whose
+   * standard output is the password. A token is minted again before it
+   * expires. See `./token-source.ts`.
+   */
+  password: z.union([envRef, tokenSourceSchema]).optional(),
   /**
    * The databases this environment's schema lives in. Import reads these and
    * nothing else; when omitted, every database except the server's own

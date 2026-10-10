@@ -53,6 +53,31 @@ The common three, which need the superuser every provider withholds, are `ALTER 
 
 Supabase's extension list is rendered by a script and could not be read whole, so its list is marked partial (`extensionListComplete: false`) and SQLPG004 does not report an extension outside it.
 
+## Short-lived credentials
+
+A profile's `password` can name a token source in place of an environment variable. The token is minted when a connection needs it, from the identity the job already has (an OIDC-federated role in CI, a workload identity, a developer's login), so CI holds no long-lived database password:
+
+```ts
+profiles: {
+  prod: {
+    url: "postgres://shop.abc123.eu-west-1.rds.amazonaws.com:5432/shop",
+    user: { env: "PG_USER" },
+    password: { token: "rds-iam" },
+  },
+},
+```
+
+| Source | What it runs | Lifetime |
+|---|---|---|
+| `{ token: "rds-iam", region? }` | `aws rds generate-db-auth-token` for the URL's host and port and the profile's `user`, in `region`, else `AWS_REGION`, else the region in the RDS host name. RDS and Aurora. | 900 s |
+| `{ token: "cloud-sql-iam" }` | `gcloud sql generate-login-token` | 3600 s |
+| `{ token: "entra" }` | `az account get-access-token --resource-type oss-rdbms` (Azure Database for PostgreSQL) | 3600 s |
+| `{ token: "command", command: ["./mint.sh"] }` | the program, without a shell; its standard output, trimmed, is the password | 300 s |
+
+Each takes `ttlSeconds` to override its lifetime. The cloud sources run that cloud's own command line, which reads the job's credentials the way it always does, so the line must be installed where chant runs. A token is reused until 80% of its lifetime has passed and minted again after, so a long apply never sends an expired one: each Postgres connection mints, if needed, when it opens, and each ClickHouse request does the same. A token the server refuses is forgotten, and the next connection mints a new one. A source that cannot mint (the program is missing, exits non-zero or prints nothing) reports the environment `no-credentials`, naming the program; no token is ever written to a message or an outcome.
+
+The cloud sources are for Postgres. A ClickHouse profile takes the `command` source.
+
 ## What the data has not verified
 
 Every file lists in `toCheck` what its pages did not confirm, each with the page to check. As read on 2026-10-03:

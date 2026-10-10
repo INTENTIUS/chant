@@ -93,6 +93,10 @@ The object form sets a cluster's Keeper path and replica name: `topology: { kind
 
 The declarations are rendered before they are compared, so a table declared `MergeTree` and running as `ReplicatedMergeTree` on a cluster is no change. A server prints a replicated engine with its default Keeper path filled in, and Cloud prints a `Shared*` engine; both compare equal to the declaration. The plan (`chant sql plan`), the deep diff and the [rebuild migration](../rebuild/) render for the same topology. `chant sql diff --statements --topology <topology>` renders the statements for a migration file the same way, and takes `single` when the flag is left out.
 
+## Short-lived credentials
+
+A profile's `password` can be `{ token: "command", command: ["./mint.sh"] }` instead of an environment variable: the program's output is the password, sent with each request and minted again before it expires. See [Short-lived credentials](../postgres-providers/#short-lived-credentials) for the sources and their lifetimes.
+
 ## A local server
 
 `chant emulator up --lexicon sql` starts the pinned `clickhouse/clickhouse-server` (the image and digest the types come from) on port 8123, and the pinned Postgres server beside it; `--json` reports the ClickHouse one as `CLICKHOUSE_URL`, which the binding reads when no profile names a server.
