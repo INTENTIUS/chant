@@ -8,6 +8,7 @@ import type { ChantConfig } from "@intentius/chant/config";
 import type { UnobservedReason } from "@intentius/chant/observation";
 import { connectPostgres, PostgresQueryError, type PostgresClient, type PostgresEndpoint } from "./client";
 import type { PostgresProvider } from "../providers/types";
+import { credentialSource, TokenSourceError } from "../../token-source";
 
 export interface PostgresTarget {
   endpoint: PostgresEndpoint;
@@ -58,12 +59,21 @@ export function resolvePostgresTarget(input: {
   if (profile && isPostgresUrl(profile.url)) {
     const source = `sql.profiles.${input.environment}`;
     const endpoint: PostgresEndpoint = { url: profile.url };
-    for (const key of ["user", "password"] as const) {
-      const ref = profile[key];
-      if (!ref) continue;
-      const value = env[ref.env];
-      if (value === undefined) return { reason: "no-credentials", detail: `${source}.${key} names ${ref.env}, which is not set` };
-      endpoint[key] = value;
+    if (profile.user) {
+      const value = env[profile.user.env];
+      if (value === undefined) return { reason: "no-credentials", detail: `${source}.user names ${profile.user.env}, which is not set` };
+      endpoint.user = value;
+    }
+    const password = profile.password;
+    if (password && "env" in password) {
+      const value = env[password.env];
+      if (value === undefined) return { reason: "no-credentials", detail: `${source}.password names ${password.env}, which is not set` };
+      endpoint.password = value;
+    } else if (password) {
+      if (password.token === "rds-iam" && endpoint.user === undefined) {
+        return { reason: "no-credentials", detail: `${source}.password is an rds-iam token, which is minted for one user, and ${source}.user is not set` };
+      }
+      endpoint.token = credentialSource(password, { url: profile.url, ...(endpoint.user !== undefined ? { user: endpoint.user } : {}), env, source: `${source}.password` });
     }
     const timeouts = Object.fromEntries(
       (["lockTimeoutMs", "statementTimeoutMs", "scanTimeoutMs"] as const).filter((k) => profile[k] !== undefined).map((k) => [k, profile[k]]),
@@ -142,6 +152,7 @@ const CREDENTIAL_STATES = new Set(["28000", "28P01", "42501"]);
 /** What a failed bind or read means, in the observation vocabulary. */
 export function classifyPostgresFailure(err: unknown): { reason: UnobservedReason; detail: string } {
   if (err instanceof PostgresBindingError) return { reason: err.unresolved.reason, detail: err.unresolved.detail };
+  if (err instanceof TokenSourceError) return { reason: "no-credentials", detail: err.message };
   if (err instanceof PostgresQueryError && err.code && CREDENTIAL_STATES.has(err.code)) {
     return { reason: "no-credentials", detail: `${err.message} (the server refused the credentials, SQLSTATE ${err.code})` };
   }

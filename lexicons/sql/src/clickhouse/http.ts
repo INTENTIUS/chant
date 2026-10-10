@@ -7,12 +7,16 @@
  * line, which is all generation (and, later, observation and import) reads.
  */
 
+import type { CredentialSource } from "../token-source";
+
 /** Where a server answers, and as whom. */
 export interface ClickHouseEndpoint {
   /** Base URL of the HTTP interface, e.g. `http://127.0.0.1:8123`. */
   url: string;
   user?: string;
   password?: string;
+  /** Mints the password for each request, in place of `password` (a profile's token source, #3685). */
+  token?: CredentialSource;
 }
 
 /** A query the server refused, with the server's own message. */
@@ -49,7 +53,8 @@ export async function clickhouseQuery<Row = Record<string, unknown>>(
 ): Promise<Row[]> {
   const headers: Record<string, string> = { "content-type": "text/plain; charset=utf-8" };
   if (endpoint.user !== undefined) headers["X-ClickHouse-User"] = endpoint.user;
-  if (endpoint.password !== undefined) headers["X-ClickHouse-Key"] = endpoint.password;
+  const password = endpoint.token ? await endpoint.token.get() : endpoint.password;
+  if (password !== undefined) headers["X-ClickHouse-Key"] = password;
   const params = new URLSearchParams({ default_format: "JSONEachRow", ...(opts.queryId !== undefined ? { query_id: opts.queryId } : {}), ...opts.settings });
   const res = await fetch(`${endpoint.url.replace(/\/$/, "")}/?${params.toString()}`, {
     method: "POST",
@@ -58,7 +63,11 @@ export async function clickhouseQuery<Row = Record<string, unknown>>(
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const text = await res.text();
-  if (!res.ok) throw new ClickHouseQueryError(res.status, text, sql);
+  if (!res.ok) {
+    // A refused token is not reused: the next request mints another.
+    if (endpoint.token && (res.status === 401 || res.status === 403 || /AUTHENTICATION_FAILED|Code: 516/.test(text))) endpoint.token.invalidate();
+    throw new ClickHouseQueryError(res.status, text, sql);
+  }
   return text
     .split("\n")
     .filter((line) => line.length > 0)

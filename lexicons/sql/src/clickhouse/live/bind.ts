@@ -8,6 +8,7 @@ import type { ChantConfig } from "@intentius/chant/config";
 import type { UnobservedReason } from "@intentius/chant/observation";
 import { ClickHouseQueryError, clickhouseQuery, type ClickHouseEndpoint } from "../http";
 import { parseTopology, toTopology, type Topology } from "../topology";
+import { credentialSource, POSTGRES_ONLY_TOKEN_SOURCES, TokenSourceError } from "../../token-source";
 
 export interface ClickHouseTarget {
   endpoint: ClickHouseEndpoint;
@@ -52,12 +53,21 @@ export function resolveClickHouseTarget(input: {
   if (profile) {
     const source = `sql.profiles.${input.environment}`;
     const endpoint: ClickHouseEndpoint = { url: profile.url.replace(/\/+$/, "") };
-    for (const key of ["user", "password"] as const) {
-      const ref = profile[key];
-      if (!ref) continue;
-      const value = env[ref.env];
-      if (value === undefined) return { reason: "no-credentials", detail: `${source}.${key} names ${ref.env}, which is not set` };
-      endpoint[key] = value;
+    if (profile.user) {
+      const value = env[profile.user.env];
+      if (value === undefined) return { reason: "no-credentials", detail: `${source}.user names ${profile.user.env}, which is not set` };
+      endpoint.user = value;
+    }
+    const password = profile.password;
+    if (password && "env" in password) {
+      const value = env[password.env];
+      if (value === undefined) return { reason: "no-credentials", detail: `${source}.password names ${password.env}, which is not set` };
+      endpoint.password = value;
+    } else if (password) {
+      if (POSTGRES_ONLY_TOKEN_SOURCES.has(password.token)) {
+        return { reason: "no-credentials", detail: `${source}.password is a ${password.token} token, which only a Postgres server takes; use a command source for ClickHouse` };
+      }
+      endpoint.token = credentialSource(password, { url: profile.url, ...(endpoint.user !== undefined ? { user: endpoint.user } : {}), env, source: `${source}.password` });
     }
     return {
       endpoint,
@@ -121,6 +131,7 @@ export async function bindClickHouse(options: BindOptions = {}): Promise<ClickHo
 /** What a failed bind or read means, in the observation vocabulary. */
 export function classifyClickHouseFailure(err: unknown): { reason: UnobservedReason; detail: string } {
   if (err instanceof ClickHouseBindingError) return { reason: err.unresolved.reason, detail: err.unresolved.detail };
+  if (err instanceof TokenSourceError) return { reason: "no-credentials", detail: err.message };
   if (err instanceof ClickHouseQueryError) {
     // 516 AUTHENTICATION_FAILED and 497 ACCESS_DENIED arrive as 401/403 or in the message.
     if (err.status === 401 || err.status === 403 || /AUTHENTICATION_FAILED|ACCESS_DENIED|Code: 516|Code: 497/.test(err.serverMessage)) {

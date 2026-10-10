@@ -8,11 +8,15 @@
  * search path.
  */
 
+import type { CredentialSource } from "../../token-source";
+
 export interface PostgresEndpoint {
   /** A `postgres://` connection URL, without a password. */
   url: string;
   user?: string;
   password?: string;
+  /** Mints the password at each connect, in place of `password` (a profile's token source, #3685). */
+  token?: CredentialSource;
 }
 
 /** What chant reads and writes through: one connection. */
@@ -54,7 +58,8 @@ export async function connectPostgres(endpoint: PostgresEndpoint, options: { app
   // node-postgres lets the connection string's fields win over the config's, so the credentials go into the URL.
   const url = new URL(endpoint.url);
   if (endpoint.user !== undefined) url.username = encodeURIComponent(endpoint.user);
-  if (endpoint.password !== undefined) url.password = encodeURIComponent(endpoint.password);
+  const password = endpoint.token ? await endpoint.token.get() : endpoint.password;
+  if (password !== undefined) url.password = encodeURIComponent(password);
   const client = new pg.Client({ connectionString: url.toString(), application_name: options.applicationName ?? "chant" });
   // A server that goes away emits an error event; the next query fails with it instead of the process crashing.
   client.on("error", () => undefined);
@@ -63,7 +68,10 @@ export async function connectPostgres(endpoint: PostgresEndpoint, options: { app
     await client.query("SELECT pg_catalog.set_config('search_path', '', false)");
   } catch (err) {
     await client.end().catch(() => undefined);
-    throw wrap(err);
+    const wrapped = wrap(err);
+    // A refused token is not reused: the next connect mints another.
+    if (endpoint.token && (wrapped.code === "28P01" || wrapped.code === "28000")) endpoint.token.invalidate();
+    throw wrapped;
   }
   let ended = false;
   return {
