@@ -79,7 +79,37 @@ describe("ClickHouseRebuildOp", () => {
     expect(Object.keys(gate.approval.context)).toEqual(["verifiedPartitions", "verifiedRows"]);
   });
 
+  test('gates: "outer" leaves out both approval gates and the Drop phase, and keeps the verification (#3658)', () => {
+    const props = propsOf({ ...BASE, gates: "outer" });
+    expect(props.phases.map((p) => p.name)).toEqual(["Build", "Plan", "Create", "Dual write", "Backfill", "Verify", "Swap", "Retain"]);
+    expect(props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate")).toEqual([]);
+    const fns = props.phases.flatMap((p) => p.steps).map((s) => (s as { fn?: string }).fn);
+    expect(fns.indexOf("clickhouseRebuildVerify")).toBeLessThan(fns.indexOf("clickhouseRebuildSwap"));
+    expect(fns).not.toContain("clickhouseRebuildDrop");
+    // Its own onFailure is unchanged.
+    expect(props.onFailure?.map((p) => p.steps.map((s) => (s as { fn?: string }).fn))).toEqual([["clickhouseRebuildCompensate"]]);
+    expect(props.overview).toContain("the caller's approval");
+  });
+
+  test('gates: "outer" in app mode keeps the writes-stopped gate, which is not an approval (#3658)', () => {
+    const props = propsOf({ ...BASE, dualWrite: { mode: "app" }, gates: "outer" });
+    const gates = props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "gate") as Array<{ gate: string }>;
+    expect(gates.map((g) => g.gate)).toEqual(["rebuild-events-writes-stopped"]);
+  });
+
+  test('onFailure: "keep" has no onFailure and tells every step so (#3658)', () => {
+    const props = propsOf({ ...BASE, onFailure: "keep" });
+    expect(props.onFailure).toBeUndefined();
+    const steps = props.phases.flatMap((p) => p.steps).filter((s) => s.kind === "activity" && (s as { fn: string }).fn.startsWith("clickhouseRebuild")) as Array<{ args: Record<string, unknown> }>;
+    expect(steps.length).toBeGreaterThan(0);
+    for (const s of steps) expect(s.args.keepOnFailure).toBe(true);
+    expect(props.phases.map((p) => p.name)).toContain("Approve");
+    expect((propsOf(BASE).phases[1]!.steps[0] as { args: Record<string, unknown> }).args).not.toHaveProperty("keepOnFailure");
+  });
+
   test("bad configuration fails when the Op is built", () => {
+    expect(() => ClickHouseRebuildOp({ ...BASE, gates: "none" as never })).toThrow(/gates must be/);
+    expect(() => ClickHouseRebuildOp({ ...BASE, onFailure: "retry" as never })).toThrow(/onFailure must be/);
     expect(() => ClickHouseRebuildOp({ ...BASE, table: "shop.events; DROP" })).toThrow(/table must be/);
     expect(() => ClickHouseRebuildOp({ ...BASE, dualWrite: { mode: "materialized-view", cutoverColumn: "" } })).toThrow(/cutoverColumn/);
     expect(() => ClickHouseRebuildOp({ ...BASE, dualWrite: { mode: "both" } as never })).toThrow(/dualWrite\.mode/);
@@ -89,7 +119,11 @@ describe("ClickHouseRebuildOp", () => {
     const contracts = new Map<string, ActivityContract>();
     collectActivityContracts(contractsModule as unknown as Record<string, unknown>, contracts);
     const merged = mergeActivityContracts(await loadActivityContracts([]), contracts);
-    for (const config of [BASE, { ...BASE, dualWrite: { mode: "app" as const }, retain: "3d", replicaTimeout: "30s", stack: "shop", ownershipEnv: "prod" }]) {
+    for (const config of [
+      BASE,
+      { ...BASE, dualWrite: { mode: "app" as const }, retain: "3d", replicaTimeout: "30s", stack: "shop", ownershipEnv: "prod" },
+      { ...BASE, gates: "outer" as const, onFailure: "keep" as const },
+    ]) {
       const props = propsOf(config);
       expect(validateActivitySteps(props, merged)).toEqual([]);
       expect(validateStepOutputRefs(props, merged)).toEqual([]);

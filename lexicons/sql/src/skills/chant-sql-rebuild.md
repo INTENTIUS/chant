@@ -28,6 +28,8 @@ export const { op } = ClickHouseRebuildOp({
 
 Options: `name`, `env`, `table`, `dualWrite` (required); `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `retain` (default `7d`), `gate` (the swap gate: `gate`, `timeout`, `description`, `approval`), `dropGate`, `writesGate` (app mode), `backfillTimeout` (default `6h`), `mutationTimeout` (default `10m`), `replicaTimeout` (default `2m`, Replicated databases only), `stack`, `ownershipEnv`.
 
+Run as one step of a change approved elsewhere: `gates: "outer"` leaves out the swap gate, the drop gate and the Drop phase (verification and the swap's own comparison still run; the old table is kept), and `onFailure: "keep"` leaves out onFailure, so a failed run's next run resumes the backfill from its receipts. Set them rather than editing the Op's phases.
+
 Pick the dual-write mode:
 
 - `{ mode: "materialized-view", cutoverColumn: "ts", cutoverDelay?: "1m" }` when the table has a time column rows arrive in order of. Writes keep flowing: a materialized view sends rows at or after the cut-over to the new table, the backfill copies the rows before it.
@@ -51,7 +53,7 @@ The swap gate is bound to a digest of the plan and the verification (row counts 
 ## When something goes wrong
 
 - A run stopped during the backfill (Ctrl-C, a killed job) is not a failure. The next run resumes from the receipts in `chant_receipts.receipts` on the same server (in `<db>.__chant_receipts` on a Replicated database), and a partition whose copy was cut off before its receipt is cleared and copied again, so no row is copied twice.
-- A failed step (a failed copy after its retries, a verification mismatch, a refused declaration) runs onFailure: the new table `<t>__chant_new` and the dual-write view `<t>__chant_dual` are dropped, and the next run starts from a new table. The original table is untouched until the swap.
+- A failed step (a failed copy after its retries, a verification mismatch, a refused declaration) runs onFailure: the new table `<t>__chant_new` and the dual-write view `<t>__chant_dual` are dropped, and the next run starts from a new table. With `onFailure: "keep"` they stay, and the next run resumes; drop them by hand to start over. The original table is untouched until the swap.
 - A verification mismatch in materialized-view mode usually means rows arrived with a time before the cut-over later than `cutoverDelay`. Raise the delay and run again.
 - The Op refuses a database that is neither Atomic nor Replicated (`EXCHANGE TABLES` needs one of them), a table whose change is not a rebuild (use the applier), and an object already under one of its working names that is not its own. In a Replicated database it also refuses a table, or a declaration, whose engine is not `Replicated*MergeTree`: a plain MergeTree keeps different rows on each replica and one replica's copy would lose the others'.
 

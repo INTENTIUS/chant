@@ -12,9 +12,9 @@ import type { ChantConfig } from "@intentius/chant/config";
 import { currentOpRun, parseDuration } from "@intentius/chant/op";
 import { bindClickHouse } from "../../clickhouse/live/bind";
 import { declaredObjects } from "../../clickhouse/apply/apply";
-import { declaredTable, observeRebuild, rebuildPlanDigest } from "../../clickhouse/rebuild/observe";
+import { declaredTable, observeRebuild, rebuildPlanDigest, RebuildRefusal } from "../../clickhouse/rebuild/observe";
 import { backfill, type BackfillDeps, type BackfillResult } from "../../clickhouse/rebuild/backfill";
-import { verifyRebuild, type VerifyResult } from "../../clickhouse/rebuild/verify";
+import { RebuildVerificationError, verifyRebuild, type VerifyResult } from "../../clickhouse/rebuild/verify";
 import {
   compensate,
   createNewTable,
@@ -75,6 +75,24 @@ export async function rebuildRun(args: ClickHouseRebuildArgs, signal: AbortSigna
   };
 }
 
+/**
+ * With `onFailure: "keep"` (#3658) no onFailure drops the new table, so a
+ * step that fails says what a person does instead: a refusal or a failed
+ * verification would otherwise fail every run after it the same way.
+ */
+async function noting<T>(args: ClickHouseRebuildArgs, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (args.keepOnFailure && (err instanceof RebuildRefusal || err instanceof RebuildVerificationError)) {
+      err.message +=
+        ` This rebuild keeps its new table on failure (onFailure: "keep"), so nothing drops it: ` +
+        `drop ${args.table}__chant_new and ${args.table}__chant_dual by hand to start again from a new table.`;
+    }
+    throw err;
+  }
+}
+
 export interface RebuildPlanResult {
   state: "rebuild" | "swapped" | "done";
   table: string;
@@ -87,6 +105,10 @@ export interface RebuildPlanResult {
 
 /** Plan: classify the table's change against the server and say how far the rebuild has got. */
 export async function clickhouseRebuildPlan(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<RebuildPlanResult> {
+  return noting(args, () => plan(args, signal, deps));
+}
+
+async function plan(args: ClickHouseRebuildArgs, signal: AbortSignal | undefined, deps: ClickHouseRebuildDeps): Promise<RebuildPlanResult> {
   const run = await rebuildRun(args, signal, deps);
   const o = await observeRebuild(run.target, run.declared, run.marker);
   const changes = o.changes.map((c) => `${c.rule} ${c.field}${c.before !== undefined || c.after !== undefined ? `: ${c.before ?? "none"} -> ${c.after ?? "none"}` : ""}`);
@@ -103,23 +125,23 @@ export async function clickhouseRebuildPlan(args: ClickHouseRebuildArgs, signal?
 }
 
 export async function clickhouseRebuildCreate(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<CreateResult> {
-  return createNewTable(await rebuildRun(args, signal, deps));
+  return noting(args, async () => createNewTable(await rebuildRun(args, signal, deps)));
 }
 
 export async function clickhouseRebuildDualWrite(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<DualWriteResult> {
-  return startDualWrite(await rebuildRun(args, signal, deps));
+  return noting(args, async () => startDualWrite(await rebuildRun(args, signal, deps)));
 }
 
 export async function clickhouseRebuildBackfill(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<BackfillResult> {
-  return backfill(await rebuildRun(args, signal, deps), deps.backfill);
+  return noting(args, async () => backfill(await rebuildRun(args, signal, deps), deps.backfill));
 }
 
 export async function clickhouseRebuildVerify(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<VerifyResult> {
-  return verifyRebuild(await rebuildRun(args, signal, deps));
+  return noting(args, async () => verifyRebuild(await rebuildRun(args, signal, deps)));
 }
 
 export async function clickhouseRebuildSwap(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<SwapResult> {
-  return swapTables(await rebuildRun(args, signal, deps));
+  return noting(args, async () => swapTables(await rebuildRun(args, signal, deps)));
 }
 
 export async function clickhouseRebuildRetain(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<RetainResult> {
