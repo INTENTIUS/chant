@@ -9,7 +9,7 @@
 import { clickhouseQuery, type ClickHouseEndpoint } from "../http";
 import type { Change } from "./diff";
 
-const EXPRESSION_FIELDS = /^(orderBy|primaryKey|partitionBy|sampleBy|select|columns\.[^.]+\.(default|ttl)|indexes\..+|projections\..+)$/;
+const EXPRESSION_FIELDS = /^(orderBy|primaryKey|partitionBy|sampleBy|select|lambda|columns\.[^.]+\.(default|ttl)|indexes\..+|projections\..+)$/;
 
 const quote = (s: string) => `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 

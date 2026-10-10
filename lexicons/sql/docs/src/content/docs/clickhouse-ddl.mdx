@@ -1,6 +1,6 @@
 ---
 title: "Declaring ClickHouse Tables and Views"
-description: "ClickHouse databases, tables, views, materialized views and dictionaries as SQL-shaped tagged templates: the tags, materialized views, dictionaries, and what each kind of interpolation means"
+description: "ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates: the tags, materialized views, dictionaries, functions, and what each kind of interpolation means"
 diataxis: how-to
 ---
 
@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/sql/docs/pages/clickhouse-ddl.mdx instead; changes here are overwritten. */}
 
 
-A ClickHouse object is declared as its own DDL, inside a `database`, `table`, `view` or `dictionary` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:
+A ClickHouse object is declared as its own DDL, inside a `database`, `table`, `view`, `dictionary` or `func` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:
 
 ```ts
 import { database, table, view } from "@intentius/chant-lexicon-sql/clickhouse";
@@ -43,6 +43,7 @@ export const byKind = view`
 | `view` | `CREATE VIEW` | `ClickHouse::View` |
 | `view` | `CREATE MATERIALIZED VIEW` | `ClickHouse::MaterializedView` |
 | `dictionary` | `CREATE DICTIONARY` | `ClickHouse::Dictionary` |
+| `func` | `CREATE FUNCTION` | `ClickHouse::Function` |
 
 Each template holds exactly one statement of its tag's kind. `OR REPLACE`, `IF NOT EXISTS` and `ON CLUSTER` are read, and so are a `COMMENT` on the object and on each column.
 
@@ -107,6 +108,20 @@ The source names its table as strings (`TABLE 'rates' DB 'analytics'`), since th
 The server prints a dictionary back its own way: the source's and the layout's key words upper case, `LIFETIME(300)` as `LIFETIME(MIN 0 MAX 300)`, a `PASSWORD` as `'[HIDDEN]'`. A plan compares the declaration and the server's copy with these undone. A changed comment is metadata only (SQLCH203). Any other change is SQLCH245: the applier sends `CREATE OR REPLACE DICTIONARY`, and the dictionary loads again from its source. A prune drops a dictionary chant created before the tables it reads.
 
 A password written in the source is part of the declaration and of the build output. Use a named collection on the server instead (`SOURCE(CLICKHOUSE(NAME rates_source))`) to keep it out of the project.
+
+## Functions
+
+A SQL user-defined function is a lambda with a name. Declare it with the `func` tag:
+
+```ts
+import { func } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const linear = func`CREATE FUNCTION linear AS (x, k, b) -> k*x + b`;
+```
+
+A function belongs to no database, so its name is never qualified. A plan reads the functions the build declares and no others: a function made by hand is never listed or dropped. The server prints the expression its own way (`((k * x) + b)`), and a plan asks the server's formatter whether the two are the same expression. A changed expression is SQLCH260, sent as `CREATE OR REPLACE FUNCTION`.
+
+A function has no comment, so it cannot carry chant's ownership marker. Chant replaces a declared function when its declaration changes, and never drops one; drop a function the build no longer declares by hand. A function is not in any database, so a `Replicated` database's log does not carry it. In the `replicated` topology a function goes `ON CLUSTER` the topology's cluster, when one is named. With none, apply to each replica.
 
 ## Interpolations
 

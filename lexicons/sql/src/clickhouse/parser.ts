@@ -1,7 +1,8 @@
 /**
  * A hand-written recursive-descent parser for the ClickHouse statements the
  * dialect declares: `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`,
- * `CREATE MATERIALIZED VIEW` (chant #3196) and `CREATE DICTIONARY` (#3682).
+ * `CREATE MATERIALIZED VIEW` (chant #3196), `CREATE DICTIONARY` and
+ * `CREATE FUNCTION` (#3682).
  *
  * Statement structure is parsed; expressions are not. An expression (a
  * default, a codec, a sort key, a TTL, a view's SELECT) is kept as a span of
@@ -147,7 +148,24 @@ export interface DictionaryNode {
   comment?: Span;
 }
 
-export type CreateNode = DatabaseNode | TableNode | ViewNode | DictionaryNode;
+/** A SQL user-defined function: `CREATE FUNCTION name AS (x, y) -> expr`. It lives outside any database. */
+export interface FunctionNode {
+  statement: "function";
+  orReplace: boolean;
+  ifNotExists: boolean;
+  name: Span;
+  onCluster?: Span;
+  /** The parameter names, each as written. */
+  params: Array<{ name: string; span: Span }>;
+  /** The whole lambda after `AS`: `(x, y) -> expr`. */
+  lambda: Span;
+  /** The expression after `->`. */
+  body: Span;
+  /** Never set: a function has no comment. Here so every node can be asked. */
+  comment?: undefined;
+}
+
+export type CreateNode = DatabaseNode | TableNode | ViewNode | DictionaryNode | FunctionNode;
 
 /** A token that can stand where a name goes. */
 const isNameToken = (t: Token | undefined): boolean =>
@@ -384,9 +402,10 @@ class Parser extends SqlCursor {
     if (this.accept("DATABASE")) return this.database();
     if (this.accept("TABLE")) return this.table(orReplace);
     if (this.accept("DICTIONARY")) return this.dictionary(orReplace);
+    if (this.accept("FUNCTION")) return this.function(orReplace);
     const materialized = this.accept("MATERIALIZED");
     if (this.accept("VIEW")) return this.view(orReplace, materialized);
-    return this.fail(materialized ? "expected VIEW" : "expected DATABASE, TABLE, VIEW, MATERIALIZED VIEW or DICTIONARY");
+    return this.fail(materialized ? "expected VIEW" : "expected DATABASE, TABLE, VIEW, MATERIALIZED VIEW, DICTIONARY or FUNCTION");
   }
 
   private ifNotExists(): boolean {
@@ -494,6 +513,38 @@ class Parser extends SqlCursor {
     if (!node.layout) this.fail("expected LAYOUT(...): a dictionary needs a layout");
     this.finish("dictionary definition");
     return node;
+  }
+
+  private function(orReplace: boolean): FunctionNode {
+    const ifNotExists = this.ifNotExists();
+    const name = this.qualifiedName();
+    if (name.to - name.from > 1 && this.tokens.slice(name.from, name.to).some((t) => t.kind === "punct" && t.text === ".")) {
+      this.fail("a function belongs to no database: name it without one");
+    }
+    const onCluster = this.onCluster();
+    this.expect("AS");
+    const from = this.idx();
+    const params: FunctionNode["params"] = [];
+    const param = () => {
+      const p = this.name("a parameter name");
+      params.push({ name: p.text, span: p.span });
+    };
+    if (this.acceptPunct("(")) {
+      if (!this.acceptPunct(")")) {
+        for (;;) {
+          param();
+          if (this.acceptPunct(",")) continue;
+          this.expectPunct(")");
+          break;
+        }
+      }
+    } else param();
+    const arrow = this.next();
+    if (arrow?.kind !== "op" || arrow.text !== "->") this.fail("expected -> and the function's expression", arrow);
+    const body = this.expr([], false);
+    const lambda = this.span(from, body.refs);
+    this.finish("function definition");
+    return { statement: "function", orReplace, ifNotExists, name, onCluster, params, lambda, body };
   }
 
   private view(orReplace: boolean, materialized: boolean): ViewNode {

@@ -146,6 +146,11 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
     return;
   }
 
+  if (before.kind === "function") {
+    if (before.lambda !== after.lambda) out.push(change(key, "lambda", "SQLCH260", before.lambda, after.lambda));
+    return;
+  }
+
   if (before.kind === "dictionary") {
     diffDictionary(key, before, after, out);
     return;
@@ -225,7 +230,8 @@ export function diffSchemas(before: readonly SchemaObject[], after: readonly Sch
   const hints: string[] = [];
   const matches = matchByIdentity(before, after, {
     qualified,
-    previously: (o) => o.previously,
+    // A function cannot be renamed: one under a new name is a create.
+    previously: (o) => (o.kind === "function" ? undefined : o.previously),
     previousNames: (o, prev) => [prev, `${o.database}.${prev}`],
   });
   for (const m of matches) {

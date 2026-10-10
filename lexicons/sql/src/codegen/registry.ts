@@ -18,6 +18,7 @@ const KINDS: Record<string, string> = {
   View: CLICKHOUSE_ENTITY_TYPES.view,
   MaterializedView: CLICKHOUSE_ENTITY_TYPES.materializedView,
   Dictionary: CLICKHOUSE_ENTITY_TYPES.dictionary,
+  Function: CLICKHOUSE_ENTITY_TYPES.function,
   PostgresSchema: POSTGRES_ENTITY_TYPES.schema,
   PostgresTable: POSTGRES_ENTITY_TYPES.table,
   PostgresIndex: POSTGRES_ENTITY_TYPES.index,

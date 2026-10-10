@@ -1,7 +1,7 @@
 /**
- * The ClickHouse entities: `database`, `table`, `view` and `dictionary` (#3682)
- * tagged templates that parse their DDL at fold time into one Declarable each
- * (chant #3196, #3197).
+ * The ClickHouse entities: `database`, `table`, `view`, `dictionary` and
+ * `func` (#3682) tagged templates that parse their DDL at fold time into one
+ * Declarable each (chant #3196, #3197).
  *
  * ```ts
  * import { table, view } from "@intentius/chant-lexicon-sql/clickhouse";
@@ -56,6 +56,7 @@ export const CLICKHOUSE_ENTITY_TYPES = {
   view: "ClickHouse::View",
   materializedView: "ClickHouse::MaterializedView",
   dictionary: "ClickHouse::Dictionary",
+  function: "ClickHouse::Function",
 } as const;
 
 export type ClickHouseEntityType = (typeof CLICKHOUSE_ENTITY_TYPES)[keyof typeof CLICKHOUSE_ENTITY_TYPES];
@@ -208,6 +209,25 @@ export interface ClickHouseView extends ClickHouseRelation {
   readonly props: ViewProps;
 }
 
+/** A SQL user-defined function, `CREATE FUNCTION name AS (x) -> expr`. It belongs to no database. */
+export interface FunctionProps {
+  name: string;
+  onCluster?: string;
+  /** The parameter names, in order. */
+  params: string[];
+  /** The expression after `->`, as written. */
+  body: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface ClickHouseFunction extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Function";
+  readonly props: FunctionProps;
+}
+
 /** A dictionary: its attributes are columns `dictGet` reads, so SQL can reference them. */
 export interface ClickHouseDictionary extends ClickHouseRelation {
   readonly entityType: "ClickHouse::Dictionary";
@@ -341,7 +361,7 @@ function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
   return pieces.length >= 2 ? { database: pieces[pieces.length - 2], name: pieces[pieces.length - 1]! } : { name: pieces[0] ?? "" };
 }
 
-type Expect = "database" | "table" | "view" | "dictionary";
+type Expect = "database" | "table" | "view" | "dictionary" | "func";
 
 function build(tag: Expect, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
   const parts = templateParts(strings);
@@ -355,10 +375,18 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
   }
   const ctx: Ctx = { d: CLICKHOUSE_TEMPLATES, tokens, values, fed: values.map(() => new Set<string>()) };
   for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
-  if (node.statement !== tag) {
+  if (node.statement !== (tag === "func" ? "function" : tag)) {
     const holds =
-      node.statement === "database" ? "CREATE DATABASE" : node.statement === "table" ? "CREATE TABLE" : node.statement === "dictionary" ? "CREATE DICTIONARY" : "CREATE VIEW";
-    throw new SqlTemplateError(tag, `holds a ${holds}; use the ${node.statement} tag`, 0, 0);
+      node.statement === "database"
+        ? "CREATE DATABASE"
+        : node.statement === "table"
+          ? "CREATE TABLE"
+          : node.statement === "dictionary"
+            ? "CREATE DICTIONARY"
+            : node.statement === "function"
+              ? "CREATE FUNCTION"
+              : "CREATE VIEW";
+    throw new SqlTemplateError(tag, `holds a ${holds}; use the ${node.statement === "function" ? "func" : node.statement} tag`, 0, 0);
   }
   const { database, name } = qualified(ctx, node.name);
   const sqlName = database ? `${quoteIdentifier(database)}.${quoteIdentifier(name)}` : quoteIdentifier(name);
@@ -412,6 +440,21 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
       source,
     });
     return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.table, sqlName, props, columns.map((c) => c.name), dependsOn));
+  }
+
+  if (node.statement === "function") {
+    for (const p of node.params) feed(ctx, p.span, "params");
+    const props: FunctionProps = strip({
+      name,
+      onCluster: common.onCluster,
+      orReplace: node.orReplace,
+      ifNotExists: node.ifNotExists,
+      params: node.params.map((p) => p.name || req(text(ctx, p.span))),
+      body: req(text(ctx, node.body, "body")),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.function, quoteIdentifier(name), props, undefined, dependsOn));
   }
 
   if (node.statement === "dictionary") {
@@ -519,4 +562,14 @@ export function view(strings: TemplateStringsArray, ...values: unknown[]): Click
  */
 export function dictionary(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseDictionary {
   return build("dictionary", strings, values) as ClickHouseDictionary;
+}
+
+/**
+ * `` func`CREATE FUNCTION ...` ``: one SQL user-defined function, a lambda
+ * with a name (#3682). It belongs to no database, and has no comment, so it
+ * carries no ownership marker: chant replaces it when its declaration
+ * changes and never drops it.
+ */
+export function func(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseFunction {
+  return build("func", strings, values) as ClickHouseFunction;
 }

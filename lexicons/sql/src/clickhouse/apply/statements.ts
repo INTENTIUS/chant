@@ -124,6 +124,11 @@ export function createStatement(
   opts: { orReplace?: boolean; trailer?: Readonly<Record<string, string>> } = {},
 ): string {
   const { tokens, node } = parsed(obj);
+  // A function has no comment to carry the marker: it is sent as declared.
+  if (node.statement === "function") {
+    const body = statementBody(tokens);
+    return opts.orReplace && !node.orReplace ? body.replace(/^(\s*(?:--[^\n]*\n\s*)*)CREATE\s+/i, "$1CREATE OR REPLACE ") : body;
+  }
   const literal = sqlString(stampedComment(obj.canonical.comment, marker, opts.trailer));
   let sql: string;
   if (node.comment) {
@@ -154,6 +159,7 @@ export function commentStatement(obj: DeclaredObject, marker: OwnershipMarker | 
 /** The `DROP` for an object a prune removes. `SYNC` so the name is free when it returns. */
 export function dropStatement(type: string, database: string | undefined, name: string): string {
   if (type === CLICKHOUSE_ENTITY_TYPES.database) return `DROP DATABASE ${ident(name)} SYNC`;
+  if (type === CLICKHOUSE_ENTITY_TYPES.function) return `DROP FUNCTION ${ident(name)}`;
   const what = type === CLICKHOUSE_ENTITY_TYPES.table ? "TABLE" : type === CLICKHOUSE_ENTITY_TYPES.dictionary ? "DICTIONARY" : "VIEW";
   return `DROP ${what} ${qualifiedIdent(database, name)} SYNC`;
 }
@@ -391,6 +397,9 @@ export function alterSteps(obj: DeclaredObject, changes: readonly Change[], opts
     const what = obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary ? "DICTIONARY" : "TABLE";
     steps.push(stepFor(`RENAME ${what} ${qualifiedIdent(from.database, from.name)} TO ${qualifiedIdent(to.database, to.name)}`, "SQLCH230"));
   }
+  if (obj.type === CLICKHOUSE_ENTITY_TYPES.function && changes.some((c) => c.rule === "SQLCH260")) {
+    steps.push(stepFor(createStatement(obj, opts.marker, { orReplace: true }), "SQLCH260"));
+  }
   // A dictionary is replaced whole, its comment and marker with it.
   if (obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary && changes.some((c) => c.rule === "SQLCH245")) {
     steps.push(stepFor(createStatement(obj, opts.marker, { orReplace: true }), "SQLCH245"));
@@ -468,7 +477,7 @@ export interface StatementPlan {
 }
 
 /** Drop order: what reads from a table before the table (a dictionary before its source), a database last. */
-const DROP_ORDER: Record<string, number> = { materializedView: 0, view: 1, dictionary: 2, table: 3, database: 4 };
+const DROP_ORDER: Record<string, number> = { materializedView: 0, view: 1, dictionary: 2, table: 3, database: 4, function: 5 };
 
 /**
  * The statements that take the current schema to the declared one, from the
@@ -514,7 +523,9 @@ function planDeclared(input: StatementPlanInput): StatementPlan {
     const renamedFrom = mine.find((c) => c.rule === "SQLCH230" || c.rule === "SQLCH231")?.before;
     const currentKey = renamedFrom !== undefined && input.current.has(renamedFrom) ? renamedFrom : key;
     const live = input.current.get(currentKey);
-    const restamp = !stepsSetComment(obj, mine) && (mine.some((c) => c.field === "comment") || !(input.carriesMarker?.(currentKey) ?? true));
+    // A function has no comment, so nothing to restamp: it never carries the marker.
+    const restamp =
+      obj.type !== CLICKHOUSE_ENTITY_TYPES.function && !stepsSetComment(obj, mine) && (mine.some((c) => c.field === "comment") || !(input.carriesMarker?.(currentKey) ?? true));
     const steps = [
       ...alterSteps(obj, mine, { ...(live ? { live } : {}), ...(input.marker ? { marker: input.marker } : {}) }),
       ...(restamp ? [stepFor(commentStatement(obj, input.marker), "SQLCH203")] : []),
@@ -528,7 +539,7 @@ function planDeclared(input: StatementPlanInput): StatementPlan {
     const o = input.current.get(c.object);
     if (!o) continue;
     const type = CLICKHOUSE_ENTITY_TYPES[o.kind as keyof typeof CLICKHOUSE_ENTITY_TYPES];
-    const database = o.kind === "database" ? undefined : o.database;
+    const database = o.kind === "database" || o.kind === "function" ? undefined : o.database;
     drops.push({ key: c.object, type, ...(database !== undefined ? { database } : {}), name: o.name, step: stepFor(dropStatement(type, database, o.name), "SQLCH250") });
   }
   drops.sort((a, b) => (DROP_ORDER[kindOf(a.type)] ?? 9) - (DROP_ORDER[kindOf(b.type)] ?? 9));

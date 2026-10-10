@@ -143,13 +143,13 @@ export function declarations(content: string, fileName = "file.ts"): Declared[] 
       const tokens = tokenize(found.parts);
       const node = parseCreate(tokens);
       const columns =
-        node.statement === "database"
+        node.statement === "database" || node.statement === "function"
           ? []
           : (node.statement === "dictionary" ? node.attributes : node.columns).map((c) => ({
               name: c.name || spanText(found, tokens, c.nameSpan, source) || "",
               ...(spanText(found, tokens, c.type, source) ? { type: spanText(found, tokens, c.type, source)! } : {}),
             }));
-      const engine = node.statement === "dictionary" ? undefined : node.engine?.name || spanText(found, tokens, node.engine?.nameSpan, source);
+      const engine = node.statement === "dictionary" || node.statement === "function" ? undefined : node.engine?.name || spanText(found, tokens, node.engine?.nameSpan, source);
       out.push({
         name: decl.name.text,
         tag: found.tag,

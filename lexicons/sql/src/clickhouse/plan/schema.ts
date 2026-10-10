@@ -4,7 +4,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { canonicalObject } from "./normalize";
+import { canonicalObject, objectKey, scopeOf } from "./normalize";
 import type { SchemaObject, UnreadableEntry } from "./diff";
 import type { ClickHouseTarget } from "../live/bind";
 import { readLiveSchema } from "../live/catalog";
@@ -34,7 +34,7 @@ export function schemaFromBuildFile(path: string, defaultDatabase = "default", t
  */
 export function keyedByQualifiedName(objects: readonly SchemaObject[]): Array<SchemaObject & { exportName: string }> {
   return objects.map((o) => ({
-    key: o.canonical.database ? `${o.canonical.database}.${o.canonical.name}` : o.canonical.name,
+    key: objectKey(o.canonical),
     canonical: o.canonical,
     exportName: o.key,
   }));
@@ -42,7 +42,8 @@ export function keyedByQualifiedName(objects: readonly SchemaObject[]): Array<Sc
 
 /**
  * What the server holds, keyed by `database.name`, limited to the databases
- * the declarations use (and the target's scope). The `default` database is
+ * the declarations use (and the target's scope) and the functions they
+ * declare (`scopeOf`). The `default` database is
  * left out, as import leaves it out. An object whose definition chant cannot
  * read is not left out silently (#3653): it goes in `unreadable`, when
  * given, and otherwise fails the read.
@@ -52,8 +53,8 @@ export async function schemaFromServer(target: ClickHouseTarget, databases?: Rea
   const out: SchemaObject[] = [];
   for (const o of live) {
     if (o.type === "ClickHouse::Database" && o.name === "default") continue;
-    if (databases && !databases.has(o.database ?? o.name)) continue;
-    const key = o.database ? `${o.database}.${o.name}` : o.name;
+    if (databases && !databases.has(scopeOf(o))) continue;
+    const key = objectKey(o);
     try {
       out.push({ key, canonical: canonicalObject(o.statement, target.defaultDatabase) });
     } catch (err) {

@@ -52,6 +52,8 @@ export async function fakeClickHouse(objects: FakeObject[], options: FakeOptions
           .join(""),
       );
     }
+    // No SQL user-defined functions.
+    if (/FROM system\.functions/.test(body)) return ok("");
     const show = /^SHOW CREATE (DATABASE|TABLE) (`(?:[^`]|``)*`)(?:\.(`(?:[^`]|``)*`))?$/.exec(body.trim());
     if (show) {
       const [db, name] = show[3] ? [unquote(show[2]!), unquote(show[3])] : [undefined, unquote(show[2]!)];

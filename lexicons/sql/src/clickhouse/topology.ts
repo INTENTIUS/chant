@@ -331,9 +331,10 @@ function renderCreate(tokens: Token[], node: CreateNode, topology: Topology): st
     return applyEdits(tokens, edits);
   }
 
-  const cluster = createClusterEdit(tokens, node, objectCluster(topology));
+  // A function belongs to no database, so in the replicated topology it reaches every replica only through the cluster.
+  const cluster = createClusterEdit(tokens, node, node.statement === "function" ? databaseCluster(topology, true) : objectCluster(topology));
   if (cluster) edits.push(cluster);
-  if (node.statement !== "dictionary" && node.engine) {
+  if ((node.statement === "table" || node.statement === "view") && node.engine) {
     const declared: EngineClause = { name: node.engine.name, ...(node.engine.args ? { args: node.engine.args.map((a) => text(tokens, a)) } : {}) };
     const rendered = renderEngine(declared, topology);
     if (engineText(rendered) !== engineText(declared)) {
@@ -421,6 +422,8 @@ export function renderStatement(sql: string, topology: Topology): string {
     w.p++;
     if (word(head, "DROP", "DETACH", "ATTACH")) w.accept("TEMPORARY");
     if (w.accept("DATABASE")) return renderAfterName(tokens, w, databaseCluster(topology, word(head, "DROP")));
+    // A function belongs to no database: like the database's own DDL, it reaches every replica through the cluster.
+    if (w.accept("FUNCTION")) return renderAfterName(tokens, w, databaseCluster(topology, true));
     // `TRUNCATE t` may leave out TABLE.
     if (w.accept("TABLE", "VIEW", "DICTIONARY") || word(head, "TRUNCATE")) return renderAfterName(tokens, w, objectCluster(topology));
     return sql;

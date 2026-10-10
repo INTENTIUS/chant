@@ -20,12 +20,13 @@ interface Item {
   ddl: string;
 }
 
-const TAG: Record<string, "database" | "table" | "view" | "dictionary"> = {
+const TAG: Record<string, "database" | "table" | "view" | "dictionary" | "func"> = {
   [CLICKHOUSE_ENTITY_TYPES.database]: "database",
   [CLICKHOUSE_ENTITY_TYPES.table]: "table",
   [CLICKHOUSE_ENTITY_TYPES.view]: "view",
   [CLICKHOUSE_ENTITY_TYPES.materializedView]: "view",
   [CLICKHOUSE_ENTITY_TYPES.dictionary]: "dictionary",
+  [CLICKHOUSE_ENTITY_TYPES.function]: "func",
 };
 
 /** A backquoted or double-quoted identifier, written bare when it can be and double-quoted otherwise. */

@@ -35,7 +35,7 @@ const DOCS = "https://clickhouse.com/docs/sql-reference/statements";
 const rule = (id: string, cls: ChangeClass, title: string, restriction: string, cite: string): ClassifierRule => classifierRule(id, cls, title, restriction, cite);
 
 export const CLASSIFIER_RULES = {
-  SQLCH200: rule("SQLCH200", "create", "Create an object", "A new database, table, view or dictionary is created; nothing existing changes.", `${DOCS}/create`),
+  SQLCH200: rule("SQLCH200", "create", "Create an object", "A new database, table, view, dictionary or function is created; nothing existing changes.", `${DOCS}/create`),
   SQLCH201: rule(
     "SQLCH201",
     "metadata",
@@ -241,6 +241,13 @@ export const CLASSIFIER_RULES = {
     "Change a dictionary",
     "A dictionary stores no data of its own: CREATE OR REPLACE DICTIONARY replaces its attributes, key, source, layout, lifetime or range, and it loads again from its source.",
     `${DOCS}/create/dictionary`,
+  ),
+  SQLCH260: rule(
+    "SQLCH260",
+    "metadata",
+    "Change a function",
+    "A SQL user-defined function stores no data: CREATE OR REPLACE FUNCTION replaces its parameters and expression, and queries that call it use the new one.",
+    `${DOCS}/create/function`,
   ),
   SQLCH250: rule("SQLCH250", "drop", "Drop an object", "DROP removes the object and, for a table, its data; it is not undone.", `${DOCS}/drop`),
 } as const satisfies Record<string, ClassifierRule>;

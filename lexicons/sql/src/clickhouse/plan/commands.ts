@@ -34,6 +34,7 @@ import { diffSchemas, type SchemaDiff, type UnreadableEntry } from "./diff";
 import { renderDiff } from "./report";
 import { keyedByQualifiedName, schemaFromBuildFile, schemaFromServer } from "./schema";
 import { dropFormattingOnly } from "./server-format";
+import { scopeOf } from "./normalize";
 import { bindClickHouse } from "../live/bind";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
 import { readFileSync } from "node:fs";
@@ -119,7 +120,7 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
 export async function planAgainstServer(environment: string, buildFile: string, options: Parameters<typeof bindClickHouse>[0] = {}): Promise<SchemaDiff> {
   const target = await bindClickHouse({ ...options, environment });
   const declared = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase, target.topology));
-  const databases = new Set(declared.map((o) => o.canonical.database ?? o.canonical.name));
+  const databases = new Set(declared.map((o) => scopeOf(o.canonical)));
   const unreadable: UnreadableEntry[] = [];
   const live = await schemaFromServer(target, databases, unreadable);
   const diff = diffSchemas(live, declared);
