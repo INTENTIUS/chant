@@ -407,3 +407,24 @@ describe("YAML key ordering", () => {
     expect(envIdx).toBeLessThan(jobsIdx);
   });
 });
+
+describe("ports and step inputs render as written (#3670)", () => {
+  test("a host:container port stays a mapping and a numeric input stays a number", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("workflow", new MockWorkflow({
+      name: "CI",
+      on: { push: null },
+      jobs: {
+        test: new MockJob({
+          "runs-on": "ubuntu-latest",
+          services: { clickhouse: { image: "clickhouse/clickhouse-server:24", ports: ["8123:8123", 9000] } },
+          steps: [new MockStep({ uses: "actions/checkout@v4", with: { "fetch-depth": 0, lfs: true } })],
+        }),
+      },
+    }));
+
+    const output = githubSerializer.serialize(entities) as string;
+    expect(output).toContain("        ports:\n          - '8123:8123'\n          - 9000");
+    expect(output).toContain("        with:\n          fetch-depth: 0\n          lfs: true\n");
+  });
+});
