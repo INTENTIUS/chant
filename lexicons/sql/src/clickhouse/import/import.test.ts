@@ -188,10 +188,18 @@ describe("live export of SQL functions (#3718)", () => {
           engine: "MergeTree",
           statement: "CREATE TABLE shop.orders\n(\n    `id` UInt64,\n    `net` Float64 DEFAULT shop_net(id)\n)\nENGINE = MergeTree\nORDER BY id",
         },
+        {
+          // ClickHouse stores a call as the function's body (#3745): this is shop_gross(net).
+          database: "shop",
+          name: "gross",
+          engine: "View",
+          statement: "CREATE VIEW shop.gross\n(\n    `g` Float64\n)\nAS SELECT net + (net * 0.07) AS g\nFROM shop.orders",
+        },
       ],
       {
         functions: [
           { name: "other_score", statement: "CREATE FUNCTION other_score AS x -> (x * 2)" },
+          { name: "shop_gross", statement: "CREATE FUNCTION shop_gross AS x -> (x + (x * 0.07))" },
           { name: "shop_net", statement: "CREATE FUNCTION shop_net AS x -> shop_tax(x)" },
           { name: "shop_tax", statement: "CREATE FUNCTION shop_tax AS x -> (x * 0.2)" },
           { name: "shop_unused", statement: "CREATE FUNCTION shop_unused AS x -> x" },
@@ -206,14 +214,14 @@ describe("live export of SQL functions (#3718)", () => {
 
   test("adopts the functions the imported objects call, and the ones those call; a warning names the rest", async () => {
     const ir = await run();
-    expect(ir.resources.map((r) => r.properties.name)).toEqual(["shop", "orders", "shop_net", "shop_tax"]);
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["shop", "orders", "gross", "shop_gross", "shop_net", "shop_tax"]);
     expect(ir.warnings).toEqual([
-      "2 SQL functions on the server are not imported, since no imported object calls them: other_score, shop_unused. Name them in sql.profiles.x.importFunctions to import them.",
+      "2 SQL functions on the server are not imported, since no imported object uses them: other_score, shop_unused. Name them in sql.profiles.x.importFunctions to import them.",
     ]);
   });
 
   test("importFunctions names more, by name or by prefix", async () => {
-    expect((await run({ importFunctions: ["shop_*"] })).resources.map((r) => r.properties.name)).toEqual(["shop", "orders", "shop_net", "shop_tax", "shop_unused"]);
+    expect((await run({ importFunctions: ["shop_*"] })).resources.map((r) => r.properties.name)).toEqual(["shop", "orders", "gross", "shop_gross", "shop_net", "shop_tax", "shop_unused"]);
     const ir = await run({ importFunctions: ["other_score"] });
     expect(ir.resources.map((r) => r.properties.name)).toContain("other_score");
     expect(ir.warnings).toEqual([expect.stringContaining(": shop_unused.")]);

@@ -58,7 +58,7 @@ A plan never proposes dropping it (SQLCH250); it names the table in a hint and l
 
 `--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier appends after the declared comment (see [Applying to a Server](../applying/)). The trailer is never written into an imported declaration. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
 
-A SQL user-defined function belongs to no database, so a server holds every project's functions side by side. An import adopts only the functions the imported tables, views and dictionaries call, and the functions those call. A warning names the ones left out. To import more, name them in the profile, by name or by a prefix ending in `*`:
+A SQL user-defined function belongs to no database, so a server holds every project's functions side by side. An import adopts only the functions the imported tables, views and dictionaries use, and the functions those call. ClickHouse doesn't keep the call in a view's query or a column's default: it stores the function's body there, with the arguments in place of the parameters. So the import also looks for each function's body in what it reads, and adopts the function when the body is there. A body that is only a parameter (`x -> x`) can't be found that way, and a short one (`(x, k) -> x * k`) is found wherever the same expression appears. A warning names the functions left out. To import more, name them in the profile, by name or by a prefix ending in `*`:
 
 ```ts
 sql: {
