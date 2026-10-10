@@ -41,13 +41,28 @@ interface Bound {
  */
 export function declaredAddress(entity: { type: string; props: Record<string, unknown> }, defaultSchema: string): { schema?: string; name: string; signature?: string } {
   const name = String(entity.props.name ?? "");
-  if (entity.type === POSTGRES_ENTITY_TYPES.schema || entity.type === POSTGRES_ENTITY_TYPES.extension) return { name };
+  if (entity.type === POSTGRES_ENTITY_TYPES.schema || entity.type === POSTGRES_ENTITY_TYPES.extension || entity.type === POSTGRES_ENTITY_TYPES.role) return { name };
   const schema = typeof entity.props.schema === "string" ? entity.props.schema : identValue(defaultSchema);
-  if (entity.type === POSTGRES_ENTITY_TYPES.function || entity.type === POSTGRES_ENTITY_TYPES.procedure || entity.type === POSTGRES_ENTITY_TYPES.trigger) {
+  if (entity.type === POSTGRES_ENTITY_TYPES.function || entity.type === POSTGRES_ENTITY_TYPES.procedure || entity.type === POSTGRES_ENTITY_TYPES.trigger || entity.type === POSTGRES_ENTITY_TYPES.policy) {
     const signature = canonicalPgObject(entity.type, entity.props, defaultSchema).signature;
     return { schema, name, ...(signature !== undefined ? { signature } : {}) };
   }
   return { schema, name };
+}
+
+/**
+ * Why an access declaration is not observed one by one: a grant or default
+ * privileges, which `chant sql plan` compares as the access they add up to;
+ * a policy or role where the profile does not manage access.
+ */
+export function accessUnobserved(type: string, managed: boolean): { reason: "unsupported-kind" | "filtered"; detail: string } | undefined {
+  if (type === POSTGRES_ENTITY_TYPES.grant || type === POSTGRES_ENTITY_TYPES.defaultPrivileges) {
+    return { reason: "unsupported-kind", detail: "a grant is compared as the privileges the declarations add up to, by chant sql plan and the applier, not one statement at a time" };
+  }
+  if (!managed && (type === POSTGRES_ENTITY_TYPES.policy || type === POSTGRES_ENTITY_TYPES.role)) {
+    return { reason: "filtered", detail: "access is not managed in this environment (sql.profiles.<env>.access)" };
+  }
+  return undefined;
 }
 
 /** A schema scope for the catalog read: the profile's schemas, else every schema the declarations name and the default one. */
@@ -68,7 +83,14 @@ function adapter(options: BindOptions & { owned?: boolean; declared: DeclaredEnt
     async bind() {
       const { target, client } = await bindPostgres(options);
       try {
-        const live = markProviderOwned(await readLiveSchema(client, { schemas: scopeFor(target, options.declared.filter((d) => d.type.startsWith("Postgres::"))) }), target.provider);
+        const live = markProviderOwned(
+          await readLiveSchema(client, {
+            schemas: scopeFor(target, options.declared.filter((d) => d.type.startsWith("Postgres::"))),
+            access: target.access === true,
+            roles: options.declared.filter((d) => d.type === POSTGRES_ENTITY_TYPES.role).map((d) => String(d.props.name)),
+          }),
+          target.provider,
+        );
         return { target, byKey: new Map(live.map((o) => [liveKey(o.type, o.schema, o.name, o.signature), o])) };
       } finally {
         await client.end();
@@ -77,6 +99,8 @@ function adapter(options: BindOptions & { owned?: boolean; declared: DeclaredEnt
     classifyBindFailure: (err) => classifyPostgresFailure(err),
     async read({ target, byKey }, entity): Promise<EntityObservation> {
       if (!entity.type.startsWith("Postgres::")) return { unobserved: { reason: "unsupported-kind", detail: entity.type } };
+      const why = accessUnobserved(entity.type, target.access === true);
+      if (why) return { unobserved: why };
       const { schema, name, signature } = declaredAddress(entity, target.defaultSchema);
       const queried = `${redactUrl(target.endpoint.url)} ${schema ? `${schema}.` : ""}${name}${signature ?? ""}`;
       const live = byKey.get(liveKey(entity.type, schema, name, signature));

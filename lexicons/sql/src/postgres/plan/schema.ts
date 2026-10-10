@@ -100,10 +100,12 @@ export function pgSchemaFromBuildFile(path: string, defaultSchema = "public"): P
  * The namespace an object's name is unique in: relations (tables, views,
  * sequences, indexes) share one per schema, types and domains another,
  * functions and procedures a third (told apart by their parameter types),
- * and a trigger's name is unique on its table.
+ * a trigger's or a policy's name is unique on its table, and a role's in the
+ * cluster.
  */
 export function pgNamespace(kind: string): string {
-  if (kind === "schema" || kind === "extension" || kind === "trigger") return kind;
+  if (kind === "schema" || kind === "extension" || kind === "trigger" || kind === "policy" || kind === "role") return kind;
+  if (kind === "grant" || kind === "defaultPrivileges") return "grant";
   if (kind === "enum" || kind === "domain") return "type";
   if (kind === "function" || kind === "procedure") return "routine";
   return "relation";

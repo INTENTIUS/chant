@@ -11,7 +11,10 @@
  *   (`nextval('app.invoice_seq'::regclass)` is `nextval(${invoiceSeq})`);
  * - the schema part of the object's own name, wherever the name appears,
  *   becomes the schema's export (`CREATE TABLE ${appSchema}.users`);
- * - an extension's `WITH SCHEMA` names the schema's export.
+ * - an extension's `WITH SCHEMA`, a grant's `ON SCHEMA` and default
+ *   privileges' `IN SCHEMA` name the schema's export;
+ * - a grant's object becomes the object's export (`GRANT SELECT ON TABLE
+ *   ${orders} TO reader`), a policy's table its table's.
  *
  * Columns stay text, as they do for ClickHouse (#3236): which relation a bare
  * column belongs to is the server's to resolve. One file, because the
@@ -45,6 +48,10 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.function]: "func",
   [POSTGRES_ENTITY_TYPES.procedure]: "procedure",
   [POSTGRES_ENTITY_TYPES.trigger]: "trigger",
+  [POSTGRES_ENTITY_TYPES.policy]: "policy",
+  [POSTGRES_ENTITY_TYPES.role]: "role",
+  [POSTGRES_ENTITY_TYPES.grant]: "grant",
+  [POSTGRES_ENTITY_TYPES.defaultPrivileges]: "grant",
 };
 
 /** Text that sits inside a template literal: a backquote and `${` escaped. */
@@ -85,8 +92,9 @@ function templateBody(item: Item, byQualified: Map<string, Item>, schemaExport: 
     const dot = tokens[sig[k + 1] ?? -1];
     const b = tokens[sig[k + 2] ?? -1];
     if (!isName(a) || dot?.kind !== "punct" || dot.text !== "." || !isName(b)) {
-      // An extension's `WITH SCHEMA app`.
-      if (item.type === POSTGRES_ENTITY_TYPES.extension && isName(a) && prev?.kind === "ident" && prev.text.toUpperCase() === "SCHEMA") {
+      // An extension's `WITH SCHEMA app`, a grant's `ON SCHEMA app`, default privileges' `IN SCHEMA app`.
+      const bySchemaWord = item.type === POSTGRES_ENTITY_TYPES.extension || item.type === POSTGRES_ENTITY_TYPES.grant || item.type === POSTGRES_ENTITY_TYPES.defaultPrivileges;
+      if (bySchemaWord && isName(a) && prev?.kind === "ident" && prev.text.toUpperCase() === "SCHEMA") {
         const s = schemaExport.get(identValue(a));
         if (s) replace.set(sig[k]!, { to: sig[k]! + 1, text: `\${${s}}`, ref: s });
       }
@@ -148,7 +156,9 @@ export class PostgresGenerator implements TypeScriptGenerator {
     for (const it of items) {
       if (it.type === POSTGRES_ENTITY_TYPES.schema) schemaExport.set(it.name, it.exportName);
       // An index or a trigger is never referenced by name in another object's DDL.
-      else if (it.schema && it.type !== POSTGRES_ENTITY_TYPES.index && it.type !== POSTGRES_ENTITY_TYPES.trigger) byQualified.set(`${it.schema}.${it.name}`, it);
+      else if (it.schema && it.type !== POSTGRES_ENTITY_TYPES.index && it.type !== POSTGRES_ENTITY_TYPES.trigger && it.type !== POSTGRES_ENTITY_TYPES.policy) {
+        byQualified.set(`${it.schema}.${it.name}`, it);
+      }
     }
 
     const bodies = new Map(items.map((it) => [it.exportName, templateBody(it, byQualified, schemaExport)]));

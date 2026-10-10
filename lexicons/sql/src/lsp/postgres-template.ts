@@ -152,6 +152,8 @@ export function postgresDeclarations(content: string, fileName = "file.ts"): Pos
         case "function":
         case "procedure":
         case "trigger":
+        case "policy":
+        case "role":
           sqlName = text(node.name.span);
           kind = node.statement;
           break;

@@ -87,6 +87,10 @@ export default defineConfig({
                                           "slug": "postgres-importing"
                                     },
                                     {
+                                          "label": "Access",
+                                          "slug": "postgres-access"
+                                    },
+                                    {
                                           "label": "Applying to a Server",
                                           "slug": "postgres-applying"
                                     },

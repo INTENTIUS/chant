@@ -187,7 +187,7 @@ The table of a many-to-many relation. Two foreign keys, a primary key on `(<left
 
 ### TenantTable
 
-A multi-tenant table whose tenant column leads every key and index. The tenant column (`NOT NULL`) goes in front of the columns given, the primary key is `(<tenant>, <primaryKey>)`, and one index covers `(<tenant>, <indexOn>)`, so a query scoped to one tenant reads one contiguous range of each. Row-level security is separate: a policy on the table keeps one tenant's role out of another's rows, and the dialect does not declare policies.
+A multi-tenant table whose tenant column leads every key and index. The tenant column (`NOT NULL`) goes in front of the columns given, the primary key is `(<tenant>, <primaryKey>)`, and one index covers `(<tenant>, <indexOn>)`, so a query scoped to one tenant reads one contiguous range of each. Row-level security is separate: a policy on the table (declared with the `policy` tag, see [Access](../postgres-access/)) keeps one tenant's role out of another's rows.
 
 | Member | Entity |
 |---|---|

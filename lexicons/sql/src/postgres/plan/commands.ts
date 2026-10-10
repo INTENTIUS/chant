@@ -18,6 +18,10 @@ import { keyedByQualifiedName, pgBuildFileMajor, pgSchemaFromBuildFile, pgSchema
 import { serverNormalized } from "./server-normalize";
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { migrationOpSuggestions } from "../migrate/handoff";
+import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
+import { ACCESS_MANAGED_KINDS } from "./normalize";
+import { declaredAccess, diffAccess, predictedAccess, targetKey } from "../access/acl";
+import { readLiveAccess } from "../access/live";
 
 export function emitPg(diff: PgSchemaDiff, json: boolean, title: string): number {
   console.log(json ? JSON.stringify(diff, null, 2) : renderPgDiff(diff, { title }));
@@ -69,6 +73,8 @@ export interface PgServerPlan {
   diff: PgSchemaDiff;
   /** The major the changes were classified for: the server's, else the one asked for. */
   major?: number;
+  /** The schemas the read was limited to; undefined is every schema. */
+  scope?: string[];
 }
 
 /**
@@ -83,29 +89,76 @@ export async function planAgainstClient(
   build: readonly PgSchemaObject[],
   options: { major?: number; environment?: string; readLive?: typeof readLiveSchema; serverNormalize?: typeof serverNormalized } = {},
 ): Promise<PgServerPlan> {
-  const declaredRaw = keyedByQualifiedName(build);
+  const managed = target.access === true;
+  const { kept, unmanaged } = accessScoped(keyedByQualifiedName(build), managed);
+  const declaredRaw = kept;
   const scope = scopeFor(
     target,
-    declaredRaw.map((o) => ({ type: POSTGRES_ENTITY_TYPES[o.canonical.kind], props: { name: o.canonical.name, ...(o.canonical.schema ? { schema: o.canonical.schema } : {}) } })),
+    declaredRaw.filter((o) => o.canonical.kind !== "role" && o.canonical.kind !== "grant" && o.canonical.kind !== "defaultPrivileges").map((o) => ({ type: POSTGRES_ENTITY_TYPES[o.canonical.kind], props: { name: o.canonical.name, ...(o.canonical.schema ? { schema: o.canonical.schema } : {}) } })),
   );
-  const liveObjects = markProviderOwned(await (options.readLive ?? readLiveSchema)(client, { schemas: scope }), target.provider);
+  const roles = declaredRaw.filter((o) => o.canonical.kind === "role").map((o) => o.canonical.name);
+  const liveObjects = markProviderOwned(await (options.readLive ?? readLiveSchema)(client, { schemas: scope, access: managed, roles }), target.provider);
   const live = pgSchemaFromLive(liveObjects, target.defaultSchema);
   const liveByKey = new Map(live.map((o) => [o.key, o]));
   const declared: PgSchemaObject[] = [];
   for (const o of declaredRaw) {
     const l = liveByKey.get(o.key);
-    if (l && differs(o, l) && (o.canonical.kind === "table" || o.canonical.kind === "view" || o.canonical.kind === "materializedView" || o.canonical.kind === "trigger")) {
+    if (l && differs(o, l) && (o.canonical.kind === "table" || o.canonical.kind === "view" || o.canonical.kind === "materializedView" || o.canonical.kind === "trigger" || o.canonical.kind === "policy")) {
       declared.push({ ...o, canonical: { ...o.canonical, ...(await (options.serverNormalize ?? serverNormalized)(client, o.canonical, target.defaultSchema)) } });
     } else declared.push(o);
   }
   // The build's major, else the server's own when it differs, since the server is what takes the locks.
   const running = await serverMajor(client).catch(() => undefined);
   const major = running ?? options.major;
-  const diff = diffPgSchemas(live, declared, { major });
+  const diff = diffPgSchemas(live, declared, { major, access: false });
+  if (managed) {
+    const want = declaredAccess(declared, { major: major ?? POSTGRES_LATEST_MAJOR, ...(await currentRole(client)) });
+    const have = await readLiveAccess(client, want.targets, { ...(scope ? { schemas: scope } : {}), forRoles: want.forRoles, declaredDefaults: want.targets.filter((t) => t.kind === "default") });
+    // An object this plan creates is given what the server gives a new one.
+    const missing = want.targets.filter((t) => t.kind !== "default" && t.kind !== "column" && !have.present.has(targetKey(t)));
+    const now = new Map([...have.state, ...predictedAccess(missing, have)]);
+    const access = diffAccess(now, want.state, want.exportsOf);
+    if (access.length > 0) {
+      diff.changes.push(...access.map((a) => a.change));
+      diff.access = access;
+    }
+  } else if (unmanaged > 0) {
+    diff.hints.push(`${unmanaged} access declaration${unmanaged === 1 ? " is" : "s are"} not planned: ${options.environment ?? "this environment"}'s profile does not manage access (sql.profiles.<env>.access)`);
+  }
   if (running !== undefined && options.major !== undefined && running !== options.major) {
     diff.hints.push(`the build targets Postgres ${options.major} but ${options.environment ?? "the server"} runs Postgres ${running}; changes are classified for ${running}`);
   }
-  return { declared, live, liveObjects, diff, ...(major !== undefined ? { major } : {}) };
+  return { declared, live, liveObjects, diff, ...(major !== undefined ? { major } : {}), ...(scope ? { scope } : {}) };
+}
+
+/** The role a session runs as: the one whose own privileges owning an object gives, and whose default privileges apply. */
+async function currentRole(client: PostgresClient): Promise<{ self?: string }> {
+  const rows = await client.query<{ self: string }>("SELECT current_user AS self").catch(() => []);
+  return rows[0]?.self ? { self: rows[0].self } : {};
+}
+
+/**
+ * The declarations a plan compares: all of them where the profile manages
+ * access; otherwise none of the policies, roles, grants and default
+ * privileges, and no table's row-level security, so a project that manages
+ * access elsewhere is not affected. `unmanaged` counts what was left out.
+ */
+export function accessScoped(objects: readonly PgSchemaObject[], managed: boolean): { kept: PgSchemaObject[]; unmanaged: number } {
+  if (managed) return { kept: [...objects], unmanaged: 0 };
+  let unmanaged = 0;
+  const kept: PgSchemaObject[] = [];
+  for (const o of objects) {
+    if (ACCESS_MANAGED_KINDS.has(o.canonical.kind)) {
+      unmanaged++;
+      continue;
+    }
+    if (o.canonical.kind === "table" && (o.canonical.fields.rowSecurity || o.canonical.fields.forceRowSecurity)) {
+      unmanaged++;
+      const { rowSecurity: _r, forceRowSecurity: _f, ...fields } = o.canonical.fields;
+      kept.push({ ...o, canonical: { ...o.canonical, fields } });
+    } else kept.push(o);
+  }
+  return { kept, unmanaged };
 }
 
 /** The declared objects against the server, keys by qualified name and labels with the export name. */
@@ -116,7 +169,7 @@ export async function planPgAgainstServer(environment: string, buildFile: string
     const { declared, diff } = await planAgainstClient(client, target, pgSchemaFromBuildFile(buildFile, target.defaultSchema), { ...(targeted !== undefined ? { major: targeted } : {}), environment });
     const { migrationOps } = withMigrationOps(diff, declared, environment, target.defaultSchema);
     const label = new Map(declared.map((o) => [o.key, `${o.canonical.exportName} (${o.key.slice(o.key.indexOf(" ") + 1)})`]));
-    const changes = diff.changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
+    const changes = diff.changes.map((c) => ({ ...c, object: label.get(c.object) ?? (c.object.startsWith("acl ") ? c.object.slice(4) : c.object) }));
     return { changes, hints: diff.hints, refused: changes.filter((c) => c.class === "expand"), ...(migrationOps ? { migrationOps } : {}) };
   } finally {
     await client.end();

@@ -1,6 +1,6 @@
 ---
 title: "Declaring Postgres Objects"
-description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains, extensions, functions, procedures and triggers as tagged templates: the eleven tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains, extensions, functions, procedures, triggers, policies, roles and grants as tagged templates: the fourteen tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
 ---
 
@@ -49,10 +49,13 @@ export const ticketsTitle = index`
 | `func` | `CREATE [OR REPLACE] FUNCTION` | `Postgres::Function` |
 | `procedure` | `CREATE [OR REPLACE] PROCEDURE` | `Postgres::Procedure` |
 | `trigger` | `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER` | `Postgres::Trigger` |
+| `policy` | `CREATE POLICY` | `Postgres::Policy` |
+| `role` | `CREATE ROLE`, without a password or memberships | `Postgres::Role` |
+| `grant` | `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` | `Postgres::Grant`, `Postgres::DefaultPrivileges` |
 
 A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. The `type` tag declares enum types only; a composite or range type is refused at `(` or `RANGE`.
 
-Row-level security policies, roles and grants have no tag. Declare them with the tool that manages them today; an import leaves them out.
+A table's template may also turn row-level security on after its `CREATE TABLE` (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`). Policies, roles, grants and row-level security are planned and applied only where the profile manages access; see [Access](../postgres-access/).
 
 ## Tables
 

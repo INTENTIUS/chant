@@ -11,6 +11,12 @@
  *   a declaration of them would have chant fight it.
  * - `verbatim` changes nothing yet: the printers already leave out what the
  *   server would add by itself.
+ * - Where the profile manages access (`sql.profiles.<env>.access`), the
+ *   policies and each table's row-level security come with the objects, and
+ *   the privileges on them and the default privileges are written as `grant`
+ *   declarations: the GRANT and REVOKE statements that take a new object's
+ *   privileges to what the server holds. Roles are the environment's and are
+ *   not imported.
  */
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
@@ -18,6 +24,7 @@ import { bindPostgres, type BindOptions } from "../live/bind";
 import { markProviderOwned, readLiveSchema } from "../live/catalog";
 import { objectsToIR, type ImportedPgObject } from "./ir";
 import { isChantManaged } from "../../core/ownership";
+import { importedAccess } from "../access/import";
 
 export interface ExportOptions extends Omit<BindOptions, "environment"> {
   environment: string;
@@ -31,8 +38,11 @@ export interface ExportOptions extends Omit<BindOptions, "environment"> {
 export async function exportResources(options: ExportOptions): Promise<ExportedTemplate> {
   const { target, client } = await bindPostgres(options);
   let live;
+  let access: ImportedPgObject[] = [];
   try {
-    live = markProviderOwned(await readLiveSchema(client, { schemas: target.schemas }), target.provider);
+    live = markProviderOwned(await readLiveSchema(client, { schemas: target.schemas, access: target.access === true }), target.provider);
+    // Where the profile manages access, the privileges on what is imported, and the default privileges, as grant declarations.
+    if (target.access === true && !options.selector) access = await importedAccess(client, live.filter((o) => !o.foreign && !o.unsupported && (!options.owned || isChantManaged(o.comment))), target.schemas);
   } finally {
     await client.end();
   }
@@ -53,5 +63,5 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
     }
     objects.push({ type: o.type, ...(o.schema ? { schema: o.schema } : {}), name: o.name, ddl: o.statement });
   }
-  return objectsToIR(objects, warnings) as ExportedTemplate;
+  return objectsToIR([...objects, ...access], warnings) as ExportedTemplate;
 }

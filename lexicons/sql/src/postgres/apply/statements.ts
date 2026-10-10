@@ -29,10 +29,12 @@ import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../entity-types"
 import { addConstraintRule, matchPgObjects } from "../plan/diff";
 import type { PgChange } from "../plan/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "../plan/rules";
-import { canonicalOptions, sameConstraint, type CanonicalConstraint, type CanonicalKind } from "../plan/normalize";
+import { ACCESS_KINDS, canonicalOptions, sameConstraint, type CanonicalConstraint, type CanonicalKind } from "../plan/normalize";
 import type { PgDiffObject, PgSchemaObject } from "../plan/schema";
 import { migrationTarget } from "../migrate/handoff";
-import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, KeyDef, SequenceProps, TableProps } from "../entities";
+import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, KeyDef, PolicyProps, SequenceProps, TableProps } from "../entities";
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** One object as a build declares it, in the shape the applier works with. */
 export interface DeclaredPgObject {
@@ -86,9 +88,9 @@ export const pgQualified = (schema: string | undefined, name: string): string =>
  * trigger with its table (`touch ON app.users`).
  */
 export const objectIdent = (o: { kind: CanonicalKind; schema?: string; name: string; signature?: string }): string =>
-  o.kind === "schema" || o.kind === "extension"
+  o.kind === "schema" || o.kind === "extension" || o.kind === "role"
     ? quoteIdent(o.name)
-    : o.kind === "trigger"
+    : o.kind === "trigger" || o.kind === "policy"
       ? `${quoteIdent(o.name)}${o.signature ?? ""}`
       : `${pgQualified(o.schema, o.name)}${o.signature ?? ""}`;
 
@@ -106,6 +108,10 @@ export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
   function: "FUNCTION",
   procedure: "PROCEDURE",
   trigger: "TRIGGER",
+  policy: "POLICY",
+  role: "ROLE",
+  grant: "GRANT",
+  defaultPrivileges: "DEFAULT PRIVILEGES",
 };
 
 /** The canonical kind of an entity type. */
@@ -172,12 +178,14 @@ export function commentStatement(obj: Pick<DeclaredPgObject, "canonical">, marke
 export function createSteps(
   obj: Pick<DeclaredPgObject, "ddl" | "canonical" | "props">,
   marker: OwnershipMarker | undefined,
-  opts: { base?: string; orReplace?: boolean; cls?: PgChangeClass; rule?: PgClassifierRuleId } = {},
+  opts: { base?: string; orReplace?: boolean; cls?: PgChangeClass; rule?: PgClassifierRuleId; access?: boolean } = {},
 ): PgStep[] {
   const cls = opts.cls ?? "create";
   const out: PgStep[] = [];
   splitStatements(obj.ddl).forEach((s, i) => {
     if (i > 0 && isOwnComment(s, obj.canonical.kind)) return;
+    // A table's row-level security is access, which only a profile that manages access applies.
+    if (i > 0 && opts.access === false && firstNode(s)?.statement === "rowSecurity") return;
     let sql = s.text;
     const replaceable = obj.canonical.kind === "view" || obj.canonical.kind === "function" || obj.canonical.kind === "procedure" || (obj.canonical.kind === "trigger" && obj.canonical.fields.constraint !== true);
     if (i === 0 && opts.orReplace && replaceable && !/^\s*CREATE\s+OR\s+REPLACE\b/i.test(sql)) sql = sql.replace(/\bCREATE\s+/i, "CREATE OR REPLACE ");
@@ -192,7 +200,7 @@ export function createSteps(
 export function dropStatement(kind: CanonicalKind, schema: string | undefined, name: string, signature?: string): PgStep {
   const what = objectIdent({ kind, ...(schema !== undefined ? { schema } : {}), name, ...(signature !== undefined ? { signature } : {}) });
   if (kind === "index") return step(`DROP INDEX CONCURRENTLY ${what}`, "concurrently", "SQLPG242", false);
-  return step(`DROP ${KIND_WORDS[kind]} ${what}`, "drop", kind === "trigger" ? "SQLPG285" : "SQLPG270");
+  return step(`DROP ${KIND_WORDS[kind]} ${what}`, "drop", kind === "trigger" ? "SQLPG285" : kind === "policy" ? "SQLPG292" : "SQLPG270");
 }
 
 // ── Columns ────────────────────────────────────────────────────────────
@@ -553,6 +561,36 @@ export function alterSteps(
       case "SQLPG280":
         steps.push(...createSteps(obj, opts.marker, { orReplace: true, cls: c.class, rule: c.rule }).slice(0, 1));
         break;
+      case "SQLPG291": {
+        const p = obj.props as unknown as PolicyProps;
+        const recreate =
+          ["table", "restrictive", "command"].some((k) => !same(d.fields[k], live.fields[k])) ||
+          (live.fields.using !== undefined && d.fields.using === undefined) ||
+          (live.fields.check !== undefined && d.fields.check === undefined);
+        if (recreate) {
+          steps.push(step(`DROP POLICY ${objectIdent(live)}`, c.class, c.rule));
+          steps.push(...createSteps(obj, opts.marker, { cls: c.class, rule: c.rule }));
+        } else {
+          const roles = p.roles.map((r) => (r === "public" ? "PUBLIC" : quoteIdent(r))).join(", ");
+          steps.push(step([`ALTER POLICY ${objectIdent(d)} TO ${roles}`, p.using ? `USING (${p.using})` : "", p.check ? `WITH CHECK (${p.check})` : ""].filter(Boolean).join(" "), c.class, c.rule));
+        }
+        break;
+      }
+      case "SQLPG293":
+        if (!same(d.fields.rowSecurity, live.fields.rowSecurity)) steps.push(step(`${alterKind} ${d.fields.rowSecurity ? "ENABLE" : "DISABLE"} ROW LEVEL SECURITY`, c.class, c.rule));
+        if (!same(d.fields.forceRowSecurity, live.fields.forceRowSecurity)) steps.push(step(`${alterKind} ${d.fields.forceRowSecurity ? "FORCE" : "NO FORCE"} ROW LEVEL SECURITY`, c.class, c.rule));
+        break;
+      case "SQLPG294": {
+        if (steps.some((x) => x.rule === "SQLPG294")) break;
+        const want = new Set((d.fields.attributes as string[] | undefined) ?? []);
+        const have = new Set((live.fields.attributes as string[] | undefined) ?? []);
+        const flip = (a: string) => (a.startsWith("no") ? a.slice(2) : `no${a}`);
+        // An attribute at its default is in neither set: write the side that changes.
+        const words = [...[...want].filter((a) => !have.has(a)), ...[...have].filter((a) => !want.has(a)).map(flip)];
+        const limit = d.fields.connectionLimit !== live.fields.connectionLimit ? [`CONNECTION LIMIT ${String(d.fields.connectionLimit ?? -1)}`] : [];
+        steps.push(step(`ALTER ROLE ${objectIdent(d)} WITH ${[...words.map((w) => w.toUpperCase()), ...limit].join(" ")}`, c.class, c.rule));
+        break;
+      }
       case "SQLPG284":
         if (d.fields.constraint === true || live.fields.constraint === true || d.signature !== live.signature) {
           steps.push(step(`DROP TRIGGER ${objectIdent(live)}`, c.class, c.rule));
@@ -674,6 +712,8 @@ export interface PgStatementPlanInput {
   carriesMarker?: (live: PgDiffObject, currentKey: string) => boolean;
   /** The comment an extension's control file sets, kept under the trailer when the declaration sets none. */
   extensionComment?: (name: string) => string | undefined;
+  /** Whether access is managed: off, a table is created without its row-level security statements. Default: on. */
+  access?: boolean;
 }
 
 export interface PgStatementPlan {
@@ -685,6 +725,9 @@ export interface PgStatementPlan {
 
 /** Drop order: what reads from a table before the table, types after the tables using them, a schema last. */
 const DROP_ORDER: Record<CanonicalKind, number> = {
+  grant: 0,
+  defaultPrivileges: 0,
+  policy: 0,
   trigger: 0,
   materializedView: 1,
   view: 2,
@@ -698,6 +741,8 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   enum: 8,
   extension: 9,
   schema: 10,
+  // A role is the cluster's: never dropped by a prune (`../live/catalog.ts` reads only the declared ones).
+  role: 11,
 };
 
 /**
@@ -718,7 +763,8 @@ export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
   }
 
   const recreatedRelations = new Set<string>();
-  const objects = input.declared.map((obj): PgObjectStatements => {
+  // Grants and default privileges are access, made by their own statements (`../access/acl.ts`).
+  const objects = input.declared.filter((obj) => !ACCESS_KINDS.has(obj.canonical.kind)).map((obj): PgObjectStatements => {
     const key = keyOf(obj);
     const currentKey = matched.get(key);
     const live = currentKey !== undefined ? currentByKey.get(currentKey) : undefined;
@@ -746,7 +792,7 @@ export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
       const base = obj.canonical.kind === "extension" && !live ? input.extensionComment?.(obj.canonical.name) : undefined;
       // An index on a table that exists is built under the scan timeout (SQLPG240, SQLPG241); one on a new table is part of the create.
       const how = mine.find((c) => c.rule === "SQLPG200" || c.rule === "SQLPG240" || c.rule === "SQLPG241");
-      const steps = createSteps(obj, input.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}) });
+      const steps = createSteps(obj, input.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}), ...(input.access === false ? { access: false } : {}) });
       return { verdict: "create", obj, changes: mine, steps, ...withLive };
     }
 
@@ -770,7 +816,7 @@ export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
 
   const drops: PgDropStatement[] = [];
   for (const c of input.changes) {
-    if (!((c.rule === "SQLPG270" || c.rule === "SQLPG242" || c.rule === "SQLPG285") && c.after === undefined)) continue;
+    if (!((c.rule === "SQLPG270" || c.rule === "SQLPG242" || c.rule === "SQLPG285" || c.rule === "SQLPG292") && c.after === undefined)) continue;
     const o = currentByKey.get(c.object);
     if (!o || o.foreign) continue;
     const schema = o.kind === "schema" || o.kind === "extension" ? undefined : o.schema;

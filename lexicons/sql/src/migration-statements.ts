@@ -237,6 +237,13 @@ function postgresStatements(beforeJson: string, afterJson: string, options: Diff
       });
     }
   }
+  // Privileges (#3681), after the objects they are on: one statement each, under the declaration behind it.
+  const afterByExport = new Map(after.map((o) => [o.exportName, o]));
+  for (const c of diff.access ?? []) {
+    const decl = c.exports.map((e) => afterByExport.get(e)).find((o) => o !== undefined);
+    const where = decl ? at(decl.exportName, decl.type, decl.name) : at(c.change.object, c.target.kind === "default" ? POSTGRES_ENTITY_TYPES.defaultPrivileges : POSTGRES_ENTITY_TYPES.grant, c.change.object.slice(4));
+    for (const sql of c.sql) steps.push({ kind: "statement", ...where, sql, rule: c.change.rule, class: c.change.class, transactional: true });
+  }
   const beforeByExport = new Map(before.map((o) => [o.exportName, o]));
   for (const d of plan.drops) {
     const o = beforeByExport.get(d.key);
