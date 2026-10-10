@@ -6,7 +6,7 @@
 
 import type { ChantConfig } from "@intentius/chant/config";
 import type { UnobservedReason } from "@intentius/chant/observation";
-import { connectPostgres, PostgresQueryError, type PostgresClient, type PostgresEndpoint } from "./client";
+import { connectPostgres, DEFAULT_LOCK_TIMEOUT_MS, PostgresQueryError, withCatalogLockTimeout, type PostgresClient, type PostgresEndpoint } from "./client";
 import type { PostgresProvider } from "../providers/types";
 import { credentialSource, TokenSourceError } from "../../token-source";
 
@@ -139,11 +139,23 @@ export async function resolveBoundTarget(options: BindOptions = {}): Promise<Pos
   return target;
 }
 
-/** Resolve the environment's server and connect to it. The caller ends the client. */
+/**
+ * Resolve the environment's server and connect to it. The caller ends the client.
+ *
+ * The session reads under the profile's `lockTimeoutMs` (the applier's 5000 ms
+ * otherwise): a catalog read blocked behind ACCESS EXCLUSIVE fails with the
+ * relation and the pid that holds it, instead of waiting for as long as the
+ * lock is held.
+ */
 export async function bindPostgres(options: BindOptions = {}): Promise<{ target: PostgresTarget; client: PostgresClient }> {
   const target = await resolveBoundTarget(options);
-  const client = await (options.connect ?? connectPostgres)(target.endpoint);
-  return { target, client };
+  const raw = await (options.connect ?? connectPostgres)(target.endpoint);
+  try {
+    return { target, client: await withCatalogLockTimeout(raw, target.timeouts?.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS) };
+  } catch (err) {
+    await raw.end();
+    throw err;
+  }
 }
 
 /** SQLSTATEs that mean the server refused who we are: invalid_authorization_specification, invalid_password, insufficient_privilege. */

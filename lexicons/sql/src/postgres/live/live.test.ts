@@ -196,3 +196,57 @@ describe("a managed provider's own objects (sql.provider)", () => {
     expect(r.resources.authUsers).toMatchObject({ ownership: "foreign", attributes: { keptBy: "Supabase" } });
   });
 });
+
+describe("catalog reads under lock_timeout (#3678)", () => {
+  /** A fake whose view read waits behind a lock and times out, and whose pg_locks names the holder. */
+  const blocked = (log: string[]) => {
+    const inner = fakeClient(CATALOG, log);
+    return {
+      async query<T>(sql: string, params?: readonly unknown[]): Promise<T[]> {
+        if (sql.includes("c.relkind IN ('v', 'm')")) {
+          log.push(sql);
+          throw new PostgresQueryError("canceling statement due to lock timeout", "55P03");
+        }
+        if (sql.includes("pg_catalog.pg_locks")) {
+          log.push(sql);
+          return [{ pid: 4242, relation: "app.orders", application: "psql", state: "idle in transaction", seconds: 12, query: "LOCK TABLE app.orders IN ACCESS EXCLUSIVE MODE" }] as T[];
+        }
+        return inner.query<T>(sql, params);
+      },
+      end: () => inner.end(),
+    };
+  };
+
+  test("the session's lock_timeout is the profile's lockTimeoutMs, else the applier's 5000 ms", async () => {
+    for (const [lockTimeoutMs, expected] of [[undefined, "5000ms"], [250, "250ms"]] as const) {
+      const log: string[] = [];
+      const params: unknown[][] = [];
+      const cfg = { sql: { profiles: { prod: { ...config.sql.profiles.prod, ...(lockTimeoutMs !== undefined ? { lockTimeoutMs } : {}) } } } };
+      await describeResources({
+        ...options({ users: DECLARED.users }),
+        config: cfg,
+        connect: async () => {
+          const c = fakeClient(CATALOG, log);
+          return { query: (sql: string, p?: readonly unknown[]) => (params.push([sql, ...(p ?? [])]), c.query(sql, p)), end: c.end } as never;
+        },
+      });
+      expect(params[0]).toEqual(["SELECT pg_catalog.set_config('lock_timeout', $1, false)", expected]);
+    }
+  });
+
+  test("a read that times out on a lock is read-failed, naming the relation and the pid holding it", async () => {
+    const log: string[] = [];
+    const r = normalizeObservation(await describeResources({ ...options({ users: DECLARED.users }), connect: async () => blocked(log) as never }));
+    const users = r.unobserved.users;
+    expect(users?.reason).toBe("read-failed");
+    expect(users?.detail).toContain("canceling statement due to lock timeout");
+    expect(users?.detail).toContain("app.orders is held in ACCESS EXCLUSIVE by pid 4242");
+    expect(users?.detail).toContain("lockTimeoutMs");
+  });
+
+  test("other failures pass through unchanged", async () => {
+    const { withCatalogLockTimeout } = await import("./client");
+    const c = await withCatalogLockTimeout({ query: async (sql: string) => { if (sql.startsWith("SELECT 1")) throw new PostgresQueryError("boom", "XX000"); return []; }, end: async () => {} }, 100);
+    await expect(c.query("SELECT 1")).rejects.toThrow(/^boom$/);
+  });
+});

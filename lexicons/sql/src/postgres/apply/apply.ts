@@ -70,7 +70,7 @@ import type { OwnershipMarker } from "@intentius/chant/ownership";
 import type { ApplyRef } from "@intentius/chant/apply";
 import { SqlApplyError, dependencyFailedDetail, missingDependencies, readBuildObjects, type SqlApplyOutcome } from "../../core/apply";
 import { carriesMarker, isChantManaged } from "../../core/ownership";
-import { PostgresQueryError, type PostgresClient } from "../live/client";
+import { DEFAULT_LOCK_TIMEOUT_MS, PostgresQueryError, type PostgresClient } from "../live/client";
 import type { PostgresTarget } from "../live/bind";
 import type { LivePgObject, readLiveSchema } from "../live/catalog";
 import { liveProps } from "../plan/deep";
@@ -98,7 +98,7 @@ export interface PostgresApplyTimeouts {
   scanTimeoutMs: number;
 }
 
-export const DEFAULT_POSTGRES_APPLY_TIMEOUTS: PostgresApplyTimeouts = { lockTimeoutMs: 5_000, statementTimeoutMs: 60_000, scanTimeoutMs: 0 };
+export const DEFAULT_POSTGRES_APPLY_TIMEOUTS: PostgresApplyTimeouts = { lockTimeoutMs: DEFAULT_LOCK_TIMEOUT_MS, statementTimeoutMs: 60_000, scanTimeoutMs: 0 };
 
 /** One statement as it ran: its object, the timeouts it ran with, and the transaction it was in. */
 export interface RanStatement {
