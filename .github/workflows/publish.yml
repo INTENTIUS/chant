@@ -64,9 +64,15 @@ jobs:
   # `gate` output; on `timeout` the tag is kept (see `untag`). The job timeout
   # sits above the script's own so a slow CI ends as `timeout`, not as a
   # cancelled job.
+  #
+  # The repo variable CHANT_RELEASE_SKIP_CI_GATE=1 skips this job, for
+  # releases made from local gates while CI is backed up (`just release`
+  # with CHANT_RELEASE_SKIP_PREFLIGHT=1). `publish` accepts a skipped gate,
+  # and `untag` reacts only to a failed or cancelled one. Trusted
+  # publishing and the audit still run.
   test:
     name: release-gate
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && vars.CHANT_RELEASE_SKIP_CI_GATE != '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
