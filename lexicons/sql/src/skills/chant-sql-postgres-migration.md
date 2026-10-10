@@ -40,6 +40,8 @@ Options besides `name`, `env`, `table`, `column`, `using`:
 - `gate` and `contractGate`: the two approvals, each with `gate` (name), `timeout` and `description`; `gate` also takes `approval` for quorum, roles and a policy, and a policy gets `verifiedRows` and `mismatched` as context;
 - `backfillTimeout` (default `6h`), `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `stack`, `ownershipEnv`.
 
+Run as one step of a change approved elsewhere: `gates: "outer"` leaves out the switch gate, the contract gate and the Contract phase (verification still runs; the old column is kept until its retention date), and `onFailure: "keep"` leaves out onFailure, so a failed run's next run resumes the backfill from its receipts. Set them rather than editing the Op's phases.
+
 ## What it does
 
 | Phase | Step |
@@ -103,7 +105,7 @@ or set `replicationLag: false` to run without the check.
 
 ## When something goes wrong
 
-- A failed step (a value the `using` expression cannot convert, a verification mismatch, a refused declaration, an index that cannot be built) runs onFailure: the trigger, its function, the check, the carried indexes and constraints, the new column and the receipts table are dropped, and the plan shows the original change again. The old column was never touched. Fix the declaration or the data and run again. A failed gate or an aborted run does not run onFailure.
+- A failed step (a value the `using` expression cannot convert, a verification mismatch, a refused declaration, an index that cannot be built) runs onFailure, unless the Op sets `onFailure: "keep"`: the trigger, its function, the check, the carried indexes and constraints, the new column and the receipts table are dropped, and the plan shows the original change again. The old column was never touched. Fix the declaration or the data and run again. A failed gate or an aborted run does not run onFailure.
 - A lock timeout means another session holds a lock the step needs (SQLSTATE 55P03). The step retries a few times, then fails. Run again when the blocker has finished.
 - The working objects (new column, trigger, function, check, receipts table) carry chant's comment marker with a `migration=` key, and plans, imports and prunes leave them out, so an `ApplyOp` for the rest of the schema can run beside a migration. An object under one of the working names that is not this migration's stops the run; rename or drop it by hand.
 
