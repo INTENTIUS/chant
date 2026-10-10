@@ -10,8 +10,27 @@
  * `upstreamPin` already tracks the LTS tags (`-lts`).
  */
 
-import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
+import { emulatorLifecycle, type EmulatorCapability, type EmulatorIdentity, type EmulatorSpec } from "@intentius/chant/op";
 import { clickhouseImage } from "../../spec/pin";
+
+/**
+ * The server's UUID (#3673), read in the container and through the endpoint
+ * `status` prints, so a server of another origin on the same port is told
+ * apart from the emulator.
+ */
+export const CLICKHOUSE_EMULATOR_IDENTITY: EmulatorIdentity = {
+  server: "ClickHouse",
+  command: ["clickhouse-client", "-q", "SELECT serverUUID()"],
+  async probe(endpoint) {
+    const url = new URL(endpoint);
+    url.searchParams.set("query", "SELECT serverUUID(), version() FORMAT TSV");
+    const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+    const body = (await res.text()).trim();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${body.split("\n")[0]}`);
+    const [id = "", version = "(unknown version)"] = body.split("\t");
+    return { id, label: `ClickHouse ${version}` };
+  },
+};
 
 export const CLICKHOUSE_EMULATOR_SPEC: EmulatorSpec = {
   name: "chant-clickhouse",
@@ -21,6 +40,8 @@ export const CLICKHOUSE_EMULATOR_SPEC: EmulatorSpec = {
   // The image disables network access for the passwordless default user
   // unless this is set; a local server is reached as `default` with no password.
   runArgs: ["-e", "CLICKHOUSE_SKIP_USER_SETUP=1"],
+  identity: CLICKHOUSE_EMULATOR_IDENTITY,
+  credentials: "user default, no password",
 };
 
 /** `CLICKHOUSE_URL` is the variable binding reads when no `sql.profiles.<env>` names a server. */

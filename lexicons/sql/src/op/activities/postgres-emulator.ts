@@ -15,11 +15,49 @@
  * `upstreamPins`, not the emulator freshness check.
  */
 
-import { emulatorLifecycle, type EmulatorCapability, type EmulatorSpec } from "@intentius/chant/op";
+import { emulatorLifecycle, type EmulatorCapability, type EmulatorIdentity, type EmulatorSpec } from "@intentius/chant/op";
 import { POSTGRES_LATEST_MAJOR, postgresImage } from "../../spec/postgres-pin";
+import { connectPostgres } from "../../postgres/live/client";
 
 /** The local server's password. It is a throwaway server on localhost. */
 export const POSTGRES_EMULATOR_PASSWORD = "chant";
+
+/** How long `chant emulator status` waits for the server behind the endpoint. */
+const PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * The cluster's system identifier, unique per `initdb` (#3673): read in the
+ * container over its socket, and through the endpoint `status` prints. A
+ * native Postgres holding 127.0.0.1:5432 answers with its own, or refuses
+ * the emulator's sign-in.
+ */
+export const POSTGRES_EMULATOR_IDENTITY: EmulatorIdentity = {
+  server: "Postgres",
+  command: ["psql", "-U", "postgres", "-tAc", "select system_identifier from pg_control_system()"],
+  async probe(endpoint) {
+    const client = await withTimeout(
+      connectPostgres({ url: endpoint, user: "postgres", password: POSTGRES_EMULATOR_PASSWORD }, { applicationName: "chant emulator status" }),
+    );
+    try {
+      const [row] = await withTimeout(
+        client.query<{ id: string; version: string }>(
+          "SELECT system_identifier::text AS id, pg_catalog.current_setting('server_version') AS version FROM pg_catalog.pg_control_system()",
+        ),
+      );
+      return { id: row?.id ?? "", label: `PostgreSQL ${row?.version ?? "(unknown version)"}` };
+    } finally {
+      await client.end();
+    }
+  },
+};
+
+function withTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${PROBE_TIMEOUT_MS / 1000}s`)), PROBE_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 export const POSTGRES_EMULATOR_SPEC: EmulatorSpec = {
   name: "chant-postgres",
@@ -28,6 +66,8 @@ export const POSTGRES_EMULATOR_SPEC: EmulatorSpec = {
   readyCommand: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres"],
   endpoint: (port) => `postgres://localhost:${port}/postgres`,
   runArgs: ["-e", `POSTGRES_PASSWORD=${POSTGRES_EMULATOR_PASSWORD}`],
+  identity: POSTGRES_EMULATOR_IDENTITY,
+  credentials: `user postgres, password ${POSTGRES_EMULATOR_PASSWORD}`,
 };
 
 /** `POSTGRES_URL` is the variable binding reads when no `sql.profiles.<env>` names a server. */

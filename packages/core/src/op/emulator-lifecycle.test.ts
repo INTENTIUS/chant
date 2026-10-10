@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { emulatorLifecycle } from "./emulator-lifecycle";
+import { createServer } from "node:net";
+import { emulatorLifecycle, hostPortInUse } from "./emulator-lifecycle";
 
 describe("emulatorLifecycle command builders", () => {
   const emu = emulatorLifecycle({
@@ -60,5 +61,16 @@ describe("an emulator reached by its own client, not over HTTP", () => {
 
   test("a spec with neither a health path nor a ready command is refused", () => {
     expect(() => emulatorLifecycle({ name: "x", image: "x:1", containerPort: 1 })).toThrow(/neither a healthPath nor a readyCommand/);
+  });
+});
+
+describe("hostPortInUse (#3673)", () => {
+  test("is true while a process listens on 127.0.0.1:<port>, false once it stops", async () => {
+    const server = createServer();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as { port: number };
+    expect(await hostPortInUse(port)).toBe(true);
+    await new Promise<void>((r) => server.close(() => r()));
+    expect(await hostPortInUse(port)).toBe(false);
   });
 });
