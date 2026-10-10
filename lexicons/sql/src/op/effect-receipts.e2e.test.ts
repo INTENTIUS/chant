@@ -10,12 +10,12 @@
  * first batch, fails on the second, and leaves one receipt. With the stop
  * row deleted, the second run skips the first batch (the log holds it once),
  * runs the other two, and leaves three receipts, in
- * `chant_receipts.receipts` under `yodel_3657/admin/`. A third run runs
+ * `chant_receipts.receipts` under `chant_e2e_3657/admin/`. A third run runs
  * nothing.
  *
  * The test's own objects are in the database (ClickHouse) or schema
- * (Postgres) `yodel_3657`; its receipts are the rows of
- * `chant_receipts.receipts` whose address starts `yodel_3657/`, deleted
+ * (Postgres) `chant_e2e_3657`; its receipts are the rows of
+ * `chant_receipts.receipts` whose address starts `chant_e2e_3657/`, deleted
  * afterwards.
  *
  * The servers: `CHANT_SQL_RECEIPTS_CLICKHOUSE_URL` and
@@ -42,7 +42,7 @@ const exec = promisify(execFile);
 
 const REPO = join(import.meta.dirname, "../../../..");
 const BIN = join(REPO, "node_modules/.bin");
-const NAME = "yodel_3657";
+const NAME = "chant_e2e_3657";
 const OP = "fill-batches";
 const ENV = "admin";
 const PREFIX = `${NAME}/${ENV}/`;
