@@ -15,7 +15,8 @@
  * PRIVILEGES` as an object, with `COMMENT ON`, `ALTER TABLE ... ROW LEVEL
  * SECURITY` and `ALTER TABLE ... ADD <table constraint>` folded into the
  * object they finish; ClickHouse reads `CREATE DATABASE`, `TABLE`, `VIEW`,
- * `MATERIALIZED VIEW`, `DICTIONARY` and `FUNCTION`. Any other statement, and any
+ * `MATERIALIZED VIEW`, `DICTIONARY`, `FUNCTION`, `USER`, `ROLE` and `ROW
+ * POLICY`, and `GRANT` (#3711). Any other statement, and any
  * statement that does not parse, throws a {@link SqlFileError} naming every
  * such statement: none is left out.
  *

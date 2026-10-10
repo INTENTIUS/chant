@@ -25,6 +25,8 @@ const CLICKHOUSE_ONLY = [
   /^\s*CREATE\s+(?:DATABASE|(?:OR\s+REPLACE\s+)?DICTIONARY)\b/im,
   // A SQL function: CREATE FUNCTION f AS (x) -> ...
   /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+[^\s(]+(?:\s+ON\s+CLUSTER\s+\S+)?\s+AS\s*\(/im,
+  // A row policy (#3711): Postgres says CREATE POLICY.
+  /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?ROW\s+POLICY\b/im,
 ];
 const POSTGRES_ONLY = [
   /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:SCHEMA|EXTENSION|TYPE|DOMAIN|SEQUENCE|(?:UNIQUE\s+)?INDEX|(?:CONSTRAINT\s+)?TRIGGER|POLICY|ROLE|FUNCTION|PROCEDURE|(?:UNLOGGED|TEMP|TEMPORARY)\s+TABLE)\b/im,

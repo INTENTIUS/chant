@@ -3,7 +3,8 @@ import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "@intentius/chant/build";
-import { readSqlFile, sqlFileDeclarations, SqlFileError } from "./sql-files";
+import { readSqlFile, sqlFileDeclarations, sqlFileEntities, SqlFileError } from "./sql-files";
+import { database, grant, policy, role, table, user } from "./clickhouse/entities";
 import { sqlPlugin } from "./plugin";
 import { sqlSerializer } from "./serializer";
 import { guessDialect, SqlFileParser } from "./import-parser";
@@ -63,6 +64,7 @@ describe("chant import of a .sql file", () => {
     expect(guessDialect("CREATE TABLE a.t (x UInt8) ENGINE = Log")).toBe("clickhouse");
     expect(guessDialect("CREATE VIEW a.v AS SELECT 1")).toBe("clickhouse");
     expect(guessDialect("CREATE FUNCTION f AS (x) -> x + 1")).toBe("clickhouse");
+    expect(guessDialect("CREATE ROW POLICY p ON a.t USING 1 TO r")).toBe("clickhouse");
     expect(guessDialect("CREATE FUNCTION app.f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$")).toBe("postgres");
     expect(new SqlFileParser().parse(PG_DDL).resources.map((r) => r.type)).toEqual(["Postgres::Enum", "Postgres::Table", "Postgres::Table", "Postgres::Index"]);
   });
@@ -102,7 +104,82 @@ CREATE TABLE analytics.counts (kind String, n UInt64) ENGINE = SummingMergeTree 
 CREATE MATERIALIZED VIEW analytics.counts_mv TO analytics.counts AS SELECT kind, count() AS n FROM analytics.events GROUP BY kind;
 CREATE DICTIONARY analytics.kinds (kind String, label String DEFAULT '') PRIMARY KEY kind SOURCE(clickhouse(table 'counts' db 'analytics')) LAYOUT(complex_key_hashed()) LIFETIME(300);
 CREATE FUNCTION kind_label AS (k) -> upper(k);
+CREATE ROLE reader SETTINGS max_memory_usage = 1000000000;
+CREATE USER app HOST ANY DEFAULT ROLE reader DEFAULT DATABASE analytics;
+CREATE ROW POLICY own_kinds ON analytics.events USING kind = 'a' TO reader;
+GRANT SELECT(ts, kind) ON analytics.events TO reader;
+GRANT reader TO app;
 `;
+
+describe("a file of ClickHouse access control (#3711)", () => {
+  const ACCESS = `CREATE DATABASE shop;
+CREATE TABLE shop.events (id UInt64, tenant String) ENGINE = MergeTree ORDER BY id;
+CREATE ROLE reader SETTINGS max_memory_usage = 1000000000;
+CREATE USER app HOST ANY DEFAULT ROLE reader DEFAULT DATABASE shop;
+CREATE ROW POLICY tenant_a ON shop.events USING tenant = 'a' TO reader;
+GRANT SELECT(id, tenant) ON shop.events TO reader;
+GRANT reader TO app;
+`;
+  const t = (s: string) => Object.assign([s], { raw: [s] }) as unknown as TemplateStringsArray;
+  const shopDb = database(t("CREATE DATABASE shop"));
+  const events = table`CREATE TABLE ${shopDb}.events (id UInt64, tenant String) ENGINE = MergeTree ORDER BY id`;
+  const reader = role(t("CREATE ROLE reader SETTINGS max_memory_usage = 1000000000"));
+  const app = user(t("CREATE USER app HOST ANY DEFAULT ROLE reader DEFAULT DATABASE shop"));
+  const tagged = [
+    shopDb,
+    events,
+    reader,
+    app,
+    policy`CREATE ROW POLICY tenant_a ON ${events} USING tenant = 'a' TO ${reader}`,
+    grant`GRANT SELECT(id, tenant) ON ${events} TO ${reader}`,
+    grant`GRANT reader TO ${app}`,
+  ];
+  const props = (e: unknown) => {
+    const { source: _source, ...rest } = (e as { props: Record<string, unknown> }).props;
+    return JSON.parse(JSON.stringify(rest)) as Record<string, unknown>;
+  };
+
+  test("users, roles, row policies and grants build to the declarations the tags make", () => {
+    const read = sqlFileEntities("clickhouse", [{ origin: "access.sql", ddl: ACCESS }]);
+    expect([...read.values()].map((e) => e.entityType)).toEqual(tagged.map((e) => e.entityType));
+    expect([...read.values()].map(props)).toEqual(tagged.map(props));
+    expect(readSqlFile("clickhouse", ACCESS, { origin: "access.sql" }).map((o) => [o.type, o.name])).toEqual([
+      ["ClickHouse::Database", "shop"],
+      ["ClickHouse::Table", "shop.events"],
+      ["ClickHouse::Role", "reader"],
+      ["ClickHouse::User", "app"],
+      ["ClickHouse::RowPolicy", "shop.tenant_a"],
+      ["ClickHouse::Grant", "grant select(id, tenant) on shop.events to reader"],
+      ["ClickHouse::Grant", "grant reader to app"],
+    ]);
+  });
+
+  test("with a database for unqualified names, a policy's and a grant's table are qualified", () => {
+    const objects = readSqlFile("clickhouse", "CREATE ROW POLICY p ON events USING 1 TO reader;\nGRANT SELECT ON events TO reader;\nGRANT SELECT ON *.* TO reader", { origin: "a.sql", schema: "shop" });
+    expect(objects.map((o) => o.ddl)).toEqual(["CREATE ROW POLICY p ON shop.events USING 1 TO reader", "GRANT SELECT ON shop.events TO reader", "GRANT SELECT ON *.* TO reader"]);
+  });
+
+  test("a password is refused with the tag's message, and so is a REVOKE", () => {
+    let tagMessage = "";
+    try {
+      user(t("CREATE USER app IDENTIFIED BY 'secret'"));
+    } catch (e) {
+      tagMessage = (e as Error).message;
+    }
+    expect(tagMessage).toMatch(/IDENTIFIED BY holds a password/);
+    const err = (() => {
+      try {
+        readSqlFile("clickhouse", "CREATE USER app IDENTIFIED BY 'secret';\nREVOKE SELECT ON shop.events FROM reader", { origin: "users.sql" });
+      } catch (e) {
+        return e as SqlFileError;
+      }
+      throw new Error("read");
+    })();
+    expect(err).toBeInstanceOf(SqlFileError);
+    expect(err.problems).toEqual([`${tagMessage}: CREATE USER app IDENTIFIED BY 'secret'`, expect.stringMatching(/holds a REVOKE; declare the grants a grantee keeps.*: REVOKE SELECT ON shop\.events FROM reader$/)]);
+    expect(err.message).not.toContain("not a CREATE statement");
+  });
+});
 
 describe("chant build reads the .sql files in the source directory", () => {
   const dirs: string[] = [];

@@ -41,7 +41,7 @@ Postgres reads each `CREATE` statement chant declares (schema, table, index, vie
 
 `BEGIN` and `COMMIT` are skipped.
 
-ClickHouse reads `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `CREATE MATERIALIZED VIEW`, `CREATE DICTIONARY` and `CREATE FUNCTION`.
+ClickHouse reads `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `CREATE MATERIALIZED VIEW`, `CREATE DICTIONARY` and `CREATE FUNCTION`, and the access statements `CREATE USER`, `CREATE ROLE`, `CREATE ROW POLICY` and `GRANT` ([Access Control](../clickhouse-access/)). Each access statement is read by its tag, so what the tag refuses is refused in its words: a password (`IDENTIFIED BY`), or a `REVOKE`.
 
 Anything else fails the build: an `INSERT`, a `DROP`, a `SET`, a `COMMENT ON` for an object the file does not create, or a statement that does not parse. The error names the file and every statement it could not read, so the whole file is reported at once:
 
@@ -84,7 +84,7 @@ Two files' objects that reference each other in a cycle are a build error, as tw
 
 ## Turn a file into templates
 
-`chant import <file>.sql --lexicon sql` writes the file's objects as one `schema.ts` of tagged templates, the same declarations the build reads from the file. The dialect is read off the statements: an `ENGINE =` clause, a `CREATE DATABASE`, a `CREATE DICTIONARY` or a lambda `CREATE FUNCTION f AS (x) -> ...` is ClickHouse, and a statement only Postgres has (`CREATE SCHEMA`, `CREATE INDEX`, `COMMENT ON`, `ALTER TABLE`, `GRANT`) or a `CREATE TABLE` with no engine is Postgres. `--parser-option dialect=postgres` names it. A statement the import cannot read stops it, named, as on a build.
+`chant import <file>.sql --lexicon sql` writes the file's objects as one `schema.ts` of tagged templates, the same declarations the build reads from the file. The dialect is read off the statements: an `ENGINE =` clause, a `CREATE DATABASE`, a `CREATE DICTIONARY`, a `CREATE ROW POLICY` or a lambda `CREATE FUNCTION f AS (x) -> ...` is ClickHouse, and a statement only Postgres has (`CREATE SCHEMA`, `CREATE INDEX`, `COMMENT ON`, `ALTER TABLE`, `GRANT`) or a `CREATE TABLE` with no engine is Postgres. `--parser-option dialect=postgres` names it. A statement the import cannot read stops it, named, as on a build.
 
 ## From code
 
