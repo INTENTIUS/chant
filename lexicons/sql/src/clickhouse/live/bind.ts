@@ -24,6 +24,12 @@ export interface ClickHouseTarget {
    * as declared.
    */
   topology?: Topology;
+  /**
+   * Whether chant manages access here (`sql.profiles.<env>.access`, #3716):
+   * the declared users, roles, row policies and grants. Off when omitted, as
+   * on Postgres, and off for a server bound by `CLICKHOUSE_URL`.
+   */
+  access?: boolean;
 }
 
 export interface UnresolvedTarget {
@@ -75,6 +81,7 @@ export function resolveClickHouseTarget(input: {
       ...(profile.databases ? { databases: profile.databases } : {}),
       defaultDatabase: profile.defaultDatabase ?? "default",
       ...(profile.topology !== undefined ? { topology: toTopology(profile.topology) } : {}),
+      ...(profile.access === true ? { access: true } : {}),
     };
   }
   const url = env.CLICKHOUSE_URL;

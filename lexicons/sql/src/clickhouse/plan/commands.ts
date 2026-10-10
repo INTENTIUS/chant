@@ -35,7 +35,7 @@ import { renderDiff } from "./report";
 import { keyedByQualifiedName, schemaFromBuildFile, schemaFromServer } from "./schema";
 import { dropFormattingOnly } from "./server-format";
 import { scopeOf } from "./normalize";
-import { declaredAccess } from "../live/catalog";
+import { ACCESS_KINDS, accessUnmanagedHint, declaredAccess } from "../live/catalog";
 import { bindClickHouse } from "../live/bind";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
 import { readFileSync } from "node:fs";
@@ -120,7 +120,10 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
 /** The declared objects against the server, keys and labels by `database.name`. */
 export async function planAgainstServer(environment: string, buildFile: string, options: Parameters<typeof bindClickHouse>[0] = {}): Promise<SchemaDiff> {
   const target = await bindClickHouse({ ...options, environment });
-  const declared = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase, target.topology));
+  const all = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase, target.topology));
+  // Access declarations a profile does not manage are not planned, and the server's access is not read (#3716).
+  const declared = target.access === true ? all : all.filter((o) => !ACCESS_KINDS.has(o.canonical.kind));
+  const unmanaged = all.length - declared.length;
   const databases = new Set(declared.map((o) => scopeOf(o.canonical)));
   const unreadable: UnreadableEntry[] = [];
   const live = await schemaFromServer(target, databases, unreadable, declaredAccess(declared.map((o) => o.canonical)));
@@ -136,7 +139,7 @@ export async function planAgainstServer(environment: string, buildFile: string, 
   return {
     changes: relabel,
     rebuilds: relabel.filter((c) => c.class === "rebuild"),
-    hints: diff.hints,
+    hints: unmanaged > 0 ? [...diff.hints, accessUnmanagedHint(unmanaged, environment)] : diff.hints,
     ...(rebuildOps.length > 0 ? { rebuildOps } : {}),
     ...(unreadable.length > 0 ? { unreadable } : {}),
   };

@@ -60,6 +60,14 @@ describe("binding an environment to a server", () => {
     });
   });
 
+  test("access is managed only where the profile says so (#3716)", () => {
+    const on = resolveClickHouseTarget({ environment: "prod", config: { sql: { profiles: { prod: { url: "http://ch:8123", access: true } } } } as never, env: {} });
+    expect(on).toMatchObject({ access: true });
+    const off = resolveClickHouseTarget({ environment: "prod", config: { sql: { profiles: { prod: { url: "http://ch:8123" } } } } as never, env: {} });
+    expect(off).not.toHaveProperty("access");
+    expect(resolveClickHouseTarget({ env: { CLICKHOUSE_URL: "http://ch:8123" } })).not.toHaveProperty("access");
+  });
+
   test("a credential variable the profile names but nobody set is no-credentials", () => {
     const t = resolveClickHouseTarget({ environment: "prod", config: { sql: { profiles: { prod: { url: "x", password: { env: "P" } } } } }, env: {} });
     expect(isUnresolvedTarget(t) && t.reason).toBe("no-credentials");

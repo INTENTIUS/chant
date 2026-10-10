@@ -158,11 +158,12 @@ export const sqlProfileSchema = z.strictObject({
    */
   scanTimeoutMs: z.number().int().nonnegative().optional(),
   /**
-   * Postgres: whether chant manages access in this environment (#3681): the
+   * Whether chant manages access in this environment. Postgres (#3681): the
    * declared row-level security policies and each table's row-level security,
    * the declared roles (created when missing, never dropped), and the
    * privileges on the declared objects and the default privileges, which a
-   * plan compares and an apply grants and revokes. Off when omitted: the
+   * plan compares and an apply grants and revokes. ClickHouse (#3716): the
+   * declared users, roles, row policies and grants. Off when omitted: the
    * access declarations are not planned or applied, and the server's access
    * is not read, so a project that manages access elsewhere is not affected.
    */

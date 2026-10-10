@@ -39,6 +39,24 @@ export const readerToApp = grant`GRANT ${reader} TO ${app}`;
 
 Interpolate a role, a user or a table where a statement names it. The reference renders as the name and makes a dependency, so a role is created before the user whose default role it is, and a table before its policy.
 
+## Turning it on per environment
+
+Access is off until the environment's profile turns it on, as on Postgres, so a project whose users and grants are managed by another tool, or by hand, is not affected:
+
+```ts
+export default {
+  lexicons: ["sql"],
+  sql: {
+    dialect: "clickhouse",
+    profiles: {
+      prod: { url: "https://ch.internal:8443", user: { env: "CH_USER" }, password: { env: "CH_PASSWORD" }, access: true },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+With `access: true`, the plan, the applier and `chant lifecycle diff --live` read the declared users, roles, row policies and grants and compare them. Without it, none of them is read: `chant sql plan` leaves them out (a hint counts them), the applier reports each as `filtered`, and the drift read reports each as unobserved, `filtered`. A server bound by `CLICKHOUSE_URL` has no profile, so access is off there.
+
 ## What the project declares and what the environment keeps
 
 A password is the environment's. A `user` template refuses `IDENTIFIED BY` and any `IDENTIFIED WITH` that holds a password or its hash, so no secret is ever written into a build. A user declared with no `IDENTIFIED` clause is not created by chant. The apply reports it as not attempted, and the grants to it wait. Create it once with its password (`CREATE USER app IDENTIFIED BY ...`), and the next apply makes the rest of it as declared and leaves the password alone. A user declared with a method that holds no secret (`ssl_certificate`, `ldap`, `kerberos`, `http`, `ssh_key` with its public key, `NOT IDENTIFIED`) is created by chant and kept that way.

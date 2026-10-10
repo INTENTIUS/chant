@@ -22,7 +22,7 @@
 import { deepObservation, type DeepObservationResult, type DeepResourceObservation, type DeepNormalizationHooks } from "@intentius/chant/deep-observation";
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "../live/bind";
-import { accessOf, readLiveAccess, readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
+import { ACCESS_ENTITY_TYPES, ACCESS_UNMANAGED_DETAIL, accessOf, readLiveAccess, readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
 import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
@@ -207,7 +207,7 @@ export async function observeResourcesDeep(
   let live: LiveObject[];
   try {
     target = await bindClickHouse(options);
-    live = [...(await readLiveSchema(target)), ...(await readLiveAccess(target, accessOf(options.entities, target.defaultDatabase)))];
+    live = [...(await readLiveSchema(target)), ...(target.access === true ? await readLiveAccess(target, accessOf(options.entities, target.defaultDatabase)) : [])];
   } catch (err) {
     const why = classifyClickHouseFailure(err);
     for (const name of options.entityNames) {
@@ -231,6 +231,10 @@ export async function observeResourcesDeep(
     const entity = options.entities.get(name);
     if (!entity || !entity.entityType.startsWith("ClickHouse::")) {
       unobserved[name] = { type: entity?.entityType ?? "", reason: "unsupported-kind" };
+      continue;
+    }
+    if (target.access !== true && ACCESS_ENTITY_TYPES.has(entity.entityType)) {
+      unobserved[name] = { type: entity.entityType, reason: "filtered", detail: ACCESS_UNMANAGED_DETAIL };
       continue;
     }
     if (entity.entityType === CLICKHOUSE_ENTITY_TYPES.grant) {

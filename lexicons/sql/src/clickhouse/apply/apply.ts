@@ -43,7 +43,7 @@ import {
 } from "../../core/apply";
 import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "../live/bind";
-import { declaredAccess, readLiveAccess, readLiveSchema, type LiveObject } from "../live/catalog";
+import { ACCESS_KINDS, ACCESS_UNMANAGED_DETAIL, declaredAccess, readLiveAccess, readLiveSchema, type LiveObject } from "../live/catalog";
 import { canonicalObject, grantsObject, liveCanonical, objectKey, scopeOf, type CanonicalObject } from "../plan/normalize";
 import { grantsByGrantee } from "../access";
 import { diffSchemas, type Change } from "../plan/diff";
@@ -148,13 +148,19 @@ export async function plannedChanges(target: ClickHouseTarget, declared: readonl
  * exactly one of applied or not attempted, and every pruned orphan; throws
  * {@link ClickHouseApplyError} when the server refused a statement.
  */
-export async function applyClickHouse(target: ClickHouseTarget, declared: readonly DeclaredObject[], opts: ClickHouseApplyOptions = {}): Promise<ClickHouseApplyOutcome> {
+export async function applyClickHouse(target: ClickHouseTarget, all: readonly DeclaredObject[], opts: ClickHouseApplyOptions = {}): Promise<ClickHouseApplyOutcome> {
   const log = opts.log ?? (() => undefined);
+  // Access declarations a profile does not manage are not applied, and the server's access is not read (#3716).
+  const managed = target.access === true;
+  const declared = managed ? all : all.filter((o) => !ACCESS_KINDS.has(o.canonical.kind));
   const { objects: liveObjects, canonical: live } = await liveSchema(target, declared);
   const liveByKey = new Map(liveObjects.map((o) => [liveKey(o), o]));
   const changes = await plannedChanges(target, declared, live);
 
   const outcome: ClickHouseApplyOutcome = { target: target.endpoint.url, source: target.source, applied: [], pruned: [], notAttempted: [], failed: [] };
+  if (!managed) {
+    for (const o of all) if (ACCESS_KINDS.has(o.canonical.kind)) outcome.notAttempted.push({ kind: o.type, name: o.key, reason: "filtered", detail: ACCESS_UNMANAGED_DETAIL });
+  }
   /** Export names whose object is on the server. */
   const onServer = new Set<string>();
   const exportNames = new Set(declared.map((o) => o.exportName));
