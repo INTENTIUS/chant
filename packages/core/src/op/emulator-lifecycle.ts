@@ -1,9 +1,10 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { connect } from "node:net";
 import { promisify } from "node:util";
 import { sleep } from "./activity-runtime";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * A local emulator's fixed identity — everything that differs between the
@@ -95,6 +96,97 @@ export function hostPortInUse(port: number, timeoutMs = 1_000): Promise<boolean>
     socket.once("connect", () => done(true));
     socket.once("error", () => done(false));
   });
+}
+
+/** One host address Docker publishes a container port on, as `docker port` prints it. */
+export interface PublishedAddress {
+  /** The bound host IP: `0.0.0.0`, `::`, `127.0.0.1`, ... */
+  ip: string;
+  port: number;
+}
+
+/**
+ * Parse `docker port <name> <port>/tcp` output (`0.0.0.0:5432`, `[::]:5432`,
+ * one per line). Lines that do not parse are dropped.
+ */
+export function parsePublishedAddresses(stdout: string): PublishedAddress[] {
+  const out: PublishedAddress[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(?:\[([^\]]+)\]|([^\s:]+)):(\d+)\s*$/.exec(line);
+    if (match) out.push({ ip: (match[1] ?? match[2])!, port: Number(match[3]) });
+  }
+  return out;
+}
+
+/**
+ * The hosts a client on this machine dials to reach a published address,
+ * `localhost` first: a wildcard bind (`0.0.0.0`, `::`) answers on the
+ * loopback of its family, and a specific IP only on itself.
+ */
+export function clientHosts(addresses: readonly PublishedAddress[]): { host: string; port: number }[] {
+  const seen = new Set<string>();
+  const hosts: { host: string; port: number }[] = [];
+  const add = (host: string, port: number): void => {
+    const key = `${host}:${port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    hosts.push({ host, port });
+  };
+  for (const { ip, port } of addresses) {
+    if (ip === "0.0.0.0" || ip === "127.0.0.1") add("localhost", port);
+  }
+  for (const { ip, port } of addresses) {
+    if (ip === "::" || ip === "::1") add("[::1]", port);
+    else if (ip !== "0.0.0.0" && ip !== "127.0.0.1") add(ip.includes(":") ? `[${ip}]` : ip, port);
+  }
+  return hosts;
+}
+
+/** `endpoint` with its host replaced by `host` (`localhost` stays as written). */
+export function endpointOnHost(endpoint: string, host: string): string {
+  if (host === "localhost") return endpoint;
+  const url = new URL(endpoint);
+  url.hostname = host;
+  return url.toString().replace(/\/$/, endpoint.endsWith("/") ? "/" : "");
+}
+
+/**
+ * Pick the endpoint of a reused container that reaches it (the identity read
+ * inside the container matches the one read through the endpoint), trying
+ * {@link clientHosts} in order. `notes` says when `localhost` reaches another
+ * server and a different address had to be used; `error` says when none of
+ * them reaches the emulator.
+ */
+export async function pickReachableEndpoint(opts: {
+  name: string;
+  hosts: readonly { host: string; port: number }[];
+  endpoint: (port: number) => string;
+  identity: EmulatorIdentity;
+  /** The identity read inside the container. */
+  inside: string;
+  /** A hint appended to an `error`, e.g. how to republish on a free port. */
+  hint: string;
+}): Promise<{ endpoint: string; notes: string[] } | { error: string }> {
+  const { name, hosts, identity, inside } = opts;
+  const misses: string[] = [];
+  for (const { host, port } of hosts) {
+    const ep = endpointOnHost(opts.endpoint(port), host);
+    try {
+      const answered = await identity.probe(ep);
+      if (answered.id.trim() === inside) {
+        const notes = misses.length
+          ? [`emulator "${name}": ${misses.join("; ")}. The emulator answers on ${ep}; use that address.`]
+          : [];
+        return { endpoint: ep, notes };
+      }
+      misses.push(`${host}:${port} reaches another ${identity.server} (${answered.label}), not the emulator`);
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      misses.push(`${host}:${port} does not answer as the emulator (${why})`);
+    }
+  }
+  const tried = misses.length ? `: ${misses.join("; ")}` : "";
+  return { error: `emulator "${name}" runs, but no address it publishes reaches it${tried}. ${opts.hint}` };
 }
 
 /**
@@ -198,7 +290,7 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     spec.readyCommand?.length ? ["docker", "exec", name, ...spec.readyCommand].join(" ") : undefined;
 
   /** One readiness probe: the in-container command when declared, else the HTTP health path. */
-  async function probe(name: string, port: number, signal?: AbortSignal): Promise<boolean> {
+  async function probe(name: string, port: number, signal?: AbortSignal, host = "localhost"): Promise<boolean> {
     const command = readyExecCommand(name);
     if (command) {
       try {
@@ -209,7 +301,7 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
       }
     }
     try {
-      const res = await fetch(healthUrl(port), { signal });
+      const res = await fetch(endpointOnHost(healthUrl(port), host), { signal });
       return res.ok && ready(await res.text());
     } catch {
       // Not up yet (connection refused / non-2xx) — retry.
@@ -231,10 +323,33 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
       // `docker ps` failed — assume not running and try to start it.
     }
 
+    // A reused container publishes what it was started with, which need not
+    // be `port` on localhost: read it from Docker rather than assume it.
+    let hosts: { host: string; port: number }[] = [{ host: "localhost", port }];
     if (running) {
       // Progress → stderr, so a `--json` consumer (chant emulator, behold) reads
       // clean JSON on stdout. runOp/Op activities capture both streams regardless.
       console.error(`emulator container "${name}" already running — reusing`);
+      let published: PublishedAddress[] = [];
+      try {
+        const { stdout } = await execFileAsync("docker", ["port", name, `${spec.containerPort}/tcp`], { signal });
+        published = parsePublishedAddresses(stdout);
+      } catch {
+        // `docker port` fails when nothing is published.
+      }
+      if (published.length === 0) {
+        throw new Error(
+          `emulator "${name}" runs, but publishes no host port for ${spec.containerPort}, so nothing on this machine reaches it. ` +
+            `Run \`chant emulator down\`, then \`chant emulator up\`.`,
+        );
+      }
+      hosts = clientHosts(published);
+      if (args.port !== undefined && !hosts.some((h) => h.port === args.port)) {
+        console.error(
+          `emulator "${name}" was started on host port ${hosts[0]!.port}, not ${args.port}; reusing it there. ` +
+            `Run \`chant emulator down\` first to move it.`,
+        );
+      }
     } else {
       if (await hostPortInUse(port)) {
         throw new Error(
@@ -249,17 +364,37 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     let ok = false;
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error(`emulator "${name}" wait aborted`);
-      if (await probe(name, port, signal)) {
-        ok = true;
-        break;
+      for (const h of hosts) {
+        if (await probe(name, h.port, signal, h.host)) {
+          ok = true;
+          break;
+        }
       }
+      if (ok) break;
       await sleep(intervalMs, signal);
     }
     if (!ok) {
       throw new Error(`emulator "${name}" did not become ready within ${timeoutMs}ms`);
     }
 
-    const ep = endpoint(port);
+    let ep = endpointOnHost(endpoint(hosts[0]!.port), hosts[0]!.host);
+    if (running && spec.identity) {
+      let inside: string | undefined;
+      try {
+        inside = (await execFileAsync("docker", ["exec", name, ...spec.identity.command], { signal })).stdout.trim();
+      } catch {
+        // The container cannot answer for itself; nothing to compare against.
+      }
+      if (inside) {
+        const picked = await pickReachableEndpoint({
+          name, hosts, endpoint, identity: spec.identity, inside,
+          hint: `Stop the other server, or run \`chant emulator down\`, then \`chant emulator up --port ${spec.containerPort}=<free port>\`.`,
+        });
+        if ("error" in picked) throw new Error(picked.error);
+        for (const note of picked.notes) console.error(note);
+        ep = picked.endpoint;
+      }
+    }
     console.error(`emulator "${name}" ready on ${ep}`);
     return { endpoint: ep };
   }

@@ -76,6 +76,21 @@ reach the native server. `up` refuses in that case and names the port, and
 chant emulator up --lexicon sql --port 5432=15432
 ```
 
+When `up` reuses a running container, it reads the address that container
+publishes from Docker (`docker port`) and prints that address.
+For an emulator with an identity check (Postgres, ClickHouse) it also checks
+that the address reaches the container's server. If `localhost` reaches
+another server but the container's IPv6 or other published address works,
+`up` says so and prints that address:
+
+```
+emulator "chant-postgres": localhost:5432 reaches another Postgres (PostgreSQL 16.14), not the emulator. The emulator answers on postgres://[::1]:5432/postgres; use that address.
+✓ sql: chant-postgres up on postgres://[::1]:5432/postgres
+```
+
+`up` fails when no published address reaches the emulator. It also fails when
+the container publishes no host port. Both errors say how to republish it.
+
 ### `emulator down`
 
 Stops and removes the containers.
