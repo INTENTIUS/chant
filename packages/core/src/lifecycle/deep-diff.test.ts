@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { countHeld, countUnclaimed, countPropertyDrift, diffDeep, suspiciousHeld, type DeclaredDeepEntity } from "./deep-diff";
+import { countHeld, countPending, countUnclaimed, countPropertyDrift, diffDeep, suspiciousHeld, type DeclaredDeepEntity } from "./deep-diff";
 import { UNRESOLVED, type NormalizedDeepObservation } from "../deep-observation";
 import { HELD_ELSEWHERE_TAG } from "../held-elsewhere";
 import type { BaselineLexicon } from "./observation-baseline";
@@ -550,5 +550,28 @@ describe("diffDeep — heldElsewhere() (#2162)", () => {
       live: live({ web: { type: "T", properties: { A: "anything" } } }),
     });
     expect(suspiciousHeld(result)).toEqual([]);
+  });
+
+  test("pending changes the reader reports ride through, sorted, and count apart from property drift (#3706)", () => {
+    const result = diffDeep({
+      declared: { t: { type: "T", properties: { A: 1 } } },
+      live: {
+        ...live({ t: { type: "T", properties: { A: 1 } } }),
+        pending: [
+          { subject: "relation b TO r", change: "GRANT SELECT ON TABLE b TO r", entities: ["readB"] },
+          { subject: "relation a TO w", change: "REVOKE INSERT ON TABLE a FROM w" },
+        ],
+      },
+    });
+    expect(result.pending?.map((p) => p.subject)).toEqual(["relation a TO w", "relation b TO r"]);
+    expect(countPending(result)).toBe(2);
+    expect(countPropertyDrift(result)).toBe(0);
+    expect(result.unchanged).toEqual(["t"]);
+  });
+
+  test("no pending changes leave the field out", () => {
+    const result = diffDeep({ declared: {}, live: live({}) });
+    expect(result.pending).toBeUndefined();
+    expect(countPending(result)).toBe(0);
   });
 });

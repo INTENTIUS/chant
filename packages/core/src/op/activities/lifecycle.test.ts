@@ -28,6 +28,11 @@ describe("detectDrift", () => {
     expect(detectDrift(MISSING)).toBe(true);
   });
 
+  test("a privilege an apply would revoke is drift (PENDING, #3706)", () => {
+    const pending = `${HEAD}0 missing, 0 orphan, 0 disappeared, 0 newly observed, 0 drifted, 3 unchanged\n${"-".repeat(80)}\n\n${BOLD}sql (properties)${RESET}\n0 property drift across 0 resource(s), 0 accepted, 2 unchanged, 1 pending\n${"-".repeat(80)}\n${BOLD}\nPENDING (changes an apply would make that no declared property shows):${RESET}\n  ~ relation app.orders TO writer: REVOKE INSERT ON TABLE app.orders FROM writer`;
+    expect(detectDrift(pending)).toBe(true);
+  });
+
   test("the counts line alone, lower case, is not drift", () => {
     expect(detectDrift("1 property drift across 1 resource(s)")).toBe(false);
   });
