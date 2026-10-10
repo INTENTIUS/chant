@@ -12,8 +12,8 @@ describe("coverage analysis", () => {
     const { computeCoverage } = await import("./coverage");
     const lexiconJSON = readFileSync(lexiconPath, "utf-8");
     const report = computeCoverage(lexiconJSON);
-    expect(report.resourceCount).toBe(3); // Job, Default, Workflow
-    expect(report.resources).toHaveLength(3);
+    expect(report.resourceCount).toBe(4); // Job, Default, Workflow, Pipeline
+    expect(report.resources).toHaveLength(4);
   });
 
   test.skipIf(!hasGenerated)("reports resource names correctly", async () => {
@@ -42,6 +42,6 @@ describe("coverage analysis", () => {
     const report = computeCoverage(lexiconJSON);
     const summary = formatSummary(report);
     expect(summary).toContain("Coverage Report");
-    expect(summary).toContain("3 resources");
+    expect(summary).toContain("4 resources");
   });
 });

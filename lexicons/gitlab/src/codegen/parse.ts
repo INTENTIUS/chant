@@ -104,6 +104,8 @@ const RESOURCE_ENTITIES: Array<{
   /** Schema path — "root" for root object, or "#/definitions/<name>" */
   source: string;
   description?: string;
+  /** Only these properties of the source (the root object holds every top-level key). */
+  pick?: string[];
 }> = [
   {
     typeName: "GitLab::CI::Job",
@@ -119,6 +121,16 @@ const RESOURCE_ENTITIES: Array<{
     typeName: "GitLab::CI::Workflow",
     source: "root:workflow",
     description: "Pipeline-level workflow configuration",
+  },
+  {
+    // The top-level keys that are neither a job, `default` nor `workflow`
+    // (#3669). The serializer writes them first, so an explicit `stages`
+    // list can name a stage no declared job uses (one an included file's
+    // jobs run in) and set the order.
+    typeName: "GitLab::CI::Pipeline",
+    source: "root",
+    description: "Top-level pipeline keys: include, stages and variables",
+    pick: ["include", "stages", "variables"],
   },
 ];
 
@@ -181,14 +193,19 @@ export function parseCISchema(data: string | Buffer): GitLabParseResult[] {
  */
 function extractResourceEntity(
   schema: CISchema,
-  entity: { typeName: string; source: string; description?: string },
+  entity: { typeName: string; source: string; description?: string; pick?: string[] },
 ): GitLabParseResult | null {
   const def = resolveSource(schema, entity.source);
   if (!def) return null;
 
   // Find the object variant if it's a oneOf/anyOf
-  const objectDef = findObjectVariant(def, schema);
-  if (!objectDef?.properties) return null;
+  const found = findObjectVariant(def, schema);
+  if (!found?.properties) return null;
+  const pick = entity.pick;
+  const objectDef: CISchemaDefinition = pick
+    ? { ...found, properties: Object.fromEntries(Object.entries(found.properties).filter(([k]) => pick.includes(k))), required: undefined }
+    : found;
+  if (!objectDef.properties) return null;
 
   const requiredSet = new Set<string>(objectDef.required ?? []);
   const properties = parseProperties(objectDef.properties, requiredSet, schema);
@@ -203,6 +220,8 @@ function extractResourceEntity(
       }
     }
   }
+  const comment = COMMENT_PROPERTIES[entity.typeName];
+  if (comment) properties.push({ name: "comment", tsType: "string", required: false, description: comment, constraints: {} });
 
   // Extract nested property types from definition properties
   const { propertyTypes, enums } = extractNestedTypes(objectDef, shortName, schema);
@@ -270,12 +289,23 @@ function extractPropertyEntity(
   };
 }
 
+/**
+ * Resources that carry a `comment`: not a GitLab key, but `#` lines the
+ * serializer writes above the entry (#3669, as #3667 for github).
+ */
+const COMMENT_PROPERTIES: Record<string, string> = {
+  "GitLab::CI::Pipeline": "YAML comment lines written at the top of the file. Not a GitLab key; each line of the string becomes a `#` line",
+  "GitLab::CI::Job": "YAML comment lines written above the job's key. Not a GitLab key; each line of the string becomes a `#` line",
+};
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 /**
  * Resolve a source path to a schema definition.
  */
 function resolveSource(schema: CISchema, source: string): CISchemaDefinition | null {
+  if (source === "root") return { properties: schema.properties } as CISchemaDefinition;
+
   if (source.startsWith("#/definitions/")) {
     // Array item extraction: "#/definitions/foo:item" → foo.items object variant
     if (source.includes(":item")) {
@@ -541,8 +571,17 @@ const RESOURCE_PROPERTY_OVERRIDES: Record<string, Record<string, string>> = {
     environment: "Environment | string",
     trigger: "Trigger | string",
     release: "Release",
-    needs: "Need[]",
+    // GitLab takes the plain forms too: `image: node:22`, `needs: [build]`.
+    image: "Image | string",
+    needs: "(Need | string)[]",
     inherit: "Inherit",
+  },
+  "GitLab::CI::Default": {
+    image: "Image | string",
+  },
+  "GitLab::CI::Pipeline": {
+    include: "Include | string | (Include | string)[]",
+    stages: "string[]",
   },
   "GitLab::CI::Workflow": {
     rules: "WorkflowRule[]",
