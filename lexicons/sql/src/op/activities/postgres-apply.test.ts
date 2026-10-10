@@ -8,6 +8,7 @@ import { buildMajor, postgresApply, type PostgresApplyArgs, type PostgresApplyDe
 import { toApplyResult } from "./index";
 import { writablePostgres, type StoredPgObject, type WritablePostgres } from "../../postgres/testing/writable-server";
 import { PostgresApplyError } from "../../postgres/apply/apply";
+import { PostgresQueryError } from "../../postgres/live/client";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -210,6 +211,37 @@ describe("a statement the server refuses", () => {
     const err = (await apply(s, [APP, withName]).catch((e: unknown) => e)) as PostgresApplyError;
     expect(err.outcome.failed[0]!.error).toMatch(/lock_timeout 5000ms: another session holds a lock/);
     expect(err.outcome.transactions[0]).toMatchObject({ result: "rolled-back", failedAt: { sql: "ALTER TABLE app.users ADD COLUMN name text" } });
+  });
+});
+
+describe("the catalog read before applying (#3726)", () => {
+  test("runs under the profile's lockTimeoutMs, else 5000 ms, else the argument's", async () => {
+    for (const [profile, arg, expected] of [[undefined, undefined, "5000ms"], [250, undefined, "250ms"], [250, 75, "75ms"]] as const) {
+      const s = writablePostgres();
+      const sent: unknown[][] = [];
+      const config = { ownership: { stack: "shop", env: "prod" }, sql: { profiles: { test: { url: "postgres://fake/shop", ...(profile !== undefined ? { lockTimeoutMs: profile } : {}) } } } };
+      const client = { query: (sql: string, p?: readonly unknown[]) => (sent.push([sql, ...(p ?? [])]), s.client.query(sql)), end: s.client.end };
+      await apply(s, [APP], arg !== undefined ? { lockTimeoutMs: arg } : {}, { config, env: {}, connect: async () => client as never });
+      expect(sent[0]).toEqual(["SELECT pg_catalog.set_config('lock_timeout', $1, false)", expected]);
+    }
+  });
+
+  test("blocked behind ACCESS EXCLUSIVE, it stops before any write, naming the relation and the pid holding it", async () => {
+    const s = writablePostgres();
+    const client = {
+      async query<T>(sql: string): Promise<T[]> {
+        if (sql.includes("pg_get_viewdef")) throw new PostgresQueryError("canceling statement due to lock timeout", "55P03");
+        if (sql.includes("pg_catalog.pg_locks")) return [{ pid: 4242, relation: "app.users", application: "psql", state: "idle in transaction", seconds: 9, query: "LOCK TABLE app.users" }] as T[];
+        return s.client.query<T>(sql);
+      },
+      end: s.client.end,
+    };
+    const err = (await apply(s, ALL, {}, { connect: async () => client as never, readLive: async (c) => (await c.query("SELECT pg_catalog.pg_get_viewdef(1)"), []) }).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(PostgresQueryError);
+    expect(err.message).toContain("canceling statement due to lock timeout: the catalog read waited 5000ms for a lock");
+    expect(err.message).toContain("app.users is held in ACCESS EXCLUSIVE by pid 4242");
+    expect(s.writes).toEqual([]);
+    expect(s.control).toEqual([]);
   });
 });
 
