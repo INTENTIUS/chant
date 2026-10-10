@@ -57,6 +57,43 @@ The generated file includes:
 | \`timeoutMinutes: 15\` | \`timeout-minutes: 15\` | camelCase → kebab-case for job properties |
 | \`new Step({ uses: "actions/checkout@v7" })\` | \`- uses: actions/checkout@v7\` | Steps serialize as sequence entries |
 
+## Comments
+
+\`Workflow\`, \`Job\` and \`Step\` take a \`comment\`. It is not a workflow key: the serializer writes it as \`#\` lines, one per line of the string, so the reasons a hand-written workflow keeps as YAML comments stay in the file a reader opens on GitHub. A workflow's comment is the file's header, above \`name:\`; a job's goes above its key and a step's above its \`- \`. The Forgejo lexicon renders the same declarations, so its files carry them too.
+
+\`\`\`typescript
+export const publish = new Workflow({
+  comment: "Publishes on a version tag.\\nKeep the file name: npm's trusted publisher names it.",
+  name: "Publish",
+  on: { push: { tags: ["v*"] } },
+  jobs: {
+    publish: new Job({
+      "runs-on": "ubuntu-latest",
+      steps: [new Step({ comment: "The registry times out now and then; retry once.", run: "npm publish || npm publish" })],
+    }),
+  },
+});
+\`\`\`
+
+\`\`\`yaml
+# Publishes on a version tag.
+# Keep the file name: npm's trusted publisher names it.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # The registry times out now and then; retry once.
+      - run: npm publish || npm publish
+\`\`\`
+
 ## Validating locally
 
 The output is standard GitHub Actions YAML. Validate locally with \`act\` or push to GitHub:

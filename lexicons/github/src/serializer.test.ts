@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { githubSerializer } from "./serializer";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
+import { parseYAML } from "@intentius/chant/yaml";
 
 // ── Mock entities ──────────────────────────────────────────────────
 
@@ -426,5 +427,63 @@ describe("ports and step inputs render as written (#3670)", () => {
     const output = githubSerializer.serialize(entities) as string;
     expect(output).toContain("        ports:\n          - '8123:8123'\n          - 9000");
     expect(output).toContain("        with:\n          fetch-depth: 0\n          lfs: true\n");
+  });
+});
+
+describe("comments (#3667)", () => {
+  const declare = (comments: boolean): Map<string, Declarable> => {
+    const c = <T>(v: T): T | undefined => (comments ? v : undefined);
+    const entities = new Map<string, Declarable>();
+    entities.set("workflow", new MockWorkflow({
+      comment: c("What this workflow is for.\n\nKeep the file name: npm's trusted publisher names it."),
+      name: "Publish",
+      on: { push: { tags: ["v*"] } },
+      jobs: {
+        build: new MockJob({ "runs-on": "ubuntu-latest", steps: [new MockStep({ run: "npm ci" })] }),
+        publish: new MockJob({
+          comment: c("Runs after build; holds the id-token."),
+          "runs-on": "ubuntu-latest",
+          needs: ["build"],
+          steps: [
+            new MockStep({ uses: "actions/checkout@v4" }),
+            new MockStep({ comment: c("The registry is flaky; retry once."), name: "Publish", run: "npm publish || npm publish", env: { NODE_AUTH_TOKEN: "x" } }),
+          ],
+        }),
+      },
+    }));
+    return entities;
+  };
+
+  test("a workflow, job and step comment render as # lines above their entries", () => {
+    const output = githubSerializer.serialize(declare(true)) as string;
+    expect(output.startsWith("# What this workflow is for.\n#\n# Keep the file name: npm's trusted publisher names it.\n\nname: Publish\n")).toBe(true);
+    expect(output).toContain("  # Runs after build; holds the id-token.\n  publish:\n    runs-on: ubuntu-latest\n");
+    expect(output).toContain("      - uses: actions/checkout@v4\n      # The registry is flaky; retry once.\n      - name: Publish\n        run: npm publish || npm publish\n");
+    expect(output).not.toContain("comment:");
+  });
+
+  test("the comments are the only difference, and the YAML parses to the same document", () => {
+    const withComments = githubSerializer.serialize(declare(true)) as string;
+    const without = githubSerializer.serialize(declare(false)) as string;
+    expect(withComments.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n").replace(/^\n/, "")).toBe(without);
+    expect(parseYAML(withComments)).toEqual(parseYAML(without));
+  });
+
+  test("standalone Job and Step entities carry their comments too", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("ci", new MockWorkflow({ comment: "Header", name: "CI", on: { push: null } }));
+    entities.set("test", new MockJob({ comment: "Unit tests", "runs-on": "ubuntu-latest", steps: [new MockStep({ comment: "Why", run: "npm test" })] }));
+    const output = githubSerializer.serialize(entities) as string;
+    expect(output).toContain("# Header\n\nname: CI");
+    expect(output).toContain("jobs:\n  # Unit tests\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      # Why\n      - run: npm test\n");
+  });
+
+  test("each file of a multi-workflow build gets its own header", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("ci", new MockWorkflow({ comment: "CI header", name: "CI", on: { push: null }, jobs: { a: new MockJob({ "runs-on": "x" }) } }));
+    entities.set("release", new MockWorkflow({ comment: "Release header", name: "Release", on: { push: null }, jobs: { b: new MockJob({ "runs-on": "x" }) } }));
+    const result = githubSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.primary.startsWith("# CI header\n\nname: CI")).toBe(true);
+    expect(result.files["release.yml"].startsWith("# Release header\n\nname: Release")).toBe(true);
   });
 });

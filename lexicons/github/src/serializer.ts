@@ -12,7 +12,7 @@ import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
-import { emitYAMLEntry } from "@intentius/chant/yaml";
+import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 
 // ── Key conversion ────────────────────────────────────────────────
 
@@ -51,6 +51,62 @@ function isTriggerType(entityType: string): boolean {
   return entityType in TRIGGER_TYPE_TO_EVENT;
 }
 
+// ── Comments ──────────────────────────────────────────────────────
+
+/**
+ * Entity types whose `comment` prop is YAML comment lines, not a key (#3667):
+ * the workflow's above `name:`, a job's above its key, a step's above its
+ * `- `. The prop never reaches the emitted mapping.
+ */
+const COMMENTED_TYPES = new Set([
+  "GitHub::Actions::Workflow",
+  "GitHub::Actions::Job",
+  "GitHub::Actions::ReusableWorkflowCallJob",
+  "GitHub::Actions::Step",
+]);
+
+/**
+ * The comment for each serialized job or step mapping, keyed by the object
+ * the emitter will see. Attached after key conversion, which builds new
+ * objects, and read by `emitJobs`.
+ */
+const COMMENTS = new WeakMap<object, string>();
+
+/** The `comment` of a workflow, job or step entity, if it has one. */
+function commentOf(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || !("entityType" in value) || !("props" in value)) return undefined;
+  if (!COMMENTED_TYPES.has((value as { entityType: string }).entityType)) return undefined;
+  const comment = ((value as { props: unknown }).props as Record<string, unknown> | undefined)?.comment;
+  return typeof comment === "string" && comment !== "" ? comment : undefined;
+}
+
+/** `props` without its `comment`, for an entity whose comment is not a key. */
+function withoutComment(props: unknown): unknown {
+  if (!props || typeof props !== "object" || !("comment" in props)) return props;
+  const { comment: _comment, ...rest } = props as Record<string, unknown>;
+  return rest;
+}
+
+/** A comment as `#` lines at `indent` (two spaces each), one per line of the string. */
+function commentLines(comment: string, indent: number): string {
+  const prefix = "  ".repeat(indent);
+  return comment.split("\n").map((l) => `${prefix}#${l.trimEnd() ? ` ${l.trimEnd()}` : ""}`).join("\n");
+}
+
+/** Record a serialized job's comment and its steps' comments, from the job entity it came from. */
+function attachComments(source: unknown, job: Record<string, unknown> | undefined): void {
+  if (!job) return;
+  const comment = commentOf(source);
+  if (comment) COMMENTS.set(job, comment);
+  const rawSteps = (source as { props?: { steps?: unknown } } | undefined)?.props?.steps;
+  if (!Array.isArray(rawSteps) || !Array.isArray(job.steps)) return;
+  rawSteps.forEach((raw, i) => {
+    const stepComment = commentOf(raw);
+    const step = (job.steps as unknown[])[i];
+    if (stepComment && step && typeof step === "object") COMMENTS.set(step, stepComment);
+  });
+}
+
 // ── Visitor ───────────────────────────────────────────────────────
 
 function githubVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
@@ -62,8 +118,10 @@ function githubVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
         return undefined;
       }
       const props = entity.props as Record<string, unknown>;
+      const commented = COMMENTED_TYPES.has(entity.entityType);
       const result: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(props)) {
+        if (commented && key === "comment") continue;
         if (value !== undefined) {
           result[key] = walk(value);
         }
@@ -134,10 +192,12 @@ function serializeInlineJob(
 
   if ("entityType" in obj && "props" in obj && JOB_ENTITY_TYPES.has(obj.entityType as string)) {
     // Job entity: serialize its props inline (not as a resource reference)
-    const props = toYAMLValue(obj.props, entityNames);
-    return props && typeof props === "object"
+    const props = toYAMLValue(withoutComment(obj.props), entityNames);
+    const job = props && typeof props === "object"
       ? convertKeys(props as Record<string, unknown>)
       : undefined;
+    attachComments(obj, job);
+    return job;
   }
 
   // Plain object job definition (JSON-style)
@@ -173,10 +233,13 @@ function buildStandaloneJobsSection(
   const jobsSection: Record<string, unknown> = {};
   for (const [name, job] of jobs) {
     const jProps = toYAMLValue(
-      isResourceDeclarable(job) ? job.props : undefined,
+      withoutComment(isResourceDeclarable(job) ? job.props : undefined),
       entityNames,
     ) as Record<string, unknown> | undefined;
-    if (jProps) jobsSection[toKebabCase(name)] = convertKeys(jProps);
+    if (!jProps) continue;
+    const converted = convertKeys(jProps);
+    attachComments(job, converted);
+    jobsSection[toKebabCase(name)] = converted;
   }
   return Object.keys(jobsSection).length > 0 ? jobsSection : undefined;
 }
@@ -358,7 +421,7 @@ function serializeSingleWorkflow(
   if (!jobsSection) jobsSection = buildStandaloneJobsSection(jobs, entityNames);
   if (jobsSection) doc.jobs = jobsSection;
 
-  return emitYAMLDocument(doc);
+  return emitYAMLDocument(doc, workflows.length > 0 ? commentOf(workflows[0][1]) : undefined);
 }
 
 function serializeMultiWorkflow(
@@ -409,7 +472,7 @@ function serializeMultiWorkflow(
     const jobsSection = inlineJobs ?? (i === 0 ? buildStandaloneJobsSection(jobs, entityNames) : undefined);
     if (jobsSection) doc.jobs = jobsSection;
 
-    const content = emitYAMLDocument(doc);
+    const content = emitYAMLDocument(doc, commentOf(wf));
     if (i === 0) {
       primary = content;
       // primary is written to the -o path by the CLI; don't also add it to files[]
@@ -443,8 +506,9 @@ function convertTriggerProps(on: unknown): unknown {
 /**
  * Emit a complete YAML document from a structured object.
  */
-function emitYAMLDocument(doc: Record<string, unknown>): string {
+function emitYAMLDocument(doc: Record<string, unknown>, header?: string): string {
   const sections: string[] = [];
+  if (header) sections.push(commentLines(header, 0));
 
   // Emit in canonical order: name, run-name, on, permissions, env, concurrency, defaults, jobs
   const order = ["name", "run-name", "on", "permissions", "env", "concurrency", "defaults", "jobs"];
@@ -456,6 +520,8 @@ function emitYAMLDocument(doc: Record<string, unknown>): string {
       const value = doc[key];
       if (value === null) {
         sections.push(`${key}:`);
+      } else if (key === "jobs" && hasComments(value)) {
+        sections.push(emitJobs(value as Record<string, unknown>));
       } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
         sections.push(`${key}: ${yamlScalar(value)}`);
       } else {
@@ -475,6 +541,56 @@ function emitYAMLDocument(doc: Record<string, unknown>): string {
   }
 
   return unquotePinComments(sections.join("\n\n") + "\n");
+}
+
+/** Whether any job in a jobs section, or any of its steps, carries a comment. */
+function hasComments(jobs: unknown): boolean {
+  if (!jobs || typeof jobs !== "object") return false;
+  return Object.values(jobs as Record<string, unknown>).some((job) =>
+    !!job && typeof job === "object" && (COMMENTS.has(job) || stepsOf(job).some((s) => !!s && typeof s === "object" && COMMENTS.has(s))));
+}
+
+const stepsOf = (job: object): unknown[] => {
+  const steps = (job as { steps?: unknown }).steps;
+  return Array.isArray(steps) ? steps : [];
+};
+
+/**
+ * The jobs section with each comment above its job or step. Everything else
+ * is what `emitYAMLEntry("jobs", jobs)` writes: the job at indent 1, its keys
+ * at 2, its step items at 3.
+ */
+function emitJobs(jobs: Record<string, unknown>): string {
+  const lines = ["jobs:"];
+  for (const [name, job] of Object.entries(jobs)) {
+    if (job === undefined) continue;
+    if (!job || typeof job !== "object" || Array.isArray(job)) {
+      lines.push(emitYAMLEntry(name, job, 1));
+      continue;
+    }
+    const comment = COMMENTS.get(job);
+    if (comment) lines.push(commentLines(comment, 1));
+    const steps = stepsOf(job);
+    if (!steps.some((s) => !!s && typeof s === "object" && COMMENTS.has(s))) {
+      lines.push(emitYAMLEntry(name, job, 1));
+      continue;
+    }
+    lines.push(`  ${name}:`);
+    for (const [key, value] of Object.entries(job as Record<string, unknown>)) {
+      if (value === undefined) continue;
+      if (key !== "steps") {
+        lines.push(emitYAMLEntry(key, value, 2));
+        continue;
+      }
+      lines.push("    steps:");
+      for (const step of steps) {
+        const stepComment = step && typeof step === "object" ? COMMENTS.get(step) : undefined;
+        if (stepComment) lines.push(commentLines(stepComment, 3));
+        lines.push(emitYAML([step], 3).slice(1));
+      }
+    }
+  }
+  return lines.join("\n");
 }
 
 /**

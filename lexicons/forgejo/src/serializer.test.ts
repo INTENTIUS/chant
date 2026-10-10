@@ -178,3 +178,25 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     expect(result.primary).not.toContain("-f body=@");
   });
 });
+
+describe("forgejoSerializer — comments from the github declarations (#3667)", () => {
+  test("the workflow, job and step comments survive the dialect", () => {
+    const workflow = new Workflow({
+      comment: "Rendered from ci.ts.",
+      name: "CI",
+      on: { push: { branches: ["main"] } },
+      jobs: {
+        build: new Job({
+          comment: "One job.",
+          "runs-on": "ubuntu-latest",
+          steps: [new Step({ uses: "actions/checkout@v4" }), new Step({ comment: "Why it runs.", run: "npm test" })],
+        }),
+      },
+    }) as unknown as Declarable;
+    const { primary } = asResult(forgejoSerializer.serialize(new Map([["workflow", workflow]])));
+    expect(primary.startsWith("# Rendered from ci.ts.\n\nname: CI\n")).toBe(true);
+    expect(primary).toContain("  # One job.\n  build:\n    runs-on: docker\n");
+    expect(primary).toContain("      # Why it runs.\n      - run: npm test\n");
+    expect(primary).not.toContain("comment:");
+  });
+});
