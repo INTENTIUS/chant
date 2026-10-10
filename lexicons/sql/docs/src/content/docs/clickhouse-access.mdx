@@ -87,7 +87,7 @@ A user's authentication is compared only when the declaration states it.
 
 The revokes run before the grants. A user's `DEFAULT ROLE` names roles the user must already hold, so when the build also declares grants to the user, it is set after them.
 
-`chant lifecycle diff --live` observes users, roles and row policies. A `grant` declaration is reported as unobserved: it is compared as part of its grantee's list, which `chant sql plan` reports.
+`chant lifecycle diff --live` observes users, roles and row policies, so one changed by hand shows as property drift. A `grant` declaration is reported as unobserved, since it is compared as part of its grantee's list. The grants and revokes an apply would make are listed under PENDING instead, one line per grantee with the statements, the same ones `chant sql plan` reports. A gated `ApplyOp` binds its approval to that diff, so a privilege granted or revoked by hand after the approval moves the plan digest, and the apply stops at the gate until the new plan is approved.
 
 ## Topologies
 

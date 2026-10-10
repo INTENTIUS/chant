@@ -13,6 +13,7 @@
  * - a privilege granted by hand to a declared grantee is SQLCH274 and is
  *   revoked, a declared one revoked by hand is SQLCH273 and is granted
  *   again, a changed role setting is SQLCH270, a changed policy SQLCH272;
+ *   the deep read lists both as pending, with the statements (#3733);
  * - the row policy filters rows for the user;
  * - with a profile that does not manage access (no `access: true`, #3716),
  *   none of it is applied, planned or read: each access declaration is
@@ -169,6 +170,7 @@ describe.skipIf(!enabled)("access control on a single node (#3682)", () => {
     const entities = new Map(Object.entries(v1).map(([k, e]) => [k, { entityType: e.entityType, props: e.props as unknown as Record<string, unknown> }]));
     const deep = await observeResourcesDeep({ environment: "test", entityNames: [...entities.keys()], entities, config: configOf(endpoint), env: envOf(endpoint) });
     expect(Object.keys(deep.unobserved ?? {}).sort()).toEqual(["readEvents", "readerToApp"]);
+    expect(deep.pending).toBeUndefined();
     for (const k of ["reader", "app", "tenant"] as const) expect(compared(deep.resources[k]!.properties), k).toEqual(compared(v1[k].props));
 
     // The policy filters rows for the user.
@@ -179,6 +181,12 @@ describe.skipIf(!enabled)("access control on a single node (#3682)", () => {
     // Changed by hand: a privilege granted, a declared one revoked. Changed in the declaration: a setting and the condition.
     await q(`GRANT INSERT ON ${DB}.events TO ${READER}`);
     await q(`REVOKE ${READER} FROM ${APP}`);
+    // The deep read lists what an apply would grant and revoke (#3733), so an approval's plan digest moves.
+    const handMade = await observeResourcesDeep({ environment: "test", entityNames: [...entities.keys()], entities, config: configOf(endpoint), env: envOf(endpoint) });
+    expect(handMade.pending).toEqual([
+      { subject: `grants ${READER}`, change: `REVOKE INSERT ON \`${DB}\`.\`events\` FROM \`${READER}\``, entities: ["readEvents"] },
+      { subject: `grants ${APP}`, change: `GRANT \`${READER}\` TO \`${APP}\``, entities: ["readerToApp"] },
+    ]);
     const v2 = declarations({ memory: "2000000000", tenant: "b" });
     const planned = await planAgainstServer("test", writeBuild("v2.json", v2), { config: configOf(endpoint), env: envOf(endpoint) });
     expect(planned.changes.map((c) => [c.object, c.field, c.rule])).toEqual([
