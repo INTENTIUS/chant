@@ -98,7 +98,9 @@ const statementType = (node: CreateNode): ClickHouseEntityType =>
       ? CLICKHOUSE_ENTITY_TYPES.table
       : node.statement === "dictionary"
         ? CLICKHOUSE_ENTITY_TYPES.dictionary
-        : node.materialized
+        : node.statement === "function"
+          ? CLICKHOUSE_ENTITY_TYPES.function
+          : node.materialized
         ? CLICKHOUSE_ENTITY_TYPES.materializedView
         : CLICKHOUSE_ENTITY_TYPES.view;
 

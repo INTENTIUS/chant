@@ -2,8 +2,9 @@
  * `describeResources()` for the ClickHouse dialect: which declared databases,
  * tables and views exist on the environment's server.
  *
- * One read of `system.databases` and `system.tables` per run, then a lookup
- * per declared entity, so N entities are two queries, not N. An object the
+ * One read of `system.databases`, `system.tables` and `system.functions` per
+ * run, then a lookup per declared entity, so N entities are three queries,
+ * not N. An object the
  * catalog does not list is absent, and the `queried` address says which
  * server and name were asked. A server that cannot be reached, or refuses the
  * credentials, leaves every entity unobserved with that reason: never absent.
@@ -25,6 +26,7 @@ import {
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "./bind";
 import { readLiveSchema, type LiveObject } from "./catalog";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
+import { objectKey } from "../plan/normalize";
 import { isChantManaged, readMarker, stripMarker } from "../ownership";
 
 interface Bound {
@@ -32,12 +34,11 @@ interface Bound {
   byKey: Map<string, LiveObject>;
 }
 
-const keyOf = (database: string | undefined, name: string) => `${database ?? ""}.${name}`;
 
 /** The database and name a declared entity is created as. */
 export function declaredAddress(entity: DeclaredEntity, defaultDatabase: string): { database?: string; name: string } {
   const name = String(entity.props.name ?? "");
-  if (entity.type === CLICKHOUSE_ENTITY_TYPES.database) return { name };
+  if (entity.type === CLICKHOUSE_ENTITY_TYPES.database || entity.type === CLICKHOUSE_ENTITY_TYPES.function) return { name };
   return { database: typeof entity.props.database === "string" ? entity.props.database : defaultDatabase, name };
 }
 
@@ -47,7 +48,7 @@ function adapter(options: BindOptions & { owned?: boolean }): ObserverAdapter<Bo
       const target = await bindClickHouse(options);
       const byKey = new Map<string, LiveObject>();
       for (const o of await readLiveSchema(target, { withStatements: false })) {
-        byKey.set(o.type === CLICKHOUSE_ENTITY_TYPES.database ? keyOf(undefined, o.name) : keyOf(o.database, o.name), o);
+        byKey.set(objectKey(o), o);
       }
       return { target, byKey };
     },
@@ -58,7 +59,7 @@ function adapter(options: BindOptions & { owned?: boolean }): ObserverAdapter<Bo
       }
       const { database, name } = declaredAddress(entity, target.defaultDatabase);
       const queried = `${target.endpoint.url} ${database ? `${database}.` : ""}${name}`;
-      const live = byKey.get(keyOf(database, name));
+      const live = byKey.get(objectKey({ type: entity.type, ...(database !== undefined ? { database } : {}), name }));
       if (!live) return { absent: true, queried };
       const owned = isChantManaged(live.comment);
       if (options.owned && !owned) {

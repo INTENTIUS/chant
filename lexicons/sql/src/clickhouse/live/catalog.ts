@@ -1,7 +1,8 @@
 /**
  * Reading a live server's schema: the databases and the tables, views,
  * materialized views and dictionaries in them, from `system.databases`,
- * `system.tables` and `SHOW CREATE`.
+ * `system.tables` and `SHOW CREATE`, and the SQL user-defined functions,
+ * from `system.functions`.
  */
 
 import { clickhouseQuery } from "../http";
@@ -93,6 +94,13 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
       ...(t.comment ? { comment: t.comment } : {}),
       statement: await statement("TABLE", `${ident(t.database)}.${ident(t.name)}`),
     });
+  }
+  // SQL user-defined functions belong to no database: every one is read, and a caller keeps those it declares.
+  const functions = await q<{ name: string; statement: string }>(
+    `SELECT name, create_query AS statement FROM system.functions WHERE origin = 'SQLUserDefined' ORDER BY name`,
+  );
+  for (const f of functions) {
+    out.push({ type: CLICKHOUSE_ENTITY_TYPES.function, name: f.name, engine: "", statement: opts.withStatements === false ? "" : f.statement });
   }
   return out;
 }

@@ -79,6 +79,8 @@ export async function writableClickHouse(initial: StoredObject[] = []): Promise<
           .join(""),
       };
     }
+    // No SQL user-defined functions.
+    if (/FROM system\.functions/.test(sql)) return { status: 200, text: "" };
     if (/FROM system\.mutations/.test(sql)) {
       const m = /database = '([^']*)' AND table = '([^']*)'/.exec(sql);
       return {

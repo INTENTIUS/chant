@@ -109,10 +109,10 @@ describe("describeResources", () => {
     });
   });
 
-  test("reads the catalog in two queries, whatever the number of entities", async () => {
+  test("reads the catalog in three queries, whatever the number of entities", async () => {
     const before = ok.queries.length;
     await run(ok.url);
-    expect(ok.queries.length - before).toBe(2);
+    expect(ok.queries.length - before).toBe(3);
   });
 });
 

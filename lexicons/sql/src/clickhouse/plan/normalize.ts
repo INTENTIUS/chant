@@ -38,7 +38,7 @@ import { previouslyIn, splitTopLevel as splitTop } from "../../core/normalize";
 
 export { previouslyIn } from "../../core/normalize";
 
-export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary";
+export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary" | "function";
 
 export interface CanonicalColumn {
   name: string;
@@ -86,6 +86,8 @@ export interface CanonicalObject {
   layout?: string;
   lifetime?: string;
   range?: string;
+  /** A function's lambda, `( x , y ) -> expr`. */
+  lambda?: string;
   /** `-- previously: <name>` before the statement: the object's previous name. */
   previously?: string;
 }
@@ -240,7 +242,7 @@ function lineComments(tokens: Token[], from: number): string[] {
 }
 
 const kindOf = (node: CreateNode): ObjectKind =>
-  node.statement === "database" || node.statement === "table" || node.statement === "dictionary" ? node.statement : node.materialized ? "materializedView" : "view";
+  node.statement === "view" ? (node.materialized ? "materializedView" : "view") : node.statement;
 
 const stringValue = (s: string | undefined) =>
   s === undefined ? undefined : /^'.*'$/s.test(s) ? s.slice(1, -1).replace(/''/g, "'").replace(/\\(.)/g, "$1") : s;
@@ -258,7 +260,7 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
     .map((t) => unquote(t.text));
   const kind = kindOf(node);
   const name = nameParts[nameParts.length - 1]!;
-  const database = kind === "database" ? undefined : nameParts.length >= 2 ? nameParts[nameParts.length - 2] : defaultDatabase;
+  const database = kind === "database" || kind === "function" ? undefined : nameParts.length >= 2 ? nameParts[nameParts.length - 2] : defaultDatabase;
   const expr = (span: Span | undefined) => {
     const t = spanText(tokens, span);
     return t === undefined ? undefined : canonicalExpression(t, database);
@@ -282,6 +284,10 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
   if (node.statement === "dictionary") {
     if (comment0 !== undefined && comment0 !== "") obj.comment = comment0;
     return dictionaryObject(obj, tokens, node, database);
+  }
+  if (node.statement === "function") {
+    obj.lambda = canonicalExpression(spanText(tokens, node.lambda) ?? "");
+    return obj;
   }
 
   const engine = node.engine;
@@ -487,4 +493,25 @@ function column(tokens: Token[], c: ColumnNode, position: number, database?: str
 function quotedIdentifier(arg: string): string {
   const bare = /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg) ? arg : /^`((?:[^`]|``)+)`$/.exec(arg)?.[1]?.replace(/``/g, "`");
   return bare === undefined ? arg : `'${bare.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+/**
+ * The key an object is compared under against a server: `database.name`,
+ * a database's name, and `function <name>` for a function, which belongs to
+ * no database and must not meet a database of the same name.
+ */
+export function objectKey(o: { kind?: ObjectKind; type?: string; database?: string; name: string }): string {
+  if (o.kind === "function" || o.type === "ClickHouse::Function") return `function ${o.name}`;
+  return o.database !== undefined ? `${o.database}.${o.name}` : o.name;
+}
+
+/**
+ * What an object is scoped by when a plan reads a server: its database, a
+ * database's own name, and for a function its key. A plan reads the
+ * databases the declarations use and the functions they declare, nothing
+ * else.
+ */
+export function scopeOf(o: { kind?: ObjectKind; type?: string; database?: string; name: string }): string {
+  if (o.kind === "function" || o.type === "ClickHouse::Function") return objectKey(o);
+  return o.database ?? o.name;
 }

@@ -26,8 +26,8 @@ import { readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catal
 import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
-import { database, dictionary, table, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
-import { canonicalObject, type CanonicalColumn, type CanonicalObject } from "./normalize";
+import { database, dictionary, func, table, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
+import { canonicalObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
 import { renderFor } from "../topology";
 
 type Props = Record<string, unknown>;
@@ -47,7 +47,9 @@ function liveProps(o: LiveObject): Props {
         ? table
         : o.type === CLICKHOUSE_ENTITY_TYPES.dictionary
           ? dictionary
-          : view;
+          : o.type === CLICKHOUSE_ENTITY_TYPES.function
+            ? func
+            : view;
   const strings = Object.assign([o.statement], { raw: [o.statement] }) as unknown as TemplateStringsArray;
   return { ...(tag(strings).props as unknown as Props) };
 }
@@ -71,6 +73,9 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   adopt("engine", same("engine"));
   for (const k of ["orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl", "comment", "select", "refresh", "dataSource", "layout", "lifetime", "range"] as const) adopt(k, same(k));
   adopt("settings", same("settings"));
+  // A function's parameters and expression are one lambda: the same lambda is the declaration's words.
+  adopt("params", d.kind === "function" && same("lambda"));
+  adopt("body", d.kind === "function" && same("lambda"));
   adopt("indexes", same("indexes"));
   adopt("projections", same("projections"));
   adopt("constraints", same("constraints"));
@@ -89,6 +94,19 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
     });
   }
   return out;
+}
+
+/** Whether the server's formatter prints two expressions the same. A formatter that cannot parse them says no. */
+async function sameExpression(target: ClickHouseTarget, a: string, b: string): Promise<boolean> {
+  try {
+    const [row] = await clickhouseQuery<{ a: string; b: string }>(
+      target.endpoint,
+      `SELECT formatQuerySingleLine(${sqlString(`SELECT ${a}`)}) AS a, formatQuerySingleLine(${sqlString(`SELECT ${b}`)}) AS b`,
+    );
+    return row !== undefined && row.a === row.b;
+  } catch {
+    return false;
+  }
 }
 
 /** Every server's copy of each table and view on a cluster (#3664), as `<database>.<name>` → host → statement. */
@@ -179,7 +197,7 @@ export async function observeResourcesDeep(
     }
     return deepObservation({}, unobserved);
   }
-  const byKey = new Map(live.map((o) => [`${o.database ?? ""}.${o.name}`, o]));
+  const byKey = new Map(live.map((o) => [objectKey(o), o]));
   let copies: ClusterCopies | undefined;
   try {
     copies = await clusterCopies(target);
@@ -198,9 +216,9 @@ export async function observeResourcesDeep(
       continue;
     }
     const props = entity.props;
-    const isDb = entity.entityType === CLICKHOUSE_ENTITY_TYPES.database;
+    const isDb = entity.entityType === CLICKHOUSE_ENTITY_TYPES.database || entity.entityType === CLICKHOUSE_ENTITY_TYPES.function;
     const db = isDb ? undefined : typeof props.database === "string" ? props.database : target.defaultDatabase;
-    const o = byKey.get(`${db ?? ""}.${String(props.name)}`);
+    const o = byKey.get(objectKey({ type: entity.entityType, ...(db !== undefined ? { database: db } : {}), name: String(props.name) }));
     if (!o) continue;
     try {
       const d = canonicalObject(renderFor(String(props.ddl), target.topology), target.defaultDatabase);
@@ -217,7 +235,9 @@ export async function observeResourcesDeep(
         };
         continue;
       }
-      const l = canonicalObject(o.statement, target.defaultDatabase);
+      let l = canonicalObject(o.statement, target.defaultDatabase);
+      // The server prints a function's expression its own way (`k*x + b` as `((k * x) + b)`): its formatter says whether the two are one.
+      if (d.kind === "function" && d.lambda !== l.lambda && (await sameExpression(target, d.lambda ?? "", l.lambda ?? ""))) l = { ...l, lambda: d.lambda! };
       resources[name] = {
         type: o.type,
         physicalId,

@@ -13,7 +13,7 @@ import { findSqlTemplates, type FoundTemplate as SqlFoundTemplate, type Template
 
 export { templatePosition, tokenPosition } from "../../core/find-templates";
 
-export type SqlTag = "database" | "table" | "view" | "dictionary";
+export type SqlTag = "database" | "table" | "view" | "dictionary" | "func";
 
 /**
  * The ClickHouse tags, by the modules they are imported from. The package
@@ -22,7 +22,7 @@ export type SqlTag = "database" | "table" | "view" | "dictionary";
 export const CLICKHOUSE_TEMPLATE_SOURCE: TemplateSource<SqlTag> = {
   dialect: "clickhouse",
   modules: ["@intentius/chant-lexicon-sql", "@intentius/chant-lexicon-sql/clickhouse"],
-  tags: ["database", "table", "view", "dictionary"],
+  tags: ["database", "table", "view", "dictionary", "func"],
 };
 
 export type FoundTemplate = SqlFoundTemplate<SqlTag>;

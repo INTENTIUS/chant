@@ -44,7 +44,7 @@ import {
 import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "../live/bind";
 import { readLiveSchema, type LiveObject } from "../live/catalog";
-import { canonicalObject, type CanonicalObject } from "../plan/normalize";
+import { canonicalObject, objectKey, scopeOf, type CanonicalObject } from "../plan/normalize";
 import { diffSchemas, type Change } from "../plan/diff";
 import { dropFormattingOnly } from "../plan/server-format";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
@@ -71,7 +71,7 @@ export function declaredObjects(json: string, defaultDatabase = "default", topol
     return {
       exportName: o.export,
       type: o.type as ClickHouseEntityType,
-      key: canonical.database !== undefined ? `${canonical.database}.${canonical.name}` : canonical.name,
+      key: objectKey(canonical),
       ddl,
       canonical,
       dependsOn: o.dependsOn,
@@ -108,17 +108,17 @@ export class ClickHouseApplyError extends SqlApplyError<ClickHouseApplyOutcome> 
   }
 }
 
-const liveKey = (o: LiveObject) => (o.database !== undefined ? `${o.database}.${o.name}` : o.name);
+const liveKey = (o: LiveObject) => objectKey(o);
 
 /**
  * The server's objects in the databases the declarations use, as the diff
  * compares them. The `default` database itself is never part of a schema.
  */
 async function liveSchema(target: ClickHouseTarget, declared: readonly DeclaredObject[]): Promise<{ objects: LiveObject[]; canonical: Map<string, CanonicalObject> }> {
-  const databases = new Set(declared.map((o) => o.canonical.database ?? o.canonical.name));
+  const scope = new Set(declared.map((o) => scopeOf(o.canonical)));
   const objects = (await readLiveSchema(target))
     .filter((o) => !(o.type === CLICKHOUSE_ENTITY_TYPES.database && o.name === "default"))
-    .filter((o) => databases.has(o.database ?? o.name));
+    .filter((o) => scope.has(scopeOf(o)));
   return { objects, canonical: new Map(objects.map((o) => [liveKey(o), canonicalObject(o.statement, target.defaultDatabase)])) };
 }
 

@@ -3,10 +3,12 @@ import { parseCreate } from "../../clickhouse/parser";
 import { SqlSyntaxError } from "../../clickhouse/tokens";
 import { findTemplates, templatePosition, tokensOf } from "./templates";
 
-const STATEMENT: Record<string, string> = { database: "CREATE DATABASE", table: "CREATE TABLE", view: "CREATE VIEW", dictionary: "CREATE DICTIONARY" };
+const STATEMENT: Record<string, string> = { database: "CREATE DATABASE", table: "CREATE TABLE", view: "CREATE VIEW", dictionary: "CREATE DICTIONARY", function: "CREATE FUNCTION" };
+/** The tag a statement belongs in: `func` for a function, the statement's own name otherwise. */
+const tagOf = (statement: string): string => (statement === "function" ? "func" : statement);
 
 /**
- * SQLCH001: the DDL in a `database`, `table`, `view` or `dictionary` template does not parse, or holds another statement than its tag.
+ * SQLCH001: the DDL in a `database`, `table`, `view`, `dictionary` or `func` template does not parse, or holds another statement than its tag.
  *
  * The same parse runs when the build calls the tag, and fails the build there.
  * This rule reports it in the editor and in `chant lint`, at the token, before
@@ -28,11 +30,11 @@ export const sqlch001: LintRule = {
       try {
         tokens = tokensOf(found);
         const node = parseCreate(tokens);
-        if (node.statement !== found.tag) {
+        if (tagOf(node.statement) !== found.tag) {
           out.push({
             ruleId: "SQLCH001",
             severity: "error",
-            message: `${found.tag}\`...\` holds a ${STATEMENT[node.statement]}; use the ${node.statement} tag`,
+            message: `${found.tag}\`...\` holds a ${STATEMENT[node.statement]}; use the ${tagOf(node.statement)} tag`,
             file: context.filePath,
             ...templatePosition(source, found, 0, 0),
           });

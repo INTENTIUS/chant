@@ -12,7 +12,7 @@ The SQL lexicon provides **45** rules: 7 lint rules and 38 post-synth checks.
 
 | ID | Severity | Category | Description |
 |----|----------|----------|-------------|
-| `SQLCH001` | error | correctness | the DDL in a `database`, `table`, `view` or `dictionary` template does not parse, or holds another statement than its tag. |
+| `SQLCH001` | error | correctness | the DDL in a `database`, `table`, `view`, `dictionary` or `func` template does not parse, or holds another statement than its tag. |
 | `SQLCH002` | error | correctness | a `Nullable` column in a table's sort key or primary key. |
 | `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
 | `SQLPG001` | error | correctness | the DDL in a Postgres template does not parse, or does not hold |

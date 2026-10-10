@@ -1,6 +1,6 @@
 ---
 skill: chant-sql
-description: Declare ClickHouse databases, tables, views, materialized views and dictionaries as SQL-shaped tagged templates, with references, lineage and the checks that run on them
+description: Declare ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates, with references, lineage and the checks that run on them
 user-invocable: true
 ---
 # Declaring a ClickHouse schema with chant
@@ -34,6 +34,8 @@ export const byKind = view`
 The export name (`events`) is the object's identity in chant. The name in the SQL (`analytics.events`) is its name in the database. A materialized view is a `view` template holding `CREATE MATERIALIZED VIEW`.
 
 A dictionary is a `dictionary` template holding `CREATE DICTIONARY`, with its attributes, `PRIMARY KEY`, `SOURCE`, `LAYOUT` and `LIFETIME`. Its attributes are columns (`${ratesDict.columns.rate}`). Any change but its comment is SQLCH245, and the applier replaces it with `CREATE OR REPLACE DICTIONARY`. Keep passwords out of `SOURCE`: name a server-side named collection instead.
+
+A SQL user-defined function is a `func` template holding `CREATE FUNCTION name AS (x) -> expr`, with no database in its name. A changed expression is SQLCH260 (`CREATE OR REPLACE FUNCTION`). It carries no ownership marker, so chant never drops one.
 
 ## Interpolations
 
