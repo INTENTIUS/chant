@@ -72,7 +72,7 @@ The catalog keeps no GRANT statements, only each object's access control list, s
 2. the declared default privileges for that kind of object, globally and in its schema, since chant creates it as the role that applies;
 3. every `GRANT` added and every `REVOKE` taken away, in the build's order. `ALL PRIVILEGES` stands for the kind's privileges at the target major (MAINTAIN from 17).
 
-`GRANT ... ON ALL TABLES IN SCHEMA` is refused: it grants on whatever exists when it runs. Grant on each declared table, and declare default privileges for the ones created later. A routine is named with its parameter types (`${fn}` interpolated, or `app.f(integer)`), since overloads share a name.
+`GRANT ... ON ALL TABLES IN SCHEMA` is refused: it grants on whatever exists when it runs. Grant on each declared table, and declare default privileges for the ones created later. A routine is named with its parameter types (`${fn}` interpolated, or `app.f(integer)`), since overloads share a name. An interpolated routine is written into the built statement with its parameter types, so a plan against an earlier build reads it the same way.
 
 ## Plan and apply
 

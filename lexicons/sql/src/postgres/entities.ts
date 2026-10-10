@@ -1048,7 +1048,7 @@ function grantProps(ctx: Ctx, node: GrantNode, ddl: string, source: { strings: s
       if (o.args) sqlName += `(${req(text(ctx, o.args, "objects")) ?? ""})`;
       else if (typeof t !== "string" && (t.entityType === POSTGRES_ENTITY_TYPES.function || t.entityType === POSTGRES_ENTITY_TYPES.procedure)) {
         // An interpolated routine is named by its own parameter types.
-        sqlName += `(${(t.props as RoutineProps).args.filter((a) => a.mode !== "out").map((a) => a.type).join(", ")})`;
+        sqlName += `(${routineArgTypes(t.props as RoutineProps)})`;
       } else throw new SqlTemplateError("grant", `${sqlName}: name the parameter types (${sqlName}(...)), or interpolate the routine, since overloads share a name`, 0, 0);
     }
     objectNames.push(sqlName);
@@ -1069,6 +1069,22 @@ function grantProps(ctx: Ctx, node: GrantNode, ddl: string, source: { strings: s
     ddl,
     source,
   }) as GrantProps;
+}
+
+/** A routine's parameter types, as `GRANT ... ON FUNCTION f(...)` names it: the `OUT` ones left out. */
+const routineArgTypes = (props: RoutineProps): string => props.args.filter((a) => a.mode !== "out").map((a) => a.type).join(", ");
+
+/** The interpolated functions and procedures not followed by their own `(...)`: the ones a grant's statement writes with the parameter types (#3707). */
+function bareRoutineSplices(tokens: readonly Token[], values: readonly unknown[]): Set<number> {
+  const out = new Set<number>();
+  tokens.forEach((t, k) => {
+    if (t.kind !== "ref") return;
+    const v = values[t.part];
+    if (!isPostgresObject(v) || (v.entityType !== POSTGRES_ENTITY_TYPES.function && v.entityType !== POSTGRES_ENTITY_TYPES.procedure)) return;
+    const next = tokens.slice(k + 1).find((x) => !isTrivia(x));
+    if (!(next?.kind === "punct" && next.text === "(")) out.add(t.part);
+  });
+  return out;
 }
 
 function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string[], rawValues: readonly unknown[]): PostgresObject {
@@ -1113,9 +1129,12 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   const rowSecurity = rest.filter((n): n is RowSecurityNode => n.statement === "rowSecurity");
 
   const positions = regclassPositions(tokens, values);
+  const bareRoutines = tag === "grant" ? bareRoutineSplices(tokens, values) : new Set<number>();
   const render = (v: unknown, i?: number): string => {
     const at = i === undefined ? undefined : positions.get(i);
     if (at && isPostgresObject(v)) return at === "call" ? `${regclassText(v.sqlName)}::regclass` : regclassText(v.sqlName);
+    // #3707: a routine a grant interpolates is written with its parameter types, so the statement names it on its own.
+    if (i !== undefined && bareRoutines.has(i) && isPostgresObject(v)) return `${renderReference(v)}(${routineArgTypes(v.props as RoutineProps)})`;
     return renderReference(v);
   };
   const ctx: Ctx = { d: { ...POSTGRES_TEMPLATES, renderReference: render }, tokens, values, fed: values.map(() => new Set<string>()) };
