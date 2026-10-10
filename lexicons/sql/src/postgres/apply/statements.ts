@@ -32,7 +32,8 @@ import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from
 import { ACCESS_KINDS, canonicalOptions, sameConstraint, type CanonicalConstraint, type CanonicalKind } from "../plan/normalize";
 import type { PgDiffObject, PgSchemaObject } from "../plan/schema";
 import { migrationTarget } from "../migrate/handoff";
-import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, KeyDef, PolicyProps, SequenceProps, TableProps } from "../entities";
+import { pgName } from "../migrate/names";
+import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, IndexProps, KeyDef, PolicyProps, SequenceProps, TableProps } from "../entities";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -66,6 +67,21 @@ export interface PgStep {
   rule?: PgClassifierRuleId;
   /** An index this statement builds CONCURRENTLY: a failed build leaves it INVALID, and the applier drops it again. */
   buildsIndex?: string;
+  /** A query to run before the statement, whose success depends on the rows already in the table (#3686). */
+  precheck?: PgPrecheck;
+}
+
+/**
+ * A data-dependent statement's pre-check (#3686): a query that returns one
+ * row with one column, `n`, the count of rows (or groups of rows) the
+ * statement would fail on. Zero means it can run. Nothing runs it on its own:
+ * a caller runs every step's pre-check before the first statement, and stops
+ * when one is not zero. It reads the table without locking it beyond `SELECT`.
+ */
+export interface PgPrecheck {
+  sql: string;
+  /** What a count above zero means, e.g. `rows where email is NULL, which SET NOT NULL fails on`. */
+  detail: string;
 }
 
 /** What {@link alterSteps} could not make in place: changes with no statement, each with why. */
@@ -120,6 +136,56 @@ export const kindOfType = (type: string): CanonicalKind =>
 
 const step = (sql: string, cls: PgChangeClass, rule?: PgClassifierRuleId, transactional = true): PgStep => ({ sql, class: cls, transactional, ...(rule ? { rule } : {}) });
 const classOf = (rule: PgClassifierRuleId): PgChangeClass => PG_CLASSIFIER_RULES[rule].class;
+
+// ── Pre-checks (#3686) ─────────────────────────────────────────────────
+
+/** The rows of `table` with `column` NULL: what SET NOT NULL fails on. */
+export function nullPrecheck(table: string, column: string): PgPrecheck {
+  return { sql: `SELECT count(*) AS n FROM ${table} WHERE ${quoteIdent(column)} IS NULL`, detail: `rows where ${column} is NULL, which SET NOT NULL fails on` };
+}
+
+/**
+ * The groups of rows of `table` with the same `columns`: what a unique index
+ * or a unique or primary key constraint fails on. NULLs are distinct unless
+ * `nullsNotDistinct`; a primary key also counts the rows with a NULL key
+ * column, which its implied NOT NULL fails on. `where` is a partial index's
+ * predicate.
+ */
+export function duplicatePrecheck(table: string, columns: readonly string[], opts: { primaryKey?: boolean; nullsNotDistinct?: boolean; where?: string } = {}): PgPrecheck {
+  const cols = columns.map(quoteIdent);
+  const filter = [...(opts.primaryKey || opts.nullsNotDistinct ? [] : cols.map((c) => `${c} IS NOT NULL`)), ...(opts.where ? [`(${opts.where})`] : [])];
+  const groups = `SELECT count(*) FROM (SELECT 1 FROM ${table}${filter.length ? ` WHERE ${filter.join(" AND ")}` : ""} GROUP BY ${cols.join(", ")} HAVING count(*) > 1) AS duplicates`;
+  const what = columns.join(", ");
+  if (!opts.primaryKey) return { sql: `SELECT (${groups}) AS n`, detail: `values of (${what}) held by more than one row, which a unique index fails on` };
+  return {
+    sql: `SELECT (${groups}) + (SELECT count(*) FROM ${table} WHERE ${cols.map((c) => `${c} IS NULL`).join(" OR ")}) AS n`,
+    detail: `values of (${what}) held by more than one row, and rows with one of them NULL, which a primary key fails on`,
+  };
+}
+
+/** The rows of `table` that fail a CHECK: its expression false (a NULL result passes). */
+export function checkPrecheck(table: string, expr: string, name?: string): PgPrecheck {
+  return { sql: `SELECT count(*) AS n FROM ${table} WHERE NOT (${expr})`, detail: `rows that fail the check${name ? ` ${name}` : ""} (${expr})` };
+}
+
+/**
+ * The rows of `table` whose foreign key references no row: every key column
+ * set and no referenced row with those values (MATCH SIMPLE, the default).
+ * Undefined for a foreign key that names no referenced columns or is MATCH
+ * FULL, which the query does not cover.
+ */
+export function foreignKeyPrecheck(table: string, fk: ForeignKeyDef): PgPrecheck | undefined {
+  if (fk.refColumns.length !== fk.columns.length || (fk.match !== undefined && fk.match.toUpperCase() !== "SIMPLE")) return undefined;
+  const child = fk.columns.map((c) => `c.${quoteIdent(c)}`);
+  const join = fk.refColumns.map((r, i) => `p.${quoteIdent(r)} = ${child[i]}`).join(" AND ");
+  return {
+    sql: `SELECT count(*) AS n FROM ${table} AS c WHERE ${child.map((c) => `${c} IS NOT NULL`).join(" AND ")} AND NOT EXISTS (SELECT 1 FROM ${fk.refTable} AS p WHERE ${join})`,
+    detail: `rows whose (${fk.columns.join(", ")}) references no row of ${fk.refTable}, which the foreign key${fk.name ? ` ${fk.name}` : ""} fails on`,
+  };
+}
+
+/** The check that proves a column NOT NULL while SET NOT NULL runs (SQLPG210), named as the migration Op names its own. */
+export const notNullCheckName = (column: string): string => pgName(`${column}__chant_nn`);
 
 // ── Statements in a template ───────────────────────────────────────────
 
@@ -326,7 +392,11 @@ function keyConstraintSteps(table: { schema?: string; name: string }, kind: "PRI
     .filter(Boolean)
     .join(" ");
   return [
-    { ...step(build, "concurrently", "SQLPG221", false), buildsIndex: index },
+    {
+      ...step(build, "concurrently", "SQLPG221", false),
+      buildsIndex: index,
+      precheck: duplicatePrecheck(pgQualified(table.schema, table.name), k.columns, { primaryKey: kind === "PRIMARY KEY", ...(k.nullsNotDistinct ? { nullsNotDistinct: true } : {}) }),
+    },
     step(
       [`ALTER TABLE ${pgQualified(table.schema, table.name)} ADD CONSTRAINT ${quoteIdent(name)} ${kind} USING INDEX ${quoteIdent(name)}`, deferralSql(k)].filter(Boolean).join(" "),
       "metadata",
@@ -342,15 +412,20 @@ function keyConstraintSteps(table: { schema?: string; name: string }, kind: "PRI
  * validated, one the declaration lost is dropped, and a changed comment is
  * set.
  */
-function constraintSteps(obj: DeclaredPgObject, live: PgDiffObject): PgStep[] {
+function constraintSteps(obj: DeclaredPgObject, live: PgDiffObject, keep: ReadonlySet<string> = new Set()): PgStep[] {
   const domain = obj.canonical.kind === "domain";
   const target = objectIdent(obj.canonical);
   const alter = domain ? `ALTER DOMAIN ${target}` : `ALTER TABLE ${target}`;
   const defs = domain
     ? (obj.props as unknown as DomainProps).checks.map((def) => ({ kind: "CHECK" as const, def: def as CheckDef }))
     : declaredConstraintDefs(obj.props as unknown as TableProps);
-  const remaining = [...live.constraints];
+  // A NOT NULL proof left by an interrupted SET NOT NULL (SQLPG210) is that sequence's to reuse and drop.
+  const remaining = live.constraints.filter((b) => !(b.name && keep.has(b.name)));
   const out: PgStep[] = [];
+  /** What the rows must pass for a CHECK or a foreign key to be valid. */
+  const precheckOf = (kind: CanonicalConstraint["kind"], def: unknown): PgPrecheck | undefined =>
+    domain || def === undefined ? undefined : kind === "CHECK" ? checkPrecheck(target, (def as CheckDef).expr, (def as CheckDef).name) : kind === "FOREIGN KEY" ? foreignKeyPrecheck(target, def as ForeignKeyDef) : undefined;
+  const withPrecheck = (s: PgStep, p: PgPrecheck | undefined): PgStep => (p ? { ...s, precheck: p } : s);
   obj.canonical.constraints.forEach((a, i) => {
     const def = defs[i]?.def;
     const at = remaining.findIndex((b) => sameConstraint(a, b));
@@ -363,7 +438,7 @@ function constraintSteps(obj: DeclaredPgObject, live: PgDiffObject): PgStep[] {
         out.push(...keyConstraintSteps(obj.canonical, a.kind, def as KeyDef));
       } else {
         const rule = addConstraintRule(a);
-        out.push(step(`${alter} ADD ${constraintSql(a.kind, def)}`, classOf(rule), rule));
+        out.push(withPrecheck(step(`${alter} ADD ${constraintSql(a.kind, def)}`, classOf(rule), rule), rule === "SQLPG217" || (def as { notEnforced?: boolean }).notEnforced ? undefined : precheckOf(a.kind, def)));
       }
       if (a.comment !== undefined) {
         const name = a.name ?? (def as { name?: string }).name;
@@ -374,7 +449,7 @@ function constraintSteps(obj: DeclaredPgObject, live: PgDiffObject): PgStep[] {
     const b = remaining.splice(at, 1)[0]!;
     const name = b.name ?? a.name;
     if (!name) return;
-    if (b.notValid && !a.notValid) out.push(step(`${alter} VALIDATE CONSTRAINT ${quoteIdent(name)}`, "validate", "SQLPG220"));
+    if (b.notValid && !a.notValid) out.push(withPrecheck(step(`${alter} VALIDATE CONSTRAINT ${quoteIdent(name)}`, "validate", "SQLPG220"), precheckOf(a.kind, def)));
     if (b.comment !== a.comment) {
       out.push(step(`COMMENT ON CONSTRAINT ${quoteIdent(name)} ON ${domain ? "DOMAIN " : ""}${target} IS ${a.comment === undefined ? "NULL" : pgString(a.comment)}`, "metadata", "SQLPG216"));
     }
@@ -426,6 +501,31 @@ export const isDestructive = (c: PgChange): boolean => c.rule === "SQLPG204";
 export const isRecreate = (c: PgChange): boolean => c.rule === "SQLPG252" || c.rule === "SQLPG243" || c.rule === "SQLPG281";
 
 /**
+ * SET NOT NULL on a table that exists, without reading the table under
+ * ACCESS EXCLUSIVE (SQLPG210): a CHECK (column IS NOT NULL) added NOT VALID,
+ * which reads no rows; validated, which reads them under SHARE UPDATE
+ * EXCLUSIVE while writes go on; then SET NOT NULL, which the valid check
+ * proves without a scan (12 and later), and the check dropped. The applier
+ * commits between the catalog changes and the validation, so the brief
+ * ACCESS EXCLUSIVE locks are never held across the scan. A check left by an
+ * interrupted run is validated as found. The first statement carries the
+ * NULL count as its pre-check. 18's `NOT NULL ... NOT VALID` would save the
+ * last statement; the check is used on every major for one sequence.
+ */
+export function setNotNullSteps(table: string, column: string, live?: Pick<PgDiffObject, "constraints">): PgStep[] {
+  const check = quoteIdent(notNullCheckName(column));
+  const left = live?.constraints.some((k) => k.name === notNullCheckName(column)) ?? false;
+  const steps = [
+    ...(left ? [] : [step(`ALTER TABLE ${table} ADD CONSTRAINT ${check} CHECK (${quoteIdent(column)} IS NOT NULL) NOT VALID`, "metadata", "SQLPG217")]),
+    step(`ALTER TABLE ${table} VALIDATE CONSTRAINT ${check}`, "validate", "SQLPG220"),
+    step(`ALTER TABLE ${table} ALTER COLUMN ${quoteIdent(column)} SET NOT NULL`, "metadata", "SQLPG210"),
+    step(`ALTER TABLE ${table} DROP CONSTRAINT ${check}`, "metadata", "SQLPG223"),
+  ];
+  steps[0] = { ...steps[0]!, precheck: nullPrecheck(table, column) };
+  return steps;
+}
+
+/**
  * The statements for an object that exists on the server, change by change.
  * `live` is the server's definition, matched to the declaration (a renamed
  * index by its `-- previously:` name). What has no statement in place is
@@ -448,6 +548,7 @@ export function alterSteps(
   const declaredColumns = new Map(d.columns.map((c) => [c.name, c]));
   let constraintsDone = false;
   let recreated = false;
+  const notNullChecks = new Set(changes.filter((c) => c.rule === "SQLPG210" && c.class !== "metadata").map((c) => notNullCheckName(COLUMN_FIELD.exec(c.field)?.[1] ?? "")));
 
   for (const c of changes) {
     const no = (why: string) => unsupported.push({ change: c, why });
@@ -460,7 +561,7 @@ export function alterSteps(
       continue;
     }
     if (c.field.startsWith("constraints.")) {
-      if (!constraintsDone) steps.push(...constraintSteps(obj, live));
+      if (!constraintsDone) steps.push(...constraintSteps(obj, live, notNullChecks));
       constraintsDone = true;
       continue;
     }
@@ -491,7 +592,9 @@ export function alterSteps(
           steps.push(step(def?.default !== undefined ? `${column} SET DEFAULT ${def.default}` : `${column} DROP DEFAULT`, c.class, c.rule));
           break;
         case "SQLPG210":
-          steps.push(step(`${column} SET NOT NULL`, c.class, c.rule));
+          // A valid check the server already holds proves it (the diff classes that metadata): SET NOT NULL alone.
+          if (c.class === "metadata") steps.push(step(`${column} SET NOT NULL`, c.class, c.rule));
+          else steps.push(...setNotNullSteps(target, name, live));
           break;
         case "SQLPG211":
           steps.push(step(`${column} DROP NOT NULL`, c.class, c.rule));
@@ -745,6 +848,12 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   role: 11,
 };
 
+/** A unique index's duplicate count, when every element is a plain column; undefined otherwise. */
+function uniqueIndexPrecheck(p: IndexProps): PgPrecheck | undefined {
+  if (!p.unique || p.elements.length === 0 || p.elements.some((e) => e.column === undefined)) return undefined;
+  return duplicatePrecheck(p.tableName, p.elements.map((e) => e.column!), { ...(p.nullsNotDistinct ? { nullsNotDistinct: true } : {}), ...(p.where ? { where: p.where } : {}) });
+}
+
 /**
  * The statements that take the current schema to the declared one, from the
  * classified changes between them. Pure: nothing is read or sent. The applier
@@ -793,6 +902,9 @@ export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
       // An index on a table that exists is built under the scan timeout (SQLPG240, SQLPG241); one on a new table is part of the create.
       const how = mine.find((c) => c.rule === "SQLPG200" || c.rule === "SQLPG240" || c.rule === "SQLPG241");
       const steps = createSteps(obj, input.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}), ...(input.access === false ? { access: false } : {}) });
+      // A unique index on a table that has rows fails on duplicates: its build carries their count.
+      const unique = how && how.rule !== "SQLPG200" && obj.canonical.kind === "index" ? uniqueIndexPrecheck(obj.props as unknown as IndexProps) : undefined;
+      if (unique && steps[0]) steps[0] = { ...steps[0], precheck: unique };
       return { verdict: "create", obj, changes: mine, steps, ...withLive };
     }
 

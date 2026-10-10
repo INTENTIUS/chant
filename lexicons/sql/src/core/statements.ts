@@ -48,6 +48,14 @@ export interface StatementStep extends StepObject {
   waitsForMutation?: boolean;
   /** The statement removes data that is not recoverable (a column or table drop). */
   destructive?: boolean;
+  /**
+   * Postgres: the statement can fail on the rows already there (a NULL under
+   * SET NOT NULL, a duplicate under a unique index, a row a check or foreign
+   * key refuses). `sql` returns one row with one column, `n`, the count of
+   * rows it would fail on; run it before the first statement and stop when
+   * it is not zero (#3686).
+   */
+  precheck?: { sql: string; detail: string };
 }
 
 /** A change no statement makes in place, made by a migration Op. */
@@ -118,7 +126,9 @@ export function renderStatements(doc: SchemaStatements): string {
   for (const s of doc.steps) {
     if (s.kind === "statement") {
       const notes = [s.transactional || doc.dialect !== "postgres" ? "" : "outside a transaction", s.waitsForMutation ? "waits for its mutation" : "", s.destructive ? "destructive" : ""].filter(Boolean);
-      out.push(`-- ${s.object} (${s.name}): ${s.rule} ${s.class}${notes.length ? `, ${notes.join(", ")}` : ""}`, `${s.sql};`, "");
+      out.push(`-- ${s.object} (${s.name}): ${s.rule} ${s.class}${notes.length ? `, ${notes.join(", ")}` : ""}`);
+      if (s.precheck) out.push(`-- pre-check, must return 0 (${s.precheck.detail}): ${s.precheck.sql}`);
+      out.push(`${s.sql};`, "");
     } else if (s.kind === "op") {
       out.push(`-- ${s.object} (${s.name}): ${s.changes.map((c) => c.rule).join(", ")} made by ${s.op}, not a statement:`, `--   ${s.declaration}`, "");
     } else {

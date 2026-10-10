@@ -83,7 +83,7 @@ Every rule has an id in the SQLPG2xx range, names its class and cites the Postgr
 | column type to a binary-coercible type (longer varchar, text, wider numeric) | SQLPG206 | metadata | indexes on the column may still be rebuilt |
 | column type with a rewrite (integer to bigint, a shorter varchar) | SQLPG207 | rewrite | |
 | column type across kinds (text to integer) | SQLPG208 | expand | needs USING and breaks readers |
-| set NOT NULL | SQLPG210 | rewrite | a valid `CHECK (col IS NOT NULL)` already in place makes it metadata |
+| set NOT NULL | SQLPG210 | validate | made as a `NOT VALID` check, `VALIDATE`, `SET NOT NULL`, the check dropped; a valid `CHECK (col IS NOT NULL)` already in place makes it metadata |
 | add a CHECK | SQLPG218 | rewrite | declare it `NOT VALID`, then validate |
 | add a foreign key | SQLPG219 | validate | `SHARE ROW EXCLUSIVE` on both tables for the scan; `NOT VALID` first avoids it |
 | add a constraint `NOT VALID` | SQLPG217 | metadata | checks new rows only |

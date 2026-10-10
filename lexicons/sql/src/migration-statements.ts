@@ -234,6 +234,7 @@ function postgresStatements(beforeJson: string, afterJson: string, options: Diff
         class: s.class,
         transactional: s.transactional,
         ...(s.rule === "SQLPG204" || isDestructive(entry.changes, s.rule) ? { destructive: true } : {}),
+        ...(s.precheck ? { precheck: { sql: s.precheck.sql, detail: s.precheck.detail } } : {}),
       });
     }
   }

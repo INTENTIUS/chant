@@ -150,6 +150,31 @@ const PG_AFTER = build("postgres", [APP, USERS_V2, EMAIL_IDX, ORDERS_RENAMED], {
 describe("Postgres", () => {
   const doc = diffStatements(PG_BEFORE, PG_AFTER, { marker: MARKER, env: "prod" });
 
+  test("a unique index on a table that exists carries its duplicate count, one on a new table none (#3686)", () => {
+    const unique: Obj = { export: "usersNick", type: "Postgres::Index", dependsOn: ["users"], ddl: "CREATE UNIQUE INDEX CONCURRENTLY users_nick_key ON app.users (nick) WHERE nick <> ''" };
+    const d = diffStatements(build("postgres", [APP, USERS]), build("postgres", [APP, USERS, unique]));
+    const built = d.steps.find((s): s is StatementStep => s.kind === "statement" && s.sql.startsWith("CREATE UNIQUE INDEX"));
+    expect(built?.precheck).toEqual({
+      sql: "SELECT (SELECT count(*) FROM (SELECT 1 FROM app.users WHERE nick IS NOT NULL AND (nick <> '') GROUP BY nick HAVING count(*) > 1) AS duplicates) AS n",
+      detail: "values of (nick) held by more than one row, which a unique index fails on",
+    });
+    expect(renderStatements(d)).toContain(`-- pre-check, must return 0 (values of (nick) held by more than one row, which a unique index fails on): ${built!.precheck!.sql}`);
+    const fresh = diffStatements(build("postgres", [APP]), build("postgres", [APP, USERS, unique]));
+    expect(fresh.steps.some((s) => s.kind === "statement" && s.precheck !== undefined)).toBe(false);
+  });
+
+  test("SET NOT NULL renders as its four statements, the first with the NULL count (#3686)", () => {
+    const d = diffStatements(build("postgres", [APP, USERS]), build("postgres", [APP, { ...USERS, ddl: USERS.ddl.replace("nick text", "nick text NOT NULL") }]));
+    const st = d.steps.filter((s): s is StatementStep => s.kind === "statement");
+    expect(st.map((s) => [s.sql, s.rule, s.class])).toEqual([
+      ["ALTER TABLE app.users ADD CONSTRAINT nick__chant_nn CHECK (nick IS NOT NULL) NOT VALID", "SQLPG217", "metadata"],
+      ["ALTER TABLE app.users VALIDATE CONSTRAINT nick__chant_nn", "SQLPG220", "validate"],
+      ["ALTER TABLE app.users ALTER COLUMN nick SET NOT NULL", "SQLPG210", "metadata"],
+      ["ALTER TABLE app.users DROP CONSTRAINT nick__chant_nn", "SQLPG223", "metadata"],
+    ]);
+    expect(st[0]!.precheck?.sql).toBe("SELECT count(*) AS n FROM app.users WHERE nick IS NULL");
+  });
+
   test("the statements are ordered, each with its change's rule and class and whether it may run in a transaction", () => {
     expect(doc).toMatchObject({ dialect: "postgres", defaultSchema: "public", major: 18 });
     expect(doc.steps.filter((s): s is StatementStep => s.kind === "statement").map((s) => [s.object, s.sql, s.rule, s.class, s.transactional])).toEqual([

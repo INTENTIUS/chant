@@ -82,7 +82,7 @@ describe("columns", () => {
     expect(rules(diff([table(ORDERS)], [table("CREATE TABLE app.orders (id bigint PRIMARY KEY, amount numeric(12,2) DEFAULT 0, note varchar(20) NOT NULL, status text)")]))).toEqual([
       ["columns.amount.default", "SQLPG209", "metadata"],
       ["columns.amount.notNull", "SQLPG211", "metadata"],
-      ["columns.note.notNull", "SQLPG210", "rewrite"],
+      ["columns.note.notNull", "SQLPG210", "validate"],
     ]);
     const renamed = diff([table(ORDERS)], [table(`CREATE TABLE app.orders (id bigint PRIMARY KEY, amount numeric(12,2) NOT NULL, note varchar(20),
       state text -- previously: status
