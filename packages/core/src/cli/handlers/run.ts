@@ -22,6 +22,7 @@ import { holdBesideLease } from "../../op/steward-beside";
 import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
 import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
 import { StaleLockError } from "../../lifecycle/git";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
@@ -976,7 +977,9 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     // branch. The gate is still right to stand, but an operator elsewhere
     // cannot see the pending fact to approve it, and nothing else here says
     // why not.
-    if (result.gated.pushed === false) {
+    if (result.gated.pushed === false && isLifecycleLocalNote(result.gated.pushWarning)) {
+      console.error(formatInfo(LIFECYCLE_LOCAL_NOTE));
+    } else if (result.gated.pushed === false) {
       console.error(formatWarning({
         message: `the pending fact was not pushed to the remote: ${result.gated.pushWarning ?? "recorded locally only"}`,
         hint: "an operator working from a clone of the remote cannot approve it until it does",

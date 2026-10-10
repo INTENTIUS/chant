@@ -63,7 +63,7 @@ vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
   return {
     ...actual,
-    pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
+    pushLifecycleReport: (...args: unknown[]) => pushLifecycleMock(...args),
     // Mocked, not merely defaulted: the real one shells to `git fetch`, and
     // these tests run in the chant checkout itself (#2303).
     requireLifecycleLedger: (...args: unknown[]) => requireLifecycleLedgerMock(...args),
@@ -92,7 +92,7 @@ beforeEach(() => {
   loadActivitiesMock.mockResolvedValue(new Map());
   loadProfilesMock.mockResolvedValue({});
   discoverOpsMock.mockResolvedValue({ ops: new Map([["fountain-apply", {}]]), errors: [] });
-  pushLifecycleMock.mockResolvedValue(true);
+  pushLifecycleMock.mockResolvedValue({ pushed: true });
   requireLifecycleLedgerMock.mockResolvedValue(undefined);
   readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
   readGateLedgerMock.mockResolvedValue({ resolutions: [], pending: [], malformed: 0 });
@@ -1046,31 +1046,33 @@ describe("runApprove — a push that does not land is reported (#2309 review)", 
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
     });
-    pushLifecycleMock.mockRejectedValue(new Error("Another snapshot completed for chant/lifecycle"));
+    pushLifecycleMock.mockResolvedValue({ pushed: false, pushWarning: "Another snapshot completed for chant/lifecycle" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
 
     const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(out).toMatch(/push to the remote was rejected/);
+    expect(out).toMatch(/push to the remote did not land: Another snapshot completed/);
     expect(out).toMatch(/local only . the push did not land/);
     // Still exit 0: the local append is a correct local fact.
     expect(code).toBe(0);
     errSpy.mockRestore();
   });
 
-  test("a project with no remote says nothing was pushed", async () => {
+  test("a project with no remote says so quietly, with no warning (#3677)", async () => {
     seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
     });
-    pushLifecycleMock.mockResolvedValue(false);
+    pushLifecycleMock.mockResolvedValue({ pushed: false, pushWarning: "recorded locally (no remote for chant/lifecycle)" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
 
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/No remote is configured/);
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toMatch(/resolved by alex .*\(recorded locally \(no remote for chant\/lifecycle\)\)/);
+    expect(out).not.toMatch(/push did not land|did not land|No remote is configured/);
     errSpy.mockRestore();
   });
 });

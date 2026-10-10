@@ -22,6 +22,7 @@ import { appendFileSync } from "node:fs";
 import { gateLedgerPath } from "../lifecycle/gate-ledger";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { approveCommand } from "./gate";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 
 /** What a gated run knows about the gate it stopped on. */
 export interface GatedRunSummary {
@@ -110,7 +111,9 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
   );
   if (summary.expiresAt) lines.push(`Expires: ${summary.expiresAt}`);
   if (summary.url) lines.push(`Approve at: ${summary.url}`);
-  if (summary.pushed === false) {
+  if (summary.pushed === false && isLifecycleLocalNote(summary.pushWarning)) {
+    lines.push("", `The pending fact was ${LIFECYCLE_LOCAL_NOTE}.`);
+  } else if (summary.pushed === false) {
     lines.push(
       "",
       `**This pending fact was not pushed to the remote** (${summary.pushWarning ?? "no reason given"}). ` +

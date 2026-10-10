@@ -44,6 +44,12 @@ describe("gatedRunSummaryMarkdown (#2243)", () => {
     expect(md).toContain("cannot see it to approve it");
   });
 
+  test("says it was recorded locally, without the warning, when chant/lifecycle has no remote (#3677)", () => {
+    const md = gatedRunSummaryMarkdown({ ...summary, pushed: false, pushWarning: "recorded locally (no remote for chant/lifecycle)" });
+    expect(md).toContain("The pending fact was recorded locally (no remote for chant/lifecycle).");
+    expect(md).not.toContain("was not pushed");
+  });
+
   test("says nothing extra when the push landed or nothing was pushed this run", () => {
     const md = gatedRunSummaryMarkdown(summary);
     expect(md).not.toContain("was not pushed");

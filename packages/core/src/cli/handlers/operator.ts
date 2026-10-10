@@ -50,7 +50,8 @@ import {
 import { approverOf, tallyGateApprovals } from "../../op/gate";
 import { FAN_OUT_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
-import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
+import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -818,23 +819,18 @@ const LIFECYCLE_BRANCH = "chant/lifecycle";
  * only in their own checkout.
  *
  * The append is still a correct *local* fact, so this is a warning and not a
- * failure; the exit code is unchanged.
+ * failure; the exit code is unchanged. With no remote at all there is nobody
+ * elsewhere to tell, so that case is a quiet suffix and no warning (#3677).
  */
-async function reportedPush(consequence: string): Promise<boolean> {
-  try {
-    const pushed = await pushLifecycle();
-    if (pushed) return true;
-    console.error(formatWarning({
-      message: `No remote is configured, so nothing was pushed. ${consequence}`,
-    }));
-    return false;
-  } catch (err) {
-    console.error(formatWarning({
-      message: `The push to the remote was rejected: ${err instanceof Error ? err.message : String(err)}`,
-      hint: consequence,
-    }));
-    return false;
-  }
+async function reportedPush(consequence: string): Promise<{ pushed: boolean; suffix: string }> {
+  const { pushed, pushWarning } = await pushLifecycleReport();
+  if (pushed) return { pushed, suffix: "" };
+  if (isLifecycleLocalNote(pushWarning)) return { pushed, suffix: ` (${LIFECYCLE_LOCAL_NOTE})` };
+  console.error(formatWarning({
+    message: `The push to the remote did not land: ${pushWarning ?? "no reason given"}`,
+    hint: consequence,
+  }));
+  return { pushed, suffix: " (local only — the push did not land)" };
 }
 
 export async function runApprove(ctx: CommandContext): Promise<number> {
@@ -873,13 +869,12 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
       expiresAt: now,
       ...(standing.description ? { description: standing.description } : {}),
     });
-    const pushed = await reportedPush(
+    const push = await reportedPush(
       `The expiry is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
         `a run in another checkout still sees the old pending fact.`,
     );
     console.error(formatSuccess(
-      `Gate "${gate}" on "${opName}" expired at ${now} — not approved` +
-        (pushed ? "" : " (local only — the push did not land)"),
+      `Gate "${gate}" on "${opName}" expired at ${now} — not approved` + push.suffix,
     ));
     console.error(formatInfo(
       opName === FAN_OUT_GATE_OP
@@ -1294,7 +1289,7 @@ export async function recordGateApproval(
     origin,
     ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
   });
-  const pushed = await reportedPush(
+  const push = await reportedPush(
     `The resolution is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
       `a run in another checkout will not see it.`,
   );
@@ -1305,7 +1300,7 @@ export async function recordGateApproval(
       ` at ${record.timestamp}` +
       (record.url ? ` (${record.url})` : "") +
       (record.seal ? `, signed with ${record.seal.key}` : "") +
-      (pushed ? "" : " (local only — the push did not land)"),
+      push.suffix,
   ));
   if (record.planDigest) {
     console.error(formatInfo(
@@ -1319,7 +1314,7 @@ export async function recordGateApproval(
       console.error(formatInfo(line));
     }
   }
-  return { ok: true, record, pushed };
+  return { ok: true, record, pushed: push.pushed };
 }
 
 /**

@@ -58,7 +58,7 @@ import {
   type ConvergeTickRecord,
 } from "../../lifecycle/converge-ledger";
 import { resolveApprovalUrl } from "../../lifecycle/gate-ledger";
-import { fetchLifecycle, pushLifecycle } from "../../lifecycle/git";
+import { fetchLifecycle, pushLifecycleReport } from "../../lifecycle/git";
 import type { ChangeSet } from "../../lifecycle/change-set";
 import type { ComponentStatusRow } from "../../lifecycle/status";
 
@@ -535,12 +535,7 @@ async function dispatchPlanned(
 
 /** Push the tick's ledger record, and say whether it reached the remote (chant#2337). */
 async function pushTick(): Promise<{ pushed: boolean; pushWarning?: string }> {
-  try {
-    const pushed = await pushLifecycle();
-    return pushed ? { pushed } : { pushed, pushWarning: "no remote is configured for chant/lifecycle — the tick record was recorded locally only" };
-  } catch (err) {
-    return { pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
-  }
+  return pushLifecycleReport();
 }
 
 /** A tick of a ConvergeOp with an observer step (#2778): the observation is already in `args.observed`. */

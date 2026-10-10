@@ -3,6 +3,7 @@ import type { OpRunResult } from "./local-executor";
 import { buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
 import { renderHuman, renderJson } from "./local-output";
+import { LIFECYCLE_LOCAL_NOTE } from "../lifecycle/local-note";
 
 /**
  * Attach the ledger record the executor would have built (#2118), so a fixture
@@ -144,6 +145,17 @@ describe("renderHuman — a gated run whose own push never reached the remote (#
     const lines: string[] = [];
     renderHuman({ ...GATED, gatePushed: true }, (l) => lines.push(l));
     expect(lines.join("\n")).not.toContain("was not pushed");
+  });
+
+  // #3677: with no remote at all, the person who approves is the one at this
+  // machine; one quiet line, no warning on every local run.
+  test("prints one quiet note, not a warning, when chant/lifecycle has no remote", () => {
+    const lines: string[] = [];
+    renderHuman({ ...GATED, gatePushed: false, gatePushWarning: LIFECYCLE_LOCAL_NOTE }, (l) => lines.push(l));
+    const out = lines.join("\n");
+    expect(out).toContain("  note    : recorded locally (no remote for chant/lifecycle)");
+    expect(out).not.toContain("warning");
+    expect(out).not.toContain("was not pushed");
   });
 });
 
