@@ -291,6 +291,12 @@ export interface ParsedArgs {
    * partway under that approval.
    */
   resume?: string;
+  /**
+   * `chant approve <op> <gate> --resume` (#3683): after recording the
+   * approval, start the CI job that waits at the gate again through the
+   * forge's API. Set when `--resume` is given no value.
+   */
+  resumeRun?: boolean;
   /** `chant audit --tier merge-worthy|all` */
   tier?: string;
   /**

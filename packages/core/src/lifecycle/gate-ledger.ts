@@ -46,6 +46,7 @@ import { samePlanDigest } from "./plan-digest";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
+import type { GateRunLocator } from "../op/gate-resume";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const DIR = "_gates";
@@ -270,6 +271,12 @@ export interface PendingGateRecord {
   expiresAt: string;
   /** The address approval happens at, when the run knew one — see {@link resolveApprovalUrl}. */
   url?: string;
+  /**
+   * The CI job that reached this gate (#3683), when it ran in one: what
+   * `chant approve --resume` and `chant run resume` hand the forge to start
+   * that job again (`../op/gate-resume.ts`). Absent outside CI.
+   */
+  resume?: GateRunLocator;
   /**
    * The plan the run reached this gate with (#2300) — `computePlanDigest`'s
    * output (`./plan-digest.ts`). This is what `chant approve` copies onto the

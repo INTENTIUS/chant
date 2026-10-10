@@ -911,6 +911,12 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
   });
   if (!outcome.ok) return 1;
 
+  // #3683: start the CI job that waits at this gate again.
+  if (ctx.args.resumeRun || ctx.args.resume !== undefined) {
+    const { resumeAfterApproval } = await import("./gate-resume");
+    return resumeAfterApproval(opName, gate, outcome.record.environment, outcome.pushed);
+  }
+
   console.error(formatInfo(
     `This records the resolution as a fact; it does not itself re-run anything. ` +
       (opName === FAN_OUT_GATE_OP
@@ -988,7 +994,7 @@ export interface GateApprovalOptions {
 }
 
 export type GateApprovalOutcome =
-  | { ok: true; record: GateResolutionRecord }
+  | { ok: true; record: GateResolutionRecord; pushed: boolean }
   | { ok: false };
 
 /**
@@ -1313,7 +1319,7 @@ export async function recordGateApproval(
       console.error(formatInfo(line));
     }
   }
-  return { ok: true, record };
+  return { ok: true, record, pushed };
 }
 
 /**

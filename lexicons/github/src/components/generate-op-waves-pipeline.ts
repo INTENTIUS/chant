@@ -13,9 +13,14 @@
  * deciding job uploads its decision, even when it waits, and each share job
  * downloads it. The forgejo generator reuses {@link buildGithubOpWavesDoc}
  * and applies its dialect.
+ *
+ * With `resume` on the spec (#3683), a second workflow, `<name>-resume.yml`,
+ * runs `chant run resume --op <name>` on that schedule: it re-runs the failed
+ * jobs of a run whose waiting wave has been approved since, with the job's
+ * token and `actions: write`.
  */
 
-import { opWaveJobs, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { actionRef } from "../action-pins";
 import {
@@ -42,7 +47,7 @@ function dirOf(path: string): string {
 export function buildGithubOpWavesDoc(
   spec: OpWavesSpec,
   options: OpWavesPipelineOptions,
-): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"] } {
+): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc } {
   const jobs = opWaveJobs(spec, options.specFile);
   const image = options.image ?? OP_WAVES_IMAGE;
   for (const wave of spec.waves) {
@@ -99,7 +104,26 @@ export function buildGithubOpWavesDoc(
     permissions: { contents: "write" },
     jobsDoc,
   };
-  return { doc, jobs };
+  return { doc, jobs, ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}) };
+}
+
+/** The scheduled resume workflow (#3683). */
+function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
+  const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
+  for (const line of options.beforeScript ?? []) steps.push({ run: line });
+  steps.push({
+    name: `Resume the waves of ${spec.name} whose approval arrived`,
+    run: opWavesResumeCommand(spec).join(" "),
+    env: { GITHUB_TOKEN: "${{ github.token }}" },
+  });
+  return {
+    name: `${spec.name}-resume`,
+    on: { schedule: [{ cron: spec.resume!.schedule }], workflow_dispatch: {} },
+    concurrency: { group: `${spec.name}-resume`, "cancel-in-progress": true },
+    // contents: read fetches chant/lifecycle; actions: write re-runs a waiting run.
+    permissions: { contents: "read", actions: "write" },
+    jobsDoc: { resume: { "runs-on": "ubuntu-latest", container: options.image ?? OP_WAVES_IMAGE, steps } },
+  };
 }
 
 function describeJob(kind: "wave" | "decide" | "share", wave: number, name: string, share?: number): string {
@@ -110,6 +134,8 @@ function describeJob(kind: "wave" | "decide" | "share", wave: number, name: stri
 
 /** Render an Op waves spec as one GitHub Actions workflow, `<name>.yml`. */
 export function generateGithubOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
-  const { doc, jobs } = buildGithubOpWavesDoc(spec, options);
-  return { files: [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(doc) }], jobs };
+  const { doc, jobs, resumeDoc } = buildGithubOpWavesDoc(spec, options);
+  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(doc) }];
+  if (resumeDoc) files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(resumeDoc) });
+  return { files, jobs };
 }

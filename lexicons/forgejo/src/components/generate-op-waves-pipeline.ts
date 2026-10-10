@@ -6,6 +6,11 @@
  * none), and each wave's `environment:` dropped with a header line saying so,
  * since Forgejo Actions has no environments. The wave's chant gate is what
  * holds it there.
+ *
+ * With `resume` on the spec (#3683), `<name>-resume.yml` runs `chant run
+ * resume --op <name>` on that schedule. Forgejo has no API to re-run a run,
+ * so it dispatches the waves workflow again on its branch, with the
+ * `CHANT_FORGE_TOKEN` secret (a token with the `write:repository` scope).
  */
 
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";
@@ -24,7 +29,7 @@ export function generateForgejoOpWavesPipeline(
   options: OpWavesPipelineOptions,
   dialectOptions: ForgejoDialectOptions = {},
 ): OpWavesPipelineResult {
-  const { doc, jobs } = buildGithubOpWavesDoc(spec, options);
+  const { doc, jobs, resumeDoc } = buildGithubOpWavesDoc(spec, options);
   const jobsDoc = Object.fromEntries(
     Object.entries(doc.jobsDoc).map(([name, job]) => {
       const { environment: _dropped, ...rest } = job as Record<string, unknown>;
@@ -50,5 +55,22 @@ export function generateForgejoOpWavesPipeline(
     permissions: {},
     jobsDoc: forgejoize(jobsDoc, dialectOptions),
   };
-  return { files: [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(forgejoDoc) }], jobs };
+  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(forgejoDoc) }];
+  if (resumeDoc) {
+    const resumeJobs = forgejoize(resumeDoc.jobsDoc, dialectOptions) as Record<string, { steps: Array<Record<string, unknown>> }>;
+    for (const job of Object.values(resumeJobs)) {
+      for (const step of job.steps) if (step.env) step.env = { CHANT_FORGE_TOKEN: "${{ secrets.CHANT_FORGE_TOKEN }}" };
+    }
+    files.push({
+      name: `${spec.name}-resume.yml`,
+      yaml: emitOpPipelineYAML({
+        name: resumeDoc.name!,
+        on: forgejoize(resumeDoc.on, dialectOptions),
+        concurrency: forgejoize(resumeDoc.concurrency, dialectOptions),
+        permissions: {},
+        jobsDoc: resumeJobs,
+      }),
+    });
+  }
+  return { files, jobs };
 }

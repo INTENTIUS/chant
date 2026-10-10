@@ -295,7 +295,7 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
       `digest ${digest}: ${decision.status}${decision.approvedBy ? ` by ${decision.approvedBy}` : ""}`,
   );
   if (decision.status === "waiting") {
-    log(`Nothing in wave ${k} or after it ran. Read the plans, then approve: ${decision.approve}`);
+    log(`Nothing in wave ${k} or after it ran. Read the plans, then approve: ${decision.approve} (with --resume, the approval also starts this job again)`);
     return { ...result, exitCode: 3 };
   }
   if (options.decide) return result;

@@ -103,6 +103,29 @@ export interface OpWavesSpec {
   /** Apply one run whose plan is at `{plan}`. Default `chant run {op} --env {target}`. */
   apply?: string[];
   waves: OpWave[];
+  /**
+   * A scheduled job that starts again a wave job whose approval has arrived
+   * (#3683): it runs `chant run resume --op <name>`, which re-runs the
+   * GitHub run, retries the GitLab job or dispatches the Forgejo workflow.
+   * It approves nothing. Absent, no such job is rendered and an approval is
+   * followed by `chant approve --resume` or a re-run by hand.
+   */
+  resume?: OpWavesResume;
+}
+
+/** The scheduled resume job of an Op waves pipeline (#3683). */
+export interface OpWavesResume {
+  /**
+   * Five-field cron, such as `"*\/10 * * * *"`. GitHub and Forgejo put it
+   * in the workflow; GitLab runs the job in a pipeline schedule you create,
+   * which sets the cron.
+   */
+  schedule: string;
+}
+
+/** The command a resume job runs. */
+export function opWavesResumeCommand(spec: Pick<OpWavesSpec, "name">): string[] {
+  return ["chant", "run", "resume", "--op", spec.name];
 }
 
 /** The default apply command. */
@@ -146,6 +169,9 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     throw new Error(`${where}: the \`plan\` command never names {plan}, the file it writes the plan digest to.`);
   }
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
+  if (spec.resume !== undefined && (typeof spec.resume.schedule !== "string" || spec.resume.schedule.trim().split(/\s+/).length !== 5)) {
+    throw new Error(`${where}: resume.schedule must be a five-field cron expression, such as "*/10 * * * *".`);
+  }
   const names = new Set<string>();
   for (const wave of spec.waves) {
     if (!NAME.test(wave.name)) {

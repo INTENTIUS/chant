@@ -30,4 +30,14 @@ describe("generateForgejoOpWavesPipeline", () => {
     expect(yaml).toContain("run: chant run wave --spec waves.json --wave 3\n");
     expect(yaml).toContain("fetch-depth: 0");
   });
+
+  test("resume renders a scheduled workflow that dispatches with the CHANT_FORGE_TOKEN secret (#3683)", () => {
+    const { files } = generateForgejoOpWavesPipeline({ ...spec, resume: { schedule: "*/10 * * * *" } }, { specFile: "waves.json" });
+    expect(files.map((f) => f.name)).toEqual(["migrations.yml", "migrations-resume.yml"]);
+    const yaml = files[1]!.yaml;
+    expect(yaml).toContain("run: chant run resume --op migrations");
+    expect(yaml).toContain("CHANT_FORGE_TOKEN: '${{ secrets.CHANT_FORGE_TOKEN }}'");
+    expect(yaml).not.toContain("github.token");
+    expect(yaml).not.toMatch(/^permissions:/m);
+  });
 });
