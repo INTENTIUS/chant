@@ -87,7 +87,23 @@ export class GitLabParser implements TemplateParser {
       }
     }
 
-    // Record include references as metadata
+    // The file's top-level include, stages and variables are a Pipeline
+    // (#3742), so a rebuild writes them back: stages as written, a stage no
+    // job uses and the declared order included.
+    const pipeline: Record<string, unknown> = {};
+    if (doc.include !== undefined && doc.include !== null) pipeline.include = doc.include;
+    if (Array.isArray(doc.stages)) pipeline.stages = doc.stages;
+    if (doc.variables && typeof doc.variables === "object") pipeline.variables = doc.variables;
+    if (Object.keys(pipeline).length > 0) {
+      const taken = new Set(resources.map((r) => r.logicalId));
+      resources.unshift({
+        logicalId: taken.has("pipeline") ? "pipelineConfig" : "pipeline",
+        type: "GitLab::CI::Pipeline",
+        properties: pipeline,
+      });
+    }
+
+    // Also kept as metadata, for callers that read the IR without the Pipeline.
     const metadata: Record<string, unknown> = {};
     if (doc.stages) metadata.stages = doc.stages;
     if (doc.include) metadata.include = doc.include;
