@@ -51,8 +51,12 @@ export async function startScratchServer(
 }
 
 export interface ScratchCluster {
-  /** One endpoint per replica, in replica order (`r1`, `r2`, ...). */
+  /** One endpoint per server, in order: shard 1's replicas first (`r1`, `r2`, ...), then shard 2's. */
   replicas: ClickHouseEndpoint[];
+  /** Each server's shard and replica macros, in the order of `replicas`. */
+  layout: Array<{ shard: string; replica: string; host: string }>;
+  /** The cluster `remote_servers` defines over every server: `ON CLUSTER` and `cluster:<name>` name it. */
+  cluster: string;
   /** The containers' common name prefix, for a log line. */
   name: string;
   /** Remove the containers and their network. Safe to call twice. */
@@ -72,23 +76,37 @@ export interface ScratchCluster {
 }
 
 /**
- * Start `replicas` servers of `image` as one shard of replicas, on their own
- * Docker network, and wait until each answers and reaches Keeper.
+ * Start servers of `image` on their own Docker network, and wait until each
+ * answers and reaches Keeper: `replicas` servers as one shard of replicas,
+ * or, with `shards`, that many replicas in each shard (`[2, 1]` is a shard of
+ * two replicas and a shard of one server).
  *
  * Keeper is the server's embedded one (`keeper_server`), run by the first
- * replica, so the pinned server image and its digest pin Keeper too. Each
- * replica gets the macros `{shard}` = `s1` and `{replica}` = `r<n>`, which
- * a `Replicated` database's arguments name. Configuration is copied into each
- * container before it starts, with no bind mount.
+ * server, so the pinned server image and its digest pin Keeper too. Each
+ * server gets the macros `{shard}` = `s<n>` and `{replica}` = `r<n>` (the
+ * replica numbered within its shard), which a `Replicated` database's and a
+ * `Replicated*MergeTree`'s arguments name, and `remote_servers` defines the
+ * cluster `cluster` (default `chant`) over all of them, with
+ * `internal_replication`, so `ON CLUSTER` reaches every server. Configuration
+ * is copied into each container before it starts, with no bind mount.
  */
 export async function startScratchCluster(
   image: string,
-  options: { replicas?: number; namePrefix?: string; readyTimeoutMs?: number } = {},
+  options: { replicas?: number; shards?: number[]; cluster?: string; namePrefix?: string; readyTimeoutMs?: number } = {},
 ): Promise<ScratchCluster> {
-  const count = options.replicas ?? 2;
+  const shards = options.shards ?? [options.replicas ?? 2];
+  const clusterName = options.cluster ?? "chant";
   const name = uniqueContainerName(options.namePrefix ?? "chant-sql-cluster");
   const network = `${name}-net`;
-  const nodes = Array.from({ length: count }, (_, i) => `${name}-r${i + 1}`);
+  // One shard keeps the names the single-shard cluster always had (`<name>-r<n>`).
+  const layout = shards.flatMap((replicas, s) =>
+    Array.from({ length: replicas }, (_, r) => ({
+      shard: `s${s + 1}`,
+      replica: `r${r + 1}`,
+      host: shards.length === 1 ? `${name}-r${r + 1}` : `${name}-s${s + 1}r${r + 1}`,
+    })),
+  );
+  const nodes = layout.map((l) => l.host);
   const dir = mkdtempSync(join(tmpdir(), "chant-sql-cluster-"));
   let removed = false;
   const stop = async (): Promise<void> => {
@@ -100,6 +118,12 @@ export async function startScratchCluster(
   };
 
   const keeper = nodes[0]!;
+  const remoteServers = shards
+    .map((_, s) => {
+      const hosts = layout.filter((l) => l.shard === `s${s + 1}`).map((l) => `<replica><host>${l.host}</host><port>9000</port></replica>`);
+      return `<shard><internal_replication>true</internal_replication>${hosts.join("")}</shard>`;
+    })
+    .join("");
   const config = (node: string, i: number) => `<clickhouse>
 ${
   i === 0
@@ -113,7 +137,9 @@ ${
 `
     : ""
 }  <zookeeper><node><host>${keeper}</host><port>9181</port></node></zookeeper>
-  <macros><shard>s1</shard><replica>r${i + 1}</replica></macros>
+  <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+  <remote_servers><${clusterName}>${remoteServers}</${clusterName}></remote_servers>
+  <macros><shard>${layout[i]!.shard}</shard><replica>${layout[i]!.replica}</replica></macros>
   <interserver_http_host>${node}</interserver_http_host>
 </clickhouse>
 `;
@@ -156,6 +182,8 @@ ${
     };
     return {
       replicas: endpoints,
+      layout,
+      cluster: clusterName,
       name,
       stop,
       async stopReplica(index) {
