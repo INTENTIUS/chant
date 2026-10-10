@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { alterSteps, columnDefinition, constraintSql, createSteps, dropStatement, splitStatements, type PgStep } from "./statements";
+import { alterSteps, columnDefinition, constraintSql, createSteps, dropStatement, planPgStatements, splitStatements, type PgStep } from "./statements";
 import { declaredObjects } from "./apply";
 import { keyedByQualifiedName, pgSchemaFromLive, type PgSchemaObject } from "../plan/schema";
 import { diffPgSchemas, matchPgObjects } from "../plan/diff";
@@ -228,5 +228,42 @@ describe("safe sequences and pre-checks (#3686)", () => {
   test("a foreign key with no referenced columns, or MATCH FULL, carries no pre-check", () => {
     expect(steps(T, "CREATE TABLE app.o (u bigint)", "CREATE TABLE app.o (u bigint REFERENCES app.users)").steps[0]!.precheck).toBeUndefined();
     expect(steps(T, "CREATE TABLE app.o (u bigint)", "CREATE TABLE app.o (u bigint REFERENCES app.users (id) MATCH FULL)").steps[0]!.precheck).toBeUndefined();
+  });
+});
+
+describe("a trigger or policy on a table", () => {
+  const TABLE = "CREATE TABLE app.t (id int)";
+  const declared = declaredObjects(
+    JSON.stringify({
+      dialect: "postgres",
+      objects: [
+        { export: "t", type: T, dependsOn: [], ddl: TABLE },
+        { export: "f", type: "Postgres::Function", dependsOn: [], ddl: "CREATE FUNCTION app.f() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$" },
+        { export: "g", type: "Postgres::Trigger", dependsOn: ["t", "f"], ddl: "CREATE TRIGGER g BEFORE INSERT ON app.t FOR EACH ROW EXECUTE FUNCTION app.f()" },
+        { export: "p", type: "Postgres::Policy", dependsOn: ["t"], ddl: "CREATE POLICY p ON app.t USING (true)" },
+      ],
+    }),
+  );
+  /** The create steps of the trigger and the policy, the table already on the server or not. */
+  function created(live: LivePgObject[]): Record<string, PgStep[]> {
+    const after: PgSchemaObject[] = declared.map((o) => ({ key: o.key, canonical: o.canonical }));
+    const current = pgSchemaFromLive(live, "public");
+    const plan = planPgStatements({ declared, changes: diffPgSchemas(current, after).changes, current, major: 18 });
+    return Object.fromEntries(plan.objects.flatMap((o) => (o.verdict === "create" ? [[o.obj.exportName, o.steps]] : [])));
+  }
+
+  test("on an existing table, the CREATE carries the lock rule and its class", () => {
+    const r = created([{ type: T, statement: TABLE, name: "t", oid: "1" } as unknown as LivePgObject]);
+    expect(r.t).toBeUndefined();
+    expect(r.g![0]).toMatchObject({ rule: "SQLPG283", class: "metadata" });
+    expect(r.g![0]!.sql).toMatch(/^CREATE TRIGGER g/);
+    expect(r.p![0]).toMatchObject({ rule: "SQLPG290", class: "metadata" });
+  });
+
+  test("on a table this plan creates, it is part of the create", () => {
+    const r = created([]);
+    expect(r.t![0]).toMatchObject({ rule: "SQLPG200", class: "create" });
+    expect(r.g![0]).toMatchObject({ rule: "SQLPG200", class: "create" });
+    expect(r.p![0]).toMatchObject({ rule: "SQLPG200", class: "create" });
   });
 });
