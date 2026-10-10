@@ -28,13 +28,18 @@ export interface TemplateBody {
   refs: string[];
 }
 
-export const CLICKHOUSE_TAG_OF: Readonly<Record<string, "database" | "table" | "view" | "dictionary" | "func">> = {
+export const CLICKHOUSE_TAG_OF: Readonly<Record<string, "database" | "table" | "view" | "dictionary" | "func" | "user" | "role" | "policy" | "grant">> = {
   [CLICKHOUSE_ENTITY_TYPES.database]: "database",
   [CLICKHOUSE_ENTITY_TYPES.table]: "table",
   [CLICKHOUSE_ENTITY_TYPES.view]: "view",
   [CLICKHOUSE_ENTITY_TYPES.materializedView]: "view",
   [CLICKHOUSE_ENTITY_TYPES.dictionary]: "dictionary",
   [CLICKHOUSE_ENTITY_TYPES.function]: "func",
+  // Read from `.sql` files (#3711).
+  [CLICKHOUSE_ENTITY_TYPES.user]: "user",
+  [CLICKHOUSE_ENTITY_TYPES.role]: "role",
+  [CLICKHOUSE_ENTITY_TYPES.rowPolicy]: "policy",
+  [CLICKHOUSE_ENTITY_TYPES.grant]: "grant",
 };
 
 /** A backquoted or double-quoted identifier, written bare when it can be and double-quoted otherwise. */
@@ -128,8 +133,8 @@ export function clickhouseTemplates(items: readonly Item[], targets: readonly It
   const dbExport = new Map<string, string>();
   for (const it of targets) {
     if (it.type === CLICKHOUSE_ENTITY_TYPES.database) dbExport.set(it.name, it.exportName);
-    // A function is called, never named after FROM, JOIN or TO.
-    else if (it.type !== CLICKHOUSE_ENTITY_TYPES.function) byQualified.set(it.database ? `${it.database}.${it.name}` : it.name, it);
+    // A function is called, never named after FROM, JOIN or TO; a row policy and a grant are never named at all.
+    else if (it.type !== CLICKHOUSE_ENTITY_TYPES.function && it.type !== CLICKHOUSE_ENTITY_TYPES.rowPolicy && it.type !== CLICKHOUSE_ENTITY_TYPES.grant) byQualified.set(it.database ? `${it.database}.${it.name}` : it.name, it);
   }
   const bodies = new Map(items.map((it) => [it.exportName, templateBody(it, byQualified, dbExport)]));
   // Declarations reference each other in one file, so each comes after what it references.

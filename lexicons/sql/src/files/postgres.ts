@@ -45,7 +45,8 @@ const isName = (t: Token | undefined): boolean => t !== undefined && (t.kind ===
 const word = (t: Token | undefined, ...words: string[]): boolean => t !== undefined && t.kind === "ident" && words.includes(t.text.toUpperCase());
 
 /** Text that sits inside a template literal: a backquote and `${` escaped. */
-const templateSafe = (s: string) => s.replace(/\\(?=`|\$\{)/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+/** Text that sits inside a template literal: a backquote and `${` escaped. */
+export const templateSafe = (s: string) => s.replace(/\\(?=`|\$\{)/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 
 interface PgFileObject {
   node: StatementNode;
