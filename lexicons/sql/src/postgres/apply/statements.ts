@@ -826,6 +826,9 @@ export interface PgStatementPlan {
   drops: PgDropStatement[];
 }
 
+/** The rules that create an object, which label its create statements. */
+const CREATE_RULES: ReadonlySet<string> = new Set(["SQLPG200", "SQLPG240", "SQLPG241", "SQLPG283", "SQLPG290"]);
+
 /** Drop order: what reads from a table before the table, types after the tables using them, a schema last. */
 const DROP_ORDER: Record<CanonicalKind, number> = {
   grant: 0,
@@ -899,8 +902,9 @@ export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
     const onRecreated = obj.canonical.kind === "index" && recreatedRelations.has(String(obj.canonical.fields.table));
     if (!live || onRecreated) {
       const base = obj.canonical.kind === "extension" && !live ? input.extensionComment?.(obj.canonical.name) : undefined;
-      // An index on a table that exists is built under the scan timeout (SQLPG240, SQLPG241); one on a new table is part of the create.
-      const how = mine.find((c) => c.rule === "SQLPG200" || c.rule === "SQLPG240" || c.rule === "SQLPG241");
+      // An index on a table that exists is built under the scan timeout (SQLPG240, SQLPG241), and a trigger or policy
+      // on one locks it (SQLPG283, SQLPG290); on a new table each is part of the create (SQLPG200).
+      const how = mine.find((c) => CREATE_RULES.has(c.rule));
       const steps = createSteps(obj, input.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}), ...(input.access === false ? { access: false } : {}) });
       // A unique index on a table that has rows fails on duplicates: its build carries their count.
       const unique = how && how.rule !== "SQLPG200" && obj.canonical.kind === "index" ? uniqueIndexPrecheck(obj.props as unknown as IndexProps) : undefined;
