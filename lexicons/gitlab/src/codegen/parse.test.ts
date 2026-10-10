@@ -5,19 +5,20 @@ import { loadSchemaFixture } from "../testdata/load-fixtures";
 const fixture = loadSchemaFixture();
 
 describe("parseCISchema", () => {
-  test("returns 19 entities", () => {
+  test("returns 20 entities", () => {
     const results = parseCISchema(fixture);
-    expect(results).toHaveLength(19);
+    expect(results).toHaveLength(20);
   });
 
-  test("returns 3 resource entities", () => {
+  test("returns 4 resource entities", () => {
     const results = parseCISchema(fixture);
     const resources = results.filter((r) => !r.isProperty);
-    expect(resources).toHaveLength(3);
+    expect(resources).toHaveLength(4);
     const names = resources.map((r) => r.resource.typeName);
     expect(names).toContain("GitLab::CI::Job");
     expect(names).toContain("GitLab::CI::Default");
     expect(names).toContain("GitLab::CI::Workflow");
+    expect(names).toContain("GitLab::CI::Pipeline");
   });
 
   test("returns 16 property entities", () => {
@@ -146,8 +147,17 @@ describe("spec conformance — type mappings", () => {
     expect(findProp("Job", "release")?.tsType).toBe("Release");
   });
 
-  test("Job.needs → Need[]", () => {
-    expect(findProp("Job", "needs")?.tsType).toBe("Need[]");
+  test("Job.needs → (Need | string)[] and Job.image → Image | string (#3669)", () => {
+    expect(findProp("Job", "needs")?.tsType).toBe("(Need | string)[]");
+    expect(findProp("Job", "image")?.tsType).toBe("Image | string");
+  });
+
+  test("Pipeline holds the top-level include, stages and variables, and a comment (#3669)", () => {
+    expect(findProp("Pipeline", "include")?.tsType).toBe("Include | string | (Include | string)[]");
+    expect(findProp("Pipeline", "stages")?.tsType).toBe("string[]");
+    expect(findProp("Pipeline", "variables")).toBeDefined();
+    expect(findProp("Pipeline", "comment")?.tsType).toBe("string");
+    expect(findProp("Job", "comment")?.tsType).toBe("string");
   });
 
   test("Job.inherit → Inherit", () => {

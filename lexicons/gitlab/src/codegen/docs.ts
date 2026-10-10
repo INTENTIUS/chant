@@ -30,12 +30,12 @@ npm install --save-dev @intentius/chant-lexicon-gitlab
 
 {{file:docs-snippets/src/quickstart.ts}}
 
-The lexicon provides **3 resources** (Job, Workflow, Default), **16 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, Need, Service, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags. It also ships **4 lint rules** + **39 post-synth checks** (including a CI/CD supply-chain security pass, WGL029–048) and a [\`chant migrate\`](./migration) source for translating GitHub Actions workflows.
+The lexicon provides **4 resources** (Job, Workflow, Default, Pipeline), **16 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, Need, Service, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags. It also ships **4 lint rules** + **39 post-synth checks** (including a CI/CD supply-chain security pass, WGL029–048) and a [\`chant migrate\`](./migration) source for translating GitHub Actions workflows.
 `;
 
 const outputFormat = `The GitLab lexicon serializes resources into **\`.gitlab-ci.yml\` YAML**. Keys are
-converted to \`snake_case\` and jobs use kebab-case names. Stages are automatically
-collected from all job definitions.
+converted to \`snake_case\` and jobs use kebab-case names. Stages are collected
+from the job definitions, after any a \`Pipeline\` lists.
 
 ## Building
 
@@ -48,7 +48,8 @@ chant build
 
 The generated file includes:
 
-- \`stages:\` list — automatically collected from all job \`stage\` properties
+- a header comment, \`include:\` and \`variables:\`, if a \`Pipeline\` resource is exported
+- \`stages:\` list: a \`Pipeline\`'s \`stages\` in its order, then every other stage a job's \`stage\` names, in first use
 - \`default:\` section — if a \`Default\` resource is exported
 - \`workflow:\` section — if a \`Workflow\` resource is exported
 - Job definitions with \`snake_case\` keys and \`kebab-case\` job names
@@ -60,6 +61,45 @@ The generated file includes:
 | \`export const buildApp = new Job({...})\` | \`build-app:\` | Export name → kebab-case job key |
 | \`expire_in: "1 week"\` | \`expire_in: 1 week\` | Property names use spec-native snake_case |
 | \`new Image({ name: "node:20" })\` | \`image: node:20\` | Single-property objects are collapsed |
+
+## Top-level keys and comments
+
+A \`Pipeline\` resource holds the top-level keys that are not a job, \`default\` or \`workflow\`: \`include\`, \`stages\` and \`variables\`. Its \`stages\` can name a stage no declared job uses, such as one an included file's jobs run in, and set the order; a stage a job names that the list leaves out is still added after it, so the file stays valid. \`variables\` holds pipeline-wide variables, which \`Default\` cannot, since GitLab's \`default:\` has none.
+
+\`Pipeline\` and \`Job\` also take a \`comment\`, written as \`#\` lines: the pipeline's at the top of the file, a job's above its key.
+
+\`\`\`typescript
+export const pipeline = new Pipeline({
+  comment: "Protect the writer's variables and scope them to their environment.",
+  include: [{ local: ".gitlab/watch.yml" }],
+  stages: ["review", "apply", "ops"],
+  variables: { GIT_DEPTH: "0" },
+});
+
+export const lint = new Job({ comment: "Blocks the merge.", stage: "review", image: "node:22", script: ["npm run lint"] });
+\`\`\`
+
+\`\`\`yaml
+# Protect the writer's variables and scope them to their environment.
+
+include:
+  - local: .gitlab/watch.yml
+
+stages:
+  - review
+  - apply
+  - ops
+
+variables:
+  GIT_DEPTH: '0'
+
+# Blocks the merge.
+lint:
+  stage: review
+  image: node:22
+  script:
+    - npm run lint
+\`\`\`
 
 ## Validating locally
 

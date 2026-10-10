@@ -10,7 +10,7 @@ describe("generated lexicon-gitlab.json", () => {
   test.skipIf(!hasGenerated)("is valid JSON with expected entries", () => {
     const content = readFileSync(join(generatedDir, "lexicon-gitlab.json"), "utf-8");
     const registry = JSON.parse(content);
-    expect(Object.keys(registry)).toHaveLength(19);
+    expect(Object.keys(registry)).toHaveLength(20);
   });
 
   test.skipIf(!hasGenerated)("contains all resource entities", () => {

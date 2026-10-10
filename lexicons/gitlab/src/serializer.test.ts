@@ -447,3 +447,73 @@ describe("nested objects and arrays", () => {
     expect(output).toContain("parallel: 5");
   });
 });
+
+describe("Pipeline: top-level include, stages and variables, and comments (#3669)", () => {
+  const Pipeline = createResource("GitLab::CI::Pipeline", "gitlab", {});
+  const Job = createResource("GitLab::CI::Job", "gitlab", {});
+  const Include = createProperty("GitLab::CI::Include", "gitlab");
+  const Image = createProperty("GitLab::CI::Image", "gitlab");
+
+  test("renders include, an explicit stage list naming a stage no job uses, variables and comments", () => {
+    const entities = new Map<string, Declarable>([
+      ["pipeline", new Pipeline({
+        comment: "Protect the writer variables.\n\nScope each to its environment.",
+        include: [new Include({ local: ".gitlab/apply.yml" }), { local: ".gitlab/watch.yml" }],
+        stages: ["review", "apply", "ops"],
+        variables: { GIT_DEPTH: "0" },
+      }) as unknown as Declarable],
+      ["lint", new Job({ comment: "Blocks the merge.", stage: "review", image: "node:22", script: ["npm run lint"] }) as unknown as Declarable],
+      ["apply", new Job({ stage: "apply", image: new Image({ name: "node:22" }), needs: ["lint"], script: ["npm run apply"] }) as unknown as Declarable],
+    ]);
+
+    expect(gitlabSerializer.serialize(entities)).toBe(`# Protect the writer variables.
+#
+# Scope each to its environment.
+
+include:
+  - local: .gitlab/apply.yml
+  - local: .gitlab/watch.yml
+
+stages:
+  - review
+  - apply
+  - ops
+
+variables:
+  GIT_DEPTH: '0'
+
+# Blocks the merge.
+lint:
+  stage: review
+  image: node:22
+  script:
+    - npm run lint
+
+apply:
+  stage: apply
+  image:
+    name: node:22
+  needs:
+    - lint
+  script:
+    - npm run apply
+`);
+  });
+
+  test("a stage a job names but the list leaves out is appended, so the file stays valid", () => {
+    const entities = new Map<string, Declarable>([
+      ["pipeline", new Pipeline({ stages: ["apply", "review"] }) as unknown as Declarable],
+      ["lint", new Job({ stage: "lint", script: ["x"] }) as unknown as Declarable],
+      ["plan", new Job({ stage: "review", script: ["x"] }) as unknown as Declarable],
+    ]);
+    expect(gitlabSerializer.serialize(entities)).toContain("stages:\n  - apply\n  - review\n  - lint\n");
+  });
+
+  test("a single include string renders as a one-item list, and no Pipeline leaves the output as before", () => {
+    const one = new Map<string, Declarable>([["p", new Pipeline({ include: "templates/ci.yml" }) as unknown as Declarable]]);
+    expect(gitlabSerializer.serialize(one)).toBe("include:\n  - templates/ci.yml\n");
+
+    const jobsOnly = new Map<string, Declarable>([["build", new Job({ stage: "build", script: ["make"] }) as unknown as Declarable]]);
+    expect(gitlabSerializer.serialize(jobsOnly)).toBe("stages:\n  - build\n\nbuild:\n  stage: build\n  script:\n    - make\n");
+  });
+});

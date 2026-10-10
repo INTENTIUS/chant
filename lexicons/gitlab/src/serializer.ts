@@ -16,6 +16,22 @@ import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { emitYAMLEntry } from "@intentius/chant/yaml";
 
 /**
+ * `#` lines for a comment, one per line of the string (#3669). Only the file
+ * header and job comments exist, and both sit at column 0.
+ */
+function commentLines(comment: string): string {
+  return comment.split("\n").map((l) => `#${l.trimEnd() ? ` ${l.trimEnd()}` : ""}`).join("\n");
+}
+
+/** An entity's props without `comment`, and the comment if it is a non-empty string. */
+function splitComment(entity: Declarable): { props: Record<string, unknown> | undefined; comment?: string } {
+  const props = isResourceDeclarable(entity) ? (entity.props as Record<string, unknown> | undefined) : undefined;
+  if (!props || !("comment" in props)) return { props };
+  const { comment, ...rest } = props;
+  return { props: rest, comment: typeof comment === "string" && comment !== "" ? comment : undefined };
+}
+
+/**
  * GitLab CI visitor for the generic serializer walker.
  */
 function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
@@ -101,6 +117,7 @@ export const gitlabSerializer: Serializer = {
 
     // Separate entities by type
     const jobs: Array<[string, Declarable]> = [];
+    const pipelines: Array<[string, Declarable]> = [];
     const defaults: Array<[string, Declarable]> = [];
     const workflows: Array<[string, Declarable]> = [];
     const others: Array<[string, Declarable]> = [];
@@ -115,13 +132,40 @@ export const gitlabSerializer: Serializer = {
         defaults.push([name, entity]);
       } else if (entityType === "GitLab::CI::Workflow") {
         workflows.push([name, entity]);
+      } else if (entityType === "GitLab::CI::Pipeline") {
+        pipelines.push([name, entity]);
       } else {
         others.push([name, entity]);
       }
     }
 
-    // Emit stages (collect from jobs)
-    const stages = new Set<string>();
+    // The Pipeline entity's top-level keys (#3669). More than one is merged
+    // in declaration order: comments joined, includes concatenated, stages
+    // in first-listed order, later variables overriding earlier ones.
+    const headers: string[] = [];
+    const includes: unknown[] = [];
+    const declaredStages: string[] = [];
+    let variables: Record<string, unknown> | undefined;
+    for (const [, entity] of pipelines) {
+      const { props, comment } = splitComment(entity);
+      if (comment) headers.push(comment);
+      const converted = toYAMLValue(props, entityNames) as Record<string, unknown> | undefined;
+      if (!converted) continue;
+      if (converted.include !== undefined) {
+        includes.push(...(Array.isArray(converted.include) ? converted.include : [converted.include]));
+      }
+      if (Array.isArray(converted.stages)) declaredStages.push(...converted.stages.map(String));
+      if (converted.variables && typeof converted.variables === "object") {
+        variables = { ...variables, ...(converted.variables as Record<string, unknown>) };
+      }
+    }
+    if (headers.length > 0) sections.push(commentLines(headers.join("\n\n")));
+    if (includes.length > 0) sections.push(emitYAMLEntry("include", includes));
+
+    // Stages: a Pipeline's explicit list first, in its order, then any stage
+    // a job names that the list leaves out, in first use. Without a list,
+    // that is the jobs' stages alone.
+    const stages = new Set<string>(declaredStages);
     for (const [, entity] of jobs) {
       const props = isResourceDeclarable(entity) ? (entity.props as Record<string, unknown> | undefined) : undefined;
       if (props?.stage && typeof props.stage === "string") {
@@ -131,6 +175,7 @@ export const gitlabSerializer: Serializer = {
     if (stages.size > 0) {
       sections.push(emitYAMLEntry("stages", [...stages]));
     }
+    if (variables && Object.keys(variables).length > 0) sections.push(emitYAMLEntry("variables", variables));
 
     // Emit defaults
     for (const [, entity] of defaults) {
@@ -156,14 +201,13 @@ export const gitlabSerializer: Serializer = {
 
     // Emit jobs
     for (const [name, entity] of jobs) {
-      const converted = toYAMLValue(
-        (isResourceDeclarable(entity) ? entity.props : undefined),
-        entityNames,
-      ) as Record<string, unknown> | undefined;
+      const { props, comment } = splitComment(entity);
+      const converted = toYAMLValue(props, entityNames) as Record<string, unknown> | undefined;
       if (converted) {
         // Convert job name from camelCase to kebab-case for YAML
         const yamlName = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-        sections.push(emitYAMLEntry(yamlName, converted));
+        const entry = emitYAMLEntry(yamlName, converted);
+        sections.push(comment ? `${commentLines(comment)}\n${entry}` : entry);
       }
     }
 
