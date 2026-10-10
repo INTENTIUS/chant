@@ -19,6 +19,7 @@ import { forgejoSerializer } from "./serializer";
 import { forgejoContextTools } from "./mcp/context-tools";
 import { generateForgejoPipeline } from "./components/generate-pipeline";
 import { generateForgejoOpPipeline } from "./components/generate-op-pipeline";
+import { generateForgejoOpWavesPipeline } from "./components/generate-op-waves-pipeline";
 import { forgejoLintRules } from "./lint/rules/delegate-to-github";
 import { forgejoCompletions } from "./lsp/completions";
 import { forgejoHover } from "./lsp/hover";
@@ -40,6 +41,8 @@ export const forgejoPlugin: LexiconPlugin = {
 
   // Generate mode, Op counterpart (#927): scheduled Op → Forgejo Actions workflow.
   generateOpPipeline: (ops, options) => generateForgejoOpPipeline(ops, options),
+  // Ordered waves of Op runs, each behind one gate (#3679).
+  generateOpWavesPipeline: (spec, options) => generateForgejoOpWavesPipeline(spec, options),
 
   initTemplates(template?: string): InitTemplateSet {
     if (template === "docker-build") {

@@ -26,7 +26,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
-import { generateOpsPipeline } from "../../op/generate-pipeline";
+import { generateOpsPipeline, generateOpWavesPipeline } from "../../op/generate-pipeline";
+import { parseOpWavesSpec } from "../../op/op-waves-run";
 import { GENERATED_MARKER } from "../../discovery/files";
 import { findWorkspaceRoot } from "../../project-root";
 import type { ComponentPipelineOptions, ScheduledOpSpec } from "../../lexicon";
@@ -71,10 +72,59 @@ export function readOpSpecFile(path: string): SpecFile {
   return { ops: ops as ScheduledOpSpec[], ...(options ? { options } : {}) };
 }
 
+/** True when a `--spec` file holds an Op waves spec (#3679) rather than a list of scheduled Ops. */
+function holdsOpWaves(path: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as { waves?: unknown } | null;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && parsed.waves !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `chant run --generate <provider> --spec <waves.json>` (#3679): one pipeline
+ * file of ordered, gated waves of Op runs. Its jobs read the same file.
+ */
+async function runOpWavesGenerate(ctx: CommandContext, provider: string, specPath: string): Promise<number> {
+  const { args } = ctx;
+  let spec;
+  let options: Record<string, unknown> | undefined;
+  try {
+    const text = readFileSync(resolve(specPath), "utf-8");
+    spec = parseOpWavesSpec(text, `--spec ${specPath}`);
+    const parsed = JSON.parse(text) as { options?: Record<string, unknown> };
+    options = Array.isArray((parsed as { waves?: unknown }).waves) ? undefined : parsed.options;
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+  const result = await generateOpWavesPipeline(spec, provider, { ...options, specFile: specPath.replace(/^\.\//, "") });
+  if (!result.success) {
+    console.error(formatError({ message: result.error ?? "Failed to generate the Op waves pipeline" }));
+    return 1;
+  }
+  const header = opPipelineHeader(provider, specPath);
+  const outDir = args.output ?? DEFAULT_OP_PIPELINE_DIRS[provider] ?? ".";
+  const files = (result.files ?? []).map((f) => ({ name: f.name, path: join(outDir, f.name), content: header + f.yaml }));
+  if (args.format === "json") {
+    console.log(JSON.stringify({ files, jobs: result.jobs ?? [] }, null, 2));
+    return 0;
+  }
+  for (const file of files) {
+    const target = resolve(file.path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, file.content);
+    console.error(formatSuccess(`wrote ${formatBold(file.path)}`));
+  }
+  return 0;
+}
+
 export async function runOpGenerate(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const provider = args.generate as string;
   const specPath = args.opsSpec;
+  if (specPath && holdsOpWaves(resolve(specPath))) return runOpWavesGenerate(ctx, provider, specPath);
 
   let ops: ScheduledOpSpec[];
   let options: ComponentPipelineOptions | undefined;

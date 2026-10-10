@@ -1,0 +1,118 @@
+---
+title: Op Waves
+description: Apply an Op to each environment, or to every target in a set, one wave at a time, each wave behind one gate
+diataxis: how-to
+---
+
+This guide is for a project that applies the same Op to several places in order, such as dev before staging before prod, or one environment made of many databases. Each place is a run of the Op against one target. Runs that go out together form a wave, and each wave waits on one gate before it applies. `chant run --generate` renders the waves as a pipeline for GitHub, GitLab or Forgejo, and every job in it runs `chant run wave`.
+
+## Write the spec
+
+The spec is a JSON file committed to the repository. Its jobs read it at run time, so the pipeline and the runs never disagree.
+
+```json
+{
+  "name": "migrations",
+  "op": "migrate",
+  "plan": ["./bin/plan", "{target}", "{plan}"],
+  "apply": ["./bin/apply", "{target}", "{plan}"],
+  "waves": [
+    { "name": "dev", "runs": [{ "target": "dev" }], "gate": "never" },
+    { "name": "staging", "runs": [{ "target": "staging" }], "gate": "on-destructive" },
+    { "name": "prod", "runs": [{ "target": "prod" }], "gate": "always", "environment": { "name": "production" } }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | The pipeline's name, and the op every wave gate is recorded under |
+| `op` | The Op a run runs when the run names none (`runs[].op` overrides it) |
+| `plan` | Plans one run and writes its plan file to `{plan}` |
+| `apply` | Applies one run. Default `chant run {op} --env {target}` |
+| `gate` | The base gate name. Default: `name` |
+| `branches` | Pushes to these branches run the waves. Default `["main"]` |
+| `base` | The commit the gate policy is read from. Default `HEAD^1` |
+| `waves[].runs` | One entry per target. A target appears once per wave |
+| `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
+| `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
+| `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
+
+The commands are argv templates. `{op}`, `{target}`, `{wave}` and `{plan}` are filled in per run. The plan command writes JSON:
+
+```json
+{ "planDigest": "jcs1-sha256:...", "destructive": false, "empty": false }
+```
+
+`planDigest` names the plan; two plans that would do the same thing share one. `destructive` is what `on-destructive` waits on. A run whose plan is `empty` changes nothing, and a wave whose runs are all empty never waits.
+
+## Render the pipeline
+
+```bash
+chant run --generate github --spec waves.json
+chant run --generate gitlab --spec waves.json
+chant run --generate forgejo --spec waves.json
+```
+
+Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their workflow directory, and GitLab gets `<name>.gitlab-ci.yml` at the root for `.gitlab-ci.yml` to include. The file can also hold `{ "waves": <spec>, "options": { ... } }`, where `options` sets the image, `beforeScript`, `extraScript` and `variables` for every job. The default image is `node:22`, which has git; install chant in it with `beforeScript`. From code, `generateOpWavesPipeline(spec, lexicon, { specFile })` in `@intentius/chant/op` does the same thing.
+
+Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push to the branch runs wave 1. If a wave waits or fails, the waves after it do not run.
+
+## What a wave job does
+
+`chant run wave --spec waves.json --wave <k>` does three things:
+
+1. Plans every run in wave `k` with the `plan` command and reads each plan file.
+2. Reads the wave's `gate` from the spec file at the base commit, and decides.
+3. Applies every run with the `apply` command.
+
+When the policy asks for an approval, the wave waits on gate `<gate>-wave-<k>` under op `<name>`. The gate is bound to the wave's set digest: one digest over every run's `{ target, planDigest }`, the same set digest a component fan-out's wave binds. An approval of that digest lets the wave apply. If any run's plan changes, the digest changes, and so does what has to be approved.
+
+| Policy | The wave waits when |
+|---|---|
+| `always` | at least one run's plan changes something |
+| `on-destructive` | at least one run's plan is `destructive` |
+| `never` | never |
+
+A waiting wave applies nothing and exits 3. It records a pending fact on `chant/lifecycle` and prints the approval command:
+
+```bash
+chant approve migrations migrations-wave-3 --plan jcs1-sha256:...
+```
+
+Approve it, then re-run the failed job (GitHub and Forgejo call it re-running failed jobs, GitLab calls it a retry). The wave plans again and applies once it finds the approval for its digest.
+
+## Where the policy is read from
+
+The policy for wave `k` comes from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
+
+Everything else in the spec is read from the commit being applied.
+
+## A wave over many targets
+
+A wave with hundreds of targets can be split with `shares`:
+
+```json
+{ "name": "prod", "shares": 4, "runs": [{ "target": "tenant-001" }, { "target": "tenant-002" }] }
+```
+
+This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. The deciding job plans every run and decides one gate over all of them. Its decision (`.chant/op-waves/<name>/wave-<k>.json`) is kept as an artifact. A share job plans its slice of the runs again, with the runs sorted by target and cut into contiguous slices. It applies only the runs whose plan digest matches the recorded decision. When a run's plan has moved since then, that run is named and skipped. The rest of the slice still applies, and the job exits 4. The next wave needs every share job.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The wave applied, or the deciding job decided it may apply |
+| 1 | A plan or an apply failed |
+| 3 | The wave is waiting for an approval of its set digest; nothing in it ran |
+| 4 | A share job refused a run whose plan moved since the decision |
+
+## The forge's own reviewers
+
+A wave's `environment` lands on its jobs on GitHub and GitLab, where a protected environment can hold the job for a reviewer before it starts. Forgejo Actions has no environments, so the Forgejo workflow drops the key and its header says so. The chant gate holds the wave on all three.
+
+## See also
+
+- [`chant run`](/chant/cli/run/#run-wave): the `run wave` command and its flags
+- [Ops](/chant/guide/ops/#gate-steps): gates, and why a gate approves a plan rather than the next run
+- [Pinned Module Rollout](/chant/guide/pinned-module-rollout/): waves of Terraform roots

@@ -34,6 +34,7 @@ import { GitHubActionsGenerator } from "./import/generator";
 import { githubContextTools } from "./mcp/context-tools";
 import { generateGithubPipeline } from "./components/generate-pipeline";
 import { generateGithubOpPipeline } from "./components/generate-op-pipeline";
+import { generateGithubOpWavesPipeline } from "./components/generate-op-waves-pipeline";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
@@ -42,6 +43,8 @@ export const githubPlugin: LexiconPlugin = {
   generateComponentPipeline: (components, options) => generateGithubPipeline(components, options),
   // Generate mode, Op counterpart (#927): synthesize one cron-triggered workflow per scheduled Op.
   generateOpPipeline: (ops, options) => generateGithubOpPipeline(ops, options),
+  // Ordered waves of Op runs, each behind one gate (#3679).
+  generateOpWavesPipeline: (spec, options) => generateGithubOpWavesPipeline(spec, options),
   serializer: githubSerializer,
 
   lintRules(): LintRule[] {

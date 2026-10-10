@@ -10,6 +10,7 @@ import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { GatedWavePipelineOptions } from "./components/gated-wave-pipeline";
 import type { PrLoopPipelineOptions } from "./components/pr-pipeline";
+import type { OpWaveJob, OpWavesSpec } from "./op/op-waves";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
@@ -901,6 +902,23 @@ export interface OpPipelineResult {
 }
 
 /**
+ * Options for an Op waves pipeline (#3679): the generic knobs of
+ * {@link ComponentPipelineOptions} that apply to every wave job, and the path
+ * of the spec file the jobs read.
+ */
+export interface OpWavesPipelineOptions
+  extends Pick<ComponentPipelineOptions, "image" | "beforeScript" | "extraScript" | "variables" | "opsStage" | "opsFileName"> {
+  /** The spec's path from the repository root. Every job runs `chant run wave --spec <specFile>`. */
+  specFile: string;
+}
+
+/** An Op waves pipeline: one file, and its jobs in order. */
+export interface OpWavesPipelineResult {
+  files: OpPipelineFile[];
+  jobs: OpWaveJob[];
+}
+
+/**
  * Live status of a single deploy unit (a CloudFormation stack, a K8s release, …)
  * addressed by its deployed name — the per-component presence signal
  * `chant components status --live` needs (#57). A component's deploy step carries
@@ -1324,6 +1342,14 @@ export interface LexiconPlugin {
     ops: ScheduledOpSpec[],
     options?: ComponentPipelineOptions,
   ): OpPipelineResult;
+
+  /**
+   * Render ordered waves of Op runs, each behind one gate (#3679,
+   * `./op/op-waves.ts`): one job per wave, or a deciding job and share jobs
+   * for a wide one, each wave needing the one before. Only CI-provider
+   * lexicons implement this.
+   */
+  generateOpWavesPipeline?(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult;
 
   /**
    * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to

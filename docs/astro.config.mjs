@@ -132,6 +132,7 @@ export default defineConfig({
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
 								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
+								{ label: 'Op Waves', slug: 'guide/op-waves' },
 							],
 						},
 						{

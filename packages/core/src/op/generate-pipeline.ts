@@ -25,7 +25,9 @@ import {
   type ScheduledOpSpec,
   type OpPipelineFile,
   type OpPipelineJob,
+  type OpWavesPipelineOptions,
 } from "../lexicon";
+import { assertOpWavesSpec, type OpWaveJob, type OpWavesSpec } from "./op-waves";
 
 /**
  * Load a lexicon's plugin (`@intentius/chant-lexicon-<name>`) to reach its
@@ -114,4 +116,51 @@ export async function generateOpsPipeline(
 
   const { files, jobs } = plugin.generateOpPipeline(withOpSchedules(ops, discovered.ops), options);
   return { success: true, files, jobs };
+}
+
+/** Result of generating an Op waves pipeline (#3679). */
+export interface GenerateOpWavesPipelineResult {
+  success: boolean;
+  files?: OpPipelineFile[];
+  jobs?: OpWaveJob[];
+  error?: string;
+}
+
+/**
+ * Render ordered waves of Op runs for `lexicon` (#3679, `./op-waves.ts`):
+ * check the spec, check that every Op it names exists, then hand it to the
+ * lexicon's `generateOpWavesPipeline`.
+ */
+export async function generateOpWavesPipeline(
+  spec: OpWavesSpec,
+  lexicon: string,
+  options: OpWavesPipelineOptions,
+  cwd?: string,
+): Promise<GenerateOpWavesPipelineResult> {
+  const plugin = await loadLexiconPlugin(lexicon);
+  if (!plugin?.generateOpWavesPipeline) {
+    return {
+      success: false,
+      error: `Lexicon "${lexicon}" does not render Op waves (no generateOpWavesPipeline). GitLab, GitHub, and Forgejo do.`,
+    };
+  }
+  try {
+    assertOpWavesSpec(spec);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const discovered = await discoverOps({ cwd });
+  if (discovered.errors.length > 0) return { success: false, error: discovered.errors.join("\n") };
+  const named = [...new Set([spec.op, ...spec.waves.flatMap((w) => w.runs.map((r) => r.op ?? spec.op))])];
+  const unknown = named.filter((name) => !discovered.ops.has(name));
+  if (unknown.length > 0) {
+    const known = [...discovered.ops.keys()].sort().join(", ");
+    return { success: false, error: `Unknown Op(s): ${unknown.join(", ")}.${known ? ` Known Ops: ${known}` : " No Ops discovered."}` };
+  }
+  try {
+    const { files, jobs } = plugin.generateOpWavesPipeline(spec, options);
+    return { success: true, files, jobs };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

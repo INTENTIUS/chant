@@ -36,6 +36,7 @@ import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
 import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpApprove, runOpSignalRenamed, runOpCancel, runOpLog } from "./handlers/run";
+import { runOpWaveCommand } from "./handlers/run-wave";
 import { runOperator, runOperatorStatus, runOperatorLog, runApprove } from "./handlers/operator";
 import { runEmulator } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
@@ -106,6 +107,7 @@ const BOOLEAN_FLAGS = new Set([
   "--allow-code",
   "--root-only",
   "--generated",
+  "--decide",
 ]);
 
 /**
@@ -355,6 +357,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       const wave = Number(raw);
       if (!Number.isInteger(wave) || wave < 1) throw new Error(`--wave needs a wave number from 1: got "${raw ?? ""}"`);
       result.wave = wave;
+    } else if (arg === "--decide") {
+      result.decide = true;
+    } else if (arg === "--share") {
+      const raw = args[++i];
+      const share = Number(raw);
+      if (!Number.isInteger(share) || share < 1) throw new Error(`--share needs a share number from 1: got "${raw ?? ""}"`);
+      result.share = share;
     } else if (arg === "--canary") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
@@ -909,6 +918,10 @@ Ops:
   run approve <op> <gate>  Record a gate's resolution and wake the runtime
   run cancel <name>     Cancel the active run (requires --force)
   run log <name>        Show run history for an Op
+  run wave --spec <file> --wave <k>  Plan, gate and apply wave k of an Op
+                        waves spec (#3679): the job a generated waves
+                        pipeline runs. --decide plans and decides only;
+                        --share <i> applies one share of a decided wave
   run --generate <provider>  Write one CI pipeline file per scheduled Op for
                         github, gitlab or forgejo (#2533), from every Op that
                         declares a schedule or from --spec <file.json>.
@@ -1815,6 +1828,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "run signal", handler: runOpSignalRenamed },
   { name: "run cancel", handler: runOpCancel },
   { name: "run log", handler: runOpLog },
+  { name: "run wave", handler: runOpWaveCommand },
   { name: "run", handler: runOp },
 
   { name: "operator status", handler: runOperatorStatus },
