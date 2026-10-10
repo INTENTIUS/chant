@@ -31,7 +31,10 @@ describe("columns", () => {
       "ALTER TABLE app.t ALTER COLUMN b DROP DEFAULT",
     ]);
     expect(sql(steps(T, "CREATE TABLE app.t (a text, b text NOT NULL)", "CREATE TABLE app.t (a text NOT NULL, b text)"))).toEqual([
+      "ALTER TABLE app.t ADD CONSTRAINT a__chant_nn CHECK (a IS NOT NULL) NOT VALID",
+      "ALTER TABLE app.t VALIDATE CONSTRAINT a__chant_nn",
       "ALTER TABLE app.t ALTER COLUMN a SET NOT NULL",
+      "ALTER TABLE app.t DROP CONSTRAINT a__chant_nn",
       "ALTER TABLE app.t ALTER COLUMN b DROP NOT NULL",
     ]);
   });
@@ -62,19 +65,34 @@ describe("constraints", () => {
     expect(added.steps[0]).toMatchObject({ class: "metadata", rule: "SQLPG217" });
     const validated = steps(T, "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0) NOT VALID)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0))");
     expect(sql(validated)).toEqual(["ALTER TABLE app.t VALIDATE CONSTRAINT a_pos"]);
-    expect(validated.steps[0]).toMatchObject({ class: "validate", rule: "SQLPG220" });
+    expect(validated.steps[0]).toMatchObject({ class: "validate", rule: "SQLPG220", precheck: { sql: "SELECT count(*) AS n FROM app.t WHERE NOT (a > 0)" } });
+    expect(added.steps[0]!.precheck).toBeUndefined();
   });
 
   test("a column-level foreign key is added as a table constraint", () => {
     const r = steps(T, "CREATE TABLE app.o (u bigint)", "CREATE TABLE app.o (u bigint REFERENCES app.users (id) ON DELETE CASCADE)");
     expect(sql(r)).toEqual(["ALTER TABLE app.o ADD FOREIGN KEY (u) REFERENCES app.users (id) ON DELETE CASCADE"]);
-    expect(r.steps[0]).toMatchObject({ class: "validate", rule: "SQLPG219" });
+    expect(r.steps[0]).toMatchObject({
+      class: "validate",
+      rule: "SQLPG219",
+      precheck: { sql: "SELECT count(*) AS n FROM app.o AS c WHERE c.u IS NOT NULL AND NOT EXISTS (SELECT 1 FROM app.users AS p WHERE p.id = c.u)" },
+    });
   });
 
   test("a unique constraint is an index built CONCURRENTLY, then the constraint made from it", () => {
     const r = steps(T, "CREATE TABLE app.t (email text)", "CREATE TABLE app.t (email text UNIQUE)");
     expect(r.steps).toEqual([
-      { sql: "CREATE UNIQUE INDEX CONCURRENTLY t_email_key ON app.t (email)", class: "concurrently", rule: "SQLPG221", transactional: false, buildsIndex: "app.t_email_key" },
+      {
+        sql: "CREATE UNIQUE INDEX CONCURRENTLY t_email_key ON app.t (email)",
+        class: "concurrently",
+        rule: "SQLPG221",
+        transactional: false,
+        buildsIndex: "app.t_email_key",
+        precheck: {
+          sql: "SELECT (SELECT count(*) FROM (SELECT 1 FROM app.t WHERE email IS NOT NULL GROUP BY email HAVING count(*) > 1) AS duplicates) AS n",
+          detail: "values of (email) held by more than one row, which a unique index fails on",
+        },
+      },
       { sql: "ALTER TABLE app.t ADD CONSTRAINT t_email_key UNIQUE USING INDEX t_email_key", class: "metadata", rule: "SQLPG221", transactional: true },
     ]);
   });
@@ -151,5 +169,64 @@ describe("create and drop", () => {
       "CREATE TABLE a (t text DEFAULT ';')",
       "-- note\nCOMMENT ON TABLE a IS 'x; y'",
     ]);
+  });
+});
+
+describe("safe sequences and pre-checks (#3686)", () => {
+  test("SET NOT NULL on a table that exists is a NOT VALID check, its validation, SET NOT NULL and the check dropped, each classified", () => {
+    const r = steps(T, "CREATE TABLE app.t (a text)", "CREATE TABLE app.t (a text NOT NULL)");
+    expect(r.steps.map((s) => [s.sql, s.class, s.rule, s.transactional])).toEqual([
+      ["ALTER TABLE app.t ADD CONSTRAINT a__chant_nn CHECK (a IS NOT NULL) NOT VALID", "metadata", "SQLPG217", true],
+      ["ALTER TABLE app.t VALIDATE CONSTRAINT a__chant_nn", "validate", "SQLPG220", true],
+      ["ALTER TABLE app.t ALTER COLUMN a SET NOT NULL", "metadata", "SQLPG210", true],
+      ["ALTER TABLE app.t DROP CONSTRAINT a__chant_nn", "metadata", "SQLPG223", true],
+    ]);
+    // The NULL count goes with the first statement, so a caller checks it before anything runs.
+    expect(r.steps[0]!.precheck).toEqual({ sql: "SELECT count(*) AS n FROM app.t WHERE a IS NULL", detail: "rows where a is NULL, which SET NOT NULL fails on" });
+    expect(r.steps.slice(1).every((s) => s.precheck === undefined)).toBe(true);
+  });
+
+  test("the plan classes the change as a validation, the same on every supported major", () => {
+    for (const major of [14, 18]) {
+      expect(sql(steps(T, "CREATE TABLE app.t (a text)", "CREATE TABLE app.t (a text NOT NULL)", major))).toHaveLength(4);
+    }
+  });
+
+  test("a check left by an interrupted run is validated as found, not added again or dropped as undeclared", () => {
+    const r = steps(T, "CREATE TABLE app.t (a text, CONSTRAINT a__chant_nn CHECK (a IS NOT NULL) NOT VALID)", "CREATE TABLE app.t (a text NOT NULL)");
+    expect(sql(r)).toEqual([
+      "ALTER TABLE app.t VALIDATE CONSTRAINT a__chant_nn",
+      "ALTER TABLE app.t ALTER COLUMN a SET NOT NULL",
+      "ALTER TABLE app.t DROP CONSTRAINT a__chant_nn",
+    ]);
+    expect(r.steps[0]!.precheck?.sql).toBe("SELECT count(*) AS n FROM app.t WHERE a IS NULL");
+  });
+
+  test("a valid declared check that proves NOT NULL keeps SET NOT NULL to one statement", () => {
+    const r = steps(T, "CREATE TABLE app.t (a text, CONSTRAINT a_nn CHECK (a IS NOT NULL))", "CREATE TABLE app.t (a text NOT NULL, CONSTRAINT a_nn CHECK (a IS NOT NULL))");
+    expect(r.steps.map((s) => [s.sql, s.class])).toEqual([["ALTER TABLE app.t ALTER COLUMN a SET NOT NULL", "metadata"]]);
+  });
+
+  test("a primary key counts duplicates and NULL keys; NULLS NOT DISTINCT counts NULLs as equal", () => {
+    const pk = steps(T, "CREATE TABLE app.t (a int, b int)", "CREATE TABLE app.t (a int, b int, PRIMARY KEY (a, b))");
+    // The key's columns become NOT NULL first, each with its own sequence and NULL count.
+    expect(pk.steps.filter((s) => s.precheck).map((s) => s.rule)).toEqual(["SQLPG217", "SQLPG217", "SQLPG221"]);
+    expect(pk.steps.find((s) => s.rule === "SQLPG221")!.precheck?.sql).toBe(
+      "SELECT (SELECT count(*) FROM (SELECT 1 FROM app.t GROUP BY a, b HAVING count(*) > 1) AS duplicates) + (SELECT count(*) FROM app.t WHERE a IS NULL OR b IS NULL) AS n",
+    );
+    const nnd = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int, UNIQUE NULLS NOT DISTINCT (a))");
+    expect(nnd.steps[0]!.precheck?.sql).toBe("SELECT (SELECT count(*) FROM (SELECT 1 FROM app.t GROUP BY a HAVING count(*) > 1) AS duplicates) AS n");
+  });
+
+  test("a CHECK added valid counts the rows it refuses; a NOT ENFORCED one has nothing to check", () => {
+    const r = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0))");
+    expect(r.steps[0]).toMatchObject({ rule: "SQLPG218", precheck: { sql: "SELECT count(*) AS n FROM app.t WHERE NOT (a > 0)", detail: "rows that fail the check a_pos (a > 0)" } });
+    const unenforced = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0) NOT ENFORCED)");
+    expect(unenforced.steps[0]!.precheck).toBeUndefined();
+  });
+
+  test("a foreign key with no referenced columns, or MATCH FULL, carries no pre-check", () => {
+    expect(steps(T, "CREATE TABLE app.o (u bigint)", "CREATE TABLE app.o (u bigint REFERENCES app.users)").steps[0]!.precheck).toBeUndefined();
+    expect(steps(T, "CREATE TABLE app.o (u bigint)", "CREATE TABLE app.o (u bigint REFERENCES app.users (id) MATCH FULL)").steps[0]!.precheck).toBeUndefined();
   });
 });

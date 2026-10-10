@@ -109,9 +109,9 @@ export const PG_CLASSIFIER_RULES = {
   SQLPG209: rule("SQLPG209", "metadata", "Change a column's default", "SET DEFAULT and DROP DEFAULT change only the catalog; existing rows keep their values.", ALTER_TABLE),
   SQLPG210: rule(
     "SQLPG210",
-    "rewrite",
+    "validate",
     "Set NOT NULL",
-    "SET NOT NULL reads the whole table under ACCESS EXCLUSIVE, unless a valid CHECK (column IS NOT NULL) constraint already proves it (since 12). Declare that check NOT VALID, validate it, then set NOT NULL; 18 can also add NOT NULL ... NOT VALID.",
+    "SET NOT NULL alone reads the whole table under ACCESS EXCLUSIVE, unless a valid CHECK (column IS NOT NULL) constraint already proves it (since 12). So it is made as four statements: that check added NOT VALID, validated under SHARE UPDATE EXCLUSIVE while writes go on, SET NOT NULL, which the check proves without a scan, and the check dropped. Rows where the column is NULL fail the validation; the first statement's pre-check counts them.",
     ALTER_TABLE,
   ),
   SQLPG211: rule("SQLPG211", "metadata", "Drop NOT NULL", "DROP NOT NULL changes only the catalog.", ALTER_TABLE),

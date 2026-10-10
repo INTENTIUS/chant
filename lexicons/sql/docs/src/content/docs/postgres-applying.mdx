@@ -64,14 +64,30 @@ Statements run in the build's order, each object's in the order its changes need
 | Statements | How they run |
 |---|---|
 | catalog-only: creates, comments, defaults, `NOT VALID` constraints, `DROP NOT NULL`, drops | consecutive ones share one transaction, across objects, so they land together or not at all |
-| ones that read or rewrite a table: a type change with a rewrite, `SET NOT NULL`, a validated `CHECK`, `VALIDATE CONSTRAINT`, a foreign key added without `NOT VALID`, an index built without `CONCURRENTLY` | a transaction of their own object, so the long statement holds locks on that one table and what came before has committed |
+| ones that read or rewrite a table: a type change with a rewrite, a validated `CHECK`, `VALIDATE CONSTRAINT`, a foreign key added without `NOT VALID`, an index built without `CONCURRENTLY` | a transaction of their own object, so the long statement holds locks on that one table and what came before has committed |
 | `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE` | alone, outside any transaction |
 
 Postgres refuses `CONCURRENTLY` inside a transaction block, and a label `ADD VALUE` adds cannot be used in the transaction that added it, which is why those run alone. A dropped index is dropped `CONCURRENTLY`.
 
 A primary key or unique constraint added to a table that exists is two statements: its unique index built `CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX`, which changes only the catalog (SQLPG221). A `CONCURRENTLY` build that fails leaves an `INVALID` index behind; the applier drops it, and only an invalid one.
 
+`SET NOT NULL` on a table that exists is four statements (SQLPG210): `ADD CONSTRAINT <column>__chant_nn CHECK (<column> IS NOT NULL) NOT VALID`, which reads no rows; `VALIDATE CONSTRAINT`, which reads them under `SHARE UPDATE EXCLUSIVE` in a transaction of its own, so writes to the table go on; `SET NOT NULL`, which the valid check proves without reading the table; and the check dropped. The `ACCESS EXCLUSIVE` locks are taken only by the two catalog changes, and never held across the scan. If a run stops after the check was added, the next one validates the check it finds.
+
 The major decides two statements: a STORED generated column's new expression is `SET EXPRESSION` from 17, and `SET STORAGE DEFAULT` exists from 16. The applier reads the major from the build output's `postgresMajor`, else `sql.postgresMajor`, else 18. On an older major, a change with no statement there is not attempted, `unsupported-kind`.
+
+## Pre-checks
+
+Some statements fail on the rows already in the table: `SET NOT NULL` over a NULL, a unique index or a primary key over duplicates, a `CHECK` or a foreign key over a row it refuses. Each of these steps carries a `precheck` (`PgStep.precheck`, and `precheck` on the step `diffStatements` returns): a query returning one row with one column, `n`, the count of rows it would fail on, with a sentence saying what they are. The applier does not run it. A caller runs every step's pre-check before the first statement and stops when one is not zero, so nothing has been sent when the data would fail. `renderStatements` writes each one as a comment above its statement.
+
+| Statement | The pre-check counts |
+|---|---|
+| `SET NOT NULL` (on the first of its four statements) | rows where the column is NULL |
+| a unique index on a table that exists, a unique constraint | values held by more than one row, NULLs left out unless `NULLS NOT DISTINCT`, within a partial index's `WHERE` |
+| a primary key | the same, plus rows with a NULL key column |
+| a `CHECK` added valid, or validated | rows where the expression is false |
+| a foreign key added valid, or validated | rows with every key column set and no referenced row (MATCH SIMPLE with its referenced columns named; none otherwise) |
+
+A unique index over an expression carries none.
 
 ## Timeouts
 
