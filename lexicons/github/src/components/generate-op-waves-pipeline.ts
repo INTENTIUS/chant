@@ -18,6 +18,11 @@
  * runs `chant run resume --op <name>` on that schedule: it re-runs the failed
  * jobs of a run whose waiting wave has been approved since, with the job's
  * token and `actions: write`.
+ *
+ * When a wave's approval is `pr-review` (#3684), the workflow also asks for
+ * `pull-requests: read`, so a wave can read the merged pull request's
+ * reviews, and a second workflow, `<name>-plans.yml`, runs `chant run wave
+ * --record-plans` on each pull request to record the digests its head plans.
  */
 
 import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
@@ -47,9 +52,10 @@ function dirOf(path: string): string {
 export function buildGithubOpWavesDoc(
   spec: OpWavesSpec,
   options: OpWavesPipelineOptions,
-): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc } {
+): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
   const jobs = opWaveJobs(spec, options.specFile);
   const image = options.image ?? OP_WAVES_IMAGE;
+  const byReview = spec.waves.some((w) => w.approval === "pr-review");
   for (const wave of spec.waves) {
     assertSetupSteps(`${spec.name}/${wave.name}`, wave.setup ?? []);
     if (wave.environment) assertEnvironment(`${spec.name}/${wave.name}`, wave.environment);
@@ -101,10 +107,15 @@ export function buildGithubOpWavesDoc(
     on: { push: { branches: spec.branches?.length ? spec.branches : ["main"] }, workflow_dispatch: {} },
     ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
     concurrency: { group: spec.name, "cancel-in-progress": false },
-    permissions: { contents: "write" },
+    permissions: { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) },
     jobsDoc,
   };
-  return { doc, jobs, ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}) };
+  return {
+    doc,
+    jobs,
+    ...(spec.resume ? { resumeDoc: buildResumeDoc(spec, options) } : {}),
+    ...(byReview ? { plansDoc: buildPlansDoc(spec, options) } : {}),
+  };
 }
 
 /** The scheduled resume workflow (#3683). */
@@ -126,6 +137,23 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
   };
 }
 
+/** The pull request workflow a `pr-review` wave needs (#3684): record the digests each head plans. */
+function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
+  const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } }];
+  for (const step of spec.waves[0]?.setup ?? []) steps.push({ ...step });
+  for (const line of options.beforeScript ?? []) steps.push({ run: line });
+  steps.push({ name: "Plan every wave at the head and record its digests", run: ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ") });
+  return {
+    name: `${spec.name}-plans`,
+    on: { pull_request: { branches: spec.branches?.length ? spec.branches : ["main"] } },
+    ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
+    concurrency: { group: spec.name + "-plans-${{ github.event.number }}", "cancel-in-progress": true },
+    // contents: write pushes the record to chant/lifecycle.
+    permissions: { contents: "write" },
+    jobsDoc: { "record-plans": { "runs-on": "ubuntu-latest", container: options.image ?? OP_WAVES_IMAGE, steps } },
+  };
+}
+
 function describeJob(kind: "wave" | "decide" | "share", wave: number, name: string, share?: number): string {
   if (kind === "decide") return `Plan wave ${wave} (${name}) and decide its gate`;
   if (kind === "share") return `Apply share ${share} of wave ${wave} (${name})`;
@@ -134,8 +162,9 @@ function describeJob(kind: "wave" | "decide" | "share", wave: number, name: stri
 
 /** Render an Op waves spec as one GitHub Actions workflow, `<name>.yml`. */
 export function generateGithubOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
-  const { doc, jobs, resumeDoc } = buildGithubOpWavesDoc(spec, options);
+  const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options);
   const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(doc) }];
   if (resumeDoc) files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(resumeDoc) });
+  if (plansDoc) files.push({ name: `${spec.name}-plans.yml`, yaml: emitOpPipelineYAML(plansDoc) });
   return { files, jobs };
 }

@@ -11,6 +11,11 @@
  *   needs an approval waits on `<gate>-wave-<k>` bound to
  *   {@link waveSetDigest} over its members, and exits 3 when nobody approved
  *   that digest.
+ * - Which approvals count is the wave's `approval`, read at base like its
+ *   policy (#3684): `ledger`, `sealed` or `pr-review` (`./gate-review.ts`).
+ *   Under `pr-review` the pull request's pipeline runs `--record-plans`
+ *   ({@link recordOpWaveHeadPlans}), which plans every wave at the head and
+ *   records the digests a review of that head approves.
  * - Apply: each run's `apply` command. A share job (`--share i`) re-plans its
  *   slice first and refuses, without applying it, a run whose plan digest is
  *   not the one the deciding job recorded (exit 4).
@@ -21,12 +26,16 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { waveGateName, waveSetDigest, type WaveMember } from "../gated-waves";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
+import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
+import type { TrustPolicy } from "../workspace/trust/policy";
 import {
   OP_WAVE_DEFAULT_APPLY,
   OP_WAVE_GATE_POLICIES,
+  GATE_APPROVAL_SOURCES,
   assertOpWavesSpec,
   opWaveRecordPath,
   opWaveShare,
+  type GateApprovalSource,
   type OpWaveGatePolicy,
   type OpWaveRun,
   type OpWavesSpec,
@@ -59,6 +68,8 @@ export interface OpWaveDecision {
   op: string;
   gate: string;
   policy: OpWaveGatePolicy;
+  /** Which approvals count, read at base with the policy (#3684). */
+  approval: GateApprovalSource;
   policySource: OpWavePolicySource;
   /** The base commit the policy was read at. */
   base: string;
@@ -67,6 +78,10 @@ export interface OpWaveDecision {
   /** `approved`: an approval of this digest stands. `not-required`: the policy lets it through. `waiting`: neither. */
   status: "approved" | "not-required" | "waiting";
   approvedBy?: string;
+  /** How the approval arrived: a resolution on the ledger, or the merged pull request's review (#3684). */
+  via?: "ledger" | "pr-review";
+  /** The review that approved the wave, or why the review did not, under `pr-review`. */
+  review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
   /** The command that approves this digest, when waiting. */
   approve?: string;
 }
@@ -128,19 +143,22 @@ export function readOpWavePolicy(
   base: string,
   cwd: string,
   show: OpWaveShowAtBase = gitShowAtBase,
-): { policy: OpWaveGatePolicy; source: OpWavePolicySource; base: string } {
+): { policy: OpWaveGatePolicy; approval: GateApprovalSource; source: OpWavePolicySource; base: string } {
   const { sha, text } = show(base, specFile.replace(/^\.\//, "").split("\\").join(posix.sep), cwd);
-  if (text === null) return { policy: "always", source: "absent-at-base", base: sha };
+  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha };
+  if (text === null) return absent;
   let spec: OpWavesSpec;
   try {
     spec = parseOpWavesSpec(text, `${specFile} at ${base}`);
   } catch {
-    return { policy: "always", source: "absent-at-base", base: sha };
+    return absent;
   }
   const wave = spec.waves.find((w) => w.name === name);
-  if (!wave) return { policy: "always", source: "absent-at-base", base: sha };
+  if (!wave) return absent;
   const policy = wave.gate ?? "always";
-  return { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", source: "base", base: sha };
+  // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
+  const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
+  return { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha };
 }
 
 /** Fill one argv template for one run. */
@@ -172,6 +190,14 @@ export interface RunOpWaveOptions {
   show?: OpWaveShowAtBase;
   now?: string;
   log?: (line: string) => void;
+  /** The applied commit, which a `pr-review` gate finds the merged pull request by. Default `git rev-parse HEAD`. */
+  head?: string;
+  /** The forge's reviews, for a `pr-review` gate. Default: the CI job's forge (`reviewSourceFromEnv`). */
+  reviews?: ReviewSource;
+  /** The plans recorded for a pull request's head. Default: read from `chant/lifecycle`. */
+  headPlans?: (name: string, head: string) => Promise<HeadPlans | null>;
+  /** The signers policy at base, for a `sealed` gate. Default: read from the base commit. */
+  trust?: (base: string) => TrustPolicy;
 }
 
 export interface RunOpWaveResult {
@@ -268,23 +294,50 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
 
   const members = wave.runs.map((run) => planRun(ctx, wave.name, run));
   const digest = waveSetDigest(members);
-  const { policy, source, base } = readOpWavePolicy(options.specFile, wave.name, options.base ?? spec.base ?? "HEAD^1", cwd, options.show);
+  const { policy, approval, source, base } = readOpWavePolicy(options.specFile, wave.name, options.base ?? spec.base ?? "HEAD^1", cwd, options.show);
   const gate = waveGateName(spec.gate ?? spec.name, k);
-  const decision: OpWaveDecision = { wave: k, name: wave.name, op: spec.name, gate, policy, policySource: source, base, digest, members, status: "not-required" };
+  const decision: OpWaveDecision = { wave: k, name: wave.name, op: spec.name, gate, policy, approval, policySource: source, base, digest, members, status: "not-required" };
   if (opWaveNeedsApproval(policy, members)) {
-    const check = await evaluateGate(options.gates ?? gitGateLedgerPort({ cwd }), {
+    const ledger = options.gates ?? gitGateLedgerPort({ cwd });
+    let port = ledger;
+    if (approval === "sealed") {
+      // #3684: only an approval sealed by a signer listed at base counts.
+      const review = await import("./gate-review");
+      const sealed = review.sealedApprovalRule(gate, (options.trust ?? ((b) => review.trustPolicyAt(cwd, b)))(base));
+      port = {
+        ...ledger,
+        async approvalRule(g) {
+          const own = (await ledger.approvalRule?.(g)) ?? null;
+          return g === gate ? review.bothRules(own, sealed) : own;
+        },
+      };
+    }
+    const now = options.now ?? new Date().toISOString();
+    const check = await evaluateGate(port, {
       op: spec.name,
       gate,
       planDigest: digest,
-      description: `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}`,
-      ...(options.now ? { now: options.now } : {}),
+      description: `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}`,
+      now,
     });
     if (check.satisfied) {
       decision.status = "approved";
+      decision.via = "ledger";
       decision.approvedBy = check.resolution.resolvedBy;
+    } else if (approval === "pr-review") {
+      const byReview = await approveByReview(options, { op: spec.name, gate, k, digest, cwd, now, port: ledger });
+      decision.review = byReview.review;
+      if (byReview.approved) {
+        decision.status = "approved";
+        decision.via = "pr-review";
+        decision.approvedBy = byReview.review.approvers!.join(", ");
+      } else {
+        decision.status = "waiting";
+        decision.approve = approveCommand(spec.name, gate, undefined, digest);
+      }
     } else {
       decision.status = "waiting";
-      decision.approve = approveCommand(spec.name, gate, undefined, digest);
+      decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
     }
   }
   mkdirSync(dirname(recordPath), { recursive: true });
@@ -292,8 +345,12 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   result.decision = decision;
   log(
     `wave ${k} (${wave.name}): gate ${policy} (read at ${base.slice(0, 12)}${source === "absent-at-base" ? ", where the wave is absent" : ""}), ` +
-      `digest ${digest}: ${decision.status}${decision.approvedBy ? ` by ${decision.approvedBy}` : ""}`,
+      `digest ${digest}: ${decision.status}${decision.approvedBy ? ` by ${decision.approvedBy}` : ""}` +
+      (decision.via === "pr-review" ? ` (review of #${decision.review?.pr})` : ""),
   );
+  if (approval === "pr-review" && decision.status === "waiting" && decision.review?.reason) {
+    log(`The pull request's review does not approve wave ${k}: ${decision.review.reason}`);
+  }
   if (decision.status === "waiting") {
     log(`Nothing in wave ${k} or after it ran. Read the plans, then approve: ${decision.approve} (with --resume, the approval also starts this job again)`);
     return { ...result, exitCode: 3 };
@@ -322,4 +379,125 @@ function applyRun(
     log(`${run.target}: apply exited ${code}`);
     result.failed.push(run.target);
   }
+}
+
+/** What {@link approveByReview} found. */
+interface ReviewOutcome {
+  approved: boolean;
+  review: NonNullable<OpWaveDecision["review"]>;
+}
+
+/**
+ * Under `pr-review` (#3684): the merged pull request's review approves the
+ * wave when a writer other than the author approved its head, and the head
+ * planned this wave's digest. The approval is then written to the ledger as a
+ * resolution that names the review, so the record says how the wave passed.
+ */
+async function approveByReview(
+  options: RunOpWaveOptions,
+  at: { op: string; gate: string; k: number; digest: string; cwd: string; now: string; port: GateLedgerPort },
+): Promise<ReviewOutcome> {
+  const review = await import("./gate-review");
+  const head = options.head ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: at.cwd, encoding: "utf-8" }).trim();
+  let merged: MergedReview | null;
+  try {
+    merged = await (options.reviews ?? review.reviewSourceFromEnv()).mergedReview(head);
+  } catch (err) {
+    return { approved: false, review: { reason: `the forge's review could not be read: ${err instanceof Error ? err.message : String(err)}` } };
+  }
+  if (!merged) return { approved: false, review: { reason: `no merged pull request produced ${head.slice(0, 12)}` } };
+  const seen = { pr: merged.pr, head: merged.head, ...(merged.url ? { url: merged.url } : {}) };
+  if (merged.approvers.length === 0) {
+    const why = merged.refused.length > 0 ? merged.refused.join("; ") : "nobody approved it";
+    return { approved: false, review: { ...seen, reason: `no writer other than its author approved the head of #${merged.pr}: ${why}` } };
+  }
+  const plans = await (options.headPlans ?? ((name, h) => readHeadPlans(name, h, at.cwd)))(options.spec.name, merged.head);
+  const planned = plans?.waves.find((w) => w.wave === at.k);
+  if (!planned) {
+    return {
+      approved: false,
+      review: { ...seen, approvers: merged.approvers, reason: `no plans are recorded for the head ${merged.head.slice(0, 12)} of #${merged.pr} (its pipeline runs \`chant run wave --record-plans\`)` },
+    };
+  }
+  if (planned.digest !== at.digest) {
+    return {
+      approved: false,
+      review: { ...seen, approvers: merged.approvers, reason: `the plan moved after the review: the head planned ${planned.digest}, and the merge plans ${at.digest}` },
+    };
+  }
+  const note = `approved by the review of #${merged.pr} at ${merged.head.slice(0, 12)}: ${merged.approvers.join(", ")}`;
+  await at.port.appendResolution?.({
+    op: at.op,
+    gate: at.gate,
+    resolvedBy: merged.approvers[0]!,
+    timestamp: at.now,
+    planDigest: at.digest,
+    approver: { kind: "human" },
+    note,
+    ...(merged.url ? { url: merged.url } : {}),
+    review: { pr: merged.pr, head: merged.head, approvers: merged.approvers },
+  });
+  return { approved: true, review: { ...seen, approvers: merged.approvers } };
+}
+
+async function readHeadPlans(name: string, head: string, cwd: string): Promise<HeadPlans | null> {
+  const { readBlobFromPath, requireLifecycleLedger } = await import("../lifecycle/git");
+  const { headPlansPath } = await import("./gate-review");
+  await requireLifecycleLedger({ cwd });
+  const { dir, file } = headPlansPath(name, head);
+  const text = await readBlobFromPath(dir, file, { cwd });
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as HeadPlans;
+  } catch {
+    return null;
+  }
+}
+
+export interface RecordHeadPlansOptions {
+  spec: OpWavesSpec;
+  cwd?: string;
+  exec?: OpWaveExec;
+  /** The commit the plans are for. Default: the pull request's head from the CI job's environment, else `git rev-parse HEAD`. */
+  head?: string;
+  now?: string;
+  /** Write the record. Default: append to `chant/lifecycle` and push. */
+  write?: (plans: HeadPlans) => Promise<void>;
+}
+
+/**
+ * `chant run wave --spec <file> --record-plans` (#3684): plan every wave at a
+ * pull request's head and record each wave's digest on `chant/lifecycle`,
+ * `_wave-plans/<name>/<head>.json`. A `pr-review` wave reads it after the
+ * merge: the review of that head approves the digests it planned, and only
+ * those.
+ */
+export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Promise<HeadPlans> {
+  const { spec } = options;
+  assertOpWavesSpec(spec);
+  const cwd = options.cwd ?? process.cwd();
+  const exec = options.exec ?? spawnExec;
+  const review = await import("./gate-review");
+  const head = options.head ?? review.pullRequestHeadFromEnv() ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).trim();
+  const plans: HeadPlans = {
+    version: 1,
+    name: spec.name,
+    head,
+    timestamp: options.now ?? new Date().toISOString(),
+    waves: spec.waves.map((wave, i) => {
+      const members = wave.runs.map((run) => planRun({ spec, wave: i + 1, cwd, exec }, wave.name, run));
+      return { wave: i + 1, name: wave.name, digest: waveSetDigest(members) };
+    }),
+  };
+  await (options.write ?? ((p) => writeHeadPlans(p, cwd)))(plans);
+  return plans;
+}
+
+async function writeHeadPlans(plans: HeadPlans, cwd: string): Promise<void> {
+  const { pushLifecycle, requireLifecycleLedger, writeBlobToPath } = await import("../lifecycle/git");
+  const { headPlansPath } = await import("./gate-review");
+  await requireLifecycleLedger({ cwd });
+  const { dir, file } = headPlansPath(plans.name, plans.head);
+  await writeBlobToPath(dir, file, JSON.stringify(plans, null, 2) + "\n", `Op waves plans of ${plans.name} at ${plans.head.slice(0, 12)}`, { cwd });
+  if (!(await pushLifecycle({ cwd }))) throw new Error("the plans were recorded locally only: chant/lifecycle has no remote to push to");
 }

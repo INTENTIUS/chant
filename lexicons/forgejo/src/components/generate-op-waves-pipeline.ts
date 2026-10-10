@@ -11,6 +11,9 @@
  * resume --op <name>` on that schedule. Forgejo has no API to re-run a run,
  * so it dispatches the waves workflow again on its branch, with the
  * `CHANT_FORGE_TOKEN` secret (a token with the `write:repository` scope).
+ *
+ * A `pr-review` wave (#3684) gets `<name>-plans.yml` on pull requests, as on
+ * GitHub. Forgejo's job token reads reviews with no permission to ask for.
  */
 
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";
@@ -29,7 +32,7 @@ export function generateForgejoOpWavesPipeline(
   options: OpWavesPipelineOptions,
   dialectOptions: ForgejoDialectOptions = {},
 ): OpWavesPipelineResult {
-  const { doc, jobs, resumeDoc } = buildGithubOpWavesDoc(spec, options);
+  const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options);
   const jobsDoc = Object.fromEntries(
     Object.entries(doc.jobsDoc).map(([name, job]) => {
       const { environment: _dropped, ...rest } = job as Record<string, unknown>;
@@ -69,6 +72,19 @@ export function generateForgejoOpWavesPipeline(
         concurrency: forgejoize(resumeDoc.concurrency, dialectOptions),
         permissions: {},
         jobsDoc: resumeJobs,
+      }),
+    });
+  }
+  if (plansDoc) {
+    files.push({
+      name: `${spec.name}-plans.yml`,
+      yaml: emitOpPipelineYAML({
+        name: plansDoc.name!,
+        on: forgejoize(plansDoc.on, dialectOptions),
+        ...(plansDoc.env ? { env: forgejoize(plansDoc.env, dialectOptions) } : {}),
+        concurrency: forgejoize(plansDoc.concurrency, dialectOptions),
+        permissions: {},
+        jobsDoc: forgejoize(plansDoc.jobsDoc, dialectOptions),
       }),
     });
   }
