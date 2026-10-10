@@ -597,6 +597,20 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. Only those two CI commands reach it, and each client takes an injected `fetch`, so no test opens a socket.",
   },
   {
+    file: "packages/core/src/op/gate-resume.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge that runs the job waiting at a gate: `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab, as the pending fact recorded it",
+    why: "Gate resume (#3683): `chant approve --resume` and `chant run resume` read the waiting run's state and re-run it (GitHub), retry its job (GitLab) or dispatch its workflow (Forgejo). Only those two commands reach it, and the client takes an injected `fetch`, so no unit test opens a socket.",
+  },
+  {
+    file: "packages/core/src/cli/handlers/gate-resume.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the same forge as `packages/core/src/op/gate-resume.ts`, through it",
+    why: "The handlers of `chant approve --resume` and `chant run resume` (#3683) pass an injected `fetch` through to `resumeGateRun`; they open no connection of their own.",
+  },
+  {
     file: "packages/core/src/workspace/ci-green-forge.ts",
     primitives: ["fetch"],
     phase: "ci",
