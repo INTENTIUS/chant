@@ -17,6 +17,7 @@ import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/fo
 import type { CommandContext } from "../cli/registry";
 import { approveCommand, describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 import { LockError } from "./lineage-lock";
 import { applyStagedUpgrade, describeStaged, stageUpgrade, type ChantRunner, type StagedUpgrade } from "./lineage-upgrade";
 
@@ -106,7 +107,8 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
       if (!opts.json) {
         const sealed = await gateIsSealed(gate);
         if (check.mismatch) console.error(formatWarning({ message: describeGateMismatch(WORKSPACE_UPGRADE_GATE_OP, gate, check.mismatch, sealed) }));
-        if (check.pushWarning) console.error(formatWarning({ message: check.pushWarning }));
+        if (isLifecycleLocalNote(check.pushWarning)) console.error(formatInfo(LIFECYCLE_LOCAL_NOTE));
+        else if (check.pushWarning) console.error(formatWarning({ message: check.pushWarning }));
         if (check.quorum) console.error(formatInfo(`approvals so far: ${check.quorum.approvers.length} of ${check.quorum.need}`));
         console.error(
           formatInfo(

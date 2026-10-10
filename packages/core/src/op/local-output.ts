@@ -6,6 +6,7 @@
 
 import type { OpRunResult, StepRecord } from "./local-executor";
 import { approveCommand } from "./gate";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 
 type Writer = (line: string) => void;
 
@@ -107,7 +108,10 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed 
   // branch, not the remote. The pending fact is still correct — the gate is
   // still right to stand — but an operator working from a clone of the
   // remote cannot see it to approve it, and nothing else here says so.
-  if (result.gatePushed === false) {
+  // #3677: with no remote at all, nobody elsewhere approves; one quiet line.
+  if (result.gatePushed === false && isLifecycleLocalNote(result.gatePushWarning)) {
+    write(`  note    : ${LIFECYCLE_LOCAL_NOTE}`);
+  } else if (result.gatePushed === false) {
     write(
       `  warning : the pending fact was not pushed to the remote — ` +
         (result.gatePushWarning ?? "it exists only in this checkout") +

@@ -50,7 +50,7 @@ import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
 import { sortedJsonReplacer } from "../utils";
 import type { GateApprover, ResolvedGateApproval } from "./gate-approval";
-import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
+import { pushLifecycleReport, requireLifecycleLedger } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 import { resolveGateRunLocator } from "./gate-resume";
 
@@ -69,7 +69,10 @@ export interface PendingGatePush {
    * configured, or the push was rejected — `pushWarning` says which.
    */
   pushed: boolean;
-  /** Set when `pushed` is false. */
+  /**
+   * Set when `pushed` is false. With no remote it is the lifecycle module's
+   * `LIFECYCLE_LOCAL_NOTE`, which renderers show as a note, not a warning (#3677).
+   */
   pushWarning?: string;
 }
 
@@ -131,32 +134,11 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
     },
     async appendResolution(input) {
       const { record } = await appendGateResolution(input, opts);
-      try {
-        const pushed = await pushLifecycle(opts);
-        return pushed ? { record, pushed } : { record, pushed, pushWarning: "no remote is configured for chant/lifecycle — the resolution was recorded locally only" };
-      } catch (err) {
-        return { record, pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
-      }
+      return { record, ...(await pushLifecycleReport(opts)) };
     },
     async appendPending(input) {
       const { record } = await appendPendingGate(input, opts);
-      try {
-        const pushed = await pushLifecycle(opts);
-        return pushed
-          ? { record, pushed }
-          : {
-              record,
-              pushed,
-              pushWarning:
-                "no remote is configured for chant/lifecycle — the pending fact was recorded locally only",
-            };
-      } catch (err) {
-        return {
-          record,
-          pushed: false,
-          pushWarning: err instanceof Error ? err.message : String(err),
-        };
-      }
+      return { record, ...(await pushLifecycleReport(opts)) };
     },
   };
 }

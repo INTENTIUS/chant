@@ -6,6 +6,7 @@
  */
 import { getRuntime } from "../runtime-adapter";
 import { resolveMemberLedger } from "./member-ledger";
+import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
 
 const STATE_BRANCH = "chant/lifecycle";
 
@@ -773,6 +774,30 @@ export function describeLifecyclePush(result: LifecyclePushStatus): string | nul
       return `"${result.remote}" holds ${STATE_BRANCH} commits this checkout has not fetched, so the push was refused; fetch ${STATE_BRANCH} and write again${said(result.stderr)}`;
     case "failed":
       return `the push of ${STATE_BRANCH} to "${result.remote}" failed${said(result.stderr)}`;
+  }
+}
+
+/**
+ * Push the ledger branch and say, in one line, why it did not land (#2310,
+ * #3677). No remote reads as {@link LIFECYCLE_LOCAL_NOTE}; a push that git
+ * refused or that failed keeps its own reason, so a renderer can warn about
+ * that case alone. Never throws.
+ */
+export async function pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }> {
+  try {
+    const result = await pushLifecycleStatus(opts);
+    switch (result.status) {
+      case "pushed":
+        return { pushed: true };
+      case "no-remote":
+        return { pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE };
+      case "stale":
+        return { pushed: false, pushWarning: new StaleLifecycleBranchError(result.expected, result.stderr).message };
+      case "failed":
+        return { pushed: false, pushWarning: describeLifecyclePush(result) ?? "the push did not land" };
+    }
+  } catch (err) {
+    return { pushed: false, pushWarning: err instanceof Error ? err.message : String(err) };
   }
 }
 
