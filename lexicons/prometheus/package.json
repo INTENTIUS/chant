@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-prometheus",
-  "version": "0.118.0",
+  "version": "0.118.1",
   "description": "Prometheus lexicon for chant — typed recording and alerting rule groups and Alertmanager routing, serialized to a rule file and alertmanager.yml",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -88,7 +88,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.118.0",
+    "@intentius/chant": "^0.118.1",
     "typescript": "^5.9.3"
   }
 }
