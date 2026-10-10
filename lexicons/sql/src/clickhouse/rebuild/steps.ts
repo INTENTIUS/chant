@@ -282,13 +282,19 @@ export function insertTarget(query: string, currentDatabase: string): { database
 /**
  * The probe against the server. On a cluster of shards it reads every
  * server's queries and buffers, and in a Replicated database every
- * replica's, since a write can be running on any of them.
+ * replica's, since a write can be running on any of them. A server that
+ * cannot be reached is left out rather than failing the wait.
  */
 export function serverCutoverProbe(run: RebuildRun, o: Pick<RebuildObservation, "names" | "replicated">): CutoverProbe {
   const { database, name } = o.names;
   const cluster = run.sharding?.cluster ?? (o.replicated ? database : undefined);
   const from = (table: string) => (cluster ? `clusterAllReplicas(${sqlString(cluster)}, system.${table})` : `system.${table}`);
-  const opts = run.signal ? { signal: run.signal } : {};
+  // A server that cannot be reached runs no write the backfill could miss
+  // from here: its parts reach this one by replication, which the backfill
+  // waits for (`syncReplica`), or the verification finds them missing. So an
+  // unreachable replica or shard is skipped, as every other step goes on
+  // with the live ones; `clusterAllReplicas` counts each replica as a shard.
+  const opts = { ...(cluster ? { settings: { skip_unavailable_shards: "1" } } : {}), ...(run.signal ? { signal: run.signal } : {}) };
   return {
     now: () => serverNow(run.target),
     async pendingWrites(cutover) {
