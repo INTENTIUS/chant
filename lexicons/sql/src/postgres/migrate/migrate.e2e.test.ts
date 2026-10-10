@@ -307,7 +307,8 @@ describe.skipIf(!enabled)("an interrupted backfill resumes from its receipts", (
     writeBuild("events-v2.json", [EV, V2]);
 
     // varchar(20) to varchar(10) is a rewrite in place (SQLPG207), which the Op makes in batches instead.
-    expect((await plan("events-v2.json")).changes.map((c) => c.rule)).toEqual(["SQLPG207"]);
+    // The application's own trigger is not declared, so the plan also proposes its drop (SQLPG285), which only a prune makes.
+    expect((await plan("events-v2.json")).changes.map((c) => c.rule)).toEqual(["SQLPG207", "SQLPG285"]);
     expect(await m.postgresMigrationPlan(args(), undefined, deps())).toMatchObject({ state: "migrate", change: "type" });
     await m.postgresMigrationExpand(args(), undefined, deps());
     await m.postgresMigrationDualWrite(args(), undefined, deps());
