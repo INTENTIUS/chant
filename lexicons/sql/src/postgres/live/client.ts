@@ -90,3 +90,88 @@ export async function connectPostgres(endpoint: PostgresEndpoint, options: { app
     },
   };
 }
+
+/** SQLSTATE lock_not_available: `lock_timeout` passed while a statement waited for a lock. */
+export const SQLSTATE_LOCK_NOT_AVAILABLE = "55P03";
+
+/** The `lock_timeout` a statement waits under when the profile sets none (`sql.profiles.<env>.lockTimeoutMs`): the applier's and the catalog reader's. */
+export const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
+
+/** A session holding ACCESS EXCLUSIVE on a relation: what a catalog read waits behind. */
+export interface LockHolder {
+  pid: number;
+  relation: string;
+  application?: string;
+  state?: string;
+  /** Seconds since the holder's transaction began. */
+  seconds?: number;
+  query?: string;
+}
+
+/**
+ * The sessions holding ACCESS EXCLUSIVE on a relation in the current database,
+ * other than this one. Only that mode conflicts with the ACCESS SHARE a
+ * catalog function (`pg_get_viewdef()`, `pg_get_indexdef()`) takes. Empty when
+ * the lookup itself fails.
+ */
+export async function accessExclusiveHolders(client: PostgresClient): Promise<LockHolder[]> {
+  try {
+    const rows = await client.query<{ pid: number; relation: string; application: string | null; state: string | null; seconds: number | null; query: string | null }>(
+      `SELECT l.pid, l.relation::pg_catalog.regclass::text AS relation, a.application_name AS application, a.state,
+              (EXTRACT(EPOCH FROM pg_catalog.now() - a.xact_start))::int AS seconds, pg_catalog.left(a.query, 120) AS query
+         FROM pg_catalog.pg_locks l LEFT JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
+        WHERE l.locktype = 'relation' AND l.granted AND l.mode = 'AccessExclusiveLock'
+          AND l.pid <> pg_catalog.pg_backend_pid()
+          AND l.database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+        ORDER BY l.pid, 2 LIMIT 10`,
+    );
+    return rows.map((r) => ({
+      pid: Number(r.pid),
+      relation: r.relation,
+      ...(r.application ? { application: r.application } : {}),
+      ...(r.state ? { state: r.state } : {}),
+      ...(r.seconds !== null && r.seconds !== undefined ? { seconds: Number(r.seconds) } : {}),
+      ...(r.query ? { query: r.query.replace(/\s+/g, " ").trim() } : {}),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** One line naming the lock holders, for a message. */
+export function describeLockHolders(holders: readonly LockHolder[]): string {
+  if (holders.length === 0) return "no session holds ACCESS EXCLUSIVE now; the lock was released after the wait";
+  return holders
+    .map((h) => {
+      const about = [h.application ? `application ${JSON.stringify(h.application)}` : "", h.state ?? "", h.seconds !== undefined ? `transaction open ${h.seconds}s` : "", h.query ? `last statement: ${h.query}` : ""].filter(Boolean);
+      return `${h.relation} is held in ACCESS EXCLUSIVE by pid ${h.pid}${about.length > 0 ? ` (${about.join(", ")})` : ""}`;
+    })
+    .join("; ");
+}
+
+/**
+ * A client for catalog reads: the session's `lock_timeout` is `lockTimeoutMs`
+ * (0 waits without limit, as Postgres does), so a read that needs a table
+ * another session holds in ACCESS EXCLUSIVE (a long `ALTER TABLE`, `LOCK
+ * TABLE`) fails after the wait instead of hanging. The failure names the
+ * relation and the pid holding it.
+ */
+export async function withCatalogLockTimeout(client: PostgresClient, lockTimeoutMs: number = DEFAULT_LOCK_TIMEOUT_MS): Promise<PostgresClient> {
+  await client.query("SELECT pg_catalog.set_config('lock_timeout', $1, false)", [`${lockTimeoutMs}ms`]);
+  return {
+    async query<T>(sql: string, params?: readonly unknown[]): Promise<T[]> {
+      try {
+        return await client.query<T>(sql, params);
+      } catch (err) {
+        if (!(err instanceof PostgresQueryError) || err.code !== SQLSTATE_LOCK_NOT_AVAILABLE) throw err;
+        const holders = describeLockHolders(await accessExclusiveHolders(client));
+        throw new PostgresQueryError(
+          `${err.message.split("\n")[0]}: the catalog read waited ${lockTimeoutMs}ms for a lock; ${holders}. Wait for that transaction to finish, or raise sql.profiles.<env>.lockTimeoutMs`,
+          err.code,
+          err.position,
+        );
+      }
+    },
+    end: () => client.end(),
+  };
+}

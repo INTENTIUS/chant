@@ -140,8 +140,10 @@ export const sqlProfileSchema = z.strictObject({
   /**
    * Postgres apply: how long one statement waits for its lock before it
    * fails (`lock_timeout`), in milliseconds, so a change blocked behind a
-   * long query fails fast instead of queueing every query behind it. 5000
-   * when omitted.
+   * long query fails fast instead of queueing every query behind it. The
+   * catalog reads (`chant lifecycle diff --live`, `chant sql plan`, the
+   * import) wait under it too, and name the session holding the lock when it
+   * passes. 5000 when omitted.
    */
   lockTimeoutMs: z.number().int().nonnegative().optional(),
   /**
