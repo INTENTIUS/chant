@@ -148,4 +148,14 @@ describe("GitLabGenerator", () => {
     const files = generator.generate(ir);
     expect(files[0].content).toContain("Pipeline stages: build, test, deploy");
   });
+
+  test("a key that is not an identifier is quoted", () => {
+    const ir: TemplateIR = {
+      resources: [{ logicalId: "pipeline", type: "GitLab::CI::Pipeline", properties: { variables: { "MY-VAR": "x", GIT_DEPTH: "0" } } }],
+      parameters: [],
+    };
+    const content = generator.generate(ir)[0]!.content;
+    expect(content).toContain('"MY-VAR": "x"');
+    expect(content).toContain('GIT_DEPTH: "0"');
+  });
 });
