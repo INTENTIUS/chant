@@ -6,6 +6,10 @@
       "kind": "resource",
       "resourceType": "ClickHouse::Database"
     },
+    "Dictionary": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::Dictionary"
+    },
     "MaterializedView": {
       "kind": "resource",
       "resourceType": "ClickHouse::MaterializedView"

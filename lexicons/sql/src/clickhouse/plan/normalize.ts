@@ -32,13 +32,13 @@
  */
 
 import { isTrivia, tokenizeText, type Token } from "../tokens";
-import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span } from "../parser";
+import { parseCreate, unquote, type ColumnNode, type CreateNode, type DictionaryAttributeNode, type DictionaryNode, type Span } from "../parser";
 import { MERGE_TREE_SETTINGS, TYPE_FAMILIES } from "../../generated/clickhouse";
 import { previouslyIn, splitTopLevel as splitTop } from "../../core/normalize";
 
 export { previouslyIn } from "../../core/normalize";
 
-export type ObjectKind = "database" | "table" | "view" | "materializedView";
+export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary";
 
 export interface CanonicalColumn {
   name: string;
@@ -50,6 +50,10 @@ export interface CanonicalColumn {
   codec?: string;
   ttl?: string;
   comment?: string;
+  /** A dictionary attribute's `EXPRESSION`. */
+  expression?: string;
+  /** A dictionary attribute's flags, sorted: `HIERARCHICAL`, `INJECTIVE`. */
+  flags?: string;
   /** `-- previously: <name>` on the column's line: the name it had before. */
   previously?: string;
   /** The column's name and type as written, for a message. Not compared. */
@@ -77,6 +81,11 @@ export interface CanonicalObject {
   select?: string;
   to?: string;
   refresh?: string;
+  /** A dictionary's `SOURCE`, `LAYOUT`, `LIFETIME` and `RANGE`, each what is inside the parentheses. */
+  dataSource?: string;
+  layout?: string;
+  lifetime?: string;
+  range?: string;
   /** `-- previously: <name>` before the statement: the object's previous name. */
   previously?: string;
 }
@@ -231,7 +240,7 @@ function lineComments(tokens: Token[], from: number): string[] {
 }
 
 const kindOf = (node: CreateNode): ObjectKind =>
-  node.statement === "database" ? "database" : node.statement === "table" ? "table" : node.materialized ? "materializedView" : "view";
+  node.statement === "database" || node.statement === "table" || node.statement === "dictionary" ? node.statement : node.materialized ? "materializedView" : "view";
 
 const stringValue = (s: string | undefined) =>
   s === undefined ? undefined : /^'.*'$/s.test(s) ? s.slice(1, -1).replace(/''/g, "'").replace(/\\(.)/g, "$1") : s;
@@ -269,6 +278,12 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
   const previously = previouslyIn(leading);
   if (previously) obj.previously = previously;
 
+  const comment0 = stringValue(spanText(tokens, node.comment));
+  if (node.statement === "dictionary") {
+    if (comment0 !== undefined && comment0 !== "") obj.comment = comment0;
+    return dictionaryObject(obj, tokens, node, database);
+  }
+
   const engine = node.engine;
   if (engine) {
     let args = engine.args?.map((a) => canonicalExpression(spanText(tokens, a) ?? "", database)) ?? [];
@@ -291,8 +306,7 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
     obj.engineName = name;
     obj.engine = args.length ? `${name}(${args.join(", ")})` : name;
   }
-  const comment = stringValue(spanText(tokens, node.comment));
-  if (comment !== undefined && comment !== "") obj.comment = comment;
+  if (comment0 !== undefined && comment0 !== "") obj.comment = comment0;
 
   if (node.statement === "database") {
     for (const s of node.settings ?? []) obj.settings[s.key] = canonicalExpression(spanText(tokens, s.value) ?? "").replace(/^'(.*)'$/, "$1");
@@ -330,6 +344,111 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
   obj.select = expr(node.select);
   if (node.to) obj.to = qualified(tokens, node.to, defaultDatabase);
   if (node.refresh) obj.refresh = expr(node.refresh);
+  return obj;
+}
+
+// ── dictionaries ──────────────────────────────────────────────────────
+
+/**
+ * A dictionary's clause (`SOURCE`, `LAYOUT`) as the server prints it: each
+ * function name and each key upper case (`clickhouse(table 'r')` is
+ * `CLICKHOUSE(TABLE 'r')`), each value as written, and a `PASSWORD` value
+ * as `'[HIDDEN]'`, since `SHOW CREATE` never prints it.
+ */
+export function canonicalDictionaryClause(text: string): string {
+  let sig: Token[];
+  try {
+    sig = tokenizeText(text, 0).filter((t) => !isTrivia(t));
+  } catch {
+    return text.trim();
+  }
+  const out: string[] = [];
+  let key = true;
+  let hide = false;
+  for (let i = 0; i < sig.length; i++) {
+    const t = sig[i]!;
+    const next = sig[i + 1];
+    if (t.kind === "punct" && (t.text === "(" || t.text === "," || t.text === ")")) {
+      out.push(t.text);
+      key = true;
+      continue;
+    }
+    if (key && t.kind === "ident") {
+      const word = t.text.toUpperCase();
+      out.push(word);
+      // A function name opens its own list of keys; a key is followed by its value.
+      key = next?.kind === "punct" && next.text === "(";
+      hide = word === "PASSWORD";
+      continue;
+    }
+    out.push(hide ? "'[HIDDEN]'" : t.kind === "qident" ? unquote(t.text) : t.text);
+    hide = false;
+    key = !(next?.kind === "punct" && next.text === "(");
+  }
+  return out.join(" ");
+}
+
+/** `300` is `MIN 0 MAX 300`; `MAX b MIN a` is `MIN a MAX b`. */
+export function canonicalLifetime(text: string): string {
+  const words = canonicalExpression(text).split(" ");
+  if (words.length === 1) return `MIN 0 MAX ${words[0]}`;
+  const at = (w: string) => words.findIndex((x) => x.toUpperCase() === w);
+  const min = at("MIN");
+  const max = at("MAX");
+  if (min < 0 || max < 0) return words.join(" ");
+  return `MIN ${words[min + 1] ?? ""} MAX ${words[max + 1] ?? ""}`;
+}
+
+/** A key list with any parentheses around the whole of it left out: `(a, b)` is `a , b`. */
+function keyList(text: string, database?: string): string {
+  const e = canonicalExpression(text, database);
+  if (!e.startsWith("( ") || !e.endsWith(" )")) return e;
+  let depth = 0;
+  const words = e.split(" ");
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === "(") depth++;
+    else if (words[i] === ")") depth--;
+    if (depth === 0 && i < words.length - 1) return e;
+  }
+  return words.slice(1, -1).join(" ");
+}
+
+function dictionaryAttribute(tokens: Token[], a: DictionaryAttributeNode, position: number, database?: string): CanonicalColumn {
+  const text = (span: Span | undefined) => spanText(tokens, span);
+  const out: CanonicalColumn = { name: a.name, position, type: canonicalType(text(a.type)!), text: [a.name, text(a.type)].join(" ") };
+  const d = text(a.default);
+  if (d !== undefined) {
+    out.defaultKind = "DEFAULT";
+    out.defaultExpr = canonicalExpression(d, database);
+  }
+  const e = text(a.expression);
+  if (e !== undefined) out.expression = canonicalExpression(e, database);
+  if (a.flags.length > 0) out.flags = [...a.flags].sort().join(" ");
+  const prev = previouslyIn(lineComments(tokens, a.nameSpan.from));
+  if (prev) out.previously = prev;
+  return out;
+}
+
+function dictionaryObject(obj: CanonicalObject, tokens: Token[], node: DictionaryNode, database?: string): CanonicalObject {
+  const text = (span: Span | undefined) => spanText(tokens, span);
+  node.attributes.forEach((a, i) => obj.columns.push(dictionaryAttribute(tokens, a, i, database)));
+  const pk = text(node.primaryKey);
+  if (pk !== undefined) obj.primaryKey = keyList(pk, database);
+  const source = text(node.source);
+  if (source !== undefined) obj.dataSource = canonicalDictionaryClause(source);
+  const layout = text(node.layout);
+  if (layout !== undefined) obj.layout = canonicalDictionaryClause(layout);
+  const lifetime = text(node.lifetime);
+  if (lifetime !== undefined) obj.lifetime = canonicalLifetime(lifetime);
+  const range = text(node.range);
+  if (range !== undefined) obj.range = canonicalExpression(range, database).replace(/\b(min|max)\b/gi, (w) => w.toUpperCase());
+  const settings = text(node.settings);
+  if (settings !== undefined) {
+    for (const item of splitTop(canonicalExpression(settings))) {
+      const m = /^(\S+) = (.*)$/.exec(item);
+      if (m) obj.settings[m[1]!] = m[2]!.replace(/^'(.*)'$/, "$1");
+    }
+  }
   return obj;
 }
 

@@ -96,7 +96,9 @@ const statementType = (node: CreateNode): ClickHouseEntityType =>
     ? CLICKHOUSE_ENTITY_TYPES.database
     : node.statement === "table"
       ? CLICKHOUSE_ENTITY_TYPES.table
-      : node.materialized
+      : node.statement === "dictionary"
+        ? CLICKHOUSE_ENTITY_TYPES.dictionary
+        : node.materialized
         ? CLICKHOUSE_ENTITY_TYPES.materializedView
         : CLICKHOUSE_ENTITY_TYPES.view;
 
@@ -130,7 +132,7 @@ export function stripServerDefaults(ddl: string): string {
     return ddl;
   }
   const edits: Array<{ span: Span; text: string }> = [];
-  if (node.statement !== "database" && node.settings && node.settingsClause) {
+  if ((node.statement === "table" || node.statement === "view") && node.settings && node.settingsClause) {
     const text = (s: Span) => tokens.slice(s.from, s.to).map((t) => t.text).join("").trim();
     const kept = node.settings.filter((s) => {
       const def = (MERGE_TREE_SETTINGS as Record<string, { default: string } | undefined>)[s.key];

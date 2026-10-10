@@ -333,7 +333,7 @@ function renderCreate(tokens: Token[], node: CreateNode, topology: Topology): st
 
   const cluster = createClusterEdit(tokens, node, objectCluster(topology));
   if (cluster) edits.push(cluster);
-  if (node.engine) {
+  if (node.statement !== "dictionary" && node.engine) {
     const declared: EngineClause = { name: node.engine.name, ...(node.engine.args ? { args: node.engine.args.map((a) => text(tokens, a)) } : {}) };
     const rendered = renderEngine(declared, topology);
     if (engineText(rendered) !== engineText(declared)) {

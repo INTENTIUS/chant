@@ -47,7 +47,7 @@ chant sql plan prod schema.json        # a build output against the prod server
 
 Both exit 2 when a change needs a rebuild. \`chant sql diff\` compares a pull request's base and head builds with no server. \`chant sql plan\` reads the server \`sql.profiles.<env>\` binds, and asks that server's formatter about any expression the normalization rules leave different, so the server's own rewriting (\`INTERVAL 1 DAY\` as \`toIntervalDay(1)\`, \`a+b*2\` as \`a + (b * 2)\`) is not reported as a change.
 
-\`chant sql plan\` also exits 2 when a declared database holds an object chant cannot read yet, a dictionary. It names each one under \`Refused\` (\`unreadable\` in \`--json\`) instead of leaving it out, and \`chant lifecycle diff --live\` reports each one as unobserved. A table with the \`Dictionary\` engine is a table, and is read.
+\`chant sql plan\` also exits 2 when a declared database holds an object whose definition it cannot read. It names each one under \`Refused\` (\`unreadable\` in \`--json\`) instead of leaving it out. Dictionaries are read and planned like the other objects: any change but a comment replaces one (SQLCH245).
 
 ## After the plan
 

@@ -1,7 +1,7 @@
 /**
  * A hand-written recursive-descent parser for the ClickHouse statements the
- * dialect declares: `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW` and
- * `CREATE MATERIALIZED VIEW` (chant #3196).
+ * dialect declares: `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`,
+ * `CREATE MATERIALIZED VIEW` (chant #3196) and `CREATE DICTIONARY` (#3682).
  *
  * Statement structure is parsed; expressions are not. An expression (a
  * default, a codec, a sort key, a TTL, a view's SELECT) is kept as a span of
@@ -114,7 +114,40 @@ export interface ViewNode extends StorageNode {
   comment?: Span;
 }
 
-export type CreateNode = DatabaseNode | TableNode | ViewNode;
+/** One attribute of a dictionary: `name Type [DEFAULT expr] [EXPRESSION expr] [HIERARCHICAL] [INJECTIVE] [IS_OBJECT_ID]`. */
+export interface DictionaryAttributeNode {
+  name: string;
+  nameSpan: Span;
+  type: Span;
+  default?: Span;
+  expression?: Span;
+  /** `HIERARCHICAL`, `BIDIRECTIONAL`, `INJECTIVE`, `IS_OBJECT_ID`, upper case, as written. */
+  flags: string[];
+}
+
+export interface DictionaryNode {
+  statement: "dictionary";
+  orReplace: boolean;
+  ifNotExists: boolean;
+  name: Span;
+  onCluster?: Span;
+  attributes: DictionaryAttributeNode[];
+  /** The key columns, as written after `PRIMARY KEY`. */
+  primaryKey?: Span;
+  /** What is inside `SOURCE(...)`: `CLICKHOUSE(TABLE 'rates')`. */
+  source?: Span;
+  /** What is inside `LAYOUT(...)`: `HASHED()`. */
+  layout?: Span;
+  /** What is inside `LIFETIME(...)`: `300`, `MIN 0 MAX 300`. */
+  lifetime?: Span;
+  /** What is inside `RANGE(...)`: `MIN start MAX end`. */
+  range?: Span;
+  /** What is inside `SETTINGS(...)`. */
+  settings?: Span;
+  comment?: Span;
+}
+
+export type CreateNode = DatabaseNode | TableNode | ViewNode | DictionaryNode;
 
 /** A token that can stand where a name goes. */
 const isNameToken = (t: Token | undefined): boolean =>
@@ -350,9 +383,10 @@ class Parser extends SqlCursor {
     }
     if (this.accept("DATABASE")) return this.database();
     if (this.accept("TABLE")) return this.table(orReplace);
+    if (this.accept("DICTIONARY")) return this.dictionary(orReplace);
     const materialized = this.accept("MATERIALIZED");
     if (this.accept("VIEW")) return this.view(orReplace, materialized);
-    return this.fail(materialized ? "expected VIEW" : "expected DATABASE, TABLE, VIEW or MATERIALIZED VIEW");
+    return this.fail(materialized ? "expected VIEW" : "expected DATABASE, TABLE, VIEW, MATERIALIZED VIEW or DICTIONARY");
   }
 
   private ifNotExists(): boolean {
@@ -412,6 +446,53 @@ class Parser extends SqlCursor {
     this.storage(node, []);
     if (this.accept("COMMENT")) node.comment = this.expr();
     this.finish("table definition");
+    return node;
+  }
+
+  private dictionaryAttribute(): DictionaryAttributeNode {
+    const { text, span } = this.name("an attribute name");
+    const STOP = ["DEFAULT", "EXPRESSION", "HIERARCHICAL", "BIDIRECTIONAL", "INJECTIVE", "IS_OBJECT_ID"];
+    const attr: DictionaryAttributeNode = { name: text, nameSpan: span, type: this.typeSpan(), flags: [] };
+    for (;;) {
+      if (this.accept("DEFAULT")) attr.default = this.expr(STOP);
+      else if (this.accept("EXPRESSION")) attr.expression = this.expr(STOP);
+      else if (kw(this.peek(), "HIERARCHICAL", "BIDIRECTIONAL", "INJECTIVE", "IS_OBJECT_ID")) attr.flags.push(this.next().text.toUpperCase());
+      else return attr;
+    }
+  }
+
+  private dictionary(orReplace: boolean): DictionaryNode {
+    const ifNotExists = this.ifNotExists();
+    const name = this.qualifiedName();
+    this.uuid();
+    const node: DictionaryNode = { statement: "dictionary", orReplace, ifNotExists, name, onCluster: this.onCluster(), attributes: [] };
+    this.expectPunct("(");
+    for (;;) {
+      node.attributes.push(this.dictionaryAttribute());
+      if (this.acceptPunct(",")) {
+        if (this.acceptPunct(")")) break;
+        continue;
+      }
+      this.expectPunct(")");
+      break;
+    }
+    const CLAUSES = ["PRIMARY", "SOURCE", "LAYOUT", "LIFETIME", "RANGE", "SETTINGS", "COMMENT"];
+    for (;;) {
+      if (kw(this.peek(), "PRIMARY") && kw(this.peek(1), "KEY")) {
+        this.p += 2;
+        node.primaryKey = this.expr(CLAUSES, false);
+      } else if (this.accept("SOURCE")) node.source = this.parenthesized();
+      else if (this.accept("LAYOUT")) node.layout = this.parenthesized();
+      else if (this.accept("LIFETIME")) node.lifetime = this.parenthesized();
+      else if (this.accept("RANGE")) node.range = this.parenthesized();
+      else if (this.accept("SETTINGS")) node.settings = this.parenthesized();
+      else if (this.accept("COMMENT")) node.comment = this.expr();
+      else break;
+    }
+    if (!node.primaryKey) this.fail("expected PRIMARY KEY: a dictionary needs its key columns");
+    if (!node.source) this.fail("expected SOURCE(...): a dictionary needs a source");
+    if (!node.layout) this.fail("expected LAYOUT(...): a dictionary needs a layout");
+    this.finish("dictionary definition");
     return node;
   }
 

@@ -22,11 +22,11 @@
 import { deepObservation, type DeepObservationResult, type DeepResourceObservation, type DeepNormalizationHooks } from "@intentius/chant/deep-observation";
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "../live/bind";
-import { readLiveSchema, readUnreadableObjects, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
+import { readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
 import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
-import { database, table, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
+import { database, dictionary, table, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
 import { canonicalObject, type CanonicalColumn, type CanonicalObject } from "./normalize";
 import { renderFor } from "../topology";
 
@@ -40,7 +40,14 @@ export const sqlDeepNormalizationHooks: DeepNormalizationHooks = {
 };
 
 function liveProps(o: LiveObject): Props {
-  const tag = o.type === CLICKHOUSE_ENTITY_TYPES.database ? database : o.type === CLICKHOUSE_ENTITY_TYPES.table ? table : view;
+  const tag =
+    o.type === CLICKHOUSE_ENTITY_TYPES.database
+      ? database
+      : o.type === CLICKHOUSE_ENTITY_TYPES.table
+        ? table
+        : o.type === CLICKHOUSE_ENTITY_TYPES.dictionary
+          ? dictionary
+          : view;
   const strings = Object.assign([o.statement], { raw: [o.statement] }) as unknown as TemplateStringsArray;
   return { ...(tag(strings).props as unknown as Props) };
 }
@@ -62,7 +69,7 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   adopt("name", d.name === l.name);
   adopt("database", d.database === l.database);
   adopt("engine", same("engine"));
-  for (const k of ["orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl", "comment", "select", "refresh"] as const) adopt(k, same(k));
+  for (const k of ["orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl", "comment", "select", "refresh", "dataSource", "layout", "lifetime", "range"] as const) adopt(k, same(k));
   adopt("settings", same("settings"));
   adopt("indexes", same("indexes"));
   adopt("projections", same("projections"));
@@ -72,7 +79,7 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   if (d.kind === "view" || d.kind === "materializedView") {
     // The server infers a view's columns; a declaration that lists none is not drift.
     if (declaredColumns.length === 0) out.columns = [];
-  } else if (d.kind === "table") {
+  } else if (d.kind === "table" || d.kind === "dictionary") {
     const liveColumns = (live.columns as ColumnDef[] | undefined) ?? [];
     out.columns = liveColumns.map((c, i) => {
       const lc = l.columns[i];
@@ -219,22 +226,6 @@ export async function observeResourcesDeep(
     } catch (err) {
       unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };
     }
-  }
-  // What the declared databases hold that chant cannot read (#3653) is named, so "no drift" is never said over it.
-  const declaredDatabases = new Set<string>();
-  for (const name of options.entityNames) {
-    const entity = options.entities.get(name);
-    if (!entity?.entityType.startsWith("ClickHouse::")) continue;
-    const props = entity.props;
-    declaredDatabases.add(entity.entityType === CLICKHOUSE_ENTITY_TYPES.database ? String(props.name) : typeof props.database === "string" ? props.database : target.defaultDatabase);
-  }
-  try {
-    for (const u of await readUnreadableObjects(target, declaredDatabases)) {
-      unobserved[`${u.database}.${u.name}`] = { type: u.type, reason: "unsupported-kind", detail: `${u.database}.${u.name} is ${u.reason}, so its drift is not reported` };
-    }
-  } catch (err) {
-    const why = classifyClickHouseFailure(err);
-    unobserved["system.dictionaries"] = { type: "ClickHouse::Dictionary", reason: why.reason, detail: `listing the declared databases' dictionaries: ${why.detail}` };
   }
   return deepObservation(resources, unobserved);
 }
