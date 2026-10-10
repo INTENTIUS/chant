@@ -80,4 +80,4 @@ Its tick runs the source at the commit it checks out, so a change to `chant ci` 
 chant ci workflow --chant 'npx tsx packages/core/src/cli/main.ts' --install 'npm install --ignore-scripts'
 ```
 
-The install skips the lexicon builds, and the tick needs none of them. `just release` picks the commit it tags from these tags: `scripts/release-preflight.sh` reads them whenever the declaration on `origin/main` sets `ci.green` for `main`. When no commit has a green tag, it refuses to release. It doesn't fall back to asking GitHub, and `CHANT_RELEASE_SKIP_PREFLIGHT=1` skips the check.
+The install skips the lexicon builds, and the tick needs none of them. `just release` picks the commit it tags from these tags: `scripts/release-preflight.sh` reads them whenever the declaration on `origin/main` sets `ci.green` for `main`. When no commit has a green tag, it refuses to release. It doesn't fall back to asking GitHub, and `CHANT_RELEASE_SKIP_PREFLIGHT=1` skips the check. The publish workflow has a second gate that waits for a green run on the released commit; setting the repository variable `CHANT_RELEASE_SKIP_CI_GATE` to `1` skips it, for releases made from local gates.
