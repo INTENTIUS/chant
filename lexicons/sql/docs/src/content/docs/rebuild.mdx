@@ -106,7 +106,26 @@ They live there, not on the `chant/lifecycle` branch, because a receipt has to g
 
 A run stopped during the backfill (Ctrl-C, a killed job, a lost machine) is not a failure: it runs no onFailure, and the next run resumes at the first partition without a receipt. A run killed between a partition's `INSERT` and its receipt leaves rows with no receipt. The next run finds them, deletes them (waiting for that mutation in `system.mutations`) and copies the partition once more, so no row is in the new table twice. Each partition's copy runs under a query id made from the new table and the partition, and a copy the server is still running from a run whose client went away is killed first.
 
-A step that fails is a failure. The backfill step retries three times, and the Verify and Swap steps fail on any difference. onFailure then drops `events__chant_new` and `events__chant_dual`, only when their comments name this rebuild and carry this project's marker, and the next run starts again from a new table. After the `EXCHANGE`, onFailure touches nothing: the next run finishes the swap.
+A step that fails is a failure. The backfill step retries three times, and the Verify and Swap steps fail on any difference. Unless the Op keeps its new table on failure ([`onFailure: "keep"`](#inside-a-larger-approved-change)), onFailure then drops `events__chant_new` and `events__chant_dual`, only when their comments name this rebuild and carry this project's marker, and the next run starts again from a new table. After the `EXCHANGE`, onFailure touches nothing: the next run finishes the swap.
+
+## Inside a larger approved change
+
+A tool that runs the rebuild as one step of a change it has already had approved (a migration runner whose own gate covers the whole change, say) can set two options so it does not have to edit the Op's config.
+
+```typescript
+export const { op } = ClickHouseRebuildOp({
+  name: "rebuild-shop-events",
+  env: "prod",
+  table: "shop.events",
+  dualWrite: { mode: "materialized-view", cutoverColumn: "ts" },
+  gates: "outer",     // the caller's approval covers the swap
+  onFailure: "keep",  // a failed run resumes from its receipts
+});
+```
+
+`gates: "outer"` leaves out the swap gate, the drop gate and the Drop phase, so a run goes from Plan through Retain without stopping. The Verify phase still compares every row, and the Swap phase still compares them again before the `EXCHANGE`: any difference fails the run with nothing swapped. The old table is kept as `events__chant_old` with its retention date. Drop it after that date, or run the Op with its own gates (`gates: "own"`, the default): its swap gate has nothing left to swap, and its drop gate binds that old table. In app mode the `<name>-writes-stopped` gate stays, because it confirms that the application stopped writing and does not approve the swap.
+
+`onFailure: "keep"` leaves out onFailure. A step that fails leaves `events__chant_new`, `events__chant_dual` and the partitions' receipts, and the next run resumes the backfill at the first partition without a receipt, as it does after a run that was stopped. A failure that a rerun would hit again (a verification difference, or a new table made from an earlier declaration) says so in its error. To start again from a new table, drop `events__chant_new` and `events__chant_dual`.
 
 ## Background rewrites
 

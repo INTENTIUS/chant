@@ -25,6 +25,12 @@
  * | Drop | the old table, once its date has passed |
  * | onFailure | drop the new table and the dual-write view |
  *
+ * `gates: "outer"` (#3658) leaves out both approval gates and the Drop phase,
+ * for a caller that runs the Op under an approval of its own: the run goes
+ * from Plan to Retain, verification and the swap's own comparison included.
+ * `onFailure: "keep"` leaves out the onFailure, so a failed run's next run
+ * resumes the backfill from its receipts instead of starting again.
+ *
  * Run it until it is done: each run goes as far as the next gate. Every step
  * re-reads the server, so a run after a gate, a crash or an approval picks up
  * where the last stopped. A run killed during the backfill (Ctrl-C, a lost
@@ -55,6 +61,27 @@ export interface ClickHouseRebuildOpConfig {
   build?: boolean;
   /** How long the old table is kept after the swap, as a duration (`7d`, `36h`). Default: `7d`. */
   retain?: string;
+  /**
+   * Whose approval the swap and the drop wait for. `"own"` (the default): the
+   * Op's two gates. `"outer"`: an approval the caller already holds for a
+   * larger change that runs this Op as one of its steps. The swap gate, the
+   * drop gate and the Drop phase are left out, so the Op ends at Retain with
+   * the old table kept as `<table>__chant_old` with its retention date. Drop
+   * it after that date, or run the Op with `"own"`: its swap gate has
+   * nothing left to swap, and its drop gate binds that old table.
+   * The verification still runs, and the swap compares the tables again
+   * before the `EXCHANGE`: any difference fails the run with nothing swapped.
+   * App mode's writes-stopped gate is not an approval and stays.
+   */
+  gates?: "own" | "outer";
+  /**
+   * What a failed run does with the new table and the dual-write view.
+   * `"drop"` (the default): onFailure drops them, and the next run starts
+   * again from a new table. `"keep"`: there is no onFailure, and the next run
+   * resumes the backfill from its per-partition receipts. To start again
+   * instead, drop `<table>__chant_new` and `<table>__chant_dual`.
+   */
+  onFailure?: "drop" | "keep";
   /** The gate before the swap. Default name `approve-<name>`. */
   gate?: {
     gate?: string;
@@ -100,6 +127,8 @@ export interface ClickHouseRebuildArgs {
   stack?: string;
   ownershipEnv?: string;
   cwd?: string;
+  /** A failed run keeps the new table (`onFailure: "keep"`): a refusal says to drop it by hand. */
+  keepOnFailure?: boolean;
 }
 
 export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHouseRebuildOpResources {
@@ -112,6 +141,14 @@ export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHou
   if (config.dualWrite.mode === "materialized-view" && !config.dualWrite.cutoverColumn) {
     throw new Error(`ClickHouseRebuildOp "${config.name}": materialized-view mode needs cutoverColumn, the time column rows are cut over on`);
   }
+  if (config.gates !== undefined && config.gates !== "own" && config.gates !== "outer") {
+    throw new Error(`ClickHouseRebuildOp "${config.name}": gates must be "own" or "outer"`);
+  }
+  if (config.onFailure !== undefined && config.onFailure !== "drop" && config.onFailure !== "keep") {
+    throw new Error(`ClickHouseRebuildOp "${config.name}": onFailure must be "drop" or "keep"`);
+  }
+  const outer = config.gates === "outer";
+  const keep = config.onFailure === "keep";
 
   const args: ClickHouseRebuildArgs = {
     table: config.table,
@@ -124,6 +161,7 @@ export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHou
     ...(config.stack ? { stack: config.stack } : {}),
     ...(config.ownershipEnv ? { ownershipEnv: config.ownershipEnv } : {}),
     ...(config.path && config.path !== "." ? { cwd: config.path } : {}),
+    ...(keep ? { keepOnFailure: true } : {}),
   };
   const a = args as unknown as Record<string, unknown>;
   const swapGate = config.gate?.gate ?? `approve-${config.name}`;
@@ -132,6 +170,33 @@ export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHou
 
   const step = (fn: string, extra: Partial<StepDefinition & { id: string; outcomeAttribute: unknown; profile: string; timeout: string }> = {}): StepDefinition =>
     ({ ...activity(fn, a), ...extra }) as StepDefinition;
+
+  // The swap waits for this gate, unless the caller holds the approval (`gates: "outer"`).
+  const approve = phase("Approve", [
+    gate(swapGate, {
+      ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
+      plan: stepOutput("verify", "planDigest"),
+      description:
+        config.gate?.description ??
+        `Approve swapping the rebuilt ${config.table} in on ${config.env}: the run record's Verification line has the counts this approval binds`,
+      ...(config.gate?.approval
+        ? {
+            approval: {
+              ...config.gate.approval,
+              ...(policy
+                ? {
+                    context: {
+                      verifiedPartitions: stepOutput("verify", "partitions"),
+                      verifiedRows: stepOutput("verify", "rows"),
+                      ...config.gate.approval.context,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    }),
+  ]);
 
   const phases = [
     ...(config.build === false ? [] : [phase("Build", [activity("chantBuild", { path: config.path ?? "." })])]),
@@ -158,49 +223,29 @@ export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHou
         ],
       }),
     ]),
-    phase("Approve", [
-      gate(swapGate, {
-        ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
-        plan: stepOutput("verify", "planDigest"),
-        description:
-          config.gate?.description ??
-          `Approve swapping the rebuilt ${config.table} in on ${config.env}: the run record's Verification line has the counts this approval binds`,
-        ...(config.gate?.approval
-          ? {
-              approval: {
-                ...config.gate.approval,
-                ...(policy
-                  ? {
-                      context: {
-                        verifiedPartitions: stepOutput("verify", "partitions"),
-                        verifiedRows: stepOutput("verify", "rows"),
-                        ...config.gate.approval.context,
-                      },
-                    }
-                  : {}),
-              },
-            }
-          : {}),
-      }),
-    ]),
+    ...(outer ? [] : [approve]),
     phase("Swap", [step("clickhouseRebuildSwap", { profile: "longInfra", outcomeAttribute: { name: "Dependents", from: "dependents" } })]),
     phase("Retain", [step("clickhouseRebuildRetain", { id: "retain", outcomeAttribute: { name: "RetainUntil", from: "retainUntil" } })]),
-    phase("Approve drop", [
-      gate(dropGate, {
-        ...(config.dropGate?.timeout ? { timeout: config.dropGate.timeout } : {}),
-        plan: stepOutput("retain", "dropDigest"),
-        description: config.dropGate?.description ?? `Approve dropping the old ${config.table} once its retention has passed`,
-      }),
-    ]),
-    phase("Drop", [step("clickhouseRebuildDrop", { outcomeAttribute: { name: "Dropped", from: "dropped" } })]),
+    ...(outer
+      ? []
+      : [
+          phase("Approve drop", [
+            gate(dropGate, {
+              ...(config.dropGate?.timeout ? { timeout: config.dropGate.timeout } : {}),
+              plan: stepOutput("retain", "dropDigest"),
+              description: config.dropGate?.description ?? `Approve dropping the old ${config.table} once its retention has passed`,
+            }),
+          ]),
+          phase("Drop", [step("clickhouseRebuildDrop", { outcomeAttribute: { name: "Dropped", from: "dropped" } })]),
+        ]),
   ];
 
   const op = Op({
     name: config.name,
-    overview: `Rebuild ${config.table} on ${config.env}: new table, ${config.dualWrite.mode === "app" ? "writes stopped" : "dual write"}, backfill, verify, gated swap`,
+    overview: `Rebuild ${config.table} on ${config.env}: new table, ${config.dualWrite.mode === "app" ? "writes stopped" : "dual write"}, backfill, verify, ${outer ? "swap under the caller's approval" : "gated swap"}`,
     labels: { Rebuild: "true", Env: config.env, Table: config.table },
     phases,
-    onFailure: [phase("Compensate", [step("clickhouseRebuildCompensate")])],
+    ...(keep ? {} : { onFailure: [phase("Compensate", [step("clickhouseRebuildCompensate")])] }),
   });
   return { op };
 }

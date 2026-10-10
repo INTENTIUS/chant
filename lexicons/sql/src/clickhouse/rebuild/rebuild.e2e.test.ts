@@ -10,6 +10,10 @@
  * - Rows dated after the cut-over (sql-yodeler#45): the ones the table held
  *   before the view are copied by the backfill, the ones written during the
  *   rebuild arrive through the view, and the swap leaves none behind.
+ * - Under an outer approval with the new table kept on failure (#3658): a
+ *   backfill that fails part way leaves the new table and its receipts, and
+ *   the next run skips the partitions already copied, verifies and swaps
+ *   with no gate, and keeps the old table.
  * - An interrupted backfill: stopped after three partitions, then killed
  *   between a partition's INSERT and its receipt, then resumed: the receipts
  *   skip what was copied, the half-copied partition is cleared first, and the
@@ -31,6 +35,7 @@ import { clickhouseImage } from "../../spec/pin";
 import { planAgainstServer } from "../plan/commands";
 import { clickhouseApply, toApplyResult } from "../../op/activities/clickhouse-apply";
 import * as rebuildActivities from "../../op/activities/clickhouse-rebuild";
+import type { ClickHouseRebuildDeps } from "../../op/activities/clickhouse-rebuild";
 import { ClickHouseRebuildOp, type ClickHouseRebuildOpConfig } from "./op";
 import { clickhouseReceiptStore, RECEIPTS_DATABASE, RECEIPTS_TABLE, type ClickHouseReceiptStore } from "./receipts";
 
@@ -68,20 +73,20 @@ const exists = async (database: string, name: string) => Number((await q<{ n: st
 const showCreate = async (name: string) => (await q<{ statement: string }>(`SHOW CREATE TABLE ${name}`))[0]!.statement;
 
 /** The rebuild activities, with the test's config, server and a quiet log, as the local executor resolves them. */
-function activities(): Map<string, ActivityFn> {
+function activities(extra: Partial<ClickHouseRebuildDeps> = {}): Map<string, ActivityFn> {
   const map = new Map<string, ActivityFn>();
   for (const [name, fn] of Object.entries(rebuildActivities)) {
     if (typeof fn !== "function" || !name.startsWith("clickhouseRebuild")) continue;
     map.set(name, ((args: Record<string, unknown>, signal?: AbortSignal) =>
-      (fn as (a: unknown, s?: AbortSignal, d?: unknown) => Promise<unknown>)(args, signal, deps())) as ActivityFn);
+      (fn as (a: unknown, s?: AbortSignal, d?: unknown) => Promise<unknown>)(args, signal, { ...deps(), ...extra })) as ActivityFn);
   }
   return map;
 }
 
-async function runOp(config: ClickHouseRebuildOpConfig, gates: GateLedgerPort): Promise<OpRunResult> {
+async function runOp(config: ClickHouseRebuildOpConfig, gates: GateLedgerPort, extra: Partial<ClickHouseRebuildDeps> = {}): Promise<OpRunResult> {
   const { op } = ClickHouseRebuildOp(config);
   const props = (op as unknown as { props: OpConfig }).props;
-  return runOpLocally(props, activities(), await loadProfiles(), undefined, { gates, now: new Date().toISOString() });
+  return runOpLocally(props, activities(extra), await loadProfiles(), undefined, { gates, now: new Date().toISOString() });
 }
 
 /** An in-memory gate ledger a person approves on: each approval answers the gate the last run stopped at, for the plan it recorded. */
@@ -452,5 +457,106 @@ describe.skipIf(!enabled)("an interrupted backfill resumes from its receipts", (
 
     const dropped = await rebuildActivities.clickhouseRebuildCompensate(args(), undefined, deps());
     expect(dropped.dropped).toEqual(["shop.page_views__chant_new"]);
+  }, 300_000);
+});
+
+describe.skipIf(!enabled)("under an outer approval, a failed rebuild keeps its new table and the rerun resumes (#3658)", () => {
+  const sessionsDdl = (orderBy: string) => `CREATE TABLE shop.sessions
+(
+  day Date,
+  user_id UInt64,
+  ts DateTime
+)
+ENGINE = MergeTree
+PARTITION BY day
+ORDER BY ${orderBy}`;
+  const V1: Obj = { export: "sessions", type: "ClickHouse::Table", dependsOn: ["shop"], ddl: sessionsDdl("(day, user_id)") };
+  const V2: Obj = { ...V1, ddl: sessionsDdl("(user_id, day)") };
+  const config = (): ClickHouseRebuildOpConfig => ({
+    name: "rebuild-sessions",
+    env: "e2e",
+    table: "shop.sessions",
+    dualWrite: { mode: "materialized-view", cutoverColumn: "ts", cutoverDelay: "2s" },
+    build: false,
+    path: dir,
+    output: "sessions-v2.json",
+    stack: MARKER.stack,
+    ownershipEnv: MARKER.env,
+    gates: "outer",
+    onFailure: "keep",
+  });
+  const receipts = async () =>
+    (await q<{ address: string }>(`SELECT DISTINCT address FROM ${RECEIPTS_DATABASE}.${RECEIPTS_TABLE} WHERE address LIKE 'e2e/test/rebuild/shop.sessions/%'`)).length;
+
+  test("the failed run keeps the new table and its receipts; the rerun skips what was copied, swaps without a gate and keeps the old table", async () => {
+    await clickhouseApply({ buildPath: join(dir, writeBuild("sessions-v1.json", [DB, V1])), environment: "e2e" }, undefined, deps());
+    // Six days of rows, a partition each, all well before any cut-over.
+    await q("INSERT INTO shop.sessions SELECT toDate('2026-02-01') + number % 6, number, toDateTime('2026-02-01 00:00:00') + (number % 6) * 86400 FROM numbers(1200)");
+    writeBuild("sessions-v2.json", [DB, V2]);
+
+    // Every attempt of the backfill step fails after its partition: three attempts, three partitions copied, then the run fails.
+    let copied = 0;
+    const ledger = new Ledger();
+    const failure = await runOp(config(), ledger.port, {
+      backfill: {
+        afterPartition: () => {
+          copied++;
+          throw new Error(`the backfill failed after ${copied} partition(s)`);
+        },
+      },
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(failure).toBeInstanceOf(OpRunFailure);
+    const records = (failure as OpRunFailure).result.records;
+    expect(records.find((x) => x.fn === "clickhouseRebuildBackfill")?.error).toMatch(/the backfill failed after 3 partition/);
+    // No onFailure ran: the new table, the dual-write view and the receipts are there.
+    expect(records.find((x) => x.fn === "clickhouseRebuildCompensate")).toBeUndefined();
+    expect(await exists("shop", "sessions__chant_new")).toBe(true);
+    expect(await exists("shop", "sessions__chant_dual")).toBe(true);
+    expect(await count("shop.sessions__chant_new")).toBe(600);
+    expect(await receipts()).toBe(3);
+    expect(await showCreate("shop.sessions")).toMatch(/ORDER BY \(day, user_id\)/);
+
+    // The rerun resumes: three partitions skipped by receipt, three copied, verified, swapped, with no gate.
+    const r = await runOp(config(), ledger.port);
+    expect(r.status).toBe("ok");
+    expect(ledger.port.appended).toEqual([]);
+    expect(outcome(r, "Skipped")).toBe(3);
+    expect(outcome(r, "Copied")).toBe(3);
+    expect(outcome(r, "VerifiedRows")).toBe(1200);
+    expect(r.records.map((x) => x.fn)).not.toContain("clickhouseRebuildDrop");
+    expect(await showCreate("shop.sessions")).toMatch(/ORDER BY \(user_id, day\)/);
+    expect(await count("shop.sessions")).toBe(1200);
+    // The old table is kept: dropping it is a run with the Op's own gates.
+    expect(await count("shop.sessions__chant_old")).toBe(1200);
+    expect(await exists("shop", "sessions__chant_new")).toBe(false);
+    expect(await receipts()).toBe(6);
+
+    // Run with its own gates, the Op has nothing left to swap, and its drop gate binds that old table.
+    const ownLedger = new Ledger();
+    const own = await runOp({ ...config(), gates: "own" }, ownLedger.port);
+    expect(own.status).toBe("gated");
+    expect(own.gate).toMatchObject({ gate: "approve-rebuild-sessions" });
+    expect(outcome(own, "RebuildState")).toBe("swapped");
+    ownLedger.approveLast();
+    const drop = await runOp({ ...config(), gates: "own" }, ownLedger.port);
+    expect(drop.status).toBe("gated");
+    expect(drop.gate).toMatchObject({ gate: "approve-rebuild-sessions-drop" });
+    expect(await count("shop.sessions__chant_old")).toBe(1200);
+  }, 300_000);
+
+  test('a refusal says to drop the kept table by hand', async () => {
+    // A new table made from another declaration: refused, and nothing will drop it.
+    writeBuild("sessions-v3.json", [DB, { ...V1, ddl: sessionsDdl("(ts, user_id)") }]);
+    await q("CREATE TABLE shop.sessions__chant_new AS shop.sessions");
+    await q(`ALTER TABLE shop.sessions__chant_new MODIFY COMMENT 'x [chant managed-by=chant stack=e2e env=test rebuild=shop.sessions role=new]'`);
+    const args = { table: "shop.sessions", buildPath: "sessions-v3.json", environment: "e2e", dualWrite: { mode: "app" as const }, stack: MARKER.stack, ownershipEnv: MARKER.env, cwd: dir };
+    await expect(rebuildActivities.clickhouseRebuildCreate({ ...args, keepOnFailure: true }, undefined, deps())).rejects.toThrow(
+      /keeps its new table on failure \(onFailure: "keep"\), so nothing drops it: drop shop\.sessions__chant_new/,
+    );
+    await expect(rebuildActivities.clickhouseRebuildCreate(args, undefined, deps())).rejects.not.toThrow(/onFailure: "keep"/);
+    await q("DROP TABLE shop.sessions__chant_new SYNC");
   }, 300_000);
 });
