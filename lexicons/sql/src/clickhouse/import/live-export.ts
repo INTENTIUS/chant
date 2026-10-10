@@ -17,9 +17,11 @@
  *   `goose_db_version`) is left out with a warning (#3676), as on Postgres.
  * - A SQL user-defined function belongs to no database, and every project's
  *   functions sit side by side on a server (#3718). Without a selector, an
- *   import adopts only the functions the imported objects call (and those
+ *   import adopts only the functions the imported objects use (and those
  *   functions call), and the ones `sql.profiles.<env>.importFunctions` names;
- *   a warning names the rest. A function carries no comment, so `owned` does
+ *   a warning names the rest. ClickHouse stores a call as the function's body
+ *   (#3745), so a use is found by that body (`./inlined.ts`) as well as by
+ *   the name. A function carries no comment, so `owned` does
  *   not apply to it.
  */
 
@@ -32,6 +34,7 @@ import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
 import { isTrivia, tokenizeText } from "../tokens";
 import { unquote } from "../parser";
 import type { LiveObject } from "../live/catalog";
+import { inlinedFunctions } from "./inlined";
 
 /** The functions among `names` a statement calls: a name followed by `(`. */
 export function calledFunctions(ddl: string, names: ReadonlySet<string>): string[] {
@@ -52,13 +55,15 @@ const named = (patterns: readonly string[], name: string) => patterns.some((p) =
 
 /**
  * The functions an import adopts (#3718): those the objects call, those
- * `patterns` name, and the functions those call in turn; and the rest.
+ * whose bodies the objects hold in place of a call (#3745, `./inlined.ts`),
+ * those `patterns` name, and the functions those call in turn; and the rest.
  */
 export function scopedFunctions(objects: readonly LiveObject[], functions: readonly LiveObject[], patterns: readonly string[] = []): { adopted: LiveObject[]; skipped: string[] } {
   const byName = new Map(functions.map((f) => [f.name, f]));
   const names = new Set(byName.keys());
   const adopted = new Set<string>(functions.filter((f) => named(patterns, f.name)).map((f) => f.name));
   for (const o of objects) for (const n of calledFunctions(o.statement, names)) adopted.add(n);
+  for (const n of inlinedFunctions(objects.map((o) => o.statement), functions)) adopted.add(n);
   const queue = [...adopted];
   while (queue.length > 0) {
     for (const n of calledFunctions(byName.get(queue.pop()!)!.statement, names)) {
@@ -99,7 +104,7 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
     selected.push(...adopted);
     if (skipped.length > 0) {
       warnings.push(
-        `${skipped.length} SQL function${skipped.length === 1 ? "" : "s"} on the server ${skipped.length === 1 ? "is" : "are"} not imported, since no imported object calls ${skipped.length === 1 ? "it" : "them"}: ${skipped.join(", ")}. Name ${skipped.length === 1 ? "it" : "them"} in sql.profiles.${options.environment}.importFunctions to import ${skipped.length === 1 ? "it" : "them"}.`,
+        `${skipped.length} SQL function${skipped.length === 1 ? "" : "s"} on the server ${skipped.length === 1 ? "is" : "are"} not imported, since no imported object uses ${skipped.length === 1 ? "it" : "them"}: ${skipped.join(", ")}. Name ${skipped.length === 1 ? "it" : "them"} in sql.profiles.${options.environment}.importFunctions to import ${skipped.length === 1 ? "it" : "them"}.`,
       );
     }
   }

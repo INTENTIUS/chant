@@ -106,10 +106,12 @@ export const sqlProfileSchema = z.strictObject({
   defaultDatabase: z.string().optional(),
   /**
    * ClickHouse import (#3718): the SQL user-defined functions `chant import
-   * --from <env>` adopts besides those the imported objects call, by name, or
+   * --from <env>` adopts besides those the imported objects use, by name, or
    * by prefix with a trailing `*` (`shop_*`). A function belongs to no
    * database, so without this only the functions the imported tables, views
-   * and dictionaries call (and the functions those call) are imported.
+   * and dictionaries use (and the functions those call) are imported. A use
+   * is found by name or, since ClickHouse stores a call as the function's
+   * body, by that body (#3745).
    */
   importFunctions: z.array(z.string()).optional(),
   /**
