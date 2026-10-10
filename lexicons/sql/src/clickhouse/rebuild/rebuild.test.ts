@@ -21,6 +21,7 @@ import * as activitiesModule from "../../op/activities";
 import { ClickHouseRebuildOp, type ClickHouseRebuildOpConfig } from "./op";
 import { copiedColumns } from "./observe";
 import { partitionEffect } from "./backfill";
+import { insertTarget, waitForCutover, type CutoverProbe } from "./steps";
 import { intoShard, onShard, onShardServers, shardTable } from "./shards";
 import { renameColumns, sourcePartitionExpression } from "./partitions";
 import { canonicalObject } from "../plan/normalize";
@@ -238,5 +239,58 @@ describe("a rebuild across the shards of a cluster (#3663)", () => {
     expect(`SELECT * FROM ${shardTable(sharding, "shop", "events")} WHERE ${onShard(shard2)}`).toBe("SELECT * FROM cluster('main', `shop`, `events`) WHERE _shard_num = 2");
     expect(intoShard(sharding, shard2, "shop", "events__chant_new")).toBe("FUNCTION cluster('main', `shop`, `events__chant_new`, 1)");
     expect(onShardServers(shard2)).toBe("getMacro('shard') = 's2'");
+  });
+});
+
+describe("the wait for the cut-over (#3700)", () => {
+  const CUT = Date.parse("2026-10-10T12:00:05Z");
+  /** A probe on a fake clock that starts at `start` and moves with real time, and writes that finish after `writesFor` polls. */
+  function probe(start: number, writesFor: number): CutoverProbe & { polls: number } {
+    const t0 = Date.now();
+    const p = {
+      polls: 0,
+      now: async () => start + (Date.now() - t0),
+      pendingWrites: async (cutover: number) => {
+        expect(cutover).toBe(CUT);
+        p.polls++;
+        return p.polls <= writesFor ? ["insert-1"] : [];
+      },
+    };
+    return p;
+  }
+  const run = (lines: string[] = []) => ({ log: (l: string) => void lines.push(l) });
+
+  test("it ends as soon as the clock has passed the cut-over and no write begun before it is running", async () => {
+    const lines: string[] = [];
+    const p = probe(CUT - 300, 2);
+    const began = Date.now();
+    await waitForCutover(run(lines), CUT, p, { pollMs: 10 });
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(p.polls).toBe(3);
+    expect(lines[0]).toMatch(/^-- waiting 1s for the cut-over at 2026-10-10T12:00:05.000Z/);
+    expect(lines.filter((l) => l.includes("insert-1"))).toHaveLength(1);
+  });
+
+  test("a quiet table past its cut-over does not wait at all", async () => {
+    const p = probe(CUT + 1, 0);
+    const began = Date.now();
+    await waitForCutover(run(), CUT, p);
+    expect(Date.now() - began).toBeLessThan(100);
+    expect(p.polls).toBe(1);
+  });
+
+  test("a write still running at the timeout stops the step, naming it", async () => {
+    await expect(waitForCutover(run(), CUT, probe(CUT + 1, Infinity), { timeoutMs: 50, pollMs: 10 })).rejects.toThrow(
+      /begun before the cut-over at 2026-10-10T12:00:05.000Z are still running after 0s: insert-1\. .*cutoverTimeout/,
+    );
+  });
+
+  test("the table an INSERT writes to", () => {
+    expect(insertTarget("INSERT INTO shop.events VALUES (1)", "default")).toEqual({ database: "shop", name: "events" });
+    expect(insertTarget("  /* app */ insert into `shop`.`events` (ts) FORMAT JSONEachRow", "default")).toEqual({ database: "shop", name: "events" });
+    expect(insertTarget("INSERT INTO TABLE events SELECT 1", "shop")).toEqual({ database: "shop", name: "events" });
+    expect(insertTarget('INSERT INTO "shop" . "events" VALUES', "default")).toEqual({ database: "shop", name: "events" });
+    expect(insertTarget("INSERT INTO FUNCTION remote('h', shop.events) VALUES (1)", "shop")).toBeUndefined();
+    expect(insertTarget("SELECT * FROM shop.events", "shop")).toBeUndefined();
   });
 });

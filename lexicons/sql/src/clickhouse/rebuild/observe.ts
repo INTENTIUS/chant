@@ -57,11 +57,15 @@ export type DualWrite =
        * `cutoverColumn` is at or after the cut-over into the new table; the
        * backfill copies the rows before it, and the rows at or after it that
        * the table held before the view was made. The cut-over is the server's
-       * time when the view is made plus `cutoverDelay` (default `1m`), rounded
-       * up to a whole second, and the backfill starts once it has passed. The column must be a time
+       * time when the view is made plus `cutoverDelay` (default `5s`), rounded
+       * up to a whole second. The backfill starts once the server's clock has
+       * passed it and every write into the old table begun before it has
+       * finished (`cutoverTimeout` bounds that wait). The column must be a time
        * (`Date`, `DateTime`, `DateTime64`) that rows arrive in order of, give
        * or take the delay; a row that arrives later than that is caught by
-       * the verification, which then fails the run.
+       * the verification, which then fails the run. Writers that batch rows
+       * for longer than five seconds before inserting them need a delay
+       * longer than their batches.
        */
       mode: "materialized-view";
       cutoverColumn: string;

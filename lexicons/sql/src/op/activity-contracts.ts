@@ -31,6 +31,7 @@ const rebuildArgs = z.strictObject({
   retain: z.string().optional(),
   mutationTimeout: z.string().optional(),
   replicaTimeout: z.string().optional(),
+  cutoverTimeout: z.string().optional(),
   stack: z.string().optional(),
   ownershipEnv: z.string().optional(),
   cwd: z.string().optional(),

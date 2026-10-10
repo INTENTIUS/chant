@@ -14,6 +14,9 @@
  *   backfill that fails part way leaves the new table and its receipts, and
  *   the next run skips the partitions already copied, verifies and swaps
  *   with no gate, and keeps the old table.
+ * - A small table (#3700): the backfill waits only the default cut-over
+ *   delay, and the wait sees an INSERT still running and an asynchronous
+ *   insert still buffered.
  * - An interrupted backfill: stopped after three partitions, then killed
  *   between a partition's INSERT and its receipt, then resumed: the receipts
  *   skip what was copied, the half-copied partition is cleared first, and the
@@ -38,6 +41,7 @@ import * as rebuildActivities from "../../op/activities/clickhouse-rebuild";
 import type { ClickHouseRebuildDeps } from "../../op/activities/clickhouse-rebuild";
 import { ClickHouseRebuildOp, type ClickHouseRebuildOpConfig } from "./op";
 import { clickhouseReceiptStore, RECEIPTS_DATABASE, RECEIPTS_TABLE, type ClickHouseReceiptStore } from "./receipts";
+import { serverCutoverProbe, type RebuildRun } from "./steps";
 
 const enabled = await dockerAvailable();
 let server: ScratchServer | undefined;
@@ -559,4 +563,62 @@ ORDER BY ${orderBy}`;
     await expect(rebuildActivities.clickhouseRebuildCreate(args, undefined, deps())).rejects.not.toThrow(/onFailure: "keep"/);
     await q("DROP TABLE shop.sessions__chant_new SYNC");
   }, 300_000);
+});
+
+describe.skipIf(!enabled)("a small table waits seconds for its cut-over (#3700)", () => {
+  const tinyDdl = (orderBy: string) => `CREATE TABLE shop.tiny (ts DateTime, id UInt64) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY ${orderBy}`;
+  const V1: Obj = { export: "tiny", type: "ClickHouse::Table", dependsOn: ["shop"], ddl: tinyDdl("(ts, id)") };
+  const V2: Obj = { ...V1, ddl: tinyDdl("(id, ts)") };
+
+  test("thirty rows reach the swap gate with the default delay, a few seconds after the view is made", async () => {
+    await clickhouseApply({ buildPath: join(dir, writeBuild("tiny-v1.json", [DB, V1])), environment: "e2e" }, undefined, deps());
+    await q("INSERT INTO shop.tiny SELECT now() - toIntervalMinute(number), number FROM numbers(30)");
+    writeBuild("tiny-v2.json", [DB, V2]);
+    const lines: string[] = [];
+    const began = Date.now();
+    const r = await runOp(
+      {
+        name: "rebuild-tiny",
+        env: "e2e",
+        table: "shop.tiny",
+        dualWrite: { mode: "materialized-view", cutoverColumn: "ts" },
+        build: false,
+        path: dir,
+        output: "tiny-v2.json",
+        stack: MARKER.stack,
+        ownershipEnv: MARKER.env,
+      },
+      new Ledger().port,
+      { log: (l: string) => void lines.push(l) },
+    );
+    expect(r.status).toBe("gated");
+    expect(outcome(r, "VerifiedRows")).toBe(30);
+    // The delay is five seconds, rounded up to the next whole second.
+    const waited = lines.filter((l) => l.startsWith("-- waiting") && l.includes("for the cut-over"));
+    expect(waited.length).toBeGreaterThan(0);
+    expect(Number(/waiting (\d+)s/.exec(waited[0]!)![1])).toBeLessThanOrEqual(6);
+    expect(Date.now() - began).toBeLessThan(30_000);
+  }, 120_000);
+
+  test("the wait names an INSERT begun before the cut-over while it runs, and an asynchronous insert while it is buffered", async () => {
+    await q("CREATE TABLE shop.writes (ts DateTime, id UInt64) ENGINE = MergeTree ORDER BY ts");
+    const run = { target: { endpoint: server!.endpoint } } as unknown as RebuildRun;
+    const probe = serverCutoverProbe(run, { names: { database: "shop", name: "writes" }, replicated: false } as never);
+    const later = (await probe.now()) + 60_000;
+    expect(await probe.pendingWrites(later)).toEqual([]);
+
+    const slow = clickhouseQuery(server!.endpoint, "INSERT INTO shop.writes SELECT now(), number + sleepEachRow(1) FROM numbers(3) SETTINGS max_block_size = 1", { queryId: "e2e-3700-slow" });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await probe.pendingWrites(later)).toEqual(["e2e-3700-slow"]);
+    // Begun after the cut-over: not the backfill's to wait for.
+    expect(await probe.pendingWrites((await probe.now()) - 60_000)).toEqual([]);
+    await slow;
+    expect(await probe.pendingWrites(later)).toEqual([]);
+
+    await clickhouseQuery(server!.endpoint, "INSERT INTO shop.writes VALUES (now(), 7)", {
+      queryId: "e2e-3700-async",
+      settings: { async_insert: "1", wait_for_async_insert: "0", async_insert_busy_timeout_min_ms: "4000", async_insert_busy_timeout_max_ms: "4000", async_insert_use_adaptive_busy_timeout: "0" },
+    });
+    expect(await probe.pendingWrites(later)).toEqual(["e2e-3700-async"]);
+  }, 60_000);
 });
