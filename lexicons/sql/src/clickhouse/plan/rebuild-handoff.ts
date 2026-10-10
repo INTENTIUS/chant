@@ -19,11 +19,14 @@
 import type { CanonicalObject } from "./normalize";
 import type { SchemaDiff } from "./diff";
 import { migrationOpName, renderMigrationOps, type MigrationOpSuggestion } from "../../core/handoff";
+import { collapsesRows } from "../rebuild/engines";
 
 export interface RebuildOpSuggestion extends MigrationOpSuggestion {
   /** `database.name`, the Op's `table`. */
   table: string;
   dualWrite: { mode: "materialized-view"; cutoverColumn: string } | { mode: "app" };
+  /** What to know before running it: set for an engine that collapses rows by sorting key (#3674). */
+  note?: string;
 }
 
 const TIME_TYPE = /^(?:Nullable\s*\(\s*)?(?:Date|Date32|DateTime|DateTime64)\b/;
@@ -42,11 +45,16 @@ export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<str
     const dualWrite: RebuildOpSuggestion["dualWrite"] = time ? { mode: "materialized-view", cutoverColumn: time.name } : { mode: "app" };
     const name = migrationOpName("rebuild", table);
     const dw = dualWrite.mode === "app" ? `{ mode: "app" }` : `{ mode: "materialized-view", cutoverColumn: ${JSON.stringify(dualWrite.cutoverColumn)} }`;
+    const note = collapsesRows(c.engineName)
+      ? `${table} is a ${c.engineName}: when the old table's engine collapses rows too, the Verify phase reads both tables under FINAL, so rows the old table has not merged yet compare as merged. ` +
+        `A new sorting key that collapses rows differently from the old one still fails it; OPTIMIZE TABLE ${table} FINAL before the run avoids that.`
+      : undefined;
     out.push({
       table,
       name,
       env,
       dualWrite,
+      ...(note ? { note } : {}),
       declaration: `export const { op } = ClickHouseRebuildOp({ name: ${JSON.stringify(name)}, env: ${JSON.stringify(env)}, table: ${JSON.stringify(table)}, dualWrite: ${dw} });`,
     });
   }
@@ -55,5 +63,6 @@ export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<str
 
 /** The suggestions as text, for the report. */
 export function renderRebuildOps(ops: readonly RebuildOpSuggestion[]): string[] {
-  return renderMigrationOps(ops, { what: "the rebuild migration Op", exportName: "ClickHouseRebuildOp", importPath: "@intentius/chant-lexicon-sql/clickhouse" });
+  const notes = ops.flatMap((o) => (o.note ? [`  Note: ${o.note}`] : []));
+  return [...renderMigrationOps(ops, { what: "the rebuild migration Op", exportName: "ClickHouseRebuildOp", importPath: "@intentius/chant-lexicon-sql/clickhouse" }), ...notes];
 }
