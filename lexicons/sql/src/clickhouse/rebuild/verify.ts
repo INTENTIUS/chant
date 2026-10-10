@@ -24,6 +24,10 @@
  * later than the cut-over delay, with a time before the cut-over) stop the
  * swap too, rather than stay behind in the old table.
  *
+ * On a cluster of more than one shard (#3663) every shard is read, through
+ * the profile's server, and each partition is compared per shard
+ * (`shard<n>/<partition>`), so a shard the copy missed is a difference.
+ *
  * Any difference fails the run, naming the partitions; the run's onFailure
  * then drops the new table. On a match the result carries the digest the
  * swap gate binds: the rebuild's plan and the counts and checksums of the
@@ -39,6 +43,7 @@ import { ident, sqlString } from "../apply/statements";
 import { rebuildPlanSubject, RebuildRefusal, type RebuildObservation } from "./observe";
 import { sourcePartitionExpression } from "./partitions";
 import { cutoverOf, observe, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
+import { shardTable } from "./shards";
 
 export interface PartitionCheck {
   partition: string;
@@ -120,11 +125,15 @@ async function compareTables(
   const newBefore = cut && cutover !== undefined ? `${ident(cut.name)} < ${utcLiteral(cutover)}` : "1";
   const fromOld = sourcePartitionExpression(o.live.partitionKey, o.newTable.partitionKey, o.copied);
 
-  const read = async (table: string, partition: string, hash: string, before: string): Promise<SideCounts> => {
+  // Across the shards of a cluster (#3663), every shard's rows, each partition counted per shard as `shard<n>/<partition>`.
+  const sharding = run.sharding;
+  const read = async (table: string, name: string, partition: string, hash: string, before: string): Promise<SideCounts> => {
+    const from = sharding ? shardTable(sharding, n.database, name) : table;
+    const key = sharding ? `concat('shard', toString(_shard_num), '/', ${partition})` : partition;
     const rows = await clickhouseQuery<{ p: string; rows: string | number; checksum: string; brows: string | number; bchecksum: string }>(
       run.target.endpoint,
-      `SELECT ${partition} AS p, count() AS rows, toString(sum(${hash})) AS checksum, countIf(${before}) AS brows, toString(sumIf(${hash}, ${before})) AS bchecksum ` +
-        `FROM ${table} GROUP BY p`,
+      `SELECT ${key} AS p, count() AS rows, toString(sum(${hash})) AS checksum, countIf(${before}) AS brows, toString(sumIf(${hash}, ${before})) AS bchecksum ` +
+        `FROM ${from} GROUP BY p`,
     );
     const side: SideCounts = { all: new Map(), before: new Map() };
     for (const r of rows) {
@@ -141,8 +150,8 @@ async function compareTables(
     await syncReplica(run, o, n.database, n.name);
     await syncReplica(run, o, n.database, n.newName);
     // The old table first: a row the view has yet to commit in the new one is read as missing there, never the other way round.
-    const before = await read(n.table, "_partition_id", oldHash, oldBefore);
-    const after = await read(n.newTable, fromOld, newHash, newBefore);
+    const before = await read(n.table, n.name, "_partition_id", oldHash, oldBefore);
+    const after = await read(n.newTable, n.newName, fromOld, newHash, newBefore);
     const mismatches = differences(before.all, after.all);
     if (mismatches.length === 0 || attempt >= attempts) return { old: before, new: after, mismatches };
     run.log(`-- ${n.key}: ${mismatches.length} partition(s) differ (${mismatches.map((m) => m.partition).slice(0, 5).join(", ")}); reading again (${attempt}/${attempts})`);

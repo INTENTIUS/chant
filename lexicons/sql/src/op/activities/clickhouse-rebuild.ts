@@ -32,6 +32,7 @@ import {
 } from "../../clickhouse/rebuild/steps";
 import type { ClickHouseRebuildArgs } from "../../clickhouse/rebuild/op";
 import { CLASSIFIER_RULES } from "../../clickhouse/plan/rules";
+import { clusterSharding } from "../../clickhouse/rebuild/shards";
 import { resolveMarker } from "./clickhouse-apply";
 
 export type { ClickHouseRebuildArgs } from "../../clickhouse/rebuild/op";
@@ -61,6 +62,7 @@ export async function rebuildRun(args: ClickHouseRebuildArgs, signal: AbortSigna
   const target = await bindClickHouse({ ...(args.environment !== undefined ? { environment: args.environment } : {}), config: config ?? {}, ...(deps.env ? { env: deps.env } : {}) });
   const declared = declaredTable(declaredObjects(readFileSync(resolve(cwd, args.buildPath), "utf8"), target.defaultDatabase, target.topology), args.table);
   const runId = currentOpRun()?.runId;
+  const sharding = await clusterSharding(target);
   return {
     target,
     declared,
@@ -72,6 +74,7 @@ export async function rebuildRun(args: ClickHouseRebuildArgs, signal: AbortSigna
     log: deps.log ?? ((line: string) => console.log(line)),
     ...(signal ? { signal } : {}),
     ...(runId ? { runId } : {}),
+    ...(sharding ? { sharding } : {}),
   };
 }
 
