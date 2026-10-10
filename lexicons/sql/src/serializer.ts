@@ -12,7 +12,8 @@
  *
  * The order is the dependency order of the references: a view after the
  * tables it reads, a materialized view after its target, a table after its
- * database. Ties break by export name, so the output is the same however the
+ * database. An object read from a `.sql` file (`./sql-files.ts`) that a
+ * template names in its text counts as referenced too. Ties break by export name, so the output is the same however the
  * files were discovered. A reference cycle is an error naming the cycle.
  *
  * One build holds one dialect: the dialect is the document's, and a project
@@ -35,6 +36,7 @@ import { isClickHouseObject, type ClickHouseObject } from "./clickhouse/entities
 import { isPostgresObject, type PostgresObject } from "./postgres/entities";
 import { POSTGRES_LATEST_MAJOR } from "./spec/postgres-pin";
 import { applyOrder, lineageJson, referenceName, type LineageEdge } from "./core/references";
+import { sqlFileReferences } from "./sql-files";
 
 export { applyOrder } from "./core/references";
 
@@ -44,7 +46,7 @@ export const CLICKHOUSE_DDL_FILE = "clickhouse.sql";
 /** The Postgres statements' file, beside the primary output. */
 export const POSTGRES_DDL_FILE = "postgres.sql";
 
-function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, string>): Record<string, unknown> {
+function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, string>, extra: readonly string[] = []): Record<string, unknown> {
   const props = { ...(obj.props as Record<string, unknown>) };
   delete props.source;
   const ddl = props.ddl;
@@ -54,7 +56,7 @@ function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, 
   if (props.lineage) {
     props.lineage = lineageJson(props.lineage as LineageEdge[], names);
   }
-  const dependsOn = [...new Set(obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined))];
+  const dependsOn = [...new Set([...obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined), ...extra])];
   return JSON.parse(
     JSON.stringify({ export: name, type: obj.entityType, sqlName: obj.sqlName, ...props, dependsOn, ddl }),
   ) as Record<string, unknown>;
@@ -68,12 +70,12 @@ function postgresJsonValue(v: unknown, names: Map<Declarable, string>): unknown 
   return v;
 }
 
-function postgresObjectJson(name: string, obj: PostgresObject, names: Map<Declarable, string>): Record<string, unknown> {
+function postgresObjectJson(name: string, obj: PostgresObject, names: Map<Declarable, string>, extra: readonly string[] = []): Record<string, unknown> {
   const props = { ...(obj.props as Record<string, unknown>) };
   delete props.source;
   const ddl = props.ddl;
   delete props.ddl;
-  const dependsOn = [...new Set(obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined))];
+  const dependsOn = [...new Set([...obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined), ...extra])];
   return JSON.parse(
     JSON.stringify({ export: name, type: obj.entityType, sqlName: obj.sqlName, ...(postgresJsonValue(props, names) as object), dependsOn, ddl }),
   ) as Record<string, unknown>;
@@ -92,12 +94,14 @@ function serializePostgres(
 ): SerializerResult {
   const names = new Map<Declarable, string>();
   for (const [name, entity] of entities) names.set(entity, name);
-  const order = applyOrder(objects, names);
+  // A template names an object read from a `.sql` file as text: that is an edge too.
+  const extra = sqlFileReferences("postgres", objects);
+  const order = applyOrder(objects, names, extra);
   const doc = {
     dialect: "postgres",
     postgresMajor: targetMajor(config),
     applyOrder: order,
-    objects: order.map((n) => postgresObjectJson(n, objects.get(n)!, names)),
+    objects: order.map((n) => postgresObjectJson(n, objects.get(n)!, names, extra.get(n))),
   };
   const ddl = order.map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`).join("\n\n");
   return {
@@ -130,11 +134,12 @@ export const sqlSerializer: Serializer = {
     const names = new Map<Declarable, string>();
     for (const [name, entity] of entities) names.set(entity, name);
 
-    const order = applyOrder(objects, names);
+    const extra = sqlFileReferences("clickhouse", objects);
+    const order = applyOrder(objects, names, extra);
     const doc = {
       dialect: "clickhouse",
       applyOrder: order,
-      objects: order.map((n) => objectJson(n, objects.get(n)!, names)),
+      objects: order.map((n) => objectJson(n, objects.get(n)!, names, extra.get(n))),
     };
     const ddl = order
       .map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`)

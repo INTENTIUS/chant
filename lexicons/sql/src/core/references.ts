@@ -45,14 +45,16 @@ export function lineageJson(edges: readonly LineageEdge[], names: Map<Declarable
 }
 
 /**
- * Export names in creation order: an object after everything it references.
+ * Export names in creation order: an object after everything it references,
+ * and after the names in `extra` (an object read from a `.sql` file that a
+ * template names as text, `../sql-files.ts`).
  * Ties break by export name, so the order is the same however the files were
  * discovered. A reference cycle is an error naming the cycle.
  */
-export function applyOrder(objects: Map<string, Referencing>, names: Map<Declarable, string>): string[] {
+export function applyOrder(objects: Map<string, Referencing>, names: Map<Declarable, string>, extra?: ReadonlyMap<string, readonly string[]>): string[] {
   const deps = new Map<string, string[]>();
   for (const [name, obj] of objects) {
-    const on = new Set<string>();
+    const on = new Set<string>(extra?.get(name)?.filter((d) => d !== name && objects.has(d)) ?? []);
     for (const ref of obj.dependsOn) {
       const parent = isAttrRefLike(ref) ? (ref.parent.deref() as Declarable | undefined) : (ref as Declarable);
       const dep = parent ? names.get(parent) : undefined;

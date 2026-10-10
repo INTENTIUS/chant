@@ -19,6 +19,7 @@ import { discover, type DiscoveryResult, type FoldDecision } from "./discovery/i
 import { decodeEntitySet, type DiscoveredEntitiesJson } from "./discovery/entity-wire";
 import { buildDependencyGraph } from "./discovery/graph";
 import { topologicalSort } from "./sort";
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -641,6 +642,15 @@ function generateManifest(
   };
 }
 
+/** The directory a build discovered from, for build-root contributors; undefined when the build's path is not one (an entity-set JSON's label). */
+function sourceDirOf(path: string): string | undefined {
+  try {
+    return statSync(path).isDirectory() ? resolve(path) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** What merging build-root contributions produced: non-fatal render notes and
  * fatal messages (a failed contributor, a name collision). */
 export interface BuildRootMergeResult {
@@ -667,6 +677,7 @@ export interface BuildRootMergeResult {
 export async function mergeBuildRootEntities(
   entities: Map<string, Declarable>,
   contributors: ReadonlyArray<BuildRootContributor>,
+  sourceDir?: string,
 ): Promise<BuildRootMergeResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -677,7 +688,7 @@ export async function mergeBuildRootEntities(
       // ciphertext file to resolve). Contributors run in order, so this also
       // carries what earlier contributors added; the merge below is still the
       // only writer, which is what keeps the collision refusal meaningful.
-      const contribution = await contribute({ entities });
+      const contribution = await contribute({ entities, ...(sourceDir !== undefined ? { sourceDir } : {}) });
       warnings.push(...(contribution.warnings ?? []));
       for (const [name, entity] of contribution.entities) {
         if (entities.has(name)) {
@@ -809,7 +820,7 @@ async function buildFromDiscoveryResult(
   // object, and re-running the contributors there would duplicate every
   // contributed entity once per child.
   if (!parentBuildStack && options?.buildRoots) {
-    const merged = await mergeBuildRootEntities(discoveryResult.entities, options.buildRoots);
+    const merged = await mergeBuildRootEntities(discoveryResult.entities, options.buildRoots, sourceDirOf(resolvedPathForChildStack));
     warnings.push(...merged.warnings);
     for (const message of merged.errors) {
       errors.push(new BuildErrorClass("", message));

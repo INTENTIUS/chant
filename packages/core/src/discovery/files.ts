@@ -116,3 +116,21 @@ export async function findInfraFiles(path: string, options?: FindInfraFilesOptio
     accept: (name, full) => isSourceFileName(name) && !hasDiscoveryMarkerSync(full),
   });
 }
+
+/**
+ * Find the files under `path` that `accept` wants, through the same walk and
+ * the same project globs as {@link findInfraFiles}: a lexicon that reads
+ * source of its own beside the TypeScript (the sql lexicon's `.sql` files)
+ * sees exactly the tree source discovery sees, so `dist`, git-ignored paths,
+ * child projects and the project's `exclude` globs are left out for it too.
+ */
+export async function findSourceFiles(path: string, accept: (name: string, full: string) => boolean, options?: FindInfraFilesOptions): Promise<string[]> {
+  const globs = options?.globs === null ? undefined : (options?.globs ?? (await resolveDiscoveryGlobs(path)));
+  return walkDiscovery({
+    walker: "source",
+    root: path,
+    globs,
+    excludeDirs: await workspaceMemberDirs(path),
+    accept,
+  });
+}

@@ -984,6 +984,15 @@ export interface BuildRootContext {
    * treat an absent map as an empty one.
    */
   entities?: ReadonlyMap<string, Declarable>;
+  /**
+   * The directory this build discovered its source in (the path handed to
+   * `build()`, which `--src` or `sourceDir` chose), absolute. A contributor
+   * that reads files beside the typed source (the sql lexicon's `.sql`
+   * files) reads them here, so it sees the tree discovery saw. Optional: a
+   * caller that is not a build (the graph paths) omits it, and a hook then
+   * falls back to `sourceDir` in `config`, resolved against `projectRoot`.
+   */
+  sourceDir?: string;
 }
 
 /**
@@ -1003,7 +1012,7 @@ export interface BuildRootContribution {
  * the argument is still assignable, which is what every pre-#1828 hook does.
  */
 export type BuildRootContributor = (
-  ctx: Pick<BuildRootContext, "entities">,
+  ctx: Pick<BuildRootContext, "entities" | "sourceDir">,
 ) => Promise<BuildRootContribution>;
 
 /**

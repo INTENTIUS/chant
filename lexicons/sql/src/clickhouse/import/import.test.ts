@@ -38,15 +38,21 @@ describe("reading a file of statements", () => {
     ]);
   });
 
-  test("each statement becomes one resource of its type, a bad one a warning", () => {
-    const ir = new ClickHouseSqlParser().parse(`${SCHEMA}\nCREATE TABLE broken (a Strin g) ENGINE = Log;\nINSERT INTO t VALUES (1);`);
+  test("each statement becomes one resource of its type", () => {
+    const ir = new ClickHouseSqlParser().parse(SCHEMA);
     expect(ir.resources.map((r) => [r.logicalId, r.type])).toEqual([
       ["analyticsDb", "ClickHouse::Database"],
       ["events", "ClickHouse::Table"],
       ["counts", "ClickHouse::MaterializedView"],
       ["daily", "ClickHouse::Table"],
     ]);
-    expect(ir.warnings).toHaveLength(2);
+  });
+
+  test("a statement that does not parse or is not a CREATE stops the import, each named", () => {
+    const parse = () => new ClickHouseSqlParser().parse(`${SCHEMA}\nCREATE TABLE broken (a Strin g) ENGINE = Log;\nINSERT INTO t VALUES (1);`);
+    expect(parse).toThrow(/2 statements chant cannot read as declarations/);
+    expect(parse).toThrow(/does not parse \(.*\): CREATE TABLE broken/);
+    expect(parse).toThrow(/not a CREATE statement: INSERT INTO t VALUES \(1\)/);
   });
 });
 

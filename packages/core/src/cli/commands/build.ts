@@ -922,7 +922,8 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   const resourceCount = result.entities.size;
   const fileCount = result.sourceFileCount;
 
-  if (fileCount === 0 && errors.length === 0) {
+  // A build root (a lexicon's own source files, a rendered overlay) can declare everything without one .ts file.
+  if (fileCount === 0 && resourceCount === 0 && errors.length === 0) {
     console.error(formatInfo("No source files found — create .ts files in the target directory"));
   }
 
