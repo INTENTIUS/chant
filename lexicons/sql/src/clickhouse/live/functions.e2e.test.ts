@@ -35,6 +35,7 @@ import { clickhouseApply } from "../../op/activities/clickhouse-apply";
 const PREFIX = "chant_e2e_3682";
 const LINEAR = `${PREFIX}_linear`;
 const FOREIGN = `${PREFIX}_foreign`;
+const DB = `${PREFIX}_fn`;
 const fromEnv = process.env.CLICKHOUSE_URL;
 const docker = await dockerAvailable();
 const enabled = fromEnv !== undefined || docker;
@@ -44,7 +45,7 @@ const dir = mkdtempSync(join(tmpdir(), "chant-sql-functions-"));
 const q = <T = Record<string, unknown>>(sql: string, at: ClickHouseEndpoint = endpoint) => clickhouseQuery<T>(at, sql);
 const cleanup = async (at: ClickHouseEndpoint) => {
   for (const f of [LINEAR, FOREIGN]) await q(`DROP FUNCTION IF EXISTS ${f}`, at).catch(() => undefined);
-  await q(`DROP DATABASE IF EXISTS ${PREFIX} SYNC`, at).catch(() => undefined);
+  await q(`DROP DATABASE IF EXISTS ${DB} SYNC`, at).catch(() => undefined);
 };
 
 beforeAll(async () => {
@@ -137,14 +138,14 @@ describe.skipIf(!docker)("a function beside a Replicated database (#3682)", () =
 
   test("each replica's apply creates it there, with no ON CLUSTER, and the next apply sends nothing", async () => {
     const [r1, r2] = cluster!.replicas as [ClickHouseEndpoint, ClickHouseEndpoint];
-    const shop = database([`CREATE DATABASE ${PREFIX}`] as unknown as TemplateStringsArray);
-    const rates = table([`CREATE TABLE ${PREFIX}.rates (code String, rate Float64) ENGINE = MergeTree ORDER BY code`] as unknown as TemplateStringsArray);
+    const shop = database([`CREATE DATABASE ${DB}`] as unknown as TemplateStringsArray);
+    const rates = table([`CREATE TABLE ${DB}.rates (code String, rate Float64) ENGINE = MergeTree ORDER BY code`] as unknown as TemplateStringsArray);
     const build = writeBuild("repl.json", { shop, rates, linear: linear("k*x + b") });
     const first = await apply(r1, build, { topology: "replicated" });
     expect(first.outcome.failed).toEqual([]);
     expect(first.sent.join("\n")).not.toMatch(/ON CLUSTER/);
     await q(first.sent[0]!, r2);
-    await q(`SYSTEM SYNC DATABASE REPLICA ${PREFIX}`, r2);
+    await q(`SYSTEM SYNC DATABASE REPLICA ${DB}`, r2);
     const second = await apply(r2, build, { topology: "replicated" });
     expect(second.sent).toEqual([`CREATE FUNCTION ${LINEAR} AS (x, k, b) -> k*x + b`]);
     expect((await q<{ y: number }>(`SELECT ${LINEAR}(2, 3, 1) AS y`, r2))[0]!.y).toBe(7);
