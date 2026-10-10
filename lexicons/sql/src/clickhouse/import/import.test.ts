@@ -121,6 +121,12 @@ describe("live export", () => {
           "CREATE TABLE analytics.events\n(\n    `id` UInt64\n)\nENGINE = MergeTree\nORDER BY id\nSETTINGS index_granularity = 8192\nCOMMENT 'Raw events [chant managed-by=chant stack=shop]'",
         comment: "Raw events [chant managed-by=chant stack=shop]",
       },
+      {
+        database: "analytics",
+        name: "schema_migrations",
+        engine: "MergeTree",
+        statement: "CREATE TABLE analytics.schema_migrations\n(\n    `version` Int64,\n    `dirty` UInt8,\n    `sequence` UInt64\n)\nENGINE = MergeTree\nORDER BY sequence",
+      },
     ]);
   });
   afterAll(() => server.close());
@@ -132,6 +138,14 @@ describe("live export", () => {
     const ir = await run();
     expect(ir.resources.map((r) => r.logicalId)).toEqual(["analyticsDb", "events"]);
     expect(String(ir.resources[1]!.properties.ddl)).not.toContain("index_granularity");
+  });
+
+  test("a migration runner's history table is left out with a warning (#3676)", async () => {
+    const ir = await run();
+    expect(ir.resources.map((r) => r.properties.name)).not.toContain("schema_migrations");
+    expect(ir.warnings).toEqual([
+      "analytics.schema_migrations is kept by a migration runner (Rails, golang-migrate, dbmate); left out, since declaring it would have chant change what that tool owns",
+    ]);
   });
 
   test("verbatim keeps the statement as the server printed it", async () => {

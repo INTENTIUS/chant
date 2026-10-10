@@ -259,7 +259,10 @@ export function diffSchemas(before: readonly SchemaObject[], after: readonly Sch
   for (const m of matches) {
     if (m.kind === "created") changes.push(change(m.after.key, "object", "SQLCH200", undefined, qualified(m.after.canonical)));
     else if (m.kind === "matched") diffObject(m.after.key, m.before.canonical, m.after.canonical, changes, hints);
-    else {
+    else if (m.before.canonical.foreign) {
+      // A migration runner's history table (#3676): not chant's to drop.
+      hints.push(`${qualified(m.before.canonical)} is kept by ${m.before.canonical.foreign}; it is not chant's to drop and is left alone`);
+    } else {
       const b = m.before;
       changes.push(change(b.key, "object", "SQLCH250", qualified(b.canonical), undefined, { destructive: b.canonical.kind === "table" || b.canonical.kind === "materializedView" }));
     }

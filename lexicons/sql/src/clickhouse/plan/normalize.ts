@@ -98,6 +98,8 @@ export interface CanonicalObject {
   access?: Record<string, string>;
   /** `-- previously: <name>` before the statement: the object's previous name. */
   previously?: string;
+  /** The tool that keeps a live table (a migration runner's history table): a plan never drops it. */
+  foreign?: string;
 }
 
 const KEYWORDS = new Set(
@@ -560,6 +562,7 @@ export function scopeOf(o: { kind?: ObjectKind; type?: string; database?: string
 }
 
 /** A live object's canonical form: a grantee's grants from its `SHOW GRANTS` lines, anything else from its `SHOW CREATE`. */
-export function liveCanonical(o: { type: string; name: string; statement: string }, defaultDatabase = "default"): CanonicalObject {
-  return o.type === "ClickHouse::Grant" ? grantsObject(o.statement, o.name, defaultDatabase) : canonicalObject(o.statement, defaultDatabase);
+export function liveCanonical(o: { type: string; name: string; statement: string; foreign?: string }, defaultDatabase = "default"): CanonicalObject {
+  const canonical = o.type === "ClickHouse::Grant" ? grantsObject(o.statement, o.name, defaultDatabase) : canonicalObject(o.statement, defaultDatabase);
+  return o.foreign ? { ...canonical, foreign: o.foreign } : canonical;
 }

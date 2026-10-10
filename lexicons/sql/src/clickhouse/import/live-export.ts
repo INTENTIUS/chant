@@ -13,6 +13,8 @@
  * - `owned` keeps the objects whose comment carries chant's ownership marker
  *   (`../ownership.ts`), the trailer the applier stamps. The trailer itself is
  *   never written into a declaration: `readLiveSchema` takes it off.
+ * - a migration runner's history table (`schema_migrations`,
+ *   `goose_db_version`) is left out with a warning (#3676), as on Postgres.
  */
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
@@ -40,14 +42,20 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
     if (name !== undefined && name !== o.name && name !== `${o.database}.${o.name}`) return false;
     return true;
   });
+  const warnings: string[] = [];
   const objects: ImportedObject[] = selected
     // The `default` database exists on every server; declaring it would make apply create what is there.
     .filter((o) => !(o.type === "ClickHouse::Database" && o.name === "default"))
+    .filter((o) => {
+      if (!o.foreign) return true;
+      warnings.push(`${o.database ? `${o.database}.` : ""}${o.name} is kept by ${o.foreign}; left out, since declaring it would have chant change what that tool owns`);
+      return false;
+    })
     .map((o) => ({
       type: o.type,
       ...(o.database ? { database: o.database } : {}),
       name: o.name,
       ddl: options.verbatim ? o.statement : stripServerDefaults(o.statement),
     }));
-  return objectsToIR(objects) as ExportedTemplate;
+  return objectsToIR(objects, warnings) as ExportedTemplate;
 }

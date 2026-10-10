@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { canonicalCodec, canonicalExpression, canonicalObject, canonicalTtl, canonicalType } from "./normalize";
+import { canonicalCodec, canonicalExpression, canonicalObject, canonicalTtl, canonicalType, liveCanonical } from "./normalize";
 import { diffSchemas, type SchemaObject } from "./diff";
 import { renderDiff } from "./report";
 import { CLASSIFIER_RULES } from "./rules";
@@ -182,6 +182,14 @@ describe("classifying a change", () => {
       ["a", "SQLCH250"],
     ]);
     expect(classify("CREATE VIEW events AS SELECT 1")).toEqual([["kind", "SQLCH224", "rebuild"]]);
+  });
+
+  test("a migration runner's history table is named in a hint, never dropped (#3676)", () => {
+    const statement = "CREATE TABLE legacy.schema_migrations (version Int64, dirty UInt8, sequence UInt64) ENGINE = MergeTree ORDER BY sequence";
+    const live = [{ key: "legacy.schema_migrations", canonical: liveCanonical({ type: "ClickHouse::Table", name: "schema_migrations", statement, foreign: "a migration runner (Rails, golang-migrate, dbmate)" }) }];
+    const d = diffSchemas(live, []);
+    expect(d.changes).toEqual([]);
+    expect(d.hints).toEqual(["legacy.schema_migrations is kept by a migration runner (Rails, golang-migrate, dbmate); it is not chant's to drop and is left alone"]);
   });
 
   test("against a server, previously before the statement matches the old name", () => {

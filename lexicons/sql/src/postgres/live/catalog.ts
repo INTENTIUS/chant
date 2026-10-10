@@ -44,26 +44,14 @@ import { quoteIdent } from "../keywords";
 import { hasChantTrailerKey, RECEIPTS_TRAILER_KEY, stripMarker } from "../../core/ownership";
 import { MIGRATION_TRAILER_KEY } from "../migrate/names";
 import { isProviderOwned, providerData } from "../providers";
+import { FOREIGN_TABLES } from "../../core/foreign-tables";
 import type { PostgresProvider } from "../providers/types";
 
 /** The server's own schemas, never part of a declared schema. */
 export const SYSTEM_SCHEMAS = ["pg_catalog", "information_schema", "pg_toast"];
 
-/** Tables another tool keeps its migration history in, by name, with the tool. */
-export const FOREIGN_TABLES: Readonly<Record<string, string>> = {
-  _prisma_migrations: "Prisma Migrate",
-  schema_migrations: "a migration runner (Rails, golang-migrate, dbmate)",
-  ar_internal_metadata: "Rails",
-  django_migrations: "Django",
-  alembic_version: "Alembic",
-  __drizzle_migrations: "drizzle-kit",
-  flyway_schema_history: "Flyway",
-  goose_db_version: "goose",
-  knex_migrations: "Knex",
-  knex_migrations_lock: "Knex",
-  SequelizeMeta: "Sequelize",
-  pgmigrations: "node-pg-migrate",
-};
+/** Tables another tool keeps its migration history in, by name, with the tool; both dialects share the list. */
+export { FOREIGN_TABLES };
 
 export interface LivePgObject {
   type: PostgresEntityType;
