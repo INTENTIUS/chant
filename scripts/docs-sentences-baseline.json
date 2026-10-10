@@ -271,7 +271,6 @@
   "formatting/em-dash-density": 2
  },
  "docs/src/content/docs/cli/workspace-ls.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-member.mdx": {
@@ -693,6 +692,10 @@
   "repetition/near-duplicate": 2,
   "tricolon/comma-series": 1
  },
+ "docs/src/content/docs/guide/op-waves.mdx": {
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/operator.mdx": {
   "formatting/em-dash-density": 39,
   "discourse/punchy-fragments": 1,
@@ -1066,7 +1069,7 @@
   "formatting/em-dash-density": 17,
   "claude/colon-reveal": 5,
   "tricolon/comma-series": 2,
-  "anaphora/repeated-opening": 3,
+  "anaphora/repeated-opening": 2,
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/reference/template-migrations.mdx": {

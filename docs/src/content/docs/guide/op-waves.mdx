@@ -4,7 +4,7 @@ description: Apply an Op to each environment, or to every target in a set, one w
 diataxis: how-to
 ---
 
-This guide is for a project that applies the same Op to several places in order: dev, then staging, then prod, or one environment made of many databases. Each place is a run of the Op against one target. Runs that go out together form a wave, and each wave waits on one gate before it applies. `chant run --generate` renders the waves as a pipeline for GitHub, GitLab or Forgejo, and every job in it runs `chant run wave`.
+This guide is for a project that applies the same Op to several places in order, such as dev before staging before prod, or one environment made of many databases. Each place is a run of the Op against one target. Runs that go out together form a wave, and each wave waits on one gate before it applies. `chant run --generate` renders the waves as a pipeline for GitHub, GitLab or Forgejo, and every job in it runs `chant run wave`.
 
 ## Write the spec
 
@@ -74,19 +74,19 @@ When the policy asks for an approval, the wave waits on gate `<gate>-wave-<k>` u
 | `on-destructive` | at least one run's plan is `destructive` |
 | `never` | never |
 
-A waiting wave applies nothing, records a pending fact on `chant/lifecycle`, prints the approval command and exits 3:
+A waiting wave applies nothing and exits 3. It records a pending fact on `chant/lifecycle` and prints the approval command:
 
 ```bash
 chant approve migrations migrations-wave-3 --plan jcs1-sha256:...
 ```
 
-Approve it, then re-run the failed job. On GitHub and Forgejo, re-run the failed jobs; on GitLab, retry the job. The wave plans again, finds the approval for its digest, and applies.
+Approve it, then re-run the failed job (GitHub and Forgejo call it re-running failed jobs, GitLab calls it a retry). The wave plans again and applies once it finds the approval for its digest.
 
 ## Where the policy is read from
 
 The policy for wave `k` comes from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
 
-Only the policy comes from the base commit. The runs, the commands and the wave order come from the commit being applied.
+Everything else in the spec is read from the commit being applied.
 
 ## A wave over many targets
 
@@ -96,7 +96,7 @@ A wave with hundreds of targets can be split with `shares`:
 { "name": "prod", "shares": 4, "runs": [{ "target": "tenant-001" }, { "target": "tenant-002" }] }
 ```
 
-This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. The deciding job plans every run, decides the one gate over all of them, and keeps its decision (`.chant/op-waves/<name>/wave-<k>.json`) as an artifact. Each share job takes that decision, plans its slice of the runs again (sorted by target, cut into contiguous slices), and applies each run whose plan digest is the one the decision recorded. A run whose plan moved since the decision is not applied; the job names it, applies the rest of its slice, and exits 4. The next wave needs every share job.
+This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. The deciding job plans every run and decides one gate over all of them. Its decision (`.chant/op-waves/<name>/wave-<k>.json`) is kept as an artifact. A share job plans its slice of the runs again, with the runs sorted by target and cut into contiguous slices. It applies only the runs whose plan digest matches the recorded decision. When a run's plan has moved since then, that run is named and skipped. The rest of the slice still applies, and the job exits 4. The next wave needs every share job.
 
 ## Exit codes
 
