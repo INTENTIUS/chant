@@ -9,10 +9,15 @@ import { Aside } from '@astrojs/starlight/components';
 ## Synopsis
 
 ```
-chant emulator up     [--lexicon <name>] [--json]
+chant emulator up     [--lexicon <name>] [--port <container-port>=<host-port>] [--json]
 chant emulator down   [--lexicon <name>] [--json]
 chant emulator status [--lexicon <name>] [--json]
+chant emulator --help
 ```
+
+`chant emulator --help` prints this command's usage. It also lists each
+emulator the project's lexicons declare, with the port and sign-in a client
+needs.
 
 ## Description
 
@@ -61,6 +66,16 @@ chant emulator up
 One line per emulator, not per lexicon: fly and sql ship two each, and
 `--lexicon fly` acts on both of fly's.
 
+Before it starts a container, `up` checks that nothing else listens on
+`127.0.0.1:<port>`. On macOS, Docker publishes `0.0.0.0:5432` even while a
+native Postgres holds `127.0.0.1:5432`. Connections to `localhost:5432` then
+reach the native server. `up` refuses in that case and names the port, and
+`--port` publishes the emulator elsewhere:
+
+```bash
+chant emulator up --lexicon sql --port 5432=15432
+```
+
 ### `emulator down`
 
 Stops and removes the containers.
@@ -73,7 +88,19 @@ chant emulator down
 
 Reports whether each emulator is running, without starting or stopping
 anything. A container that is not running reports `down` with an empty
-endpoint.
+endpoint. The endpoint uses the host port Docker published, so it follows a
+`--port` given to `up`.
+
+For the sql lexicon's emulators, `status` also checks that the printed
+endpoint reaches the container: it compares the server's identity read inside
+the container (Postgres's system identifier, ClickHouse's `serverUUID()`)
+with the one read through the endpoint. When they differ, the line names the
+server that answered and the command exits 1. In the JSON report, that
+emulator has a `conflict` message in place of its `endpoint` and `env`, which are empty:
+
+```
+✗ sql: chant-postgres runs, but localhost:5432 answers as PostgreSQL 16.14, not the emulator; another Postgres holds 127.0.0.1:5432. Run `chant emulator down --lexicon sql`, then `chant emulator up --lexicon sql --port 5432=<free port>`.
+```
 
 ```bash
 chant emulator status
@@ -88,6 +115,7 @@ aws: chant-floci — up on http://localhost:4566
 | Flag | Description |
 |------|-------------|
 | `--lexicon <name>` | Act on one lexicon's emulator instead of all of them. A lexicon with no emulator, or one this project does not configure, warns and exits 0. |
+| `--port <container-port>=<host-port>` | `up` only. Publish that container port on another host port. Repeatable; a bare `<host-port>` works when one emulator is selected. |
 | `--json` | Emit the machine-readable report on stdout instead of the human summary. |
 
 ## `--json`
@@ -151,6 +179,9 @@ programmatically.
 | sql | `chant-clickhouse` | `clickhouse/clickhouse-server:26.8.15.10`, by digest | `8123` | `/ping` | `CLICKHOUSE_URL` |
 | sql | `chant-postgres` | `postgres:18.6`, by digest | `5432` | `pg_isready` in the container, over TCP | `POSTGRES_URL` (with `POSTGRES_USER` and `POSTGRES_PASSWORD`) |
 
+The ClickHouse emulator signs in as `default` with no password; the Postgres
+one as `postgres` with password `chant`.
+
 gcp has no endpoint variable because `gcpApply` takes the endpoint as an
 explicit argument rather than reading one — `chant emulator up --json` still
 reports the endpoint, there is just nothing to export.
@@ -160,15 +191,16 @@ passes today does not fail tomorrow because an image moved. A weekly workflow
 reports how far behind each pin is; the bump is a human decision, made when a
 consuming test needs the newer emulator.
 
-Requires Docker. If Docker is missing or not running, `status` reports the
-emulator as down rather than failing.
+Requires Docker. When `docker` is not on `PATH`, `status` prints
+`docker not found on PATH; cannot check the emulator` and exits 1. A daemon
+that does not answer is reported the same way.
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | The action completed, including the case where no configured lexicon has an emulator |
-| 1 | No subcommand, or one that is not `up`, `down`, or `status` |
+| 1 | No subcommand, or one that is not `up`, `down`, or `status`; a bad `--port`; `up` failed (for example, the host port is held by another process); or `status` could not ask Docker, or found an endpoint that reaches another server |
 
 ## See Also
 

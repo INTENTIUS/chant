@@ -38,7 +38,7 @@ import { runSearch } from "./handlers/search";
 import { runOp, runOpList, runOpStatus, runOpApprove, runOpSignalRenamed, runOpCancel, runOpLog } from "./handlers/run";
 import { runOpWaveCommand } from "./handlers/run-wave";
 import { runOperator, runOperatorStatus, runOperatorLog, runApprove } from "./handlers/operator";
-import { runEmulator } from "./handlers/emulator";
+import { runEmulator, formatEmulatorHelp } from "./handlers/emulator";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
 import type { LexiconPlugin } from "../lexicon";
 
@@ -290,6 +290,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.src = args[++i];
     } else if (arg === "--env") {
       result.env = args[++i];
+    } else if (arg === "--port") {
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--port needs a port: --port <container-port>=<host-port>");
+      (result.port ??= []).push(value);
     } else if (arg === "--promote-to") {
       result.promoteTo = args[++i];
       if (!result.promoteTo || result.promoteTo.startsWith("-")) throw new Error("--promote-to needs an environment: --promote-to <env>");
@@ -1460,7 +1464,8 @@ Lexicon development:
 
 Local:
   emulator <up|down|status>  Boot/stop/inspect configured lexicons' local
-                           emulators (Floci etc.); --lexicon <name>, --json
+                           emulators (Floci etc.); --lexicon <name>, --json,
+                           --port; \`chant emulator --help\` lists ports and logins
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -1991,6 +1996,15 @@ async function main(): Promise<void> {
   // only for one of core's own commands; a lexicon-mounted verb keeps the flag.
   if (args.version && (!args.command || resolveCommand(args, commandRegistry))) {
     console.log(CHANT_VERSION);
+    await flushAndExit(0);
+    return;
+  }
+
+  // #3673 — `chant emulator --help` is the emulator's own usage, with the
+  // ports and sign-in each configured lexicon's emulator uses, not the
+  // global command list it used to print.
+  if (args.help && args.command === "emulator") {
+    console.log(formatEmulatorHelp(await loadPluginsBestEffort().catch(() => [])));
     await flushAndExit(0);
     return;
   }

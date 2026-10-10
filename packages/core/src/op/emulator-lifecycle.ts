@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import { connect } from "node:net";
 import { promisify } from "node:util";
 import { sleep } from "./activity-runtime";
 
@@ -53,6 +54,47 @@ export interface EmulatorSpec {
     /** `owner/repo` whose latest GitHub release names the current version. */
     repo: string;
   };
+  /**
+   * How to tell this emulator's server from another one answering on the
+   * same host port (#3673).
+   *
+   * On macOS, Docker publishes `0.0.0.0:<port>` even while a native server
+   * holds `127.0.0.1:<port>`, and `localhost` then reaches the native one.
+   * `chant emulator status` runs {@link EmulatorIdentity.command} in the
+   * container and {@link EmulatorIdentity.probe} through the printed endpoint,
+   * and reports a mismatch instead of an endpoint that reaches the wrong server.
+   */
+  identity?: EmulatorIdentity;
+  /** How a client signs in, for `chant emulator --help` (e.g. `user postgres, password chant`). */
+  credentials?: string;
+}
+
+/** A server identity check: one value read inside the container and through the endpoint (#3673). */
+export interface EmulatorIdentity {
+  /** What kind of server it is, for messages: `Postgres`, `ClickHouse`. */
+  server: string;
+  /** Run as `docker exec <name> <command...>`; its trimmed stdout is the server's identity. */
+  command: readonly string[];
+  /** The identity of the server answering at `endpoint`, and a label for it (e.g. `PostgreSQL 16.14`). */
+  probe(endpoint: string): Promise<{ id: string; label: string }>;
+}
+
+/**
+ * True when something accepts TCP connections on 127.0.0.1:`port` (#3673).
+ * `up` asks before `docker run`: a native server there would take every
+ * `localhost` connection meant for the emulator.
+ */
+export function hostPortInUse(port: number, timeoutMs = 1_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    const done = (inUse: boolean): void => {
+      socket.destroy();
+      resolve(inUse);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
 }
 
 /**
@@ -194,6 +236,12 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
       // clean JSON on stdout. runOp/Op activities capture both streams regardless.
       console.error(`emulator container "${name}" already running — reusing`);
     } else {
+      if (await hostPortInUse(port)) {
+        throw new Error(
+          `emulator "${name}": 127.0.0.1:${port} is already held by another process, so localhost:${port} would not reach the emulator. ` +
+            `Stop that process, or publish the emulator on another port (chant emulator up --port ${spec.containerPort}=<free port>).`,
+        );
+      }
       await execAsync(runCommand({ ...args, name, port }), { signal });
     }
 

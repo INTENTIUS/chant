@@ -24,3 +24,23 @@ describe("the Postgres emulator capability (#3280)", () => {
     expect(lc.endpoint(5432)).toBe("postgres://localhost:5432/postgres");
   });
 });
+
+describe("the sql emulators say who they are (#3673)", () => {
+  test("Postgres compares the cluster's system identifier, read over the container's socket", () => {
+    expect(POSTGRES_EMULATOR.spec.identity?.server).toBe("Postgres");
+    expect(POSTGRES_EMULATOR.spec.identity?.command).toEqual(["psql", "-U", "postgres", "-tAc", "select system_identifier from pg_control_system()"]);
+    expect(POSTGRES_EMULATOR.spec.credentials).toBe("user postgres, password chant");
+  });
+
+  test("ClickHouse compares serverUUID(), and signs in as default with no password", () => {
+    expect(CLICKHOUSE_EMULATOR.spec.identity?.server).toBe("ClickHouse");
+    expect(CLICKHOUSE_EMULATOR.spec.identity?.command).toEqual(["clickhouse-client", "-q", "SELECT serverUUID()"]);
+    expect(CLICKHOUSE_EMULATOR.spec.credentials).toBe("user default, no password");
+  });
+
+  test("a server that is not Postgres fails the Postgres probe instead of matching", async () => {
+    // Nothing listens on port 1; the probe rejects, which status reports as "does not answer as the emulator".
+    await expect(POSTGRES_EMULATOR.spec.identity!.probe("postgres://127.0.0.1:1/postgres")).rejects.toThrow();
+  });
+});
+
