@@ -35,6 +35,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
 | `waves[].runs` | One entry per target. A target appears once per wave |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
+| `waves[].approval` | `ledger`, `pr-review` or `sealed`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
 | `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
 | `resume` | `{ "schedule": "<cron>" }` renders a scheduled job that resumes waiting waves whose approval arrived ([Resume the waiting job](#resume-the-waiting-job)) |
@@ -113,9 +114,47 @@ With `"resume": { "schedule": "*/10 * * * *" }` in the spec, the rendered pipeli
 | GitLab | `<name>-resume` in the same file, run only in scheduled pipelines. Create a pipeline schedule with the cron, and set `CHANT_FORGE_TOKEN` to a project access token as in the table above |
 | Forgejo | `<name>-resume.yml`, on the cron, with the `CHANT_FORGE_TOKEN` secret |
 
+## Which approvals count
+
+A wave's `approval` decides which approvals of its digest let it apply. Every mode binds the digest, so an approval of other plans never counts.
+
+| `approval` | Counts | What it proves |
+|---|---|---|
+| `ledger` (default) | any `chant approve` of the digest on `chant/lifecycle` | someone who can push to `chant/lifecycle` approved these plans, in whatever name they wrote |
+| `pr-review` | the merged pull request's approving review of its head, by a writer other than its author, when the head planned this digest; and any `chant approve` of the digest, as under `ledger` | a writer other than the author approved the change whose plans these are |
+| `sealed` | only a `chant approve --sign` whose seal verifies against the signers file at the base commit (`.chant/allowed_signers`, or the file `.chant/trust.json` names), for the approver it names | a listed person approved these plans |
+
+### `pr-review`
+
+The pull request's pipeline records what its head plans. `chant run wave --spec waves.json --record-plans` plans every wave at the head and writes each wave's digest to `_wave-plans/<name>/<head>.json` on `chant/lifecycle`. The rendered pipeline runs it on each pull request (`<name>-plans.yml` on GitHub and Forgejo, `<name>-record-plans` in GitLab merge request pipelines), and the job needs to push to `chant/lifecycle`.
+
+After the merge, a wave with no `chant approve` of its digest reads the review of the pull request that merged the commit:
+
+| The review | The wave |
+|---|---|
+| a writer other than the author approved the head, and the head planned this digest | records the approval on `chant/lifecycle` (the pull request, its head and the reviewers) and applies |
+| the same, but the head planned another digest (the plans moved after the review) | waits, with the `chant approve` command for the new digest |
+| only the author approved, no writer approved the head, a writer requests changes, no plans were recorded for the head, or no pull request merged the commit | waits, as under `ledger` |
+
+| Forge | An approving review | A writer | Token |
+|---|---|---|---|
+| GitHub | the reviewer's newest review is an approval that names the head commit | `write`, `maintain` or `admin` on the repository | `pull-requests: read`, which the rendered workflow asks for |
+| Forgejo | the same, not stale or dismissed | the review is official, which Forgejo marks for a reviewer with write access | the job's token |
+| GitLab | an approval of the merge request, counted only when the project removes approvals on a new push (Settings > Merge requests > Remove all approvals when commits are added), since a GitLab approval names no commit | Developer or higher | `CHANT_FORGE_TOKEN` with `read_api` |
+
+### `sealed`
+
+Add `.chant/allowed_signers` in a reviewed change, one `<principal> <key>` line per approver, then approve with `--sign`:
+
+```bash
+chant approve migrations migrations-wave-3 --plan jcs1-sha256:... --actor github:alice --sign ~/.ssh/id_ed25519
+```
+
+The signers file is read at the base commit, like the policy. A pull request that adds its author's key to it cannot use that key to approve its own waves. Without a signers file at base, no approval counts.
+
 ## Where the policy is read from
 
-The policy for wave `k` comes from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
+The policy and the approval mode for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
 
 Everything else in the spec is read from the commit being applied.
 

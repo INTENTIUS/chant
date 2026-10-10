@@ -15,6 +15,7 @@ chant run cancel <name> [flags]
 chant run log <name> [flags]
 chant run wave --spec <file> --wave <k> [--decide | --share <i>] [--base <ref>]
 chant run resume [--op <name>] [--dry-run] [--json]
+chant run wave --spec <file> --record-plans
 chant run --components <name|all> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 ```
@@ -203,6 +204,8 @@ chant run resume --dry-run
 
 A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
 
+`--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
+
 ### `run --components <name|all>`
 
 Run a discovered [component](/chant/components/orchestration/)'s `deploy` composition on the same in-process executor an Op uses. `all` runs every discovered component in dependency order (parallel-safe waves); a single name runs just that component.
@@ -307,6 +310,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--spec <file>` | JSON Op specs to generate instead of every Op with a `schedule` (`run --generate`), or the Op waves spec (`run --generate`, `run wave`) |
 | `--wave <k>` | The wave to run, from 1 (`run wave`) |
 | `--decide` | Plan the wave and decide its gate without applying it (`run wave`) |
+| `--record-plans` | Plan every wave at a pull request's head and record the digests a `pr-review` wave compares (`run wave`) |
 | `--share <i>` | Apply share `i` of a decided wide wave (`run wave`) |
 | `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
 | `--output <dir>` | Where generated pipeline files go, instead of the forge's own directory (`run --generate`) |

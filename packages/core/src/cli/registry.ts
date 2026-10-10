@@ -252,6 +252,8 @@ export interface ParsedArgs {
   wave?: number;
   /** `chant run wave --decide` (#3679) — plan a wide wave and decide its gate, applying nothing. */
   decide?: boolean;
+  /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
+  recordPlans?: boolean;
   /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
   share?: number;
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */

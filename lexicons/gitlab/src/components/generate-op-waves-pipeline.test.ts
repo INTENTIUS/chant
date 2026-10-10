@@ -36,4 +36,12 @@ describe("generateGitlabOpWavesPipeline", () => {
     expect(yaml).toContain('give the schedule the cron "*/10 * * * *"');
     expect(generateGitlabOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml).not.toContain("resume");
   });
+
+  test("a pr-review wave adds a merge request job that records the head's plans (#3684)", () => {
+    const yaml = generateGitlabOpWavesPipeline({ ...spec, waves: spec.waves.map((w, i) => (i === spec.waves.length - 1 ? { ...w, approval: "pr-review" as const } : w)) }, { specFile: "waves.json" }).files[0]!.yaml;
+    expect(yaml).toContain(`${spec.name}-record-plans:`);
+    expect(yaml).toContain('$CI_PIPELINE_SOURCE == "merge_request_event"');
+    expect(yaml).toContain("chant run wave --spec waves.json --record-plans");
+    expect(yaml).toMatch(/stages:\n\s+- plans\n/);
+  });
 });

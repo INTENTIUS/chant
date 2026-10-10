@@ -27,6 +27,12 @@
  * the same digest a component fan-out's wave binds). Whether it waits at all
  * is the wave's gate policy, read from the base commit's copy of the spec
  * file, so a change cannot loosen the rule that gates its own merge.
+ *
+ * So is which approvals count (#3684), the wave's `approval`: `ledger` (any
+ * `chant approve` of the digest), `sealed` (only one whose seal verifies
+ * against the signers file at base) or `pr-review` (also the merged pull
+ * request's review of its head, by a writer other than its author, when the
+ * head planned the same digest). See `./gate-review.ts`.
  */
 
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
@@ -41,6 +47,17 @@ export type OpWaveGatePolicy =
   | "never";
 
 export const OP_WAVE_GATE_POLICIES: readonly OpWaveGatePolicy[] = ["always", "on-destructive", "never"];
+
+/** Which approvals of a gate's digest count (#3684). See `./gate-review.ts`. */
+export type GateApprovalSource =
+  /** Any resolution on `chant/lifecycle` that names the digest. */
+  | "ledger"
+  /** As `ledger`, and the merged pull request's review of its head, by a writer other than its author. */
+  | "pr-review"
+  /** Only a resolution sealed by a key the signers file at base lists for its approver. */
+  | "sealed";
+
+export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "pr-review", "sealed"];
 
 /** One Op run in a wave: an Op applied to one target (an environment, a database, a tenant). */
 export interface OpWaveRun {
@@ -60,6 +77,11 @@ export interface OpWave {
    * spec file at the base commit, never from the change being applied.
    */
   gate?: OpWaveGatePolicy;
+  /**
+   * Which approvals of the wave's digest count (#3684). Default `"ledger"`.
+   * Like `gate`, the runner reads it from the spec file at the base commit.
+   */
+  approval?: GateApprovalSource;
   /**
    * Split the wave into a deciding job and this many share jobs, each
    * applying a slice of the runs. Default 1: one job plans, decides and
@@ -181,6 +203,9 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     names.add(wave.name);
     if (wave.gate !== undefined && !OP_WAVE_GATE_POLICIES.includes(wave.gate)) {
       throw new Error(`${where}: wave "${wave.name}" has gate "${wave.gate}"; use ${OP_WAVE_GATE_POLICIES.join(", ")}.`);
+    }
+    if (wave.approval !== undefined && !GATE_APPROVAL_SOURCES.includes(wave.approval)) {
+      throw new Error(`${where}: wave "${wave.name}" has approval "${wave.approval}"; use ${GATE_APPROVAL_SOURCES.join(", ")}.`);
     }
     if (wave.runs.length === 0) throw new Error(`${where}: wave "${wave.name}" has no runs.`);
     const targets = new Set<string>();

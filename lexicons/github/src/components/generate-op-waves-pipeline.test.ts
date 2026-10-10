@@ -41,4 +41,12 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(yaml).toContain("GITHUB_TOKEN: '${{ github.token }}'");
     expect(generateGithubOpWavesPipeline(spec, { specFile: "waves.json" }).files).toHaveLength(1);
   });
+
+  test("a pr-review wave adds a pull request workflow that records the head's plans (#3684)", () => {
+    const { files } = generateGithubOpWavesPipeline({ ...spec, waves: spec.waves.map((w, i) => (i === spec.waves.length - 1 ? { ...w, approval: "pr-review" as const } : w)) }, { specFile: "waves.json" });
+    expect(files.map((f) => f.name)).toEqual([`${spec.name}.yml`, `${spec.name}-plans.yml`]);
+    expect(files[1]!.yaml).toContain("pull_request:");
+    expect(files[1]!.yaml).toContain("run: chant run wave --spec waves.json --record-plans");
+    expect(files[0]!.yaml).toMatch(/permissions:\n\s+contents: write\n\s+pull-requests: read/);
+  });
 });

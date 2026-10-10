@@ -223,6 +223,13 @@ export interface GateResolutionRecord {
    */
   seal?: GateApprovalSeal;
   /**
+   * The forge review this approval came from (#3684): a wave whose approval
+   * mode is `pr-review` writes it when the merged pull request's head was
+   * approved by a writer other than its author and planned this digest.
+   * `resolvedBy` is the first of `approvers`.
+   */
+  review?: { pr: number; head: string; approvers: string[] };
+  /**
    * The answer record that passed the gate, on a gate that asks a decision
    * point (#3170). The run writes this resolution itself when the point's
    * question is answered with an answer the gate passes on; the record's

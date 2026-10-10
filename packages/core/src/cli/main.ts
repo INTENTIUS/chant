@@ -108,6 +108,7 @@ const BOOLEAN_FLAGS = new Set([
   "--root-only",
   "--generated",
   "--decide",
+  "--record-plans",
 ]);
 
 /**
@@ -359,6 +360,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.wave = wave;
     } else if (arg === "--decide") {
       result.decide = true;
+    } else if (arg === "--record-plans") {
+      result.recordPlans = true;
     } else if (arg === "--share") {
       const raw = args[++i];
       const share = Number(raw);
@@ -925,7 +928,10 @@ Ops:
   run wave --spec <file> --wave <k>  Plan, gate and apply wave k of an Op
                         waves spec (#3679): the job a generated waves
                         pipeline runs. --decide plans and decides only;
-                        --share <i> applies one share of a decided wave
+                        --share <i> applies one share of a decided wave.
+                        --record-plans (no --wave), in a pull request's
+                        pipeline: plan every wave at its head and record the
+                        digests a pr-review approval mode compares
   run resume [--op <name>]  Start again each CI job that waits at a gate an
                         approval now answers, through the forge's API
                         (#3683); approves nothing. --dry-run lists them

@@ -15,6 +15,9 @@
  * with the spec's cron. It retries a waiting wave's job once its approval
  * arrived, with `CHANT_FORGE_TOKEN` (a project access token with the `api`
  * scope and the Developer role; the job token cannot retry jobs).
+ *
+ * A `pr-review` wave (#3684) adds `<name>-record-plans`, run in merge request
+ * pipelines only, which records the digests the merge request's head plans.
  */
 
 import { emitYAMLEntry } from "@intentius/chant/yaml";
@@ -36,7 +39,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   }
   const rules = branches.map((branch) => ({ if: `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "${branch}"` }));
 
-  const stages = spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`);
+  const byReview = spec.waves.some((w) => w.approval === "pr-review");
+  const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
   if (spec.resume) stages.push("resume");
   const sections: string[] = [emitYAMLEntry("stages", stages)];
   if (options.variables && Object.keys(options.variables).length > 0) sections.push(emitYAMLEntry("variables", options.variables));
@@ -53,7 +57,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     });
     sections.push(
       emitYAMLEntry(job.jobName, {
-        stage: stages[job.wave - 1],
+        stage: stages[job.wave - 1 + (byReview ? 1 : 0)],
         image,
         resource_group: `${spec.name}-${wave.name}`,
         ...(wave.environment
@@ -74,6 +78,19 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         image,
         rules: [{ if: '$CI_PIPELINE_SOURCE == "schedule"' }],
         script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec).join(" ")],
+      }),
+    );
+  }
+  if (byReview) {
+    sections.splice(
+      options.variables && Object.keys(options.variables).length > 0 ? 2 : 1,
+      0,
+      emitYAMLEntry(`${spec.name}-record-plans`, {
+        stage: "plans",
+        image,
+        variables: { GIT_DEPTH: "0" },
+        rules: [{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }],
+        script: [...(options.beforeScript ?? []), ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ")],
       }),
     );
   }
