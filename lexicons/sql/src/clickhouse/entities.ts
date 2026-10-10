@@ -41,6 +41,7 @@ import type { AttrRef } from "@intentius/chant/attrref";
 import { setInterpolationFields } from "@intentius/chant/provenance";
 import { CLICKHOUSE_LEXICAL, isTrivia, SqlSyntaxError, untokenize } from "./tokens";
 import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span, type StorageNode } from "./parser";
+import { parseAccess, type AccessNode } from "./access";
 import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, type TemplateCtx, type TemplateDialect } from "../core/interpolation";
 import { SQL_LEXICON, SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
 import type { LineageEdge } from "../core/references";
@@ -57,6 +58,10 @@ export const CLICKHOUSE_ENTITY_TYPES = {
   materializedView: "ClickHouse::MaterializedView",
   dictionary: "ClickHouse::Dictionary",
   function: "ClickHouse::Function",
+  user: "ClickHouse::User",
+  role: "ClickHouse::Role",
+  rowPolicy: "ClickHouse::RowPolicy",
+  grant: "ClickHouse::Grant",
 } as const;
 
 export type ClickHouseEntityType = (typeof CLICKHOUSE_ENTITY_TYPES)[keyof typeof CLICKHOUSE_ENTITY_TYPES];
@@ -226,6 +231,84 @@ export interface FunctionProps {
 export interface ClickHouseFunction extends ClickHouseObject {
   readonly entityType: "ClickHouse::Function";
   readonly props: FunctionProps;
+}
+
+/** A user (#3682). Its password is the environment's and is never declared (`./access.ts`). */
+export interface UserProps {
+  name: string;
+  onCluster?: string;
+  /** `IDENTIFIED ...` after the keyword, for a method that holds no secret; `NOT IDENTIFIED` as itself. */
+  identified?: string;
+  host?: string;
+  validUntil?: string;
+  defaultRole?: string;
+  defaultDatabase?: string;
+  grantees?: string;
+  settings?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface RoleProps {
+  name: string;
+  onCluster?: string;
+  settings?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface RowPolicyProps {
+  name: string;
+  onCluster?: string;
+  /** The table's database, when the DDL qualifies it. */
+  database?: string;
+  table: string;
+  /** `PERMISSIVE` or `RESTRICTIVE`. */
+  as?: string;
+  for?: string;
+  using: string;
+  to?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface GrantProps {
+  /** The grant's name in chant: its grantees, for a report. */
+  name: string;
+  onCluster?: string;
+  /** The privileges granted (`SELECT(a)`, `SHOW TABLES`), or the roles. */
+  privileges?: string[];
+  roles?: string[];
+  /** `db.table`, `db.*`, `*.*`. */
+  on?: string;
+  to: string[];
+  withGrantOption?: boolean;
+  withAdminOption?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface ClickHouseUser extends ClickHouseObject {
+  readonly entityType: "ClickHouse::User";
+  readonly props: UserProps;
+}
+export interface ClickHouseRole extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Role";
+  readonly props: RoleProps;
+}
+export interface ClickHouseRowPolicy extends ClickHouseObject {
+  readonly entityType: "ClickHouse::RowPolicy";
+  readonly props: RowPolicyProps;
+}
+export interface ClickHouseGrant extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Grant";
+  readonly props: GrantProps;
 }
 
 /** A dictionary: its attributes are columns `dictGet` reads, so SQL can reference them. */
@@ -572,4 +655,121 @@ export function dictionary(strings: TemplateStringsArray, ...values: unknown[]):
  */
 export function func(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseFunction {
   return build("func", strings, values) as ClickHouseFunction;
+}
+
+type AccessTag = "user" | "role" | "policy" | "grant";
+const ACCESS_STATEMENT: Record<AccessTag, AccessNode["statement"]> = { user: "user", role: "role", policy: "rowPolicy", grant: "grant" };
+const ACCESS_HOLDS: Record<AccessNode["statement"], [string, AccessTag]> = {
+  user: ["CREATE USER", "user"],
+  role: ["CREATE ROLE", "role"],
+  rowPolicy: ["CREATE ROW POLICY", "policy"],
+  grant: ["GRANT", "grant"],
+};
+
+function buildAccess(tag: AccessTag, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
+  const parts = templateParts(strings);
+  const tokens = splice(tag, parts, values);
+  let node: AccessNode;
+  try {
+    node = parseAccess(tokens);
+  } catch (err) {
+    if (!(err instanceof SqlSyntaxError)) throw err;
+    throw templateSyntaxError(tag, parts, err);
+  }
+  if (node.statement !== ACCESS_STATEMENT[tag]) {
+    const [holds, use] = ACCESS_HOLDS[node.statement];
+    throw new SqlTemplateError(tag, `holds a ${holds}; use the ${use} tag`, 0, 0);
+  }
+  if (node.revoke) throw new SqlTemplateError(tag, "holds a REVOKE; declare the grants a grantee keeps, and a plan revokes the rest", 0, 0);
+  const ctx: Ctx = { d: CLICKHOUSE_TEMPLATES, tokens, values, fed: values.map(() => new Set<string>()) };
+  for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
+  const ddl = req(untokenize(tokens, (i) => renderReference(values[i])).trim().replace(/;\s*$/, ""));
+  const source = { strings: parts };
+  const dependsOn = [...new Set(values.filter((v) => isClickHouseObject(v) || isColumnRef(v)))];
+  const done = <T extends ClickHouseObject>(entity: T): T => {
+    setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));
+    return entity;
+  };
+  const rendered = (span: Span | undefined): string | undefined =>
+    span ? untokenize(tokens.slice(span.from, span.to), (i) => renderReference(values[i])).trim() || undefined : undefined;
+  const name = node.name ? unquote(rendered(node.name) ?? "") : "";
+  const c = node.clauses;
+  const common = { name, onCluster: text(ctx, node.onCluster, "onCluster"), orReplace: node.orReplace || undefined, ifNotExists: node.ifNotExists || undefined };
+  if (node.statement === "user") {
+    const props: UserProps = strip({
+      ...common,
+      identified: c.notIdentified ? "NOT IDENTIFIED" : rendered(c.identified),
+      host: rendered(c.host),
+      validUntil: rendered(c.validUntil),
+      defaultRole: rendered(c.defaultRole),
+      defaultDatabase: rendered(c.defaultDatabase),
+      grantees: rendered(c.grantees),
+      settings: rendered(c.settings),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.user, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "role") {
+    const props: RoleProps = strip({ ...common, settings: rendered(c.settings), ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.role, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "rowPolicy") {
+    const { database, name: tableName } = qualified(ctx, node.table!);
+    const props: RowPolicyProps = strip({
+      ...common,
+      database,
+      table: tableName,
+      as: rendered(c.as)?.toUpperCase(),
+      for: rendered(c.for),
+      using: req(rendered(c.using)),
+      to: rendered(c.to),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.rowPolicy, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  const items = node.items.map((i) => rendered(i) ?? "");
+  const to = node.grantees.map((g) => unquote(rendered(g) ?? ""));
+  const props: GrantProps = strip({
+    name: to.join(", "),
+    onCluster: common.onCluster,
+    privileges: node.target ? items : undefined,
+    roles: node.target ? undefined : items.map(unquote),
+    on: rendered(node.target),
+    to,
+    withGrantOption: node.withOption === "GRANT" || undefined,
+    withAdminOption: node.withOption === "ADMIN" || undefined,
+    ddl,
+    source,
+  });
+  return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.grant, "", props, undefined, dependsOn));
+}
+
+/**
+ * `` user`CREATE USER ...` ``: one user (#3682). A password is the
+ * environment's: `IDENTIFIED BY` is refused, and a user declared without
+ * `IDENTIFIED` is compared without it and is not created by chant.
+ */
+export function user(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseUser {
+  return buildAccess("user", strings, values) as ClickHouseUser;
+}
+
+/** `` role`CREATE ROLE ...` ``: one role (#3682). Interpolate it where a grant or a user names it. */
+export function role(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseRole {
+  return buildAccess("role", strings, values) as ClickHouseRole;
+}
+
+/** `` policy`CREATE ROW POLICY ...` ``: one row policy on one table (#3682). */
+export function policy(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseRowPolicy {
+  return buildAccess("policy", strings, values) as ClickHouseRowPolicy;
+}
+
+/**
+ * `` grant`GRANT ...` ``: privileges or roles granted to users or roles
+ * (#3682). Every grant declaration naming a grantee adds up to its complete
+ * list: a plan revokes what it holds besides.
+ */
+export function grant(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseGrant {
+  return buildAccess("grant", strings, values) as ClickHouseGrant;
 }

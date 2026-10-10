@@ -24,6 +24,8 @@ export interface LiveObject {
   comment?: string;
   /** `SHOW CREATE` as the server prints it, less chant's ownership trailer, so it reads as the declaration. */
   statement: string;
+  /** A row policy's table. */
+  table?: string;
 }
 
 const quote = (s: string) => `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
@@ -105,3 +107,86 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   return out;
 }
 
+
+/** The access objects a build declares, by kind and name: what `readLiveAccess` reads. */
+export interface DeclaredAccess {
+  kind: string;
+  name: string;
+  database?: string;
+  table?: string;
+}
+
+/**
+ * The users, roles, row policies and grantees' grants the build declares,
+ * as the server holds them (#3682): `SHOW CREATE USER`, `SHOW CREATE ROLE`,
+ * `SHOW CREATE ROW POLICY`, and for a grantee every line of
+ * `SHOW GRANTS FOR`, one per line. Nothing else is read, so a project that
+ * declares none needs no access to `system.users` and the like, and an
+ * object made by hand is never seen. One that does not exist is left out.
+ */
+export async function readLiveAccess(target: ClickHouseTarget, declared: readonly DeclaredAccess[], opts: { withStatements?: boolean } = {}): Promise<LiveObject[]> {
+  if (declared.length === 0) return [];
+  const q = <T>(sql: string) => clickhouseQuery<T>(target.endpoint, sql);
+  const first = async (sql: string) => (opts.withStatements === false ? "" : Object.values((await q<Record<string, string>>(sql))[0] ?? {})[0] ?? "");
+  const all = async (sql: string) => (await q<Record<string, string>>(sql)).map((r) => Object.values(r)[0] ?? "");
+  const names = (kind: string) => [...new Set(declared.filter((d) => d.kind === kind).map((d) => d.name))];
+  const users = names("user");
+  const roles = names("role");
+  const grantees = names("grants");
+  const principals = [...new Set([...users, ...roles, ...grantees])];
+  const list = (xs: string[]) => xs.map(quote).join(", ");
+  const existingUsers = new Set(principals.length ? (await q<{ name: string }>(`SELECT name FROM system.users WHERE name IN (${list(principals)})`)).map((r) => r.name) : []);
+  const existingRoles = new Set(principals.length ? (await q<{ name: string }>(`SELECT name FROM system.roles WHERE name IN (${list(principals)})`)).map((r) => r.name) : []);
+  const out: LiveObject[] = [];
+  for (const name of users.filter((u) => existingUsers.has(u))) {
+    out.push({ type: CLICKHOUSE_ENTITY_TYPES.user, name, engine: "", statement: await first(`SHOW CREATE USER ${ident(name)}`) });
+  }
+  for (const name of roles.filter((r) => existingRoles.has(r))) {
+    out.push({ type: CLICKHOUSE_ENTITY_TYPES.role, name, engine: "", statement: await first(`SHOW CREATE ROLE ${ident(name)}`) });
+  }
+  const policies = declared.filter((d) => d.kind === "rowPolicy");
+  if (policies.length > 0) {
+    const live = await q<{ name: string; database: string; table: string }>(
+      `SELECT short_name AS name, database, table FROM system.row_policies WHERE short_name IN (${list(policies.map((p) => p.name))})`,
+    );
+    for (const p of policies) {
+      if (!live.some((l) => l.name === p.name && l.database === p.database && l.table === p.table)) continue;
+      out.push({
+        type: CLICKHOUSE_ENTITY_TYPES.rowPolicy,
+        name: p.name,
+        database: p.database!,
+        table: p.table!,
+        engine: "",
+        statement: await first(`SHOW CREATE ROW POLICY ${ident(p.name)} ON ${ident(p.database!)}.${ident(p.table!)}`),
+      });
+    }
+  }
+  for (const name of grantees.filter((g) => existingUsers.has(g) || existingRoles.has(g))) {
+    const lines = opts.withStatements === false ? [] : await all(`SHOW GRANTS FOR ${ident(name)}`);
+    out.push({ type: CLICKHOUSE_ENTITY_TYPES.grant, name, engine: "", statement: lines.join("\n") });
+  }
+  return out;
+}
+
+const ACCESS_KINDS = new Set(["user", "role", "rowPolicy", "grants"]);
+
+/** The access objects among declared canonical objects, for `readLiveAccess`. */
+export function declaredAccess(objects: ReadonlyArray<{ kind: string; name: string; database?: string; table?: string }>): DeclaredAccess[] {
+  return objects
+    .filter((o) => ACCESS_KINDS.has(o.kind))
+    .map((o) => ({ kind: o.kind, name: o.name, ...(o.database !== undefined ? { database: o.database } : {}), ...(o.table !== undefined ? { table: o.table } : {}) }));
+}
+
+/** The users, roles and row policies among declared entities, for `readLiveAccess`. */
+export function accessOf(entities: ReadonlyMap<string, { entityType: string; props: Record<string, unknown> }>, defaultDatabase: string): DeclaredAccess[] {
+  const kinds: Record<string, string> = { [CLICKHOUSE_ENTITY_TYPES.user]: "user", [CLICKHOUSE_ENTITY_TYPES.role]: "role", [CLICKHOUSE_ENTITY_TYPES.rowPolicy]: "rowPolicy" };
+  const out: DeclaredAccess[] = [];
+  for (const e of entities.values()) {
+    const kind = kinds[e.entityType];
+    if (!kind) continue;
+    const name = String(e.props.name ?? "");
+    if (kind === "rowPolicy") out.push({ kind, name, database: typeof e.props.database === "string" ? e.props.database : defaultDatabase, table: String(e.props.table ?? "") });
+    else out.push({ kind, name });
+  }
+  return out;
+}

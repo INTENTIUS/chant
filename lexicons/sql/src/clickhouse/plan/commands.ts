@@ -35,6 +35,7 @@ import { renderDiff } from "./report";
 import { keyedByQualifiedName, schemaFromBuildFile, schemaFromServer } from "./schema";
 import { dropFormattingOnly } from "./server-format";
 import { scopeOf } from "./normalize";
+import { declaredAccess } from "../live/catalog";
 import { bindClickHouse } from "../live/bind";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
 import { readFileSync } from "node:fs";
@@ -122,7 +123,7 @@ export async function planAgainstServer(environment: string, buildFile: string, 
   const declared = keyedByQualifiedName(schemaFromBuildFile(buildFile, target.defaultDatabase, target.topology));
   const databases = new Set(declared.map((o) => scopeOf(o.canonical)));
   const unreadable: UnreadableEntry[] = [];
-  const live = await schemaFromServer(target, databases, unreadable);
+  const live = await schemaFromServer(target, databases, unreadable, declaredAccess(declared.map((o) => o.canonical)));
   const diff = diffSchemas(live, declared);
   const changes = await dropFormattingOnly(target.endpoint, diff.changes);
   const rebuildOps = rebuildOpSuggestions(
@@ -130,7 +131,7 @@ export async function planAgainstServer(environment: string, buildFile: string, 
     new Map(declared.map((o) => [o.key, o.canonical])),
     environment,
   );
-  const label = new Map(declared.map((o) => [o.key, `${o.exportName} (${o.key})`]));
+  const label = new Map(declared.map((o) => [o.key, o.exportName === o.key ? o.key : `${o.exportName} (${o.key})`]));
   const relabel = changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
   return {
     changes: relabel,

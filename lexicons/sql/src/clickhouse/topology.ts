@@ -351,6 +351,13 @@ function renderOtherCreate(tokens: Token[], topology: Topology): string {
   w.accept("CREATE");
   if (w.accept("OR")) w.accept("REPLACE");
   w.accept("TEMPORARY");
+  // Access control (`./access.ts`) belongs to no database: like a database's own DDL, it reaches every replica through the cluster.
+  if (w.accept("USER", "ROLE", "POLICY", "QUOTA") || w.acceptSeq("ROW", "POLICY") || w.acceptSeq("SETTINGS", "PROFILE")) {
+    w.acceptSeq("IF", "NOT", "EXISTS") || w.acceptSeq("OR", "REPLACE");
+    if (!w.name()) return applyEdits(tokens, []);
+    const edit = onClusterEdit(w, databaseCluster(topology, true), w.end());
+    return applyEdits(tokens, edit ? [edit] : []);
+  }
   let database = false;
   if (w.accept("DATABASE")) database = true;
   else if (w.accept("MATERIALIZED", "LIVE", "WINDOW")) w.accept("VIEW");
@@ -422,11 +429,16 @@ export function renderStatement(sql: string, topology: Topology): string {
     w.p++;
     if (word(head, "DROP", "DETACH", "ATTACH")) w.accept("TEMPORARY");
     if (w.accept("DATABASE")) return renderAfterName(tokens, w, databaseCluster(topology, word(head, "DROP")));
-    // A function belongs to no database: like the database's own DDL, it reaches every replica through the cluster.
-    if (w.accept("FUNCTION")) return renderAfterName(tokens, w, databaseCluster(topology, true));
+    // A function and access control belong to no database: like the database's own DDL, they reach every replica through the cluster.
+    if (w.accept("FUNCTION", "USER", "ROLE", "POLICY") || w.acceptSeq("ROW", "POLICY")) return renderAfterName(tokens, w, databaseCluster(topology, true));
     // `TRUNCATE t` may leave out TABLE.
     if (w.accept("TABLE", "VIEW", "DICTIONARY") || word(head, "TRUNCATE")) return renderAfterName(tokens, w, objectCluster(topology));
     return sql;
+  }
+  if (word(head, "GRANT", "REVOKE")) {
+    w.p++;
+    const edit = onClusterEdit(w, databaseCluster(topology, true), w.end());
+    return applyEdits(tokens, edit ? [edit] : []);
   }
   if (word(head, "RENAME")) {
     w.p++;

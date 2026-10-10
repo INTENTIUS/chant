@@ -24,7 +24,7 @@ import {
   type ObserverAdapter,
 } from "@intentius/chant/observation";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "./bind";
-import { readLiveSchema, type LiveObject } from "./catalog";
+import { accessOf, readLiveAccess, readLiveSchema, type DeclaredAccess, type LiveObject } from "./catalog";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
 import { objectKey } from "../plan/normalize";
 import { isChantManaged, readMarker, stripMarker } from "../ownership";
@@ -38,16 +38,24 @@ interface Bound {
 /** The database and name a declared entity is created as. */
 export function declaredAddress(entity: DeclaredEntity, defaultDatabase: string): { database?: string; name: string } {
   const name = String(entity.props.name ?? "");
-  if (entity.type === CLICKHOUSE_ENTITY_TYPES.database || entity.type === CLICKHOUSE_ENTITY_TYPES.function) return { name };
+  if (
+    entity.type === CLICKHOUSE_ENTITY_TYPES.database ||
+    entity.type === CLICKHOUSE_ENTITY_TYPES.function ||
+    entity.type === CLICKHOUSE_ENTITY_TYPES.user ||
+    entity.type === CLICKHOUSE_ENTITY_TYPES.role
+  ) {
+    return { name };
+  }
   return { database: typeof entity.props.database === "string" ? entity.props.database : defaultDatabase, name };
 }
 
-function adapter(options: BindOptions & { owned?: boolean }): ObserverAdapter<Bound> {
+function adapter(options: BindOptions & { owned?: boolean; access?: (defaultDatabase: string) => DeclaredAccess[] }): ObserverAdapter<Bound> {
   return {
     async bind() {
       const target = await bindClickHouse(options);
       const byKey = new Map<string, LiveObject>();
-      for (const o of await readLiveSchema(target, { withStatements: false })) {
+      const access = await readLiveAccess(target, options.access?.(target.defaultDatabase) ?? [], { withStatements: false });
+      for (const o of [...(await readLiveSchema(target, { withStatements: false })), ...access]) {
         byKey.set(objectKey(o), o);
       }
       return { target, byKey };
@@ -57,9 +65,13 @@ function adapter(options: BindOptions & { owned?: boolean }): ObserverAdapter<Bo
       if (!entity.type.startsWith("ClickHouse::")) {
         return { unobserved: { reason: "unsupported-kind", detail: entity.type } };
       }
+      if (entity.type === CLICKHOUSE_ENTITY_TYPES.grant) {
+        return { unobserved: { reason: "unsupported-kind", detail: "a grant is compared as part of its grantees' grants, which chant sql plan reports" } };
+      }
       const { database, name } = declaredAddress(entity, target.defaultDatabase);
       const queried = `${target.endpoint.url} ${database ? `${database}.` : ""}${name}`;
-      const live = byKey.get(objectKey({ type: entity.type, ...(database !== undefined ? { database } : {}), name }));
+      const table = typeof entity.props.table === "string" ? entity.props.table : undefined;
+      const live = byKey.get(objectKey({ type: entity.type, ...(database !== undefined ? { database } : {}), name, ...(table !== undefined ? { table } : {}) }));
       if (!live) return { absent: true, queried };
       const owned = isChantManaged(live.comment);
       if (options.owned && !owned) {
@@ -95,5 +107,5 @@ export async function describeResources(
     const entity = options.entities.get(name);
     return { name, type: entity?.entityType ?? "", props: entity?.props ?? {} };
   });
-  return observeEntities(declared, adapter(options));
+  return observeEntities(declared, adapter({ ...options, access: (db) => accessOf(options.entities, db) }));
 }

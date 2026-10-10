@@ -37,6 +37,8 @@ A dictionary is a `dictionary` template holding `CREATE DICTIONARY`, with its at
 
 A SQL user-defined function is a `func` template holding `CREATE FUNCTION name AS (x) -> expr`, with no database in its name. A changed expression is SQLCH260 (`CREATE OR REPLACE FUNCTION`). It carries no ownership marker, so chant never drops one.
 
+Users, roles, row policies and grants are `user`, `role`, `policy` and `grant` templates. Never write a password: `IDENTIFIED BY` is refused, a user declared without `IDENTIFIED` is created by the environment with its password, and chant manages the rest of it. Grants are compared per grantee: every `grant` naming a grantee adds up to its complete list, and anything else it holds is revoked (SQLCH274). None of these is ever dropped by chant.
+
 ## Interpolations
 
 | Value | Means | Renders as |

@@ -1,0 +1,75 @@
+---
+title: "ClickHouse Access Control"
+description: "Users, roles, row policies and grants as declarations: what a project declares and what the environment keeps, how a plan compares each, and the statements an apply sends"
+diataxis: how-to
+order: 5
+label: "Access Control"
+group: "ClickHouse"
+---
+
+ClickHouse keeps users, roles, row policies and grants outside any table. The sql lexicon declares each with its own tag from `@intentius/chant-lexicon-sql/clickhouse`:
+
+```ts
+import { database, grant, policy, role, table, user } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const shop = database`CREATE DATABASE shop`;
+
+export const events = table`
+  CREATE TABLE ${shop}.events (id UInt64, tenant String)
+  ENGINE = MergeTree ORDER BY id`;
+
+export const reader = role`CREATE ROLE reader SETTINGS max_memory_usage = 1000000000`;
+
+export const app = user`CREATE USER app HOST ANY DEFAULT ROLE ${reader} DEFAULT DATABASE shop`;
+
+export const tenantA = policy`
+  CREATE ROW POLICY tenant_a ON ${events}
+  USING ${events.columns.tenant} = 'a' TO ${reader}`;
+
+export const readEvents = grant`GRANT SELECT(id, tenant) ON ${events} TO ${reader}`;
+export const readerToApp = grant`GRANT ${reader} TO ${app}`;
+```
+
+| Tag | Statement | Entity type |
+|---|---|---|
+| `user` | `CREATE USER` | `ClickHouse::User` |
+| `role` | `CREATE ROLE` | `ClickHouse::Role` |
+| `policy` | `CREATE ROW POLICY` | `ClickHouse::RowPolicy` |
+| `grant` | `GRANT` | `ClickHouse::Grant` |
+
+Interpolate a role, a user or a table where a statement names it. The reference renders as the name and makes a dependency, so a role is created before the user whose default role it is, and a table before its policy.
+
+## What the project declares and what the environment keeps
+
+A password is the environment's. A `user` template refuses `IDENTIFIED BY` and any `IDENTIFIED WITH` that holds a password or its hash, so no secret is ever written into a build. A user declared with no `IDENTIFIED` clause is not created by chant. The apply reports it as not attempted, and the grants to it wait. Create it once with its password (`CREATE USER app IDENTIFIED BY ...`), and the next apply makes the rest of it as declared and leaves the password alone. A user declared with a method that holds no secret (`ssl_certificate`, `ldap`, `kerberos`, `http`, `ssh_key` with its public key, `NOT IDENTIFIED`) is created by chant and kept that way.
+
+Grants are compared per grantee. Every `grant` declaration that names a grantee adds up to that grantee's complete list. A privilege or role granted to it by hand is revoked, and one revoked by hand is granted again. A grantee the build names in no `grant` keeps whatever it holds.
+
+None of these objects has a comment, so none carries chant's ownership marker. A plan reads only the users, roles, row policies and grantees the build declares, and an object made by hand is never seen. Chant creates and changes them, and never drops one: drop by hand what the build no longer declares.
+
+## How a plan compares them
+
+Each is read back with `SHOW CREATE USER`, `SHOW CREATE ROLE`, `SHOW CREATE ROW POLICY` and `SHOW GRANTS FOR`, and compared clause by clause. The server's way of printing is undone first:
+
+- a clause at its default is not compared: `HOST ANY`, `DEFAULT ROLE ALL`, `GRANTEES ANY`, a row policy's `AS PERMISSIVE` and `FOR SELECT`;
+- hosts and the roles a clause names are sorted, and a setting's `READONLY` is `CONST`;
+- a row policy's condition goes to the server's formatter, which prints `tenant='a' AND id+0>0` as `(tenant = 'a') AND ((id + 0) > 0)`;
+- the server folds a grant another covers: `SELECT(id)` under `SELECT` on the same table, `SELECT ON shop.events` under `SELECT ON shop.*`, any privilege under `*.*`. The declarations are folded the same way.
+
+A user's authentication is compared only when the declaration states it.
+
+| Change | Rule | Statement |
+|---|---|---|
+| a role's settings | SQLCH270 | `ALTER ROLE ... SETTINGS` |
+| a user's host, default role, default database, grantees, settings, expiry or a stated authentication | SQLCH271 | one `ALTER USER` per clause |
+| a row policy's condition, kind or roles | SQLCH272 | `CREATE ROW POLICY OR REPLACE` |
+| a privilege or role a grantee lacks | SQLCH273 | `GRANT` |
+| a privilege or role a grantee holds besides its declarations | SQLCH274 | `REVOKE` |
+
+The revokes run before the grants. A user's `DEFAULT ROLE` names roles the user must already hold, so when the build also declares grants to the user, it is set after them.
+
+`chant lifecycle diff --live` observes users, roles and row policies. A `grant` declaration is reported as unobserved: it is compared as part of its grantee's list, which `chant sql plan` reports.
+
+## Topologies
+
+These objects belong to no database, so a `Replicated` database's log does not carry them. On a cluster every statement goes `ON CLUSTER`. In the `replicated` topology they go `ON CLUSTER` the topology's cluster when it names one (`replicated:<cluster>`). With none, apply to each replica, or keep access entities in a replicated user directory on the server.

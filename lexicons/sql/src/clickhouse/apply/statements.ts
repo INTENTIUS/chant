@@ -24,6 +24,7 @@ import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "../pl
 import { stampedComment } from "../ownership";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
 import { renderFor, type Topology } from "../topology";
+import { accessClauseText, alterAccessField, grantStatement, revokeStatement, SECRETLESS, type GrantAtom } from "../access";
 
 /** A backquoted identifier. */
 export const ident = (name: string): string => `\`${name.replace(/`/g, "``")}\``;
@@ -498,14 +499,89 @@ export function planStatements(input: StatementPlanInput): StatementPlan {
   };
 }
 
+const NEVER_DROPPED: ReadonlySet<string> = new Set(["function", "user", "role", "rowPolicy", "grants"]);
+
+/** The entity types of access control (`../access.ts`): no comment, no marker, never dropped. */
+export const ACCESS_TYPES: ReadonlySet<string> = new Set([
+  CLICKHOUSE_ENTITY_TYPES.user,
+  CLICKHOUSE_ENTITY_TYPES.role,
+  CLICKHOUSE_ENTITY_TYPES.rowPolicy,
+  CLICKHOUSE_ENTITY_TYPES.grant,
+]);
+
+/** What a user, role, row policy or grantee's grants take (`../access.ts`). */
+function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalObject | undefined, deferred: DeferredDefaultRoles): ObjectStatements {
+  const kind = obj.canonical.kind;
+  const name = obj.canonical.name;
+  if (kind === "grants") {
+    const atom = (json: string | undefined) => JSON.parse(json ?? "{}") as GrantAtom;
+    const declared = obj.canonical.access ?? {};
+    const current = live?.access ?? {};
+    const created = mine.some((c) => c.rule === "SQLCH200");
+    const revokes = created ? [] : mine.filter((c) => c.rule === "SQLCH274").map((c) => stepFor(revokeStatement(atom(current[c.before as string]), name), "SQLCH274"));
+    const grants = (created ? Object.keys(declared) : mine.filter((c) => c.rule === "SQLCH273").map((c) => c.after as string)).map((key) =>
+      stepFor(grantStatement(atom(declared[key]), name), "SQLCH273"),
+    );
+    // A user's DEFAULT ROLE names roles it must already hold: set after its grants.
+    const defaultRole = deferred.get(name);
+    const after = defaultRole ? [defaultRole.step] : [];
+    if (defaultRole) mine = [...mine, defaultRole.change];
+    return { verdict: created ? "create" : "alter", obj, changes: mine, steps: [...revokes, ...grants, ...after] };
+  }
+  const body = statementBody(tokenizeText(obj.ddl, 0));
+  if (mine.some((c) => c.rule === "SQLCH200")) {
+    const method = obj.canonical.access?.identified?.split(" ")[0];
+    if (kind === "user" && (method === undefined || !SECRETLESS.has(method))) {
+      return {
+        verdict: "withheld",
+        obj,
+        changes: mine,
+        withheld: mine,
+        detail: `the user's password is the environment's, so chant does not create it: create ${name} with its password (CREATE USER ${ident(name)} IDENTIFIED BY ...), and the next apply makes the rest of it as declared`,
+      };
+    }
+    return { verdict: "create", obj, changes: mine, steps: [stepFor(body, "SQLCH200")] };
+  }
+  if (kind === "rowPolicy") {
+    // `CREATE ROW POLICY OR REPLACE`: ClickHouse takes OR REPLACE after the kind.
+    const replace = /^\s*(?:--[^\n]*\n\s*)*CREATE\s+(?:ROW\s+)?POLICY\s+OR\s+REPLACE\b/i.test(body)
+      ? body
+      : body.replace(/^(\s*(?:--[^\n]*\n\s*)*CREATE\s+(?:ROW\s+)?POLICY)\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, "$1 OR REPLACE ");
+    return { verdict: "alter", obj, changes: mine, steps: mine.some((c) => c.rule === "SQLCH272") ? [stepFor(replace, "SQLCH272")] : [] };
+  }
+  const clauses = accessClauseText(obj.ddl);
+  const rule = kind === "user" ? "SQLCH271" : "SQLCH270";
+  const steps = mine
+    .filter((c) => c.rule === rule && !(kind === "user" && c.field === "defaultRole" && deferred.has(name)))
+    .map((c) => stepFor(alterAccessField(kind as "user" | "role", name, c.field, obj.canonical.access ?? {}, clauses), rule));
+  return { verdict: "alter", obj, changes: mine, steps };
+}
+
+/** The `ALTER USER ... DEFAULT ROLE` of each user whose grants the build also declares, by user: it runs after them. */
+type DeferredDefaultRoles = Map<string, { step: Step; change: Change }>;
+
+function deferredDefaultRoles(declared: readonly DeclaredObject[], byObject: ReadonlyMap<string, Change[]>, keyOf: (o: DeclaredObject) => string): DeferredDefaultRoles {
+  const out: DeferredDefaultRoles = new Map();
+  const grantees = new Set(declared.filter((o) => o.canonical.kind === "grants").map((o) => o.canonical.name));
+  for (const o of declared) {
+    if (o.canonical.kind !== "user" || !grantees.has(o.canonical.name)) continue;
+    const change = (byObject.get(keyOf(o)) ?? []).find((c) => c.rule === "SQLCH271" && c.field === "defaultRole");
+    if (!change) continue;
+    out.set(o.canonical.name, { step: stepFor(alterAccessField("user", o.canonical.name, "defaultRole", o.canonical.access ?? {}, accessClauseText(o.ddl)), "SQLCH271"), change });
+  }
+  return out;
+}
+
 function planDeclared(input: StatementPlanInput): StatementPlan {
   const keyOf = input.keyOf ?? ((o: DeclaredObject) => o.key);
   const byObject = new Map<string, Change[]>();
   for (const c of input.changes) byObject.set(c.object, [...(byObject.get(c.object) ?? []), c]);
+  const deferred = deferredDefaultRoles(input.declared, byObject, keyOf);
 
   const objects: ObjectStatements[] = input.declared.map((obj): ObjectStatements => {
     const key = keyOf(obj);
     const mine = byObject.get(key) ?? [];
+    if (ACCESS_TYPES.has(obj.type)) return accessStatements(obj, mine, input.current.get(key), deferred);
     const refused = mine.filter(isRebuild);
     if (refused.length > 0) return { verdict: "rebuild", obj, changes: mine, refused, detail: refusalDetail(refused, obj.key, obj.type) };
     const destructive = mine.filter(isDestructiveAlter);
@@ -538,6 +614,8 @@ function planDeclared(input: StatementPlanInput): StatementPlan {
     if (c.rule !== "SQLCH250") continue;
     const o = input.current.get(c.object);
     if (!o) continue;
+    // A function and access control carry no marker, so chant never drops one.
+    if (NEVER_DROPPED.has(o.kind)) continue;
     const type = CLICKHOUSE_ENTITY_TYPES[o.kind as keyof typeof CLICKHOUSE_ENTITY_TYPES];
     const database = o.kind === "database" || o.kind === "function" ? undefined : o.database;
     drops.push({ key: c.object, type, ...(database !== undefined ? { database } : {}), name: o.name, step: stepFor(dropStatement(type, database, o.name), "SQLCH250") });
