@@ -1039,7 +1039,8 @@ function renderDeepDiff(
         // Both sides of the attribution, where each is known (#1443/#1189).
         const from = change.origin ? ` [from: ${describePathOrigin(change.origin)}]` : "";
         const owner = change.owner ? ` [owner: ${change.owner}]` : "";
-        console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}`);
+        const seen = change.seenOn ? ` [seen on: ${change.seenOn}]` : "";
+        console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}${seen}`);
         // chant #2161 — what may be done about it, when the origin says
         // something today's behaviour would get wrong. A field the author
         // declared directly is left unremarked: editing it IS today's

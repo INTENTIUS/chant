@@ -87,6 +87,16 @@ describe("normalization", () => {
     expect(shown("ReplicatedMergeTree('/clickhouse/tables/{shard}/t', '{replica}')")).not.toBe(shown("ReplicatedMergeTree"));
   });
 
+  test("a Distributed engine's cluster, database and table read the same quoted or not (#3664)", () => {
+    const shown = (engine: string) => canonicalObject(`CREATE TABLE d.events_all (id UInt64) ENGINE = ${engine}`).engine;
+    expect(shown("Distributed(my_cluster, d, events, id)")).toBe(shown("Distributed('my_cluster', 'd', 'events', id)"));
+    expect(shown("Distributed(`my_cluster`, `d`, `events`)")).toBe(shown("Distributed('my_cluster', 'd', 'events')"));
+    expect(shown("Distributed('{cluster}', currentDatabase(), events, rand())")).toBe(shown("Distributed('{cluster}', currentDatabase(), 'events', rand())"));
+    // The sharding key is an expression, not a name: it stays as written.
+    expect(shown("Distributed(c, d, events, id)")).not.toBe(shown("Distributed(c, d, events, 'id')"));
+    expect(shown("Distributed(c, d, events)")).not.toBe(shown("Distributed(c, d, other)"));
+  });
+
   test("a setting at its default is not part of the definition", () => {
     expect(canonicalObject("CREATE TABLE t (a UInt8) ENGINE = MergeTree ORDER BY a SETTINGS index_granularity = 8192").settings).toEqual({});
     expect(canonicalObject("CREATE TABLE t (a UInt8) ENGINE = MergeTree ORDER BY a SETTINGS min_bytes_for_wide_part = '0'").settings).toEqual({ min_bytes_for_wide_part: "0" });

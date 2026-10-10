@@ -69,6 +69,14 @@ export interface DeepResourceObservation {
    */
   fieldOwners?: Record<string, string>;
   /**
+   * The server the properties were read from, when a reader reads more than
+   * one copy of the entity and they disagree (#3664): a sql table on a
+   * ClickHouse cluster, read on every shard and replica, reports the copy
+   * that differs from the rest and names its server here. Absent when there
+   * is one copy, or every copy reads the same.
+   */
+  observedOn?: string;
+  /**
    * The paths this entity's declaration claims (#2160) — every property chant
    * set, flattened into the diff's own grammar and sorted. Built by core in
    * `lifecycle/deep-observe.ts` from the declaration's `props`, never by a

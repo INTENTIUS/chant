@@ -55,6 +55,19 @@ On ClickHouse, a user with `SELECT` on the project's databases and `readonly = 1
 
 The diff compares the server with what the checkout declares, not with what was last applied, so a change merged but not yet applied reads as drift too.
 
+## On a ClickHouse cluster
+
+With `topology: "cluster:<name>"` on the profile, the live read covers every replica of every shard, through the profile's server (`clusterAllReplicas('<name>', system.tables)`), as well as the profile's server itself. A change made on one server without `ON CLUSTER` (for example `ALTER TABLE events MODIFY TTL ...` run on shard 2 only) is drift even though the profile's server still holds the declaration. When the servers' copies of a table differ, the report shows the copy that departs most from the declaration and names its server:
+
+```
+  - events (ClickHouse::Table)
+      ttl: ts + INTERVAL 30 DAY → ts + toIntervalDay(7) [seen on: ch-s2r1]
+```
+
+The read needs every server to answer. If one cannot be read, every object is reported unobserved with the reason; none is reported as matching.
+
+A `Distributed` table's cluster, database and table arguments compare the same whether they are declared as identifiers (`Distributed(main, shop, events, id)`) or as strings. The server prints them quoted.
+
 ## Render it to CI
 
 `generateOpsPipeline` renders the watch as a scheduled job on the Op's own cron. Pass the reader's credentials as the job's variables and nothing else:

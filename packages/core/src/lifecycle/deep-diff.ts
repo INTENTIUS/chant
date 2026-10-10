@@ -107,6 +107,12 @@ export interface PropertyDrift {
    * child, have no expression to attribute (see `EntityProvenance.paths`).
    */
   origin?: PathOrigin;
+  /**
+   * The server the live value was read on, when the reader read the entity
+   * on several and reported the copy that differs (#3664,
+   * `DeepResourceObservation.observedOn`).
+   */
+  seenOn?: string;
 }
 
 /** Property-level drift for one declared entity. */
@@ -382,6 +388,7 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
         ...(hasLive ? { live: liveValue } : {}),
         ...(owner ? { owner } : {}),
         ...(origin ? { origin } : {}),
+        ...(hasLive && liveEntity.observedOn ? { seenOn: liveEntity.observedOn } : {}),
       };
 
       if (acceptedEntry) {
