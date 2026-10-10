@@ -146,6 +146,16 @@ export const sqlProfileSchema = z.strictObject({
    * `CONCURRENTLY` index build), in milliseconds. 0, no limit, when omitted.
    */
   scanTimeoutMs: z.number().int().nonnegative().optional(),
+  /**
+   * Postgres: whether chant manages access in this environment (#3681): the
+   * declared row-level security policies and each table's row-level security,
+   * the declared roles (created when missing, never dropped), and the
+   * privileges on the declared objects and the default privileges, which a
+   * plan compares and an apply grants and revokes. Off when omitted: the
+   * access declarations are not planned or applied, and the server's access
+   * is not read, so a project that manages access elsewhere is not affected.
+   */
+  access: z.boolean().optional(),
 });
 
 const dialectName = z.enum(SQL_DIALECTS);

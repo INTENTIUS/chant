@@ -16,7 +16,8 @@
 import { classifiedChange, type ChangeSet, type ClassifiedChange } from "../../core/classifier";
 import { matchByIdentity } from "../../core/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "./rules";
-import { sameConstraint, serialBase, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
+import { ACCESS_KINDS, sameConstraint, serialBase, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
+import { builtinEntries, declaredAccess, diffAccess, entryKey, targetKey, type AccessChange } from "../access/acl";
 import { pgNamespace, type PgDiffObject, type PgSchemaObject } from "./schema";
 import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
 import type { PostgresMigrationOpSuggestion } from "../migrate/handoff";
@@ -24,6 +25,12 @@ import type { PostgresMigrationOpSuggestion } from "../migrate/handoff";
 /** What the diff needs to know beyond the two schemas: the server's major (`sql.postgresMajor`, else the newest pinned). */
 export interface PgDiffOptions {
   major?: number;
+  /**
+   * Whether to compare the access the two sides declare (grants, revokes,
+   * default privileges). On by default, for a diff between two builds; a plan
+   * against a server compares the server's access itself (`./commands.ts`).
+   */
+  access?: boolean;
 }
 
 export type PgChange = ClassifiedChange<PgClassifierRuleId, PgChangeClass>;
@@ -33,12 +40,14 @@ export interface PgSchemaDiff extends ChangeSet<PgChange> {
   refused: PgChange[];
   /** The `PostgresMigrationOp` to run for each refused column rename or type change (#3281). */
   migrationOps?: PostgresMigrationOpSuggestion[];
+  /** The access changes among `changes`, each with its GRANT, REVOKE or ALTER DEFAULT PRIVILEGES statements (#3681). */
+  access?: AccessChange[];
 }
 
 const change = (object: string, field: string, rule: PgClassifierRuleId, before?: unknown, after?: unknown, extra: Partial<PgChange> = {}): PgChange =>
   classifiedChange(PG_CLASSIFIER_RULES, object, field, rule, before, after, extra);
 
-const qualified = (o: PgDiffObject) => `${o.schema ? `${o.schema}.` : ""}${o.name}${o.kind === "trigger" ? "" : (o.signature ?? "")}`;
+const qualified = (o: PgDiffObject) => `${o.schema ? `${o.schema}.` : ""}${o.name}${o.kind === "trigger" || o.kind === "policy" ? "" : (o.signature ?? "")}`;
 
 // ── Columns ────────────────────────────────────────────────────────────
 
@@ -294,7 +303,31 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
       }
       break;
     }
+    case "policy": {
+      // ALTER POLICY sets the roles, USING and WITH CHECK; the command and AS RESTRICTIVE are fixed, and neither expression can be taken away.
+      const definition = ["table", "restrictive", "command", "roles", "using", "check"];
+      const changed = definition.filter((k) => !same(before.fields[k], after.fields[k]));
+      if (changed.length === 0) break;
+      const recreate =
+        !same(before.fields.table, after.fields.table) ||
+        !same(before.fields.restrictive, after.fields.restrictive) ||
+        !same(before.fields.command, after.fields.command) ||
+        (before.fields.using !== undefined && after.fields.using === undefined) ||
+        (before.fields.check !== undefined && after.fields.check === undefined);
+      out.push(
+        change(key, changed.join(", "), "SQLPG291", changed.map((k) => `${k} ${show(before.fields[k]) ?? "-"}`).join("; "), changed.map((k) => `${k} ${show(after.fields[k]) ?? "-"}`).join("; "), recreate ? { note: "dropped and created in one transaction: ALTER POLICY cannot change its command, AS RESTRICTIVE or table, or take an expression away" } : {}),
+      );
+      break;
+    }
+    case "role":
+      field("attributes", "SQLPG294");
+      field("connectionLimit", "SQLPG294");
+      break;
     case "table":
+      if (!same(before.fields.rowSecurity, after.fields.rowSecurity) || !same(before.fields.forceRowSecurity, after.fields.forceRowSecurity)) {
+        const state = (o: PgDiffObject) => (o.fields.rowSecurity ? (o.fields.forceRowSecurity ? "enabled, forced" : "enabled") : o.fields.forceRowSecurity ? "disabled, forced" : "disabled");
+        out.push(change(key, "rowSecurity", "SQLPG293", state(before), state(after), after.fields.rowSecurity && !before.fields.rowSecurity ? { note: "with row-level security on, a role the table's policies do not let in sees no rows" } : {}));
+      }
       diffColumns(key, before, after, out, hints, false, major);
       diffConstraints(key, before, after, out, false);
       field("with", "SQLPG224");
@@ -334,8 +367,11 @@ export function matchPgObjects(before: readonly PgSchemaObject[], after: readonl
   });
 }
 
-export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[], options: PgDiffOptions = {}): PgSchemaDiff {
+export function diffPgSchemas(beforeAll: readonly PgSchemaObject[], afterAll: readonly PgSchemaObject[], options: PgDiffOptions = {}): PgSchemaDiff {
   const major = options.major ?? POSTGRES_LATEST_MAJOR;
+  // Grants and default privileges are compared as the access they add up to, below, not one declaration against another.
+  const before = beforeAll.filter((o) => !ACCESS_KINDS.has(o.canonical.kind));
+  const after = afterAll.filter((o) => !ACCESS_KINDS.has(o.canonical.kind));
   const matches = matchPgObjects(before, after);
   const newTables = createdTables(matches);
   const changes: PgChange[] = [];
@@ -347,6 +383,8 @@ export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly
         changes.push(change(m.after.key, "index", o.concurrently ? "SQLPG240" : "SQLPG241", undefined, qualified(o)));
       } else if (o.kind === "trigger" && !newTables.has(String(o.fields.table))) {
         changes.push(change(m.after.key, "trigger", "SQLPG283", undefined, `${o.name}${o.signature ?? ""}`));
+      } else if (o.kind === "policy" && !newTables.has(String(o.fields.table))) {
+        changes.push(change(m.after.key, "policy", "SQLPG290", undefined, `${o.name}${o.signature ?? ""}`));
       } else changes.push(change(m.after.key, o.kind, "SQLPG200", undefined, qualified(o)));
     } else if (m.kind === "dropped") {
       const o = m.before.canonical;
@@ -354,10 +392,37 @@ export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly
         hints.push(`${m.before.key} is kept by ${o.foreign}; it is not chant's to drop and is left alone`);
         continue;
       }
+      if (o.kind === "role") {
+        hints.push(`role ${o.name} is no longer declared; a role is the cluster's and is never dropped`);
+        continue;
+      }
       const destructive = o.kind === "table" || o.kind === "materializedView" || o.kind === "sequence";
-      const rule = o.kind === "index" ? "SQLPG242" : o.kind === "trigger" ? "SQLPG285" : "SQLPG270";
-      changes.push(change(m.before.key, o.kind, rule, o.kind === "trigger" ? `${o.name}${o.signature ?? ""}` : qualified(o), undefined, destructive ? { destructive: true } : {}));
+      const rule = o.kind === "index" ? "SQLPG242" : o.kind === "trigger" ? "SQLPG285" : o.kind === "policy" ? "SQLPG292" : "SQLPG270";
+      changes.push(change(m.before.key, o.kind, rule, o.kind === "trigger" || o.kind === "policy" ? `${o.name}${o.signature ?? ""}` : qualified(o), undefined, destructive ? { destructive: true } : {}));
     } else diffObject(m.after.key, m.before.canonical, m.after.canonical, changes, hints, major);
   }
-  return { changes, hints, refused: changes.filter((c) => c.class === "expand") };
+  const access = options.access === false ? [] : buildAccessChanges(beforeAll, afterAll, major);
+  changes.push(...access.map((a) => a.change));
+  return { changes, hints, refused: changes.filter((c) => c.class === "expand"), ...(access.length > 0 ? { access } : {}) };
+}
+
+/**
+ * The access change between two builds: on what the newer build decides. An
+ * object only it declares starts from what Postgres gives a new one; an
+ * object only the older one declared is dropped with its privileges.
+ */
+function buildAccessChanges(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[], major: number): AccessChange[] {
+  const b = declaredAccess(before, { major });
+  const a = declaredAccess(after, { major });
+  const decided = new Set(a.targets.map(targetKey));
+  const known = new Set(b.targets.map(targetKey));
+  const from = new Map([...b.state].filter(([, e]) => decided.has(targetKey(e.target))));
+  for (const t of a.targets) {
+    if (known.has(targetKey(t)) || t.kind === "default" || t.kind === "column") continue;
+    for (const e of builtinEntries(t.kind)) {
+      const key = entryKey(t, e.grantee);
+      from.set(key, { target: t, grantee: e.grantee, privileges: new Map([...(from.get(key)?.privileges ?? []), [e.privilege, false]]) });
+    }
+  }
+  return diffAccess(from, a.state, a.exportsOf);
 }

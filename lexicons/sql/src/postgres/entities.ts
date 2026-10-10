@@ -1,8 +1,8 @@
 /**
  * The Postgres entities: `schema`, `table`, `index`, `view`, `sequence`,
- * `type`, `domain`, `extension`, `func`, `procedure` and `trigger` tagged
- * templates that parse their DDL at fold time into one Declarable each
- * (chant #3278, #3279, #3680).
+ * `type`, `domain`, `extension`, `func`, `procedure`, `trigger`, `policy`,
+ * `role` and `grant` tagged templates that parse their DDL at fold time into
+ * one Declarable each (chant #3278, #3279, #3680, #3681).
  *
  * ```ts
  * import { schema, table, index } from "@intentius/chant-lexicon-sql/postgres";
@@ -56,7 +56,7 @@
 import type { AttrRef } from "@intentius/chant/attrref";
 import { setInterpolationFields } from "@intentius/chant/provenance";
 import { isTrivia, POSTGRES_LEXICAL, SqlSyntaxError, untokenize, type Token } from "./tokens";
-import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type NameNode, type Span, type StatementNode } from "./parser";
+import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode } from "./parser";
 import { keywordCategory, quoteIdent } from "./keywords";
 import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, type TemplateCtx, type TemplateDialect } from "../core/interpolation";
 import { SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
@@ -183,6 +183,10 @@ export interface TableProps extends CommonProps {
   with?: string;
   onCommit?: string;
   tablespace?: string;
+  /** `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` after the CREATE (true), or `DISABLE` (false). */
+  rowSecurity?: boolean;
+  /** `ALTER TABLE ... FORCE ROW LEVEL SECURITY` after the CREATE (true), or `NO FORCE` (false): the owner is subject to the policies too. */
+  forceRowSecurity?: boolean;
 }
 
 export interface IndexProps extends CommonProps {
@@ -338,6 +342,70 @@ export interface TriggerProps extends CommonProps {
   args: string[];
 }
 
+export interface PolicyProps extends CommonProps {
+  /** The table: the entity when interpolated, else its name. */
+  table: PostgresObject | string;
+  tableName: string;
+  /** `AS PERMISSIVE` (the default) or `AS RESTRICTIVE`. */
+  permissive: boolean;
+  command: "all" | "select" | "insert" | "update" | "delete";
+  /** The roles it applies to; `public` when it names none. */
+  roles: string[];
+  /** `USING (...)`, parentheses excluded. */
+  using?: string;
+  /** `WITH CHECK (...)`, parentheses excluded. */
+  check?: string;
+}
+
+export interface RoleProps extends Omit<CommonProps, "schema"> {
+  /** The options written, each by its key word, lower case (`login`, `noinherit`). */
+  options: string[];
+  /** `CONNECTION LIMIT n`. */
+  connectionLimit?: string;
+}
+
+/** A privilege as written: `select`, `update` on some columns, `all`. */
+export interface PrivilegeDef {
+  privilege: string;
+  columns?: string[];
+}
+
+export interface GrantProps {
+  /** A grant's or revoke's name, which no catalog holds: what it grants on what to whom. */
+  name: string;
+  action: "grant" | "revoke";
+  /** `REVOKE GRANT OPTION FOR`: only the right to grant on is revoked. */
+  grantOptionFor?: boolean;
+  privileges: PrivilegeDef[];
+  /** The kind of object. */
+  on: "table" | "sequence" | "schema" | "function" | "procedure" | "routine";
+  /** The objects: each the entity when interpolated, else its name. */
+  objects: Array<PostgresObject | string>;
+  /** The objects' SQL names; a routine's with its parameter types when they are written or interpolated. */
+  objectNames: string[];
+  /** Role names; `public` for PUBLIC. */
+  grantees: string[];
+  withGrantOption?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface DefaultPrivilegesProps {
+  name: string;
+  action: "grant" | "revoke";
+  grantOptionFor?: boolean;
+  /** `FOR ROLE`: the roles whose new objects it applies to; the role that applies it when not written. */
+  forRoles?: string[];
+  /** `IN SCHEMA`: the schemas; every schema when not written. */
+  inSchemas?: string[];
+  privileges: string[];
+  on: "tables" | "sequences" | "functions" | "types" | "schemas";
+  grantees: string[];
+  withGrantOption?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
 /**
  * A string as a quoted Postgres string literal: `'` doubled, a backslash left
  * as written (standard_conforming_strings is on). An interpolated plain string
@@ -417,6 +485,21 @@ export interface PostgresProcedure extends PostgresObject {
 export interface PostgresTrigger extends PostgresObject {
   readonly entityType: "Postgres::Trigger";
   readonly props: TriggerProps;
+}
+
+export interface PostgresPolicy extends PostgresObject {
+  readonly entityType: "Postgres::Policy";
+  readonly props: PolicyProps;
+}
+
+export interface PostgresRole extends PostgresObject {
+  readonly entityType: "Postgres::Role";
+  readonly props: RoleProps;
+}
+
+export interface PostgresGrant extends PostgresObject {
+  readonly entityType: "Postgres::Grant" | "Postgres::DefaultPrivileges";
+  readonly props: GrantProps | DefaultPrivilegesProps;
 }
 
 export function isPostgresObject(value: unknown): value is PostgresObject {
@@ -521,7 +604,7 @@ export const POSTGRES_TEMPLATES: TemplateDialect = {
 
 type Ctx = TemplateCtx;
 
-export type PostgresTag = "schema" | "table" | "index" | "view" | "sequence" | "type" | "domain" | "extension" | "func" | "procedure" | "trigger";
+export type PostgresTag = "schema" | "table" | "index" | "view" | "sequence" | "type" | "domain" | "extension" | "func" | "procedure" | "trigger" | "policy" | "role" | "grant";
 
 const STATEMENT_OF: Record<PostgresTag, StatementNode["statement"]> = {
   schema: "schema",
@@ -535,6 +618,9 @@ const STATEMENT_OF: Record<PostgresTag, StatementNode["statement"]> = {
   func: "function",
   procedure: "procedure",
   trigger: "trigger",
+  policy: "policy",
+  role: "role",
+  grant: "grant",
 };
 
 const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
@@ -549,6 +635,10 @@ const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
   function: "func",
   procedure: "procedure",
   trigger: "trigger",
+  policy: "policy",
+  role: "role",
+  grant: "grant",
+  rowSecurity: undefined,
   comment: undefined,
 };
 
@@ -565,6 +655,10 @@ export const STATEMENT_NAMES: Record<StatementNode["statement"], string> = {
   function: "CREATE FUNCTION",
   procedure: "CREATE PROCEDURE",
   trigger: "CREATE TRIGGER",
+  policy: "CREATE POLICY",
+  role: "CREATE ROLE",
+  grant: "GRANT",
+  rowSecurity: "ALTER TABLE",
   comment: "COMMENT ON",
 };
 
@@ -782,9 +876,9 @@ function applyComments(
       if (value !== undefined) constraint!.comment = value;
     } else {
       if (!objectTypes.includes(c.objectType)) refuse(c, `does not comment on the ${tag} this template declares`);
-      if (c.objectType === "TRIGGER") {
+      if (c.objectType === "TRIGGER" || c.objectType === "POLICY") {
         // `COMMENT ON TRIGGER name ON table`: the name is the trigger's, the table its own.
-        if (qualified(ctx, c.target).name !== self.name || !c.on || !isSelf({ ...qualified(ctx, c.on), name: self.name })) refuse(c, `names another trigger than ${self.name}`);
+        if (qualified(ctx, c.target).name !== self.name || !c.on || !isSelf({ ...qualified(ctx, c.on), name: self.name })) refuse(c, `names another ${c.objectType.toLowerCase()} than ${self.name}`);
       } else if (!isSelf(qualified(ctx, c.target))) refuse(c, `names another object than ${sqlNameOf(self)}`);
       comment = value;
     }
@@ -799,6 +893,17 @@ function lastDot(ctx: Ctx, span: Span): number {
     if (t.kind === "punct" && t.text === ".") return i;
   }
   return span.from;
+}
+
+/**
+ * The first statement after the CREATE that its template may not hold: a
+ * template is one object, then COMMENT ON statements for it; a table's may
+ * also turn row-level security on or off (`ALTER TABLE ... ENABLE ROW LEVEL
+ * SECURITY`), as `pg_dump` prints it. A grant is one statement.
+ */
+export function followOnStray(tag: PostgresTag, rest: readonly StatementNode[]): StatementNode | undefined {
+  if (tag === "grant") return rest[0];
+  return rest.find((n) => n.statement !== "comment" && !(tag === "table" && n.statement === "rowSecurity"));
 }
 
 /**
@@ -897,6 +1002,75 @@ function inlineQuoted(parts: readonly string[], values: readonly unknown[]): { p
   return { parts: out, values: outValues, original, inlined, refs };
 }
 
+/** A role named where one is granted to: an interpolated role entity gives its name. */
+function roleName(ctx: Ctx, r: { name: string; span: Span }): string {
+  if (r.name) return r.name;
+  const t = ctx.tokens[r.span.from];
+  const v = t?.kind === "ref" ? ctx.values[t.part] : undefined;
+  if (isPostgresObject(v)) return (v.props as { name: string }).name;
+  return identValue(req(text(ctx, r.span)));
+}
+
+/** A GRANT's, REVOKE's or ALTER DEFAULT PRIVILEGES's props. */
+function grantProps(ctx: Ctx, node: GrantNode, ddl: string, source: { strings: string[] }): GrantProps | DefaultPrivilegesProps {
+  const action = node.revoke ? "revoke" : "grant";
+  const grantees = node.grantees.map((g) => roleName(ctx, g));
+  if (node.defaults) {
+    if (node.privileges.some((p) => p.columns.length > 0)) throw new SqlTemplateError("grant", "default privileges are on whole objects; a column list is for a grant on one table", 0, 0);
+    const on = (node.on === "ROUTINES" ? "functions" : node.on.toLowerCase()) as DefaultPrivilegesProps["on"];
+    const forRoles = node.forRoles?.map((r) => roleName(ctx, r));
+    const inSchemas = node.inSchemas?.map((s) => columnName(ctx, s));
+    if (on === "schemas" && inSchemas) throw new SqlTemplateError("grant", "default privileges on schemas cannot be limited to a schema (IN SCHEMA)", 0, 0);
+    const privileges = node.privileges.map((p) => p.privilege.toLowerCase());
+    return stripUnset({
+      name: `default privileges ${action === "grant" ? "grant" : "revoke"} ${privileges.join(", ")} on ${on}${inSchemas ? ` in ${inSchemas.join(", ")}` : ""}${forRoles ? ` for ${forRoles.join(", ")}` : ""} ${action === "grant" ? "to" : "from"} ${grantees.join(", ")}`,
+      action,
+      grantOptionFor: node.grantOptionFor || undefined,
+      forRoles,
+      inSchemas,
+      privileges,
+      on,
+      grantees,
+      withGrantOption: node.withGrantOption || undefined,
+      ddl,
+      source,
+    }) as DefaultPrivilegesProps;
+  }
+  const on = (node.on === "TABLE" ? "table" : node.on.toLowerCase()) as GrantProps["on"];
+  const routine = on === "function" || on === "procedure" || on === "routine";
+  const objects: Array<PostgresObject | string> = [];
+  const objectNames: string[] = [];
+  for (const o of node.objects) {
+    const t = target(ctx, o.name);
+    objects.push(t);
+    let sqlName = typeof t === "string" ? t : on === "schema" ? (t.props as { name: string }).name : t.sqlName;
+    if (routine) {
+      if (o.args) sqlName += `(${req(text(ctx, o.args, "objects")) ?? ""})`;
+      else if (typeof t !== "string" && (t.entityType === POSTGRES_ENTITY_TYPES.function || t.entityType === POSTGRES_ENTITY_TYPES.procedure)) {
+        // An interpolated routine is named by its own parameter types.
+        sqlName += `(${(t.props as RoutineProps).args.filter((a) => a.mode !== "out").map((a) => a.type).join(", ")})`;
+      } else throw new SqlTemplateError("grant", `${sqlName}: name the parameter types (${sqlName}(...)), or interpolate the routine, since overloads share a name`, 0, 0);
+    }
+    objectNames.push(sqlName);
+  }
+  const privileges = node.privileges.map((p) => stripUnset({ privilege: p.privilege.toLowerCase(), columns: p.columns.length > 0 ? p.columns.map((c) => columnName(ctx, c)) : undefined }) as PrivilegeDef);
+  if (on !== "table" && privileges.some((p) => p.columns)) throw new SqlTemplateError("grant", "a column list is for privileges on a table", 0, 0);
+  const verb = action === "grant" ? "to" : "from";
+  return stripUnset({
+    name: `${action} ${privileges.map((p) => `${p.privilege}${p.columns ? `(${p.columns.join(", ")})` : ""}`).join(", ")} on ${on} ${objectNames.join(", ")} ${verb} ${grantees.join(", ")}`,
+    action,
+    grantOptionFor: node.grantOptionFor || undefined,
+    privileges,
+    on,
+    objects,
+    objectNames,
+    grantees,
+    withGrantOption: node.withGrantOption || undefined,
+    ddl,
+    source,
+  }) as GrantProps;
+}
+
 function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string[], rawValues: readonly unknown[]): PostgresObject {
   const rawParts = templateParts(strings);
   const routine = tag === "func" || tag === "procedure";
@@ -915,11 +1089,28 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   if (node.statement !== STATEMENT_OF[tag]) {
     const holds = STATEMENT_NAMES[node.statement];
     const use = TAG_OF[node.statement];
-    throw new SqlTemplateError(tag, use ? `holds a ${holds}; use the ${use} tag` : `holds a ${holds} before any CREATE; a COMMENT ON goes after the CREATE it comments on`, 0, 0);
+    throw new SqlTemplateError(
+      tag,
+      use
+        ? `holds a ${holds}; use the ${use} tag`
+        : node.statement === "rowSecurity"
+          ? "holds an ALTER TABLE ... ROW LEVEL SECURITY before any CREATE; it goes after the table's CREATE TABLE, in the table's template"
+          : `holds a ${holds} before any CREATE; a COMMENT ON goes after the CREATE it comments on`,
+      0,
+      0,
+    );
   }
-  const stray = rest.find((n) => n.statement !== "comment");
-  if (stray) throw new SqlTemplateError(tag, `holds a second statement (${STATEMENT_NAMES[stray.statement]}); a template declares one object, followed only by COMMENT ON statements for it`, 0, 0);
-  const comments = rest as CommentNode[];
+  const stray = followOnStray(tag, rest);
+  if (stray) {
+    throw new SqlTemplateError(
+      tag,
+      `holds a second statement (${STATEMENT_NAMES[stray.statement]}); a template declares one object, followed only by COMMENT ON statements for it${tag === "table" ? " and ALTER TABLE ... ROW LEVEL SECURITY" : ""}`,
+      0,
+      0,
+    );
+  }
+  const comments = rest.filter((n): n is CommentNode => n.statement === "comment");
+  const rowSecurity = rest.filter((n): n is RowSecurityNode => n.statement === "rowSecurity");
 
   const positions = regclassPositions(tokens, values);
   const render = (v: unknown, i?: number): string => {
@@ -1078,6 +1269,16 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       const named = new Map<string, Commentable>();
       for (const c of [primaryKey, ...uniques, ...checks, ...foreignKeys, ...exclusions]) if (c?.name) named.set(c.name, c);
       const comment = applyComments(tag, ctx, comments, q, ["TABLE"], { columns: new Map(columns.map((c) => [c.name, c])), constraints: named });
+      let rls: boolean | undefined;
+      let force: boolean | undefined;
+      for (const r of rowSecurity) {
+        const t = qualified(ctx, r.table);
+        if (t.name !== q.name || (t.schema !== undefined && q.schema !== undefined && t.schema !== q.schema)) {
+          throw new SqlTemplateError(tag, `ALTER TABLE ${sqlNameOf(t)} ... ROW LEVEL SECURITY names another table than ${sqlNameOf(q)}`, 0, 0);
+        }
+        if (r.action === "ENABLE" || r.action === "DISABLE") rls = r.action === "ENABLE";
+        else force = r.action === "FORCE";
+      }
       const props: TableProps = strip(
         {
           ...q,
@@ -1099,12 +1300,16 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
           with: text(ctx, node.with, "with"),
           onCommit: text(ctx, node.onCommit),
           tablespace: text(ctx, node.tablespace, "tablespace"),
+          rowSecurity: rls,
+          forceRowSecurity: force,
           comment,
           ddl,
           source,
         },
         ["columns", "uniques", "checks", "foreignKeys", "exclusions", "like", "inherits"],
       );
+      if (rls === false) props.rowSecurity = false;
+      if (force === false) props.forceRowSecurity = false;
       return make(POSTGRES_ENTITY_TYPES.table, q, props, columns.map((c) => c.name));
     }
     case "index": {
@@ -1274,6 +1479,52 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       );
       return make(POSTGRES_ENTITY_TYPES.trigger, q, props);
     }
+    case "policy": {
+      const tq = qualified(ctx, node.table);
+      const name = node.name.pieces[0] || identValue(req(text(ctx, node.name.span)));
+      feed(ctx, node.name.span, "name");
+      // A policy is its table's, named in the table's schema.
+      const q = { schema: tq.schema, name };
+      const comment = applyComments(tag, ctx, comments, q, ["POLICY"]);
+      const props: PolicyProps = stripUnset({
+        ...q,
+        table: target(ctx, node.table),
+        tableName: sqlNameOf(tq),
+        permissive: node.permissive !== false,
+        command: (node.command ?? "ALL").toLowerCase() as PolicyProps["command"],
+        roles: node.roles.length > 0 ? node.roles.map((r) => roleName(ctx, r)) : ["public"],
+        using: text(ctx, node.using, "using"),
+        check: text(ctx, node.check, "check"),
+        comment,
+        ddl,
+        source,
+      });
+      // AS RESTRICTIVE is a false that means something.
+      props.permissive = node.permissive !== false;
+      return make(POSTGRES_ENTITY_TYPES.policy, q, props);
+    }
+    case "role": {
+      const name = node.name.pieces[0] || identValue(req(text(ctx, node.name.span)));
+      feed(ctx, node.name.span, "name");
+      const comment = applyComments(tag, ctx, comments, { name }, ["ROLE"]);
+      const value = (o: string) => {
+        const x = node.options.find((y) => y.option === o);
+        return x?.value ? text(ctx, x.value, "options") : undefined;
+      };
+      const props: RoleProps = stripUnset({
+        name,
+        options: node.options.filter((o) => o.value === undefined).map((o) => o.option.toLowerCase()),
+        connectionLimit: value("CONNECTION LIMIT"),
+        comment,
+        ddl,
+        source,
+      });
+      return make(POSTGRES_ENTITY_TYPES.role, { name }, props);
+    }
+    case "grant":
+      return make(node.defaults ? POSTGRES_ENTITY_TYPES.defaultPrivileges : POSTGRES_ENTITY_TYPES.grant, { name: "" }, grantProps(ctx, node, ddl, source));
+    case "rowSecurity":
+      throw new SqlTemplateError(tag, "an ALTER TABLE ... ROW LEVEL SECURITY goes after the table's CREATE TABLE, in the table's template", 0, 0);
     case "comment":
       throw new SqlTemplateError(tag, "a COMMENT ON goes after the CREATE it comments on", 0, 0);
   }
@@ -1336,4 +1587,29 @@ export function procedure(strings: TemplateStringsArray, ...values: unknown[]): 
 /** `` trigger`CREATE [OR REPLACE] [CONSTRAINT] TRIGGER name ... ON ${table} ... EXECUTE FUNCTION ${fn}()` ``: one trigger on its table. */
 export function trigger(strings: TemplateStringsArray, ...values: unknown[]): PostgresTrigger {
   return build("trigger", strings, values) as PostgresTrigger;
+}
+
+/** `` policy`CREATE POLICY name ON ${table} ... USING (...)` ``: one row-level security policy on its table. */
+export function policy(strings: TemplateStringsArray, ...values: unknown[]): PostgresPolicy {
+  return build("policy", strings, values) as PostgresPolicy;
+}
+
+/**
+ * `` role`CREATE ROLE name [WITH] options` ``: a role the schema needs, created
+ * when it is missing. A password and memberships are the environment's and are
+ * refused; a role the environment provisions is named as text where it is
+ * granted to, never declared.
+ */
+export function role(strings: TemplateStringsArray, ...values: unknown[]): PostgresRole {
+  return build("role", strings, values) as PostgresRole;
+}
+
+/**
+ * `` grant`GRANT ... ON ... TO ...` ``, `REVOKE ... FROM ...`, or
+ * `ALTER DEFAULT PRIVILEGES ... GRANT|REVOKE ...`: privileges on schemas,
+ * tables, columns, sequences and routines, applied where the profile manages
+ * access (`sql.profiles.<env>.access`).
+ */
+export function grant(strings: TemplateStringsArray, ...values: unknown[]): PostgresGrant {
+  return build("grant", strings, values) as PostgresGrant;
 }

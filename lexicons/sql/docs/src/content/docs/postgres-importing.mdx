@@ -86,7 +86,7 @@ The import builds and plans as no change against the server it came from, becaus
 - Aggregates, the triggers Postgres makes for itself (a foreign key's), and the copies of a partitioned table's trigger on its partitions.
 - A function or procedure with a SQL-standard body (`RETURN expr`, `BEGIN ATOMIC`), which the server prints back rewritten; the import names each one in a warning. Declare it again with a string body (`AS $$ ... $$`).
 - The working function and trigger of a column migration in progress.
-- Policies, roles and grants, which the dialect does not declare.
+- Roles, which are the environment's. Policies, row-level security and privileges are imported only where the profile manages access (`sql.profiles.<env>.access`); see [Access](../postgres-access/#import).
 
 ### Objects another tool keeps
 

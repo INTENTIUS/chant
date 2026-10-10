@@ -17,7 +17,7 @@ import { deepObservation, type DeepObservationResult, type DeepResourceObservati
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindPostgres, classifyPostgresFailure, type BindOptions } from "../live/bind";
 import { liveKey, readLiveSchema, type LivePgObject } from "../live/catalog";
-import { declaredAddress, scopeFor } from "../live/describe-resources";
+import { accessUnobserved, declaredAddress, scopeFor } from "../live/describe-resources";
 import * as tags from "../entities";
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { canonicalPgObject, columnShape, sameConstraint, type CanonicalPgObject } from "./normalize";
@@ -39,6 +39,10 @@ const TAG: Record<string, (s: TemplateStringsArray) => { props: object }> = {
   [POSTGRES_ENTITY_TYPES.function]: tags.func,
   [POSTGRES_ENTITY_TYPES.procedure]: tags.procedure,
   [POSTGRES_ENTITY_TYPES.trigger]: tags.trigger,
+  [POSTGRES_ENTITY_TYPES.policy]: tags.policy,
+  [POSTGRES_ENTITY_TYPES.role]: tags.role,
+  [POSTGRES_ENTITY_TYPES.grant]: tags.grant,
+  [POSTGRES_ENTITY_TYPES.defaultPrivileges]: tags.grant,
 };
 
 /** The props of what the server printed, parsed with the declaration's tag. */
@@ -105,6 +109,14 @@ const PROP_OF_FIELD: Record<string, string[]> = {
   deferrable: ["deferrable"],
   initiallyDeferred: ["initiallyDeferred"],
   referencing: ["referencing"],
+  restrictive: ["permissive"],
+  command: ["command"],
+  roles: ["roles"],
+  check: ["check"],
+  attributes: ["options"],
+  connectionLimit: ["connectionLimit"],
+  rowSecurity: ["rowSecurity"],
+  forceRowSecurity: ["forceRowSecurity"],
 };
 
 /** Props keys that hold constraints, by constraint kind. */
@@ -190,6 +202,8 @@ export async function observeResourcesDeep(
     try {
       live = await readLiveSchema(bound.client, {
         schemas: scopeFor(target, declared.filter((x) => x.entity?.entityType.startsWith("Postgres::")).map((x) => ({ type: x.entity!.entityType, props: x.entity!.props }))),
+        access: target.access === true,
+        roles: declared.filter((x) => x.entity?.entityType === POSTGRES_ENTITY_TYPES.role).map((x) => String(x.entity!.props.name)),
       });
     } catch (err) {
       await bound.client.end();
@@ -207,6 +221,11 @@ export async function observeResourcesDeep(
         unobserved[name] = { type: entity?.entityType ?? "", reason: "unsupported-kind" };
         continue;
       }
+      const why = accessUnobserved(entity.entityType, target.access === true);
+      if (why) {
+        unobserved[name] = { type: entity.entityType, ...why };
+        continue;
+      }
       const { schema, name: objectName, signature } = declaredAddress({ type: entity.entityType, props: entity.props }, target.defaultSchema);
       const o = byKey.get(liveKey(entity.entityType, schema, objectName, signature));
       if (!o) continue;
@@ -214,8 +233,10 @@ export async function observeResourcesDeep(
         const lp = liveProps(o);
         let d = canonicalPgObject(entity.entityType, entity.props, target.defaultSchema);
         const l = canonicalPgObject(o.type, lp, target.defaultSchema);
-        // A trigger's WHEN as the server would print it, when the rules leave it different.
-        if (d.kind === "trigger" && d.fields.when !== l.fields.when) d = await serverNormalized(client, d, target.defaultSchema);
+        // A trigger's WHEN and a policy's expressions as the server would print them, when the rules leave them different.
+        if ((d.kind === "trigger" && d.fields.when !== l.fields.when) || (d.kind === "policy" && (d.fields.using !== l.fields.using || d.fields.check !== l.fields.check))) {
+          d = await serverNormalized(client, d, target.defaultSchema);
+        }
         resources[name] = { type: o.type, physicalId: o.oid, properties: inDeclaredVocabulary(entity.props, lp, d, l) };
       } catch (err) {
         unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };

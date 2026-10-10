@@ -8,7 +8,10 @@
  * (`CREATE TEMP VIEW`, or a `CREATE TEMP TABLE` holding the columns' types,
  * defaults and generated expressions and the checks) inside a transaction
  * that is always rolled back, with a short `lock_timeout`, and read back with
- * the same printers the catalog read uses. Nothing is left behind: Postgres
+ * the same printers the catalog read uses. A trigger's `WHEN` and a policy's
+ * `USING` and `WITH CHECK`, which the server prints with the casts it
+ * resolved, are read back from a trigger or policy on a temporary copy of the
+ * table (`CREATE TEMP TABLE ... (LIKE table)`). Nothing is left behind: Postgres
  * DDL is transactional and a temporary object lives in the session's own
  * schema. A server that refuses (no TEMP privilege, a lock not granted in
  * time, an expression it rejects) leaves the rules' answer standing.
@@ -108,6 +111,27 @@ async function triggerWhen(client: PostgresClient, o: CanonicalPgObject, default
   });
 }
 
+/** A policy's USING and WITH CHECK as the server prints them, canonical, from a policy on a temporary copy of its table. */
+async function policyExpressions(client: PostgresClient, o: CanonicalPgObject, defaultSchema: string): Promise<{ using?: string; check?: string } | undefined> {
+  const using = o.fields.using as string | undefined;
+  const check = o.fields.check as string | undefined;
+  if (using === undefined && check === undefined) return undefined;
+  return rolledBack(client, defaultSchema, async () => {
+    await client.query(`CREATE TEMP TABLE chant_normalize (LIKE ${String(o.fields.table)})`);
+    await client.query(
+      [`CREATE POLICY chant_normalize ON pg_temp.chant_normalize FOR ${String(o.fields.command ?? "all").toUpperCase()}`, using !== undefined ? `USING (${using})` : "", check !== undefined ? `WITH CHECK (${check})` : ""]
+        .filter(Boolean)
+        .join(" "),
+    );
+    await emptyPath(client);
+    const [row] = await client.query<Row>(
+      `SELECT pg_catalog.pg_get_expr(p.polqual, p.polrelid, true) AS qual, pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid, true) AS withcheck
+       FROM pg_catalog.pg_policy p WHERE p.polrelid = 'pg_temp.chant_normalize'::pg_catalog.regclass`,
+    );
+    return { ...(row?.qual ? { using: canonicalExpr(String(row.qual)) } : {}), ...(row?.withcheck ? { check: canonicalExpr(String(row.withcheck)) } : {}) };
+  });
+}
+
 /**
  * The declared object with its expressions in the server's own printing,
  * when the server answers; the object unchanged otherwise. Only the
@@ -118,6 +142,10 @@ export async function serverNormalized<T extends CanonicalPgObject & { outputs?:
     const q = await viewQuery(client, o.fields.query, defaultSchema);
     // A declared column list names the outputs; otherwise the server's names do (`SELECT *` expanded).
     return q === undefined ? o : { ...o, fields: { ...o.fields, query: q.query }, ...(o.fields.columns === undefined ? { outputs: q.outputs } : {}) };
+  }
+  if (o.kind === "policy") {
+    const e = await policyExpressions(client, o, defaultSchema);
+    return e === undefined ? o : { ...o, fields: { ...o.fields, ...e } };
   }
   if (o.kind === "trigger") {
     const when = await triggerWhen(client, o, defaultSchema);

@@ -21,6 +21,8 @@ export interface PostgresTarget {
   provider?: PostgresProvider;
   /** The apply's timeouts the profile sets (`lockTimeoutMs`, `statementTimeoutMs`, `scanTimeoutMs`); the applier's defaults otherwise. */
   timeouts?: { lockTimeoutMs?: number; statementTimeoutMs?: number; scanTimeoutMs?: number };
+  /** Whether chant manages access here (`sql.profiles.<env>.access`): policies, row-level security, the declared roles, grants and default privileges. */
+  access?: boolean;
 }
 
 export interface UnresolvedTarget {
@@ -72,6 +74,7 @@ export function resolvePostgresTarget(input: {
       ...(profile.schemas ? { schemas: profile.schemas } : {}),
       defaultSchema: profile.defaultSchema ?? "public",
       ...(Object.keys(timeouts).length > 0 ? { timeouts } : {}),
+      ...(profile.access === true ? { access: true } : {}),
     });
   }
   const url = env.POSTGRES_URL;

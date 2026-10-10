@@ -1,6 +1,6 @@
 import type { LintContext, LintDiagnostic, LintRule } from "@intentius/chant/lint/rule";
 import { parseStatements, SqlSyntaxError } from "../../postgres/parser";
-import { STATEMENT_NAMES, type PostgresTag } from "../../postgres/entities";
+import { followOnStray, STATEMENT_NAMES, type PostgresTag } from "../../postgres/entities";
 import { findPostgresTemplates, postgresTokensOf, templatePosition, tokenPosition } from "./postgres-templates";
 
 /** The statement each tag holds. */
@@ -16,6 +16,9 @@ const STATEMENT: Record<PostgresTag, string> = {
   func: "function",
   procedure: "procedure",
   trigger: "trigger",
+  policy: "policy",
+  role: "role",
+  grant: "grant",
 };
 
 const TAG_OF: Record<string, PostgresTag> = Object.fromEntries(Object.entries(STATEMENT).map(([tag, statement]) => [statement, tag as PostgresTag]));
@@ -62,15 +65,15 @@ export const sqlpg001: LintRule = {
           report(
             use
               ? `${found.tag}\`...\` holds a ${STATEMENT_NAMES[node!.statement]}; use the ${use} tag`
-              : `${found.tag}\`...\` starts with a COMMENT ON; it goes after the CREATE it comments on`,
+              : `${found.tag}\`...\` starts with a ${STATEMENT_NAMES[node!.statement]}; it goes after the CREATE it belongs to`,
             templatePosition(source, found, 0, 0),
           );
           continue;
         }
-        const stray = rest.find((n) => n.statement !== "comment");
+        const stray = followOnStray(found.tag, rest);
         if (stray) {
           report(
-            `${found.tag}\`...\` holds a second statement (${STATEMENT_NAMES[stray.statement]}); a template declares one object, followed only by COMMENT ON statements for it`,
+            `${found.tag}\`...\` holds a second statement (${STATEMENT_NAMES[stray.statement]}); a template declares one object, followed only by COMMENT ON statements for it${found.tag === "table" ? " and ALTER TABLE ... ROW LEVEL SECURITY" : ""}`,
             templatePosition(source, found, 0, 0),
           );
         }

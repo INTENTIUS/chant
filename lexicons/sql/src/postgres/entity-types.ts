@@ -16,6 +16,10 @@ export const POSTGRES_ENTITY_TYPES = {
   function: "Postgres::Function",
   procedure: "Postgres::Procedure",
   trigger: "Postgres::Trigger",
+  policy: "Postgres::Policy",
+  role: "Postgres::Role",
+  grant: "Postgres::Grant",
+  defaultPrivileges: "Postgres::DefaultPrivileges",
 } as const;
 
 export type PostgresEntityType = (typeof POSTGRES_ENTITY_TYPES)[keyof typeof POSTGRES_ENTITY_TYPES];

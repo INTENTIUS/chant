@@ -106,6 +106,9 @@ export const sqlPlugin: LexiconPlugin = {
       { name: "func", isTag: true, description: "A Postgres CREATE FUNCTION, parsed into a function entity with its body kept verbatim" },
       { name: "procedure", isTag: true, description: "A Postgres CREATE PROCEDURE, parsed into a procedure entity with its body kept verbatim" },
       { name: "trigger", isTag: true, description: "A Postgres CREATE TRIGGER, parsed into a trigger entity on its table" },
+      { name: "policy", isTag: true, description: "A Postgres CREATE POLICY, parsed into a row-level security policy on its table" },
+      { name: "role", isTag: true, description: "A Postgres CREATE ROLE without a password or memberships, parsed into a role entity" },
+      { name: "grant", isTag: true, description: "A Postgres GRANT, REVOKE or ALTER DEFAULT PRIVILEGES, parsed into the privileges it declares" },
       {
         name: "literal",
         isTag: false,

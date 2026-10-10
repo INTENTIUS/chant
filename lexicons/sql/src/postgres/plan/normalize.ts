@@ -60,6 +60,10 @@ import type {
   IndexProps,
   KeyDef,
   SchemaProps,
+  DefaultPrivilegesProps,
+  GrantProps,
+  PolicyProps,
+  RoleProps,
   RoutineProps,
   SequenceProps,
   TableProps,
@@ -67,6 +71,8 @@ import type {
   ViewProps,
 } from "../entities";
 import { stringValue } from "../entities";
+import { parseStatements } from "../parser";
+import type { RoutineNode } from "../parser";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -319,7 +325,29 @@ export interface CanonicalConstraint {
   comment?: string;
 }
 
-export type CanonicalKind = "schema" | "table" | "index" | "view" | "materializedView" | "sequence" | "enum" | "domain" | "extension" | "function" | "procedure" | "trigger";
+export type CanonicalKind =
+  | "schema"
+  | "table"
+  | "index"
+  | "view"
+  | "materializedView"
+  | "sequence"
+  | "enum"
+  | "domain"
+  | "extension"
+  | "function"
+  | "procedure"
+  | "trigger"
+  | "policy"
+  | "role"
+  | "grant"
+  | "defaultPrivileges";
+
+/** The kinds whose declarations are privileges, compared as the access they add up to (`../access/`), not one by one. */
+export const ACCESS_KINDS: ReadonlySet<CanonicalKind> = new Set(["grant", "defaultPrivileges"]);
+
+/** The kinds a profile manages only when it says so (`sql.profiles.<env>.access`). */
+export const ACCESS_MANAGED_KINDS: ReadonlySet<CanonicalKind> = new Set(["policy", "role", "grant", "defaultPrivileges"]);
 
 export interface CanonicalPgObject {
   kind: CanonicalKind;
@@ -350,6 +378,10 @@ const kindOf: Record<string, CanonicalKind> = {
   "Postgres::Function": "function",
   "Postgres::Procedure": "procedure",
   "Postgres::Trigger": "trigger",
+  "Postgres::Policy": "policy",
+  "Postgres::Role": "role",
+  "Postgres::Grant": "grant",
+  "Postgres::DefaultPrivileges": "defaultPrivileges",
 };
 
 const comment = (c: string | undefined): string | undefined => {
@@ -500,6 +532,38 @@ function routineFields(kind: "function" | "procedure", p: RoutineProps, defaultS
   fields.window = p.window === true;
 }
 
+/** A routine named with its parameters as a GRANT writes it (`app.f(int, text)`), as the target the catalog names: `app.f(integer,text)`. */
+export function canonicalRoutineTarget(text: string, defaultSchema: string): string {
+  const open = text.indexOf("(");
+  const name = canonicalName(open < 0 ? text : text.slice(0, open), defaultSchema);
+  if (open < 0) return name;
+  try {
+    // The parameter list read the way a CREATE FUNCTION reads it: modes, names and types.
+    const tokens = tokenizeText(`CREATE FUNCTION x${text.slice(open)} RETURNS void LANGUAGE sql AS ''`, 0);
+    const [node] = parseStatements(tokens);
+    const args = (node as RoutineNode).args.map((a) => ({ mode: (a.mode?.toLowerCase() ?? "in") as RoutineProps["args"][number]["mode"], type: tokens.slice(a.type.from, a.type.to).map((t) => t.text).join("") }));
+    return `${name}${routineSignature({ args }, defaultSchema)}`;
+  } catch {
+    return `${name}${text.slice(open).replace(/\s+/g, "")}`;
+  }
+}
+
+/** A role's attributes that differ from `CREATE ROLE`'s defaults (NOLOGIN, INHERIT and every other NO...), sorted. */
+const ROLE_DEFAULTS: Readonly<Record<string, boolean>> = { superuser: false, createdb: false, createrole: false, inherit: true, login: false, replication: false, bypassrls: false };
+
+export function canonicalRoleAttributes(options: readonly string[]): string[] {
+  const set: Record<string, boolean> = { ...ROLE_DEFAULTS };
+  for (const o of options) {
+    const word = o.toLowerCase();
+    if (word.startsWith("no") && word.slice(2) in ROLE_DEFAULTS) set[word.slice(2)] = false;
+    else if (word in ROLE_DEFAULTS) set[word] = true;
+  }
+  return Object.entries(set)
+    .filter(([k, v]) => ROLE_DEFAULTS[k] !== v)
+    .map(([k, v]) => (v ? k : `no${k}`))
+    .sort();
+}
+
 /** The order the catalog prints a trigger's events in. */
 const EVENT_ORDER = ["insert", "delete", "update", "truncate"];
 
@@ -538,7 +602,7 @@ function triggerFields(p: TriggerProps, defaultSchema: string, fields: Record<st
 export function canonicalPgObject(entityType: string, props: Record<string, unknown>, defaultSchema = "public"): CanonicalPgObject {
   const kind = kindOf[entityType];
   if (!kind) throw new Error(`not a Postgres entity type: ${entityType}`);
-  const schemaOf = (p: { schema?: string }) => (kind === "schema" || kind === "extension" ? undefined : (p.schema ?? defaultSchema));
+  const schemaOf = (p: { schema?: string }) => (kind === "schema" || kind === "extension" || kind === "role" || ACCESS_KINDS.has(kind) ? undefined : (p.schema ?? defaultSchema));
   const base: Pick<CanonicalPgObject, "kind" | "schema" | "name" | "signature"> = { kind, schema: schemaOf(props as { schema?: string }), name: String(props.name) };
   const fields: Record<string, unknown> = { comment: comment(props.comment as string | undefined) };
   const columns: CanonicalColumn[] = [];
@@ -570,6 +634,53 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
       const p = props as unknown as TriggerProps;
       triggerFields(p, defaultSchema, fields);
       base.signature = ` ON ${String(fields.table)}`;
+      break;
+    }
+    case "policy": {
+      const p = props as unknown as PolicyProps;
+      fields.table = canonicalName(p.tableName, defaultSchema);
+      base.signature = ` ON ${String(fields.table)}`;
+      fields.restrictive = p.permissive === false;
+      fields.command = p.command && p.command !== "all" ? p.command : undefined;
+      const roles = [...new Set(p.roles.map((r) => r.toLowerCase() === "public" ? "public" : quoteIdent(r)))].sort();
+      fields.roles = roles.length === 1 && roles[0] === "public" ? undefined : roles;
+      fields.using = canonicalExpr(p.using);
+      fields.check = canonicalExpr(p.check);
+      break;
+    }
+    case "role": {
+      const p = props as unknown as RoleProps;
+      const attributes = canonicalRoleAttributes(p.options);
+      fields.attributes = attributes.length > 0 ? attributes : undefined;
+      fields.connectionLimit = p.connectionLimit !== undefined && Number(p.connectionLimit) !== -1 ? String(Number(p.connectionLimit)) : undefined;
+      break;
+    }
+    case "grant": {
+      const p = props as unknown as GrantProps;
+      const routine = p.on === "function" || p.on === "procedure" || p.on === "routine";
+      fields.grant = {
+        action: p.action,
+        on: p.on,
+        objects: p.objectNames.map((n) => (routine ? canonicalRoutineTarget(n, defaultSchema) : p.on === "schema" ? canonicalName(n) : canonicalName(n, defaultSchema))),
+        privileges: p.privileges.map((x) => ({ privilege: x.privilege.toLowerCase(), ...(x.columns ? { columns: x.columns } : {}) })),
+        grantees: p.grantees,
+        ...(p.withGrantOption ? { withGrantOption: true } : {}),
+        ...(p.grantOptionFor ? { grantOptionFor: true } : {}),
+      };
+      break;
+    }
+    case "defaultPrivileges": {
+      const p = props as unknown as DefaultPrivilegesProps;
+      fields.grant = {
+        action: p.action,
+        on: p.on,
+        privileges: p.privileges.map((x) => ({ privilege: x.toLowerCase() })),
+        grantees: p.grantees,
+        ...(p.forRoles ? { forRoles: p.forRoles } : {}),
+        ...(p.inSchemas ? { inSchemas: p.inSchemas } : {}),
+        ...(p.withGrantOption ? { withGrantOption: true } : {}),
+        ...(p.grantOptionFor ? { grantOptionFor: true } : {}),
+      };
       break;
     }
     case "domain": {
@@ -681,6 +792,8 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
       fields.using = p.using && p.using.toLowerCase() !== "heap" ? p.using.toLowerCase() : undefined;
       fields.with = canonicalOptions(p.with);
       fields.tablespace = p.tablespace;
+      fields.rowSecurity = p.rowSecurity === true;
+      fields.forceRowSecurity = p.forceRowSecurity === true;
       break;
     }
   }

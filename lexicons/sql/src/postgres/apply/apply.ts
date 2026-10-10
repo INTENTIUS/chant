@@ -84,6 +84,9 @@ import type { PgChangeClass } from "../plan/rules";
 import type { CanonicalKind } from "../plan/normalize";
 import { quoteIdent } from "../keywords";
 import { planPgStatements, scansRows, type DeclaredPgObject, type PgDropStatement, type PgStep } from "./statements";
+import { ACCESS_KINDS, ACCESS_MANAGED_KINDS } from "../plan/normalize";
+import { declaredAccess, diffAccess, targetKey } from "../access/acl";
+import { readLiveAccess } from "../access/live";
 
 /** The timeouts a statement runs with, in milliseconds; 0 is no limit. */
 export interface PostgresApplyTimeouts {
@@ -144,9 +147,9 @@ export class PostgresApplyError extends SqlApplyError<PostgresApplyOutcome> {
  * (`app.touch()`), a trigger's with its table (`touch ON app.users`).
  */
 export const refName = (o: { kind: CanonicalKind; schema?: string; name: string; signature?: string }): string =>
-  o.kind === "trigger"
+  o.kind === "trigger" || o.kind === "policy"
     ? `${o.name}${o.signature ?? ""}`
-    : o.kind === "schema" || o.kind === "extension" || o.schema === undefined
+    : o.kind === "schema" || o.kind === "extension" || o.kind === "role" || o.schema === undefined
       ? o.name
       : `${o.schema}.${o.name}${o.kind === "function" || o.kind === "procedure" ? (o.signature ?? "") : ""}`;
 
@@ -259,7 +262,21 @@ export async function applyPostgres(
   });
   const normalizedByKey = new Map(plan.declared.map((o) => [o.key, o.canonical]));
   const liveRawByKey = new Map(plan.liveObjects.map((o) => [qualifiedKey(liveCanonicalAddress(o)), o]));
-  const objects = declared.map((original) => ({ ...original, canonical: { ...original.canonical, ...normalizedByKey.get(original.key) } }));
+  const managed = target.access === true;
+  // Access declarations a profile does not manage are not applied; grants and default privileges run after every object, as access.
+  for (const o of declared) {
+    if (!managed && ACCESS_MANAGED_KINDS.has(o.canonical.kind)) {
+      outcome.notAttempted.push({
+        kind: o.type,
+        name: o.name,
+        reason: "filtered",
+        detail: `access is not managed in this environment: set sql.profiles.<env>.access to plan and apply policies, roles, grants and row-level security`,
+      });
+    }
+  }
+  const objects = declared
+    .filter((o) => !ACCESS_KINDS.has(o.canonical.kind) && (managed || !ACCESS_MANAGED_KINDS.has(o.canonical.kind)))
+    .map((original) => ({ ...original, canonical: { ...original.canonical, ...normalizedByKey.get(original.key) } }));
   const matchedLive = new Set<string>();
   for (const m of matchPgObjects(plan.live, plan.declared)) if (m.kind === "matched") matchedLive.add(m.after.key);
 
@@ -275,6 +292,7 @@ export async function applyPostgres(
     allowDestructive: opts.prune === true,
     carriesMarker: (_live, key) => carriesMarker(liveRawByKey.get(key)?.comment, opts.marker),
     extensionComment: (name) => extensionComments.get(name),
+    access: managed,
     ...(opts.marker ? { marker: opts.marker } : {}),
   });
 
@@ -436,9 +454,100 @@ export async function applyPostgres(
   }
   await commit();
 
+  if (managed) await applyAccess(client, declared, onServer, exportNames, { ...opts, major: plan.major ?? opts.major ?? POSTGRES_LATEST_MAJOR, ...(plan.scope ? { schemas: plan.scope } : {}) }, timeouts, outcome, log);
+
   if (opts.prune) await prune(client, statements.drops, liveRawByKey, opts, timeouts, outcome, log);
   if (outcome.failed.length > 0) throw new PostgresApplyError(outcome);
   return outcome;
+}
+
+/**
+ * Access, after every object (#3681): the privileges and default privileges
+ * the declarations add up to, against what the server holds now that the
+ * objects exist, made in one transaction. A grant or default-privileges
+ * declaration is `updated` when a statement ran for it and `unchanged`
+ * otherwise; a privilege nothing declares is revoked under the object's name.
+ */
+async function applyAccess(
+  client: PostgresClient,
+  declared: readonly DeclaredPgObject[],
+  onServer: ReadonlySet<string>,
+  exportNames: ReadonlySet<string>,
+  opts: PostgresApplyOptions & { major: number; schemas?: string[] },
+  timeouts: PostgresApplyTimeouts,
+  outcome: PostgresApplyOutcome,
+  log: (line: string) => void,
+): Promise<void> {
+  const decls = declared.filter((o) => ACCESS_KINDS.has(o.canonical.kind));
+  const ref = (o: DeclaredPgObject) => ({ kind: o.type, name: o.canonical.name });
+  const ready: DeclaredPgObject[] = [];
+  for (const o of decls) {
+    const missing = missingDependencies(o.exportName, o.dependsOn, exportNames, onServer);
+    if (missing.length > 0) outcome.notAttempted.push({ ...ref(o), reason: "dependency-failed", detail: dependencyFailedDetail(missing) });
+    else ready.push(o);
+  }
+  const skipped = new Set(decls.filter((o) => !ready.includes(o)).map((o) => o.exportName));
+  const [me] = await client.query<{ self: string }>("SELECT current_user AS self");
+  const want = declaredAccess(
+    declared.filter((o) => !skipped.has(o.exportName)).map((o) => ({ key: o.exportName, canonical: o.canonical })),
+    { major: opts.major, ...(me?.self ? { self: me.self } : {}) },
+  );
+  const have = await readLiveAccess(client, want.targets, {
+    ...(opts.schemas ? { schemas: opts.schemas } : {}),
+    forRoles: want.forRoles,
+    declaredDefaults: want.targets.filter((t) => t.kind === "default"),
+  });
+  // A target that is not on the server (its object failed) is left for the next apply.
+  const changes = diffAccess(have.state, want.state, want.exportsOf).filter(
+    (c) => c.target.kind === "default" || have.present.has(targetKey(c.target.kind === "column" ? { kind: "table", name: c.target.name } : c.target)),
+  );
+  const ranFor = new Map<string, string[]>();
+  if (changes.length > 0) {
+    const t = { lockTimeoutMs: timeouts.lockTimeoutMs, statementTimeoutMs: timeouts.statementTimeoutMs };
+    const number = outcome.transactions.length;
+    const members = new Set<string>();
+    log("BEGIN");
+    await client.query("BEGIN");
+    try {
+      for (const set of [`SET LOCAL lock_timeout = ${ms(t.lockTimeoutMs)}`, `SET LOCAL statement_timeout = ${ms(t.statementTimeoutMs)}`]) {
+        log(set);
+        await client.query(set);
+      }
+      for (const c of changes) {
+        const object = c.exports[0] !== undefined ? (declared.find((o) => o.exportName === c.exports[0])?.canonical.name ?? c.change.object) : c.change.object.slice(4);
+        members.add(object);
+        for (const sql of c.sql) {
+          opts.signal?.throwIfAborted();
+          log(sql);
+          outcome.statements.push({ object, sql, class: c.change.class, ...t, transaction: number });
+          await client.query(sql);
+          for (const e of c.exports) ranFor.set(e, [...(ranFor.get(e) ?? []), sql]);
+        }
+      }
+      log("COMMIT");
+      await client.query("COMMIT");
+      outcome.transactions.push({ objects: [...members], result: "committed" });
+    } catch (err) {
+      if (opts.signal?.aborted) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw err;
+      }
+      const error = errorText(err, t);
+      const failedAt = outcome.statements[outcome.statements.length - 1]?.sql ?? "BEGIN";
+      log("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => undefined);
+      outcome.transactions.push({ objects: [...members], result: "rolled-back", failedAt: { sql: failedAt, error } });
+      for (const o of ready) {
+        if (changes.some((c) => c.exports.includes(o.exportName))) outcome.failed.push({ ...ref(o), error: `${error}, in the access transaction at ${failedAt}`, statements: [] });
+        else outcome.applied.push({ ...ref(o), action: "unchanged", statements: [] });
+      }
+      return;
+    }
+  }
+  for (const o of ready) {
+    const ran = ranFor.get(o.exportName) ?? [];
+    outcome.applied.push({ ...ref(o), action: ran.length > 0 ? "updated" : "unchanged", statements: ran });
+  }
 }
 
 /** The address a live object is keyed by in the diff. */
@@ -457,11 +566,15 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
       "Postgres::Function": "function",
       "Postgres::Procedure": "procedure",
       "Postgres::Trigger": "trigger",
+      "Postgres::Policy": "policy",
+      "Postgres::Role": "role",
+      "Postgres::Grant": "grant",
+      "Postgres::DefaultPrivileges": "defaultPrivileges",
     } as const
   )[o.type];
   return {
     kind,
-    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" ? { schema: o.schema } : {}),
+    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" && kind !== "role" ? { schema: o.schema } : {}),
     name: o.name,
     ...(o.signature !== undefined ? { signature: o.signature } : {}),
   };

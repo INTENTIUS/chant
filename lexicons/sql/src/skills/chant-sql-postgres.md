@@ -1,6 +1,6 @@
 ---
 skill: chant-sql-postgres
-description: Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types, extensions, functions, procedures and triggers as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules
+description: Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types, extensions, functions, procedures, triggers, policies, roles and grants as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules
 user-invocable: true
 ---
 # Declaring a Postgres schema with chant
@@ -40,6 +40,9 @@ The export name (`users`) is the object's identity in chant. The name in the SQL
 | `func` | `CREATE FUNCTION` | `Postgres::Function` |
 | `procedure` | `CREATE PROCEDURE` | `Postgres::Procedure` |
 | `trigger` | `CREATE TRIGGER` | `Postgres::Trigger` |
+| `policy` | `CREATE POLICY` | `Postgres::Policy` |
+| `role` | `CREATE ROLE` (no password, no memberships) | `Postgres::Role` |
+| `grant` | `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` | `Postgres::Grant`, `Postgres::DefaultPrivileges` |
 
 `table` and `view` imported from the package root are ClickHouse's. Import every tag from `@intentius/chant-lexicon-sql/postgres`.
 
@@ -140,6 +143,10 @@ export const ordersTouch = trigger`CREATE TRIGGER orders_touch BEFORE UPDATE ON 
 
 The tag is `func` (`function` is a JavaScript key word). Write the body as a string, `AS $$ ... $$`: it is kept and compared verbatim. `${users}` inside the body renders as `app.users` and makes the routine depend on the table. A SQL-standard body (`RETURN ...`, `BEGIN ATOMIC`) and `SET ... FROM CURRENT` are SQLPG001 errors. Overloads are separate objects, identified by their input parameter types. A trigger's name is unqualified; it lives on its table.
 
+## Access
+
+A table's template may end with `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`. `policy`, `role` and `grant` declare policies, the roles the schema needs (never a password or a membership: those are the environment's), privileges on schemas, tables, columns, sequences and routines, and default privileges. They are planned and applied only where `sql.profiles.<env>.access` is true; there, the declared privileges are the whole of them, and one granted by hand is revoked. A role the environment provisions is named as text (`TO support`), never declared. `GRANT ... ON ALL TABLES IN SCHEMA` is refused: grant per table and declare default privileges.
+
 ## Comments
 
 Postgres has no inline comment clause. Follow the `CREATE` with `COMMENT ON` for the object, its columns and its named constraints, separated by `;`:
@@ -178,4 +185,4 @@ chant build src --lexicon sql -o dist/schema.json
 
 ## Not covered
 
-`ALTER`, `CREATE POLICY`, `GRANT`, rules, aggregates, event triggers and the composite and range forms of `CREATE TYPE` are not declared with the tags. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.
+`ALTER` (other than a table's row-level security), role memberships, rules, aggregates, event triggers and the composite and range forms of `CREATE TYPE` are not declared with the tags. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.

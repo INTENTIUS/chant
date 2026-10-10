@@ -1,0 +1,99 @@
+---
+title: "Postgres Access: Row-Level Security, Roles and Grants"
+description: "Declaring row-level security, policies, roles, grants and default privileges; which of them are the schema's and which the environment's; and sql.profiles.<env>.access, which turns their planning and applying on per environment"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-access.mdx instead; changes here are overwritten. */}
+
+
+Who can read and write which rows is part of a schema, so the Postgres dialect declares it next to the tables it is about, and the plan, the applier and drift cover it. It is off until a profile turns it on, so a project whose access is managed by another tool, or by hand, is not affected.
+
+```ts
+import { grant, policy, role, table } from "@intentius/chant-lexicon-sql/postgres";
+
+export const reader = role`CREATE ROLE app_reader NOLOGIN`;
+
+export const tickets = table`
+  CREATE TABLE ${app}.tickets (
+    id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant text NOT NULL,
+    title  text NOT NULL
+  );
+  ALTER TABLE ${app}.tickets ENABLE ROW LEVEL SECURITY`;
+
+export const ticketsByTenant = policy`
+  CREATE POLICY tickets_tenant ON ${tickets} FOR SELECT TO ${reader}
+  USING (${tickets.columns.tenant} = current_setting('app.tenant'))`;
+
+export const useApp = grant`GRANT USAGE ON SCHEMA ${app} TO ${reader}`;
+export const readTickets = grant`GRANT SELECT ON ${tickets} TO ${reader}`;
+export const editTitles = grant`GRANT UPDATE (title) ON ${tickets} TO support`;
+export const countPrivate = grant`REVOKE EXECUTE ON FUNCTION ${openCount} FROM PUBLIC`;
+export const readNewTables = grant`ALTER DEFAULT PRIVILEGES IN SCHEMA ${app} GRANT SELECT ON TABLES TO ${reader}`;
+```
+
+## Turn it on per environment
+
+```ts
+export default {
+  sql: {
+    profiles: {
+      prod: { url: "postgres://db.internal:5432/shop", password: { env: "PG_PASSWORD" }, access: true },
+    },
+  },
+};
+```
+
+With `access: true`, `chant sql plan` reads the server's policies, each table's row-level security, the declared roles and the privileges on the declared objects, and compares them; the applier makes the difference. Without it, none of that is read: the access declarations are left out of the plan (a hint counts them), the applier reports each as `filtered`, and a table is created without its `ALTER TABLE ... ROW LEVEL SECURITY` statements.
+
+## What is the schema's and what is the environment's
+
+The schema's, declared and kept as declared:
+
+- Row-level security on a table, and `FORCE ROW LEVEL SECURITY`, written after the table's `CREATE TABLE` in its template, as `pg_dump` prints them.
+- Policies. A policy belongs to its table.
+- Privileges on the declared schemas, tables, views, sequences, columns, functions and procedures. Once access is managed, those declarations are the whole of it: a privilege nothing declares is revoked, a declared one missing is granted.
+- Default privileges of the role that applies (and of a role named with `FOR ROLE`), globally and in the schemas in scope.
+- Roles the schema itself needs, such as a `NOLOGIN` role that carries the privileges. They are created when missing and their attributes kept as declared. A role is never dropped, since it belongs to the cluster and outlives the schema.
+
+The environment's, never in a declaration:
+
+- Passwords. `PASSWORD` in `CREATE ROLE` is refused; set it wherever the environment's credentials are kept.
+- Memberships: who is in which role. `IN ROLE`, `ROLE`, `ADMIN` and `GRANT role TO role` are refused. They differ per environment, and a login role is usually provisioned by the platform.
+- Any role the environment provisions. Name it as text where it is granted to (`TO support`); chant never creates, reads or drops it. A grant to a role the server does not have fails in the apply, naming it.
+- Who owns an object. The owner's own privileges are never compared.
+
+## How privileges are compared
+
+The catalog keeps no GRANT statements, only each object's access control list, so declarations are compared by what they add up to: one entry per object (or column) and grantee. For a declared object that is:
+
+1. what Postgres gives a new object of its kind: EXECUTE to PUBLIC on a function or procedure, nothing on anything else;
+2. the declared default privileges for that kind of object, globally and in its schema, since chant creates it as the role that applies;
+3. every `GRANT` added and every `REVOKE` taken away, in the build's order. `ALL PRIVILEGES` stands for the kind's privileges at the target major (MAINTAIN from 17).
+
+`GRANT ... ON ALL TABLES IN SCHEMA` is refused: it grants on whatever exists when it runs. Grant on each declared table, and declare default privileges for the ones created later. A routine is named with its parameter types (`${fn}` interpolated, or `app.f(integer)`), since overloads share a name.
+
+## Plan and apply
+
+| Rule | Change | Class |
+|---|---|---|
+| SQLPG290 | A policy created on an existing table | metadata, ACCESS EXCLUSIVE briefly |
+| SQLPG291 | A policy changed: `ALTER POLICY` for its roles and expressions, a drop and a create in one transaction for its command or `AS RESTRICTIVE` | metadata |
+| SQLPG292 | A policy dropped | drop |
+| SQLPG293 | Row-level security turned on or off, or forced | metadata |
+| SQLPG294 | A role's attributes changed (`ALTER ROLE`) | metadata |
+| SQLPG296 | A privilege granted | metadata |
+| SQLPG297 | A privilege revoked | metadata |
+| SQLPG298 | Default privileges changed | metadata |
+
+The applier makes the policies, row-level security and roles with the other objects, and then, once every object exists, the privileges in one transaction. A `grant` declaration is `updated` when a statement ran for it and `unchanged` otherwise. A privilege granted by hand on a declared object is drift: the plan reports it as SQLPG297, and the next apply revokes it.
+
+A policy's `USING` and `WITH CHECK` are compared as the server prints them (`note::text = 'x'::text`), by creating the policy on a temporary copy of its table in a transaction that is rolled back.
+
+`chant lifecycle diff --live` observes policies and roles like the other objects. A `grant` declaration is reported unobserved, since it is compared as part of the privileges it adds up to; `chant sql plan` is where privilege drift shows.
+
+## Import
+
+With `access: true`, `chant import --from <env>` brings each table's row-level security with its `CREATE TABLE`, the policies, and the privileges as `grant` declarations. Each declaration is the GRANT or REVOKE that takes a new object's privileges to what the server holds, one per object and grantee, so the import plans as no change. Roles are the environment's and are not imported.

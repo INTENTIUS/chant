@@ -93,6 +93,15 @@ export interface LivePgObject {
 export interface SchemaScope {
   /** The schemas in scope; undefined is every schema but the server's own and `public`'s own objects included. */
   schemas?: readonly string[];
+  /**
+   * Whether access is read (`sql.profiles.<env>.access`): the policies on the
+   * tables in scope, each table's row-level security, and the roles named in
+   * `roles`. Off, none of it is read, so a project that manages access
+   * elsewhere sees none of it.
+   */
+  access?: boolean;
+  /** The roles to read, when access is: the declared ones. A role is the cluster's, never read otherwise. */
+  roles?: readonly string[];
 }
 
 type Row = Record<string, unknown>;
@@ -193,8 +202,8 @@ const seqParams = (r: Row): SequenceParams => ({
 /**
  * Every object in scope, in a stable order: schemas, extensions, enums,
  * domains, sequences, tables, views and materialized views, indexes,
- * functions and procedures, triggers; each kind by schema then name, in byte
- * order.
+ * functions and procedures, triggers, and where access is read, policies and
+ * the declared roles; each kind by schema then name, in byte order.
  */
 export async function readLiveSchema(client: PostgresClient, scope: SchemaScope = {}): Promise<LivePgObject[]> {
   const out: LivePgObject[] = [];
@@ -326,6 +335,7 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
                   FROM pg_catalog.pg_inherits i JOIN pg_catalog.pg_class pc ON pc.oid = i.inhparent JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace
                   WHERE i.inhrelid = c.oid ORDER BY i.inhseqno) AS parents,
             c.reloptions AS reloptions, (SELECT a.amname FROM pg_catalog.pg_am a WHERE a.oid = c.relam) AS am,
+            c.relrowsecurity AS rowsecurity, c.relforcerowsecurity AS forcerowsecurity,
             (SELECT ts.spcname FROM pg_catalog.pg_tablespace ts WHERE ts.oid = c.reltablespace) AS tablespace,
             pg_catalog.obj_description(c.oid, 'pg_class') AS comment
      FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -492,7 +502,13 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
       oid: rel,
       ...(str(t.comment) ? { comment: str(t.comment) } : {}),
       ...(FOREIGN_TABLES[String(t.name)] ? { foreign: FOREIGN_TABLES[String(t.name)] } : {}),
-      statement: [create, ...commentOn(`TABLE ${q}`, t.comment), ...commentLines].join(";\n"),
+      statement: [
+        create,
+        ...(scope.access && t.rowsecurity === true ? [`ALTER TABLE ${q} ENABLE ROW LEVEL SECURITY`] : []),
+        ...(scope.access && t.forcerowsecurity === true ? [`ALTER TABLE ${q} FORCE ROW LEVEL SECURITY`] : []),
+        ...commentOn(`TABLE ${q}`, t.comment),
+        ...commentLines,
+      ].join(";\n"),
     });
   }
 
@@ -627,6 +643,66 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
         ...(FOREIGN_TABLES[String(r.table_name)] ? { foreign: FOREIGN_TABLES[String(r.table_name)] } : {}),
         statement: [String(r.def), ...commentOn(`TRIGGER ${quoteIdent(String(r.name))} ON ${table}`, r.comment)].join(";\n"),
       });
+    }
+  }
+
+  if (scope.access) {
+    // Policies, on the tables in scope.
+    const policies = await client.query<Row>(
+      `SELECT p.oid::text AS oid, n.nspname AS schema, c.relname AS table_name, p.polname AS name, p.polpermissive AS permissive, p.polcmd AS cmd,
+              ARRAY(SELECT CASE WHEN r = 0 THEN 'PUBLIC' ELSE pg_catalog.quote_ident(pg_catalog.pg_get_userbyid(r)) END FROM pg_catalog.unnest(p.polroles) r ORDER BY 1) AS roles,
+              pg_catalog.pg_get_expr(p.polqual, p.polrelid, true) AS qual, pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid, true) AS withcheck,
+              pg_catalog.obj_description(p.oid, 'pg_policy') AS comment
+       FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE ${s.sql} AND ${notExtensionOwned("pg_class", "c.oid")}
+       ORDER BY n.nspname ${C}, c.relname ${C}, p.polname ${C}`,
+      s.params,
+    );
+    const COMMAND: Record<string, string> = { r: "SELECT", a: "INSERT", w: "UPDATE", d: "DELETE" };
+    for (const r of policies) {
+      const table = qname(String(r.schema), String(r.table_name));
+      const roles = (r.roles as string[] | null) ?? [];
+      const parts = [`CREATE POLICY ${quoteIdent(String(r.name))} ON ${table}`];
+      if (r.permissive === false) parts.push("AS RESTRICTIVE");
+      if (COMMAND[String(r.cmd)]) parts.push(`FOR ${COMMAND[String(r.cmd)]}`);
+      if (!(roles.length === 1 && roles[0] === "PUBLIC")) parts.push(`TO ${roles.join(", ")}`);
+      if (str(r.qual)) parts.push(`USING (${r.qual})`);
+      if (str(r.withcheck)) parts.push(`WITH CHECK (${r.withcheck})`);
+      out.push({
+        type: POSTGRES_ENTITY_TYPES.policy,
+        schema: String(r.schema),
+        name: String(r.name),
+        oid: String(r.oid),
+        signature: ` ON ${table}`,
+        ...(str(r.comment) ? { comment: str(r.comment) } : {}),
+        statement: [parts.join(" "), ...commentOn(`POLICY ${quoteIdent(String(r.name))} ON ${table}`, r.comment)].join(";\n"),
+      });
+    }
+
+    // The declared roles, by name: a role is the cluster's, and the ones the declarations do not name are the environment's.
+    if (scope.roles && scope.roles.length > 0) {
+      const roles = await client.query<Row>(
+        `SELECT r.oid::text AS oid, r.rolname AS name, r.rolsuper AS superuser, r.rolinherit AS inherit, r.rolcreaterole AS createrole, r.rolcreatedb AS createdb,
+                r.rolcanlogin AS login, r.rolreplication AS replication, r.rolbypassrls AS bypassrls, r.rolconnlimit AS connlimit,
+                pg_catalog.shobj_description(r.oid, 'pg_authid') AS comment
+         FROM pg_catalog.pg_roles r WHERE r.rolname = ANY($1::text[]) ORDER BY r.rolname ${C}`,
+        [[...scope.roles]],
+      );
+      for (const r of roles) {
+        const words: string[] = [];
+        for (const [k, dflt] of [["superuser", false], ["createdb", false], ["createrole", false], ["inherit", true], ["login", false], ["replication", false], ["bypassrls", false]] as const) {
+          if ((r[k] === true) !== dflt) words.push(r[k] === true ? k.toUpperCase() : `NO${k.toUpperCase()}`);
+        }
+        if (Number(r.connlimit) !== -1) words.push(`CONNECTION LIMIT ${Number(r.connlimit)}`);
+        const name = quoteIdent(String(r.name));
+        out.push({
+          type: POSTGRES_ENTITY_TYPES.role,
+          name: String(r.name),
+          oid: String(r.oid),
+          ...(str(r.comment) ? { comment: str(r.comment) } : {}),
+          statement: [`CREATE ROLE ${name}${words.length > 0 ? ` WITH ${words.join(" ")}` : ""}`, ...commentOn(`ROLE ${name}`, r.comment)].join(";\n"),
+        });
+      }
     }
   }
 

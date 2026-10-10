@@ -81,7 +81,7 @@ export function postgresSearch(params: Record<string, unknown>): unknown {
   };
 }
 
-const TAGS = { schema: pg.schema, table: pg.table, index: pg.index, view: pg.view, sequence: pg.sequence, type: pg.type, domain: pg.domain, extension: pg.extension, func: pg.func, procedure: pg.procedure, trigger: pg.trigger } as const;
+const TAGS = { schema: pg.schema, table: pg.table, index: pg.index, view: pg.view, sequence: pg.sequence, type: pg.type, domain: pg.domain, extension: pg.extension, func: pg.func, procedure: pg.procedure, trigger: pg.trigger, policy: pg.policy, role: pg.role, grant: pg.grant } as const;
 export const POSTGRES_TAGS = Object.keys(TAGS);
 
 /** Parse one statement with the Postgres tag; an error comes back as SQLPG001 with its line and column. */

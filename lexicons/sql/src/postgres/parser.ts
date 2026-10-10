@@ -2,8 +2,10 @@
  * A hand-written, lossless parser for the Postgres statements the dialect
  * declares (chant #3278, #3279): `CREATE SCHEMA`, `TABLE`, `INDEX`, `VIEW`,
  * `MATERIALIZED VIEW`, `SEQUENCE`, `TYPE ... AS ENUM`, `DOMAIN`, `EXTENSION`,
- * `FUNCTION`, `PROCEDURE` and `TRIGGER` (#3680), and `COMMENT ON` for those
- * objects.
+ * `FUNCTION`, `PROCEDURE` and `TRIGGER` (#3680), `POLICY` and `ROLE`, `GRANT`,
+ * `REVOKE` and `ALTER DEFAULT PRIVILEGES` on schemas, tables, columns,
+ * sequences and routines, `ALTER TABLE ... ROW LEVEL SECURITY` (#3681), and
+ * `COMMENT ON` for those objects.
  *
  * A function's or procedure's body is a string (`AS $$ ... $$`), kept
  * verbatim: Postgres stores it as written and prints it back unchanged. A
@@ -260,6 +262,58 @@ export interface TriggerNode {
   args: Span[];
 }
 
+export interface PolicyNode {
+  statement: "policy";
+  name: NameNode;
+  table: NameNode;
+  /** `AS PERMISSIVE` (true, the default) or `AS RESTRICTIVE` (false). */
+  permissive?: boolean;
+  command?: "ALL" | "SELECT" | "INSERT" | "UPDATE" | "DELETE";
+  /** `TO role, ...`: role names, `public` for PUBLIC. */
+  roles: Array<{ name: string; span: Span }>;
+  /** `USING (...)`, parentheses excluded. */
+  using?: Span;
+  /** `WITH CHECK (...)`, parentheses excluded. */
+  check?: Span;
+}
+
+export interface RoleNode {
+  statement: "role";
+  name: NameNode;
+  /** The options, each by its key word (`LOGIN`, `NOINHERIT`, `CONNECTION LIMIT`, `VALID UNTIL`), with a value where it takes one. */
+  options: Array<{ option: string; value?: Span }>;
+}
+
+/** What a GRANT or REVOKE is on: an object kind, or (for default privileges) a kind of object created later. */
+export type GrantTarget = "TABLE" | "SEQUENCE" | "SCHEMA" | "FUNCTION" | "PROCEDURE" | "ROUTINE" | "TABLES" | "SEQUENCES" | "FUNCTIONS" | "ROUTINES" | "TYPES" | "SCHEMAS";
+
+export interface GrantNode {
+  statement: "grant";
+  revoke: boolean;
+  /** `REVOKE GRANT OPTION FOR ...`. */
+  grantOptionFor: boolean;
+  /** Each privilege, upper case (`ALL` for ALL [PRIVILEGES]), with the columns it is limited to. */
+  privileges: Array<{ privilege: string; columns: Array<{ name: string; span: Span }> }>;
+  on: GrantTarget;
+  /** The objects, each with a routine's parameter list as written (parentheses excluded). Empty for default privileges. */
+  objects: Array<{ name: NameNode; args?: Span }>;
+  /** Role names, `public` for PUBLIC. */
+  grantees: Array<{ name: string; span: Span }>;
+  withGrantOption: boolean;
+  /** `ALTER DEFAULT PRIVILEGES FOR ROLE ...`. */
+  forRoles?: Array<{ name: string; span: Span }>;
+  /** `ALTER DEFAULT PRIVILEGES IN SCHEMA ...`. */
+  inSchemas?: Array<{ name: string; span: Span }>;
+  /** True for `ALTER DEFAULT PRIVILEGES`. */
+  defaults: boolean;
+}
+
+export interface RowSecurityNode {
+  statement: "rowSecurity";
+  table: NameNode;
+  action: "ENABLE" | "DISABLE" | "FORCE" | "NO FORCE";
+}
+
 export interface CommentNode {
   statement: "comment";
   /** TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, TRIGGER, CONSTRAINT, DOMAIN CONSTRAINT. */
@@ -284,6 +338,10 @@ export type StatementNode =
   | ExtensionNode
   | RoutineNode
   | TriggerNode
+  | PolicyNode
+  | RoleNode
+  | GrantNode
+  | RowSecurityNode
   | CommentNode;
 
 const isNameToken = (t: Token | undefined): boolean =>
@@ -805,8 +863,15 @@ class PgParser extends SqlCursor {
 
   parse(): StatementNode {
     if (this.accept("COMMENT")) return this.comment();
+    if (this.accept("GRANT")) return this.grant(false, false);
+    if (this.accept("REVOKE")) return this.grant(true, false);
+    if (this.acceptSeq("ALTER", "DEFAULT", "PRIVILEGES")) return this.defaultPrivileges();
+    if (this.acceptSeq("ALTER", "TABLE")) return this.rowSecurity();
     this.expect("CREATE");
     const orReplace = this.acceptSeq("OR", "REPLACE");
+    if (!orReplace && this.accept("POLICY")) return this.policy();
+    if (!orReplace && this.accept("ROLE")) return this.role();
+    if (!orReplace && kw(this.peek(), "USER", "GROUP")) this.fail("expected ROLE (declare a role with CREATE ROLE; LOGIN is an option of it)");
     if (this.accept("FUNCTION")) return this.routine("function", orReplace);
     if (this.accept("PROCEDURE")) return this.routine("procedure", orReplace);
     if (this.accept("TRIGGER")) return this.trigger(orReplace, false);
@@ -825,7 +890,7 @@ class PgParser extends SqlCursor {
     const recursive = this.accept("RECURSIVE");
     if (!orReplace && !recursive && persistence === undefined && this.acceptSeq("MATERIALIZED", "VIEW")) return this.view(true, false, false, false);
     if (this.accept("VIEW")) return this.view(false, orReplace, persistence === "temporary", recursive);
-    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE or TRIGGER");
+    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, TRIGGER, POLICY or ROLE");
   }
 
   private schema(): SchemaNode {
@@ -1306,6 +1371,165 @@ class PgParser extends SqlCursor {
     return node;
   }
 
+  /** A role name where one is granted to or named: an identifier, an interpolation, or PUBLIC (`public`). */
+  private roleSpec(what = "a role name"): { name: string; span: Span } {
+    const t = this.peek();
+    if (kw(t, "CURRENT_USER", "CURRENT_ROLE", "SESSION_USER")) this.fail(`expected ${what} (name the role: ${t!.text.toUpperCase()} is whichever role runs the statement)`);
+    if (kw(t, "PUBLIC")) {
+      const i = this.idx();
+      this.p++;
+      return { name: "public", span: { from: i, to: i + 1, refs: [] } };
+    }
+    const n = this.next();
+    if (!isNameToken(n)) this.fail(`expected ${what}`, n);
+    const i = this.idx(-1);
+    return { name: n.kind === "ref" ? "" : identValue(n), span: { from: i, to: i + 1, refs: n.kind === "ref" ? [n.part] : [] } };
+  }
+
+  private roleList(what?: string): Array<{ name: string; span: Span }> {
+    const out = [this.roleSpec(what)];
+    while (this.acceptPunct(",")) out.push(this.roleSpec(what));
+    return out;
+  }
+
+  private policy(): PolicyNode {
+    const { text, span } = this.nameTok("a policy name");
+    this.expect("ON");
+    const node: PolicyNode = { statement: "policy", name: { pieces: [text], span }, table: this.qualifiedName("a table name"), roles: [] };
+    if (this.accept("AS")) {
+      if (this.accept("PERMISSIVE")) node.permissive = true;
+      else {
+        this.expect("RESTRICTIVE");
+        node.permissive = false;
+      }
+    }
+    if (this.accept("FOR")) {
+      if (!this.accept("ALL", "SELECT", "INSERT", "UPDATE", "DELETE")) this.fail("expected ALL, SELECT, INSERT, UPDATE or DELETE");
+      node.command = this.lastSeen()!.text.toUpperCase() as PolicyNode["command"];
+    }
+    if (this.accept("TO")) node.roles = this.roleList();
+    if (this.accept("USING")) {
+      if (!this.isPunct("(")) this.fail("expected '('");
+      node.using = this.parenthesized();
+    }
+    if (this.acceptSeq("WITH", "CHECK")) {
+      if (!this.isPunct("(")) this.fail("expected '('");
+      node.check = this.parenthesized();
+    }
+    return node;
+  }
+
+  private role(): RoleNode {
+    const { text, span } = this.nameTok("a role name");
+    const node: RoleNode = { statement: "role", name: { pieces: [text], span }, options: [] };
+    this.accept("WITH");
+    const FLAGS = ["SUPERUSER", "NOSUPERUSER", "CREATEDB", "NOCREATEDB", "CREATEROLE", "NOCREATEROLE", "INHERIT", "NOINHERIT", "LOGIN", "NOLOGIN", "REPLICATION", "NOREPLICATION", "BYPASSRLS", "NOBYPASSRLS"];
+    for (;;) {
+      if (this.atEnd()) return node;
+      if (kw(this.peek(), ...FLAGS)) node.options.push({ option: this.next().text.toUpperCase() });
+      else if (this.acceptSeq("CONNECTION", "LIMIT")) {
+        const from = this.idx();
+        if (this.isOp("-")) this.p++;
+        const t = this.next();
+        if (t.kind !== "number" && t.kind !== "ref") this.fail("expected a number", t);
+        node.options.push({ option: "CONNECTION LIMIT", value: this.span(from, t.kind === "ref" ? [t.part] : []) });
+      } else if (kw(this.peek(), "PASSWORD", "ENCRYPTED", "UNENCRYPTED") || this.is("VALID", "UNTIL")) {
+        this.fail("expected a role option (a password is the environment's secret, never a declaration's: set it where the environment's credentials are kept)");
+      } else if (kw(this.peek(), "IN", "ROLE", "ADMIN", "USER", "SYSID")) {
+        this.fail("expected a role option (who is a member of which role is the environment's: grant memberships where the roles are provisioned)");
+      } else return this.fail("expected a role option");
+    }
+  }
+
+  /** `GRANT|REVOKE privileges ON target TO|FROM roles`, after GRANT or REVOKE; for default privileges, `on` is a plural kind and there are no objects. */
+  private grant(revoke: boolean, defaults: boolean): GrantNode {
+    const grantOptionFor = revoke && this.acceptSeq("GRANT", "OPTION", "FOR");
+    const privileges: GrantNode["privileges"] = [];
+    if (this.accept("ALL")) {
+      this.accept("PRIVILEGES");
+      const columns = this.isPunct("(") ? this.nameList() : [];
+      privileges.push({ privilege: "ALL", columns });
+    } else {
+      const KNOWN = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN", "USAGE", "CREATE", "EXECUTE"];
+      do {
+        const t = this.next();
+        if (!kw(t, ...KNOWN)) {
+          if (t.kind === "ident" || t.kind === "qident" || t.kind === "ref") {
+            this.fail("expected a privilege (a role granted to a role is membership, which is the environment's: grant it where the roles are provisioned)", t);
+          }
+          this.fail("expected a privilege", t);
+        }
+        privileges.push({ privilege: t.text.toUpperCase(), columns: this.isPunct("(") ? this.nameList() : [] });
+      } while (this.acceptPunct(","));
+    }
+    this.expect("ON");
+    const node: GrantNode = { statement: "grant", revoke, grantOptionFor, privileges, on: "TABLE", objects: [], grantees: [], withGrantOption: false, defaults };
+    if (defaults) {
+      if (!this.accept("TABLES", "SEQUENCES", "FUNCTIONS", "ROUTINES", "TYPES", "SCHEMAS")) this.fail("expected TABLES, SEQUENCES, FUNCTIONS, ROUTINES, TYPES or SCHEMAS");
+      node.on = this.lastSeen()!.text.toUpperCase() as GrantTarget;
+    } else {
+      if (this.accept("ALL")) {
+        this.fail("expected an object (ALL ... IN SCHEMA grants on what exists when it runs; grant on each declared object, and use ALTER DEFAULT PRIVILEGES for what is created later)", this.lastSeen());
+      }
+      if (kw(this.peek(), "DATABASE", "DOMAIN", "TYPE", "LANGUAGE", "LARGE", "TABLESPACE", "FOREIGN", "PARAMETER")) {
+        this.fail("expected TABLE, SEQUENCE, SCHEMA, FUNCTION, PROCEDURE or ROUTINE (privileges on this kind of object are not declared)");
+      }
+      if (this.accept("TABLE", "SEQUENCE", "SCHEMA", "FUNCTION", "PROCEDURE", "ROUTINE")) node.on = this.lastSeen()!.text.toUpperCase() as GrantTarget;
+      const routine = node.on === "FUNCTION" || node.on === "PROCEDURE" || node.on === "ROUTINE";
+      do {
+        const name = this.qualifiedName(node.on === "SCHEMA" ? "a schema name" : "an object name");
+        node.objects.push(routine && this.isPunct("(") ? { name, args: this.parenthesized() } : { name });
+      } while (this.acceptPunct(","));
+    }
+    if (revoke) this.expect("FROM");
+    else this.expect("TO");
+    this.accept("GROUP");
+    node.grantees = this.roleList();
+    if (!revoke && this.acceptSeq("WITH", "GRANT", "OPTION")) node.withGrantOption = true;
+    if (this.acceptSeq("GRANTED", "BY")) this.fail("expected the end of the statement (GRANTED BY names another grantor; chant grants as the role it runs as)", this.lastSeen());
+    if (revoke && this.accept("CASCADE", "RESTRICT")) {
+      if (this.lastSeen()!.text.toUpperCase() === "CASCADE") this.fail("expected the end of the statement (CASCADE revokes what others granted from it; revoke each grant)", this.lastSeen());
+    }
+    return node;
+  }
+
+  private defaultPrivileges(): GrantNode {
+    let forRoles: GrantNode["forRoles"];
+    let inSchemas: GrantNode["inSchemas"];
+    for (;;) {
+      if (this.accept("FOR")) {
+        this.expect("ROLE", "USER");
+        forRoles = this.roleList();
+      } else if (this.acceptSeq("IN", "SCHEMA")) {
+        inSchemas = [];
+        do inSchemas.push((({ text, span }) => ({ name: text, span }))(this.nameTok("a schema name")));
+        while (this.acceptPunct(","));
+      } else break;
+    }
+    let node: GrantNode;
+    if (this.accept("GRANT")) node = this.grant(false, true);
+    else {
+      this.expect("REVOKE");
+      node = this.grant(true, true);
+    }
+    return { ...node, ...(forRoles ? { forRoles } : {}), ...(inSchemas ? { inSchemas } : {}) };
+  }
+
+  private rowSecurity(): RowSecurityNode {
+    this.accept("ONLY");
+    const table = this.qualifiedName("a table name");
+    let action: RowSecurityNode["action"];
+    if (this.accept("ENABLE")) action = "ENABLE";
+    else if (this.accept("DISABLE")) action = "DISABLE";
+    else if (this.accept("FORCE")) action = "FORCE";
+    else if (this.acceptSeq("NO", "FORCE")) action = "NO FORCE";
+    else return this.fail("expected ENABLE, DISABLE, FORCE or NO FORCE ROW LEVEL SECURITY (a table's other changes are its CREATE TABLE's)");
+    this.expect("ROW");
+    this.expect("LEVEL");
+    this.expect("SECURITY");
+    return { statement: "rowSecurity", table, action };
+  }
+
   private comment(): CommentNode {
     this.expect("ON");
     let objectType: string;
@@ -1318,16 +1542,19 @@ class PgParser extends SqlCursor {
       this.expect("ON");
       if (this.accept("DOMAIN")) objectType = "DOMAIN CONSTRAINT";
       on = this.qualifiedName("a table name");
-    } else if (this.accept("TRIGGER")) {
-      objectType = "TRIGGER";
-      target = this.qualifiedName("a trigger name");
+    } else if (this.accept("TRIGGER", "POLICY")) {
+      objectType = this.lastSeen()!.text.toUpperCase();
+      target = this.qualifiedName(`a ${objectType.toLowerCase()} name`);
       this.expect("ON");
       on = this.qualifiedName("a table name");
+    } else if (this.accept("ROLE")) {
+      objectType = "ROLE";
+      target = this.qualifiedName("a role name");
     } else {
       if (this.acceptSeq("MATERIALIZED", "VIEW")) objectType = "MATERIALIZED VIEW";
       else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION", "FUNCTION", "PROCEDURE")) {
         objectType = this.tokens[this.idx(-1)]!.text.toUpperCase();
-      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, TRIGGER or CONSTRAINT");
+      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, TRIGGER, POLICY, ROLE or CONSTRAINT");
       target = this.qualifiedName("an object name");
       if ((objectType === "FUNCTION" || objectType === "PROCEDURE") && this.isPunct("(")) args = this.parenthesized();
     }
@@ -1357,7 +1584,19 @@ class PgParser extends SqlCursor {
 }
 
 const describe = (n: StatementNode): string =>
-  n.statement === "comment" ? "COMMENT ON" : n.statement === "enum" ? "type definition" : `${n.statement} definition`;
+  n.statement === "comment"
+    ? "COMMENT ON"
+    : n.statement === "enum"
+      ? "type definition"
+      : n.statement === "grant"
+        ? n.defaults
+          ? "ALTER DEFAULT PRIVILEGES"
+          : n.revoke
+            ? "REVOKE"
+            : "GRANT"
+        : n.statement === "rowSecurity"
+          ? "ALTER TABLE"
+          : `${n.statement} definition`;
 
 /**
  * Parse a template: one CREATE, optionally followed by COMMENT ON statements,

@@ -29,6 +29,10 @@ const KINDS: Record<string, string> = {
   PostgresFunction: POSTGRES_ENTITY_TYPES.function,
   PostgresProcedure: POSTGRES_ENTITY_TYPES.procedure,
   PostgresTrigger: POSTGRES_ENTITY_TYPES.trigger,
+  PostgresPolicy: POSTGRES_ENTITY_TYPES.policy,
+  PostgresRole: POSTGRES_ENTITY_TYPES.role,
+  PostgresGrant: POSTGRES_ENTITY_TYPES.grant,
+  PostgresDefaultPrivileges: POSTGRES_ENTITY_TYPES.defaultPrivileges,
 };
 
 export function buildRegistry(): string {
