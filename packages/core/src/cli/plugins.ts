@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
+import { isNoLexiconDetected } from "../detectLexicon";
 import { checkConflicts, describeConflict } from "./conflict-check";
 import { prepareProjectCodegen } from "../project-codegen";
 
@@ -317,14 +318,34 @@ export async function loadPlugins(lexiconNames: string[]): Promise<LexiconPlugin
  * loaded but never imported by name in that particular stack's files) would
  * otherwise silently miss it.
  */
-export async function resolveProjectLexicons(projectPath: string): Promise<string[]> {
+export async function resolveProjectLexicons(
+  projectPath: string,
+  options: {
+    /**
+     * chant #3648: the lexicon the command line named (`--lexicon <name>`).
+     * It is always in the result: a project whose config and source name no
+     * lexicon resolves to it alone, instead of failing with "No lexicon
+     * detected", and one that names other lexicons gets it added to them.
+     */
+    lexicon?: string;
+  } = {},
+): Promise<string[]> {
+  const requested = options.lexicon;
   const { config } = await loadChantConfigUpward(projectPath);
 
+  let names: string[];
   if (config.lexicons && config.lexicons.length > 0) {
-    return lexiconNames(config.lexicons);
+    names = lexiconNames(config.lexicons);
+  } else {
+    // Fallback: detect from source imports — a pure text scan, no execution.
+    const files = await findInfraFiles(projectPath);
+    try {
+      names = await detectLexicons(files);
+    } catch (error) {
+      if (requested && isNoLexiconDetected(error)) return [requested];
+      throw error;
+    }
   }
 
-  // Fallback: detect from source imports — a pure text scan, no execution.
-  const files = await findInfraFiles(projectPath);
-  return detectLexicons(files);
+  return requested && !names.includes(requested) ? [...names, requested] : names;
 }

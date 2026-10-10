@@ -19,7 +19,8 @@ export function isNoLexiconDetected(error: unknown): boolean {
 
 /**
  * Detects which lexicons are being used by analyzing import statements
- * in the provided infrastructure files. Matches any `@intentius/chant-lexicon-*` package.
+ * in the provided infrastructure files. Matches any `@intentius/chant-lexicon-*` package,
+ * imported by its root or by a subpath (`@intentius/chant-lexicon-sql/postgres`).
  *
  * @param files - Array of file paths to analyze
  * @returns Array of detected lexicon names
@@ -40,7 +41,11 @@ export async function detectLexicons(files: string[]): Promise<string[]> {
     // Match @intentius/chant-lexicon-<name> in import/export statements.
     // Uses [\s\S] instead of . to handle multiline imports like:
     //   import { Foo, Bar } from "@intentius/chant-lexicon-k8s";
-    const regex = /(?:import|export)\s+[\s\S]*?\s+from\s+['"]@intentius\/chant-lexicon-([a-z][\w-]*)['"]/g;
+    // chant #3648: a subpath import names the same lexicon, so
+    // "@intentius/chant-lexicon-sql/clickhouse" detects "sql". A project that
+    // imports a lexicon only through its subpaths (every sql project) has no
+    // other import for this scan to find.
+    const regex = /(?:import|export)\s+[\s\S]*?\s+from\s+['"]@intentius\/chant-lexicon-([a-z][\w-]*)(?:\/[^'"\s]*)?['"]/g;
 
     for (const match of content.matchAll(regex)) {
       detectedLexicons.add(match[1]);
