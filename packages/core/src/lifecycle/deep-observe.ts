@@ -160,6 +160,8 @@ export function diffDeepObservation(
         // up by the flattened path, so a keyed list element (`[#name]`) has
         // no owner today — its raw index path is what the reader recorded.
         ...(liveEntity.fieldOwners ? { fieldOwners: liveEntity.fieldOwners } : {}),
+        // Which server's copy was read, when the reader read several (#3664).
+        ...(liveEntity.observedOn ? { observedOn: liveEntity.observedOn } : {}),
         // The claimed-field set (#2160), computed from the declaration and
         // carried on the observation so a consumer holding only this envelope
         // can classify a live value three ways rather than two. Same normalized

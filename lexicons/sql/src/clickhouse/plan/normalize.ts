@@ -284,6 +284,10 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
       name = shared[1]!;
       if (/^'.*'$/s.test(args[0] ?? "") && /^'.*'$/s.test(args[1] ?? "")) args = args.slice(2);
     }
+    // `Distributed(cluster, db, table, ...)` takes its first three arguments
+    // as identifiers or as strings, and the server prints them back quoted
+    // (#3664): an unquoted declaration says the same.
+    if (name === "Distributed") args = args.map((a, i) => (i < 3 ? quotedIdentifier(a) : a));
     obj.engineName = name;
     obj.engine = args.length ? `${name}(${args.join(", ")})` : name;
   }
@@ -358,4 +362,10 @@ function column(tokens: Token[], c: ColumnNode, position: number, database?: str
   const prev = previouslyIn(lineComments(tokens, c.nameSpan.from));
   if (prev) out.previously = prev;
   return out;
+}
+
+/** A bare or backquoted identifier as the string literal the server prints it as; anything else as it is. */
+function quotedIdentifier(arg: string): string {
+  const bare = /^[A-Za-z_][A-Za-z0-9_]*$/.test(arg) ? arg : /^`((?:[^`]|``)+)`$/.exec(arg)?.[1]?.replace(/``/g, "`");
+  return bare === undefined ? arg : `'${bare.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }

@@ -8,7 +8,7 @@ import type { BaselineLexicon } from "./observation-baseline";
 const held = (by: string, reason: string) => ({ heldElsewhere: HELD_ELSEWHERE_TAG, by, reason });
 
 const live = (
-  resources: Record<string, { type: string; properties: Record<string, unknown>; fieldOwners?: Record<string, string> }>,
+  resources: Record<string, { type: string; properties: Record<string, unknown>; fieldOwners?: Record<string, string>; observedOn?: string }>,
   unobserved: NormalizedDeepObservation["unobserved"] = {},
 ): NormalizedDeepObservation => ({ resources, unobserved });
 
@@ -239,6 +239,25 @@ describe("diffDeep — owning field manager (#1189)", () => {
     const change = result.drifted[0].changes.find((c) => c.path === "spec.replicas")!;
     expect(change.kind).toBe("absent");
     expect(change).not.toHaveProperty("owner");
+  });
+});
+
+// #3664 — a reader that read several copies of an entity (a table on every
+// server of a ClickHouse cluster) names the server whose copy it reported.
+describe("diffDeep — the server a live value was seen on (#3664)", () => {
+  const declared = { events: { type: "ClickHouse::Table", properties: { ttl: "ts + INTERVAL 30 DAY" } } };
+
+  test("rides on every drifted path of that entity", () => {
+    const result = diffDeep({
+      declared,
+      live: live({ events: { type: "ClickHouse::Table", properties: { ttl: "ts + toIntervalDay(7)" }, observedOn: "shard-2" } }),
+    });
+    expect(result.drifted[0].changes[0]).toMatchObject({ path: "ttl", kind: "changed", seenOn: "shard-2" });
+  });
+
+  test("is absent when the reader read one copy", () => {
+    const result = diffDeep({ declared, live: live({ events: { type: "ClickHouse::Table", properties: { ttl: "ts + toIntervalDay(7)" } } }) });
+    expect(result.drifted[0].changes[0]).not.toHaveProperty("seenOn");
   });
 });
 
