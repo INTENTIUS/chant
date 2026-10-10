@@ -24,7 +24,7 @@ import { partitionEffect } from "./backfill";
 import { insertTarget, waitForCutover, type CutoverProbe } from "./steps";
 import { intoShard, onShard, onShardServers, shardTable } from "./shards";
 import { renameColumns, sourcePartitionExpression } from "./partitions";
-import { collapsesRows } from "./engines";
+import { collapseSemantics, collapsesRows, engineArguments, splitTopLevel, type EngineColumn } from "./engines";
 import { RebuildVerificationError } from "./verify";
 import { canonicalObject } from "../plan/normalize";
 import { diffSchemas } from "../plan/diff";
@@ -246,6 +246,14 @@ describe("a table whose engine collapses rows by sorting key (#3674)", () => {
     expect(plain).toMatch(/The usual cause is in materialized-view mode a row written to the old table later than the cut-over delay/);
   });
 
+  test("from a plain MergeTree, a difference names what was compared per key", () => {
+    const mismatch = [{ partition: "202610", old: { partition: "202610", rows: 2, checksum: "1" }, new: { partition: "202610", rows: 1, checksum: "2" } }];
+    const message = new RebuildVerificationError("db.daily", mismatch, { engine: "SummingMergeTree", how: "keys", describe: "the sums of total" }).message;
+    expect(message).toContain("202610: old 2 keys, checksum 1, new 1 keys, checksum 2");
+    expect(message).toMatch(/The new table is a SummingMergeTree, .*compared per key on the sums of total/);
+    expect(message).not.toMatch(/OPTIMIZE/);
+  });
+
   test("the plan's hand-off says so for such a table", () => {
     const ddl = (o: string) => `CREATE TABLE db.daily (day Date, total Decimal(18, 2), n UInt64) ENGINE = SummingMergeTree ORDER BY ${o}`;
     const after = [{ key: "daily", canonical: canonicalObject(ddl("(day, n)")) }];
@@ -322,5 +330,45 @@ describe("the wait for the cut-over (#3700)", () => {
     expect(insertTarget('INSERT INTO "shop" . "events" VALUES', "default")).toEqual({ database: "shop", name: "events" });
     expect(insertTarget("INSERT INTO FUNCTION remote('h', shop.events) VALUES (1)", "shop")).toBeUndefined();
     expect(insertTarget("SELECT * FROM shop.events", "shop")).toBeUndefined();
+  });
+});
+
+describe("what a collapsing engine keeps per sorting key (#3727)", () => {
+  const col = (name: string, type: string, inSortingKey = false): EngineColumn => ({ name, type, inSortingKey });
+  const columns = [col("day", "Date", true), col("shop", "UInt32", true), col("total", "Decimal(18, 2)"), col("n", "UInt64"), col("ratio", "Float64"), col("note", "String"), col("sign", "Int8"), col("ver", "UInt32")];
+
+  test("splitTopLevel and engineArguments read engine_full, without a Replicated engine's Keeper path", () => {
+    expect(splitTopLevel("toStartOfInterval(ts, toIntervalDay(1)), id")).toEqual(["toStartOfInterval(ts, toIntervalDay(1))", "id"]);
+    expect(splitTopLevel("")).toEqual([]);
+    expect(engineArguments("SummingMergeTree((total, n)) PARTITION BY toYYYYMM(day) ORDER BY (day, shop) SETTINGS index_granularity = 8192")).toEqual(["(total, n)"]);
+    expect(engineArguments("ReplicatedCollapsingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', sign) ORDER BY id")).toEqual(["sign"]);
+    expect(engineArguments("SummingMergeTree ORDER BY id")).toEqual([]);
+  });
+
+  test("SummingMergeTree: the sums of every numeric column outside the key, or of those listed, in their own types; a key whose sums are zero is removed", () => {
+    const all = collapseSemantics("SummingMergeTree", "SummingMergeTree ORDER BY (day, shop)", columns)!;
+    expect(all.aggregates).toEqual(["CAST(sum(`total`), 'Decimal(18, 2)')", "CAST(sum(`n`), 'UInt64')", "toFloat32(sum(`ratio`))", "CAST(sum(`sign`), 'Int8')", "CAST(sum(`ver`), 'UInt32')"]);
+    expect(all.having).toBe(`NOT (${all.aggregates.map((a) => `${a} = 0`).join(" AND ")})`);
+    const listed = collapseSemantics("ReplicatedSummingMergeTree", "ReplicatedSummingMergeTree('/p', '{replica}', (total, n)) ORDER BY (day, shop)", columns)!;
+    expect(listed).toMatchObject({ engine: "SummingMergeTree", aggregates: ["CAST(sum(`total`), 'Decimal(18, 2)')", "CAST(sum(`n`), 'UInt64')"], describe: "the sums of total, n" });
+    const partitioned = collapseSemantics("SummingMergeTree", "SummingMergeTree PARTITION BY g ORDER BY k", [col("k", "UInt32", true), { ...col("g", "UInt8"), inPartitionKey: true }, col("a", "UInt32")])!;
+    expect(partitioned.aggregates).toEqual(["CAST(sum(`a`), 'UInt32')"]);
+  });
+
+  test("Replacing keeps the highest version, Collapsing the sum of its signs, Aggregating its order-free simple functions, Coalescing which columns hold a value", () => {
+    expect(collapseSemantics("ReplacingMergeTree", "ReplacingMergeTree(ver) ORDER BY id", columns)).toMatchObject({ aggregates: ["max(`ver`)"], describe: "the highest ver" });
+    expect(collapseSemantics("ReplacingMergeTree", "ReplacingMergeTree ORDER BY id", columns)).toMatchObject({ aggregates: [], describe: "the keys" });
+    expect(collapseSemantics("CollapsingMergeTree", "CollapsingMergeTree(sign) ORDER BY id", columns)).toMatchObject({ aggregates: ["sum(`sign`)"], having: "sum(`sign`) != 0" });
+    expect(collapseSemantics("VersionedCollapsingMergeTree", "VersionedCollapsingMergeTree(sign, ver) ORDER BY id", columns)).toMatchObject({ aggregates: ["sum(`sign`)"], having: "sum(`sign`) != 0" });
+    const agg = [col("k", "UInt32", true), col("hi", "SimpleAggregateFunction(max, UInt64)"), col("any", "SimpleAggregateFunction(anyLast, String)"), col("u", "AggregateFunction(uniq, UInt64)")];
+    expect(collapseSemantics("AggregatingMergeTree", "AggregatingMergeTree ORDER BY k", agg)).toMatchObject({ aggregates: ["max(`hi`)"], describe: "max(hi)" });
+    const coalescing = [col("k", "UInt32", true), col("v", "Nullable(String)"), col("w", "UInt8")];
+    expect(collapseSemantics("CoalescingMergeTree", "CoalescingMergeTree ORDER BY k", coalescing)).toMatchObject({ aggregates: ["count(`v`) > 0"] });
+  });
+
+  test("an engine that keeps every row, or whose rows depend on the order of merges, has none", () => {
+    expect(collapseSemantics("MergeTree", "MergeTree ORDER BY id", columns)).toBeUndefined();
+    expect(collapseSemantics("GraphiteMergeTree", "GraphiteMergeTree('graphite_rollup') ORDER BY id", columns)).toBeUndefined();
+    expect(collapseSemantics("CollapsingMergeTree", "CollapsingMergeTree(missing) ORDER BY id", columns)).toBeUndefined();
   });
 });

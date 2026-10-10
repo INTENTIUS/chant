@@ -77,6 +77,18 @@ The Verify phase compares every row of the old table with the new one, per parti
 
 A table whose engine collapses rows that share a sorting key when parts merge (`SummingMergeTree`, `ReplacingMergeTree`, `AggregatingMergeTree`, `CollapsingMergeTree`, `VersionedCollapsingMergeTree`, `CoalescingMergeTree`, `GraphiteMergeTree`, and their `Replicated` forms), rebuilt into one of them, is compared under `FINAL`. The old table can hold unmerged parts with several rows for one key; the copy inserts them in one block, and the new table collapses them as it writes, so their raw counts differ while the merged rows are the same. Under `FINAL` both tables are read as merged, and the `Verification` outcome says so. `FINAL` reads cost more than a plain count on a large table. If the tables still differ, the new sorting key collapses the copied rows differently from how the old table merges them; the error names the engine. Run `OPTIMIZE TABLE <db>.<table> FINAL` and run the rebuild again, so the copy reads merged rows. The plan's hand-off to the Op adds the same note for such a table.
 
+A table whose engine keeps every row (a plain `MergeTree`) rebuilt into one that collapses them is compared by what the new engine keeps per sorting key. The new table holds one row per key where the old one holds them all, so their row counts differ by design. Both tables are grouped by the new table's sorting key and partition, and each key is compared on what a merge of the new engine leaves unchanged:
+
+| New engine | Compared per key |
+|---|---|
+| `SummingMergeTree` | the sums of its summed columns (those listed, else every numeric column outside the sorting and partition keys), in their own types; a key whose sums are all zero is left out |
+| `ReplacingMergeTree` | the highest version, or the key alone without a version column |
+| `CollapsingMergeTree`, `VersionedCollapsingMergeTree` | the sum of the sign column; a key whose signs cancel out is left out |
+| `AggregatingMergeTree` | `sum`, `min`, `max` and the `groupBit` functions of its `SimpleAggregateFunction` columns |
+| `CoalescingMergeTree` | which of its `Nullable` columns hold a value |
+
+Each side is read without `FINAL`, so it does not matter which parts have merged. A key missing from the new table, or one whose sums differ, still fails the verification, and the `Verification` outcome counts the old table's rows and the keys they make. A `GraphiteMergeTree`, whose rows depend on their age, is still compared row for row.
+
 The swap gate's approval is for one plan and one verification. Its digest covers the definitions on both sides, the classified changes, the columns copied, the dual-write mode and, per partition, the row count and checksum of the rows before the cut-over (every row in app mode). Rows at or after the cut-over keep arriving through the view, so they are compared but not bound: an approval stays valid while writes go on, and a run that verifies different numbers before the cut-over needs a fresh approval. The run record carries the verification as outcomes (`Verification`, `VerifiedPartitions`, `VerifiedRows`), which `chant run status` and `chant operator log` show:
 
 ```bash
