@@ -13,7 +13,10 @@
  * - a privilege granted by hand to a declared grantee is SQLCH274 and is
  *   revoked, a declared one revoked by hand is SQLCH273 and is granted
  *   again, a changed role setting is SQLCH270, a changed policy SQLCH272;
- * - the row policy filters rows for the user.
+ * - the row policy filters rows for the user;
+ * - with a profile that does not manage access (no `access: true`, #3716),
+ *   none of it is applied, planned or read: each access declaration is
+ *   reported filtered, and a hand change to a grant is not undone.
  *
  * Beside a Replicated database (two replicas of the pinned server in
  * Docker): access control is in no database, so the database's log does not
@@ -23,7 +26,7 @@
  * `CLICKHOUSE_PASSWORD`) names a running one, such as the one
  * `chant emulator up --lexicon sql` starts. Without it, a throwaway server
  * at the pin, skipped cleanly when Docker is not available. Users and roles
- * are global to the server, so the test names everything `chant_e2e_3682_access*`
+ * are global to the server, so the test names everything `chant_e2e_3716_access*`
  * and drops it afterwards.
  */
 
@@ -37,9 +40,10 @@ import { clickhouseImage } from "../../spec/pin";
 import { database, grant, policy, role, table, user } from "../entities";
 import { planAgainstServer } from "../plan/commands";
 import { observeResourcesDeep, sqlDeepNormalizationHooks } from "../plan/deep";
+import { describeResources } from "./describe-resources";
 import { clickhouseApply } from "../../op/activities/clickhouse-apply";
 
-const DB = "chant_e2e_3682_access";
+const DB = "chant_e2e_3716_access";
 const READER = `${DB}_reader`;
 const APP = `${DB}_app`;
 const fromEnv = process.env.CLICKHOUSE_URL;
@@ -76,12 +80,26 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const envOf = (at: ClickHouseEndpoint, topology?: string) => ({
-  CLICKHOUSE_URL: at.url,
-  ...(at.user ? { CLICKHOUSE_USER: at.user } : {}),
-  ...(at.password ? { CLICKHOUSE_PASSWORD: at.password } : {}),
-  ...(topology ? { CLICKHOUSE_TOPOLOGY: topology } : {}),
+const envOf = (at: ClickHouseEndpoint) => ({
+  ...(at.user ? { CH_USER: at.user } : {}),
+  ...(at.password ? { CH_PASSWORD: at.password } : {}),
 });
+
+/** The `test` profile: the server, and whether it manages access (#3716). */
+const configOf = (at: ClickHouseEndpoint, opts: { topology?: string; access?: boolean } = {}) => ({
+  ownership: { stack: "e2e3682", env: "test" },
+  sql: {
+    profiles: {
+      test: {
+        url: at.url,
+        ...(at.user ? { user: { env: "CH_USER" } } : {}),
+        ...(at.password ? { password: { env: "CH_PASSWORD" } } : {}),
+        ...(opts.topology ? { topology: opts.topology } : {}),
+        ...(opts.access !== false ? { access: true } : {}),
+      },
+    },
+  },
+}) as never;
 
 type Entity = { entityType: string; props: { ddl: string }; dependsOn?: unknown };
 function writeBuild(file: string, declared: Record<string, Entity>): string {
@@ -91,11 +109,11 @@ function writeBuild(file: string, declared: Record<string, Entity>): string {
   return path;
 }
 
-async function apply(at: ClickHouseEndpoint, buildPath: string, topology?: string) {
+async function apply(at: ClickHouseEndpoint, buildPath: string, opts: { topology?: string; access?: boolean } = {}) {
   const sent: string[] = [];
   const outcome = await clickhouseApply({ buildPath, environment: "test" }, undefined, {
-    config: { ownership: { stack: "e2e3682", env: "test" } },
-    env: envOf(at, topology),
+    config: configOf(at, opts),
+    env: envOf(at),
     log: (l) => void (/^[A-Z]+ /.test(l) && sent.push(l)),
   });
   return { outcome, sent };
@@ -146,10 +164,10 @@ describe.skipIf(!enabled)("access control on a single node (#3682)", () => {
     expect((await q<{ s: string }>(`SELECT auth_type[1] AS s FROM system.users WHERE name = '${APP}'`))[0]!.s).toBe("sha256_password");
 
     // The server prints the policy's condition and the grants its own way: still the declarations.
-    const diff = await planAgainstServer("test", build, { config: {}, env: envOf(endpoint) });
+    const diff = await planAgainstServer("test", build, { config: configOf(endpoint), env: envOf(endpoint) });
     expect(diff.changes).toEqual([]);
     const entities = new Map(Object.entries(v1).map(([k, e]) => [k, { entityType: e.entityType, props: e.props as unknown as Record<string, unknown> }]));
-    const deep = await observeResourcesDeep({ environment: "test", entityNames: [...entities.keys()], entities, config: {}, env: envOf(endpoint) });
+    const deep = await observeResourcesDeep({ environment: "test", entityNames: [...entities.keys()], entities, config: configOf(endpoint), env: envOf(endpoint) });
     expect(Object.keys(deep.unobserved ?? {}).sort()).toEqual(["readEvents", "readerToApp"]);
     for (const k of ["reader", "app", "tenant"] as const) expect(compared(deep.resources[k]!.properties), k).toEqual(compared(v1[k].props));
 
@@ -162,7 +180,7 @@ describe.skipIf(!enabled)("access control on a single node (#3682)", () => {
     await q(`GRANT INSERT ON ${DB}.events TO ${READER}`);
     await q(`REVOKE ${READER} FROM ${APP}`);
     const v2 = declarations({ memory: "2000000000", tenant: "b" });
-    const planned = await planAgainstServer("test", writeBuild("v2.json", v2), { config: {}, env: envOf(endpoint) });
+    const planned = await planAgainstServer("test", writeBuild("v2.json", v2), { config: configOf(endpoint), env: envOf(endpoint) });
     expect(planned.changes.map((c) => [c.object, c.field, c.rule])).toEqual([
       [`reader (role ${READER})`, "settings", "SQLCH270"],
       // Revoking the role took it off the user's default roles too.
@@ -180,8 +198,35 @@ describe.skipIf(!enabled)("access control on a single node (#3682)", () => {
       `GRANT \`${READER}\` TO \`${APP}\``,
       `ALTER USER \`${APP}\` DEFAULT ROLE ${READER}`,
     ]);
-    expect((await planAgainstServer("test", writeBuild("v2.json", v2), { config: {}, env: envOf(endpoint) })).changes).toEqual([]);
+    expect((await planAgainstServer("test", writeBuild("v2.json", v2), { config: configOf(endpoint), env: envOf(endpoint) })).changes).toEqual([]);
     expect(Number((await q<{ n: string }>(`SELECT count() AS n FROM ${DB}.events`, asApp))[0]!.n)).toBe(1);
+
+    // A profile that does not manage access (#3716): nothing access-related is read, planned or applied.
+    await q(`GRANT INSERT ON ${DB}.events TO ${READER}`);
+    const off = { access: false };
+    const v3 = declarations({ memory: "3000000000", tenant: "a" });
+    const offBuild = writeBuild("v3.json", v3);
+    const offPlan = await planAgainstServer("test", offBuild, { config: configOf(endpoint, off), env: envOf(endpoint) });
+    expect(offPlan.changes).toEqual([]);
+    expect(offPlan.hints).toContain("5 access declarations are not planned: test's profile does not manage access (sql.profiles.<env>.access)");
+    const offApply = await apply(endpoint, offBuild, off);
+    expect(offApply.outcome.failed).toEqual([]);
+    expect(offApply.sent).toEqual([]);
+    expect(offApply.outcome.notAttempted.map((n) => [n.name, n.reason])).toEqual([
+      [`role ${READER}`, "filtered"],
+      [`user ${APP}`, "filtered"],
+      [`row policy ${DB}_tenant ON ${DB}.events`, "filtered"],
+      [`grants ${READER}`, "filtered"],
+      [`grants ${APP}`, "filtered"],
+    ]);
+    expect((await q<{ s: string }>(`SHOW GRANTS FOR ${READER}`)).map((r) => Object.values(r)[0]).join("\n")).toMatch(/GRANT INSERT\b.* ON chant_e2e_3716_access\.events TO/);
+    const v3entities = new Map(Object.entries(v3).map(([k, e]) => [k, { entityType: e.entityType, props: e.props as unknown as Record<string, unknown> }]));
+    const offDeep = await observeResourcesDeep({ environment: "test", entityNames: [...v3entities.keys()], entities: v3entities, config: configOf(endpoint, off), env: envOf(endpoint) });
+    expect(Object.entries(offDeep.unobserved ?? {}).map(([k, u]) => [k, u.reason]).sort()).toEqual(
+      ["app", "readEvents", "reader", "readerToApp", "tenant"].map((k) => [k, "filtered"]),
+    );
+    const offThin = await describeResources({ environment: "test", entityNames: [...v3entities.keys()], entities: v3entities, config: configOf(endpoint, off), env: envOf(endpoint) });
+    expect(Object.keys(offThin.unobserved ?? {}).sort()).toEqual(["app", "readEvents", "reader", "readerToApp", "tenant"]);
   }, 300_000);
 });
 
@@ -198,12 +243,12 @@ describe.skipIf(!docker)("access control beside a Replicated database (#3682)", 
     const [r1, r2] = cluster!.replicas as [ClickHouseEndpoint, ClickHouseEndpoint];
     const { shop, events, reader, tenant, readEvents } = declarations();
     const build = writeBuild("repl.json", { shop, events, reader, tenant, readEvents });
-    const first = await apply(r1, build, "replicated");
+    const first = await apply(r1, build, { topology: "replicated" });
     expect(first.outcome.failed).toEqual([]);
     expect(first.sent.join("\n")).not.toMatch(/ON CLUSTER/);
     await q(first.sent[0]!, r2);
     await q(`SYSTEM SYNC DATABASE REPLICA ${DB}`, r2);
-    const second = await apply(r2, build, "replicated");
+    const second = await apply(r2, build, { topology: "replicated" });
     expect(second.outcome.failed).toEqual([]);
     expect(second.outcome.applied.filter((a) => a.action === "created").map((a) => a.name)).toEqual([
       `role ${READER}`,
@@ -212,7 +257,7 @@ describe.skipIf(!docker)("access control beside a Replicated database (#3682)", 
     ]);
     for (const at of [r1, r2]) {
       expect(Number((await q<{ n: string }>(`SELECT count() AS n FROM system.row_policies WHERE short_name = '${DB}_tenant'`, at))[0]!.n)).toBe(1);
-      expect((await apply(at, build, "replicated")).sent).toEqual([]);
+      expect((await apply(at, build, { topology: "replicated" })).sent).toEqual([]);
     }
   }, 300_000);
 });

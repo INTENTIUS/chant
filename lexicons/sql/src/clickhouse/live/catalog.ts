@@ -179,7 +179,19 @@ export async function readLiveAccess(target: ClickHouseTarget, declared: readonl
   return out;
 }
 
-const ACCESS_KINDS = new Set(["user", "role", "rowPolicy", "grants"]);
+/** The canonical kinds a profile's `access` switch decides (#3716). */
+export const ACCESS_KINDS: ReadonlySet<string> = new Set(["user", "role", "rowPolicy", "grants"]);
+
+/** The entity types a profile's `access` switch decides (#3716). */
+export const ACCESS_ENTITY_TYPES: ReadonlySet<string> = new Set([CLICKHOUSE_ENTITY_TYPES.user, CLICKHOUSE_ENTITY_TYPES.role, CLICKHOUSE_ENTITY_TYPES.rowPolicy, CLICKHOUSE_ENTITY_TYPES.grant]);
+
+/** Why an access declaration is not read, planned or applied where the profile does not manage access. */
+export const ACCESS_UNMANAGED_DETAIL = "access is not managed in this environment: set sql.profiles.<env>.access to plan and apply users, roles, row policies and grants";
+
+/** The hint a plan gives for the access declarations it left out. */
+export function accessUnmanagedHint(n: number, environment: string): string {
+  return `${n} access declaration${n === 1 ? " is" : "s are"} not planned: ${environment}'s profile does not manage access (sql.profiles.<env>.access)`;
+}
 
 /** The access objects among declared canonical objects, for `readLiveAccess`. */
 export function declaredAccess(objects: ReadonlyArray<{ kind: string; name: string; database?: string; table?: string }>): DeclaredAccess[] {

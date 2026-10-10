@@ -24,7 +24,7 @@ import {
   type ObserverAdapter,
 } from "@intentius/chant/observation";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "./bind";
-import { accessOf, readLiveAccess, readLiveSchema, type DeclaredAccess, type LiveObject } from "./catalog";
+import { ACCESS_ENTITY_TYPES, ACCESS_UNMANAGED_DETAIL, accessOf, readLiveAccess, readLiveSchema, type DeclaredAccess, type LiveObject } from "./catalog";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
 import { objectKey } from "../plan/normalize";
 import { isChantManaged, readMarker, stripMarker } from "../ownership";
@@ -54,7 +54,7 @@ function adapter(options: BindOptions & { owned?: boolean; access?: (defaultData
     async bind() {
       const target = await bindClickHouse(options);
       const byKey = new Map<string, LiveObject>();
-      const access = await readLiveAccess(target, options.access?.(target.defaultDatabase) ?? [], { withStatements: false });
+      const access = target.access === true ? await readLiveAccess(target, options.access?.(target.defaultDatabase) ?? [], { withStatements: false }) : [];
       for (const o of [...(await readLiveSchema(target, { withStatements: false })), ...access]) {
         byKey.set(objectKey(o), o);
       }
@@ -64,6 +64,9 @@ function adapter(options: BindOptions & { owned?: boolean; access?: (defaultData
     async read({ target, byKey }, entity): Promise<EntityObservation> {
       if (!entity.type.startsWith("ClickHouse::")) {
         return { unobserved: { reason: "unsupported-kind", detail: entity.type } };
+      }
+      if (target.access !== true && ACCESS_ENTITY_TYPES.has(entity.type)) {
+        return { unobserved: { reason: "filtered", detail: ACCESS_UNMANAGED_DETAIL } };
       }
       if (entity.type === CLICKHOUSE_ENTITY_TYPES.grant) {
         return { unobserved: { reason: "unsupported-kind", detail: "a grant is compared as part of its grantees' grants, which chant sql plan reports" } };
