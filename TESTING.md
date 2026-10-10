@@ -361,7 +361,9 @@ CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run path/to/file.test.ts   # no budget, f
 
 A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it.
 
-### The `chant` workflow
+### What runs when
+
+Every change gets the fast checks, and no other test suite runs on its own. The large suites run only when a person starts them, and a change never waits on one.
 
 `.github/workflows/chant.yml` runs on every pull request and on every push to main:
 
@@ -369,13 +371,26 @@ A unit test over the budget either gets faster or moves out of the unit project.
 |---|---|
 | `check` | typechecks, the lexicon completeness contract, lint and build guards |
 | `test-shard (1/4)` to `(4/4)` | `npx vitest run --project unit --shard=N/4` |
-| `test-e2e` | `npx vitest run --project e2e`, in parallel with the shards |
-| `test` | passes only when all four shards and `test-e2e` passed |
+| `test` | passes only when all four shards passed |
+| `trust` | `chant workspace verify` against the base branch (pull requests only) |
 | `validate` | every lexicon's prepack with the release gate armed |
 
-Branch protection requires `check`, `test` and `validate`. The `test` job is how the shards and `test-e2e` become required.
+Branch protection requires `check`, `test` and `validate`. The `test` job is how the shards become required.
 
-Every job that needs lexicon artifacts builds them with `scripts/ci-lexicon-artifacts.sh`. It runs each lexicon's `generate` one at a time and the rest of its prepack (bundle, validate, build) with one lexicon per CPU. The shards and `test-e2e` keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
+Every job that needs lexicon artifacts builds them with `scripts/ci-lexicon-artifacts.sh`. It runs each lexicon's `generate` one at a time and the rest of its prepack (bundle, validate, build) with one lexicon per CPU. The shards keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
+
+Locally the same fast gate is `just check`: the core typecheck, lint, `just test` (the unit project) and the lexicon contract. A change merges on it.
+
+### Large suites
+
+These run only when a person starts them. On GitHub each is a `workflow_dispatch` workflow with no push, pull request or schedule trigger:
+
+| Workflow | Jobs |
+|---|---|
+| `large-suites.yml` | `test-e2e` (`npx vitest run --project e2e`), `test-binaries` (the tests against real otelcol-contrib, promtool, amtool and tofu), `smoke-npm` (the npm tarball Docker smoke). Pick one or `all` when you start it. |
+| `helm-survey.yml` | the pinnability survey over the upstream chart corpus |
+
+Locally the `just` targets for the large suites start with `scripts/human-gate.sh`: `test-e2e`, `smoke`, `smoke-workspace`, `smoke-npm`, `smoke-build-examples`, `smoke-npm-registry`, `smoke-sql-registry`, `helm-survey`, `bench`, `leftness-capture`, `testing-harness-e2e` and every runtime and cloud `*-e2e` target. At a terminal it asks you to type `run`. Without a terminal on stdin and stdout, which covers scripts, pipes and coding agents, it prints a STOP message and exits 3. A coding agent that hits it does not run the suite, does not work around the gate and does not wait for anyone to run it; it merges on the fast gates and goes on. The gate lets a GitHub Actions run through (`GITHUB_ACTIONS=true` with `GITHUB_RUN_ID` set), so a dispatched workflow can call the same targets.
 
 ## Smoke Tests (Docker)
 

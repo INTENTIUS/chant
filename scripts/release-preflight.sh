@@ -87,7 +87,7 @@ if ! command -v gh >/dev/null 2>&1; then
   fail "gh is not installed, so CI status cannot be verified."
 fi
 
-# The `chant` workflow is the gate (build, lint, full suite, lexicon
+# The `chant` workflow is the gate (build, lint, unit suite, lexicon
 # contract). docs/docs-check are not release-blocking. Newest run first, so
 # the first entry per headSha is that commit's latest verdict (a re-run
 # reuses its run).

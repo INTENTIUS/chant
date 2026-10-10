@@ -105,14 +105,14 @@ The command is idempotent. A second run changes nothing and reports each file as
    # Unit tests
    npx vitest run lexicons/<name>
 
-   # Full test suite
-   npx vitest run
+   # The unit suite, the one a change merges on
+   npx vitest run --project unit
 
    # Docker smoke tests
    just smoke
    ```
 
-   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` run only locally. No CI job builds them. The `smoke-npm` job in `.github/workflows/chant.yml` is gated `if: false` on purpose (chant #1687), because a Docker build per push is too expensive. A new lexicon's integration section therefore executes for the first time when you run `just smoke` by hand. Do that before the lexicon's first release.
+   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` never run on a push or a pull request (chant #1687), because a Docker build per change costs more than it catches. They run only when a person starts them: `just smoke` at a terminal, which asks you to type `run`, or the `smoke-npm` job of `.github/workflows/large-suites.yml`, a `workflow_dispatch` workflow. A new lexicon's integration section therefore executes for the first time when someone runs `just smoke`. Do that before the lexicon's first release.
 
 </Steps>
 

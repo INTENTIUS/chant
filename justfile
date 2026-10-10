@@ -77,9 +77,19 @@ regen:
       npm run --prefix "$lex" bundle
     done
 
-# Run tests (builds missing lexicon artifacts first — see _ensure-gen)
+# Run the unit tests, the vitest `unit` project that CI shards (builds missing
+# lexicon artifacts first — see _ensure-gen). The end-to-end project is
+# `just test-e2e`, which only a person starts.
 test: _ensure-gen
-    npx vitest run
+    npx vitest run --project unit
+
+# The end-to-end tests, the vitest `e2e` project (*.e2e.test.ts). A large
+# suite: it asks a person to type `run` (scripts/human-gate.sh), and on GitHub
+# it runs only from a dispatch of large-suites.yml.
+test-e2e:
+    @scripts/human-gate.sh test-e2e
+    @just _ensure-gen
+    npx vitest run --project e2e
 
 # chant #1025 — the fold-vs-run differential corpus, standalone with its
 # per-source report (fold / run-fallback / drift). Already part of `just
@@ -130,7 +140,10 @@ dogwood-freshness:
 lint:
     npx eslint packages/
 
-# Run all checks (build, lint, test)
+# The fast local gate: typecheck, lint, the unit tests and the lexicon
+# contract. A change merges on this. The large suites (test-e2e, smoke*,
+# *-e2e, helm-survey, bench) are not part of it and run only when a person
+# starts them.
 check: build lint test check-lexicons
 
 # Build diagram SVGs from .dot source files (requires graphviz)
@@ -147,76 +160,92 @@ docs-lexicon lexicon:
 
 # Run performance benchmarks
 bench:
+    @scripts/human-gate.sh bench
     npx vitest run bench
 
 # Build and run workspace smoke test (drops into bash)
 smoke-workspace:
+    @scripts/human-gate.sh smoke-workspace
     docker build -f test/Dockerfile.smoke -t chant-smoke-workspace . && docker run -it --rm chant-smoke-workspace
 
 # Build and run npm tarball smoke test (the lexicons in test/smoke-npm-lexicons.txt)
 smoke-npm:
+    @scripts/human-gate.sh smoke-npm
     ./test/smoke.sh npm
 
 # Build all root examples in Docker and extract artifacts to test/example-builds/
 smoke-build-examples:
+    @scripts/human-gate.sh smoke-build-examples
     ./test/smoke.sh build-examples
 
 # Smoke test against published npm packages (run after just release — local only, never CI)
 smoke-npm-registry:
+    @scripts/human-gate.sh smoke-npm-registry
     ./test/smoke.sh npm-registry
 
 # sql lexicon from the registry against `chant emulator up --lexicon sql`, both dialects (#3641; local only, needs Docker). version: a version or dist-tag; SQL_SMOKE_DB names the database and schema it drops and recreates
 smoke-sql-registry version="latest":
+    @scripts/human-gate.sh smoke-sql-registry
     ./test/smoke.sh sql-registry {{version}}
 
 # Run a chant-generated GitLab pipeline in Docker (gitlab-ci-local; on-demand, needs Docker)
 gitlab-runtime-e2e:
+    @scripts/human-gate.sh gitlab-runtime-e2e
     bash test/gitlab-runtime-e2e.sh
 
 # Run a chant-generated Forgejo workflow in Docker (forgejo-runner/act exec; on-demand, needs Docker)
 forgejo-runtime-e2e:
+    @scripts/human-gate.sh forgejo-runtime-e2e
     bash test/forgejo-runtime-e2e.sh
 
 # Per-PR preview loop (#1223) on a real runner: deploy on PR open, teardown on PR close, against mudflaps (on-demand, needs Docker + network)
 forgejo-preview-e2e:
+    @scripts/human-gate.sh forgejo-preview-e2e
     bash test/forgejo-preview-e2e.sh
 
 # Left-of-line proof capture (#1084): profile chant build --fold vs cdk synth on the matched pair, one measurement on both (on-demand, needs network for pinned installs; no cloud credentials)
 leftness-capture:
+    @scripts/human-gate.sh leftness-capture
     bash test/leftness/capture.sh
 
 # Deploy the components-aws-e2e example against a local AWS emulator (Floci in Docker; on-demand, needs Docker + aws CLI)
 components-aws-e2e:
+    @scripts/human-gate.sh components-aws-e2e
     bash test/components-aws-e2e.sh
 
 # AWS config-controller round-trip (#1208): apply -> observe -> drift -> reconcile -> rollback
 # on the canonical mixed-substrate example, both substrates in one run
 # (on-demand, needs Docker + aws CLI + kubectl)
 aws-cc-e2e:
+    @scripts/human-gate.sh aws-cc-e2e
     bash test/aws-cc-e2e.sh
 
 # GCP config-controller round-trip (#1211): apply -> observe -> drift -> remediate -> destroy
 # on the canonical GCP estate via direct REST against floci-gcp
 # (on-demand, needs Docker)
 gcp-cc-e2e:
+    @scripts/human-gate.sh gcp-cc-e2e
     bash test/gcp-cc-e2e.sh
 
 # Azure property-level drift acceptance (#1213): clean apply quiet, hand-edited NSG rule
 # surfaces, RG-orphan estate stays observed, emulator restart reads MISSING
 # (floci-az in Docker; on-demand, needs Docker only)
 azure-drift-e2e:
+    @scripts/human-gate.sh azure-drift-e2e
     bash test/azure-drift-e2e.sh
 
 # Azure config-controller round-trip (#1214): apply -> observe -> drift -> reconcile -> rollback
 # on the canonical mixed-substrate example — AKS backed by a real k3s, the k8s
 # Service on it included (floci-az in Docker; on-demand, needs Docker + kubectl)
 azure-cc-e2e:
+    @scripts/human-gate.sh azure-cc-e2e
     bash test/azure-cc-e2e.sh
 
 # AWS stack-level env teardown (#1222): deploy two envs + a foreign stack, tear one env
 # down, assert only that env's marker-verified stack is deleted
 # (Floci in Docker; on-demand, needs Docker only)
 aws-teardown-e2e:
+    @scripts/human-gate.sh aws-teardown-e2e
     bash test/aws-teardown-e2e.sh
 
 # Worked example for the @intentius/chant/testing live-stack harness (#1224):
@@ -224,28 +253,36 @@ aws-teardown-e2e:
 # destroy in afterAll — including the teardown-survives-a-failing-test fixture
 # (Floci in Docker; on-demand, needs Docker only)
 testing-harness-e2e:
+    @scripts/human-gate.sh testing-harness-e2e
     CHANT_HARNESS_E2E=1 npx vitest run examples/testing-harness-aws/harness.e2e.test.ts
 
 # Pinnability survey over the upstream chart corpus (#1228 Phase 0): pull each
 # pinned chart, render twice with closed inputs, assert every verdict against
-# expected.txt (on-demand here; CI runs it via helm-survey.yml — needs helm 4 + network)
+# expected.txt (a person starts it, here or by dispatching helm-survey.yml — needs helm 4 + network)
 helm-survey:
+    @scripts/human-gate.sh helm-survey
     CHANT_HELM_SURVEY=1 CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run lexicons/helm/test/survey/survey.test.ts
 
 # Prove the adopt-alb-services GENERATED pipeline deploys multi-service across isolated jobs, with cross-stack outputs threaded as artifacts (Floci in Docker; on-demand, needs Docker + aws CLI)
 adopt-alb-services-e2e:
+    @scripts/human-gate.sh adopt-alb-services-e2e
     bash test/adopt-alb-services-e2e.sh
 
 # Prove `chant carve emit --env` adopts a LIVE AWS resource into chant source against a real endpoint (Floci in Docker; on-demand, needs Docker + aws CLI). The offline --state path is unit-tested separately.
 carve-emit-e2e:
+    @scripts/human-gate.sh carve-emit-e2e
     bash test/carve-emit-e2e.sh
 
 # Drift lands on the line you wrote: deploy examples/k8s-drift-to-source to a throwaway k3d cluster, `kubectl scale` it, and check `lifecycle diff --live` names the composite argument and its line (on-demand, needs Docker + k3d + kubectl). BREAK=1 scales the directly written Deployment and requires it attributed as direct.
 drift-to-source-e2e:
+    @scripts/human-gate.sh drift-to-source-e2e
     bash test/drift-to-source-e2e.sh
 
-# Run all smoke tests
-smoke: smoke-workspace smoke-npm
+# Run all smoke tests (smoke-workspace, then smoke-npm; asks once)
+smoke:
+    @scripts/human-gate.sh smoke
+    docker build -f test/Dockerfile.smoke -t chant-smoke-workspace . && docker run -it --rm chant-smoke-workspace
+    ./test/smoke.sh npm
 
 # Build unified documentation site (main + lexicon docs, includes diagrams)
 docs-build:
