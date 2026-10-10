@@ -127,6 +127,7 @@ const migrationArgs = z.strictObject({
   stack: z.string().optional(),
   ownershipEnv: z.string().optional(),
   cwd: z.string().optional(),
+  keepOnFailure: z.boolean().optional(),
 });
 
 const migrationState = z.enum(["migrate", "switched", "done"]);

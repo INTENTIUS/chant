@@ -35,6 +35,12 @@
  * machine) is not a failure, runs no onFailure, and the next run resumes the
  * backfill from its receipts; a step that fails runs onFailure, and the next
  * run starts again from a new column.
+ *
+ * `gates: "outer"` (#3687) leaves out both approval gates and the Contract
+ * phase, for a caller that runs the Op under an approval of its own: the run
+ * goes from Plan to Retain, verification included. `onFailure: "keep"`
+ * leaves out the onFailure, so a failed run's next run resumes the backfill
+ * from its receipts instead of starting again.
  */
 
 import { Op, activity, gate, phase, stepOutput, type GateApproval } from "@intentius/chant/op";
@@ -98,6 +104,27 @@ export interface PostgresMigrationOpConfig {
   stack?: string;
   /** Ownership env. Default: `ownership.env` in `chant.config.ts`. */
   ownershipEnv?: string;
+  /**
+   * Whose approval the switch and the contract wait for. `"own"` (the
+   * default): the Op's two gates. `"outer"`: an approval the caller already
+   * holds for a larger change that runs this Op as one of its steps. The
+   * switch gate, the contract gate and the Contract phase are left out, so
+   * the Op ends at Retain with the old column kept until its retention date.
+   * Drop it after that date, or run the Op with `"own"`: its switch gate has
+   * nothing left to switch, and its contract gate binds that old column. The
+   * verification still runs, and any difference fails the run with nothing
+   * switched.
+   */
+  gates?: "own" | "outer";
+  /**
+   * What a failed run does with what the expand added. `"drop"` (the
+   * default): onFailure drops the new column, the dual-write trigger and the
+   * receipts, and the next run starts again from a new column. `"keep"`:
+   * there is no onFailure, and the next run resumes the backfill from its
+   * per-batch receipts. To start again instead, run the Op once with
+   * `"drop"`.
+   */
+  onFailure?: "drop" | "keep";
 }
 
 export interface PostgresMigrationOpResources {
@@ -119,6 +146,8 @@ export interface PostgresMigrationArgs {
   stack?: string;
   ownershipEnv?: string;
   cwd?: string;
+  /** A failed run keeps what the expand added (`onFailure: "keep"`): a refusal says how to start again. */
+  keepOnFailure?: boolean;
 }
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_$]*$|^"(?:[^"]|"")+"$/;
@@ -134,6 +163,14 @@ export function PostgresMigrationOp(config: PostgresMigrationOpConfig): Postgres
   }
   if (config.replicationLag) for (const d of [config.replicationLag.max, config.replicationLag.wait]) if (d !== undefined) parseDuration(d);
   if (config.retain !== undefined) parseDuration(config.retain);
+  if (config.gates !== undefined && config.gates !== "own" && config.gates !== "outer") {
+    throw new Error(`PostgresMigrationOp "${config.name}": gates must be "own" or "outer"`);
+  }
+  if (config.onFailure !== undefined && config.onFailure !== "drop" && config.onFailure !== "keep") {
+    throw new Error(`PostgresMigrationOp "${config.name}": onFailure must be "drop" or "keep"`);
+  }
+  const outer = config.gates === "outer";
+  const keep = config.onFailure === "keep";
 
   const args: PostgresMigrationArgs = {
     table: config.table,
@@ -149,6 +186,7 @@ export function PostgresMigrationOp(config: PostgresMigrationOpConfig): Postgres
     ...(config.stack ? { stack: config.stack } : {}),
     ...(config.ownershipEnv ? { ownershipEnv: config.ownershipEnv } : {}),
     ...(config.path && config.path !== "." ? { cwd: config.path } : {}),
+    ...(keep ? { keepOnFailure: true } : {}),
   };
   const a = args as unknown as Record<string, unknown>;
   const switchGate = config.gate?.gate ?? `approve-${config.name}`;
@@ -158,6 +196,33 @@ export function PostgresMigrationOp(config: PostgresMigrationOpConfig): Postgres
 
   const step = (fn: string, extra: Partial<StepDefinition & { id: string; outcomeAttribute: unknown; profile: string; timeout: string }> = {}): StepDefinition =>
     ({ ...activity(fn, a), ...extra }) as StepDefinition;
+
+  // The switch waits for this gate, unless the caller holds the approval (`gates: "outer"`).
+  const approve = phase("Approve", [
+    gate(switchGate, {
+      ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
+      plan: stepOutput("verify", "planDigest"),
+      description:
+        config.gate?.description ??
+        `Approve switching ${what} on ${config.env}: the run record's Verification line has what this approval binds; for a rename, readers move to the new name once it is switched`,
+      ...(config.gate?.approval
+        ? {
+            approval: {
+              ...config.gate.approval,
+              ...(policy
+                ? {
+                    context: {
+                      verifiedRows: stepOutput("verify", "rows"),
+                      mismatched: stepOutput("verify", "mismatched"),
+                      ...config.gate.approval.context,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    }),
+  ]);
 
   const phases = [
     ...(config.build === false ? [] : [phase("Build", [activity("chantBuild", { path: config.path ?? "." })])]),
@@ -194,49 +259,29 @@ export function PostgresMigrationOp(config: PostgresMigrationOpConfig): Postgres
         ],
       }),
     ]),
-    phase("Approve", [
-      gate(switchGate, {
-        ...(config.gate?.timeout ? { timeout: config.gate.timeout } : {}),
-        plan: stepOutput("verify", "planDigest"),
-        description:
-          config.gate?.description ??
-          `Approve switching ${what} on ${config.env}: the run record's Verification line has what this approval binds; for a rename, readers move to the new name once it is switched`,
-        ...(config.gate?.approval
-          ? {
-              approval: {
-                ...config.gate.approval,
-                ...(policy
-                  ? {
-                      context: {
-                        verifiedRows: stepOutput("verify", "rows"),
-                        mismatched: stepOutput("verify", "mismatched"),
-                        ...config.gate.approval.context,
-                      },
-                    }
-                  : {}),
-              },
-            }
-          : {}),
-      }),
-    ]),
+    ...(outer ? [] : [approve]),
     phase("Switch", [step("postgresMigrationSwitch", { timeout: "6h", outcomeAttribute: [{ name: "OldColumn", from: "oldColumn" }] })]),
     phase("Retain", [step("postgresMigrationRetain", { id: "retain", outcomeAttribute: { name: "RetainUntil", from: "retainUntil" } })]),
-    phase("Approve contract", [
-      gate(contractGate, {
-        ...(config.contractGate?.timeout ? { timeout: config.contractGate.timeout } : {}),
-        plan: stepOutput("retain", "contractDigest"),
-        description: config.contractGate?.description ?? `Approve dropping the old column of ${what} once its retention has passed and no reader uses it`,
-      }),
-    ]),
-    phase("Contract", [step("postgresMigrationContract", { outcomeAttribute: { name: "Dropped", from: "dropped" } })]),
+    ...(outer
+      ? []
+      : [
+          phase("Approve contract", [
+            gate(contractGate, {
+              ...(config.contractGate?.timeout ? { timeout: config.contractGate.timeout } : {}),
+              plan: stepOutput("retain", "contractDigest"),
+              description: config.contractGate?.description ?? `Approve dropping the old column of ${what} once its retention has passed and no reader uses it`,
+            }),
+          ]),
+          phase("Contract", [step("postgresMigrationContract", { outcomeAttribute: { name: "Dropped", from: "dropped" } })]),
+        ]),
   ];
 
   const op = Op({
     name: config.name,
-    overview: `Migrate ${what} on ${config.env} as expand and contract: new column, dual write, backfill, verify, gated switch, gated contract`,
+    overview: `Migrate ${what} on ${config.env} as expand and contract: new column, dual write, backfill, verify, ${outer ? "switch under the caller's approval" : "gated switch, gated contract"}`,
     labels: { Migration: "true", Env: config.env, Table: config.table, Column: config.column },
     phases,
-    onFailure: [phase("Compensate", [step("postgresMigrationCompensate")])],
+    ...(keep ? {} : { onFailure: [phase("Compensate", [step("postgresMigrationCompensate")])] }),
   });
   return { op };
 }

@@ -135,6 +135,25 @@ The receipts table lives in the migrated table's schema, so whoever can read the
 
 A run stopped during the backfill (Ctrl-C, a killed job, a lost machine) is not a failure: it runs no onFailure, and the next run resumes at the first batch without a receipt. A run killed between a batch's `UPDATE` and its `COMMIT` leaves neither the rows nor the receipt, so no batch is ever updated twice. A row an application transaction holds makes a batch give up at the lock timeout and try again, a few times, rather than queue behind it.
 
+## Inside a larger approved change
+
+A tool that runs the migration as one step of a change it has already had approved (a migration runner whose own gate covers the whole change, say) can set two options so it does not have to edit the Op's config.
+
+```typescript
+export const { op } = PostgresMigrationOp({
+  name: "migrate-app-users-display-name",
+  env: "prod",
+  table: "app.users",
+  column: "display_name",
+  gates: "outer",     // the caller's approval covers the switch
+  onFailure: "keep",  // a failed run resumes from its receipts
+});
+```
+
+`gates: "outer"` leaves out the switch gate, the contract gate and the Contract phase, so a run goes from Plan through Retain without stopping. The Verify phase still compares every row, and any difference fails the run with nothing switched. The old column is kept until its retention date. Drop it after that date, or run the Op with its own gates (`gates: "own"`, the default): its switch gate has nothing left to switch, and its contract gate binds that old column.
+
+`onFailure: "keep"` leaves out onFailure. A step that fails leaves the new column, its trigger, the carried indexes and constraints and the batches' receipts, and the next run resumes the backfill at the first batch without a receipt, as it does after a run that was stopped. A failure that a rerun would hit again (a verification difference, or a refusal) says so in its error. To start again from a new column, run the Op once with `onFailure: "drop"`: when the step fails again, its onFailure drops what the expand added.
+
 ## Replication
 
 A backfill writes every row of the table once more, and every standby and logical subscriber receives it. Before each batch the Op reads `pg_stat_replication` on the primary and waits while any replica's `replay_lag` is above `replicationLag.max` (default `10s`), for up to `replicationLag.wait` (default `30m`) at a time, then stops naming the replica. No rows means no WAL senders, a single server or a managed service whose replicas share storage, and the check passes at once. A role that is neither a superuser nor a member of `pg_monitor` sees the lag as NULL, so the backfill stops and names the grant to make (`GRANT pg_monitor TO <role>`) rather than go on blind. `replicationLag: false` turns the check off.
@@ -155,6 +174,8 @@ A table a logical replication publication sends the column of is refused, naming
 | `backfillTimeout` | `6h` | one attempt of the backfill step |
 | `output`, `path`, `build` | `dist/schema.json`, `.`, `true` | |
 | `stack`, `ownershipEnv` | `ownership.stack`, `ownership.env` | the marker on the working objects |
+| `gates` | `"own"` | `"outer"` leaves out both gates and the Contract phase for a caller that holds the approval; see [Inside a larger approved change](#inside-a-larger-approved-change) |
+| `onFailure` | `"drop"` | `"keep"` leaves out onFailure, so the next run resumes from the receipts |
 
 ## What the Op refuses
 

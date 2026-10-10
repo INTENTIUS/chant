@@ -17,8 +17,8 @@ import { resolveBoundTarget } from "../../postgres/live/bind";
 import { connectPostgres, type PostgresClient, type PostgresEndpoint } from "../../postgres/live/client";
 import { DEFAULT_POSTGRES_APPLY_TIMEOUTS, declaredObjects } from "../../postgres/apply/apply";
 import { PG_CLASSIFIER_RULES } from "../../postgres/plan/rules";
-import { declaredTable, migrationPlanDigest, observeMigration } from "../../postgres/migrate/observe";
-import { backfill, verifyMigration, type BackfillDeps, type BackfillResult, type VerifyResult } from "../../postgres/migrate/backfill";
+import { declaredTable, migrationPlanDigest, MigrationRefusal, observeMigration } from "../../postgres/migrate/observe";
+import { backfill, MigrationVerificationError, verifyMigration, type BackfillDeps, type BackfillResult, type VerifyResult } from "../../postgres/migrate/backfill";
 import {
   carryOver,
   compensate,
@@ -60,8 +60,33 @@ async function loadConfig(cwd: string): Promise<Pick<ChantConfig, "sql" | "owner
   }
 }
 
+/**
+ * With `onFailure: "keep"` (#3687) no onFailure drops what the expand added,
+ * so a step that fails says what a person does instead: a refusal or a
+ * failed verification would otherwise fail every run after it the same way.
+ */
+const ON_FAILURE_DROPS = "onFailure drops what the expand added, and the next run starts again.";
+
+function noting(args: PostgresMigrationArgs, err: unknown): unknown {
+  if (args.keepOnFailure && (err instanceof MigrationRefusal || err instanceof MigrationVerificationError)) {
+    const kept =
+      `This migration keeps what the expand added on failure (onFailure: "keep"), so nothing drops it: ` +
+      `to start again from a new column, run the Op once with onFailure: "drop" (the default), whose onFailure drops it when this step fails again.`;
+    err.message = err.message.includes(ON_FAILURE_DROPS) ? err.message.replace(ON_FAILURE_DROPS, kept) : `${err.message.replace(/\.?$/, ".")} ${kept}`;
+  }
+  return err;
+}
+
 /** Bind the server, connect and read the declaration, run `body` with it, then close the connection. */
 async function withRun<T>(args: PostgresMigrationArgs, signal: AbortSignal | undefined, deps: PostgresMigrationDeps, body: (run: MigrationRun) => Promise<T>): Promise<T> {
+  try {
+    return await bound(args, signal, deps, body);
+  } catch (err) {
+    throw noting(args, err);
+  }
+}
+
+async function bound<T>(args: PostgresMigrationArgs, signal: AbortSignal | undefined, deps: PostgresMigrationDeps, body: (run: MigrationRun) => Promise<T>): Promise<T> {
   const cwd = args.cwd ?? process.cwd();
   const config = deps.config ?? (await loadConfig(cwd));
   const marker = resolveOwnershipMarker(args, config, "PostgresMigrationOp");
