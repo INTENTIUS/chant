@@ -70,7 +70,7 @@ import type { OwnershipMarker } from "@intentius/chant/ownership";
 import type { ApplyRef } from "@intentius/chant/apply";
 import { SqlApplyError, dependencyFailedDetail, missingDependencies, readBuildObjects, type SqlApplyOutcome } from "../../core/apply";
 import { carriesMarker, isChantManaged } from "../../core/ownership";
-import { DEFAULT_LOCK_TIMEOUT_MS, PostgresQueryError, type PostgresClient } from "../live/client";
+import { DEFAULT_LOCK_TIMEOUT_MS, PostgresQueryError, withCatalogLockTimeout, type PostgresClient } from "../live/client";
 import type { PostgresTarget } from "../live/bind";
 import type { LivePgObject, readLiveSchema } from "../live/catalog";
 import { liveProps } from "../plan/deep";
@@ -254,8 +254,10 @@ export async function applyPostgres(
   };
 
   // ── Plan: the same diff `chant sql plan` shows. ──
+  // The catalog reads wait under lockTimeoutMs, as a plan's do (#3726): one blocked behind ACCESS EXCLUSIVE fails naming the holder instead of hanging.
+  const reader = await withCatalogLockTimeout(client, timeouts.lockTimeoutMs);
   const build: PgSchemaObject[] = declared.map((o) => ({ key: o.exportName, canonical: o.canonical }));
-  const plan = await planAgainstClient(client, target, build, {
+  const plan = await planAgainstClient(reader, target, build, {
     ...(opts.major !== undefined ? { major: opts.major } : {}),
     ...(opts.readLive ? { readLive: opts.readLive } : {}),
     ...(opts.serverNormalize ? { serverNormalize: opts.serverNormalize } : {}),
@@ -281,7 +283,7 @@ export async function applyPostgres(
   for (const m of matchPgObjects(plan.live, plan.declared)) if (m.kind === "matched") matchedLive.add(m.after.key);
 
   // An extension's own comment stays under the trailer when the declaration sets none.
-  const extensionComments = await extensionDefaults(client, objects.filter((o) => o.canonical.kind === "extension" && !matchedLive.has(o.key)).map((o) => o.canonical.name));
+  const extensionComments = await extensionDefaults(reader, objects.filter((o) => o.canonical.kind === "extension" && !matchedLive.has(o.key)).map((o) => o.canonical.name));
 
   // ── Each object's statements, or its verdict when it has none to send. ──
   const statements = planPgStatements({
@@ -454,7 +456,7 @@ export async function applyPostgres(
   }
   await commit();
 
-  if (managed) await applyAccess(client, declared, onServer, exportNames, { ...opts, major: plan.major ?? opts.major ?? POSTGRES_LATEST_MAJOR, ...(plan.scope ? { schemas: plan.scope } : {}) }, timeouts, outcome, log);
+  if (managed) await applyAccess(client, reader, declared, onServer, exportNames, { ...opts, major: plan.major ?? opts.major ?? POSTGRES_LATEST_MAJOR, ...(plan.scope ? { schemas: plan.scope } : {}) }, timeouts, outcome, log);
 
   if (opts.prune) await prune(client, statements.drops, liveRawByKey, opts, timeouts, outcome, log);
   if (outcome.failed.length > 0) throw new PostgresApplyError(outcome);
@@ -470,6 +472,7 @@ export async function applyPostgres(
  */
 async function applyAccess(
   client: PostgresClient,
+  reader: PostgresClient,
   declared: readonly DeclaredPgObject[],
   onServer: ReadonlySet<string>,
   exportNames: ReadonlySet<string>,
@@ -487,12 +490,12 @@ async function applyAccess(
     else ready.push(o);
   }
   const skipped = new Set(decls.filter((o) => !ready.includes(o)).map((o) => o.exportName));
-  const [me] = await client.query<{ self: string }>("SELECT current_user AS self");
+  const [me] = await reader.query<{ self: string }>("SELECT current_user AS self");
   const want = declaredAccess(
     declared.filter((o) => !skipped.has(o.exportName)).map((o) => ({ key: o.exportName, canonical: o.canonical })),
     { major: opts.major, ...(me?.self ? { self: me.self } : {}) },
   );
-  const have = await readLiveAccess(client, want.targets, {
+  const have = await readLiveAccess(reader, want.targets, {
     ...(opts.schemas ? { schemas: opts.schemas } : {}),
     forRoles: want.forRoles,
     declaredDefaults: want.targets.filter((t) => t.kind === "default"),

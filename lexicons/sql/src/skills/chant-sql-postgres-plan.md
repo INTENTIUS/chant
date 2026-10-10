@@ -167,7 +167,7 @@ Transactions follow the class, so a long scan holds locks on one table and what 
 
 A primary key or unique constraint added to an existing table goes in two steps, the unique index built `CONCURRENTLY` and then `ADD CONSTRAINT ... USING INDEX` (SQLPG221), so a busy table is never blocked for the build.
 
-Timeouts are set on every statement: `lock_timeout` 5000 ms, so a statement that cannot get its lock fails instead of queueing behind a long transaction and blocking everything behind it; `statement_timeout` 60000 ms for catalog-only statements, and 0 (no limit) for scans, rewrites and `CONCURRENTLY` builds. Set them per environment with `lockTimeoutMs`, `statementTimeoutMs` and `scanTimeoutMs` on `sql.profiles.<env>`, or per call.
+Timeouts are set on every statement: `lock_timeout` 5000 ms, so a statement that cannot get its lock fails instead of queueing behind a long transaction and blocking everything behind it; `statement_timeout` 60000 ms for catalog-only statements, and 0 (no limit) for scans, rewrites and `CONCURRENTLY` builds. Set them per environment with `lockTimeoutMs`, `statementTimeoutMs` and `scanTimeoutMs` on `sql.profiles.<env>`, or per call. The catalog read an apply makes before its first statement waits under the same `lock_timeout`: blocked behind `ACCESS EXCLUSIVE`, the apply stops with nothing written, naming the table and the pid that holds it.
 
 ```ts
 profiles: { prod: { url: "postgres://db.internal:5432/shop", lockTimeoutMs: 2000, scanTimeoutMs: 600000 } }

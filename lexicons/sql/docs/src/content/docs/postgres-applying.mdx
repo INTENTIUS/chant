@@ -118,13 +118,13 @@ sql: {
 
 or pass them to `postgresApply`, which wins over the profile. A lock timeout fails the object with `lock_timeout 5000ms: another session holds a lock this statement needs; SQLSTATE 55P03` in its error, after its transaction has rolled back, and a statement timeout with `SQLSTATE 57014`. The outcome records the timeouts, every statement with the values it ran under and the transaction it was in, and how each transaction ended.
 
-The profile's `lockTimeoutMs` (5000 when unset) also bounds the catalog reads: `chant lifecycle diff --live`, `chant sql plan` and `chant import --from <env>`. Reading a view's or an index's definition takes `ACCESS SHARE` on its table, so while another session holds `ACCESS EXCLUSIVE` on that table (a long `ALTER TABLE`, a `LOCK TABLE`), the read waits for the lock timeout and then fails, naming the table and the session that holds it:
+The profile's `lockTimeoutMs` (5000 when unset) also bounds the catalog reads: `chant lifecycle diff --live`, `chant sql plan`, `chant import --from <env>`, and the read an apply makes before its first statement. Reading a view's or an index's definition takes `ACCESS SHARE` on its table, so while another session holds `ACCESS EXCLUSIVE` on that table (a long `ALTER TABLE`, a `LOCK TABLE`), the read waits for the lock timeout and then fails, naming the table and the session that holds it:
 
 ```
 canceling statement due to lock timeout: the catalog read waited 5000ms for a lock; shop.orders is held in ACCESS EXCLUSIVE by pid 4242 (application "psql", idle in transaction, transaction open 40s, last statement: LOCK TABLE shop.orders IN ACCESS EXCLUSIVE MODE). Wait for that transaction to finish, or raise sql.profiles.<env>.lockTimeoutMs
 ```
 
-`chant lifecycle diff --live` reports the declared objects as `read-failed` with that reason; a plan or an import stops with it. `lockTimeoutMs: 0` waits without limit.
+`chant lifecycle diff --live` reports the declared objects as `read-failed` with that reason; a plan, an import or an apply stops with it, and the apply writes nothing. `lockTimeoutMs: 0` waits without limit.
 
 ## The ownership marker
 
