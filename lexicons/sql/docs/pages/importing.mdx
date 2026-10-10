@@ -58,6 +58,18 @@ A plan never proposes dropping it (SQLCH250); it names the table in a hint and l
 
 `--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier appends after the declared comment (see [Applying to a Server](../applying/)). The trailer is never written into an imported declaration. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
 
+A SQL user-defined function belongs to no database, so a server holds every project's functions side by side. An import adopts only the functions the imported tables, views and dictionaries call, and the functions those call. A warning names the ones left out. To import more, name them in the profile, by name or by a prefix ending in `*`:
+
+```ts
+sql: {
+  profiles: {
+    prod: { url: "https://ch.internal:8443", databases: ["shop"], importFunctions: ["shop_*"] },
+  },
+},
+```
+
+A function has no comment, so `--owned` does not apply to it. `--type ClickHouse::Function` or `--name <function>` imports the functions it names.
+
 ## A file of statements
 
 `chant import schema.sql --lexicon sql` reads a file of CREATE statements the same way, keeping each as written. A statement that does not parse, or is not a CREATE, stops the import, and the error names every such statement. A project can also keep the file as it is and let the build read it; see [Plain .sql Files](../sql-files/).

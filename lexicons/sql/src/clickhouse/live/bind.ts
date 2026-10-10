@@ -30,6 +30,8 @@ export interface ClickHouseTarget {
    * on Postgres, and off for a server bound by `CLICKHOUSE_URL`.
    */
   access?: boolean;
+  /** `sql.profiles.<env>.importFunctions` (#3718): the functions an import adopts besides those the imported objects call. */
+  importFunctions?: string[];
 }
 
 export interface UnresolvedTarget {
@@ -82,6 +84,7 @@ export function resolveClickHouseTarget(input: {
       defaultDatabase: profile.defaultDatabase ?? "default",
       ...(profile.topology !== undefined ? { topology: toTopology(profile.topology) } : {}),
       ...(profile.access === true ? { access: true } : {}),
+      ...(profile.importFunctions ? { importFunctions: profile.importFunctions } : {}),
     };
   }
   const url = env.CLICKHOUSE_URL;
