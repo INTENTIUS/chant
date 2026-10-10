@@ -25,6 +25,11 @@ function getEntityType(entity: unknown): string {
 // ── WatchOp ──────────────────────────────────────────────────────────
 
 describe("WatchOp: shape", () => {
+  test("failOn: \"drift\" rides on the op; omitted, the op has none (#3675)", () => {
+    expect(getProps(WatchOp({ name: "w", env: "prod", failOn: "drift" }).op).failOn).toBe("drift");
+    expect(getProps(WatchOp({ name: "w", env: "prod" }).op)).not.toHaveProperty("failOn");
+  });
+
   test("returns { op } — the cadence is on the op, not a second resource (#2120)", () => {
     const result = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
     expect(result.op).toBeDefined();

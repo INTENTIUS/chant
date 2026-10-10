@@ -127,6 +127,16 @@ Whenever a run is gated, `chant run` also appends a short markdown block to the 
 
 The [github Op generator](/chant/guide/ops/#scheduling-an-op) passes `--gated-exit 0` on `push`-triggered jobs and adds a follow-up job that posts the pending gate on the merged pull request, so a gated apply is a green run with a visible pending state rather than a red one.
 
+#### Drift as a failed job: `--fail-on-drift`
+
+A run whose `lifecycleDiff` step finds drift still completes, and exits 0. `--fail-on-drift` makes such a run exit **2** when its `Drift` outcome is true, so a scheduled drift job turns red without a script that reads the run ledger ([#3675](https://github.com/INTENTIUS/chant/issues/3675)):
+
+```bash
+chant run prod-watch --fail-on-drift
+```
+
+An Op that declares `failOn: "drift"` (on `WatchOp`, or on any `Op`) gets the same exit code without the flag. A run without drift exits 0, a failed run 1 and a gated run 3, as before. See [Failing the job on drift](/chant/guide/watching-lifecycle/#failing-the-job-on-drift).
+
 Every run appends one record to the run ledger on the `chant/lifecycle` branch, at `<env>/runs__<name>.jsonl` beside the converge ledger. The record carries the run id, the start and end instants, the status (`ok`, `fail`), the Op's `labels`, every `outcomeAttribute` the run captured, and each phase's per-step status. `--json` prints that same record, so what you read on stdout and what `chant operator log` reads back later are one document. `<env>` is the Op's own `labels.Env`, or `local` when it declares none.
 
 ### `run list`

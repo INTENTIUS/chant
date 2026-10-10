@@ -58,6 +58,21 @@ The two phases run in order on each tick:
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
+### Failing the job on drift
+
+A run that finds drift completes: every step succeeded, and the drift is a fact on the run record. So `chant run prod-watch` exits 0 by default, and a scheduled CI job that runs it stays green. Declare `failOn: "drift"` to have the run exit **2** when its `Drift` outcome is true ([#3675](https://github.com/INTENTIUS/chant/issues/3675)):
+
+```typescript
+const { op } = WatchOp({
+  name: "prod-watch",
+  env: "prod",
+  schedule: "*/15 * * * *",
+  failOn: "drift",
+});
+```
+
+`failOn` rides on the Op's declaration, so a pipeline rendered by any of the CI generators picks it up with no change to the `chant run prod-watch` line they write. `chant run prod-watch --fail-on-drift` asks for the same exit code on one invocation of a watch that does not declare it. Either way the run records the same thing on the ledger; only the process exit status changes. A failed run still exits 1 and a gated one 3.
+
 `receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, recorded as a `StaleReceipts` outcome — it never runs an effect and never writes a receipt.
 
 ## Reading the ticks back

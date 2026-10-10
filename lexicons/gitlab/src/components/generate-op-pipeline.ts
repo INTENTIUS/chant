@@ -505,7 +505,7 @@ export function generateGitlabOpPipeline(
   }
 
   const headerLines = [
-    `# chant Ops (#927, #2084, #2293) — one job per Op under stage "${stage}", each`,
+    `# chant Ops — one job per Op under stage "${stage}", each`,
     "# selected by its own rules:. A merge_request_event or push job needs no",
     "# setup; its rule fires on the event itself.",
   ];

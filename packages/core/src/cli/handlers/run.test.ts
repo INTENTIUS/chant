@@ -1877,3 +1877,55 @@ describe("runOpComponents", () => {
     });
   });
 });
+
+/**
+ * chant #3675 — a completed run that found drift exits 0 unless asked to
+ * fail: `--fail-on-drift` on the command line, or `failOn: "drift"` on the Op.
+ * The drift arrives the way a WatchOp's does, as a `Drift` outcome attribute.
+ */
+describe("runOp: --fail-on-drift (#3675)", () => {
+  function driftOp(name: string, drifted: boolean, extra: Record<string, unknown> = {}) {
+    const step = {
+      kind: "activity",
+      fn: "shellCmd",
+      args: { cmd: `echo '{"drifted":${drifted}}'`, json: true },
+      outcomeAttribute: { name: "Drift", from: "json.drifted" },
+    };
+    const [opName, discovered] = localOp(name, [step]);
+    return [opName, { config: { ...discovered.config, ...extra } }] as const;
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  test("drift without the flag or failOn still exits 0", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true)]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runOp({ args: makeArgs({ path: "watch" }), plugins: [], serializers: [] })).toBe(0);
+  });
+
+  test("--fail-on-drift exits 2 when the Drift outcome is true, and says why", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true)]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+    expect(await runOp({ args: makeArgs({ path: "watch", failOnDrift: true }), plugins: [], serializers: [] })).toBe(2);
+    expect(stderr.join("\n")).toContain("exiting 2 because --fail-on-drift");
+  });
+
+  test("--fail-on-drift exits 0 when the run found no drift", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", false)]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runOp({ args: makeArgs({ path: "watch", failOnDrift: true }), plugins: [], serializers: [] })).toBe(0);
+  });
+
+  test("an Op declaring failOn: \"drift\" exits 2 with no flag", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true, { failOn: "drift" })]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runOp({ args: makeArgs({ path: "watch" }), plugins: [], serializers: [] })).toBe(2);
+  });
+});

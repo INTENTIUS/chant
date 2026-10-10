@@ -190,7 +190,7 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     `name: ${CI_GREEN_WORKFLOW_NAME}`,
     "",
     "# Tags each commit on the branch that passed its required phases ci/green/<sha>,",
-    "# and a green commit that later fails one ci/revoked/<sha> (#3573).",
+    "# and a green commit that later fails one ci/revoked/<sha>.",
     "on:",
     "  workflow_run:",
     "    workflows:",

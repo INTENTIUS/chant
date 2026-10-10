@@ -68,7 +68,18 @@ export interface OpConfig {
    * `chant run` and `chant approve` are unchanged.
    */
   neverOverMcp?: boolean;
+  /**
+   * An outcome that makes `chant run` exit non-zero although every step
+   * succeeded (#3675). `"drift"`: a completed run whose `Drift` outcome is
+   * true exits {@link DRIFT_EXIT_CODE}, so a scheduled drift job turns red
+   * without a wrapper script. Same as passing `chant run <op> --fail-on-drift`.
+   * The run itself, and what it records on the ledger, are unchanged.
+   */
+  failOn?: "drift";
 }
+
+/** The exit code `chant run` returns for a completed run that found drift, under `failOn: "drift"` or `--fail-on-drift` (#3675). */
+export const DRIFT_EXIT_CODE = 2;
 
 /**
  * The id under which a run's work lease is published to its steps (#2748):

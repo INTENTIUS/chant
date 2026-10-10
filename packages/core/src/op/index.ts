@@ -16,7 +16,7 @@ export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpA
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";
 export type { OpConfig, OpSchedule, OpWorkLease, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
-export { outcomeAttributesOf, WORK_LEASE_STEP_ID } from "./types";
+export { outcomeAttributesOf, WORK_LEASE_STEP_ID, DRIFT_EXIT_CODE } from "./types";
 export {
   RunWorkLease, workLeaseOutput, stewardWorkHolder, workLeaseProblems, workLeaseNeedsRunItem, LEASE_LOST, WORK_BRANCH_PREFIX,
 } from "./work-lease-run";
