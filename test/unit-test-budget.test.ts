@@ -18,6 +18,6 @@ describe("the unit-test budget (chant #2817)", () => {
     const message = overBudgetMessage("builds the world", 21_340, 15_000);
     expect(message).toContain('"builds the world" took 21.3s, over the 15s unit-test budget (chant #2817).');
     expect(message).toContain("*.e2e.test.ts");
-    expect(message).toContain("test-e2e job");
+    expect(message).toContain("just test-e2e");
   });
 });

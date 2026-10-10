@@ -14,6 +14,7 @@
  * `chant` run, checked through the API by scripts/publish-verify-ci.sh.
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { load } from "js-yaml";
@@ -21,7 +22,7 @@ import { describe, expect, it } from "vitest";
 
 type Step = { name?: string; run?: string; env?: Record<string, string> };
 type Job = { env?: Record<string, string>; steps?: Step[]; needs?: string[]; if?: string };
-type Workflow = { jobs: Record<string, Job> };
+type Workflow = { on: Record<string, unknown>; jobs: Record<string, Job> };
 
 const root = join(import.meta.dirname, "..");
 const workflow = (file: string): Workflow =>
@@ -95,5 +96,47 @@ describe("release gate parity (#1481)", () => {
     const test = publish.jobs.test as Job & { outputs?: Record<string, string> };
     expect(test.outputs?.gate).toMatch(/steps\.verify\.outputs\.outcome/);
     expect(publish.jobs.untag.if).toMatch(/needs\.test\.outputs\.gate != 'timeout'/);
+  });
+});
+
+// The fast checks run on every change; a large suite runs only when a person
+// starts it. On GitHub that is a workflow_dispatch, locally a person typing
+// `run` at scripts/human-gate.sh.
+describe("large suites run only when a person starts them", () => {
+  it("chant.yml runs no end-to-end, binary or Docker suite", () => {
+    const chant = workflow("chant.yml");
+    for (const name of Object.keys(chant.jobs)) {
+      expect(stepsRunning(chant.jobs[name], /--project e2e|ci-observability-binaries\.sh test|smoke\.sh|docker build/)).toEqual([]);
+    }
+    expect(chant.jobs.test.needs).toEqual(["test-shard"]);
+  });
+
+  it("the large-suite workflows and the release gate start only from a dispatch", () => {
+    for (const file of ["large-suites.yml", "helm-survey.yml"]) {
+      expect(Object.keys(workflow(file).on)).toEqual(["workflow_dispatch"]);
+    }
+    const gate = workflow("publish.yml").jobs.test.if ?? "";
+    expect(gate).toMatch(/github\.event_name == 'workflow_dispatch' && inputs\.verify_ci/);
+    expect(gate).not.toMatch(/refs\/tags/);
+  });
+
+  const gateScript = join(root, "scripts", "human-gate.sh");
+  const runGate = (env: Record<string, string>) =>
+    spawnSync("bash", [gateScript, "test-e2e"], {
+      env: { PATH: process.env.PATH ?? "", ...env },
+      input: "run\n",
+      encoding: "utf8",
+    });
+
+  it("the local gate stops anything without a terminal, with exit 3", () => {
+    const result = runGate({});
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("STOP: `test-e2e` is a large suite");
+    expect(result.stderr).toContain("A coding agent must not run it");
+  });
+
+  it("the local gate lets GitHub's own runs through", () => {
+    expect(runGate({ GITHUB_ACTIONS: "true", GITHUB_RUN_ID: "1" }).status).toBe(0);
+    expect(runGate({ GITHUB_ACTIONS: "true" }).status).toBe(3);
   });
 });

@@ -25,7 +25,7 @@ export function unitTestBudgetMs(env: Record<string, string | undefined>): numbe
 export function overBudgetMessage(name: string, elapsedMs: number, budgetMs: number): string {
   return [
     `"${name}" took ${(elapsedMs / 1000).toFixed(1)}s, over the ${budgetMs / 1000}s unit-test budget (chant #2817).`,
-    "Make it faster, or move it to a *.e2e.test.ts file: CI runs those in the test-e2e job, which has no per-test budget.",
+    "Make it faster, or move it to a *.e2e.test.ts file: those are the e2e project (`just test-e2e`, or the test-e2e job of the large-suites workflow), which has no per-test budget and runs only when a person starts it.",
     "CHANT_UNIT_TEST_BUDGET_MS changes the budget for a local run (0 turns it off).",
   ].join(" ");
 }

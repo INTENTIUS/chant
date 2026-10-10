@@ -2,26 +2,13 @@ name: helm-survey
 
 # Pinnability survey over the upstream chart corpus (#1231, epic #1228 Phase 0):
 # pull each chart at its pinned version, render twice with closed inputs,
-# classify, and fail on any drift from expected.txt. Path-scoped rather than in
-# the gating chant workflow so unrelated PRs never depend on 13 chart-repo
-# pulls; the weekly run catches external drift (a repo dropping a pinned
-# version, a helm behavior change) with no code change involved.
+# classify, and fail on any drift from expected.txt. A large suite (13
+# chart-repo pulls, up to five minutes a chart), so it runs only when a person
+# dispatches it: no push, pull_request or schedule trigger. Locally it is
+# `just helm-survey`, behind scripts/human-gate.sh.
 run-name: helm-survey — ${{ github.head_ref || github.ref_name }}
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'lexicons/helm/**'
-      - '.github/workflows/helm-survey.yml'
-  pull_request:
-    paths:
-      - 'lexicons/helm/**'
-      - '.github/workflows/helm-survey.yml'
-  schedule:
-    # Mondays at 08:00 UTC — after lexicon-upgrade (06:00) and
-    # emulator-freshness (07:00), to spread the load.
-    - cron: '0 8 * * 1'
   workflow_dispatch:
 
 concurrency:

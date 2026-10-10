@@ -47,9 +47,11 @@ const forkHeapMb = Math.max(
  *
  * `e2e` is every `*.e2e.test.ts` under packages/, lexicons/ and test/, plus the
  * testing-harness example. These spawn the CLI, boot containers, or build and
- * release whole projects, and take tens of seconds to minutes each. CI runs
- * them in their own job, `test-e2e`, in parallel with the shards, with no
- * per-test budget beyond each test's own timeout.
+ * release whole projects, and take tens of seconds to minutes each. They run
+ * them only when a person starts them (`just test-e2e`, or the `test-e2e`
+ * job of large-suites.yml, which is workflow_dispatch only), with no per-test
+ * budget beyond each test's own timeout. `just test` and `just check` run the
+ * unit project alone.
  *
  * A test over the budget either gets faster or moves: split it into a sibling
  * `<name>.e2e.test.ts` (or rename the file, when the whole file is end to end).
@@ -159,7 +161,7 @@ export const UNIT_INCLUDE = [
   "test/smoke-tarball-deps.test.ts",
 ];
 
-/** The end-to-end files: out of the shards, into CI's `test-e2e` job. */
+/** The end-to-end files: out of the shards; `just test-e2e` or large-suites.yml, started by a person. */
 export const E2E_INCLUDE = [
   "packages/**/*.e2e.test.ts",
   "lexicons/**/*.e2e.test.ts",

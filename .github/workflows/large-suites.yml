@@ -1,0 +1,165 @@
+name: large-suites
+
+# chant's large suites, run only when a person starts them: Actions, then
+# large-suites, then "Run workflow". No push, pull_request or schedule
+# trigger, on purpose. A change merges on the fast checks in chant.yml (and
+# `just check` locally); these suites are not part of developing a change,
+# and nothing waits on them. Locally the same suites sit behind
+# scripts/human-gate.sh, which asks a person at a terminal to type `run`.
+#
+# None of these job names is check, test or validate, so a run here never
+# counts toward or against a ci.green phase in chant.workspace.json.
+run-name: large-suites (${{ inputs.suite }}) — ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Which suite to run
+        type: choice
+        default: all
+        options:
+          - all
+          - test-e2e
+          - test-binaries
+          - smoke-npm
+
+permissions:
+  contents: read
+
+jobs:
+  # The end-to-end tests (#2817): every *.e2e.test.ts, the vitest `e2e`
+  # project. They spawn the CLI, boot containers or release whole projects,
+  # and take from tens of seconds to minutes each (#2812's migrated release
+  # has a 20 minute timeout), so they have no per-test budget. Locally:
+  # `just test-e2e`.
+  test-e2e:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'test-e2e' }}
+    runs-on: ubuntu-latest
+    # #2812's migrated-release test allows itself 20 minutes; the setup
+    # before it is about 3.
+    timeout-minutes: 25
+    steps:
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Generate lexicon artifacts
+        run: scripts/ci-lexicon-artifacts.sh
+
+      # Longest file first, as in the shards: the longest e2e file is several
+      # times the next, and started last it would set the job's length.
+      - name: Restore vitest's recorded durations
+        uses: actions/cache@v5
+        with:
+          path: node_modules/.vite/vitest
+          key: vitest-results-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vitest-results-e2e-
+
+      - name: Run end-to-end tests
+        run: npx vitest run --project e2e
+
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "test-e2e ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Report a timeout, distinct from a test failure
+        if: cancelled()
+        run: |
+          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
+          message="test-e2e timed out after ~${elapsed}m against its 25 minute ceiling. This is a CI timeout, not a test failure."
+          echo "::error::${message}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # The unit tests that check output with the real otelcol-contrib, promtool
+  # and amtool (#3359), and the pull-request loop over five real roots with
+  # tofu (#3463). They skip where a binary is missing, and the unit shards in
+  # chant.yml install none, so this job installs the pinned builds and fails
+  # on a skip. The versions are the lexicons' pins (COLLECTOR_PIN,
+  # PROMETHEUS_PIN); the digests sit beside the script. The archives are
+  # about 240 MB.
+  test-binaries:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'test-binaries' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Generate lexicon artifacts
+        run: scripts/ci-lexicon-artifacts.sh
+
+      - name: Read the binary pins
+        id: pins
+        run: echo "key=$(scripts/ci-observability-binaries.sh key)" >> "$GITHUB_OUTPUT"
+
+      # The archives; the install step checks their digests after a restore too.
+      - name: Cache the binary archives
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/chant-observability-binaries
+          key: observability-binaries-${{ steps.pins.outputs.key }}
+
+      - name: Install otelcol-contrib, promtool, amtool and tofu (pinned)
+        run: scripts/ci-observability-binaries.sh install ~/.cache/chant-observability-binaries
+
+      - name: Run the tests that need the binaries
+        run: scripts/ci-observability-binaries.sh test
+
+  # The npm tarball smoke (#1687): the Docker image test/Dockerfile.smoke-npm
+  # builds. Locally: `just smoke-npm`, or `just smoke` for both images.
+  smoke-npm:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'smoke-npm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      # The same path `just smoke-npm` takes: prepack the lexicons the image
+      # packs (test/smoke-npm-lexicons.txt) on the host, then build the image,
+      # whose build runs the tests.
+      - name: npm smoke tests (prepack, then docker build)
+        run: ./test/smoke.sh npm
