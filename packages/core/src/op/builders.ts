@@ -177,7 +177,8 @@ export function gate(
  * A gate authored inside `steps` is reached only when the effect will fire
  * (the matched path never reaches it). The receipt-store activities
  * (`receiptRead`, `receiptWrite`) are provided by the receipt row's lexicon
- * (#1835, aws).
+ * (#1835 aws, #2074 k8s), or in a sql-only project by the sql lexicon's
+ * store on the database server (#3657).
  *
  * @example
  * ```ts

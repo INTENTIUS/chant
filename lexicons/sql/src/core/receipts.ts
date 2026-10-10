@@ -10,9 +10,11 @@
  *
  * A dialect's store implements this interface over its own client and keeps
  * the receipts in a table whose comment carries the ownership trailer with
- * the `receipts` key (`./ownership.ts`), so schema reads leave it out. It is
- * not registered as the global `receiptRead` / `receiptWrite` activities,
- * which would take over every other lexicon's `effect()` steps in the run.
+ * the `receipts` key (`./ownership.ts`), so schema reads leave it out. A
+ * migration's store is reached by its backfill directly. The store `effect()`
+ * steps use (`../receipts.ts`) is registered as the `receiptRead` /
+ * `receiptWrite` activities only as a fallback, so it never takes over
+ * another configured lexicon's receipt row.
  */
 
 import type { ReceiptStore } from "@intentius/chant/op/receipt-store";

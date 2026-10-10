@@ -27,9 +27,9 @@
  * stale; onFailure and the contract also delete the migration's receipts.
  *
  * The store implements the shared core's `SqlReceiptStore`
- * (`../../core/receipts.ts`) over the migration's own connection. It is not
- * exported as the `receiptRead` / `receiptWrite` activities, whose names are
- * global to a run and belong to an aws or k8s project's receipt row.
+ * (`../../core/receipts.ts`) over the migration's own connection, which the
+ * backfill reaches directly. A sql project's `effect()` receipts use the same
+ * store over `chant_receipts.receipts` (`../../receipts.ts`).
  */
 
 import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
@@ -48,10 +48,10 @@ export { receiptAddress } from "../../core/receipts";
 
 /** A receipts table chant did not make: a user's table under the same name. */
 export class ReceiptsTableConflict extends Error {
-  constructor(schema: string) {
+  constructor(schema: string, table: string = POSTGRES_RECEIPTS_TABLE) {
     super(
-      `${schema}.${POSTGRES_RECEIPTS_TABLE} exists and is not chant's receipts table (its comment carries no receipts marker). ` +
-        `The migration keeps its receipts under that name, so it stops rather than write into it; rename the table.`,
+      `${schema}.${table} exists and is not chant's receipts table (its comment carries no receipts marker). ` +
+        `chant keeps its receipts under that name, so it stops rather than write into it; rename the table.`,
     );
     this.name = "ReceiptsTableConflict";
   }
@@ -70,10 +70,18 @@ export interface PostgresReceiptStore extends SqlReceiptStore {
  * A receipt store in `<schema>.__chant_receipts`, over `client`. `write` runs
  * on the client as it is, so a write inside the caller's transaction commits
  * or rolls back with it. `identity` is the project's ownership stack and env,
- * which every address starts with.
+ * which every address starts with. `table` names the table in `schema`,
+ * `__chant_receipts` by default (`../../receipts.ts` keeps `effect()`
+ * receipts in `chant_receipts.receipts`).
  */
-export function postgresReceiptStore(client: PostgresClient, schema: string, identity: { stack?: string; env?: string }, opts: { runId?: string } = {}): PostgresReceiptStore {
-  const table = `${quoteIdent(schema)}.${quoteIdent(POSTGRES_RECEIPTS_TABLE)}`;
+export function postgresReceiptStore(
+  client: PostgresClient,
+  schema: string,
+  identity: { stack?: string; env?: string },
+  opts: { runId?: string; table?: string } = {},
+): PostgresReceiptStore {
+  const name = opts.table ?? POSTGRES_RECEIPTS_TABLE;
+  const table = `${quoteIdent(schema)}.${quoteIdent(name)}`;
   let ensured = false;
   const comment = async (): Promise<string | null | undefined> => {
     const [row] = await client.query<{ present: boolean; comment: string | null }>(
@@ -87,7 +95,7 @@ export function postgresReceiptStore(client: PostgresClient, schema: string, ide
     if (ensured) return true;
     const c = await comment();
     if (c === undefined) return false;
-    if (!hasChantTrailerKey(c ?? undefined, [RECEIPTS_TRAILER_KEY])) throw new ReceiptsTableConflict(schema);
+    if (!hasChantTrailerKey(c ?? undefined, [RECEIPTS_TRAILER_KEY])) throw new ReceiptsTableConflict(schema, name);
     return true;
   };
   const address = (receipt: EffectReceiptRef) => receiptAddress(identity, receipt.effect);

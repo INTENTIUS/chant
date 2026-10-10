@@ -208,3 +208,17 @@ export const postgresMigrationCompensateContract = activityContract(
   z.object({ dropped: z.array(z.string()) }),
   tableEntity,
 );
+
+// ── effect() batches (#3657) ───────────────────────────────────────────
+
+/** `SqlExecArgs` (`./activities/sql-exec.ts`): one batch's SQL on the environment's server. */
+export const sqlExecContract = activityContract(
+  "sqlExec",
+  z.strictObject({
+    sql: z.string().min(1),
+    environment: z.string().optional(),
+    settings: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ dialect: z.enum(["clickhouse", "postgres"]), source: z.string(), rows: z.number() }),
+);

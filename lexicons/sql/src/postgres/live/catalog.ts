@@ -22,7 +22,7 @@
  *   column's sequence, since the column prints as `serial`;
  * - an index that backs a constraint (the constraint creates it), and an
  *   index partition (the partitioned index creates it);
- * - chant's own receipts tables (`../../core/ownership.ts`), and the working
+ * - chant's own receipts tables and schema (`../../core/ownership.ts`), and the working
  *   columns, constraints and indexes of an expand-and-contract migration in
  *   progress (`../migrate/names.ts`, `../migrate/carry.ts`), so a table reads
  *   as it was before the migration until its switch, and as declared after it.
@@ -199,6 +199,8 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
     );
     for (const r of rows) {
       const name = String(r.name);
+      // chant's own receipts schema (`../../receipts.ts`), like the receipts tables.
+      if (hasChantTrailerKey(str(r.comment), [RECEIPTS_TRAILER_KEY])) continue;
       out.push({
         type: POSTGRES_ENTITY_TYPES.schema,
         name,

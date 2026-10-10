@@ -124,6 +124,27 @@ describe("loadActivities — multi-lexicon (#706)", () => {
     expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
   });
 
+  // #3657 — the sql lexicon's receipt activities are fallbacks: a sql-only
+  // project's effect() receipts go to its database, and a project that also
+  // lists aws or k8s keeps them in that lexicon's row, in either order.
+  test("sql's fallback receipt activities give way to another lexicon's, in either order (#3657)", async () => {
+    const sql = await loadActivities(["sql"]);
+    const sqlRead = sql.get("receiptRead");
+    expect(typeof sqlRead).toBe("function");
+    expect(sql.has("sqlExec")).toBe(true);
+
+    const aws = (await loadActivities(["aws"])).get("receiptRead");
+    expect(aws).toBeDefined();
+    expect(aws).not.toBe(sqlRead);
+    for (const order of [["sql", "aws"], ["aws", "sql"]]) {
+      const a = await loadActivities(order);
+      expect(a.get("receiptRead"), order.join(",")).toBe(aws);
+      expect(a.get("sqlExec"), order.join(",")).toBe(sql.get("sqlExec"));
+    }
+    const k8s = await loadActivities(["sql", "k8s"]);
+    expect(k8s.get("receiptWrite")).toBe((await loadActivities(["k8s"])).get("receiptWrite"));
+  });
+
   test("unknown lexicon is skipped without throwing", async () => {
     const a = await loadActivities(["definitely-not-a-lexicon"]);
     expect(a.has("waitForStack")).toBe(true); // core base still loads

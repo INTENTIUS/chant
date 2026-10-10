@@ -24,12 +24,29 @@ export type { ActivityProfile } from "./activity-profiles";
  */
 export type ActivityFn = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 
-/** Add every exported function from an activity module to `into`, keyed by name. */
+/**
+ * The export an activity module lists its fallback activities under: names it
+ * provides only when no other configured lexicon does (#3657). The sql
+ * lexicon's `receiptRead` / `receiptWrite` / `receiptStaleness` are the case:
+ * a project that uses only sql keeps its `effect()` receipts on its database
+ * server, and one that also configures aws or k8s keeps them in that
+ * lexicon's receipt row, whichever order `lexicons` lists them in.
+ */
+export const ACTIVITY_FALLBACKS_EXPORT = "ACTIVITY_FALLBACKS";
+
+/**
+ * Add every exported function from an activity module to `into`, keyed by
+ * name. A name the module lists in {@link ACTIVITY_FALLBACKS_EXPORT} is added
+ * only when nothing provides it yet; any other export replaces what is there,
+ * a fallback included.
+ */
 function collectActivities(mod: Record<string, unknown>, into: Map<string, ActivityFn>): void {
+  const listed = mod[ACTIVITY_FALLBACKS_EXPORT];
+  const fallbacks = new Set(Array.isArray(listed) ? listed.filter((n): n is string => typeof n === "string") : []);
   for (const [name, value] of Object.entries(mod)) {
-    if (typeof value === "function") {
-      into.set(name, value as ActivityFn);
-    }
+    if (typeof value !== "function") continue;
+    if (fallbacks.has(name) && into.has(name)) continue;
+    into.set(name, value as ActivityFn);
   }
 }
 
@@ -41,7 +58,10 @@ function collectActivities(mod: Record<string, unknown>, into: Map<string, Activ
  * Cloud-specific appliers live in their own lexicon (aws → `flociUp`/`flociDown`,
  * gcp → `gcpApply`, azure → `azGroupEnsure`/`azGroupDelete`), so `lexicons` —
  * the project's configured lexicon list — is consulted to pull those in. A
- * lexicon that ships no `op/activities` module is skipped.
+ * lexicon that ships no `op/activities` module is skipped. A lexicon's
+ * fallback activities ({@link ACTIVITY_FALLBACKS_EXPORT}) give way to another
+ * lexicon's activity of the same name; otherwise a later lexicon's export
+ * replaces an earlier one's.
  *
  * Never throws: the base library is a static import, so there is no "no
  * activities registered" state to report.
