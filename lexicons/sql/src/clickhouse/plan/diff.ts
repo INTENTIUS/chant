@@ -32,6 +32,18 @@ export interface SchemaDiff extends ChangeSet<Change> {
   rebuilds: Change[];
   /** For each table refused as a rebuild, the rebuild migration Op to run instead (`./rebuild-handoff.ts`). */
   rebuildOps?: RebuildOpSuggestion[];
+  /**
+   * Objects on the server, in the declared databases, that chant cannot read
+   * (#3653): a plan names each one and fails rather than leave it out.
+   */
+  unreadable?: UnreadableEntry[];
+}
+
+/** An object a plan could not read: `database.name`, its type and why. */
+export interface UnreadableEntry {
+  object: string;
+  type: string;
+  reason: string;
 }
 
 const qualified = (o: CanonicalObject) => (o.database ? `${o.database}.${o.name}` : o.name);

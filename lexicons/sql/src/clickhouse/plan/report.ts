@@ -6,14 +6,25 @@ import type { SchemaDiff } from "./diff";
 import { renderRebuildOps } from "./rebuild-handoff";
 
 export function renderDiff(diff: SchemaDiff, opts: { title?: string } = {}): string {
-  const trailer =
-    diff.rebuilds.length > 0
+  const unreadable = diff.unreadable ?? [];
+  const refusedRead =
+    unreadable.length > 0
+      ? [
+          "",
+          `Refused: ${unreadable.length} object(s) in the declared databases could not be read, so this plan cannot say what changes for them:`,
+          ...unreadable.map((u) => `  ${u.object} (${u.type}): ${u.reason}`),
+        ]
+      : [];
+  const trailer = [
+    ...refusedRead,
+    ...(diff.rebuilds.length > 0
       ? [
           "",
           `Refused: ${diff.rebuilds.length} change(s) need a rebuild, which ClickHouse cannot make to the existing table. ` +
             "A rebuild runs as its own migration (create the new table, backfill, verify, swap), not in place.",
           ...renderRebuildOps(diff.rebuildOps ?? []),
         ]
-      : [];
+      : []),
+  ];
   return renderChangeSet(diff, { ...(opts.title ? { title: opts.title } : {}), rules: CLASSIFIER_RULES, classes: CHANGE_CLASSES, trailer });
 }

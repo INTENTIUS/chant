@@ -22,7 +22,7 @@
 import { deepObservation, type DeepObservationResult, type DeepResourceObservation, type DeepNormalizationHooks } from "@intentius/chant/deep-observation";
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "../live/bind";
-import { readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
+import { readLiveSchema, readUnreadableObjects, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
 import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
@@ -219,6 +219,22 @@ export async function observeResourcesDeep(
     } catch (err) {
       unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };
     }
+  }
+  // What the declared databases hold that chant cannot read (#3653) is named, so "no drift" is never said over it.
+  const declaredDatabases = new Set<string>();
+  for (const name of options.entityNames) {
+    const entity = options.entities.get(name);
+    if (!entity?.entityType.startsWith("ClickHouse::")) continue;
+    const props = entity.props;
+    declaredDatabases.add(entity.entityType === CLICKHOUSE_ENTITY_TYPES.database ? String(props.name) : typeof props.database === "string" ? props.database : target.defaultDatabase);
+  }
+  try {
+    for (const u of await readUnreadableObjects(target, declaredDatabases)) {
+      unobserved[`${u.database}.${u.name}`] = { type: u.type, reason: "unsupported-kind", detail: `${u.database}.${u.name} is ${u.reason}, so its drift is not reported` };
+    }
+  } catch (err) {
+    const why = classifyClickHouseFailure(err);
+    unobserved["system.dictionaries"] = { type: "ClickHouse::Dictionary", reason: why.reason, detail: `listing the declared databases' dictionaries: ${why.detail}` };
   }
   return deepObservation(resources, unobserved);
 }
