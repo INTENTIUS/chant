@@ -69,14 +69,32 @@ describe("constraints", () => {
     expect(added.steps[0]!.precheck).toBeUndefined();
   });
 
-  test("a column-level foreign key is added as a table constraint", () => {
+  test("a column-level foreign key is added NOT VALID as a table constraint, then validated", () => {
     const r = steps(T, "CREATE TABLE app.o (u bigint)", "CREATE TABLE app.o (u bigint REFERENCES app.users (id) ON DELETE CASCADE)");
-    expect(sql(r)).toEqual(["ALTER TABLE app.o ADD FOREIGN KEY (u) REFERENCES app.users (id) ON DELETE CASCADE"]);
+    expect(sql(r)).toEqual([expect.stringMatching(/^ALTER TABLE app\.o ADD CONSTRAINT o_[0-9a-f]{8}_fkey FOREIGN KEY \(u\) REFERENCES app\.users \(id\) ON DELETE CASCADE NOT VALID$/), expect.stringMatching(/^ALTER TABLE app\.o VALIDATE CONSTRAINT o_[0-9a-f]{8}_fkey$/)]);
     expect(r.steps[0]).toMatchObject({
-      class: "validate",
-      rule: "SQLPG219",
+      class: "metadata",
+      rule: "SQLPG217",
       precheck: { sql: "SELECT count(*) AS n FROM app.o AS c WHERE c.u IS NOT NULL AND NOT EXISTS (SELECT 1 FROM app.users AS p WHERE p.id = c.u)" },
     });
+    expect(r.steps[1]).toMatchObject({ class: "validate", rule: "SQLPG220", transactional: true });
+    expect(r.steps[1]!.precheck).toBeUndefined();
+  });
+
+  test("a CHECK on a table that exists is added NOT VALID, then validated (#3703)", () => {
+    const r = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0))");
+    expect(r.steps.map((s) => [s.sql, s.class, s.rule])).toEqual([
+      ["ALTER TABLE app.t ADD CONSTRAINT a_pos CHECK (a > 0) NOT VALID", "metadata", "SQLPG217"],
+      ["ALTER TABLE app.t VALIDATE CONSTRAINT a_pos", "validate", "SQLPG220"],
+    ]);
+    // Interrupted after the first statement: the server holds it NOT VALID, and the next run only validates it.
+    const resumed = steps(T, "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0) NOT VALID)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0))");
+    expect(resumed.steps.map((s) => [s.sql, s.class, s.rule])).toEqual([["ALTER TABLE app.t VALIDATE CONSTRAINT a_pos", "validate", "SQLPG220"]]);
+    // An unnamed check is given a name for VALIDATE, and that named constraint still matches the unnamed declaration.
+    const unnamed = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int CHECK (a > 0))");
+    expect(sql(unnamed)).toEqual([expect.stringMatching(/^ALTER TABLE app\.t ADD CONSTRAINT t_[0-9a-f]{8}_check CHECK \(a > 0\) NOT VALID$/), expect.stringMatching(/^ALTER TABLE app\.t VALIDATE CONSTRAINT t_[0-9a-f]{8}_check$/)]);
+    const given = /CONSTRAINT (\S+)/.exec(unnamed.steps[0]!.sql)![1];
+    expect(steps(T, `CREATE TABLE app.t (a int, CONSTRAINT ${given} CHECK (a > 0) NOT VALID)`, "CREATE TABLE app.t (a int CHECK (a > 0))").steps.map((s) => s.sql)).toEqual([`ALTER TABLE app.t VALIDATE CONSTRAINT ${given}`]);
   });
 
   test("a unique constraint is an index built CONCURRENTLY, then the constraint made from it", () => {
@@ -220,7 +238,7 @@ describe("safe sequences and pre-checks (#3686)", () => {
 
   test("a CHECK added valid counts the rows it refuses; a NOT ENFORCED one has nothing to check", () => {
     const r = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0))");
-    expect(r.steps[0]).toMatchObject({ rule: "SQLPG218", precheck: { sql: "SELECT count(*) AS n FROM app.t WHERE NOT (a > 0)", detail: "rows that fail the check a_pos (a > 0)" } });
+    expect(r.steps[0]).toMatchObject({ rule: "SQLPG217", precheck: { sql: "SELECT count(*) AS n FROM app.t WHERE NOT (a > 0)", detail: "rows that fail the check a_pos (a > 0)" } });
     const unenforced = steps(T, "CREATE TABLE app.t (a int)", "CREATE TABLE app.t (a int, CONSTRAINT a_pos CHECK (a > 0) NOT ENFORCED)");
     expect(unenforced.steps[0]!.precheck).toBeUndefined();
   });

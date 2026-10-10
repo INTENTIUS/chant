@@ -64,7 +64,7 @@ Statements run in the build's order, each object's in the order its changes need
 | Statements | How they run |
 |---|---|
 | catalog-only: creates, comments, defaults, `NOT VALID` constraints, `DROP NOT NULL`, drops | consecutive ones share one transaction, across objects, so they land together or not at all |
-| ones that read or rewrite a table: a type change with a rewrite, a validated `CHECK`, `VALIDATE CONSTRAINT`, a foreign key added without `NOT VALID`, an index built without `CONCURRENTLY` | a transaction of their own object, so the long statement holds locks on that one table and what came before has committed |
+| ones that read or rewrite a table: a type change with a rewrite, `VALIDATE CONSTRAINT`, an index built without `CONCURRENTLY` | a transaction of their own object, so the long statement holds locks on that one table and what came before has committed |
 | `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE` | alone, outside any transaction |
 
 Postgres refuses `CONCURRENTLY` inside a transaction block, and a label `ADD VALUE` adds cannot be used in the transaction that added it, which is why those run alone. A dropped index is dropped `CONCURRENTLY`.
@@ -72,6 +72,8 @@ Postgres refuses `CONCURRENTLY` inside a transaction block, and a label `ADD VAL
 A primary key or unique constraint added to a table that exists is two statements: its unique index built `CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX`, which changes only the catalog (SQLPG221). A `CONCURRENTLY` build that fails leaves an `INVALID` index behind; the applier drops it, and only an invalid one.
 
 `SET NOT NULL` on a table that exists is four statements (SQLPG210): `ADD CONSTRAINT <column>__chant_nn CHECK (<column> IS NOT NULL) NOT VALID`, which reads no rows; `VALIDATE CONSTRAINT`, which reads them under `SHARE UPDATE EXCLUSIVE` in a transaction of its own, so writes to the table go on; `SET NOT NULL`, which the valid check proves without reading the table; and the check dropped. The `ACCESS EXCLUSIVE` locks are taken only by the two catalog changes, and never held across the scan. If a run stops after the check was added, the next one validates the check it finds.
+
+A `CHECK` (SQLPG218) or a foreign key (SQLPG219) added to a table that exists is two statements: `ADD CONSTRAINT ... NOT VALID`, which reads no rows, then `VALIDATE CONSTRAINT` in a transaction of its own, which reads them under `SHARE UPDATE EXCLUSIVE` while writes to the table go on (a foreign key takes `ROW SHARE` on the referenced table). Adding either one valid in a single statement would read every row under `ACCESS EXCLUSIVE` for a check, or `SHARE ROW EXCLUSIVE` on both tables for a foreign key, and block writes for the whole scan. `VALIDATE` needs a name, so a constraint declared without one is added as `<table>_<hash>_check` or `<table>_<hash>_fkey`; the plan matches an unnamed declaration by what it says, so the name never shows up as drift. If a run stops after the `NOT VALID` add, the next plan finds the constraint `NOT VALID` and only validates it. A `NOT ENFORCED` check or foreign key (18) reads no rows and is still one statement.
 
 The major decides two statements: a STORED generated column's new expression is `SET EXPRESSION` from 17, and `SET STORAGE DEFAULT` exists from 16. The applier reads the major from the build output's `postgresMajor`, else `sql.postgresMajor`, else 18. On an older major, a change with no statement there is not attempted, `unsupported-kind`.
 
@@ -84,8 +86,8 @@ Some statements fail on the rows already in the table: `SET NOT NULL` over a NUL
 | `SET NOT NULL` (on the first of its four statements) | rows where the column is NULL |
 | a unique index on a table that exists, a unique constraint | values held by more than one row, NULLs left out unless `NULLS NOT DISTINCT`, within a partial index's `WHERE` |
 | a primary key | the same, plus rows with a NULL key column |
-| a `CHECK` added valid, or validated | rows where the expression is false |
-| a foreign key added valid, or validated | rows with every key column set and no referenced row (MATCH SIMPLE with its referenced columns named; none otherwise) |
+| a `CHECK` on a table that exists (on its `NOT VALID` add), or validated | rows where the expression is false |
+| a foreign key on a table that exists (on its `NOT VALID` add), or validated | rows with every key column set and no referenced row (MATCH SIMPLE with its referenced columns named; none otherwise) |
 
 A unique index over an expression carries none.
 
