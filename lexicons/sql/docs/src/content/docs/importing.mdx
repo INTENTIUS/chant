@@ -49,6 +49,14 @@ Each object is read with `SHOW CREATE`, so the declaration is the server's canon
 
 A materialized view's inner table belongs to its view and is not imported, and the `default` database, which every server has, is not declared. A column a view's SELECT names directly stays text, so an imported view records the tables it reads but not its column lineage; write its column references as `${table.columns.name}` to get it.
 
+A migration runner's history table is read and marked with the tool's name, the same list the Postgres reader uses: golang-migrate's and dbmate's `schema_migrations`, goose's `goose_db_version`, Flyway's `flyway_schema_history`, and the others named in [Importing a Postgres Server](../postgres-importing/#objects-another-tool-keeps). Import leaves such a table out and says so on stderr:
+
+```
+warning: legacy.schema_migrations is kept by a migration runner (Rails, golang-migrate, dbmate); left out, since declaring it would have chant change what that tool owns
+```
+
+A plan never proposes dropping it (SQLCH250); it names the table in a hint and leaves it alone.
+
 `--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier appends after the declared comment (see [Applying to a Server](../applying/)). The trailer is never written into an imported declaration. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
 
 ## A file of statements

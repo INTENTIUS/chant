@@ -9,6 +9,7 @@ import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "./bind";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
 import { isChantWorkingObject, stripMarkerFromStatement } from "../ownership";
+import { foreignTool } from "../../core/foreign-tables";
 
 /** The server's own databases, never part of a declared schema. */
 export const SYSTEM_DATABASES = new Set(["system", "information_schema", "INFORMATION_SCHEMA"]);
@@ -26,6 +27,8 @@ export interface LiveObject {
   statement: string;
   /** A row policy's table. */
   table?: string;
+  /** The tool that keeps it, for a migration runner's history table (`../../core/foreign-tables.ts`): never chant's to import, change or drop. */
+  foreign?: string;
 }
 
 const quote = (s: string) => `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
@@ -45,6 +48,11 @@ export function entityTypeOfEngine(engine: string): ClickHouseEntityType {
  * dictionary is read (#3682) from `system.tables`, where a reader granted
  * `SELECT` on the database sees it without a grant on `system.dictionaries`;
  * a table with the `Dictionary` engine is a table.
+ *
+ * A table another tool keeps its migration history in (`schema_migrations`,
+ * `goose_db_version`, `../../core/foreign-tables.ts`) is read and marked with
+ * the tool, as the Postgres reader marks it (#3676): import leaves it out
+ * with a warning, and a plan names it in a hint instead of dropping it.
  *
  * So are chant's own working objects (`../ownership.ts`
  * `isChantWorkingObject`): a rebuild migration's new, dual-write and retained
@@ -87,13 +95,16 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   }
   for (const t of tables) {
     if (working.has(t.database) || isChantWorkingObject(t.comment)) continue;
+    const type = Number(t.dictionary) === 1 ? CLICKHOUSE_ENTITY_TYPES.dictionary : entityTypeOfEngine(t.engine);
+    const foreign = type === CLICKHOUSE_ENTITY_TYPES.table ? foreignTool(t.name) : undefined;
     out.push({
-      type: Number(t.dictionary) === 1 ? CLICKHOUSE_ENTITY_TYPES.dictionary : entityTypeOfEngine(t.engine),
+      type,
       database: t.database,
       name: t.name,
       engine: t.engine,
       ...(t.uuid && !/^0{8}-/.test(t.uuid) ? { uuid: t.uuid } : {}),
       ...(t.comment ? { comment: t.comment } : {}),
+      ...(foreign ? { foreign } : {}),
       statement: await statement("TABLE", `${ident(t.database)}.${ident(t.name)}`),
     });
   }
