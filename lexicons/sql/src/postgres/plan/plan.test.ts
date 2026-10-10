@@ -113,7 +113,7 @@ describe("constraints", () => {
     );
     expect(rules(d)).toEqual([
       ["constraints.unique", "SQLPG221", "concurrently"],
-      ["constraints.a", "SQLPG218", "rewrite"],
+      ["constraints.a", "SQLPG218", "validate"],
       ["constraints.b", "SQLPG217", "metadata"],
       ["constraints.c", "SQLPG219", "validate"],
       ["constraints.exclude", "SQLPG222", "rewrite"],

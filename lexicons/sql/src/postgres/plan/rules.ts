@@ -135,16 +135,16 @@ export const PG_CLASSIFIER_RULES = {
   ),
   SQLPG218: rule(
     "SQLPG218",
-    "rewrite",
+    "validate",
     "Add a CHECK constraint",
-    "ADD CONSTRAINT ... CHECK reads every row under ACCESS EXCLUSIVE. Declare it NOT VALID, then remove NOT VALID to validate it under SHARE UPDATE EXCLUSIVE (SQLPG220).",
+    "ADD CONSTRAINT ... CHECK alone reads every row under ACCESS EXCLUSIVE. On a table that exists it is made as two statements: the check added NOT VALID (SQLPG217), which reads no rows, then VALIDATE CONSTRAINT (SQLPG220) in a transaction of its own, which reads them under SHARE UPDATE EXCLUSIVE while writes go on. Rows the check refuses fail the validation; the first statement's pre-check counts them.",
     ALTER_TABLE,
   ),
   SQLPG219: rule(
     "SQLPG219",
     "validate",
     "Add a foreign key",
-    "ADD FOREIGN KEY reads every row under SHARE ROW EXCLUSIVE on both tables, which blocks writes to them for the scan. Declare it NOT VALID, then remove NOT VALID to validate it under SHARE UPDATE EXCLUSIVE (SQLPG220).",
+    "ADD FOREIGN KEY alone reads every row under SHARE ROW EXCLUSIVE on both tables, which blocks writes to them for the scan. On a table that exists it is made as two statements: the key added NOT VALID (SQLPG217), which takes that lock briefly and reads no rows, then VALIDATE CONSTRAINT (SQLPG220) in a transaction of its own, which reads them under SHARE UPDATE EXCLUSIVE while writes go on. Orphan rows fail the validation; the first statement's pre-check counts them.",
     ALTER_TABLE,
   ),
   SQLPG220: rule(

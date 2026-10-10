@@ -20,6 +20,7 @@
  * transaction block at all (`CREATE INDEX CONCURRENTLY` may not).
  */
 
+import { createHash } from "node:crypto";
 import type { OwnershipMarker } from "@intentius/chant/ownership";
 import { stampedComment } from "../../core/ownership";
 import { isTrivia, tokenizeText, type Token } from "../tokens";
@@ -406,6 +407,31 @@ function keyConstraintSteps(table: { schema?: string; name: string }, kind: "PRI
 }
 
 /**
+ * A CHECK (SQLPG218) or a foreign key (SQLPG219) added to a table that
+ * exists, without reading its rows under a lock that blocks writes: the
+ * constraint added NOT VALID, which checks new rows only (SQLPG217), then
+ * validated (SQLPG220), which reads the rows under SHARE UPDATE EXCLUSIVE
+ * while writes go on. The applier commits between the two, since their
+ * classes differ, so the validation runs in a transaction of its own. A run
+ * interrupted after the first statement leaves the constraint NOT VALID on
+ * the server, and the next plan validates it as found. The first statement
+ * carries the pre-check (the rows the check or the foreign key refuses).
+ * VALIDATE needs a name, so a constraint declared without one is given
+ * {@link unnamedConstraintName}'s; the diff matches an unnamed declaration
+ * to the constraint by its body, whatever it is called.
+ */
+/** The name given to a CHECK or foreign key declared without one: `<table>_<hash of its body>_check` or `_fkey`. */
+export function unnamedConstraintName(table: string, c: Pick<CanonicalConstraint, "kind" | "body">): string {
+  const hash = createHash("sha256").update(c.body).digest("hex").slice(0, 8);
+  return pgName(`${table}_${hash}_${c.kind === "CHECK" ? "check" : "fkey"}`);
+}
+
+function notValidThenValidateSteps(alter: string, kind: "CHECK" | "FOREIGN KEY", def: CheckDef | ForeignKeyDef, precheck: PgPrecheck | undefined): PgStep[] {
+  const add = step(`${alter} ADD ${constraintSql(kind, { ...def, notValid: true })}`, "metadata", "SQLPG217");
+  return [precheck ? { ...add, precheck } : add, step(`${alter} VALIDATE CONSTRAINT ${quoteIdent(def.name!)}`, "validate", "SQLPG220")];
+}
+
+/**
  * The constraint changes of a table or a domain, matched the way the diff
  * matches them (`../plan/diff.ts`): a declared constraint the server lacks is
  * added, one the server holds NOT VALID and the declaration does not is
@@ -436,6 +462,10 @@ function constraintSteps(obj: DeclaredPgObject, live: PgDiffObject, keep: Readon
         out.push(step(`${alter} ADD ${named(c.name)}CHECK (${c.expr})${c.notValid ? " NOT VALID" : ""}`, c.notValid ? "metadata" : "validate", c.notValid ? "SQLPG217" : "SQLPG262"));
       } else if ((a.kind === "PRIMARY KEY" || a.kind === "UNIQUE") && !a.notValid) {
         out.push(...keyConstraintSteps(obj.canonical, a.kind, def as KeyDef));
+      } else if ((a.kind === "CHECK" || a.kind === "FOREIGN KEY") && !a.notValid && !(def as { notEnforced?: boolean }).notEnforced) {
+        const d = def as CheckDef | ForeignKeyDef;
+        const withName = d.name ? d : { ...d, name: unnamedConstraintName(obj.canonical.name, a) };
+        out.push(...notValidThenValidateSteps(alter, a.kind, withName, precheckOf(a.kind, withName)));
       } else {
         const rule = addConstraintRule(a);
         out.push(withPrecheck(step(`${alter} ADD ${constraintSql(a.kind, def)}`, classOf(rule), rule), rule === "SQLPG217" || (def as { notEnforced?: boolean }).notEnforced ? undefined : precheckOf(a.kind, def)));

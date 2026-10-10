@@ -84,8 +84,8 @@ Every rule has an id in the SQLPG2xx range, names its class and cites the Postgr
 | column type with a rewrite (integer to bigint, a shorter varchar) | SQLPG207 | rewrite | |
 | column type across kinds (text to integer) | SQLPG208 | expand | needs USING and breaks readers |
 | set NOT NULL | SQLPG210 | validate | made as a `NOT VALID` check, `VALIDATE`, `SET NOT NULL`, the check dropped; a valid `CHECK (col IS NOT NULL)` already in place makes it metadata |
-| add a CHECK | SQLPG218 | rewrite | declare it `NOT VALID`, then validate |
-| add a foreign key | SQLPG219 | validate | `SHARE ROW EXCLUSIVE` on both tables for the scan; `NOT VALID` first avoids it |
+| add a CHECK | SQLPG218 | validate | made as `ADD CONSTRAINT ... NOT VALID`, then `VALIDATE` in its own transaction; writes go on during the scan |
+| add a foreign key | SQLPG219 | validate | made as `ADD CONSTRAINT ... NOT VALID`, then `VALIDATE` in its own transaction; writes go on during the scan |
 | add a constraint `NOT VALID` | SQLPG217 | metadata | checks new rows only |
 | validate a constraint | SQLPG220 | validate | `SHARE UPDATE EXCLUSIVE`, so reads and writes go on |
 | add a primary key or unique constraint | SQLPG221 | concurrently | build the unique index CONCURRENTLY, then `ADD CONSTRAINT ... USING INDEX` |
