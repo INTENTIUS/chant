@@ -105,6 +105,14 @@ export const sqlProfileSchema = z.strictObject({
   /** The database an unqualified declaration is created in. `default` when omitted. */
   defaultDatabase: z.string().optional(),
   /**
+   * ClickHouse import (#3718): the SQL user-defined functions `chant import
+   * --from <env>` adopts besides those the imported objects call, by name, or
+   * by prefix with a trailing `*` (`shop_*`). A function belongs to no
+   * database, so without this only the functions the imported tables, views
+   * and dictionaries call (and the functions those call) are imported.
+   */
+  importFunctions: z.array(z.string()).optional(),
+  /**
    * ClickHouse: the topology this environment runs, which the applier, the
    * plan and the rebuild migration render every statement for: `single`,
    * `cluster:<name>` (`ON CLUSTER`, `Replicated*MergeTree` with a Keeper

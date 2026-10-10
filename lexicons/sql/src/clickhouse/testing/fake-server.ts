@@ -24,6 +24,8 @@ export interface FakeOptions {
   /** Answer every query with this status and body (an auth failure, say). */
   fail?: { status: number; body: string };
   version?: string;
+  /** The SQL user-defined functions `system.functions` lists. Default: none. */
+  functions?: Array<{ name: string; statement: string }>;
 }
 
 const row = (o: Record<string, unknown>) => `${JSON.stringify(o)}\n`;
@@ -52,8 +54,7 @@ export async function fakeClickHouse(objects: FakeObject[], options: FakeOptions
           .join(""),
       );
     }
-    // No SQL user-defined functions.
-    if (/FROM system\.functions/.test(body)) return ok("");
+    if (/FROM system\.functions/.test(body)) return ok((options.functions ?? []).map((f) => row(f)).join(""));
     const show = /^SHOW CREATE (DATABASE|TABLE) (`(?:[^`]|``)*`)(?:\.(`(?:[^`]|``)*`))?$/.exec(body.trim());
     if (show) {
       const [db, name] = show[3] ? [unquote(show[2]!), unquote(show[3])] : [undefined, unquote(show[2]!)];

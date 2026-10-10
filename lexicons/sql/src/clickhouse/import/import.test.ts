@@ -175,3 +175,53 @@ describe("live export", () => {
     expect(new ClickHouseGenerator().generate(ir)[0]!.content).toContain("CREATE TABLE ${analyticsDb}.events");
   });
 });
+
+describe("live export of SQL functions (#3718)", () => {
+  let server: FakeServer;
+  beforeAll(async () => {
+    server = await fakeClickHouse(
+      [
+        { name: "shop", engine: "Atomic", statement: "CREATE DATABASE shop\nENGINE = Atomic" },
+        {
+          database: "shop",
+          name: "orders",
+          engine: "MergeTree",
+          statement: "CREATE TABLE shop.orders\n(\n    `id` UInt64,\n    `net` Float64 DEFAULT shop_net(id)\n)\nENGINE = MergeTree\nORDER BY id",
+        },
+      ],
+      {
+        functions: [
+          { name: "other_score", statement: "CREATE FUNCTION other_score AS x -> (x * 2)" },
+          { name: "shop_net", statement: "CREATE FUNCTION shop_net AS x -> shop_tax(x)" },
+          { name: "shop_tax", statement: "CREATE FUNCTION shop_tax AS x -> (x * 0.2)" },
+          { name: "shop_unused", statement: "CREATE FUNCTION shop_unused AS x -> x" },
+        ],
+      },
+    );
+  });
+  afterAll(() => server.close());
+
+  const run = (profile: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
+    exportResources({ environment: "x", config: { sql: { profiles: { x: { url: server.url, ...profile } } } } as never, env: {}, ...extra });
+
+  test("adopts the functions the imported objects call, and the ones those call; a warning names the rest", async () => {
+    const ir = await run();
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["shop", "orders", "shop_net", "shop_tax"]);
+    expect(ir.warnings).toEqual([
+      "2 SQL functions on the server are not imported, since no imported object calls them: other_score, shop_unused. Name them in sql.profiles.x.importFunctions to import them.",
+    ]);
+  });
+
+  test("importFunctions names more, by name or by prefix", async () => {
+    expect((await run({ importFunctions: ["shop_*"] })).resources.map((r) => r.properties.name)).toEqual(["shop", "orders", "shop_net", "shop_tax", "shop_unused"]);
+    const ir = await run({ importFunctions: ["other_score"] });
+    expect(ir.resources.map((r) => r.properties.name)).toContain("other_score");
+    expect(ir.warnings).toEqual([expect.stringContaining(": shop_unused.")]);
+  });
+
+  test("a selector picks a function it names", async () => {
+    const ir = await run({}, { selector: { name: "other_score" } });
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["other_score"]);
+    expect(ir.warnings).toBeUndefined();
+  });
+});
