@@ -34,3 +34,16 @@ export {
   type StatementStep,
   type StepObject,
 } from "./migration-statements";
+
+// Plain `.sql` files as a schema source (#3646): DDL read into the declarations
+// the tagged templates make; also at `@intentius/chant-lexicon-sql/sql-files`.
+export {
+  readSqlFile,
+  sqlFileDeclarations,
+  sqlFileEntities,
+  sqlFileOf,
+  SqlFileError,
+  type SqlFileObject,
+  type SqlFileOptions,
+  type SqlFileSource,
+} from "./sql-files";

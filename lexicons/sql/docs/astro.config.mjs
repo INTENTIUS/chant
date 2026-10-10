@@ -47,6 +47,10 @@ export default defineConfig({
                   "label": "How-to guides",
                   "items": [
                         {
+                              "label": "Plain .sql Files",
+                              "slug": "sql-files"
+                        },
+                        {
                               "label": "Watching a Server for Drift",
                               "slug": "drift-watch"
                         },

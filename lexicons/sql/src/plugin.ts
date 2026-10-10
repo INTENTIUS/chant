@@ -18,7 +18,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
-import { ClickHouseSqlParser } from "./clickhouse/import/parser";
+import { SqlFileParser, dialectOption } from "./import-parser";
 import { sqlTemplateGenerator } from "./import-generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
@@ -156,9 +156,28 @@ export const sqlPlugin: LexiconPlugin = {
     return sqlMcpResources();
   },
 
-  /** `chant import schema.sql`: a file of ClickHouse CREATE statements. */
-  templateParser() {
-    return new ClickHouseSqlParser();
+  /** `chant import schema.sql`: a file of Postgres or ClickHouse DDL (`./import-parser.ts`). */
+  templateParser(options) {
+    return new SqlFileParser(dialectOption(options));
+  },
+
+  parserOptions() {
+    return [
+      {
+        name: "dialect",
+        type: "string" as const,
+        description: "the DDL's dialect, clickhouse or postgres; read off its statements when omitted",
+      },
+    ];
+  },
+
+  /**
+   * The `.sql` files in the source directory, read into declarations beside
+   * the tagged templates (`./files/build-root.ts`, #3646).
+   */
+  async buildRoots(ctx) {
+    const { sqlFilesBuildRoot } = await import("./files/build-root");
+    return sqlFilesBuildRoot(ctx);
   },
 
   /** One generator for both dialects: each IR resource's type says whose declarations it is. */

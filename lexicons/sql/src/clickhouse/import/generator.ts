@@ -12,15 +12,23 @@ import { isTrivia, tokenizeText, type Token } from "../tokens";
 import { parseCreate, unquote, type CreateNode } from "../parser";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
 
-interface Item {
+/** One object a template is written for, or one a template may reference. */
+export interface ChTemplateItem {
   exportName: string;
   type: string;
   database?: string;
   name: string;
   ddl: string;
 }
+type Item = ChTemplateItem;
 
-const TAG: Record<string, "database" | "table" | "view" | "dictionary" | "func"> = {
+/** A template's text: `parts` (template-literal safe) around one interpolation per entry of `refs`, an export name. */
+export interface TemplateBody {
+  parts: string[];
+  refs: string[];
+}
+
+export const CLICKHOUSE_TAG_OF: Readonly<Record<string, "database" | "table" | "view" | "dictionary" | "func">> = {
   [CLICKHOUSE_ENTITY_TYPES.database]: "database",
   [CLICKHOUSE_ENTITY_TYPES.table]: "table",
   [CLICKHOUSE_ENTITY_TYPES.view]: "view",
@@ -39,12 +47,16 @@ function identifierText(t: Token): string {
 /** Text that sits inside a template literal: a backquote and `${` escaped. */
 const templateSafe = (s: string) => s.replace(/\\(?=`|\$\{)/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 
+/** Words after which a bare name is a relation: `FROM t`, `JOIN t`, a materialized view's `TO t`. */
+const RELATION_WORDS = new Set(["FROM", "JOIN", "TO"]);
+
 /**
  * The template body for one statement, and the exports it references. A
- * qualified name of another imported object becomes `${export}`; the database
- * part of the statement's own name becomes the database's export.
+ * qualified name of another object becomes `${export}`, and so does a bare
+ * name after `FROM`, `JOIN` or `TO` that an unqualified object has; the
+ * database part of the statement's own name becomes the database's export.
  */
-function templateBody(item: Item, byQualified: Map<string, Item>, dbExport: Map<string, string>): { body: string; refs: string[] } {
+function templateBody(item: Item, byQualified: Map<string, Item>, dbExport: Map<string, string>): TemplateBody {
   const tokens = tokenizeText(item.ddl, 0);
   let node: CreateNode | undefined;
   try {
@@ -58,41 +70,86 @@ function templateBody(item: Item, byQualified: Map<string, Item>, dbExport: Map<
     if (!isTrivia(t)) sig.push(i);
   });
   const isName = (t: Token | undefined) => t !== undefined && (t.kind === "ident" || t.kind === "qident");
-  const replace = new Map<number, { to: number; text: string; ref: string }>();
-  for (let k = 0; k + 2 < sig.length; k++) {
+  const isSelf = (target: Item) => target === item || target.exportName === item.exportName;
+  const replace = new Map<number, { to: number; ref: string }>();
+  for (let k = 0; k < sig.length; k++) {
     const a = tokens[sig[k]!]!;
-    const dot = tokens[sig[k + 1]!]!;
-    const b = tokens[sig[k + 2]!]!;
-    if (!isName(a) || dot.kind !== "punct" || dot.text !== "." || !isName(b)) continue;
+    const dot = tokens[sig[k + 1] ?? -1];
+    const b = tokens[sig[k + 2] ?? -1];
     const prev = tokens[sig[k - 1] ?? -1];
     if (prev?.kind === "punct" && prev.text === ".") continue;
+    if (!isName(a) || dot?.kind !== "punct" || dot.text !== "." || !isName(b)) {
+      const inOwnName = own !== undefined && sig[k]! >= own.from && sig[k]! < own.to;
+      const bare = isName(a) && !inOwnName && prev?.kind === "ident" && RELATION_WORDS.has(prev.text.toUpperCase());
+      const target = bare ? byQualified.get(unquote(a.text)) : undefined;
+      if (target && !isSelf(target)) replace.set(sig[k]!, { to: sig[k]! + 1, ref: target.exportName });
+      continue;
+    }
     const db = unquote(a.text);
-    const name = unquote(b.text);
+    const name = unquote(b!.text);
     const inOwnName = own !== undefined && sig[k]! >= own.from && sig[k]! < own.to;
     const target = byQualified.get(`${db}.${name}`);
-    if (!inOwnName && target && target !== item) {
-      replace.set(sig[k]!, { to: sig[k + 2]! + 1, text: `\${${target.exportName}}`, ref: target.exportName });
+    if (!inOwnName && target && !isSelf(target)) {
+      replace.set(sig[k]!, { to: sig[k + 2]! + 1, ref: target.exportName });
       k += 2;
     } else if (inOwnName && dbExport.has(db)) {
-      replace.set(sig[k]!, { to: sig[k]! + 1, text: `\${${dbExport.get(db)}}`, ref: dbExport.get(db)! });
+      replace.set(sig[k]!, { to: sig[k]! + 1, ref: dbExport.get(db)! });
       k += 2;
     }
   }
-  let body = "";
+  const parts: string[] = [""];
   const refs: string[] = [];
   for (let i = 0; i < tokens.length; ) {
     const r = replace.get(i);
     if (r) {
-      body += r.text;
       refs.push(r.ref);
+      parts.push("");
       i = r.to;
       continue;
     }
     const t = tokens[i]!;
-    body += t.kind === "qident" ? templateSafe(identifierText(t)) : templateSafe(t.text);
+    parts[parts.length - 1] += t.kind === "qident" ? templateSafe(identifierText(t)) : templateSafe(t.text);
     i++;
   }
-  return { body, refs };
+  return { parts, refs };
+}
+
+/** A template body as the text between the backquotes. */
+export const bodyText = (body: TemplateBody): string => body.parts.map((p, i) => (i === 0 ? p : `\${${body.refs[i - 1]}}${p}`)).join("");
+
+/**
+ * The template of each object in `items`, with the references to `targets`
+ * (the items themselves, and any object declared elsewhere that they may
+ * name) interpolated, and the items in the order a file declares them: each
+ * after what it references.
+ */
+export function clickhouseTemplates(items: readonly Item[], targets: readonly Item[] = items): { order: Item[]; bodies: Map<string, TemplateBody> } {
+  const byQualified = new Map<string, Item>();
+  const dbExport = new Map<string, string>();
+  for (const it of targets) {
+    if (it.type === CLICKHOUSE_ENTITY_TYPES.database) dbExport.set(it.name, it.exportName);
+    // A function is called, never named after FROM, JOIN or TO.
+    else if (it.type !== CLICKHOUSE_ENTITY_TYPES.function) byQualified.set(it.database ? `${it.database}.${it.name}` : it.name, it);
+  }
+  const bodies = new Map(items.map((it) => [it.exportName, templateBody(it, byQualified, dbExport)]));
+  // Declarations reference each other in one file, so each comes after what it references.
+  const order: Item[] = [];
+  const done = new Set<string>();
+  const visiting = new Set<string>();
+  const byExport = new Map(items.map((it) => [it.exportName, it]));
+  const visit = (it: Item) => {
+    if (done.has(it.exportName) || visiting.has(it.exportName)) return;
+    visiting.add(it.exportName);
+    for (const ref of bodies.get(it.exportName)!.refs) {
+      const dep = byExport.get(ref);
+      if (dep) visit(dep);
+    }
+    visiting.delete(it.exportName);
+    done.add(it.exportName);
+    order.push(it);
+  };
+  for (const it of items) visit(it);
+  return { order, bodies };
 }
 
 function indent(body: string): string {
@@ -107,7 +164,7 @@ export class ClickHouseGenerator implements TypeScriptGenerator {
 
   generate(ir: TemplateIR): GeneratedFile[] {
     const items: Item[] = ir.resources
-      .filter((r) => TAG[r.type])
+      .filter((r) => CLICKHOUSE_TAG_OF[r.type])
       .map((r) => ({
         exportName: r.logicalId,
         type: r.type,
@@ -117,38 +174,14 @@ export class ClickHouseGenerator implements TypeScriptGenerator {
       }));
     if (items.length === 0) return [];
 
-    const byQualified = new Map<string, Item>();
-    const dbExport = new Map<string, string>();
-    for (const it of items) {
-      if (it.type === CLICKHOUSE_ENTITY_TYPES.database) dbExport.set(it.name, it.exportName);
-      else if (it.database) byQualified.set(`${it.database}.${it.name}`, it);
-    }
+    const { order, bodies } = clickhouseTemplates(items);
 
-    const bodies = new Map(items.map((it) => [it.exportName, templateBody(it, byQualified, dbExport)]));
-    // Declarations reference each other in one file, so each comes after what it references.
-    const order: Item[] = [];
-    const done = new Set<string>();
-    const visiting = new Set<string>();
-    const byExport = new Map(items.map((it) => [it.exportName, it]));
-    const visit = (it: Item) => {
-      if (done.has(it.exportName) || visiting.has(it.exportName)) return;
-      visiting.add(it.exportName);
-      for (const ref of bodies.get(it.exportName)!.refs) {
-        const dep = byExport.get(ref);
-        if (dep) visit(dep);
-      }
-      visiting.delete(it.exportName);
-      done.add(it.exportName);
-      order.push(it);
-    };
-    for (const it of items) visit(it);
-
-    const tags = [...new Set(order.map((it) => TAG[it.type]!))].sort();
+    const tags = [...new Set(order.map((it) => CLICKHOUSE_TAG_OF[it.type]!))].sort();
     const lines: string[] = [];
     if (this.header) lines.push(...this.header.split("\n").map((l) => `// ${l}`), "");
     lines.push(`import { ${tags.join(", ")} } from "@intentius/chant-lexicon-sql/clickhouse";`, "");
     for (const it of order) {
-      lines.push(`export const ${it.exportName} = ${TAG[it.type]}\`\n  ${indent(bodies.get(it.exportName)!.body)}\`;`, "");
+      lines.push(`export const ${it.exportName} = ${CLICKHOUSE_TAG_OF[it.type]}\`\n  ${indent(bodyText(bodies.get(it.exportName)!))}\`;`, "");
     }
     return [{ path: "schema.ts", content: `${lines.join("\n").trimEnd()}\n` }];
   }

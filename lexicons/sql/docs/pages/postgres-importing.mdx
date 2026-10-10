@@ -103,4 +103,4 @@ A managed provider's own objects read the same way when `sql.provider` (or the p
 
 `--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier sets (see [Applying to a Postgres Server](../postgres-applying/#the-ownership-marker)). `--type Postgres::Table` imports one kind, and `--name app.tickets` (or `--name tickets`) one object. `--verbatim` changes nothing for Postgres: the printers already leave out what the server would add by itself.
 
-`chant import schema.sql`, from a file of statements, reads ClickHouse DDL only. To start from a Postgres dump, load it into a scratch server and import from that.
+`chant import schema.sql --lexicon sql` reads a file of Postgres DDL into the same `schema.ts`, with `COMMENT ON`, row-level security and `ALTER TABLE ... ADD` constraints folded into the objects they finish. A project can also keep the file and let the build read it; see [Plain .sql Files](../sql-files/).

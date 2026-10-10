@@ -211,7 +211,7 @@ export function collectBuildRootContributors(
     .filter((plugin) => typeof plugin.buildRoots === "function")
     // `entities` is not bindable here — discovery has not run — so the merge
     // hands it in when it calls the closure (#1828 / SOPS provenance).
-    .map((plugin): import("../lexicon").BuildRootContributor => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities }));
+    .map((plugin): import("../lexicon").BuildRootContributor => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities, ...(ctx?.sourceDir !== undefined ? { sourceDir: ctx.sourceDir } : {}) }));
   return [...codegen, ...roots];
 }
 

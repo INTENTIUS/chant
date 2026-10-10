@@ -1,0 +1,90 @@
+---
+title: "Plain .sql Files"
+description: "Keep schema in .sql files of CREATE statements beside the tagged templates; the build reads them into the same declarations, for Postgres and ClickHouse"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/sql-files.mdx instead; changes here are overwritten. */}
+
+
+A project can keep its schema, or part of it, in plain `.sql` files of `CREATE` statements. `chant build` reads every `.sql` file in the source directory and turns each object into the declaration `chant import` would write for it, so a file and the tagged templates can sit side by side and reference each other.
+
+## Put the file in the source directory
+
+```sql
+-- src/users.sql
+CREATE TABLE app.users (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  email text NOT NULL
+);
+COMMENT ON TABLE app.users IS 'People who can sign in';
+CREATE INDEX users_email_idx ON app.users (lower(email));
+```
+
+```ts
+// src/app.ts
+import { schema, view } from "@intentius/chant-lexicon-sql/postgres";
+
+export const app = schema`CREATE SCHEMA app`;
+export const activeUsers = view`CREATE VIEW app.active_users AS SELECT id, email FROM app.users`;
+```
+
+The build finds the file the way it finds `.ts` source: `dist`, git-ignored paths, child projects and the project's `exclude` globs are left out. The dialect is the templates' (here Postgres, from the `schema` tag). A project with no templates reads its files as `sql.dialect`, which defaults to ClickHouse, so a Postgres project of `.sql` files alone sets `sql: { dialect: "postgres" }` in `chant.config.ts`.
+
+Each object gets an export name, as an import would name it: `users` and `usersEmailIdx` above, `<name>Schema` for a schema, `<name>Db` for a ClickHouse database. The names show up in the build output, in `dependsOn`, and in plan and lint messages. A file's object whose export name a template already uses is a build error; rename the template's export.
+
+## What a file can hold
+
+Postgres reads each `CREATE` statement chant declares (schema, table, index, view, materialized view, sequence, enum type, domain, extension, function, procedure, trigger, policy, role), each `GRANT` and `REVOKE`, and each `ALTER DEFAULT PRIVILEGES` as one object. Three kinds of statement are folded into the object they finish:
+
+- `COMMENT ON` joins the object it comments on, wherever in the file it is.
+- `ALTER TABLE ... ENABLE | DISABLE | FORCE ROW LEVEL SECURITY` joins its table.
+- `ALTER TABLE <t> ADD [CONSTRAINT <c>] FOREIGN KEY | UNIQUE | PRIMARY KEY | CHECK | EXCLUDE ...` becomes a table constraint in `<t>`'s `CREATE TABLE`. `pg_dump` and most ORMs print foreign keys this way.
+
+`BEGIN` and `COMMIT` are skipped.
+
+ClickHouse reads `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `CREATE MATERIALIZED VIEW`, `CREATE DICTIONARY` and `CREATE FUNCTION`.
+
+Anything else fails the build: an `INSERT`, a `DROP`, a `SET`, a `COMMENT ON` for an object the file does not create, or a statement that does not parse. The error names the file and every statement it could not read, so the whole file is reported at once:
+
+```
+src/users.sql: a statement chant cannot read as declarations:
+  - not a statement that declares an object: DROP TABLE app.old_users
+```
+
+A `.sql` file that is not schema (seed data, a query, a migration) is kept out of the build by an `exclude` glob, or by a `-- chant-discovery-skip` line at its top.
+
+## References and order
+
+A name in a file's statement is a reference to another object, in a file or in a template, when:
+
+- it is qualified, `app.users`, and an object has that schema and name;
+- it is bare, where SQL names an object (after `FROM`, `JOIN` or `REFERENCES`, an index's, trigger's or policy's table, a trigger's function, a column's or a domain's type), and an object declared without a schema has that name.
+
+The reference becomes an interpolation, as in the import's output, so it carries into `dependsOn` and the build orders the objects by it. A template cannot import a file's object, so it names it in its text; a qualified or bare name of a file's object in a template's statement counts as a reference the same way. Above, `users` comes after `app`, and `activeUsers` after `users`.
+
+Two files' objects that reference each other in a cycle are a build error, as two templates would be. An object declared in a file and again in a template (the same type and qualified name) is an error naming both.
+
+## Turn a file into templates
+
+`chant import <file>.sql --lexicon sql` writes the file's objects as one `schema.ts` of tagged templates, the same declarations the build reads from the file. The dialect is read off the statements: an `ENGINE =` clause, a `CREATE DATABASE`, a `CREATE DICTIONARY` or a lambda `CREATE FUNCTION f AS (x) -> ...` is ClickHouse, and a statement only Postgres has (`CREATE SCHEMA`, `CREATE INDEX`, `COMMENT ON`, `ALTER TABLE`, `GRANT`) or a `CREATE TABLE` with no engine is Postgres. `--parser-option dialect=postgres` names it. A statement the import cannot read stops it, named, as on a build.
+
+## From code
+
+The same reading is exported from the package root (and from `@intentius/chant-lexicon-sql/sql-files`), for a tool that turns DDL it gets elsewhere into declarations:
+
+```ts
+import { readSqlFile, sqlFileDeclarations, sqlFileEntities, SqlFileError } from "@intentius/chant-lexicon-sql";
+
+// The objects, each with its export name, type, qualified name and statements.
+const objects = readSqlFile("postgres", ddl, { origin: "prisma migrate diff" });
+
+// The TypeScript chant import would write, with comment lines at the top.
+const { content } = sqlFileDeclarations("postgres", ddl, { origin: "db/legacy.sql", schema: "app", header: "Generated from db/legacy.sql" });
+
+// The declarations themselves, references to `known` entities interpolated.
+const entities = sqlFileEntities("postgres", [{ origin: "db/legacy.sql", ddl }], { known });
+```
+
+`schema` qualifies the names the DDL leaves unqualified, as an ORM does when the schema comes from its connection: an object's own name, an index's, trigger's or policy's table, a foreign key's table, a comment's target and a column type naming an enum or domain the file creates. On ClickHouse it is the database for an object's unqualified name. Each function throws a `SqlFileError`, whose `problems` list the statements it could not read.
