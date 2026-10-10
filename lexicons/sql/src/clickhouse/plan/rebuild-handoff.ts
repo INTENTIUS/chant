@@ -25,7 +25,7 @@ export interface RebuildOpSuggestion extends MigrationOpSuggestion {
   /** `database.name`, the Op's `table`. */
   table: string;
   dualWrite: { mode: "materialized-view"; cutoverColumn: string } | { mode: "app" };
-  /** What to know before running it: set for an engine that collapses rows by sorting key (#3674). */
+  /** What to know before running it: set for an engine that collapses rows by sorting key (#3674, #3727). */
   note?: string;
 }
 
@@ -47,7 +47,8 @@ export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<str
     const dw = dualWrite.mode === "app" ? `{ mode: "app" }` : `{ mode: "materialized-view", cutoverColumn: ${JSON.stringify(dualWrite.cutoverColumn)} }`;
     const note = collapsesRows(c.engineName)
       ? `${table} is a ${c.engineName}: when the old table's engine collapses rows too, the Verify phase reads both tables under FINAL, so rows the old table has not merged yet compare as merged. ` +
-        `A new sorting key that collapses rows differently from the old one still fails it; OPTIMIZE TABLE ${table} FINAL before the run avoids that.`
+        `A new sorting key that collapses rows differently from the old one still fails it; OPTIMIZE TABLE ${table} FINAL before the run avoids that. ` +
+        `From an engine that keeps every row (a plain MergeTree), it groups both tables by the new sorting key instead and compares what a ${c.engineName} keeps per key (its sums, its highest version, the sum of its signs).`
       : undefined;
     out.push({
       table,
