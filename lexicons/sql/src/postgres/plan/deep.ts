@@ -21,6 +21,8 @@ import { declaredAddress, scopeFor } from "../live/describe-resources";
 import * as tags from "../entities";
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { canonicalPgObject, columnShape, sameConstraint, type CanonicalPgObject } from "./normalize";
+import { serverNormalized } from "./server-normalize";
+import type { PostgresClient } from "../live/client";
 
 type Props = Record<string, unknown>;
 
@@ -34,6 +36,9 @@ const TAG: Record<string, (s: TemplateStringsArray) => { props: object }> = {
   [POSTGRES_ENTITY_TYPES.enum]: tags.type,
   [POSTGRES_ENTITY_TYPES.domain]: tags.domain,
   [POSTGRES_ENTITY_TYPES.extension]: tags.extension,
+  [POSTGRES_ENTITY_TYPES.function]: tags.func,
+  [POSTGRES_ENTITY_TYPES.procedure]: tags.procedure,
+  [POSTGRES_ENTITY_TYPES.trigger]: tags.trigger,
 };
 
 /** The props of what the server printed, parsed with the declaration's tag. */
@@ -74,6 +79,32 @@ const PROP_OF_FIELD: Record<string, string[]> = {
   partitionBound: ["partitionBound"],
   inherits: ["inherits"],
   using: ["using"],
+  args: ["args"],
+  returns: ["returns", "returnsTable"],
+  language: ["language"],
+  body: ["body"],
+  link: ["link"],
+  securityDefiner: ["securityDefiner"],
+  set: ["set"],
+  transform: ["transform"],
+  volatility: ["volatility"],
+  strict: ["strict"],
+  leakproof: ["leakproof"],
+  parallel: ["parallel"],
+  cost: ["cost"],
+  rows: ["rows"],
+  support: ["support"],
+  window: ["window"],
+  constraint: ["constraint"],
+  timing: ["timing"],
+  events: ["events"],
+  forEach: ["forEach"],
+  when: ["when"],
+  function: ["function", "functionName"],
+  from: ["from"],
+  deferrable: ["deferrable"],
+  initiallyDeferred: ["initiallyDeferred"],
+  referencing: ["referencing"],
 };
 
 /** Props keys that hold constraints, by constraint kind. */
@@ -150,39 +181,48 @@ export async function observeResourcesDeep(
   const unobserved: Record<string, UnobservedEntity> = {};
   let target;
   let live: LivePgObject[];
+  let client: PostgresClient;
   const declared = options.entityNames.map((name) => ({ name, entity: options.entities.get(name) }));
   try {
     const bound = await bindPostgres(options);
     target = bound.target;
+    client = bound.client;
     try {
       live = await readLiveSchema(bound.client, {
         schemas: scopeFor(target, declared.filter((x) => x.entity?.entityType.startsWith("Postgres::")).map((x) => ({ type: x.entity!.entityType, props: x.entity!.props }))),
       });
-    } finally {
+    } catch (err) {
       await bound.client.end();
+      throw err;
     }
   } catch (err) {
     const why = classifyPostgresFailure(err);
     for (const { name, entity } of declared) unobserved[name] = { type: entity?.entityType ?? "", reason: why.reason, detail: why.detail };
     return deepObservation({}, unobserved);
   }
-  const byKey = new Map(live.map((o) => [liveKey(o.type, o.schema, o.name), o]));
-  for (const { name, entity } of declared) {
-    if (!entity || !entity.entityType.startsWith("Postgres::")) {
-      unobserved[name] = { type: entity?.entityType ?? "", reason: "unsupported-kind" };
-      continue;
+  try {
+    const byKey = new Map(live.map((o) => [liveKey(o.type, o.schema, o.name, o.signature), o]));
+    for (const { name, entity } of declared) {
+      if (!entity || !entity.entityType.startsWith("Postgres::")) {
+        unobserved[name] = { type: entity?.entityType ?? "", reason: "unsupported-kind" };
+        continue;
+      }
+      const { schema, name: objectName, signature } = declaredAddress({ type: entity.entityType, props: entity.props }, target.defaultSchema);
+      const o = byKey.get(liveKey(entity.entityType, schema, objectName, signature));
+      if (!o) continue;
+      try {
+        const lp = liveProps(o);
+        let d = canonicalPgObject(entity.entityType, entity.props, target.defaultSchema);
+        const l = canonicalPgObject(o.type, lp, target.defaultSchema);
+        // A trigger's WHEN as the server would print it, when the rules leave it different.
+        if (d.kind === "trigger" && d.fields.when !== l.fields.when) d = await serverNormalized(client, d, target.defaultSchema);
+        resources[name] = { type: o.type, physicalId: o.oid, properties: inDeclaredVocabulary(entity.props, lp, d, l) };
+      } catch (err) {
+        unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };
+      }
     }
-    const { schema, name: objectName } = declaredAddress({ type: entity.entityType, props: entity.props }, target.defaultSchema);
-    const o = byKey.get(liveKey(entity.entityType, schema, objectName));
-    if (!o) continue;
-    try {
-      const lp = liveProps(o);
-      const d = canonicalPgObject(entity.entityType, entity.props, target.defaultSchema);
-      const l = canonicalPgObject(o.type, lp, target.defaultSchema);
-      resources[name] = { type: o.type, physicalId: o.oid, properties: inDeclaredVocabulary(entity.props, lp, d, l) };
-    } catch (err) {
-      unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };
-    }
+  } finally {
+    await client.end();
   }
   return deepObservation(resources, unobserved);
 }

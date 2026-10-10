@@ -28,6 +28,8 @@ export interface PgDiffObject extends CanonicalPgObject {
   foreign?: string;
   /** The export name, against a server. */
   exportName?: string;
+  /** What depends on a routine on the server (a view, a trigger, a default), which a DROP FUNCTION would refuse. */
+  dependents?: string[];
 }
 
 export type PgSchemaObject = Keyed<PgDiffObject>;
@@ -94,10 +96,22 @@ export function pgSchemaFromBuildFile(path: string, defaultSchema = "public"): P
   return pgSchemaFromBuildOutput(readFileSync(path, "utf-8"), defaultSchema);
 }
 
-/** The identity an object has on a server: its kind's namespace and its qualified name. */
-export function qualifiedKey(o: { kind: string; schema?: string; name: string }): string {
-  const space = o.kind === "schema" ? "schema" : o.kind === "extension" ? "extension" : o.kind === "enum" || o.kind === "domain" ? "type" : "relation";
-  return `${space} ${o.schema ? `${o.schema}.` : ""}${o.name}`;
+/**
+ * The namespace an object's name is unique in: relations (tables, views,
+ * sequences, indexes) share one per schema, types and domains another,
+ * functions and procedures a third (told apart by their parameter types),
+ * and a trigger's name is unique on its table.
+ */
+export function pgNamespace(kind: string): string {
+  if (kind === "schema" || kind === "extension" || kind === "trigger") return kind;
+  if (kind === "enum" || kind === "domain") return "type";
+  if (kind === "function" || kind === "procedure") return "routine";
+  return "relation";
+}
+
+/** The identity an object has on a server: its kind's namespace, its qualified name, and its signature where it has one. */
+export function qualifiedKey(o: { kind: string; schema?: string; name: string; signature?: string }): string {
+  return `${pgNamespace(o.kind)} ${o.schema ? `${o.schema}.` : ""}${o.name}${o.signature ?? ""}`;
 }
 
 /** The declared objects re-keyed by qualified name, the only identity a server has. */
@@ -107,8 +121,13 @@ export function keyedByQualifiedName(objects: readonly PgSchemaObject[]): PgSche
 
 /** What a server holds, in the diff's form, keyed by qualified name. */
 export function pgSchemaFromLive(live: readonly LivePgObject[], defaultSchema: string): PgSchemaObject[] {
-  return live.map((o) => {
-    const canonical = { ...diffObject(o.type, o.statement, defaultSchema), ...(o.foreign ? { foreign: o.foreign } : {}) };
+  // A routine with a SQL-standard body is not one a declaration can hold (`../parser.ts`): never chant's, never compared.
+  return live.filter((o) => !o.unsupported).map((o) => {
+    const canonical = {
+      ...diffObject(o.type, o.statement, defaultSchema),
+      ...(o.foreign ? { foreign: o.foreign } : {}),
+      ...(o.dependents && o.dependents.length > 0 ? { dependents: o.dependents } : {}),
+    };
     return { key: qualifiedKey(canonical), canonical };
   });
 }

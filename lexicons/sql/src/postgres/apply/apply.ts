@@ -138,9 +138,17 @@ export class PostgresApplyError extends SqlApplyError<PostgresApplyOutcome> {
   }
 }
 
-/** The name an apply result gives an object: `schema.name`, or a schema's or extension's own name. */
-export const refName = (o: { kind: CanonicalKind; schema?: string; name: string }): string =>
-  o.kind === "schema" || o.kind === "extension" || o.schema === undefined ? o.name : `${o.schema}.${o.name}`;
+/**
+ * The name an apply result gives an object: `schema.name`, or a schema's or
+ * extension's own name; a routine's with its parameter types
+ * (`app.touch()`), a trigger's with its table (`touch ON app.users`).
+ */
+export const refName = (o: { kind: CanonicalKind; schema?: string; name: string; signature?: string }): string =>
+  o.kind === "trigger"
+    ? `${o.name}${o.signature ?? ""}`
+    : o.kind === "schema" || o.kind === "extension" || o.schema === undefined
+      ? o.name
+      : `${o.schema}.${o.name}${o.kind === "function" || o.kind === "procedure" ? (o.signature ?? "") : ""}`;
 
 /**
  * The objects a Postgres `chant build` output declares, in creation order,
@@ -434,7 +442,7 @@ export async function applyPostgres(
 }
 
 /** The address a live object is keyed by in the diff. */
-function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: string; name: string } {
+function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: string; name: string; signature?: string } {
   const kind = (
     {
       "Postgres::Schema": "schema",
@@ -446,9 +454,17 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
       "Postgres::Enum": "enum",
       "Postgres::Domain": "domain",
       "Postgres::Extension": "extension",
+      "Postgres::Function": "function",
+      "Postgres::Procedure": "procedure",
+      "Postgres::Trigger": "trigger",
     } as const
   )[o.type];
-  return { kind, ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" ? { schema: o.schema } : {}), name: o.name };
+  return {
+    kind,
+    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" ? { schema: o.schema } : {}),
+    name: o.name,
+    ...(o.signature !== undefined ? { signature: o.signature } : {}),
+  };
 }
 
 /** The comments the extensions' control files set, by extension name. */

@@ -1,7 +1,7 @@
 ---
 title: "Declaring Postgres Objects"
 label: "Declaring Objects"
-description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains and extensions as tagged templates: the eight tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains, extensions, functions, procedures and triggers as tagged templates: the eleven tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
 group: "Postgres"
 order: 11
@@ -45,10 +45,13 @@ export const ticketsTitle = index`
 | `type` | `CREATE TYPE name AS ENUM (...)` | `Postgres::Enum` |
 | `domain` | `CREATE DOMAIN` | `Postgres::Domain` |
 | `extension` | `CREATE EXTENSION` | `Postgres::Extension` |
+| `func` | `CREATE [OR REPLACE] FUNCTION` | `Postgres::Function` |
+| `procedure` | `CREATE [OR REPLACE] PROCEDURE` | `Postgres::Procedure` |
+| `trigger` | `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER` | `Postgres::Trigger` |
 
 A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. The `type` tag declares enum types only; a composite or range type is refused at `(` or `RANGE`.
 
-Functions, triggers, row-level security policies, roles and grants have no tag. Declare them with the tool that manages them today; an import leaves them out.
+Row-level security policies, roles and grants have no tag. Declare them with the tool that manages them today; an import leaves them out.
 
 ## Tables
 
@@ -114,6 +117,38 @@ export const trgm = extension`CREATE EXTENSION pg_trgm WITH SCHEMA ${app}`;
 A column of an enum type or a domain names it by reference, `status ${ticketStatus} NOT NULL DEFAULT 'open'`, so the build creates the type first. Labels are added to an enum in place (SQLPG260); removing or reordering them is expand and contract (SQLPG261).
 
 An extension is checked against the configured managed provider's list (SQLPG004, see [Managed Providers](../postgres-providers/)) and against the target major's catalog (SQLPG116 for one the major no longer ships). The objects an extension creates are its own, and chant neither declares nor imports them.
+
+## Functions, procedures and triggers
+
+```ts
+import { func, procedure, trigger } from "@intentius/chant-lexicon-sql/postgres";
+
+export const touch = func`
+  CREATE FUNCTION ${app}.touch() RETURNS trigger LANGUAGE plpgsql AS $$
+  BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+  END
+  $$`;
+
+export const openCount = func`
+  CREATE FUNCTION ${app}.open_count(min_priority int DEFAULT 1) RETURNS bigint
+  LANGUAGE sql STABLE PARALLEL SAFE
+  AS $$ SELECT count(*) FROM ${tickets} WHERE ${tickets.columns.priority} >= min_priority $$`;
+
+export const closeOld = procedure`
+  CREATE PROCEDURE ${app}.close_old(before timestamptz) LANGUAGE plpgsql AS $$
+  BEGIN UPDATE ${tickets} SET status = 'closed' WHERE created_at < before; END
+  $$`;
+
+export const ticketsTouch = trigger`
+  CREATE TRIGGER tickets_touch BEFORE UPDATE ON ${tickets}
+  FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION ${touch}()`;
+```
+
+`function` is a JavaScript key word, so the tag is `func`. The body is a string constant (`AS $$ ... $$` or `AS '...'`), kept as written: Postgres stores it verbatim and prints it back unchanged, so it is compared exactly. An interpolation inside the body renders as text, an object as its schema-qualified name and a column reference as the column's name, and is recorded as a reference, so the build creates the routine after the table its body reads. A SQL-standard body (`RETURN expr`, `BEGIN ATOMIC ... END`) is refused, since the server keeps it parsed and prints it back rewritten; so is `SET ... FROM CURRENT`, which takes the value of whichever session runs the `CREATE`.
+
+A routine's identity on the server is its name and its input parameter types, so overloads are separate objects, and `COMMENT ON FUNCTION ${app}.touch() IS '...'` names it the same way. A trigger belongs to its table and its name is unqualified. A trigger's arguments are stored as strings, and its `WHEN` condition is compared as the server prints it, its casts included.
 
 ## Comments
 

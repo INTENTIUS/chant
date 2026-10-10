@@ -103,6 +103,9 @@ export const sqlPlugin: LexiconPlugin = {
       { name: "type", isTag: true, description: "A Postgres CREATE TYPE ... AS ENUM, parsed into an enum entity" },
       { name: "domain", isTag: true, description: "A Postgres CREATE DOMAIN, parsed into a domain entity" },
       { name: "extension", isTag: true, description: "A Postgres CREATE EXTENSION, parsed into an extension entity" },
+      { name: "func", isTag: true, description: "A Postgres CREATE FUNCTION, parsed into a function entity with its body kept verbatim" },
+      { name: "procedure", isTag: true, description: "A Postgres CREATE PROCEDURE, parsed into a procedure entity with its body kept verbatim" },
+      { name: "trigger", isTag: true, description: "A Postgres CREATE TRIGGER, parsed into a trigger entity on its table" },
       {
         name: "literal",
         isTag: false,

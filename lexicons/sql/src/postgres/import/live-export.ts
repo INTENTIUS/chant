@@ -43,6 +43,10 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
     if (options.selector?.type && o.type !== options.selector.type) continue;
     const name = options.selector?.name;
     if (name !== undefined && name !== o.name && name !== `${o.schema}.${o.name}`) continue;
+    if (o.unsupported) {
+      warnings.push(`${o.schema ? `${o.schema}.` : ""}${o.name}${o.signature ?? ""} is left out: ${o.unsupported}`);
+      continue;
+    }
     if (o.foreign) {
       warnings.push(`${o.schema ? `${o.schema}.` : ""}${o.name} is kept by ${o.foreign}; left out, since declaring it would have chant change what that tool owns`);
       continue;

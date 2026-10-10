@@ -94,7 +94,7 @@ export async function planAgainstClient(
   const declared: PgSchemaObject[] = [];
   for (const o of declaredRaw) {
     const l = liveByKey.get(o.key);
-    if (l && differs(o, l) && (o.canonical.kind === "table" || o.canonical.kind === "view" || o.canonical.kind === "materializedView")) {
+    if (l && differs(o, l) && (o.canonical.kind === "table" || o.canonical.kind === "view" || o.canonical.kind === "materializedView" || o.canonical.kind === "trigger")) {
       declared.push({ ...o, canonical: { ...o.canonical, ...(await (options.serverNormalize ?? serverNormalized)(client, o.canonical, target.defaultSchema)) } });
     } else declared.push(o);
   }
@@ -115,7 +115,7 @@ export async function planPgAgainstServer(environment: string, buildFile: string
     const targeted = pgBuildFileMajor(buildFile) ?? (await projectMajor(options));
     const { declared, diff } = await planAgainstClient(client, target, pgSchemaFromBuildFile(buildFile, target.defaultSchema), { ...(targeted !== undefined ? { major: targeted } : {}), environment });
     const { migrationOps } = withMigrationOps(diff, declared, environment, target.defaultSchema);
-    const label = new Map(declared.map((o) => [o.key, `${o.canonical.exportName} (${o.key.split(" ")[1]})`]));
+    const label = new Map(declared.map((o) => [o.key, `${o.canonical.exportName} (${o.key.slice(o.key.indexOf(" ") + 1)})`]));
     const changes = diff.changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
     return { changes, hints: diff.hints, refused: changes.filter((c) => c.class === "expand"), ...(migrationOps ? { migrationOps } : {}) };
   } finally {

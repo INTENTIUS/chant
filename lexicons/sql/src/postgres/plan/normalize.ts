@@ -27,7 +27,15 @@
  *   column's columns are `NOT NULL` whether or not that is written;
  * - an identity column's or a sequence's options at their defaults are left
  *   out; storage parameters compare as a map;
- * - an index's access method defaults to `btree`.
+ * - an index's access method defaults to `btree`;
+ * - a function's or procedure's parameter types drop their modifiers (the
+ *   catalog keeps none: `varchar(20)` is `character varying`), a parameter's
+ *   mode is `in` unless written, its attributes at their defaults (VOLATILE,
+ *   CALLED ON NULL INPUT, SECURITY INVOKER, PARALLEL UNSAFE, COST 100 or 1,
+ *   ROWS 1000 or 0) are left out, and its body is compared as written, since
+ *   the server keeps it verbatim;
+ * - a trigger's events compare as a set, `UPDATE OF` columns sorted, and its
+ *   arguments as the strings the catalog stores.
  *
  * What the rules cannot see (a view's `SELECT *`, which the server expands, or
  * an expression it parenthesizes) is asked of the live server itself when a
@@ -52,10 +60,13 @@ import type {
   IndexProps,
   KeyDef,
   SchemaProps,
+  RoutineProps,
   SequenceProps,
   TableProps,
+  TriggerProps,
   ViewProps,
 } from "../entities";
+import { stringValue } from "../entities";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -178,7 +189,7 @@ function castEnd(sig: readonly Token[], i: number): { end: number; type: string 
   return { end: j, type: words.join("").toLowerCase() };
 }
 
-const isLiteral = (t: Token | undefined): boolean => t !== undefined && (t.kind === "string" || t.kind === "number");
+const isLiteral = (t: Token | undefined): boolean => t !== undefined && (t.kind === "string" || t.kind === "number" || (t.kind === "ident" && t.text.toUpperCase() === "NULL"));
 
 /** One token's canonical text. */
 function tokenText(t: Token): string {
@@ -308,12 +319,18 @@ export interface CanonicalConstraint {
   comment?: string;
 }
 
-export type CanonicalKind = "schema" | "table" | "index" | "view" | "materializedView" | "sequence" | "enum" | "domain" | "extension";
+export type CanonicalKind = "schema" | "table" | "index" | "view" | "materializedView" | "sequence" | "enum" | "domain" | "extension" | "function" | "procedure" | "trigger";
 
 export interface CanonicalPgObject {
   kind: CanonicalKind;
   schema?: string;
   name: string;
+  /**
+   * What tells the object from another of the same name: a routine's input
+   * parameter types, `(integer,text)`; a trigger's table, ` ON app.users`.
+   * Written as SQL names the object after its name.
+   */
+  signature?: string;
   /** Everything else that is compared, by field, each field canonical. */
   fields: Record<string, unknown>;
   columns: CanonicalColumn[];
@@ -330,6 +347,9 @@ const kindOf: Record<string, CanonicalKind> = {
   "Postgres::Enum": "enum",
   "Postgres::Domain": "domain",
   "Postgres::Extension": "extension",
+  "Postgres::Function": "function",
+  "Postgres::Procedure": "procedure",
+  "Postgres::Trigger": "trigger",
 };
 
 const comment = (c: string | undefined): string | undefined => {
@@ -390,6 +410,127 @@ const keyBody = (kind: string, k: KeyDef) =>
     .filter(Boolean)
     .join(" ");
 
+/** The pseudo-types (`pg_type.typtype = 'p'`), in `pg_catalog`: a routine's parameter or result, never a column's. */
+const PSEUDO_TYPES = new Set([
+  "any", "anyarray", "anycompatible", "anycompatiblearray", "anycompatiblemultirange", "anycompatiblenonarray", "anycompatiblerange",
+  "anyelement", "anyenum", "anymultirange", "anynonarray", "anyrange", "cstring", "event_trigger", "fdw_handler", "index_am_handler",
+  "internal", "language_handler", "pg_ddl_command", "record", "table_am_handler", "trigger", "tsm_handler", "unknown", "void",
+]);
+
+/** A parameter's or result's type as the catalog keeps it: canonical, its modifiers dropped (`varchar(20)` is `character varying`). */
+export function canonicalArgType(text: string, defaultSchema: string): string {
+  const m = /^\s*(?:pg_catalog\s*\.\s*)?([A-Za-z_]+)\s*((?:\[\s*\]\s*)*)$/.exec(text);
+  if (m && PSEUDO_TYPES.has(m[1]!.toLowerCase())) return `${m[1]!.toLowerCase()}${"[]".repeat((m[2]!.match(/\[/g) ?? []).length)}`;
+  return canonicalType(text, defaultSchema)!.replace(/\([^()]*\)/g, "");
+}
+
+/** A routine's input parameters: those whose mode is `in`, `inout` or `variadic`. */
+const isInput = (a: { mode: string }) => a.mode !== "out";
+
+/** A routine's identity among its overloads: its input parameter types, `(integer,text)`. */
+export function routineSignature(p: Pick<RoutineProps, "args">, defaultSchema: string): string {
+  return `(${p.args.filter(isInput).map((a) => canonicalArgType(a.type, defaultSchema)).join(",")})`;
+}
+
+/** The result a function declares, or the one its OUT parameters give it: one OUT is its type, several are `record`. */
+function routineResult(p: RoutineProps, defaultSchema: string): string | undefined {
+  if (p.returnsTable) return `table(${p.returnsTable.map((c) => `${quoteIdent(c.name)} ${canonicalArgType(c.type, defaultSchema)}`).join(",")})`;
+  if (p.returns !== undefined) {
+    const m = /^setof\s+(.*)$/is.exec(p.returns.trim());
+    return m ? `setof ${canonicalArgType(m[1]!, defaultSchema)}` : canonicalArgType(p.returns, defaultSchema);
+  }
+  const outs = p.args.filter((a) => a.mode === "out" || a.mode === "inout");
+  if (outs.length === 1) return canonicalArgType(outs[0]!.type, defaultSchema);
+  if (outs.length > 1) return "record";
+  return undefined;
+}
+
+/** A `SET` value as compared: each item unquoted, a bare word folded, `TO` and `=` alike. */
+function canonicalSetting(value: string): string {
+  const items: string[] = [];
+  let tokens: Token[];
+  try {
+    tokens = tokenizeText(value, 0).filter((t) => !isTrivia(t));
+  } catch {
+    return value.trim();
+  }
+  let sign = "";
+  for (const t of tokens) {
+    if (t.kind === "punct" && t.text === ",") continue;
+    if (t.kind === "op" && (t.text === "-" || t.text === "+")) {
+      sign = t.text === "-" ? "-" : "";
+      continue;
+    }
+    if (t.kind === "string") items.push(stringValue(t.text) ?? t.text);
+    else if (t.kind === "qident") items.push(identValue(t));
+    else items.push(`${sign}${t.kind === "ident" ? t.text.toLowerCase() : t.text}`);
+    sign = "";
+  }
+  return items.join(", ");
+}
+
+/** The canonical fields of a function or procedure. */
+function routineFields(kind: "function" | "procedure", p: RoutineProps, defaultSchema: string, fields: Record<string, unknown>): void {
+  const lang = (p.language ?? "sql").toLowerCase();
+  fields.args = p.args.map((a) =>
+    [a.mode, a.name ? quoteIdent(a.name) : "", canonicalArgType(a.type, defaultSchema), a.default !== undefined ? `default ${canonicalExpr(a.default)}` : ""].filter(Boolean).join(" "),
+  );
+  fields.language = lang;
+  // Line endings aside, the body is what the server keeps and prints back.
+  fields.body = p.body.replace(/\r\n/g, "\n");
+  fields.link = p.link;
+  fields.securityDefiner = p.securityDefiner === true;
+  fields.set = p.set && Object.keys(p.set).length > 0
+    ? Object.fromEntries(Object.entries(p.set).map(([k, v]) => [k.toLowerCase(), canonicalSetting(v)]).sort(([a], [b]) => (a! < b! ? -1 : 1)))
+    : undefined;
+  fields.transform = p.transform ? canonicalExpr(p.transform) : undefined;
+  if (kind === "procedure") return;
+  const result = routineResult(p, defaultSchema);
+  const setReturning = result !== undefined && /^(setof |table\()/.test(result);
+  fields.returns = result;
+  fields.volatility = p.volatility && p.volatility !== "volatile" ? p.volatility : undefined;
+  fields.strict = p.strict === true;
+  fields.leakproof = p.leakproof === true;
+  fields.parallel = p.parallel && p.parallel !== "unsafe" ? p.parallel : undefined;
+  const defaultCost = lang === "c" || lang === "internal" ? 1 : 100;
+  fields.cost = p.cost !== undefined && Number(p.cost) !== defaultCost ? String(Number(p.cost)) : undefined;
+  const defaultRows = setReturning ? 1000 : 0;
+  fields.rows = p.rows !== undefined && Number(p.rows) !== defaultRows ? String(Number(p.rows)) : undefined;
+  fields.support = p.support ? canonicalName(p.support, "pg_catalog").replace(/^pg_catalog\./, "") : undefined;
+  fields.window = p.window === true;
+}
+
+/** The order the catalog prints a trigger's events in. */
+const EVENT_ORDER = ["insert", "delete", "update", "truncate"];
+
+/** A trigger argument as the catalog stores it: a string. */
+function triggerArg(a: string): string {
+  const t = a.trim();
+  if (/^'/.test(t) || /^[Ee]'/.test(t) || /^\$/.test(t)) return stringValue(t) ?? t;
+  if (/^"/.test(t)) return identValue(t);
+  if (/^-?[0-9.]/.test(t)) return t.replace(/\s+/g, "");
+  return t.toLowerCase();
+}
+
+function triggerFields(p: TriggerProps, defaultSchema: string, fields: Record<string, unknown>): void {
+  fields.table = canonicalName(p.tableName, defaultSchema);
+  fields.constraint = p.constraint === true;
+  fields.timing = p.timing;
+  fields.events = [...p.events]
+    .sort((a, b) => EVENT_ORDER.indexOf(a.event) - EVENT_ORDER.indexOf(b.event))
+    .map((e) => (e.columns && e.columns.length > 0 ? `${e.event} of ${[...e.columns].sort().map(quoteIdent).join(",")}` : e.event));
+  fields.forEach = p.forEach;
+  fields.when = canonicalExpr(p.when);
+  fields.function = canonicalName(p.functionName, defaultSchema);
+  fields.args = p.args.length > 0 ? p.args.map(triggerArg) : undefined;
+  fields.from = p.from ? canonicalName(p.from, defaultSchema) : undefined;
+  fields.deferrable = p.deferrable === true;
+  fields.initiallyDeferred = p.initiallyDeferred === true;
+  fields.referencing = p.referencing && (p.referencing.old || p.referencing.new)
+    ? [p.referencing.old ? `old table as ${quoteIdent(p.referencing.old)}` : "", p.referencing.new ? `new table as ${quoteIdent(p.referencing.new)}` : ""].filter(Boolean).join(" ")
+    : undefined;
+}
+
 /**
  * A definition in canonical form. `props` is an entity's props, declared or
  * parsed from what the server printed; `defaultSchema` qualifies a bare name.
@@ -398,7 +539,7 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
   const kind = kindOf[entityType];
   if (!kind) throw new Error(`not a Postgres entity type: ${entityType}`);
   const schemaOf = (p: { schema?: string }) => (kind === "schema" || kind === "extension" ? undefined : (p.schema ?? defaultSchema));
-  const base = { kind, schema: schemaOf(props as { schema?: string }), name: String(props.name) };
+  const base: Pick<CanonicalPgObject, "kind" | "schema" | "name" | "signature"> = { kind, schema: schemaOf(props as { schema?: string }), name: String(props.name) };
   const fields: Record<string, unknown> = { comment: comment(props.comment as string | undefined) };
   const columns: CanonicalColumn[] = [];
   const constraints: CanonicalConstraint[] = [];
@@ -418,6 +559,19 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
     case "enum":
       fields.labels = (props as unknown as EnumProps).labels;
       break;
+    case "function":
+    case "procedure": {
+      const p = props as unknown as RoutineProps;
+      base.signature = routineSignature(p, defaultSchema);
+      routineFields(kind, p, defaultSchema, fields);
+      break;
+    }
+    case "trigger": {
+      const p = props as unknown as TriggerProps;
+      triggerFields(p, defaultSchema, fields);
+      base.signature = ` ON ${String(fields.table)}`;
+      break;
+    }
     case "domain": {
       const p = props as unknown as DomainProps;
       fields.dataType = canonicalType(p.dataType, defaultSchema);

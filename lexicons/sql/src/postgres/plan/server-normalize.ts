@@ -88,6 +88,26 @@ async function tableExpressions(client: PostgresClient, o: CanonicalPgObject, de
   });
 }
 
+/** A trigger's WHEN condition as the server prints it, canonical. */
+async function triggerWhen(client: PostgresClient, o: CanonicalPgObject, defaultSchema: string): Promise<string | undefined> {
+  const when = o.fields.when;
+  // An INSTEAD OF trigger, on a view, takes no WHEN.
+  if (typeof when !== "string" || o.fields.timing === "instead of") return undefined;
+  const events = ((o.fields.events as string[] | undefined) ?? []).map((e) => e.replace(/^(\w+)( of )?/, (_m, ev: string, of?: string) => `${ev.toUpperCase()}${of ? " OF " : ""}`));
+  return rolledBack(client, defaultSchema, async () => {
+    await client.query(`CREATE TEMP TABLE chant_normalize (LIKE ${String(o.fields.table)})`);
+    await client.query(`CREATE FUNCTION pg_temp.chant_normalize() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END'`);
+    await client.query(
+      `CREATE TRIGGER chant_normalize ${String(o.fields.timing).toUpperCase()} ${events.join(" OR ")} ON pg_temp.chant_normalize ` +
+        `FOR EACH ${o.fields.forEach === "row" ? "ROW" : "STATEMENT"} WHEN (${when}) EXECUTE FUNCTION pg_temp.chant_normalize()`,
+    );
+    await emptyPath(client);
+    const [row] = await client.query<Row>(`SELECT pg_catalog.pg_get_triggerdef(t.oid, true) AS def FROM pg_catalog.pg_trigger t WHERE t.tgrelid = 'pg_temp.chant_normalize'::pg_catalog.regclass`);
+    const m = / WHEN \((.*)\) EXECUTE (?:FUNCTION|PROCEDURE) /s.exec(String(row?.def ?? ""));
+    return m ? canonicalExpr(m[1]!) : undefined;
+  });
+}
+
 /**
  * The declared object with its expressions in the server's own printing,
  * when the server answers; the object unchanged otherwise. Only the
@@ -98,6 +118,10 @@ export async function serverNormalized<T extends CanonicalPgObject & { outputs?:
     const q = await viewQuery(client, o.fields.query, defaultSchema);
     // A declared column list names the outputs; otherwise the server's names do (`SELECT *` expanded).
     return q === undefined ? o : { ...o, fields: { ...o.fields, query: q.query }, ...(o.fields.columns === undefined ? { outputs: q.outputs } : {}) };
+  }
+  if (o.kind === "trigger") {
+    const when = await triggerWhen(client, o, defaultSchema);
+    return when === undefined ? o : { ...o, fields: { ...o.fields, when } };
   }
   if (o.kind === "table") {
     const e = await tableExpressions(client, o, defaultSchema);

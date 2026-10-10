@@ -18,6 +18,11 @@
  * - objects an extension owns (`pg_depend.deptype = 'e'`): the extension
  *   declares them, so the extension is what is imported;
  * - `plpgsql`, installed in every database;
+ * - aggregates, and a trigger the server makes for itself (a foreign key's)
+ *   or clones onto a partition from its parent's;
+ * - a routine with a SQL-standard body (`RETURN`, `BEGIN ATOMIC`): read, but
+ *   marked `unsupported`, since the server prints it rewritten and a
+ *   declaration cannot hold it;
  * - a sequence an identity column owns (it is the column's), and a `serial`
  *   column's sequence, since the column prints as `serial`;
  * - an index that backs a constraint (the constraint creates it), and an
@@ -76,6 +81,12 @@ export interface LivePgObject {
   statement: string;
   /** The tool whose bookkeeping this is, when it is another tool's (an ORM's revision table). */
   foreign?: string;
+  /** A routine's input parameter types, `(integer,text)`; a trigger's table, ` ON app.users` (`../plan/normalize.ts`). */
+  signature?: string;
+  /** What depends on a routine (a view, a trigger, a column default), as the server describes each. */
+  dependents?: string[];
+  /** Why no declaration can hold this object; it is read so import can say it left it out. */
+  unsupported?: string;
 }
 
 /** What {@link readLiveSchema} reads. */
@@ -181,8 +192,9 @@ const seqParams = (r: Row): SequenceParams => ({
 
 /**
  * Every object in scope, in a stable order: schemas, extensions, enums,
- * domains, sequences, tables, views and materialized views, indexes; each
- * kind by schema then name, in byte order.
+ * domains, sequences, tables, views and materialized views, indexes,
+ * functions and procedures, triggers; each kind by schema then name, in byte
+ * order.
  */
 export async function readLiveSchema(client: PostgresClient, scope: SchemaScope = {}): Promise<LivePgObject[]> {
   const out: LivePgObject[] = [];
@@ -556,11 +568,73 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
     }
   }
 
+  // Functions and procedures (not aggregates).
+  {
+    const rows = await client.query<Row>(
+      `SELECT p.oid::text AS oid, n.nspname AS schema, p.proname AS name, p.prokind AS kind, pg_catalog.pg_get_functiondef(p.oid) AS def,
+              '(' || pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes), ', ', ',') || ')' AS signature,
+              p.prosqlbody IS NOT NULL AS sqlbody, pg_catalog.obj_description(p.oid, 'pg_proc') AS comment,
+              ARRAY(SELECT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) FROM pg_catalog.pg_depend d
+                    WHERE d.refclassid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.refobjid = p.oid AND d.deptype = 'n'
+                    ORDER BY 1) AS dependents
+       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE p.prokind IN ('f', 'p', 'w') AND ${s.sql} AND ${notExtensionOwned("pg_proc", "p.oid")}
+       ORDER BY n.nspname ${C}, p.proname ${C}, pg_catalog.oidvectortypes(p.proargtypes) ${C}`,
+      s.params,
+    );
+    for (const r of rows) {
+      // A migration's dual-write function, until its contract.
+      if (hasChantTrailerKey(str(r.comment), [MIGRATION_TRAILER_KEY])) continue;
+      const signature = String(r.signature);
+      const q = `${qname(String(r.schema), String(r.name))}${signature}`;
+      const procedure = r.kind === "p";
+      const dependents = (r.dependents as string[] | null) ?? [];
+      out.push({
+        type: procedure ? POSTGRES_ENTITY_TYPES.procedure : POSTGRES_ENTITY_TYPES.function,
+        schema: String(r.schema),
+        name: String(r.name),
+        oid: String(r.oid),
+        signature,
+        ...(dependents.length > 0 ? { dependents } : {}),
+        ...(str(r.comment) ? { comment: str(r.comment) } : {}),
+        ...(r.sqlbody === true ? { unsupported: "its body is SQL-standard (RETURN or BEGIN ATOMIC), which the server prints back rewritten; declare it with a string body (AS $$ ... $$)" } : {}),
+        statement: [String(r.def).trim(), ...commentOn(`${procedure ? "PROCEDURE" : "FUNCTION"} ${q}`, r.comment)].join(";\n"),
+      });
+    }
+  }
+
+  // Triggers: the ones written by hand, not a foreign key's or a partition's clone of its parent's.
+  {
+    const rows = await client.query<Row>(
+      `SELECT t.oid::text AS oid, n.nspname AS schema, c.relname AS table_name, t.tgname AS name, pg_catalog.pg_get_triggerdef(t.oid, true) AS def,
+              pg_catalog.obj_description(t.oid, 'pg_trigger') AS comment
+       FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE NOT t.tgisinternal AND t.tgparentid = 0 AND ${s.sql} AND ${notExtensionOwned("pg_class", "c.oid")}
+       ORDER BY n.nspname ${C}, c.relname ${C}, t.tgname ${C}`,
+      s.params,
+    );
+    for (const r of rows) {
+      // A migration's dual-write trigger, until its contract.
+      if (hasChantTrailerKey(str(r.comment), [MIGRATION_TRAILER_KEY])) continue;
+      const table = qname(String(r.schema), String(r.table_name));
+      out.push({
+        type: POSTGRES_ENTITY_TYPES.trigger,
+        schema: String(r.schema),
+        name: String(r.name),
+        oid: String(r.oid),
+        signature: ` ON ${table}`,
+        ...(str(r.comment) ? { comment: str(r.comment) } : {}),
+        ...(FOREIGN_TABLES[String(r.table_name)] ? { foreign: FOREIGN_TABLES[String(r.table_name)] } : {}),
+        statement: [String(r.def), ...commentOn(`TRIGGER ${quoteIdent(String(r.name))} ON ${table}`, r.comment)].join(";\n"),
+      });
+    }
+  }
+
   return out;
 }
 
-/** The key an object is found by: its type and schema-qualified name. */
-export const liveKey = (type: string, schema: string | undefined, name: string): string => `${type} ${schema ?? ""}.${name}`;
+/** The key an object is found by: its type and schema-qualified name, and a routine's parameter types or a trigger's table. */
+export const liveKey = (type: string, schema: string | undefined, name: string, signature?: string): string => `${type} ${schema ?? ""}.${name}${signature ?? ""}`;
 
 /**
  * Mark what the managed service owns (#3282) as foreign: its reserved

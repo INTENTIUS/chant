@@ -1,6 +1,6 @@
 ---
 skill: chant-sql-postgres
-description: Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types and extensions as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules
+description: Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types, extensions, functions, procedures and triggers as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules
 user-invocable: true
 ---
 # Declaring a Postgres schema with chant
@@ -37,6 +37,9 @@ The export name (`users`) is the object's identity in chant. The name in the SQL
 | `type` | `CREATE TYPE ... AS ENUM` | `Postgres::Enum` |
 | `domain` | `CREATE DOMAIN` | `Postgres::Domain` |
 | `extension` | `CREATE EXTENSION` | `Postgres::Extension` |
+| `func` | `CREATE FUNCTION` | `Postgres::Function` |
+| `procedure` | `CREATE PROCEDURE` | `Postgres::Procedure` |
+| `trigger` | `CREATE TRIGGER` | `Postgres::Trigger` |
 
 `table` and `view` imported from the package root are ClickHouse's. Import every tag from `@intentius/chant-lexicon-sql/postgres`.
 
@@ -124,6 +127,19 @@ export const citext = extension`CREATE EXTENSION IF NOT EXISTS citext WITH SCHEM
 
 Use the entity as a column type: `status ${status} NOT NULL DEFAULT 'placed'`. The table then depends on the type. Enum labels are values of the type, so a label cannot be removed or reordered later without a rebuild; add labels at the end. An extension is an object of its own with no references to it from a column type, so a table using a type it provides does not wait for it; keep extensions in a project the database already has, or apply them first.
 
+## Functions, procedures and triggers
+
+```ts
+import { func, trigger } from "@intentius/chant-lexicon-sql/postgres";
+
+export const touch = func`CREATE FUNCTION ${app}.touch() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at := now(); RETURN NEW; END
+$$`;
+export const ordersTouch = trigger`CREATE TRIGGER orders_touch BEFORE UPDATE ON ${orders} FOR EACH ROW EXECUTE FUNCTION ${touch}()`;
+```
+
+The tag is `func` (`function` is a JavaScript key word). Write the body as a string, `AS $$ ... $$`: it is kept and compared verbatim. `${users}` inside the body renders as `app.users` and makes the routine depend on the table. A SQL-standard body (`RETURN ...`, `BEGIN ATOMIC`) and `SET ... FROM CURRENT` are SQLPG001 errors. Overloads are separate objects, identified by their input parameter types. A trigger's name is unqualified; it lives on its table.
+
 ## Comments
 
 Postgres has no inline comment clause. Follow the `CREATE` with `COMMENT ON` for the object, its columns and its named constraints, separated by `;`:
@@ -162,4 +178,4 @@ chant build src --lexicon sql -o dist/schema.json
 
 ## Not covered
 
-`ALTER`, `CREATE POLICY`, `GRANT`, functions, triggers, rules and the composite and range forms of `CREATE TYPE` are not declared with the tags. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.
+`ALTER`, `CREATE POLICY`, `GRANT`, rules, aggregates, event triggers and the composite and range forms of `CREATE TYPE` are not declared with the tags. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.

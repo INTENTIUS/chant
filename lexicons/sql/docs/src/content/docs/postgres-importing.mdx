@@ -45,7 +45,7 @@ An environment with no profile falls back to `POSTGRES_URL`, `POSTGRES_USER` and
 chant import --from prod --output src/
 ```
 
-Postgres has no `SHOW CREATE TABLE`, so each statement is assembled the way `pg_dump` assembles it, from the catalog's own printers: `format_type()`, `pg_get_expr()`, `pg_get_constraintdef()`, `pg_get_indexdef()`, `pg_get_viewdef()` and `pg_get_partkeydef()`, with `COMMENT ON` statements after the `CREATE`. The declaration is the server's canonical form, so it reads differently from what someone wrote by hand. From the getting-started example, applied and then imported:
+Postgres has no `SHOW CREATE TABLE`, so each statement is assembled the way `pg_dump` assembles it, from the catalog's own printers: `format_type()`, `pg_get_expr()`, `pg_get_constraintdef()`, `pg_get_indexdef()`, `pg_get_viewdef()`, `pg_get_partkeydef()`, `pg_get_functiondef()` and `pg_get_triggerdef()`, with `COMMENT ON` statements after the `CREATE`. The declaration is the server's canonical form, so it reads differently from what someone wrote by hand. From the getting-started example, applied and then imported:
 
 ```ts
 export const orders = table`
@@ -83,7 +83,10 @@ The import builds and plans as no change against the server it came from, becaus
 - Every object an extension created (`pg_depend.deptype = 'e'`). The extension is imported, not its types and functions, and `plpgsql`, which every database has, is not imported at all.
 - An identity column's sequence, the indexes a primary key or unique constraint creates, and the partitions of a partitioned index: each comes with the object that makes it.
 - chant's own working objects: the `__chant_receipts` tables and the columns and constraints of a migration in progress.
-- Functions, triggers, policies, roles and grants, which the dialect does not declare.
+- Aggregates, the triggers Postgres makes for itself (a foreign key's), and the copies of a partitioned table's trigger on its partitions.
+- A function or procedure with a SQL-standard body (`RETURN expr`, `BEGIN ATOMIC`), which the server prints back rewritten; the import names each one in a warning. Declare it again with a string body (`AS $$ ... $$`).
+- The working function and trigger of a column migration in progress.
+- Policies, roles and grants, which the dialect does not declare.
 
 ### Objects another tool keeps
 

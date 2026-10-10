@@ -1,7 +1,8 @@
 /**
  * The Postgres entities: `schema`, `table`, `index`, `view`, `sequence`,
- * `type`, `domain` and `extension` tagged templates that parse their DDL at
- * fold time into one Declarable each (chant #3278, #3279).
+ * `type`, `domain`, `extension`, `func`, `procedure` and `trigger` tagged
+ * templates that parse their DDL at fold time into one Declarable each
+ * (chant #3278, #3279, #3680).
  *
  * ```ts
  * import { schema, table, index } from "@intentius/chant-lexicon-sql/postgres";
@@ -39,6 +40,12 @@
  *   is `NULL`;
  * - `literal(value)` is a quoted string literal (`'` doubled; a backslash is an
  *   ordinary character, since standard_conforming_strings is on).
+ *
+ * A function's or procedure's body is a string constant (`AS $$ ... $$`), kept
+ * verbatim. An interpolation inside it renders as text (an object as its
+ * schema-qualified name, a column reference as the column's name) and is
+ * recorded as a reference, so the routine is created after what its body
+ * names: `` func`... AS $$ SELECT count(*) FROM ${users} $$` ``.
  *
  * Postgres has no inline comment clause, so a template may follow its CREATE
  * with `COMMENT ON` statements for the same object, its columns and its
@@ -258,6 +265,79 @@ export interface ExtensionProps extends Omit<CommonProps, "schema"> {
   ifNotExists?: boolean;
 }
 
+/** One parameter of a function or procedure, as written. */
+export interface RoutineArgDef {
+  /** `in` when not written. */
+  mode: "in" | "out" | "inout" | "variadic";
+  name?: string;
+  type: string;
+  default?: string;
+}
+
+export interface RoutineProps extends CommonProps {
+  orReplace?: boolean;
+  args: RoutineArgDef[];
+  /** `RETURNS type`, `SETOF` included (`setof app.users`). */
+  returns?: string;
+  /** `RETURNS TABLE (...)`'s columns. */
+  returnsTable?: Array<{ name: string; type: string }>;
+  language?: string;
+  volatility?: "immutable" | "stable" | "volatile";
+  /** `STRICT` / `RETURNS NULL ON NULL INPUT` (true) or `CALLED ON NULL INPUT` (false). */
+  strict?: boolean;
+  /** `SECURITY DEFINER` (true) or `SECURITY INVOKER` (false). */
+  securityDefiner?: boolean;
+  leakproof?: boolean;
+  parallel?: "unsafe" | "restricted" | "safe";
+  cost?: string;
+  rows?: string;
+  support?: string;
+  window?: boolean;
+  /** `TRANSFORM FOR TYPE ...`, as written. */
+  transform?: string;
+  /** `SET name = value` clauses: each parameter, folded, to its value as written. */
+  set?: Record<string, string>;
+  /** The definition: the string constant's value, verbatim. */
+  body: string;
+  /** A C function's link symbol (`AS 'obj_file', 'link_symbol'`). */
+  link?: string;
+  /** The objects the body interpolates. */
+  reads: PostgresObject[];
+}
+
+/** `func` declares a function; `procedure` a procedure, which has no result and none of a function's planner attributes. */
+export type FunctionProps = RoutineProps;
+export type ProcedureProps = Omit<RoutineProps, "returns" | "returnsTable" | "volatility" | "strict" | "leakproof" | "parallel" | "cost" | "rows" | "support" | "window">;
+
+export interface TriggerProps extends CommonProps {
+  orReplace?: boolean;
+  /** `CREATE CONSTRAINT TRIGGER`. */
+  constraint?: boolean;
+  timing: "before" | "after" | "instead of";
+  /** The events, each `insert`, `update`, `delete` or `truncate`; an `update` may name its columns. */
+  events: Array<{ event: "insert" | "update" | "delete" | "truncate"; columns?: string[] }>;
+  /** The table or view: the entity when interpolated, else its name. */
+  table: PostgresObject | string;
+  /** The table's SQL name. */
+  tableName: string;
+  /** A constraint trigger's `FROM` table's SQL name. */
+  from?: string;
+  deferrable?: boolean;
+  initiallyDeferred?: boolean;
+  /** `REFERENCING OLD TABLE AS ...` / `NEW TABLE AS ...`. */
+  referencing?: { old?: string; new?: string };
+  /** `FOR EACH ROW` or `FOR EACH STATEMENT` (the default). */
+  forEach: "row" | "statement";
+  /** The `WHEN` condition, parentheses excluded. */
+  when?: string;
+  /** The function it executes: the entity when interpolated, else its name. */
+  function: PostgresObject | string;
+  /** The function's SQL name. */
+  functionName: string;
+  /** The arguments, as written. */
+  args: string[];
+}
+
 /**
  * A string as a quoted Postgres string literal: `'` doubled, a backslash left
  * as written (standard_conforming_strings is on). An interpolated plain string
@@ -322,6 +402,21 @@ export interface PostgresDomain extends PostgresObject {
 export interface PostgresExtension extends PostgresObject {
   readonly entityType: "Postgres::Extension";
   readonly props: ExtensionProps;
+}
+
+export interface PostgresFunction extends PostgresObject {
+  readonly entityType: "Postgres::Function";
+  readonly props: FunctionProps;
+}
+
+export interface PostgresProcedure extends PostgresObject {
+  readonly entityType: "Postgres::Procedure";
+  readonly props: ProcedureProps;
+}
+
+export interface PostgresTrigger extends PostgresObject {
+  readonly entityType: "Postgres::Trigger";
+  readonly props: TriggerProps;
 }
 
 export function isPostgresObject(value: unknown): value is PostgresObject {
@@ -426,7 +521,7 @@ export const POSTGRES_TEMPLATES: TemplateDialect = {
 
 type Ctx = TemplateCtx;
 
-export type PostgresTag = "schema" | "table" | "index" | "view" | "sequence" | "type" | "domain" | "extension";
+export type PostgresTag = "schema" | "table" | "index" | "view" | "sequence" | "type" | "domain" | "extension" | "func" | "procedure" | "trigger";
 
 const STATEMENT_OF: Record<PostgresTag, StatementNode["statement"]> = {
   schema: "schema",
@@ -437,6 +532,9 @@ const STATEMENT_OF: Record<PostgresTag, StatementNode["statement"]> = {
   type: "enum",
   domain: "domain",
   extension: "extension",
+  func: "function",
+  procedure: "procedure",
+  trigger: "trigger",
 };
 
 const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
@@ -448,6 +546,9 @@ const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
   enum: "type",
   domain: "domain",
   extension: "extension",
+  function: "func",
+  procedure: "procedure",
+  trigger: "trigger",
   comment: undefined,
 };
 
@@ -461,6 +562,9 @@ export const STATEMENT_NAMES: Record<StatementNode["statement"], string> = {
   enum: "CREATE TYPE",
   domain: "CREATE DOMAIN",
   extension: "CREATE EXTENSION",
+  function: "CREATE FUNCTION",
+  procedure: "CREATE PROCEDURE",
+  trigger: "CREATE TRIGGER",
   comment: "COMMENT ON",
 };
 
@@ -678,7 +782,10 @@ function applyComments(
       if (value !== undefined) constraint!.comment = value;
     } else {
       if (!objectTypes.includes(c.objectType)) refuse(c, `does not comment on the ${tag} this template declares`);
-      if (!isSelf(qualified(ctx, c.target))) refuse(c, `names another object than ${sqlNameOf(self)}`);
+      if (c.objectType === "TRIGGER") {
+        // `COMMENT ON TRIGGER name ON table`: the name is the trigger's, the table its own.
+        if (qualified(ctx, c.target).name !== self.name || !c.on || !isSelf({ ...qualified(ctx, c.on), name: self.name })) refuse(c, `names another trigger than ${self.name}`);
+      } else if (!isSelf(qualified(ctx, c.target))) refuse(c, `names another object than ${sqlNameOf(self)}`);
       comment = value;
     }
   }
@@ -694,8 +801,108 @@ function lastDot(ctx: Ctx, span: Span): number {
   return span.from;
 }
 
-function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): PostgresObject {
-  const parts = templateParts(strings);
+/**
+ * The interpolations that sit inside a string constant (a routine's
+ * `AS $$ ... $$` body), rendered into the text around them: a string
+ * constant is one token, so the template is joined there before it is
+ * tokenized. Returns the joined parts and values, the original index of each
+ * value kept, and the objects the inlined interpolations name.
+ */
+function inlineQuoted(parts: readonly string[], values: readonly unknown[]): { parts: string[]; values: unknown[]; original: number[]; inlined: number[]; refs: unknown[] } {
+  // The lexical state at the end of each part: inside a '...' string, a $tag$ string, or neither.
+  type State = { kind: "none" } | { kind: "single"; escapes: boolean } | { kind: "dollar"; tag: string } | { kind: "dquote" } | { kind: "line" } | { kind: "block"; depth: number };
+  let state: State = { kind: "none" };
+  const insideAt: Array<"single" | "dollar" | undefined> = [];
+  parts.forEach((src, part) => {
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i]!;
+      const rest = src.slice(i);
+      switch (state.kind) {
+        case "none": {
+          if (c === "'") state = { kind: "single", escapes: /[Ee]$/.test(src.slice(0, i)) && !/[A-Za-z0-9_$][Ee]$/.test(src.slice(0, i)) };
+          else if (c === '"') state = { kind: "dquote" };
+          else if (rest.startsWith("--")) state = { kind: "line" };
+          else if (rest.startsWith("/*")) {
+            state = { kind: "block", depth: 1 };
+            i++;
+          } else if (c === "$" && !/[A-Za-z0-9_$]$/.test(src.slice(0, i))) {
+            const m = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(rest);
+            if (m) {
+              state = { kind: "dollar", tag: m[0] };
+              i += m[0].length - 1;
+            }
+          }
+          break;
+        }
+        case "single":
+          if (state.escapes && c === "\\") i++;
+          else if (c === "'") {
+            if (src[i + 1] === "'") i++;
+            else state = { kind: "none" };
+          }
+          break;
+        case "dquote":
+          if (c === '"') {
+            if (src[i + 1] === '"') i++;
+            else state = { kind: "none" };
+          }
+          break;
+        case "dollar":
+          if (rest.startsWith(state.tag)) {
+            i += state.tag.length - 1;
+            state = { kind: "none" };
+          }
+          break;
+        case "line":
+          if (c === "\n") state = { kind: "none" };
+          break;
+        case "block":
+          if (rest.startsWith("/*")) {
+            state.depth++;
+            i++;
+          } else if (rest.startsWith("*/")) {
+            i++;
+            state = state.depth === 1 ? { kind: "none" } : { kind: "block", depth: state.depth - 1 };
+          }
+          break;
+      }
+    }
+    if (part < parts.length - 1) insideAt.push(state.kind === "single" ? "single" : state.kind === "dollar" ? "dollar" : undefined);
+  });
+  if (!insideAt.some(Boolean)) return { parts: [...parts], values: [...values], original: values.map((_, i) => i), inlined: [], refs: [] };
+  const out: string[] = [parts[0]!];
+  const outValues: unknown[] = [];
+  const original: number[] = [];
+  const inlined: number[] = [];
+  const refs: unknown[] = [];
+  values.forEach((v, i) => {
+    if (!insideAt[i]) {
+      outValues.push(v);
+      original.push(i);
+      out.push(parts[i + 1]!);
+      return;
+    }
+    let text: string;
+    if (isPostgresObject(v) || isColumnRef(v)) {
+      text = renderReference(v);
+      refs.push(v);
+    } else if (v instanceof SqlLiteral) text = v.sql;
+    else if (v === null) text = "NULL";
+    else if (typeof v === "string" || typeof v === "number" || typeof v === "bigint" || typeof v === "boolean") text = String(v);
+    else throw new SqlTemplateError("func", `the interpolation inside the body is ${describe(v)}; a body takes an object, a column reference, a string or a number`, i, parts[i]!.length);
+    // Inside a '...' string a quote is doubled.
+    out[out.length - 1] += (insideAt[i] === "single" ? text.replace(/'/g, "''") : text) + parts[i + 1]!;
+    inlined.push(i);
+  });
+  return { parts: out, values: outValues, original, inlined, refs };
+}
+
+function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string[], rawValues: readonly unknown[]): PostgresObject {
+  const rawParts = templateParts(strings);
+  const routine = tag === "func" || tag === "procedure";
+  const joined = routine ? inlineQuoted(rawParts, rawValues) : undefined;
+  const parts = joined ? joined.parts : rawParts;
+  const values = joined ? joined.values : rawValues;
   const tokens = spliceWith(POSTGRES_TEMPLATES, tag, parts, values);
   let nodes: StatementNode[];
   try {
@@ -723,11 +930,18 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   const ctx: Ctx = { d: { ...POSTGRES_TEMPLATES, renderReference: render }, tokens, values, fed: values.map(() => new Set<string>()) };
   for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
   const ddl = untokenize(tokens, (i) => render(values[i], i)).trim().replace(/;\s*$/, "");
-  const source = { strings: parts };
-  const dependsOn = [...new Set(values.filter((v) => isPostgresObject(v) || isColumnRef(v)))];
+  const source = { strings: rawParts };
+  const dependsOn = [...new Set([...values, ...(joined?.refs ?? [])].filter((v) => isPostgresObject(v) || isColumnRef(v)))];
   const make = <T extends PostgresObject>(type: PostgresEntityType, q: { schema?: string; name: string }, props: object, columnNames?: readonly string[]): T => {
     const entity = makeSqlEntity(PostgresObject.prototype as PostgresObject, type, sqlNameOf(q), props, columnNames, dependsOn) as T;
-    setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));
+    const fed = ctx.fed.map((paths) => [...paths].sort());
+    if (!joined) setInterpolationFields(entity, fed);
+    else {
+      // Back to the template's own interpolations: one inlined into the body feeds the body.
+      const byOriginal: string[][] = rawValues.map(() => ["body", "ddl"]);
+      joined.original.forEach((orig, i) => (byOriginal[orig] = fed[i]!));
+      setInterpolationFields(entity, byOriginal);
+    }
     return entity;
   };
 
@@ -970,6 +1184,96 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       feed(ctx, node.query, "lineage");
       return make(node.materialized ? POSTGRES_ENTITY_TYPES.materializedView : POSTGRES_ENTITY_TYPES.view, q, props, outputs);
     }
+    case "function":
+    case "procedure": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, node.statement === "function" ? ["FUNCTION", "ROUTINE"] : ["PROCEDURE", "ROUTINE"]);
+      const flag = (o: string) => node.options.find((x) => x.option === o)?.flag;
+      const value = (o: string, path: string) => {
+        const x = node.options.find((y) => y.option === o);
+        return x?.value ? text(ctx, x.value, path) : undefined;
+      };
+      const set: Record<string, string> = {};
+      for (const s of node.set) set[s.name] = req(text(ctx, s.value, "set"));
+      const [def, link] = node.body.map((b) => stringValue(text(ctx, b, "body")));
+      const lang = text(ctx, node.language, "language");
+      const props: RoutineProps = strip(
+        {
+          ...q,
+          orReplace: node.orReplace || undefined,
+          args: node.args.map((a) =>
+            stripUnset({
+              mode: (a.mode?.toLowerCase() ?? "in") as RoutineArgDef["mode"],
+              name: a.name,
+              type: req(text(ctx, a.type, "args")),
+              default: text(ctx, a.default, "args"),
+            }),
+          ),
+          returns: node.returns ? `${node.returns.setof ? "SETOF " : ""}${req(text(ctx, node.returns.type, "returns"))}` : undefined,
+          returnsTable: node.returnsTable?.map((c) => ({ name: c.name, type: req(text(ctx, c.type, "returns")) })),
+          language: lang === undefined ? undefined : lang.startsWith("'") ? stringValue(lang) : identValue(lang),
+          volatility: value("VOLATILITY", "volatility")?.toLowerCase() as RoutineProps["volatility"],
+          strict: flag("STRICT"),
+          securityDefiner: flag("SECURITY"),
+          leakproof: flag("LEAKPROOF"),
+          parallel: value("PARALLEL", "parallel")?.toLowerCase() as RoutineProps["parallel"],
+          cost: value("COST", "cost"),
+          rows: value("ROWS", "rows"),
+          support: value("SUPPORT", "support"),
+          window: flag("WINDOW"),
+          transform: value("TRANSFORM", "transform"),
+          set: Object.keys(set).length > 0 ? set : undefined,
+          body: req(def),
+          link,
+          reads: (joined?.refs ?? []).filter((v): v is PostgresObject => isPostgresObject(v)),
+          comment,
+          ddl,
+          source,
+        },
+        ["args", "reads"],
+      );
+      for (const k of ["strict", "securityDefiner", "leakproof"] as const) if (flag(k === "securityDefiner" ? "SECURITY" : k.toUpperCase()) === false) props[k] = false;
+      return make(node.statement === "function" ? POSTGRES_ENTITY_TYPES.function : POSTGRES_ENTITY_TYPES.procedure, q, props);
+    }
+    case "trigger": {
+      const tq = qualified(ctx, node.table);
+      const name = node.name.pieces[0] || identValue(req(text(ctx, node.name.span)));
+      feed(ctx, node.name.span, "name");
+      // A trigger is its table's: it is named in the table's schema.
+      const q = { schema: tq.schema, name };
+      const comment = applyComments(tag, ctx, comments, q, ["TRIGGER"]);
+      const referencing: { old?: string; new?: string } = {};
+      for (const r of node.referencing) referencing[r.which === "OLD" ? "old" : "new"] = r.name;
+      const props: TriggerProps = strip(
+        {
+          ...q,
+          orReplace: node.orReplace || undefined,
+          constraint: node.constraint || undefined,
+          timing: node.timing.toLowerCase() as TriggerProps["timing"],
+          events: node.events.map((e) => {
+            for (const c of e.columns) feed(ctx, c.span, "events");
+            const columns = e.columns.map((c) => columnName(ctx, c));
+            return { event: e.event.toLowerCase() as TriggerProps["events"][number]["event"], ...(columns.length > 0 ? { columns } : {}) };
+          }),
+          table: target(ctx, node.table),
+          tableName: sqlNameOf(tq),
+          from: node.from ? targetName(ctx, node.from) : undefined,
+          deferrable: node.deferrable,
+          initiallyDeferred: node.initiallyDeferred,
+          referencing: Object.keys(referencing).length > 0 ? referencing : undefined,
+          forEach: (node.forEach ?? "STATEMENT").toLowerCase() as TriggerProps["forEach"],
+          when: text(ctx, node.when, "when"),
+          function: target(ctx, node.function),
+          functionName: targetName(ctx, node.function),
+          args: node.args.map((a) => req(text(ctx, a, "args"))),
+          comment,
+          ddl,
+          source,
+        },
+        ["events", "args"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.trigger, q, props);
+    }
     case "comment":
       throw new SqlTemplateError(tag, "a COMMENT ON goes after the CREATE it comments on", 0, 0);
   }
@@ -1013,4 +1317,23 @@ export function domain(strings: TemplateStringsArray, ...values: unknown[]): Pos
 /** `` extension`CREATE EXTENSION ...` ``: one extension. */
 export function extension(strings: TemplateStringsArray, ...values: unknown[]): PostgresExtension {
   return build("extension", strings, values) as PostgresExtension;
+}
+
+/**
+ * `` func`CREATE [OR REPLACE] FUNCTION name(args) RETURNS ... LANGUAGE ... AS $$ ... $$` ``:
+ * one function, its body a string kept verbatim. (`function` is a JavaScript
+ * key word, hence `func`.)
+ */
+export function func(strings: TemplateStringsArray, ...values: unknown[]): PostgresFunction {
+  return build("func", strings, values) as PostgresFunction;
+}
+
+/** `` procedure`CREATE [OR REPLACE] PROCEDURE name(args) LANGUAGE ... AS $$ ... $$` ``: one procedure. */
+export function procedure(strings: TemplateStringsArray, ...values: unknown[]): PostgresProcedure {
+  return build("procedure", strings, values) as PostgresProcedure;
+}
+
+/** `` trigger`CREATE [OR REPLACE] [CONSTRAINT] TRIGGER name ... ON ${table} ... EXECUTE FUNCTION ${fn}()` ``: one trigger on its table. */
+export function trigger(strings: TemplateStringsArray, ...values: unknown[]): PostgresTrigger {
+  return build("trigger", strings, values) as PostgresTrigger;
 }
