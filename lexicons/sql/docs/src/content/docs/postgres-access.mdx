@@ -92,7 +92,7 @@ The applier makes the policies, row-level security and roles with the other obje
 
 A policy's `USING` and `WITH CHECK` are compared as the server prints them (`note::text = 'x'::text`), by creating the policy on a temporary copy of its table in a transaction that is rolled back.
 
-`chant lifecycle diff --live` observes policies and roles like the other objects. A `grant` declaration is reported unobserved, since it is compared as part of the privileges it adds up to; `chant sql plan` is where privilege drift shows.
+`chant lifecycle diff --live` observes policies and roles like the other objects. A `grant` declaration is reported unobserved, since it is compared as part of the privileges it adds up to. The privilege changes an apply would make are listed under PENDING instead, one per object and grantee with the statements, the same ones `chant sql plan` reports. A gated `ApplyOp` binds its approval to that diff, so a privilege granted or revoked by hand after the approval moves the plan digest, and the apply stops at the gate until the new plan is approved.
 
 ## Import
 

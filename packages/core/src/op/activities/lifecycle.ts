@@ -88,6 +88,9 @@ const DRIFT_HEADERS = [
   // An owned resource whose live properties differ from its declaration (the
   // deep read): a sql table's TTL changed out of band, say (#3642).
   "PROPERTY DRIFT",
+  // A change an apply would make that no declared property shows: a
+  // privilege granted by hand on a Postgres table (#3706).
+  "PENDING",
   "ARTIFACTS ADDED",
   "ARTIFACTS REMOVED",
   "ARTIFACTS CHANGED",

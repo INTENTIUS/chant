@@ -5,7 +5,7 @@ import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
-import { countUnclaimed, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
+import { countUnclaimed, countPending, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
 import { describePathOrigin, getPathProvenance, getProvenance, type EntityProvenance } from "../../provenance";
 import { resolveDeepDrift, resolveDriftedField, type FieldReconcile } from "../../fold-provenance";
 import {
@@ -913,7 +913,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
           componentStacks: args.componentStacks,
           baseline: baselineForLexicon(args.baseline, lexiconName),
         });
-        totalDrift += countPropertyDrift(deep);
+        totalDrift += countPropertyDrift(deep) + countPending(deep);
         // Only count a deep hole for an entity the thin read *did* resolve —
         // otherwise one unreadable entity is counted twice.
         totalUnobserved += deep.unobserved.filter((u) => !observed.unobserved[u.name]).length;
@@ -1001,8 +1001,10 @@ function renderDeepDiff(
   const drift = countPropertyDrift(deep);
   const unclaimedCount = countUnclaimed(deep);
   const heldCount = countHeld(deep);
+  const pendingCount = countPending(deep);
   if (
     drift === 0 &&
+    pendingCount === 0 &&
     heldCount === 0 &&
     unclaimedCount === 0 &&
     deep.accepted.length === 0 &&
@@ -1017,6 +1019,7 @@ function renderDeepDiff(
   console.log(
     `${drift} property drift across ${deep.drifted.length} resource(s), ` +
       `${acceptedCount} accepted, ${deep.unchanged.length} unchanged` +
+      (pendingCount > 0 ? `, ${pendingCount} pending` : "") +
       (heldCount > 0 ? `, ${heldCount} held` : "") +
       (unclaimedCount > 0 ? `, ${unclaimedCount} unclaimed` : "") +
       (deep.unobserved.length > 0 ? `, ${deep.unobserved.length} unobserved` : ""),
@@ -1062,6 +1065,14 @@ function renderDeepDiff(
           console.log(`        ${resolution.description}`);
         }
       }
+    }
+  }
+  if (pendingCount > 0) {
+    // #3706: changes an apply would make that no declared property shows
+    // (privileges granted by hand). Printed, so the plan digest moves with them.
+    console.log(formatBold("\nPENDING (changes an apply would make that no declared property shows):"));
+    for (const p of deep.pending ?? []) {
+      console.log(`  ~ ${p.subject}: ${p.change}${p.entities && p.entities.length > 0 ? ` [from: ${p.entities.join(", ")}]` : ""}`);
     }
   }
   if (deep.unclaimed.length > 0) {

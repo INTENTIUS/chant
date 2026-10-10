@@ -13,7 +13,7 @@
  * of the object (the DDL text, the template source, lineage, reads).
  */
 
-import { deepObservation, type DeepObservationResult, type DeepResourceObservation } from "@intentius/chant/deep-observation";
+import { deepObservation, type DeepObservationResult, type DeepPendingChange, type DeepResourceObservation } from "@intentius/chant/deep-observation";
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindPostgres, classifyPostgresFailure, type BindOptions } from "../live/bind";
 import { liveKey, readLiveSchema, type LivePgObject } from "../live/catalog";
@@ -23,6 +23,8 @@ import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { canonicalPgObject, columnShape, sameConstraint, type CanonicalPgObject } from "./normalize";
 import { serverNormalized } from "./server-normalize";
 import type { PostgresClient } from "../live/client";
+import { accessChangesAgainst } from "../access/changes";
+import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
 
 type Props = Record<string, unknown>;
 
@@ -214,7 +216,21 @@ export async function observeResourcesDeep(
     for (const { name, entity } of declared) unobserved[name] = { type: entity?.entityType ?? "", reason: why.reason, detail: why.detail };
     return deepObservation({}, unobserved);
   }
+  const pending: DeepPendingChange[] = [];
   try {
+    if (target.access === true) {
+      // #3706: the privilege changes an apply would make, which no one
+      // declaration's properties show, so the plan digest moves with them.
+      try {
+        pending.push(...(await pendingAccess(client, target.defaultSchema, declared, scopeFor(target, declared.filter((x) => x.entity?.entityType.startsWith("Postgres::")).map((x) => ({ type: x.entity!.entityType, props: x.entity!.props }))))));
+      } catch (err) {
+        for (const { name, entity } of declared) {
+          if (entity?.entityType === POSTGRES_ENTITY_TYPES.grant || entity?.entityType === POSTGRES_ENTITY_TYPES.defaultPrivileges) {
+            unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's privileges could not be compared: ${(err as Error).message}` };
+          }
+        }
+      }
+    }
     const byKey = new Map(live.map((o) => [liveKey(o.type, o.schema, o.name, o.signature), o]));
     for (const { name, entity } of declared) {
       if (!entity || !entity.entityType.startsWith("Postgres::")) {
@@ -223,6 +239,7 @@ export async function observeResourcesDeep(
       }
       const why = accessUnobserved(entity.entityType, target.access === true);
       if (why) {
+        if (unobserved[name]) continue;
         unobserved[name] = { type: entity.entityType, ...why };
         continue;
       }
@@ -245,5 +262,30 @@ export async function observeResourcesDeep(
   } finally {
     await client.end();
   }
-  return deepObservation(resources, unobserved);
+  return deepObservation(resources, unobserved, pending);
+}
+
+/**
+ * The privilege changes an apply would make (#3706), as `chant sql plan`
+ * computes them, one per object and grantee: the statements, and the
+ * declarations behind them.
+ */
+async function pendingAccess(
+  client: PostgresClient,
+  defaultSchema: string,
+  declared: ReadonlyArray<{ name: string; entity?: { entityType: string; props: Record<string, unknown> } }>,
+  scope: string[] | undefined,
+): Promise<DeepPendingChange[]> {
+  const objects = declared
+    .filter((x) => x.entity?.entityType.startsWith("Postgres::"))
+    .map((x) => ({ key: x.name, canonical: canonicalPgObject(x.entity!.entityType, x.entity!.props, defaultSchema) }));
+  const [row] = await client.query<{ v: string }>("SELECT current_setting('server_version_num') AS v");
+  const n = Number(row?.v);
+  const major = Number.isFinite(n) && n > 0 ? Math.floor(n / 10000) : POSTGRES_LATEST_MAJOR;
+  const changes = await accessChangesAgainst(client, objects, { major, ...(scope ? { scope } : {}) });
+  return changes.map((c) => ({
+    subject: c.change.object.startsWith("acl ") ? c.change.object.slice(4) : c.change.object,
+    change: c.sql.join("; "),
+    ...(c.exports.length > 0 ? { entities: [...c.exports].sort() } : {}),
+  }));
 }

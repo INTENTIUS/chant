@@ -96,6 +96,24 @@ export interface DeepResourceObservation {
 }
 
 /**
+ * A change an apply would make that no one declared entity's properties show
+ * (#3706): Postgres privileges, which the declarations decide as the access
+ * they add up to rather than one grant at a time, so a privilege granted by
+ * hand is a change to make with no declared property it differs on.
+ *
+ * `lifecycle diff --live` prints these as drift, so the plan digest an
+ * approval binds to moves with them.
+ */
+export interface DeepPendingChange {
+  /** What the change is on, in the lexicon's words: `relation app.orders TO reader`. */
+  subject: string;
+  /** What an apply would do about it: the statements, or a sentence. */
+  change: string;
+  /** The declared entities behind it, where the reader can name them. */
+  entities?: string[];
+}
+
+/**
  * The deep observation envelope. Explicitly versioned and discriminated by
  * `deepObservation: "v1"`, for the same reason {@link
  * import("./observation").ObservationResult} is: the shape is a wire format
@@ -119,12 +137,16 @@ export interface DeepObservationResult {
    * surface, not a claim about existence.
    */
   unobserved?: Record<string, UnobservedEntity>;
+  /** Changes an apply would make beyond the declared properties (#3706). Omitted when there are none. */
+  pending?: DeepPendingChange[];
 }
 
 /** Normalized form every consumer works with. Both maps always present. */
 export interface NormalizedDeepObservation {
   resources: Record<string, DeepResourceObservation>;
   unobserved: Record<string, UnobservedEntity>;
+  /** As {@link DeepObservationResult.pending}; absent when there are none. */
+  pending?: DeepPendingChange[];
 }
 
 /** True when `value` is the versioned {@link DeepObservationResult} envelope. */
@@ -140,11 +162,13 @@ export function isDeepObservationResult(value: unknown): value is DeepObservatio
 export function deepObservation(
   resources: Record<string, DeepResourceObservation>,
   unobserved?: Record<string, UnobservedEntity>,
+  pending?: DeepPendingChange[],
 ): DeepObservationResult {
   return {
     deepObservation: "v1",
     resources,
     ...(unobserved && Object.keys(unobserved).length > 0 ? { unobserved } : {}),
+    ...(pending && pending.length > 0 ? { pending } : {}),
   };
 }
 
@@ -158,7 +182,11 @@ export function normalizeDeepObservation(
   value: DeepObservationResult | undefined,
 ): NormalizedDeepObservation {
   if (!value) return { resources: {}, unobserved: {} };
-  return { resources: value.resources ?? {}, unobserved: value.unobserved ?? {} };
+  return {
+    resources: value.resources ?? {},
+    unobserved: value.unobserved ?? {},
+    ...(value.pending && value.pending.length > 0 ? { pending: value.pending } : {}),
+  };
 }
 
 // ── Normalization pass ──────────────────────────────────────────────────────

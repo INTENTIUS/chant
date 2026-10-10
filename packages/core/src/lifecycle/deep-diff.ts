@@ -38,6 +38,7 @@ import {
   deepValueEqual,
   flattenDeepProperties,
   type DeepNormalizationHooks,
+  type DeepPendingChange,
   type NormalizedDeepObservation,
 } from "../deep-observation";
 import { claimedFieldsFromPaths, heldBy, isClaimed, type FieldClaimSource } from "../claimed-fields";
@@ -229,6 +230,12 @@ export interface DeepDiffResult {
   unobserved: UnobservedResource[];
   /** Entities the deep reader returned that were never declared. Sorted. */
   undeclaredEntities: string[];
+  /**
+   * Changes an apply would make that no declared property shows (#3706), as
+   * the reader reported them: privileges granted or revoked by hand, say.
+   * Drift, counted by {@link countPending}. Absent when there are none.
+   */
+  pending?: DeepPendingChange[];
 }
 
 /** A declared entity's property tree, already normalized with the lexicon's hooks. */
@@ -421,12 +428,20 @@ export function diffDeep(input: DiffDeepInput): DeepDiffResult {
     unchanged: unchanged.sort(),
     unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
     undeclaredEntities: undeclaredEntities.sort(),
+    ...(input.live.pending && input.live.pending.length > 0
+      ? { pending: [...input.live.pending].sort((a, b) => a.subject.localeCompare(b.subject) || a.change.localeCompare(b.change)) }
+      : {}),
   };
 }
 
 /** Total reported property differences across every entity. */
 export function countPropertyDrift(result: DeepDiffResult): number {
   return result.drifted.reduce((n, e) => n + e.changes.length, 0);
+}
+
+/** The pending changes (#3706): drift, though on no one entity's properties. */
+export function countPending(result: DeepDiffResult): number {
+  return result.pending?.length ?? 0;
 }
 
 /** Total live values on paths no declaration claimed, across every entity (#2160). Never added to the drift count. */

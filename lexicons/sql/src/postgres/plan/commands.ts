@@ -20,8 +20,7 @@ import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { migrationOpSuggestions } from "../migrate/handoff";
 import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
 import { ACCESS_MANAGED_KINDS } from "./normalize";
-import { declaredAccess, diffAccess, predictedAccess, targetKey } from "../access/acl";
-import { readLiveAccess } from "../access/live";
+import { accessChangesAgainst } from "../access/changes";
 
 export function emitPg(diff: PgSchemaDiff, json: boolean, title: string): number {
   console.log(json ? JSON.stringify(diff, null, 2) : renderPgDiff(diff, { title }));
@@ -112,12 +111,7 @@ export async function planAgainstClient(
   const major = running ?? options.major;
   const diff = diffPgSchemas(live, declared, { major, access: false });
   if (managed) {
-    const want = declaredAccess(declared, { major: major ?? POSTGRES_LATEST_MAJOR, ...(await currentRole(client)) });
-    const have = await readLiveAccess(client, want.targets, { ...(scope ? { schemas: scope } : {}), forRoles: want.forRoles, declaredDefaults: want.targets.filter((t) => t.kind === "default") });
-    // An object this plan creates is given what the server gives a new one.
-    const missing = want.targets.filter((t) => t.kind !== "default" && t.kind !== "column" && !have.present.has(targetKey(t)));
-    const now = new Map([...have.state, ...predictedAccess(missing, have)]);
-    const access = diffAccess(now, want.state, want.exportsOf);
+    const access = await accessChangesAgainst(client, declared, { major: major ?? POSTGRES_LATEST_MAJOR, ...(scope ? { scope } : {}) });
     if (access.length > 0) {
       diff.changes.push(...access.map((a) => a.change));
       diff.access = access;
@@ -129,12 +123,6 @@ export async function planAgainstClient(
     diff.hints.push(`the build targets Postgres ${options.major} but ${options.environment ?? "the server"} runs Postgres ${running}; changes are classified for ${running}`);
   }
   return { declared, live, liveObjects, diff, ...(major !== undefined ? { major } : {}), ...(scope ? { scope } : {}) };
-}
-
-/** The role a session runs as: the one whose own privileges owning an object gives, and whose default privileges apply. */
-async function currentRole(client: PostgresClient): Promise<{ self?: string }> {
-  const rows = await client.query<{ self: string }>("SELECT current_user AS self").catch(() => []);
-  return rows[0]?.self ? { self: rows[0].self } : {};
 }
 
 /**
