@@ -80,9 +80,17 @@ export const pgString = (value: string): string => `'${value.replace(/'/g, "''")
 /** `schema.name`, each part quoted where Postgres needs it. */
 export const pgQualified = (schema: string | undefined, name: string): string => (schema ? `${quoteIdent(schema)}.${quoteIdent(name)}` : quoteIdent(name));
 
-/** An object's name in a statement. A schema and an extension have no schema. */
-export const objectIdent = (o: { kind: CanonicalKind; schema?: string; name: string }): string =>
-  o.kind === "schema" || o.kind === "extension" ? quoteIdent(o.name) : pgQualified(o.schema, o.name);
+/**
+ * An object's name in a statement. A schema and an extension have no schema;
+ * a routine is named with its parameter types (`app.f(integer,text)`), a
+ * trigger with its table (`touch ON app.users`).
+ */
+export const objectIdent = (o: { kind: CanonicalKind; schema?: string; name: string; signature?: string }): string =>
+  o.kind === "schema" || o.kind === "extension"
+    ? quoteIdent(o.name)
+    : o.kind === "trigger"
+      ? `${quoteIdent(o.name)}${o.signature ?? ""}`
+      : `${pgQualified(o.schema, o.name)}${o.signature ?? ""}`;
 
 /** The words a statement names the object's kind with. */
 export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
@@ -95,6 +103,9 @@ export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
   enum: "TYPE",
   domain: "DOMAIN",
   extension: "EXTENSION",
+  function: "FUNCTION",
+  procedure: "PROCEDURE",
+  trigger: "TRIGGER",
 };
 
 /** The canonical kind of an entity type. */
@@ -168,7 +179,8 @@ export function createSteps(
   splitStatements(obj.ddl).forEach((s, i) => {
     if (i > 0 && isOwnComment(s, obj.canonical.kind)) return;
     let sql = s.text;
-    if (i === 0 && opts.orReplace && obj.canonical.kind === "view" && !/\bOR\s+REPLACE\b/i.test(sql)) sql = sql.replace(/\bCREATE\s+/i, "CREATE OR REPLACE ");
+    const replaceable = obj.canonical.kind === "view" || obj.canonical.kind === "function" || obj.canonical.kind === "procedure" || (obj.canonical.kind === "trigger" && obj.canonical.fields.constraint !== true);
+    if (i === 0 && opts.orReplace && replaceable && !/^\s*CREATE\s+OR\s+REPLACE\b/i.test(sql)) sql = sql.replace(/\bCREATE\s+/i, "CREATE OR REPLACE ");
     const concurrently = i === 0 && obj.canonical.kind === "index" && obj.props.concurrently === true;
     out.push({ ...step(sql, cls, opts.rule, !concurrently), ...(concurrently ? { buildsIndex: objectIdent(obj.canonical) } : {}) });
   });
@@ -177,10 +189,10 @@ export function createSteps(
 }
 
 /** The `DROP` for an object a prune removes. Never `CASCADE`: what something else still uses is kept. */
-export function dropStatement(kind: CanonicalKind, schema: string | undefined, name: string): PgStep {
-  const what = objectIdent({ kind, ...(schema !== undefined ? { schema } : {}), name });
+export function dropStatement(kind: CanonicalKind, schema: string | undefined, name: string, signature?: string): PgStep {
+  const what = objectIdent({ kind, ...(schema !== undefined ? { schema } : {}), name, ...(signature !== undefined ? { signature } : {}) });
   if (kind === "index") return step(`DROP INDEX CONCURRENTLY ${what}`, "concurrently", "SQLPG242", false);
-  return step(`DROP ${KIND_WORDS[kind]} ${what}`, "drop", "SQLPG270");
+  return step(`DROP ${KIND_WORDS[kind]} ${what}`, "drop", kind === "trigger" ? "SQLPG285" : "SQLPG270");
 }
 
 // ── Columns ────────────────────────────────────────────────────────────
@@ -403,7 +415,7 @@ export const isRefused = (c: PgChange): boolean => c.class === "expand";
 export const isDestructive = (c: PgChange): boolean => c.rule === "SQLPG204";
 
 /** Changes that replace the object: drop it and create it again from its declaration. */
-export const isRecreate = (c: PgChange): boolean => c.rule === "SQLPG252" || c.rule === "SQLPG243";
+export const isRecreate = (c: PgChange): boolean => c.rule === "SQLPG252" || c.rule === "SQLPG243" || c.rule === "SQLPG281";
 
 /**
  * The statements for an object that exists on the server, change by change.
@@ -538,7 +550,14 @@ export function alterSteps(
         steps.push(step(`ALTER INDEX ${objectIdent(live)} RENAME TO ${quoteIdent(d.name)}`, c.class, c.rule));
         break;
       case "SQLPG250":
+      case "SQLPG280":
         steps.push(...createSteps(obj, opts.marker, { orReplace: true, cls: c.class, rule: c.rule }).slice(0, 1));
+        break;
+      case "SQLPG284":
+        if (d.fields.constraint === true || live.fields.constraint === true || d.signature !== live.signature) {
+          steps.push(step(`DROP TRIGGER ${objectIdent(live)}`, c.class, c.rule));
+          steps.push(...createSteps(obj, opts.marker, { cls: c.class, rule: c.rule }));
+        } else steps.push(...createSteps(obj, opts.marker, { orReplace: true, cls: c.class, rule: c.rule }).slice(0, 1));
         break;
       case "SQLPG260": {
         const before = (live.fields.labels as string[] | undefined) ?? [];
@@ -631,6 +650,8 @@ export interface PgDropStatement {
   kind: CanonicalKind;
   schema?: string;
   name: string;
+  /** A routine's parameter types, a trigger's table. */
+  signature?: string;
   step: PgStep;
 }
 
@@ -663,7 +684,21 @@ export interface PgStatementPlan {
 }
 
 /** Drop order: what reads from a table before the table, types after the tables using them, a schema last. */
-const DROP_ORDER: Record<CanonicalKind, number> = { materializedView: 0, view: 1, index: 2, table: 3, sequence: 4, domain: 5, enum: 6, extension: 7, schema: 8 };
+const DROP_ORDER: Record<CanonicalKind, number> = {
+  trigger: 0,
+  materializedView: 1,
+  view: 2,
+  index: 3,
+  table: 4,
+  sequence: 5,
+  // A routine after what calls it (a view, a trigger, a default), before the types its parameters use.
+  function: 6,
+  procedure: 6,
+  domain: 7,
+  enum: 8,
+  extension: 9,
+  schema: 10,
+};
 
 /**
  * The statements that take the current schema to the declared one, from the
@@ -735,11 +770,18 @@ export function planPgStatements(input: PgStatementPlanInput): PgStatementPlan {
 
   const drops: PgDropStatement[] = [];
   for (const c of input.changes) {
-    if (!((c.rule === "SQLPG270" || c.rule === "SQLPG242") && c.after === undefined)) continue;
+    if (!((c.rule === "SQLPG270" || c.rule === "SQLPG242" || c.rule === "SQLPG285") && c.after === undefined)) continue;
     const o = currentByKey.get(c.object);
     if (!o || o.foreign) continue;
     const schema = o.kind === "schema" || o.kind === "extension" ? undefined : o.schema;
-    drops.push({ key: c.object, kind: o.kind, ...(schema !== undefined ? { schema } : {}), name: o.name, step: dropStatement(o.kind, schema, o.name) });
+    drops.push({
+      key: c.object,
+      kind: o.kind,
+      ...(schema !== undefined ? { schema } : {}),
+      name: o.name,
+      ...(o.signature !== undefined ? { signature: o.signature } : {}),
+      step: dropStatement(o.kind, schema, o.name, o.signature),
+    });
   }
   drops.sort((a, b) => DROP_ORDER[a.kind] - DROP_ORDER[b.kind]);
   return { objects, drops };

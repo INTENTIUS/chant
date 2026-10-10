@@ -70,7 +70,7 @@ Two rules change class across the supported majors: a STORED generated column's 
 
 ## Identity and renames
 
-An object is identified by its export name between two builds, and by its schema-qualified name against a server, which has no export names. Tables, views, materialized views, sequences and indexes share one namespace per schema, types and domains another, and schemas and extensions are matched by name.
+An object is identified by its export name between two builds, and by its schema-qualified name against a server, which has no export names. Tables, views, materialized views, sequences and indexes share one namespace per schema, types and domains another, and schemas and extensions are matched by name. Functions and procedures share a namespace of their own and are told apart by their input parameter types, so an overload is another object; a trigger is matched by its name on its table.
 
 A rename is declared where it happens. Before a CREATE, \`-- previously: <old name>\` says the object had another name; on a column's line, it says the column did:
 

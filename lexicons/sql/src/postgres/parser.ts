@@ -2,7 +2,13 @@
  * A hand-written, lossless parser for the Postgres statements the dialect
  * declares (chant #3278, #3279): `CREATE SCHEMA`, `TABLE`, `INDEX`, `VIEW`,
  * `MATERIALIZED VIEW`, `SEQUENCE`, `TYPE ... AS ENUM`, `DOMAIN`, `EXTENSION`,
- * and `COMMENT ON` for those objects.
+ * `FUNCTION`, `PROCEDURE` and `TRIGGER` (#3680), and `COMMENT ON` for those
+ * objects.
+ *
+ * A function's or procedure's body is a string (`AS $$ ... $$`), kept
+ * verbatim: Postgres stores it as written and prints it back unchanged. A
+ * SQL-standard body (`RETURN expr`, `BEGIN ATOMIC ... END`) is refused, since
+ * the server stores it parsed and prints it back rewritten.
  *
  * As for ClickHouse (#3196), statement structure is parsed and expressions are
  * not: a default, a check, a generated expression, an index element, a
@@ -22,7 +28,8 @@
  * Grammar source: the Postgres 18 reference pages for each statement
  * (sql-createtable, sql-createindex, sql-createview,
  * sql-creatematerializedview, sql-createsequence, sql-createtype,
- * sql-createdomain, sql-createextension, sql-createschema, sql-comment) and
+ * sql-createdomain, sql-createextension, sql-createschema, sql-createfunction,
+ * sql-createprocedure, sql-createtrigger, sql-comment) and
  * `src/backend/parser/gram.y` at `REL_18_6` where a page is silent.
  */
 
@@ -205,13 +212,63 @@ export interface ExtensionNode {
   cascade: boolean;
 }
 
+/** One parameter of a function or procedure: `[mode] [name] type [DEFAULT expr]`. */
+export interface RoutineArgNode {
+  mode?: "IN" | "OUT" | "INOUT" | "VARIADIC";
+  name?: string;
+  nameSpan?: Span;
+  type: Span;
+  default?: Span;
+}
+
+export interface RoutineNode {
+  statement: "function" | "procedure";
+  orReplace: boolean;
+  name: NameNode;
+  args: RoutineArgNode[];
+  /** `RETURNS [SETOF] type`: the type, `SETOF` excluded. */
+  returns?: { setof: boolean; type: Span };
+  /** `RETURNS TABLE (name type, ...)`. */
+  returnsTable?: Array<{ name: string; nameSpan: Span; type: Span }>;
+  language?: Span;
+  /** The attributes after the signature, by their key word: `VOLATILITY` (IMMUTABLE, STABLE, VOLATILE), `STRICT`, `SECURITY`, `LEAKPROOF`, `PARALLEL`, `COST`, `ROWS`, `SUPPORT`, `WINDOW`, `TRANSFORM`. */
+  options: Array<{ option: string; value?: Span; flag?: boolean }>;
+  /** `SET name { TO | = } value`: the parameter, folded, and its value as written. */
+  set: Array<{ name: string; value: Span }>;
+  /** `AS 'definition'`, or `AS 'obj_file', 'link_symbol'`: the string constants. */
+  body: Span[];
+}
+
+export interface TriggerNode {
+  statement: "trigger";
+  orReplace: boolean;
+  constraint: boolean;
+  name: NameNode;
+  timing: "BEFORE" | "AFTER" | "INSTEAD OF";
+  events: Array<{ event: "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE"; columns: Array<{ name: string; span: Span }> }>;
+  table: NameNode;
+  /** A constraint trigger's `FROM referenced_table`. */
+  from?: NameNode;
+  deferrable?: boolean;
+  initiallyDeferred?: boolean;
+  /** `REFERENCING OLD TABLE AS o NEW TABLE AS n`. */
+  referencing: Array<{ which: "OLD" | "NEW"; name: string }>;
+  forEach?: "ROW" | "STATEMENT";
+  /** The `WHEN (...)` condition, parentheses excluded. */
+  when?: Span;
+  function: NameNode;
+  args: Span[];
+}
+
 export interface CommentNode {
   statement: "comment";
-  /** TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, CONSTRAINT, DOMAIN CONSTRAINT. */
+  /** TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, TRIGGER, CONSTRAINT, DOMAIN CONSTRAINT. */
   objectType: string;
   target: NameNode;
-  /** For `COMMENT ON CONSTRAINT c ON [DOMAIN] t`: the table or domain. */
+  /** For `COMMENT ON CONSTRAINT c ON [DOMAIN] t` and `COMMENT ON TRIGGER t ON table`: the table or domain. */
   on?: NameNode;
+  /** For `COMMENT ON FUNCTION f(...)`: the parameter list, parentheses excluded. */
+  args?: Span;
   /** The comment, a string, or undefined for `IS NULL`. */
   text?: Span;
 }
@@ -225,6 +282,8 @@ export type StatementNode =
   | EnumNode
   | DomainNode
   | ExtensionNode
+  | RoutineNode
+  | TriggerNode
   | CommentNode;
 
 const isNameToken = (t: Token | undefined): boolean =>
@@ -748,6 +807,10 @@ class PgParser extends SqlCursor {
     if (this.accept("COMMENT")) return this.comment();
     this.expect("CREATE");
     const orReplace = this.acceptSeq("OR", "REPLACE");
+    if (this.accept("FUNCTION")) return this.routine("function", orReplace);
+    if (this.accept("PROCEDURE")) return this.routine("procedure", orReplace);
+    if (this.accept("TRIGGER")) return this.trigger(orReplace, false);
+    if (this.acceptSeq("CONSTRAINT", "TRIGGER")) return this.trigger(orReplace, true);
     if (!orReplace) {
       if (this.accept("SCHEMA")) return this.schema();
       if (this.accept("EXTENSION")) return this.extension();
@@ -762,7 +825,7 @@ class PgParser extends SqlCursor {
     const recursive = this.accept("RECURSIVE");
     if (!orReplace && !recursive && persistence === undefined && this.acceptSeq("MATERIALIZED", "VIEW")) return this.view(true, false, false, false);
     if (this.accept("VIEW")) return this.view(false, orReplace, persistence === "temporary", recursive);
-    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN or EXTENSION");
+    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE or TRIGGER");
   }
 
   private schema(): SchemaNode {
@@ -1007,26 +1070,269 @@ class PgParser extends SqlCursor {
     }
   }
 
+  /** Whether `a b` continues one type name (`double precision`, `character varying`, `timestamp with time zone`) rather than being a name and a type. */
+  private continuesType(a: Token | undefined, b: Token | undefined): boolean {
+    if (a?.kind !== "ident" || b?.kind !== "ident") return false;
+    const x = a.text.toUpperCase();
+    const y = b.text.toUpperCase();
+    if (x === "DOUBLE") return y === "PRECISION";
+    if (["CHARACTER", "CHAR", "NCHAR", "BIT", "VARCHAR"].includes(x)) return y === "VARYING";
+    if (x === "NATIONAL") return y === "CHARACTER" || y === "CHAR";
+    if (x === "TIME" || x === "TIMESTAMP") return y === "WITH" || y === "WITHOUT";
+    if (x === "INTERVAL") return ["YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND"].includes(y);
+    return false;
+  }
+
+  /** `[IN | OUT | INOUT | VARIADIC] [name] type [{DEFAULT | =} expr]`. */
+  private routineArg(): RoutineArgNode {
+    const arg: RoutineArgNode = { type: { from: 0, to: 0, refs: [] } };
+    // A mode word is a mode unless it is the whole parameter (a type of that name) or the parameter's type follows nothing else.
+    if (kw(this.peek(), "IN", "OUT", "INOUT", "VARIADIC") && !(this.isPunct(",", 1) || this.isPunct(")", 1))) {
+      arg.mode = this.next().text.toUpperCase() as RoutineArgNode["mode"];
+    }
+    const a = this.peek();
+    const b = this.peek(1);
+    const named =
+      a !== undefined &&
+      (a.kind === "ident" || a.kind === "qident") &&
+      b !== undefined &&
+      (b.kind === "ident" || b.kind === "qident" || b.kind === "ref") &&
+      !(b.kind === "ident" && keywordCategory(b.text) === "R") &&
+      !kw(b, "DEFAULT") &&
+      !this.continuesType(a, b);
+    if (named) {
+      const { text, span } = this.nameTok("a parameter name");
+      arg.name = text;
+      arg.nameSpan = span;
+    }
+    if (kw(this.peek(), "SETOF")) this.fail("expected a parameter type (SETOF is a return type)");
+    arg.type = this.typeName();
+    if (this.isOp("%")) this.fail("expected the end of the parameter (write the column's type: %TYPE is resolved once, when the function is created)");
+    if (this.accept("DEFAULT") || (this.isOp("=") && (this.p++, true))) arg.default = this.checkedExpr([], true);
+    return arg;
+  }
+
+  private routine(kind: "function" | "procedure", orReplace: boolean): RoutineNode {
+    const node: RoutineNode = { statement: kind, orReplace, name: this.qualifiedName(`a ${kind} name`), args: [], options: [], set: [], body: [] };
+    this.expectPunct("(");
+    if (!this.acceptPunct(")")) {
+      for (;;) {
+        node.args.push(this.routineArg());
+        if (this.acceptPunct(",")) continue;
+        this.expectPunct(")");
+        break;
+      }
+    }
+    if (kind === "function" && this.accept("RETURNS")) {
+      if (this.accept("TABLE")) {
+        this.expectPunct("(");
+        node.returnsTable = [];
+        for (;;) {
+          const { text, span } = this.nameTok("a column name");
+          node.returnsTable.push({ name: text, nameSpan: span, type: this.typeName() });
+          if (this.acceptPunct(",")) continue;
+          this.expectPunct(")");
+          break;
+        }
+      } else {
+        const setof = this.accept("SETOF");
+        node.returns = { setof, type: this.typeName() };
+      }
+    }
+    const word = (what: string): Span => {
+      const from = this.idx();
+      const t = this.next();
+      if (!["ident", "qident", "string", "ref", "number"].includes(t.kind)) this.fail(`expected ${what}`, t);
+      return this.span(from, t.kind === "ref" ? [t.part] : []);
+    };
+    const option = (option: string, value?: Span, flag?: boolean) => node.options.push({ option, ...(value ? { value } : {}), ...(flag !== undefined ? { flag } : {}) });
+    const forFunction = (what: string) => {
+      if (kind === "procedure") this.fail(`expected LANGUAGE, SECURITY, SET or AS (${what} is not an attribute of a procedure)`, this.lastSeen());
+    };
+    for (;;) {
+      if (this.accept("LANGUAGE")) node.language = word("a language name");
+      else if (this.accept("TRANSFORM")) {
+        const from = this.idx();
+        const refs: number[] = [];
+        do {
+          this.expect("FOR");
+          this.expect("TYPE");
+          refs.push(...this.typeName().refs);
+        } while (this.acceptPunct(","));
+        option("TRANSFORM", this.span(from, refs));
+      } else if (kw(this.peek(), "IMMUTABLE", "STABLE", "VOLATILE")) {
+        forFunction(this.peek()!.text.toUpperCase());
+        option("VOLATILITY", word("a volatility"));
+      } else if (this.acceptSeq("NOT", "LEAKPROOF")) {
+        forFunction("LEAKPROOF");
+        option("LEAKPROOF", undefined, false);
+      } else if (this.accept("LEAKPROOF")) {
+        forFunction("LEAKPROOF");
+        option("LEAKPROOF", undefined, true);
+      } else if (this.acceptSeq("CALLED", "ON", "NULL", "INPUT")) {
+        forFunction("CALLED ON NULL INPUT");
+        option("STRICT", undefined, false);
+      } else if (this.acceptSeq("RETURNS", "NULL", "ON", "NULL", "INPUT") || this.accept("STRICT")) {
+        forFunction("STRICT");
+        option("STRICT", undefined, true);
+      } else if (this.acceptSeq("EXTERNAL", "SECURITY") || this.accept("SECURITY")) {
+        if (this.accept("DEFINER")) option("SECURITY", undefined, true);
+        else {
+          this.expect("INVOKER");
+          option("SECURITY", undefined, false);
+        }
+      } else if (this.accept("PARALLEL")) {
+        forFunction("PARALLEL");
+        if (!kw(this.peek(), "UNSAFE", "RESTRICTED", "SAFE")) this.fail("expected UNSAFE, RESTRICTED or SAFE");
+        option("PARALLEL", word("UNSAFE, RESTRICTED or SAFE"));
+      } else if (kw(this.peek(), "COST", "ROWS")) {
+        const o = this.next().text.toUpperCase();
+        forFunction(o);
+        const from = this.idx();
+        const t = this.next();
+        if (t.kind !== "number" && t.kind !== "ref") this.fail("expected a number", t);
+        option(o, this.span(from, t.kind === "ref" ? [t.part] : []));
+      } else if (this.accept("SUPPORT")) {
+        forFunction("SUPPORT");
+        option("SUPPORT", this.qualifiedName("a support function").span);
+      } else if (this.accept("WINDOW")) {
+        forFunction("WINDOW");
+        option("WINDOW", undefined, true);
+      } else if (this.accept("SET")) {
+        const param = this.qualifiedName("a configuration parameter");
+        if (this.acceptSeq("FROM", "CURRENT")) {
+          this.fail("expected TO or = (SET ... FROM CURRENT takes the value of the session that runs the CREATE; write the value)", this.lastSeen());
+        }
+        if (!this.accept("TO")) {
+          if (!this.isOp("=")) this.fail("expected TO or =");
+          this.p++;
+        }
+        const from = this.idx();
+        const refs: number[] = [];
+        for (;;) {
+          if (this.isOp("-") || this.isOp("+")) this.p++;
+          const t = this.next();
+          if (t.kind === "ref") refs.push(t.part);
+          else if (!["ident", "qident", "string", "number"].includes(t.kind)) this.fail("expected a value", t);
+          if (this.acceptPunct(",")) continue;
+          break;
+        }
+        node.set.push({ name: param.pieces.join("."), value: this.span(from, refs) });
+      } else if (this.accept("AS")) {
+        if (node.body.length > 0) this.fail("expected one AS clause", this.lastSeen());
+        for (;;) {
+          const from = this.idx();
+          const t = this.next();
+          if (t.kind !== "string") this.fail("expected the definition as a string constant (AS $$ ... $$)", t);
+          node.body.push(this.span(from, []));
+          if (this.acceptPunct(",")) continue;
+          break;
+        }
+      } else if (kw(this.peek(), "RETURN") || this.is("BEGIN", "ATOMIC")) {
+        this.fail("expected AS (a SQL-standard body is stored parsed and printed back rewritten, so it cannot be compared with what was written; write the body as a string: AS $$ ... $$)");
+      } else break;
+    }
+    if (node.body.length === 0) this.fail("expected AS and the body, as a string constant (AS $$ ... $$)");
+    return node;
+  }
+
+  /** The last significant token read. */
+  private lastSeen(): Token | undefined {
+    return this.tokens[this.idx(-1)];
+  }
+
+  private trigger(orReplace: boolean, constraint: boolean): TriggerNode {
+    const { text, span } = this.nameTok("a trigger name");
+    if (this.isPunct(".")) this.fail("expected BEFORE, AFTER or INSTEAD OF (a trigger name is not schema-qualified; the trigger is its table's)");
+    const name: NameNode = { pieces: [text], span };
+    let timing: TriggerNode["timing"];
+    if (this.accept("BEFORE")) timing = "BEFORE";
+    else if (this.accept("AFTER")) timing = "AFTER";
+    else if (this.acceptSeq("INSTEAD", "OF")) timing = "INSTEAD OF";
+    else return this.fail("expected BEFORE, AFTER or INSTEAD OF");
+    const events: TriggerNode["events"] = [];
+    do {
+      if (this.accept("INSERT", "DELETE", "TRUNCATE")) events.push({ event: this.lastSeen()!.text.toUpperCase() as "INSERT", columns: [] });
+      else if (this.accept("UPDATE")) {
+        const columns: Array<{ name: string; span: Span }> = [];
+        if (this.accept("OF")) {
+          do columns.push((({ text, span }) => ({ name: text, span }))(this.nameTok("a column name")));
+          while (this.acceptPunct(","));
+        }
+        events.push({ event: "UPDATE", columns });
+      } else this.fail("expected INSERT, UPDATE, DELETE or TRUNCATE");
+    } while (this.accept("OR"));
+    this.expect("ON");
+    const node: TriggerNode = { statement: "trigger", orReplace, constraint, name, timing, events, table: this.qualifiedName("a table name"), referencing: [], function: { pieces: [], span: { from: 0, to: 0, refs: [] } }, args: [] };
+    for (;;) {
+      if (this.accept("FROM")) node.from = this.qualifiedName("a referenced table");
+      else if (this.acceptSeq("NOT", "DEFERRABLE")) node.deferrable = false;
+      else if (this.accept("DEFERRABLE")) node.deferrable = true;
+      else if (this.acceptSeq("INITIALLY", "DEFERRED")) node.initiallyDeferred = true;
+      else if (this.acceptSeq("INITIALLY", "IMMEDIATE")) node.initiallyDeferred = false;
+      else if (this.accept("REFERENCING")) {
+        do {
+          if (!this.accept("OLD", "NEW")) this.fail("expected OLD or NEW");
+          const which = this.lastSeen()!.text.toUpperCase() as "OLD" | "NEW";
+          this.expect("TABLE");
+          this.accept("AS");
+          node.referencing.push({ which, name: this.nameTok("a transition table name").text });
+        } while (kw(this.peek(), "OLD", "NEW"));
+      } else if (this.accept("FOR")) {
+        this.accept("EACH");
+        if (!this.accept("ROW", "STATEMENT")) this.fail("expected ROW or STATEMENT");
+        node.forEach = this.lastSeen()!.text.toUpperCase() as "ROW" | "STATEMENT";
+      } else if (this.accept("WHEN")) {
+        if (!this.isPunct("(")) this.fail("expected '(' (a WHEN condition is parenthesized)");
+        node.when = this.parenthesized();
+      } else break;
+    }
+    this.expect("EXECUTE");
+    this.expect("FUNCTION", "PROCEDURE");
+    node.function = this.qualifiedName("a trigger function");
+    this.expectPunct("(");
+    if (!this.acceptPunct(")")) {
+      for (;;) {
+        const from = this.idx();
+        if (this.isOp("-")) this.p++;
+        const t = this.next();
+        if (!["string", "number", "ident", "qident", "ref"].includes(t.kind)) this.fail("expected a trigger argument (a string, a number or a name)", t);
+        node.args.push(this.span(from, t.kind === "ref" ? [t.part] : []));
+        if (this.acceptPunct(",")) continue;
+        this.expectPunct(")");
+        break;
+      }
+    }
+    return node;
+  }
+
   private comment(): CommentNode {
     this.expect("ON");
     let objectType: string;
     let on: NameNode | undefined;
     let target: NameNode;
+    let args: Span | undefined;
     if (this.accept("CONSTRAINT")) {
       objectType = "CONSTRAINT";
       target = this.qualifiedName("a constraint name");
       this.expect("ON");
       if (this.accept("DOMAIN")) objectType = "DOMAIN CONSTRAINT";
       on = this.qualifiedName("a table name");
+    } else if (this.accept("TRIGGER")) {
+      objectType = "TRIGGER";
+      target = this.qualifiedName("a trigger name");
+      this.expect("ON");
+      on = this.qualifiedName("a table name");
     } else {
       if (this.acceptSeq("MATERIALIZED", "VIEW")) objectType = "MATERIALIZED VIEW";
-      else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION")) {
+      else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION", "FUNCTION", "PROCEDURE")) {
         objectType = this.tokens[this.idx(-1)]!.text.toUpperCase();
-      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION or CONSTRAINT");
+      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, TRIGGER or CONSTRAINT");
       target = this.qualifiedName("an object name");
+      if ((objectType === "FUNCTION" || objectType === "PROCEDURE") && this.isPunct("(")) args = this.parenthesized();
     }
     this.expect("IS");
-    const node: CommentNode = { statement: "comment", objectType, target, on };
+    const node: CommentNode = { statement: "comment", objectType, target, on, ...(args ? { args } : {}) };
     if (!this.accept("NULL")) {
       const t = this.peek();
       if (t?.kind !== "string" && t?.kind !== "ref") this.fail("expected a string or NULL");

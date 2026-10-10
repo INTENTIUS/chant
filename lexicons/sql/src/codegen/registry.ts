@@ -26,6 +26,9 @@ const KINDS: Record<string, string> = {
   PostgresEnum: POSTGRES_ENTITY_TYPES.enum,
   PostgresDomain: POSTGRES_ENTITY_TYPES.domain,
   PostgresExtension: POSTGRES_ENTITY_TYPES.extension,
+  PostgresFunction: POSTGRES_ENTITY_TYPES.function,
+  PostgresProcedure: POSTGRES_ENTITY_TYPES.procedure,
+  PostgresTrigger: POSTGRES_ENTITY_TYPES.trigger,
 };
 
 export function buildRegistry(): string {

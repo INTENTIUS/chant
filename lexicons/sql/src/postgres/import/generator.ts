@@ -42,6 +42,9 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.enum]: "type",
   [POSTGRES_ENTITY_TYPES.domain]: "domain",
   [POSTGRES_ENTITY_TYPES.extension]: "extension",
+  [POSTGRES_ENTITY_TYPES.function]: "func",
+  [POSTGRES_ENTITY_TYPES.procedure]: "procedure",
+  [POSTGRES_ENTITY_TYPES.trigger]: "trigger",
 };
 
 /** Text that sits inside a template literal: a backquote and `${` escaped. */
@@ -144,8 +147,8 @@ export class PostgresGenerator implements TypeScriptGenerator {
     const schemaExport = new Map<string, string>();
     for (const it of items) {
       if (it.type === POSTGRES_ENTITY_TYPES.schema) schemaExport.set(it.name, it.exportName);
-      // An index is never referenced by name in another object's DDL.
-      else if (it.schema && it.type !== POSTGRES_ENTITY_TYPES.index) byQualified.set(`${it.schema}.${it.name}`, it);
+      // An index or a trigger is never referenced by name in another object's DDL.
+      else if (it.schema && it.type !== POSTGRES_ENTITY_TYPES.index && it.type !== POSTGRES_ENTITY_TYPES.trigger) byQualified.set(`${it.schema}.${it.name}`, it);
     }
 
     const bodies = new Map(items.map((it) => [it.exportName, templateBody(it, byQualified, schemaExport)]));

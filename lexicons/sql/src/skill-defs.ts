@@ -54,7 +54,7 @@ export const sqlSkills = createSkillsLoader(import.meta.url, [
     file: "chant-sql-postgres.md",
     name: "chant-sql-postgres",
     description:
-      "Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types and extensions as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules",
+      "Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types, extensions, functions, procedures and triggers as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules",
     triggers: [
       { type: "context" as const, value: "postgres" },
       { type: "context" as const, value: "postgres schema" },

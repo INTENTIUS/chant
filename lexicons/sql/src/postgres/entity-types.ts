@@ -13,6 +13,9 @@ export const POSTGRES_ENTITY_TYPES = {
   enum: "Postgres::Enum",
   domain: "Postgres::Domain",
   extension: "Postgres::Extension",
+  function: "Postgres::Function",
+  procedure: "Postgres::Procedure",
+  trigger: "Postgres::Trigger",
 } as const;
 
 export type PostgresEntityType = (typeof POSTGRES_ENTITY_TYPES)[keyof typeof POSTGRES_ENTITY_TYPES];

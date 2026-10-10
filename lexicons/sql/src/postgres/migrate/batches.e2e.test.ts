@@ -96,7 +96,8 @@ describe.skipIf(!enabled)("a uuid primary key", () => {
     await admin!.query("CREATE FUNCTION audit.count_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO audit.updates VALUES (NEW.id); RETURN NEW; END $$");
     await admin!.query("CREATE TRIGGER audit_update AFTER UPDATE ON uu.tokens FOR EACH ROW EXECUTE FUNCTION audit.count_update()");
     writeBuild("tokens-v2.json", [UU, tokens("integer")]);
-    expect((await plan("tokens-v2.json")).changes.map((c) => c.rule)).toEqual(["SQLPG208"]);
+    // The application's own trigger is not declared, so the plan also proposes its drop (SQLPG285), which only a prune makes.
+    expect((await plan("tokens-v2.json")).changes.map((c) => c.rule)).toEqual(["SQLPG208", "SQLPG285"]);
 
     expect(await m.postgresMigrationPlan(args(), undefined, deps())).toMatchObject({ state: "migrate", summary: expect.stringContaining("batched by id") });
     await m.postgresMigrationExpand(args(), undefined, deps());

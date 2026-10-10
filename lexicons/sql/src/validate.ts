@@ -34,6 +34,9 @@ const REQUIRED_ENTITIES = [
   "PostgresEnum",
   "PostgresDomain",
   "PostgresExtension",
+  "PostgresFunction",
+  "PostgresProcedure",
+  "PostgresTrigger",
 ];
 
 /** Engines a ClickHouse schema declares most: the MergeTree family and the engines beside it. */

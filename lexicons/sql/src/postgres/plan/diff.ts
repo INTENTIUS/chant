@@ -17,7 +17,7 @@ import { classifiedChange, type ChangeSet, type ClassifiedChange } from "../../c
 import { matchByIdentity } from "../../core/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "./rules";
 import { sameConstraint, serialBase, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
-import type { PgDiffObject, PgSchemaObject } from "./schema";
+import { pgNamespace, type PgDiffObject, type PgSchemaObject } from "./schema";
 import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
 import type { PostgresMigrationOpSuggestion } from "../migrate/handoff";
 
@@ -38,7 +38,7 @@ export interface PgSchemaDiff extends ChangeSet<PgChange> {
 const change = (object: string, field: string, rule: PgClassifierRuleId, before?: unknown, after?: unknown, extra: Partial<PgChange> = {}): PgChange =>
   classifiedChange(PG_CLASSIFIER_RULES, object, field, rule, before, after, extra);
 
-const qualified = (o: PgDiffObject) => `${o.schema ? `${o.schema}.` : ""}${o.name}`;
+const qualified = (o: PgDiffObject) => `${o.schema ? `${o.schema}.` : ""}${o.name}${o.kind === "trigger" ? "" : (o.signature ?? "")}`;
 
 // ── Columns ────────────────────────────────────────────────────────────
 
@@ -258,6 +258,42 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
       field("columnComments", "SQLPG216");
       break;
     }
+    case "function":
+    case "procedure": {
+      // CREATE OR REPLACE cannot change the result, the OUT parameters, an input parameter's name, a removed default or a window function's kind.
+      const ba = (before.fields.args as string[] | undefined) ?? [];
+      const aa = (after.fields.args as string[] | undefined) ?? [];
+      const inputName = (a: string) => (/^(in|inout|variadic) /.test(a) ? a.split(" ")[1] : undefined);
+      const reasons: string[] = [];
+      // Between two builds, the same export with other parameter types is another function on the server.
+      if (before.signature !== after.signature) reasons.push(`the parameter types ${before.signature} -> ${after.signature}`);
+      if (!same(before.fields.returns, after.fields.returns)) reasons.push(`the result ${show(before.fields.returns) ?? "-"} -> ${show(after.fields.returns) ?? "-"}`);
+      const outs = (l: string[]) => l.filter((a) => /^(out|inout) /.test(a));
+      if (!same(outs(ba), outs(aa))) reasons.push("the output parameters");
+      if (ba.some((a, i) => aa[i] !== undefined && inputName(a) !== inputName(aa[i]!) && /^(in|inout|variadic) /.test(aa[i]!))) reasons.push("a parameter's name");
+      if (ba.some((a, i) => / default /.test(a) && aa[i] !== undefined && !/ default /.test(aa[i]!))) reasons.push("a parameter's default is removed");
+      if (!same(before.fields.window, after.fields.window)) reasons.push("WINDOW");
+      const definition = ["args", "returns", "language", "body", "link", "securityDefiner", "set", "transform", "volatility", "strict", "leakproof", "parallel", "cost", "rows", "support", "window"];
+      const changed = definition.filter((k) => !same(before.fields[k], after.fields[k]));
+      if (changed.length === 0 && reasons.length === 0) break;
+      if (changed.length === 0) changed.push("args");
+      const what = changed.join(", ");
+      if (reasons.length === 0) out.push(change(key, what, "SQLPG280", undefined, undefined, { note: `CREATE OR REPLACE ${after.kind.toUpperCase()}` }));
+      else if (before.dependents && before.dependents.length > 0) {
+        out.push(change(key, what, "SQLPG282", undefined, undefined, { note: `${reasons.join(", ")} changes, and ${before.dependents.join(", ")} depend${before.dependents.length === 1 ? "s" : ""} on it` }));
+      } else out.push(change(key, what, "SQLPG281", undefined, undefined, { note: `${reasons.join(", ")} changes, which CREATE OR REPLACE refuses` }));
+      break;
+    }
+    case "trigger": {
+      const definition = ["table", "constraint", "timing", "events", "forEach", "when", "function", "args", "from", "deferrable", "initiallyDeferred", "referencing"];
+      const changed = definition.filter((k) => !same(before.fields[k], after.fields[k]));
+      if (changed.length > 0) {
+        out.push(
+          change(key, changed.join(", "), "SQLPG284", changed.map((k) => `${k} ${show(before.fields[k]) ?? "-"}`).join("; "), changed.map((k) => `${k} ${show(after.fields[k]) ?? "-"}`).join("; "), after.fields.constraint || before.fields.constraint || !same(before.fields.table, after.fields.table) ? { note: "dropped and created in one transaction: a constraint trigger has no OR REPLACE, and OR REPLACE keeps a trigger on its table" } : {}),
+        );
+      }
+      break;
+    }
     case "table":
       diffColumns(key, before, after, out, hints, false, major);
       diffConstraints(key, before, after, out, false);
@@ -288,11 +324,12 @@ function createdTables(matches: ReturnType<typeof matchByIdentity<PgDiffObject>>
  */
 export function matchPgObjects(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[]): ReturnType<typeof matchByIdentity<PgDiffObject>> {
   return matchByIdentity(before, after, {
-    qualified: (o) => `${o.kind === "schema" ? "schema" : o.kind === "extension" ? "extension" : o.kind === "enum" || o.kind === "domain" ? "type" : "relation"} ${qualified(o)}`,
+    qualified: (o) => `${pgNamespace(o.kind)} ${o.schema ? `${o.schema}.` : ""}${o.name}${o.signature ?? ""}`,
     previously: (o) => o.previously,
     previousNames: (o, prev) => {
-      const space = o.kind === "schema" ? "schema" : o.kind === "extension" ? "extension" : o.kind === "enum" || o.kind === "domain" ? "type" : "relation";
-      return [`${space} ${prev}`, ...(o.schema && !prev.includes(".") ? [`${space} ${o.schema}.${prev}`] : [])];
+      const space = pgNamespace(o.kind);
+      const sig = o.signature ?? "";
+      return [`${space} ${prev}${sig}`, ...(o.schema && !prev.includes(".") ? [`${space} ${o.schema}.${prev}${sig}`] : [])];
     },
   });
 }
@@ -308,6 +345,8 @@ export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly
       const o = m.after.canonical;
       if (o.kind === "index" && !newTables.has(String(o.fields.table))) {
         changes.push(change(m.after.key, "index", o.concurrently ? "SQLPG240" : "SQLPG241", undefined, qualified(o)));
+      } else if (o.kind === "trigger" && !newTables.has(String(o.fields.table))) {
+        changes.push(change(m.after.key, "trigger", "SQLPG283", undefined, `${o.name}${o.signature ?? ""}`));
       } else changes.push(change(m.after.key, o.kind, "SQLPG200", undefined, qualified(o)));
     } else if (m.kind === "dropped") {
       const o = m.before.canonical;
@@ -316,7 +355,8 @@ export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly
         continue;
       }
       const destructive = o.kind === "table" || o.kind === "materializedView" || o.kind === "sequence";
-      changes.push(change(m.before.key, o.kind, o.kind === "index" ? "SQLPG242" : "SQLPG270", qualified(o), undefined, destructive ? { destructive: true } : {}));
+      const rule = o.kind === "index" ? "SQLPG242" : o.kind === "trigger" ? "SQLPG285" : "SQLPG270";
+      changes.push(change(m.before.key, o.kind, rule, o.kind === "trigger" ? `${o.name}${o.signature ?? ""}` : qualified(o), undefined, destructive ? { destructive: true } : {}));
     } else diffObject(m.after.key, m.before.canonical, m.after.canonical, changes, hints, major);
   }
   return { changes, hints, refused: changes.filter((c) => c.class === "expand") };

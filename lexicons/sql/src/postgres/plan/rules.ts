@@ -270,6 +270,42 @@ export const PG_CLASSIFIER_RULES = {
   ),
   SQLPG267: rule("SQLPG267", "metadata", "Change a schema's owner", "ALTER SCHEMA ... OWNER TO changes only the catalog.", `${DOCS}/sql-alterschema.html`),
   SQLPG268: rule("SQLPG268", "expand", "Change an object's kind", "A view and a materialized view, or a table and either, are different kinds of object: the old one is dropped and the new one created.", `${DOCS}/sql-createview.html`),
+  SQLPG280: rule(
+    "SQLPG280",
+    "metadata",
+    "Replace a function's or procedure's definition",
+    "CREATE OR REPLACE FUNCTION (or PROCEDURE) replaces the body and attributes in the catalog; it locks no table, and a call already running finishes with the old definition. The parameter types, the result and the input parameters' names have to stay the same.",
+    `${DOCS}/sql-createfunction.html`,
+  ),
+  SQLPG281: rule(
+    "SQLPG281",
+    "metadata",
+    "Drop and create a function or procedure",
+    "CREATE OR REPLACE refuses a change of the result type, the output parameters, an input parameter's name, a removed parameter default or the routine's kind: the routine is dropped and created in one transaction. Nothing on the server depends on it (a view, a trigger, a column default would make the DROP fail).",
+    `${DOCS}/sql-createfunction.html`,
+  ),
+  SQLPG282: rule(
+    "SQLPG282",
+    "expand",
+    "Change a function's result or parameters while other objects depend on it",
+    "DROP FUNCTION refuses while a view, a trigger, a column default or another routine depends on the function, and CREATE OR REPLACE cannot make this change. Create the new definition under a new name (or signature), move what depends on it, then drop the old.",
+    `${DOCS}/sql-dropfunction.html`,
+  ),
+  SQLPG283: rule(
+    "SQLPG283",
+    "metadata",
+    "Create a trigger on an existing table",
+    "CREATE TRIGGER takes SHARE ROW EXCLUSIVE on its table: writes and other schema changes to the table wait until the transaction commits, but no row is read. The applier's lock_timeout bounds the wait behind long-running transactions.",
+    `${DOCS}/sql-createtrigger.html`,
+  ),
+  SQLPG284: rule(
+    "SQLPG284",
+    "metadata",
+    "Change a trigger",
+    "CREATE OR REPLACE TRIGGER (14 and later) replaces the trigger under SHARE ROW EXCLUSIVE on its table. A constraint trigger has no OR REPLACE, and a trigger moved to another table is another trigger: each is dropped (ACCESS EXCLUSIVE, briefly) and created in one transaction.",
+    `${DOCS}/sql-createtrigger.html`,
+  ),
+  SQLPG285: rule("SQLPG285", "drop", "Drop a trigger", "DROP TRIGGER takes ACCESS EXCLUSIVE on its table, briefly; no row is read or lost, and the table's writes no longer fire it.", `${DOCS}/sql-droptrigger.html`),
   SQLPG270: rule("SQLPG270", "drop", "Drop an object", "The object and, for a table, a materialized view or a sequence, its data are gone.", `${DOCS}/sql-droptable.html`),
 } as const satisfies Record<string, PgClassifierRule>;
 

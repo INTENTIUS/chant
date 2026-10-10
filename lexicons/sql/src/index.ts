@@ -18,7 +18,7 @@ export { database, table, view, literal } from "./clickhouse/entities";
 // A tag folds as the function its file imports, so `table` imported from
 // `@intentius/chant-lexicon-sql/postgres` is Postgres's. Declarations import
 // them from the dialect subpath.
-export { schema, index, sequence, type, domain, extension } from "./postgres/entities";
+export { schema, index, sequence, type, domain, extension, func, procedure, trigger } from "./postgres/entities";
 
 // A schema change's statements between two builds, rendered offline for a
 // migration file (#3644); also at `@intentius/chant-lexicon-sql/migration-statements`.

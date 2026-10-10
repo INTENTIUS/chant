@@ -27,17 +27,27 @@ import { liveKey, markProviderOwned, readLiveSchema, type LivePgObject } from ".
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { isChantManaged, readMarker, stripMarker } from "../../core/ownership";
 import { identValue } from "../parser";
+import { canonicalPgObject } from "../plan/normalize";
 
 interface Bound {
   target: PostgresTarget;
   byKey: Map<string, LivePgObject>;
 }
 
-/** The schema and name a declared entity is created as; a bare name is in the default schema. */
-export function declaredAddress(entity: { type: string; props: Record<string, unknown> }, defaultSchema: string): { schema?: string; name: string } {
+/**
+ * The schema and name a declared entity is created as; a bare name is in the
+ * default schema. A routine's parameter types and a trigger's table tell it
+ * from another of the same name (`signature`).
+ */
+export function declaredAddress(entity: { type: string; props: Record<string, unknown> }, defaultSchema: string): { schema?: string; name: string; signature?: string } {
   const name = String(entity.props.name ?? "");
   if (entity.type === POSTGRES_ENTITY_TYPES.schema || entity.type === POSTGRES_ENTITY_TYPES.extension) return { name };
-  return { schema: typeof entity.props.schema === "string" ? entity.props.schema : identValue(defaultSchema), name };
+  const schema = typeof entity.props.schema === "string" ? entity.props.schema : identValue(defaultSchema);
+  if (entity.type === POSTGRES_ENTITY_TYPES.function || entity.type === POSTGRES_ENTITY_TYPES.procedure || entity.type === POSTGRES_ENTITY_TYPES.trigger) {
+    const signature = canonicalPgObject(entity.type, entity.props, defaultSchema).signature;
+    return { schema, name, ...(signature !== undefined ? { signature } : {}) };
+  }
+  return { schema, name };
 }
 
 /** A schema scope for the catalog read: the profile's schemas, else every schema the declarations name and the default one. */
@@ -59,7 +69,7 @@ function adapter(options: BindOptions & { owned?: boolean; declared: DeclaredEnt
       const { target, client } = await bindPostgres(options);
       try {
         const live = markProviderOwned(await readLiveSchema(client, { schemas: scopeFor(target, options.declared.filter((d) => d.type.startsWith("Postgres::"))) }), target.provider);
-        return { target, byKey: new Map(live.map((o) => [liveKey(o.type, o.schema, o.name), o])) };
+        return { target, byKey: new Map(live.map((o) => [liveKey(o.type, o.schema, o.name, o.signature), o])) };
       } finally {
         await client.end();
       }
@@ -67,9 +77,9 @@ function adapter(options: BindOptions & { owned?: boolean; declared: DeclaredEnt
     classifyBindFailure: (err) => classifyPostgresFailure(err),
     async read({ target, byKey }, entity): Promise<EntityObservation> {
       if (!entity.type.startsWith("Postgres::")) return { unobserved: { reason: "unsupported-kind", detail: entity.type } };
-      const { schema, name } = declaredAddress(entity, target.defaultSchema);
-      const queried = `${redactUrl(target.endpoint.url)} ${schema ? `${schema}.` : ""}${name}`;
-      const live = byKey.get(liveKey(entity.type, schema, name));
+      const { schema, name, signature } = declaredAddress(entity, target.defaultSchema);
+      const queried = `${redactUrl(target.endpoint.url)} ${schema ? `${schema}.` : ""}${name}${signature ?? ""}`;
+      const live = byKey.get(liveKey(entity.type, schema, name, signature));
       if (!live) return { absent: true, queried };
       const owned = !live.foreign && isChantManaged(live.comment);
       if (options.owned && !owned) {

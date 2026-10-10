@@ -13,6 +13,9 @@ const STATEMENT: Record<PostgresTag, string> = {
   type: "enum",
   domain: "domain",
   extension: "extension",
+  func: "function",
+  procedure: "procedure",
+  trigger: "trigger",
 };
 
 const TAG_OF: Record<string, PostgresTag> = Object.fromEntries(Object.entries(STATEMENT).map(([tag, statement]) => [statement, tag as PostgresTag]));
