@@ -17,9 +17,20 @@
  * (#3664). When a server's copy of a table differs from the profile
  * server's, that copy is what is reported, with the server in `observedOn`,
  * which the drift report prints as `seen on`.
+ *
+ * Where the profile manages access, the grants an apply would give or take
+ * from each declared grantee are reported as `pending` (#3733), the same
+ * statements `chant sql plan` plans (SQLCH273, SQLCH274), so a privilege
+ * granted or revoked by hand after an approval moves the plan digest.
  */
 
-import { deepObservation, type DeepObservationResult, type DeepResourceObservation, type DeepNormalizationHooks } from "@intentius/chant/deep-observation";
+import {
+  deepObservation,
+  type DeepObservationResult,
+  type DeepPendingChange,
+  type DeepResourceObservation,
+  type DeepNormalizationHooks,
+} from "@intentius/chant/deep-observation";
 import type { UnobservedEntity } from "@intentius/chant/lexicon";
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "../live/bind";
 import { ACCESS_ENTITY_TYPES, ACCESS_UNMANAGED_DETAIL, accessOf, readLiveAccess, readLiveSchema, SYSTEM_DATABASES, type LiveObject } from "../live/catalog";
@@ -27,7 +38,8 @@ import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
 import { database, dictionary, func, policy, role, table, user, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
-import { canonicalObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
+import { canonicalObject, grantsObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
+import { grantStatement, grantsByGrantee, revokeStatement, type GrantAtom } from "../access";
 import { renderFor } from "../topology";
 
 type Props = Record<string, unknown>;
@@ -227,6 +239,18 @@ export async function observeResourcesDeep(
     }
     return deepObservation({}, unobserved);
   }
+  const pending: DeepPendingChange[] = [];
+  if (target.access === true) {
+    try {
+      pending.push(...(await pendingGrants(target, options.entities)));
+    } catch (err) {
+      const why = classifyClickHouseFailure(err);
+      for (const name of options.entityNames) {
+        if (options.entities.get(name)?.entityType !== CLICKHOUSE_ENTITY_TYPES.grant) continue;
+        unobserved[name] = { type: CLICKHOUSE_ENTITY_TYPES.grant, reason: "read-failed", detail: `the server's grants could not be compared: ${why.detail}` };
+      }
+    }
+  }
   for (const name of options.entityNames) {
     const entity = options.entities.get(name);
     if (!entity || !entity.entityType.startsWith("ClickHouse::")) {
@@ -238,10 +262,11 @@ export async function observeResourcesDeep(
       continue;
     }
     if (entity.entityType === CLICKHOUSE_ENTITY_TYPES.grant) {
+      if (unobserved[name]) continue;
       unobserved[name] = {
         type: entity.entityType,
         reason: "unsupported-kind",
-        detail: "a grant is compared as part of its grantees' grants, which chant sql plan reports (SQLCH273, SQLCH274)",
+        detail: "a grant is compared as part of its grantees' grants: what an apply would grant or revoke is listed as pending (SQLCH273, SQLCH274)",
       };
       continue;
     }
@@ -284,5 +309,40 @@ export async function observeResourcesDeep(
       unobserved[name] = { type: entity.entityType, reason: "read-failed", detail: `the server's definition does not parse: ${(err as Error).message}` };
     }
   }
-  return deepObservation(resources, unobserved);
+  return deepObservation(resources, unobserved, pending);
+}
+
+/**
+ * The grants an apply would give or take from each declared grantee (#3733),
+ * as `chant sql plan` compares them: the declared grants against what
+ * `SHOW GRANTS FOR` prints, atom by atom. One change per grantee, its
+ * REVOKEs before its GRANTs as the applier sends them, with the grant
+ * declarations behind it. A grantee the server does not hold yet is given
+ * every declared grant.
+ */
+export async function pendingGrants(
+  target: ClickHouseTarget,
+  entities: ReadonlyMap<string, { entityType: string; props: Record<string, unknown> }>,
+): Promise<DeepPendingChange[]> {
+  const declared = grantsByGrantee([...entities].map(([name, e]) => ({ export: name, type: e.entityType, ddl: String(e.props.ddl ?? "") })));
+  if (declared.length === 0) return [];
+  const live = await readLiveAccess(target, declared.map((g) => ({ kind: "grants", name: g.grantee })));
+  const held = new Map(live.filter((o) => o.type === CLICKHOUSE_ENTITY_TYPES.grant).map((o) => [o.name, grantsObject(o.statement, o.name, target.defaultDatabase).access ?? {}]));
+  const atom = (json: string) => JSON.parse(json) as GrantAtom;
+  const out: DeepPendingChange[] = [];
+  for (const g of declared) {
+    const want = grantsObject(g.ddl, g.grantee, target.defaultDatabase).access ?? {};
+    const have = held.get(g.grantee) ?? {};
+    const statements = [
+      ...Object.keys(have)
+        .filter((k) => !(k in want))
+        .map((k) => revokeStatement(atom(have[k]!), g.grantee)),
+      ...Object.keys(want)
+        .filter((k) => !(k in have))
+        .map((k) => grantStatement(atom(want[k]!), g.grantee)),
+    ];
+    if (statements.length === 0) continue;
+    out.push({ subject: `grants ${g.grantee}`, change: statements.join("; "), entities: [...g.exports].sort() });
+  }
+  return out;
 }
