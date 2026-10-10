@@ -50,6 +50,8 @@ describe("sql serializer", () => {
     expect(sql.indexOf("CREATE DATABASE")).toBeLessThan(sql.indexOf("CREATE TABLE"));
     expect(sql.indexOf("CREATE TABLE")).toBeLessThan(sql.indexOf("CREATE VIEW"));
     expect(r.verbatimFiles).toEqual([CLICKHOUSE_DDL_FILE]);
+    // DDL is copied exactly but is not a secret, so it prints with no --output (#3738).
+    expect(r.secretFiles).toBeUndefined();
   });
 
   test("10. a declarable of another lexicon is not written", () => {
@@ -98,6 +100,8 @@ describe("sql serializer, Postgres", () => {
     expect(doc(r).objects[1]).toMatchObject({ export: "users", type: "Postgres::Table", name: "users", schema: "app", sqlName: "app.users" });
     expect(r.files![POSTGRES_DDL_FILE]).toBe("CREATE SCHEMA app;\n\nCREATE TABLE app.users (id bigint PRIMARY KEY, email text NOT NULL);\n");
     expect(r.verbatimFiles).toEqual([POSTGRES_DDL_FILE]);
+    // DDL is copied exactly but is not a secret, so it prints with no --output (#3738).
+    expect(r.secretFiles).toBeUndefined();
   });
 
   test("a Postgres build records the target major: sql.postgresMajor, else the newest pinned", () => {

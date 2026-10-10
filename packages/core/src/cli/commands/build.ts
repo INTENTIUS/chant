@@ -706,6 +706,10 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     // out of that round trip structurally, via `SerializerResult.verbatimFiles`
     // (chant#1937) — "the parse happens to fail" is not a safety guarantee.
     const verbatimFiles = new Set<string>();
+    // Basenames that hold a secret (`SerializerResult.secretFiles`): a build
+    // with no --output refuses rather than echo them (chant#3738). Verbatim
+    // alone does not mean secret, so this is its own set.
+    const secretFiles = new Set<string>();
 
     // A same basename emitted by two sources with different content would
     // otherwise silently overwrite (last-writer-wins, since `additionalFiles`
@@ -741,6 +745,11 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       if (raw.verbatimFiles) {
         for (const filename of raw.verbatimFiles) {
           verbatimFiles.add(filename);
+        }
+      }
+      if (raw.secretFiles) {
+        for (const filename of raw.secretFiles) {
+          secretFiles.add(filename);
         }
       }
       return raw.primary;
@@ -893,13 +902,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
           })
         );
       }
-    } else if (verbatimFiles.size > 0) {
+    } else if (secretFiles.size > 0) {
       // A build carrying committed ciphertext and no --output has nowhere to
       // put the sidecar. Echoing it to a terminal is not useful and dropping
       // it silently is worse: the primary output would reference a Secret
       // whose file never got written, and the miss would surface as a pod
       // failing to start, far from its cause. Refuse, naming the flag.
-      const names = [...verbatimFiles].sort().join(", ");
+      const names = [...secretFiles].sort().join(", ");
       errors.push(
         formatError({
           message:

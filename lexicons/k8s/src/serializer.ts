@@ -607,7 +607,9 @@ export const k8sSerializer: Serializer = {
     return {
       primary,
       files,
-      ...(verbatimFiles.length > 0 ? { verbatimFiles } : {}),
+      // Every verbatim file here is committed ciphertext, so each is also a
+      // secret: a build with no --output refuses rather than echo it (chant#3738).
+      ...(verbatimFiles.length > 0 ? { verbatimFiles, secretFiles: [...verbatimFiles] } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     };
   },

@@ -70,6 +70,17 @@ export interface SerializerResult {
    */
   verbatimFiles?: string[];
   /**
+   * Basenames from `files` that hold a secret (committed ciphertext) and so
+   * must be written to disk, never echoed to a terminal. A build with no
+   * `--output` refuses when this is non-empty, naming the flag (chant#3738).
+   *
+   * Separate from {@link verbatimFiles}: "copy these bytes exactly" says
+   * nothing about secrecy. A verbatim file that is not listed here, such as
+   * the sql lexicon's DDL, prints like any other additional file when there
+   * is no `--output`.
+   */
+  secretFiles?: string[];
+  /**
    * Non-fatal diagnostics produced during serialization (e.g. a dialect
    * dropping keys the target platform ignores). The build pipeline collects
    * these into its `warnings` array.

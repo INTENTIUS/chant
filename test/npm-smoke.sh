@@ -102,7 +102,6 @@ test_manual_project() {
   local lexicon="$1"    # e.g. "aws"
   local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"
   local source="$3"     # TypeScript source code
-  local build_args="${4:-}"  # extra `chant build` arguments, e.g. "-o dist/out.json"
   local label="npm-manual-$lexicon"
 
   echo ""
@@ -124,8 +123,7 @@ test_manual_project() {
   echo "$source" > src/infra.ts
 
   # Build
-  # shellcheck disable=SC2086 # build_args is a word list
-  if pkg_run chant build src $build_args 2>&1; then
+  if pkg_run chant build src 2>&1; then
     pass "$label: chant build"
   else
     fail "$label: chant build"
@@ -201,12 +199,11 @@ export const smoke = new RuleGroup({ name: "smoke", rules });'
 
 # SQL manual project, in both modes. It has no chant.config.ts and imports the
 # lexicon only through a dialect subpath, so the build relies on detection
-# reading subpath imports (#3648). The DDL is a sidecar file, so the build
-# needs --output.
+# reading subpath imports (#3648). It builds to stdout: the DDL file is
+# verbatim but not a secret, so no --output is needed (#3738).
 test_manual_project "sql" "/tarballs/lexicon-sql.tgz" \
   'import { table } from "@intentius/chant-lexicon-sql/clickhouse";
-export const events = table`CREATE TABLE events (id UInt64, ts DateTime) ENGINE = MergeTree ORDER BY (id, ts)`;' \
-  "-o dist/schema.json"
+export const events = table`CREATE TABLE events (id UInt64, ts DateTime) ENGINE = MergeTree ORDER BY (id, ts)`;'
 
 # Grafana manual project (#2919). grafana depends on the k8s, prometheus and
 # otel lexicons, so their tarballs go in too. Beyond build and lint, it checks

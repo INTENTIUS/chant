@@ -781,6 +781,7 @@ export const testEntity = {
         primary: "kind: Deployment\n",
         files: { "db.sops.yaml": CIPHERTEXT },
         verbatimFiles: ["db.sops.yaml"],
+        secretFiles: ["db.sops.yaml"],
       }),
     };
 
@@ -841,6 +842,7 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
           primary: "kind: Deployment\n",
           files: { "db.sops.yaml": jsonish },
           verbatimFiles: ["db.sops.yaml"],
+          secretFiles: ["db.sops.yaml"],
         }),
       };
       await writeProject("secrets/db.sops.yaml");
@@ -890,6 +892,33 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
 
       expect(result.errors).toEqual([]);
       expect(readFileSync(join(testDir, "dist", "raw.json"), "utf-8")).toBe(raw);
+    });
+
+    test("a verbatim file that is not a secret prints with no --output (#3738)", async () => {
+      // The sql lexicon's DDL is verbatim but not a secret. Only `secretFiles`
+      // makes a build with no --output refuse.
+      const ddl = "CREATE TABLE events (id UInt64) ENGINE = MergeTree ORDER BY id;\n";
+      const ddlSerializer: Serializer = {
+        name: "multi",
+        rulePrefix: "MULTI",
+        serialize: () => ({ primary: "{}", files: { "clickhouse.sql": ddl }, verbatimFiles: ["clickhouse.sql"] }),
+      };
+      await writeFile(
+        join(testDir, "infra.ts"),
+        `export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+      );
+      const printed: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { printed.push(args.join(" ")); });
+      try {
+        const result = await buildCommand({ path: testDir, format: "json", serializers: [ddlSerializer] } as BuildOptions);
+
+        expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed.join("\n")).toContain("--- clickhouse.sql ---");
+      expect(printed).toContain(ddl);
     });
   });
 

@@ -6,7 +6,7 @@
  * sql dialects, and check that `--lexicon` is honoured when resolving the
  * project's lexicons.
  */
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -98,5 +98,32 @@ describe("chant build on the #3648 repro", () => {
         expect(readFileSync(join(root, "dist", ddl), "utf-8")).toContain("CREATE TABLE");
       }, 60_000);
     }
+
+    // chant #3738 — the DDL is verbatim but not a secret, so a build with no
+    // --output prints it rather than refusing as if it were ciphertext.
+    test(`${dialect}: builds to stdout with no --output (#3738)`, async () => {
+      writeSource(source);
+      // The build prints through console, which vitest intercepts before it
+      // reaches the stream captureRun replaces.
+      const out: string[] = [];
+      const err: string[] = [];
+      const log = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => { out.push(a.join(" ")); });
+      const error = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { err.push(a.join(" ")); });
+      let run: Awaited<ReturnType<typeof captureRun>>;
+      try {
+        run = await captureRun(() => runCommandInProcess(["build", join(root, "src")]));
+      } finally {
+        log.mockRestore();
+        error.mockRestore();
+      }
+      const stderr = run.stderr + err.join("\n");
+
+      expect(stderr).not.toContain("committed-encrypted");
+      expect(run.exitCode).toBe(0);
+      expect(JSON.parse(out.join("\n"))).toMatchObject({ dialect });
+      expect(stderr).toContain(`--- ${ddl} ---`);
+      expect(stderr).toContain("CREATE TABLE events");
+      expect(existsSync(join(root, ddl))).toBe(false);
+    }, 60_000);
   }
 });
