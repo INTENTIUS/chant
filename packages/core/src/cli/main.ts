@@ -1676,10 +1676,12 @@ async function tryPluginCommand(rawArgv: string[]): Promise<number | undefined> 
 /**
  * Load lexicon plugins for the given project path, or exit with an error.
  */
-async function loadPluginsOrExit(path: string): Promise<import("../lexicon").LexiconPlugin[]> {
+async function loadPluginsOrExit(path: string, lexicon?: string): Promise<import("../lexicon").LexiconPlugin[]> {
   let plugins;
   try {
-    const lexiconNames = await resolveProjectLexicons(resolve(path));
+    // chant #3648 — `--lexicon <name>` loads that lexicon even when the
+    // project's config and imports name none.
+    const lexiconNames = await resolveProjectLexicons(resolve(path), { lexicon });
     plugins = await loadPlugins(lexiconNames);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1778,7 +1780,7 @@ export async function runCommandInProcess(argv: string[]): Promise<number> {
     console.error(formatError({ message: envErr, hint: "Declare it in chant.config `environments`, or omit --env." }));
     return 1;
   }
-  const plugins = match.def.requiresPlugins ? await loadPluginsOrExit(match.compound ? "." : args.path) : [];
+  const plugins = match.def.requiresPlugins ? await loadPluginsOrExit(match.compound ? "." : args.path, args.lexicon) : [];
   return match.def.handler({ args, plugins, serializers: plugins.map((p) => p.serializer) });
 }
 
@@ -2138,7 +2140,7 @@ async function main(): Promise<void> {
       ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
       : match.def.name === "serve mcp" && (await isLexiconlessWorkspaceRoot(projectPath))
         ? [] // #2700 — runServeMcp loads the chant members' lexicons itself.
-        : await loadPluginsOrExit(projectPath)
+        : await loadPluginsOrExit(projectPath, args.lexicon)
     : [];
   const serializers = plugins.map((p) => p.serializer);
   const ctx = { args, plugins, serializers };

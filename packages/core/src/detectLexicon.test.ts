@@ -257,4 +257,42 @@ describe("detectLexicons", () => {
     const result = await detectLexicons([file]);
     expect(result).toEqual(["testdom"]);
   });
+
+  // chant #3648: a project that imports a lexicon only through a subpath,
+  // as every sql project does, was detected as having no lexicon at all.
+  test.each([
+    {
+      dialect: "clickhouse",
+      code: 'import { table } from "@intentius/chant-lexicon-sql/clickhouse";\nexport const events = table`CREATE TABLE events (id UInt64, ts DateTime) ENGINE = MergeTree ORDER BY (id, ts)`;',
+    },
+    {
+      dialect: "postgres",
+      code: 'import { table } from "@intentius/chant-lexicon-sql/postgres";\nexport const events = table`CREATE TABLE events (id bigint PRIMARY KEY, ts timestamptz NOT NULL)`;',
+    },
+  ])("detects sql from a $dialect subpath import (#3648)", async ({ code }) => {
+    const file = join(testDir, "infra.ts");
+    await writeFile(file, code);
+
+    expect(await detectLexicons([file])).toEqual(["sql"]);
+  });
+
+  test("detects a lexicon from a nested subpath and a subpath re-export (#3648)", async () => {
+    const file = join(testDir, "infra.ts");
+    await writeFile(
+      file,
+      'import { rule } from "@intentius/chant-lexicon-testdom/lint/post-synth";\nexport * from \'@intentius/chant-lexicon-k8s/composites\';',
+    );
+
+    const result = await detectLexicons([file]);
+    expect(result.sort()).toEqual(["k8s", "testdom"]);
+  });
+
+  test("subpath imports of both sql dialects detect sql once (#3648)", async () => {
+    const ch = join(testDir, "ch.ts");
+    const pg = join(testDir, "pg.ts");
+    await writeFile(ch, 'import { table } from "@intentius/chant-lexicon-sql/clickhouse";');
+    await writeFile(pg, 'import { table } from "@intentius/chant-lexicon-sql/postgres";');
+
+    expect(await detectLexicons([ch, pg])).toEqual(["sql"]);
+  });
 });
