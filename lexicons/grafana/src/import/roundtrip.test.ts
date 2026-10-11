@@ -85,7 +85,8 @@ async function importAndBuild(content: string): Promise<Imported> {
     const srcDir = join(dir, "src");
     writeFiles(srcDir, generated);
     const result = await build(srcDir, [grafanaSerializer]);
-    const lint = await lintCommand({ path: srcDir, format: "stylish" });
+    // Source-rule cleanliness of the generated TypeScript only; imported dashboards' post-synth findings are checked through `issues` (#3750).
+    const lint = await lintCommand({ path: srcDir, format: "stylish", postSynth: false });
     const files = (result.outputs.get("grafana") as SerializerResult | undefined)?.files ?? {};
     const dashboards = Object.entries(files).filter(([f]) => f.startsWith("dashboards/"));
     const text = dashboards[0]?.[1];

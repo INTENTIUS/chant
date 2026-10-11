@@ -27,7 +27,8 @@ describe("core lint on grafana's property-kind declarables (chant #2957)", () =>
       writeFileSync(join(project, "chant.config.json"), JSON.stringify({ lexicons: ["grafana"] }));
       mkdirSync(join(project, "src"));
       copyFileSync(join(fixture, "dashboard.ts"), join(project, "src", "dashboard.ts"));
-      const result = await lintCommand({ path: join(project, "src"), format: "stylish" });
+      // This test is about the core source rules (COR001/COR004/COR009), not the dashboard's post-synth findings (#3750).
+      const result = await lintCommand({ path: join(project, "src"), format: "stylish", postSynth: false });
       expect(result.output).not.toMatch(/COR00[149]|LEX001/);
       expect(result.warningCount).toBe(0);
       expect(result.errorCount).toBe(0);

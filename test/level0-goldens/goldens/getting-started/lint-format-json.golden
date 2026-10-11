@@ -5,6 +5,23 @@ exit: 0
 --- wrote (empty)
 
 --- stdout
-[]
+[
+  {
+    "file": "<project>/chant.config.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "WK8105",
+    "severity": "warning",
+    "message": "[web] Container \"web\" in Deployment \"web\" has no explicit imagePullPolicy — set it to \"Always\", \"IfNotPresent\", or \"Never\""
+  },
+  {
+    "file": "<project>/chant.config.ts",
+    "line": 1,
+    "column": 1,
+    "ruleId": "WK8203",
+    "severity": "warning",
+    "message": "[web] Container \"web\" in Deployment \"web\" does not set readOnlyRootFilesystem: true — set it to reduce the attack surface"
+  }
+]
 
 --- stderr (empty)

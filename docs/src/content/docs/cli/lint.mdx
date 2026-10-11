@@ -46,6 +46,12 @@ chant lint --watch
 chant lint --sandbox
 ```
 
+## Lexicon post-synth checks
+
+Each lexicon the project loads can ship post-synth checks, which read the built output rather than the source (SQLCH101 for a ClickHouse engine the pinned server does not have, for example). `chant lint` builds the lint path in memory, as [`chant build`](/chant/cli/build/) would build that path, writes nothing, and runs every loaded lexicon's post-synth checks over the result. Their findings are reported with the source rules, under the check's own ID. `lint.rules` changes their severity or turns them off, and `lint.presets` applies as it does in `chant build`. A post-synth finding has no source line, so it is reported at `1:1` in the file that declared the resource it names, or at the config file when it names none.
+
+When the lint path does not build, each build error is reported as a `LEX002` error and the post-synth checks are skipped. Like `LEX001`, `LEX002` is not a rule and cannot be turned off. A project whose lexicons ship no post-synth checks is not built at all.
+
 ## Unresolved lexicons
 
 A lexicon the project declares in `chant.config.*` but that cannot be resolved is reported as a `LEX001` error against the config file, with the same message [`chant build`](/chant/cli/build/) gives for the same project. The lint exits 1, and the diagnostic appears in `--format json` and `--format sarif` like any other. This covers a lexicon package that is not installed and a `chant.config.ts` that fails to load, so a CI job that lints before it builds cannot report green on a project the build refuses.
@@ -63,4 +69,4 @@ At the root of a [declared workspace](/chant/reference/workspace-declaration/), 
 | Code | Meaning |
 |------|---------|
 | 0 | No errors found |
-| 1 | Lint errors found, including a declared lexicon that could not be resolved, or `WSP000` at a workspace root |
+| 1 | Lint errors found, including a lexicon post-synth error, a declared lexicon that could not be resolved, a lint path that does not build (`LEX002`), or `WSP000` at a workspace root |

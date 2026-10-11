@@ -80,7 +80,7 @@ Run it with `otelcol-contrib --config collector.yaml`.
 
 ## 4. Lint
 
-`chant lint src` runs the source rules (OTEL001, OTEL002) and `chant build` runs the post-synth checks. Remove `memoryLimiter` from the chain but leave it declared, and OTEL103 warns that it is declared and unused. Replace `tempo` with the string `"otlp/tmepo"` and OTEL101 fails the build, because no exporter has that id.
+`chant lint src` runs the source rules (OTEL001, OTEL002) and the post-synth checks, which `chant build` runs too. Remove `memoryLimiter` from the chain but leave it declared, and OTEL103 warns that it is declared and unused. Replace `tempo` with the string `"otlp/tmepo"` and OTEL101 fails the build, because no exporter has that id.
 
 ## Starting from a template
 
