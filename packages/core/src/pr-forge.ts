@@ -76,6 +76,15 @@ export interface CommentResult {
   url?: string;
 }
 
+/** A comment or note {@link PrForge.findComment} read back. */
+export interface FoundComment {
+  /** The comment's or note's id. */
+  id: number;
+  body: string;
+  /** Its web URL, when the forge's answer carries one (GitHub and Forgejo do; a GitLab note does not). */
+  url?: string;
+}
+
 /** A finding to keep in a tracking issue. `body` carries the marker. */
 export interface IssueFinding {
   title: string;
@@ -92,6 +101,15 @@ export interface TrackIssueOptions extends MarkerMatch {
   closeOnClear?: boolean;
   /** Posted on the issue before it is closed. */
   clearComment?: string;
+  /**
+   * When the open issue counts as already current, in place of an equal
+   * title and body, for a body that names something that changes on every
+   * run (the run's URL, a timestamp). A string: unchanged when the titles
+   * are equal and the open issue's body carries it, such as the finding's
+   * fingerprint. A function: unchanged when it returns true for the open
+   * issue and the finding. An unchanged issue is not edited.
+   */
+  sameWhen?: string | ((open: IssueFinding, finding: IssueFinding) => boolean);
 }
 
 /** What {@link PrForge.trackIssue} did. */
@@ -129,6 +147,14 @@ export interface PrForge {
    * comment's web URL. The pull-request loop's form.
    */
   upsertNote(pr: number, marker: string, body: string): Promise<string | undefined>;
+  /**
+   * The comment on pull request `pr` (the note on merge request `pr`) that
+   * {@link upsertComment} would update for `marker`: the oldest one that
+   * {@link MarkerMatch} finds, `author` honoured, so a pull request's author
+   * cannot plant one. Undefined when there is none. Every page is read, and
+   * GitLab's system notes are skipped.
+   */
+  findComment(pr: number, marker: string, opts?: MarkerMatch): Promise<FoundComment | undefined>;
   setStatus(sha: string, status: ForgeStatus): Promise<void>;
   /**
    * Keep one OPEN tracking issue for `marker` in line with `finding`: open
@@ -250,9 +276,15 @@ function checkMarker(what: string, marker: string, body: string, match: MarkerMa
   }
 }
 
+/** The oldest comment on `pr` that `opts` takes for the caller's own. */
+async function ownComment(t: Threads, pr: number, marker: string, opts: MarkerMatch): Promise<Thread | undefined> {
+  if (!marker) throw new Error("the comment needs a marker to be found");
+  return (await t.comments(pr)).filter(ownedBy(marker, opts)).sort((a, b) => a.id - b.id)[0];
+}
+
 async function upsertCommentWith(t: Threads, pr: number, marker: string, body: string, opts: MarkerMatch, check: boolean): Promise<CommentResult> {
   if (check) checkMarker("comment", marker, body, opts.match);
-  const mine = (await t.comments(pr)).filter(ownedBy(marker, opts)).sort((a, b) => a.id - b.id)[0];
+  const mine = await ownComment(t, pr, marker, opts);
   if (!mine) {
     const made = await t.addComment(pr, body);
     return { action: "created", id: made?.id ?? 0, ...(made?.url ? { url: made.url } : {}) };
@@ -274,14 +306,24 @@ async function trackIssueWith(t: Threads, marker: string, finding: IssueFinding 
     return { action: "closed", ...at(mine) };
   }
   if (!mine) return { action: "opened", ...at(await t.openIssue(finding.title, finding.body)) };
-  if (mine.body === finding.body && mine.title === finding.title) return { action: "unchanged", ...at(mine) };
+  if (sameIssue({ title: mine.title ?? "", body: mine.body }, finding, opts.sameWhen)) return { action: "unchanged", ...at(mine) };
   const edited = await t.editIssue(mine.id, finding.title, finding.body);
   return { action: "updated", ...at(mine), ...(edited?.url ? { url: edited.url } : {}) };
 }
 
+function sameIssue(open: IssueFinding, finding: IssueFinding, sameWhen: TrackIssueOptions["sameWhen"]): boolean {
+  if (typeof sameWhen === "function") return sameWhen(open, finding);
+  if (open.title !== finding.title) return false;
+  return typeof sameWhen === "string" && sameWhen !== "" ? open.body.includes(sameWhen) : open.body === finding.body;
+}
+
 /** The recipes every client shares, over its own {@link Threads}. */
-function threadCalls(t: Threads): Pick<PrForge, "upsertComment" | "upsertNote" | "trackIssue" | "upsertIssue"> {
+function threadCalls(t: Threads): Pick<PrForge, "upsertComment" | "upsertNote" | "findComment" | "trackIssue" | "upsertIssue"> {
   return {
+    async findComment(pr, marker, opts = {}) {
+      const c = await ownComment(t, pr, marker, opts);
+      return c ? { id: c.id, body: c.body, ...(c.url ? { url: c.url } : {}) } : undefined;
+    },
     upsertComment: (pr, marker, body, opts = {}) => upsertCommentWith(t, pr, marker, body, opts, true),
     upsertNote: async (pr, marker, body) => (await upsertCommentWith(t, pr, marker, body, {}, false)).url,
     trackIssue: (marker, finding, opts = {}) => trackIssueWith(t, marker, finding, opts, true),
@@ -647,13 +689,15 @@ export interface ForgeTargetOptions {
 }
 
 /**
- * The token order guide/ops documents for the finding modes (#2291, #2256):
- * a chant-specific variable first, for posting to an instance other than the
- * one the job runs on, then what the job already carries.
+ * The token order {@link forgeTargetFromEnv} reads, as guide/ops documents
+ * it: a chant-specific variable first, for posting to an instance other than
+ * the one the job runs on, then what the job already carries (#3802). A
+ * Forgejo job reads `FORGEJO_TOKEN` before the `GITHUB_*` names, and the
+ * GitHub row has its own chant variable rather than the Forgejo one.
  */
 export const FORGE_TOKEN_ORDER: Record<ForgeKind, readonly string[]> = {
-  github: ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
-  forgejo: ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+  github: ["CHANT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+  forgejo: ["CHANT_FORGEJO_TOKEN", "FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
   gitlab: ["CHANT_GITLAB_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN"],
 };
 
