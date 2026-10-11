@@ -29,11 +29,19 @@
  *   approved set (#3762). A share job (`--share i`) re-plans its
  *   slice first and refuses, without applying it, a run whose plan digest is
  *   not the one the deciding job recorded (exit 4).
+ * - Hooks file (#3804): every apply call gets `CHANT_HOOKS`, a JSON file
+ *   ({@link OpWaveHooksFile}) with the outcomes of the hooks that already ran
+ *   and whether an approval stands. Under `hooks.apply.runBy: "apply"` (read
+ *   at base) chant does not run the apply-stage hooks itself: the file hands
+ *   them to the apply, which runs them under its own lock with
+ *   {@link runOpWaveApplyHooks}, and their outcomes come back through
+ *   `CHANT_HOOKS_RESULT`. A non-wave apply reads the same hooks at base with
+ *   {@link opWaveHooksAtBase}.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, posix } from "node:path";
 import { waveGateName, waveSetDigest, type WaveMember } from "../gated-waves";
 import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
@@ -47,11 +55,13 @@ import {
   GATE_APPROVAL_SOURCES,
   assertOpWaveHooks,
   assertOpWavesSpec,
+  opWaveApplyHooksRunBy,
   opWaveHooksAt,
   opWaveRecordPath,
   opWaveShare,
   type GateApprovalSource,
   type OpWave,
+  type OpWaveApplyHooksRunner,
   type OpWaveGatePolicy,
   type OpWaveHook,
   type OpWaveHookMoment,
@@ -134,6 +144,10 @@ export interface OpWaveDecision {
   approvedAt?: string;
   /** When the wave recorded that it applies under the approval, which spent it. */
   spentAt?: string;
+  /** `apply`: the apply command runs the apply-stage hooks under its own lock (#3804), as read at base. Absent: chant runs them. */
+  applyHooksRunBy?: "apply";
+  /** Every hook's outcome so far in the job that wrote the record (#3804). */
+  outcomes?: OpWaveHookOutcome[];
 }
 
 /** One hook's run (#3762). */
@@ -144,6 +158,77 @@ export interface OpWaveHookOutcome {
   target?: string;
   exit: number;
   outcome: "passed" | "failed" | "held";
+}
+
+/** One run as a hook sees it (#3804). */
+export interface OpWaveHookRun {
+  target: string;
+  op: string;
+  /** The run's plan file, once planned. */
+  plan?: string;
+}
+
+/**
+ * What chant hands an apply command in `CHANT_HOOKS` (#3804), and what
+ * {@link opWaveHooksAtBase} builds for an apply outside the waves. Paths are
+ * relative to the job's working directory.
+ */
+export interface OpWaveHooksFile {
+  version: 1;
+  /** The Op waves spec's name. */
+  opWaves: string;
+  /** The spec's `op`: a hook's `{op}` when it runs once for the wave. */
+  op: string;
+  wave: string;
+  /** 1-based; 0 when the working tree's spec has no such wave. */
+  number: number;
+  /** The commit the hooks were read at. */
+  base?: string;
+  /** The wave's set digest, once decided. */
+  digest?: string;
+  /** An approval of the digest stands, so a held hook does not stop the apply. */
+  approved: boolean;
+  /** The labels of the hooks that held the wave, approved or not. */
+  heldBy?: string[];
+  /** Who runs the apply-stage hooks. With `chant`, `hooks` is empty: chant runs them around the apply. */
+  runBy: OpWaveApplyHooksRunner;
+  /** The runs this apply call applies. */
+  runs: OpWaveHookRun[];
+  /** The runs file, a hook's `{runs}` and `CHANT_RUNS`. */
+  runsFile: string;
+  /** The hooks the apply runs, by moment, as read at base. */
+  hooks: Partial<Record<OpWaveHookMoment, OpWaveHook[]>>;
+  /** The hooks that already ran for this wave in this job, and how each came out. */
+  outcomes: OpWaveHookOutcome[];
+  /** Where {@link runOpWaveApplyHooks} writes its outcomes (`CHANT_HOOKS_RESULT`), which chant reads back. */
+  result?: string;
+  /** Set when the hooks at base could not be read: none run, and the runner refuses to proceed. */
+  refused?: string;
+}
+
+/** What {@link runOpWaveApplyHooks} writes to `CHANT_HOOKS_RESULT` (#3804). */
+export interface OpWaveHooksResult {
+  version: 1;
+  /** The moments the apply ran, empty ones included. */
+  moments: OpWaveHookMoment[];
+  outcomes: OpWaveHookOutcome[];
+}
+
+/** One call of {@link runOpWaveApplyHooks}. */
+export interface OpWaveApplyHooksRun {
+  moment: OpWaveHookMoment;
+  outcomes: OpWaveHookOutcome[];
+  /** Set when a hook with `onFailure: fail` failed; the hooks after it did not run. */
+  failed?: string;
+  /** The `onFailure: approve` hooks that failed, or why the hooks could not be read at base. */
+  held: string[];
+  /**
+   * Whether the apply may go on: no hook failed, and nothing held it or an
+   * approval of the digest stands. When false after a hold, the apply applies
+   * nothing and exits non-zero; chant then waits for, or finds, an approval
+   * and calls it again.
+   */
+  proceed: boolean;
 }
 
 /** Runs one argv; returns its exit code. `env` is added to the job's environment. Injected so tests run no processes. */
@@ -204,6 +289,8 @@ export interface OpWaveBaseRules {
   hooksRefused?: string;
   /** The spec at base sets `approvals.spend` (#3784). */
   spend: boolean;
+  /** Who runs the apply-stage hooks, as read at base (#3804). `chant` when the file, the wave or the hooks are missing there. */
+  applyHooksRunBy: OpWaveApplyHooksRunner;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -224,7 +311,7 @@ export function readOpWavePolicy(
   show: OpWaveShowAtBase = gitShowAtBase,
 ): OpWaveBaseRules {
   const { sha, text } = show(base, specFile.replace(/^\.\//, "").split("\\").join(posix.sep), cwd);
-  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha, hooks: noHooks(), spend: false };
+  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha, hooks: noHooks(), spend: false, applyHooksRunBy: "chant" as const };
   if (text === null) return absent;
   let spec: OpWavesSpec;
   try {
@@ -239,11 +326,12 @@ export function readOpWavePolicy(
   const policy = wave.gate ?? "always";
   // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
   const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
-  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend };
+  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, applyHooksRunBy: "chant" };
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
     rules.hooks = opWaveHooksAt(spec, name);
+    rules.applyHooksRunBy = opWaveApplyHooksRunBy(spec, name);
   } catch (err) {
     // A hook at base no runner can run: none run, and the wave waits for a person rather than going out without them.
     rules.hooksRefused = `the hooks at base cannot be run (${err instanceof Error ? err.message : String(err)})`;
@@ -366,8 +454,8 @@ function writeRunsFile(
   runs: readonly OpWaveRun[],
   members?: ReadonlyMap<string, OpWaveMember>,
   digest?: string,
+  path: string = opWaveRunsPath(at.spec, at.k),
 ): string {
-  const path = opWaveRunsPath(at.spec, at.k);
   const file: OpWaveRunsFile = {
     wave: at.wave.name,
     number: at.k,
@@ -436,36 +524,43 @@ interface HooksOutcome {
   holds: string[];
 }
 
+/** Where hooks run: the wave they belong to and the job's tools. */
+interface HookPlace {
+  /** The spec's name and `op`. */
+  name: string;
+  op: string;
+  waveName: string;
+  k: number;
+  cwd: string;
+  exec: OpWaveExec;
+  log: (line: string) => void;
+}
+
 /**
- * Run one moment's hooks (#3762), in order: each once for the wave, or once
- * per run for a `perRun` hook. A hook that fails stops the rest, unless its
+ * Run one moment's hooks, in order: each once for the wave, or once per run
+ * for a `perRun` hook. A hook that fails stops the rest, unless its
  * `onFailure` is `approve`: then it holds the wave and the hooks after it run.
  */
-function runHooks(
-  ctx: WaveContext,
+function runHookList(
+  at: HookPlace,
   moment: OpWaveHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
-  runs: readonly OpWaveRun[],
-  members?: ReadonlyMap<string, OpWaveMember>,
-  digest?: string,
-): HooksOutcome {
-  const out: HooksOutcome = { holds: [] };
+  runs: readonly OpWaveHookRun[],
+  runsPath: string,
+): HooksOutcome & { outcomes: OpWaveHookOutcome[] } {
+  const out: HooksOutcome & { outcomes: OpWaveHookOutcome[] } = { holds: [], outcomes: [] };
   if (!hooks || hooks.length === 0) return out;
-  const { spec, k, wave, cwd, exec, log } = ctx;
-  const runsPath = writeRunsFile(ctx, runs, members, digest);
-  const env = { CHANT_OP_WAVES: spec.name, CHANT_WAVE: wave.name, CHANT_WAVE_NUMBER: String(k), CHANT_HOOK: moment, CHANT_RUNS: runsPath };
+  const { name: specName, op, waveName, k, cwd, exec, log } = at;
+  const env = { CHANT_OP_WAVES: specName, CHANT_WAVE: waveName, CHANT_WAVE_NUMBER: String(k), CHANT_HOOK: moment, CHANT_RUNS: runsPath };
   for (const hook of hooks) {
     const name = hook.name ?? (hook.command.join(" ").length > 60 ? `${hook.command.join(" ").slice(0, 57)}...` : hook.command.join(" "));
     const calls = hook.perRun
-      ? runs.map((run) => {
-          const plan = members?.has(run.target) ? opWavePlanPath(spec, k, run.target) : undefined;
-          return {
-            target: run.target as string | undefined,
-            argv: opWaveArgv(hook.command, { op: run.op ?? spec.op, wave: wave.name, target: run.target, runs: runsPath, ...(plan ? { plan } : {}) }),
-            env: { ...env, CHANT_TARGET: run.target, ...(plan ? { CHANT_PLAN: plan } : {}) } as Record<string, string>,
-          };
-        })
-      : [{ target: undefined, argv: opWaveArgv(hook.command, { op: spec.op, wave: wave.name, runs: runsPath }), env: env as Record<string, string> }];
+      ? runs.map((run) => ({
+          target: run.target as string | undefined,
+          argv: opWaveArgv(hook.command, { op: run.op, wave: waveName, target: run.target, runs: runsPath, ...(run.plan ? { plan: run.plan } : {}) }),
+          env: { ...env, CHANT_TARGET: run.target, ...(run.plan ? { CHANT_PLAN: run.plan } : {}) } as Record<string, string>,
+        }))
+      : [{ target: undefined, argv: opWaveArgv(hook.command, { op, wave: waveName, runs: runsPath }), env: env as Record<string, string> }];
     for (const call of calls) {
       const label = `${moment} hook ${name}${call.target ? ` (${call.target})` : ""}`;
       let code: number;
@@ -477,22 +572,159 @@ function runHooks(
       }
       const base = { moment, name, ...(call.target ? { target: call.target } : {}), exit: code };
       if (code === 0) {
-        ctx.result.hooks.push({ ...base, outcome: "passed" });
+        out.outcomes.push({ ...base, outcome: "passed" });
         continue;
       }
       if (hook.onFailure === "approve") {
-        ctx.result.hooks.push({ ...base, outcome: "held" });
+        out.outcomes.push({ ...base, outcome: "held" });
         out.holds.push(label);
-        log(`${label} exited ${code}, so wave ${k} (${wave.name}) waits for an approval of its set digest`);
+        log(`${label} exited ${code}, so wave ${k} (${waveName}) waits for an approval of its set digest`);
         continue;
       }
-      ctx.result.hooks.push({ ...base, outcome: "failed" });
+      out.outcomes.push({ ...base, outcome: "failed" });
       out.failed = `${label} exited ${code}`;
       log(out.failed);
       return out;
     }
   }
   return out;
+}
+
+const placeOf = (ctx: WaveContext): HookPlace => ({ name: ctx.spec.name, op: ctx.spec.op, waveName: ctx.wave.name, k: ctx.k, cwd: ctx.cwd, exec: ctx.exec, log: ctx.log });
+
+const hookRuns = (spec: OpWavesSpec, k: number, runs: readonly OpWaveRun[], members?: ReadonlyMap<string, OpWaveMember>): OpWaveHookRun[] =>
+  runs.map((run) => ({ target: run.target, op: run.op ?? spec.op, ...(members?.has(run.target) ? { plan: opWavePlanPath(spec, k, run.target) } : {}) }));
+
+/** Run one moment's hooks in the wave job (#3762), recording each outcome on the result. */
+function runHooks(
+  ctx: WaveContext,
+  moment: OpWaveHookMoment,
+  hooks: readonly OpWaveHook[] | undefined,
+  runs: readonly OpWaveRun[],
+  members?: ReadonlyMap<string, OpWaveMember>,
+  digest?: string,
+): HooksOutcome {
+  if (!hooks || hooks.length === 0) return { holds: [] };
+  const runsPath = writeRunsFile(ctx, runs, members, digest);
+  const out = runHookList(placeOf(ctx), moment, hooks, hookRuns(ctx.spec, ctx.k, runs, members), runsPath);
+  ctx.result.hooks.push(...out.outcomes);
+  return { holds: out.holds, ...(out.failed ? { failed: out.failed } : {}) };
+}
+
+/**
+ * Read the hooks file chant hands an apply command (#3804): the one at
+ * `path`, by default `CHANT_HOOKS`. Null when there is none, as for an apply
+ * that a wave job did not start.
+ */
+export function readOpWaveHooksFile(path: string | undefined = process.env.CHANT_HOOKS, cwd: string = process.cwd()): OpWaveHooksFile | null {
+  if (!path) return null;
+  const at = isAbsolute(path) ? path : join(cwd, path);
+  let parsed: OpWaveHooksFile;
+  try {
+    parsed = JSON.parse(readFileSync(at, "utf-8")) as OpWaveHooksFile;
+  } catch (err) {
+    throw new Error(`the hooks file ${path} cannot be read: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (parsed?.version !== 1 || !Array.isArray(parsed.runs) || typeof parsed.hooks !== "object") throw new Error(`${path} is not an Op waves hooks file (version 1)`);
+  return parsed;
+}
+
+/**
+ * Run one moment's hooks from a hooks file (#3804): what an apply command
+ * calls under its own lock, `before-apply` right before it changes anything
+ * and `after-apply` once it has, when the spec's `hooks.apply.runBy` at base
+ * is `apply`. Also what a product's apply outside the waves calls, with a
+ * file from {@link opWaveHooksAtBase}. A moment the file has no hooks for
+ * runs nothing and proceeds, so an apply can call it whoever runs the hooks.
+ *
+ * Each call adds its outcomes to the file's `result` (`CHANT_HOOKS_RESULT`),
+ * which chant reads back after the apply exits: the outcomes join the wave's
+ * result and decision record, and a hold makes the wave wait for, or find,
+ * an approval of its digest. `exec` runs one hook; inject it to run a hook
+ * in process or to keep its output.
+ */
+export function runOpWaveApplyHooks(
+  file: OpWaveHooksFile,
+  moment: OpWaveHookMoment,
+  options: { cwd?: string; exec?: OpWaveExec; log?: (line: string) => void } = {},
+): OpWaveApplyHooksRun {
+  const cwd = options.cwd ?? process.cwd();
+  const log = options.log ?? ((line: string) => console.error(line));
+  let run: OpWaveApplyHooksRun;
+  if (file.refused) {
+    log(`${file.refused}, so none of the ${moment} hooks run and the apply does not go on`);
+    run = { moment, outcomes: [], held: [file.refused], proceed: false };
+  } else {
+    const place: HookPlace = { name: file.opWaves, op: file.op, waveName: file.wave, k: file.number, cwd, exec: options.exec ?? spawnExec, log };
+    const out = runHookList(place, moment, file.hooks[moment], file.runs, file.runsFile);
+    run = {
+      moment,
+      outcomes: out.outcomes,
+      ...(out.failed ? { failed: out.failed } : {}),
+      held: out.holds,
+      proceed: !out.failed && (out.holds.length === 0 || file.approved),
+    };
+  }
+  if (file.result) {
+    const at = isAbsolute(file.result) ? file.result : join(cwd, file.result);
+    let prior: OpWaveHooksResult = { version: 1, moments: [], outcomes: [] };
+    if (existsSync(at)) {
+      try {
+        prior = JSON.parse(readFileSync(at, "utf-8")) as OpWaveHooksResult;
+      } catch {
+        // A result file that cannot be read is started again.
+      }
+    }
+    const next: OpWaveHooksResult = { version: 1, moments: [...prior.moments, moment], outcomes: [...prior.outcomes, ...run.outcomes] };
+    mkdirSync(dirname(at), { recursive: true });
+    writeFileSync(at, JSON.stringify(next, null, 2) + "\n");
+  }
+  return run;
+}
+
+/**
+ * The hooks of wave `wave` read at base, for an apply outside the waves
+ * (#3804): a product's own `apply <env>` that runs the same Op as the wave
+ * does, and the same hooks. All four moments are in the file; the apply runs
+ * the ones it has a stage for with {@link runOpWaveApplyHooks}. Nothing is
+ * approved: a held hook stops the apply. The wave or the file missing at
+ * base has no hooks, as in a wave job.
+ */
+export function opWaveHooksAtBase(options: {
+  specFile: string;
+  wave: string;
+  /** The runs this apply applies. Default: the wave's runs in the working tree's spec. */
+  runs?: ReadonlyArray<{ target: string; op?: string }>;
+  /** Default: the spec's `base`, else `HEAD^1`. */
+  base?: string;
+  cwd?: string;
+  show?: OpWaveShowAtBase;
+}): OpWaveHooksFile {
+  const cwd = options.cwd ?? process.cwd();
+  const spec = parseOpWavesSpec(readFileSync(isAbsolute(options.specFile) ? options.specFile : join(cwd, options.specFile), "utf-8"), options.specFile);
+  const k = spec.waves.findIndex((w) => w.name === options.wave) + 1;
+  const rules = readOpWavePolicy(options.specFile, options.wave, options.base ?? spec.base ?? "HEAD^1", cwd, options.show);
+  const runs = (options.runs ?? spec.waves[k - 1]?.runs ?? []).map((r) => ({ target: r.target, op: r.op ?? spec.op }));
+  const runsFile = `.chant/op-waves/${spec.name}/${options.wave.replace(/[^A-Za-z0-9._-]/g, "_")}.runs.json`;
+  const runsBody: OpWaveRunsFile = { wave: options.wave, number: k, runs };
+  mkdirSync(dirname(join(cwd, runsFile)), { recursive: true });
+  writeFileSync(join(cwd, runsFile), JSON.stringify(runsBody, null, 2) + "\n");
+  const hooks = Object.fromEntries(Object.entries(rules.hooks).filter(([, list]) => list.length > 0));
+  return {
+    version: 1,
+    opWaves: spec.name,
+    op: spec.op,
+    wave: options.wave,
+    number: k,
+    base: rules.base,
+    approved: false,
+    runBy: "apply",
+    runs,
+    runsFile,
+    hooks,
+    outcomes: [],
+    ...(rules.hooksRefused ? { refused: rules.hooksRefused } : {}),
+  };
 }
 
 /** Whether `policy` lets a wave with these members through without an approval. */
@@ -504,9 +736,10 @@ export function opWaveNeedsApproval(policy: OpWaveGatePolicy, members: readonly 
 }
 
 /** Log when the change's hooks are not the ones at base, which are the ones that run. */
-function noteHooksAtBase(ctx: WaveContext, atBase: Record<OpWaveHookMoment, OpWaveHook[]>, base: string): void {
+function noteHooksAtBase(ctx: WaveContext, rules: OpWaveBaseRules): void {
+  const { hooks: atBase, base } = rules;
   const own = opWaveHooksAt(ctx.spec, ctx.wave.name);
-  if (JSON.stringify(own) !== JSON.stringify(atBase)) {
+  if (JSON.stringify(own) !== JSON.stringify(atBase) || opWaveApplyHooksRunBy(ctx.spec, ctx.wave.name) !== rules.applyHooksRunBy) {
     ctx.log(`wave ${ctx.k} (${ctx.wave.name}): its hooks are read at ${base.slice(0, 12)}, and this change's differ; the ones at base run`);
   }
 }
@@ -570,7 +803,7 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   // The policy, the approval mode and the hooks, read at base before anything runs.
   const rules = readOpWavePolicy(options.specFile, wave.name, options.base ?? spec.base ?? "HEAD^1", cwd, options.show);
   const { policy, approval, source, base } = rules;
-  noteHooksAtBase(ctx, rules.hooks, base);
+  noteHooksAtBase(ctx, rules);
   const holds: string[] = [];
   if (rules.hooksRefused) {
     holds.push(rules.hooksRefused);
@@ -601,12 +834,13 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
     ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     ...(holds.length > 0 ? { heldBy: holds } : {}),
     ...(rules.spend ? { spend: "base" as const } : spec.approvals?.spend === true ? { spend: "change" as const } : {}),
+    ...(rules.applyHooksRunBy === "apply" ? { applyHooksRunBy: "apply" as const } : {}),
   };
   if (opWaveNeedsApproval(policy, members) || holds.length > 0) await settleGate(options, ctx, decision);
   // A wide wave's shares apply under the deciding job's approval, so it is spent here, once.
   if (options.decide && !(await spendApproval(options, ctx, decision))) return ctx.result;
   mkdirSync(dirname(recordPath), { recursive: true });
-  writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
+  writeRecord(recordPath, decision, result);
   result.decision = decision;
   log(
     `wave ${k} (${wave.name}): gate ${policy} (read at ${base.slice(0, 12)}${source === "absent-at-base" ? ", where the wave is absent" : ""}), ` +
@@ -695,11 +929,135 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
 }
 
+/** Write the decision record, with every hook's outcome so far (#3804). */
+function writeRecord(recordPath: string, decision: OpWaveDecision, result: RunOpWaveResult): void {
+  if (result.hooks.length > 0) decision.outcomes = [...result.hooks];
+  writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
+}
+
+/**
+ * A hold waits only when nobody approved the decided digest: settle the gate
+ * once for `holds`. False when the wave now waits (exit 3).
+ */
+async function settleHolds(
+  options: RunOpWaveOptions,
+  ctx: WaveContext,
+  decision: OpWaveDecision,
+  holds: readonly string[],
+  recordPath?: string,
+): Promise<boolean> {
+  const { k, wave, log, result } = ctx;
+  if (holds.length === 0 || decision.status === "approved") return true;
+  decision.heldBy = [...(decision.heldBy ?? []), ...holds];
+  await settleGate(options, ctx, decision);
+  if (recordPath) writeRecord(recordPath, decision, result);
+  if (decision.status === "waiting") {
+    log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and nobody approved ${decision.digest}; nothing applied. Approve: ${decision.approve}`);
+    result.exitCode = 3;
+    return false;
+  }
+  log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and ${decision.approvedBy} approved its digest`);
+  return true;
+}
+
+/** How one apply call came out. `applied` with a `problem`: the runs applied, and the wave still fails. */
+type ApplyCall = { outcome: "applied"; problem?: string } | { outcome: "failed" | "waiting" };
+
+/**
+ * Call one apply command (#3804) with `CHANT_HOOKS` and `CHANT_HOOKS_RESULT`.
+ * When the apply runs the apply-stage hooks, read their outcomes back: a hold
+ * with no approval standing settles the gate and, once approved, calls the
+ * apply again; an `after-apply` failure means the runs applied and the wave
+ * fails; an apply that exited 0 without running its hooks fails the wave.
+ */
+async function callApply(
+  options: RunOpWaveOptions,
+  ctx: WaveContext,
+  decision: OpWaveDecision,
+  runs: readonly OpWaveRun[],
+  planned: ReadonlyMap<string, OpWaveMember>,
+  argv: string[],
+  call: { label: string; key: string; runsPath: string },
+  recordPath?: string,
+): Promise<ApplyCall> {
+  const { spec, k, wave, cwd, exec, log, result } = ctx;
+  const byApply = decision.applyHooksRunBy === "apply";
+  const dir = `.chant/op-waves/${spec.name}/wave-${k}`;
+  const filePath = `${dir}/${call.key}.json`;
+  const resultPath = `${dir}/${call.key}-result.json`;
+  const handed: Partial<Record<OpWaveHookMoment, OpWaveHook[]>> = {};
+  if (byApply) {
+    for (const m of ["before-apply", "after-apply"] as const) if (decision.hooks?.[m]?.length) handed[m] = decision.hooks[m];
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const approved = decision.status === "approved";
+    const file: OpWaveHooksFile = {
+      version: 1,
+      opWaves: spec.name,
+      op: spec.op,
+      wave: wave.name,
+      number: k,
+      base: decision.base,
+      digest: decision.digest,
+      approved,
+      ...(decision.heldBy?.length ? { heldBy: decision.heldBy } : {}),
+      runBy: byApply ? "apply" : "chant",
+      runs: hookRuns(spec, k, runs, planned),
+      runsFile: call.runsPath,
+      hooks: handed,
+      outcomes: [...result.hooks],
+      ...(byApply ? { result: resultPath } : {}),
+    };
+    mkdirSync(join(cwd, dir), { recursive: true });
+    writeFileSync(join(cwd, filePath), JSON.stringify(file, null, 2) + "\n");
+    rmSync(join(cwd, resultPath), { force: true });
+    let code: number;
+    try {
+      code = exec(argv, cwd, { CHANT_HOOKS: filePath, ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) });
+    } catch (err) {
+      log(`${call.label}: the apply did not run: ${err instanceof Error ? err.message : String(err)}`);
+      code = 127;
+    }
+    if (!byApply) return { outcome: code === 0 ? "applied" : "failed" };
+    let back: OpWaveHooksResult | null = null;
+    try {
+      back = JSON.parse(readFileSync(join(cwd, resultPath), "utf-8")) as OpWaveHooksResult;
+    } catch {
+      back = null;
+    }
+    const outcomes = Array.isArray(back?.outcomes) ? back!.outcomes : [];
+    const moments = Array.isArray(back?.moments) ? back!.moments : [];
+    result.hooks.push(...outcomes);
+    const holds = outcomes.filter((o) => o.moment === "before-apply" && o.outcome === "held").map((o) => `${o.moment} hook ${o.name}${o.target ? ` (${o.target})` : ""}`);
+    if (holds.length > 0 && !approved) {
+      if (code === 0) {
+        log(`${call.label}: the apply exited 0 although ${holds.join(", ")} held it and no approval stood; an apply applies nothing on a hold`);
+        return { outcome: "failed" };
+      }
+      if (pass > 0 || !(await settleHolds(options, ctx, decision, holds, recordPath))) return { outcome: "waiting" };
+      if (!(await spendApproval(options, ctx, decision))) return { outcome: "failed" };
+      if (recordPath && decision.spentAt) writeRecord(recordPath, decision, result);
+      continue;
+    }
+    const afterFailed = outcomes.find((o) => o.moment === "after-apply" && o.outcome === "failed");
+    if (afterFailed) return { outcome: "applied", problem: `${call.label} applied, and then the after-apply hook ${afterFailed.name} failed` };
+    if (code !== 0) return { outcome: "failed" };
+    const skipped = (["before-apply", "after-apply"] as const).filter((m) => handed[m] && !moments.includes(m));
+    if (skipped.length > 0) {
+      return { outcome: "applied", problem: `${call.label}: the apply exited 0 without running its ${skipped.join(" and ")} hooks (runOpWaveApplyHooks with CHANT_HOOKS), which the spec at base hands it` };
+    }
+    return { outcome: "applied" };
+  }
+  return { outcome: "failed" };
+}
+
 /**
  * Apply `runs` of a decided wave: the before-apply hooks, the apply (one call
  * per run, or one `applyWave` call for the set), then the after-apply hooks.
  * A hook that holds the wave here, or held a share job's plan, makes it wait
- * for an approval of the decided digest unless one already stands.
+ * for an approval of the decided digest unless one already stands. Under
+ * `hooks.apply.runBy: "apply"` the apply call runs the apply-stage hooks
+ * itself, under its lock (#3804).
  */
 async function applyStage(
   options: RunOpWaveOptions,
@@ -710,70 +1068,74 @@ async function applyStage(
   earlierHolds: readonly string[],
   recordPath?: string,
 ): Promise<void> {
-  const { spec, k, wave, cwd, exec, log, result } = ctx;
+  const { spec, k, wave, log, result } = ctx;
   if (runs.length === 0) return;
-  const before = runHooks(ctx, "before-apply", decision.hooks?.["before-apply"], runs, planned, decision.digest);
-  if (before.failed) {
-    failed(ctx, `a hook before the apply failed, so nothing in wave ${k} was applied`);
-    return;
-  }
-  const holds = [...earlierHolds, ...before.holds];
-  if (holds.length > 0 && decision.status !== "approved") {
-    decision.heldBy = [...(decision.heldBy ?? []), ...holds];
-    await settleGate(options, ctx, decision);
-    if (recordPath) writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
-    if (decision.status === "waiting") {
-      log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and nobody approved ${decision.digest}; nothing applied. Approve: ${decision.approve}`);
-      result.exitCode = 3;
+  const byApply = decision.applyHooksRunBy === "apply";
+  const holds = [...earlierHolds];
+  if (!byApply) {
+    const before = runHooks(ctx, "before-apply", decision.hooks?.["before-apply"], runs, planned, decision.digest);
+    if (before.failed) {
+      failed(ctx, `a hook before the apply failed, so nothing in wave ${k} was applied`);
       return;
     }
-    log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and ${decision.approvedBy} approved its digest`);
+    holds.push(...before.holds);
   }
+  if (!(await settleHolds(options, ctx, decision, holds, recordPath))) return;
   if (!(await spendApproval(options, ctx, decision))) return;
-  if (recordPath && decision.spentAt) writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
+  if (recordPath && decision.spentAt) writeRecord(recordPath, decision, result);
+  const problems: string[] = [];
+  let waiting = false;
   if (spec.applyWave) {
     const runsPath = writeRunsFile(ctx, runs, planned, decision.digest);
-    let code: number;
-    try {
-      code = exec(opWaveArgv(spec.applyWave, { op: spec.op, wave: wave.name, runs: runsPath, plans: opWavePlansPath(spec, k) }), cwd);
-    } catch (err) {
-      log(`applying wave ${k} (${wave.name}) did not run: ${err instanceof Error ? err.message : String(err)}`);
-      code = 127;
-    }
-    if (code === 0) result.applied.push(...runs.map((r) => r.target));
+    const argv = opWaveArgv(spec.applyWave, { op: spec.op, wave: wave.name, runs: runsPath, plans: opWavePlansPath(spec, k) });
+    const got = await callApply(options, ctx, decision, runs, planned, argv, { label: `wave ${k} (${wave.name})`, key: "hooks", runsPath }, recordPath);
+    if (got.outcome === "applied") {
+      result.applied.push(...runs.map((r) => r.target));
+      if (got.problem) problems.push(got.problem);
+    } else if (got.outcome === "waiting") waiting = true;
     else {
-      log(`wave ${k} (${wave.name}): apply exited ${code}, so none of ${runs.map((r) => r.target).join(", ")} counts as applied`);
+      log(`wave ${k} (${wave.name}): apply failed, so none of ${runs.map((r) => r.target).join(", ")} counts as applied`);
       result.failed.push(...runs.map((r) => r.target));
     }
   } else {
-    for (const run of runs) applyRun(spec, wave.name, k, run, cwd, exec, result, log);
+    for (const run of runs) {
+      const key = run.target.replace(/[^A-Za-z0-9._-]/g, "_");
+      // Under runBy "apply" each run's apply runs its own apply-stage hooks, over a runs file of that run alone.
+      const runsPath = byApply ? writeRunsFile(ctx, [run], planned, decision.digest, `.chant/op-waves/${spec.name}/wave-${k}/${key}.runs.json`) : opWaveRunsPath(spec, k);
+      const argv = opWaveArgv(spec.apply ?? OP_WAVE_DEFAULT_APPLY, { op: run.op ?? spec.op, target: run.target, wave: wave.name, plan: opWavePlanPath(spec, k, run.target) });
+      const got = await callApply(options, ctx, decision, [run], planned, argv, { label: run.target, key: `${key}.hooks`, runsPath }, recordPath);
+      if (got.outcome === "waiting") {
+        waiting = true;
+        break;
+      }
+      if (got.outcome === "applied") {
+        result.applied.push(run.target);
+        if (got.problem) problems.push(got.problem);
+      } else {
+        log(`${run.target}: apply failed`);
+        result.failed.push(run.target);
+      }
+    }
+  }
+  if (recordPath && byApply) writeRecord(recordPath, decision, result);
+  if (waiting) {
+    result.exitCode = 3;
+    return;
   }
   if (result.failed.length > 0) {
     result.exitCode = 1;
     return;
   }
-  const after = runHooks(ctx, "after-apply", decision.hooks?.["after-apply"], runs, planned, decision.digest);
-  if (after.failed) failed(ctx, `wave ${k} (${wave.name}) applied, and then a hook after the apply failed`);
-}
-
-function applyRun(
-  spec: OpWavesSpec,
-  waveName: string,
-  k: number,
-  run: OpWaveRun,
-  cwd: string,
-  exec: OpWaveExec,
-  result: RunOpWaveResult,
-  log: (line: string) => void,
-): void {
-  const op = run.op ?? spec.op;
-  const plan = opWavePlanPath(spec, k, run.target);
-  const code = exec(opWaveArgv(spec.apply ?? OP_WAVE_DEFAULT_APPLY, { op, target: run.target, wave: waveName, plan }), cwd);
-  if (code === 0) result.applied.push(run.target);
-  else {
-    log(`${run.target}: apply exited ${code}`);
-    result.failed.push(run.target);
+  if (problems.length > 0) {
+    for (const p of problems) log(p);
+    result.exitCode = 1;
+    return;
   }
+  if (!byApply) {
+    const after = runHooks(ctx, "after-apply", decision.hooks?.["after-apply"], runs, planned, decision.digest);
+    if (after.failed) failed(ctx, `wave ${k} (${wave.name}) applied, and then a hook after the apply failed`);
+  }
+  if (recordPath && result.hooks.length > 0) writeRecord(recordPath, decision, result);
 }
 
 /**
