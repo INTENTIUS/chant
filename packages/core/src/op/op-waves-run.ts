@@ -25,7 +25,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { waveGateName, waveSetDigest, type WaveMember } from "../gated-waves";
-import { reviewApproval, type ReviewApproval } from "../gate-decision";
+import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
@@ -406,6 +406,7 @@ async function approveByReview(
   if (!merged) return { approved: false, review: { reason: `no merged pull request produced ${head.slice(0, 12)}` } };
   // The head's plans are read only when a writer approved it.
   const plans = merged.approvers.length === 0 ? null : await (options.headPlans ?? ((name, h) => readHeadPlans(name, h, at.cwd)))(options.spec.name, merged.head);
+  const { reviewApproval } = await import("../gate-decision");
   const outcome = reviewApproval(merged, plans?.waves.find((w) => w.wave === at.k)?.digest, at.digest);
   if (!outcome.approved) return outcome;
   const note = `approved by the review of #${merged.pr} at ${merged.head.slice(0, 12)}: ${merged.approvers.join(", ")}`;
