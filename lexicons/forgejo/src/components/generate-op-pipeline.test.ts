@@ -33,7 +33,7 @@ describe("generateForgejoOpPipeline: structure (github-shaped)", () => {
   test("one file per scheduled Op, each a valid workflow with one job", () => {
     const specs: ScheduledOpSpec[] = [
       { name: "actions-audit", schedule: "0 6 * * *" },
-      { name: "prod-reconcile", schedule: "0 * * * *", findingMode: "pull-request" },
+      { name: "prod-reconcile", schedule: "0 * * * *", findingMode: "issue" },
     ];
     const result = generateForgejoOpPipeline(specs);
 
@@ -78,7 +78,7 @@ describe("generateForgejoOpPipeline: dialect applied", () => {
 describe("generateForgejoOpPipeline: non-cron trigger survives the dialect transform (#2084)", () => {
   test("a pull_request trigger round-trips through the Forgejo dialect, with permissions: still dropped", () => {
     const specs: ScheduledOpSpec[] = [
-      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "pull-request" },
+      { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
     ];
     const fj = generateForgejoOpPipeline(specs);
     const gh = generateGithubOpPipeline(specs);
@@ -149,32 +149,41 @@ describe("generateForgejoOpPipeline: comment finding mode crosses over (#2291)",
   });
 });
 
-describe("generateForgejoOpPipeline: issue finding mode is refused by name (#2315)", () => {
-  // `comment` (above) was checked against a real Forgejo instance and cleared
-  // (#2291, #2304). `issue` stayed un-refused-but-unverified after that —
-  // this is the same settling, and it came out the other way: a real
-  // instance showed the write half of `postOrUpdateGithubIssue` cannot
-  // authenticate (`gh`'s GH_TOKEN never reaches a self-hosted Forgejo), so
-  // the refusal this mode used to carry (pre-#2304, for a different reason)
-  // is reinstated rather than left lifted. See the module doc above for the
-  // reproduction.
-  test("findingMode issue is refused, naming the Op and the real-instance failure", () => {
+describe("generateForgejoOpPipeline: issue finding mode crosses over (#2351)", () => {
+  // Refused here from #2332 to #2351: a real Forgejo instance answered 401 to
+  // the writes `gh` made for this mode, because `gh` never sent its token to
+  // a self-hosted host (#2315). #2333 fixed that credential, and #3757 moved
+  // the mode onto the forge client in `pr-forge.ts`, which sends the header
+  // itself. So the generator emits the mode as github does: same trigger,
+  // same job, same step env, with `permissions:` dropped by the dialect.
+  test("a cron issue Op generates cleanly", () => {
     const specs: ScheduledOpSpec[] = [{ name: "prod-watch", schedule: "0 6 * * *", findingMode: "issue" }];
-    expect(() => generateForgejoOpPipeline(specs)).toThrow(
-      /Scheduled Op "prod-watch".*findingMode "issue".*token is required/s,
-    );
+    expect(() => generateForgejoOpPipeline(specs)).not.toThrow();
   });
 
-  test("github generates the same spec cleanly, so the refusal is forgejo's and not the shared builder's", () => {
-    const specs: ScheduledOpSpec[] = [{ name: "prod-watch", schedule: "0 6 * * *", findingMode: "issue" }];
-    expect(() => generateGithubOpPipeline(specs)).not.toThrow();
-  });
-
-  test("a pull_request-triggered Op is refused the same way — issue mode needs no trigger to fail on", () => {
+  test("job/trigger/findingMode parity with the github generator", () => {
     const specs: ScheduledOpSpec[] = [
+      { name: "prod-watch", schedule: "0 6 * * *", findingMode: "issue" },
       { name: "tf-plan", trigger: { kind: "pull_request", branches: ["main"] }, findingMode: "issue" },
     ];
-    expect(() => generateForgejoOpPipeline(specs)).toThrow(/findingMode "issue"/);
+    expect(generateForgejoOpPipeline(specs).jobs).toEqual(generateGithubOpPipeline(specs).jobs);
+  });
+
+  test("the cron job carries github.token as GH_TOKEN and GITHUB_TOKEN, the credential the mode reads", () => {
+    const specs: ScheduledOpSpec[] = [{ name: "prod-watch", schedule: "0 6 * * *", findingMode: "issue" }];
+    const fjDoc = parseFile(generateForgejoOpPipeline(specs).files[0].yaml);
+    const ghDoc = parseFile(generateGithubOpPipeline(specs).files[0].yaml);
+    const run = fjDoc.jobs!["prod-watch"].steps.at(-1)!;
+    expect(run.run).toBe("chant run prod-watch");
+    expect((run as { env?: Record<string, string> }).env).toEqual({
+      GITHUB_TOKEN: "${{ github.token }}",
+      GH_TOKEN: "${{ github.token }}",
+    });
+    expect(fjDoc.on).toEqual(ghDoc.on);
+    expect(fjDoc.permissions).toBeUndefined();
+    // github grants the scope the mode needs; on Forgejo what the token may
+    // write is the runner's configuration.
+    expect(ghDoc.permissions).toEqual({ contents: "read", issues: "write" });
   });
 });
 
@@ -329,7 +338,7 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
 
   test("a spec with no environment emits the bytes it emitted before the option existed", () => {
     const yaml = generateForgejoOpPipeline([
-      { name: "actions-audit", schedule: "0 6 * * *", findingMode: "pull-request" },
+      { name: "actions-audit", schedule: "0 6 * * *", findingMode: "issue" },
     ]).files[0].yaml;
     expect(yaml).toBe(AUDIT_YAML_BEFORE_2257);
   });
