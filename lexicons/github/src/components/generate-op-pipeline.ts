@@ -402,6 +402,9 @@ function gateNoticeJob(applyJobName: string): Record<string, unknown> {
         name: "Report the pending gate",
         env: {
           GH_TOKEN: "${{ github.token }}",
+          // What `gh` reads for a host other than github.com and ghe.com, so
+          // the notice authenticates on GitHub Enterprise Server too (#2352).
+          GH_ENTERPRISE_TOKEN: "${{ github.token }}",
           GH_REPO: "${{ github.repository }}",
           CHANT_OP: output("op"),
           CHANT_GATE: output("gate"),

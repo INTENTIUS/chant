@@ -91,6 +91,9 @@ export const deploy = new Job({
       name: "Sticky PR comment",
       env: {
         GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
+        // `gh` reads this one for any host but github.com and ghe.com, so the
+        // same step posts on GitHub Enterprise Server and Forgejo (#2352).
+        GH_ENTERPRISE_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
         PR_NUMBER: "${{ github.event.number }}",
         HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
         REPO: "${{ github.repository }}",
