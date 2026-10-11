@@ -48,7 +48,7 @@ import {
   type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
 } from "../../op/gate-approval";
 import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate";
-import { FAN_OUT_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
+import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
@@ -888,6 +888,19 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
+  // #3760: an override of a denied plan names its rules and gives a reason.
+  if (opName === OVERRIDE_GATE_OP) {
+    const { runOverrideApprove } = await import("./override-approve");
+    return runOverrideApprove(ctx);
+  }
+  if (ctx.args.rules !== undefined || ctx.args.reason !== undefined) {
+    console.error(formatError({
+      message: `--rule and --reason override a denied plan: chant approve ${OVERRIDE_GATE_OP} <subject> --rule <id> --reason <text>`,
+      hint: `To approve gate "${gate}" on "${opName}", put any prose in --note.`,
+    }));
+    return 1;
+  }
+
   // `--approver` wins over `--actor`, the same precedence `chant run approve`
   // has applied since #2126 (`../handlers/run.ts`'s `runOpApprove`). Reading
   // only `--actor` here meant every README that teaches `--approver you`
@@ -1016,7 +1029,7 @@ export async function recordGateApproval(
   // `fan-out` is the op name every `chant components fan-out` gate is recorded
   // under (../handlers/fan-out.ts). It is a command rather than a declaration,
   // so there is no `*.op.ts` to find and nothing is wrong when none is there.
-  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP) {
+  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== OVERRIDE_GATE_OP) {
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));

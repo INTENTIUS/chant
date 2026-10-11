@@ -598,6 +598,10 @@ export interface ParsedArgs {
   once?: boolean;
   /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */
   note?: string;
+  /** `chant approve policy-override <subject> --reason <text>` (#3760): why a denied plan goes out anyway, recorded as the override's note. */
+  reason?: string;
+  /** `chant approve policy-override <subject> --rule <id>` (#3760), repeated: the rules that denied the plan, which the override names. */
+  rules?: string[];
   /** `chant approve <op> <gate> --expire` (#2119) — clear the gate's standing pending fact instead of approving it, so the next run decides the gate from scratch and records a fresh one. Writes no resolution: nothing is approved, the wait is only restarted. */
   expire?: boolean;
   /**

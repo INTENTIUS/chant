@@ -386,6 +386,16 @@ describe("runApprove", () => {
     errSpy.mockRestore();
   });
 
+  // #3760: --rule and --reason belong to an override of a denied plan.
+  test("refuses --rule and --reason on a gate that is not the override gate", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", rules: ["no-drop"], reason: "why" }))).toBe(1);
+    expect(errSpy.mock.calls.flat().join("\n")).toMatch(/--rule and --reason override a denied plan: chant approve policy-override <subject>/);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   test("appends a gate-resolution record and pushes, resolving --actor over env fallbacks", async () => {
     seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
