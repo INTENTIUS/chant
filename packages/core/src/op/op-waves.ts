@@ -47,6 +47,7 @@
  */
 
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
+import { notifyConfigProblem, type NotifyConfig } from "../notify";
 
 /** When a wave waits for an approval. */
 export type OpWaveGatePolicy =
@@ -197,6 +198,15 @@ export interface OpWavesSpec {
    * followed by `chant approve --resume` or a re-run by hand.
    */
   resume?: OpWavesResume;
+  /**
+   * Tell people when a wave waits for an approval, a share job refuses a run
+   * whose plan moved, or a wave fails (#3761): the environment variables
+   * holding a Slack or Teams incoming webhook's URL, or a generic webhook's
+   * URL and the key its `chant.notify/v1` events are signed with. A failed
+   * delivery is logged and never changes the job's exit code. See
+   * `../notify.ts`.
+   */
+  notify?: NotifyConfig;
 }
 
 /** The scheduled resume job of an Op waves pipeline (#3683). */
@@ -279,6 +289,10 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
   if (spec.resume !== undefined && (typeof spec.resume.schedule !== "string" || spec.resume.schedule.trim().split(/\s+/).length !== 5)) {
     throw new Error(`${where}: resume.schedule must be a five-field cron expression, such as "*/10 * * * *".`);
+  }
+  if (spec.notify !== undefined) {
+    const problem = notifyConfigProblem(spec.notify, "notify");
+    if (problem) throw new Error(`${where}: ${problem}`);
   }
   const names = new Set<string>();
   for (const wave of spec.waves) {

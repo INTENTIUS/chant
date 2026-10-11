@@ -133,6 +133,7 @@ export default defineConfig({
 								{ label: 'Operator', slug: 'guide/operator' },
 								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
 								{ label: 'Op Waves', slug: 'guide/op-waves' },
+								{ label: 'Notify', slug: 'guide/notify' },
 							],
 						},
 						{
