@@ -47,6 +47,33 @@
  * - `override`: an apply cites an override that no line holds.
  * - `malformed-line`: a line that is not a gate record. Its content is lost
  *   to the trail, so it is said.
+ *
+ * ## Sources and ids
+ *
+ * Every ledger entry's `source` names the line it came from: `path`, `line`
+ * (the line's own `line` when given, which {@link gateLedgerLines} fills
+ * with the file's line number, else its 1-based place in `ledger.lines`),
+ * and `text`, exactly as passed in, when the line was given as text. When the
+ * line came from {@link gateLedgerLinesFromLog}, `source.author` is the
+ * author of the commit that added it (or, for a revocation, removed it), and
+ * resolutions also carry it as `committedBy`. Under `approval: ledger` that
+ * is the only check on who pushed an approval: anyone who can push may write
+ * any `resolvedBy`.
+ *
+ * The default `id` is a digest over the source and the record. A product
+ * that already holds ids of its own (an append-only record whose ids
+ * customers keep) passes {@link GateAuditOptions.id}, which gets each entry
+ * with its default id and returns the id to use. `under` links follow it.
+ *
+ * ## Seal and review
+ *
+ * `seal` names how the approval came to be: `review` when the line came
+ * through a forge review (`via: "pr-review"`, or a `review` field), else
+ * `sealed` when it carries an ssh seal, else `unsigned`. A pull request
+ * approval that `chant approve` also sealed is still `review`: the review is
+ * what authorised it, and the seal attests who wrote the line. That fact is
+ * kept apart as `sealed: true` with its `signer`, on any entry whose line
+ * holds a seal. terragucci classifies the same way.
  */
 import { canonicalJson } from "../effect-receipt";
 import { contentDigest } from "../content-digest";
@@ -64,19 +91,29 @@ export const GATE_AUDIT_KINDS = [
 ] as const;
 export type GateAuditKind = (typeof GATE_AUDIT_KINDS)[number];
 
-/** How an approval was authenticated: an ssh seal, a forge review, or neither. */
+/** How an approval was authorised: a forge review, an ssh seal, or neither. A review wins; a review that is also sealed has `sealed: true` beside it. */
 export type GateAuditSeal = "sealed" | "review" | "unsigned";
+
+/** A commit that added or removed a ledger line: its date and its author's name and email. */
+export interface GateLedgerCommit {
+  at: string;
+  by?: string;
+  email?: string;
+}
 
 /**
  * One line of a ledger file. Give the `text` as it is on disk, or the parsed
- * `record` a {@link GateLedgerPort} returns. A line a commit removed carries
- * `removed`, with when and by whom (the commit's date and author).
+ * `record` a {@link GateLedgerPort} returns. `line` is its line number in the
+ * file, when known. A line read from history carries the commit that `added`
+ * it, or, if a commit removed it, `removed`, each with when and by whom.
  */
 export interface GateLedgerLine {
   text?: string;
   record?: unknown;
+  line?: number;
   commit?: string;
-  removed?: { at: string; by?: string };
+  added?: GateLedgerCommit;
+  removed?: GateLedgerCommit;
 }
 
 /** One op's ledger file. */
@@ -111,7 +148,13 @@ export interface GateAuditSource {
   /** The ledger file, or the apply's `ref` for an apply. */
   path: string;
   op?: string;
+  /** Ledger entries: the line's `line`, else its 1-based place in the ledger's `lines`. */
+  line?: number;
+  /** Ledger entries: the line's text exactly as passed in, when it was passed as text. */
+  text?: string;
   commit?: string;
+  /** The commit that added the line, or for a revocation removed it, when the line came from history. */
+  author?: GateLedgerCommit;
   change: "added" | "removed" | "apply";
 }
 
@@ -127,10 +170,14 @@ export interface GateAuditEntry {
   digest?: string;
   /** Who: the approver or overrider, whoever removed the line, or for an apply, whoever ran it. */
   by?: string;
-  /** Resolutions and revocations: sealed, reviewed, or unsigned. */
+  /** Resolutions and revocations: reviewed, sealed, or unsigned. */
   seal?: GateAuditSeal;
+  /** The line holds an ssh seal, whatever `seal` says (a sealed review is `seal: "review"`). */
+  sealed?: true;
   /** The ssh signer, when sealed. */
   signer?: string;
+  /** Resolutions read from history: the author of the commit that added the line, who may not be `by`. */
+  committedBy?: string;
   /** Who carried the approval to chant (`chant approve --relayed-by`). */
   relayedBy?: string;
   /** A person or an agent, and the roles claimed. */
@@ -168,6 +215,12 @@ export interface GateAuditOptions {
   isOverride?: (op: string, gate: string) => boolean;
   /** Whether approvals of a gate need a seal or a review. Default none. */
   sealed?: (op: string, gate: string) => boolean;
+  /**
+   * The id to give an entry, from the entry with its default id. Default
+   * that id. A product with ids of its own keys by `entry.source` (its
+   * `path`, `line`, `text`). `under` refers to the ids this returns.
+   */
+  id?: (entry: GateAuditEntry) => string;
 }
 
 export interface GateAuditInput extends GateAuditOptions {
@@ -205,11 +258,11 @@ function rowOf(line: GateLedgerLine): Row | undefined {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : undefined;
 }
 
-function sealOf(r: Row): { seal: GateAuditSeal; signer?: string } {
+function sealOf(r: Row): { seal: GateAuditSeal; sealed?: true; signer?: string } {
   const s = r.seal as { signature?: unknown; signer?: unknown } | null | undefined;
-  if (s && s.signature) return { seal: "sealed", ...(str(s.signer) ? { signer: str(s.signer) } : {}) };
-  if (r.review || r.via === "pr-review") return { seal: "review" };
-  return { seal: "unsigned" };
+  const signed = s && s.signature ? { sealed: true as const, ...(str(s.signer) ? { signer: str(s.signer) } : {}) } : undefined;
+  if (r.review || r.via === "pr-review") return { seal: "review", ...signed };
+  return signed ? { seal: "sealed", ...signed } : { seal: "unsigned" };
 }
 
 function reviewOf(r: Row): GateAuditEntry["review"] {
@@ -246,13 +299,15 @@ const compatible = (a: string | undefined, b: string | undefined): boolean => a 
 /** The entries `input` adds up to, oldest first, and the gaps they show. */
 export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntry[]; gaps: GateAuditGap[] } {
   const isOverride = input.isOverride ?? isOverrideGate;
+  const rekey = input.id;
+  const keyed = (e: GateAuditEntry): GateAuditEntry => (rekey ? { ...e, id: rekey(e) } : e);
   const entries: GateAuditEntry[] = [];
   const gaps: GateAuditGap[] = [];
 
   for (const ledger of input.ledgers) {
     const path = ledger.path ?? `_gates/${ledger.op}.jsonl`;
-    const parsed: { line: GateLedgerLine; r: Row; pending: boolean }[] = [];
-    for (const line of ledger.lines) {
+    const parsed: { line: GateLedgerLine; n: number; r: Row; pending: boolean }[] = [];
+    for (const [i, line] of ledger.lines.entries()) {
       const r = rowOf(line);
       const pending = r?.kind === "pending";
       const ok = r && r.version === 1 && typeof r.gate === "string" && typeof r.timestamp === "string" && (pending || typeof r.resolvedBy === "string");
@@ -260,7 +315,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
         gaps.push({ kind: "malformed-line", op: ledger.op, detail: `${path} holds a line that is not a gate record${line.commit ? ` (commit ${line.commit})` : ""}: ${(line.text ?? JSON.stringify(line.record) ?? "").slice(0, 80)}` });
         continue;
       }
-      parsed.push({ line, r, pending });
+      parsed.push({ line, n: line.line ?? i + 1, r, pending });
     }
 
     // Each denial an override answers: the newest pending fact of its gate and digest.
@@ -273,53 +328,63 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
       requests.push({ op: ledger.op, gate: String(p.r.gate), at: time(String(p.r.timestamp)), ...(digest ? { digest } : {}), ...(str(p.r.environment) ? { environment: str(p.r.environment) } : {}) });
     }
 
-    for (const { line, r, pending } of parsed) {
+    for (const { line, n, r, pending } of parsed) {
       const gate = String(r.gate);
       const override = isOverride(ledger.op, gate);
       const removed = line.removed;
       if (pending && removed) continue;
       const digest = str(r.planDigest);
-      const source: GateAuditSource = { path, op: ledger.op, ...(line.commit ? { commit: line.commit } : {}), change: removed ? "removed" : "added" };
+      const author = removed ?? line.added;
+      const source: GateAuditSource = {
+        path,
+        op: ledger.op,
+        line: n,
+        ...(line.text !== undefined ? { text: line.text } : {}),
+        ...(line.commit ? { commit: line.commit } : {}),
+        ...(author ? { author } : {}),
+        change: removed ? "removed" : "added",
+      };
       const id = idOf(removed ? "removed" : "ledger", path, line.commit ?? null, r);
       const extra = Object.fromEntries(Object.entries(r).filter(([k]) => !KNOWN.has(k)));
       const base = { id, gate, op: ledger.op, ...(digest ? { digest } : {}), source } as const;
 
       if (pending) {
-        entries.push({
+        entries.push(keyed({
           ...base,
           kind: override ? "override-requested" : "approval-requested",
           at: String(r.timestamp),
           ...drop({ runId: str(r.runId), expiresAt: str(r.expiresAt), description: str(r.description), url: str(r.url), rules: strings(r.rules) }),
           detail: extra,
-        });
+        }));
         continue;
       }
 
-      const { seal, signer } = sealOf(r);
+      const { seal, sealed, signer } = sealOf(r);
       if (removed) {
-        entries.push({
+        entries.push(keyed({
           ...base,
           kind: "revoked",
           at: removed.at,
           ...(removed.by ? { by: removed.by } : {}),
           subject: override ? "override" : "approval",
           seal,
+          ...(sealed ? { sealed } : {}),
           detail: { ...extra, approvedBy: r.resolvedBy, approvedAt: r.timestamp, ...(signer ? { signer } : {}) },
-        });
+        }));
         continue;
       }
 
       const denial = override ? denials.get(`${gate}\n${digest ?? ""}`) : undefined;
       const rules = strings(denial?.rules) ?? (override && gate.startsWith("override-") ? [gate.slice("override-".length)] : undefined);
-      const entry: GateAuditEntry = {
+      const entry: GateAuditEntry = keyed({
         ...base,
         kind: override ? "override-recorded" : "approved",
         at: String(r.timestamp),
         by: String(r.resolvedBy),
         seal,
-        ...drop({ signer, relayedBy: str(r.relayedBy), approver: approverOf(r), note: str(r.note), url: str(r.url), review: reviewOf(r), rules }),
+        ...drop({ sealed, signer, committedBy: line.added?.by, relayedBy: str(r.relayedBy), approver: approverOf(r), note: str(r.note), url: str(r.url), review: reviewOf(r), rules }),
         detail: extra,
-      };
+      });
       entries.push(entry);
 
       if (!override) {
@@ -349,7 +414,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
     if (a.digest !== undefined && a.approval !== "not-required" && !approval) {
       gaps.push({ kind: "approval", ...(a.op ? { op: a.op } : {}), gate: a.gate, digest: a.digest, detail: `${a.ref} applied under ${a.digest}, but the ledger holds no approval of ${a.gate} for that digest before ${a.at}` });
     }
-    entries.push({
+    entries.push(keyed({
       ...base,
       id: idOf("apply", a.ref, a.at, a.gate, a.digest ?? null),
       kind: "applied",
@@ -357,7 +422,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
       ...(a.by ? { by: a.by } : {}),
       ...(approval ? { under: approval.id } : {}),
       detail: { ...(a.detail ?? {}), approval: a.approval ?? "required" },
-    });
+    }));
 
     for (const o of a.overrides ?? []) {
       const recorded = find("override-recorded", o.gate, o.digest, false);
@@ -365,7 +430,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
         gaps.push({ kind: "override", ...(a.op ? { op: a.op } : {}), gate: o.gate, ...(o.digest ? { digest: o.digest } : {}), detail: `${a.ref} cites the override ${o.gate}${o.digest ? ` for ${o.digest}` : ""}, but the ledger holds none` });
         continue;
       }
-      entries.push({
+      entries.push(keyed({
         ...base,
         id: idOf("spent", a.ref, a.at, recorded.id),
         kind: "override-spent",
@@ -375,7 +440,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
         ...(recorded.digest ? { digest: recorded.digest } : {}),
         under: recorded.id,
         detail: {},
-      });
+      }));
     }
   }
 
@@ -383,24 +448,26 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
   return { entries, gaps };
 }
 
-/** The lines of one ledger file's text, all added. Blank lines are skipped. */
+/** The lines of one ledger file's text, all added, each with its line number. Blank lines are skipped. */
 export function gateLedgerLines(content: string): GateLedgerLine[] {
-  return content.split("\n").map((l) => l.trim()).filter(Boolean).map((text) => ({ text }));
+  return content.split("\n").flatMap((l, i) => (l.trim() ? [{ text: l.trim(), line: i + 1 }] : []));
 }
 
 /**
  * The lines each commit added to and removed from a ledger file, oldest first,
  * from `git log -p --unified=0 --no-renames` written with
- * `--format=%x1e%H%x1f%an%x1f%aI` over the file. The caller runs git; this
- * reads the text. A line removed and added again in one commit (a newline
- * fixed at the end of the file) is neither. A removed line is what
- * {@link deriveGateAudit} reports as a revocation.
+ * `--format=%x1e%H%x1f%an%x1f%aI` over the file (append `%x1f%ae` for the
+ * author's email). The caller runs git; this reads the text. Each line keeps
+ * its commit and that commit's date and author, as `added` or `removed`. A
+ * line removed and added again in one commit (a newline fixed at the end of
+ * the file) is neither. A removed line is what {@link deriveGateAudit}
+ * reports as a revocation.
  */
 export function gateLedgerLinesFromLog(log: string): GateLedgerLine[] {
   const out: GateLedgerLine[] = [];
   for (const block of log.split("\x1e").slice(1)) {
     const [head = "", ...rest] = block.split("\n");
-    const [commit = "", author = "", date = ""] = head.split("\x1f");
+    const [commit = "", author = "", date = "", email = ""] = head.split("\x1f");
     const net = new Map<string, number>();
     const order: string[] = [];
     for (const l of rest) {
@@ -412,10 +479,11 @@ export function gateLedgerLinesFromLog(log: string): GateLedgerLine[] {
     }
     const when = Date.parse(date.trim());
     const at = Number.isNaN(when) ? date.trim() : new Date(when).toISOString();
+    const by: GateLedgerCommit = { at, ...(author ? { by: author } : {}), ...(email.trim() ? { email: email.trim() } : {}) };
     for (const text of order) {
       const n = net.get(text)!;
       for (let i = 0; i < Math.abs(n); i++) {
-        out.push(n > 0 ? { text, commit: commit.trim() } : { text, commit: commit.trim(), removed: { at, ...(author ? { by: author } : {}) } });
+        out.push({ text, commit: commit.trim(), ...(n > 0 ? { added: { ...by } } : { removed: { ...by } }) });
       }
     }
   }
