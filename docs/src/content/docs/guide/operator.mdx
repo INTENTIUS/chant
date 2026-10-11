@@ -152,6 +152,21 @@ the thread once the resolution is written, so the sandbox re-runs and reads
 the fact.
 </Aside>
 
+### Reading the ledger as an audit trail
+
+`@intentius/chant/lifecycle/gate-audit` turns `_gates/<op>.jsonl` lines into typed audit entries and reports what the ledger is missing. It is a pure function that takes ledger lines and returns entries and gaps. It touches no git, clock or file, and it bundles small enough for a product's single CI file. The product keeps storage and rendering.
+
+```ts
+import { deriveGateAudit, gateLedgerLines } from "@intentius/chant/lifecycle/gate-audit";
+
+const { entries, gaps } = deriveGateAudit({
+  ledgers: [{ op: "tf-apply", lines: gateLedgerLines(fileText) }],
+  applies: [{ ref: "reports/1", at, gate: "wave-1", digest }],
+});
+```
+
+Entry kinds are `approval-requested`, `approved` (with `seal`, `signer`, `approver`, `relayedBy` and `review`), `override-requested`, `override-recorded` (reason in `note`), `revoked`, and, for the applies a product passes in, `applied` (with the approval it ran under) and `override-spent`. A line a commit removed is a revocation: feed `gateLedgerLinesFromLog` the text of `git log -p --unified=0` over the file. An override gate is one of op `policy-override` or named `override-<rule>` unless `isOverride` says otherwise. Gaps are `approval-without-request`, `unsealed` (when `sealed(op, gate)` says the gate needs a seal), `approval` and `override` (an apply with no approval or override behind it), and `malformed-line`. `readGateAuditLedgers(port, ops)` reads the current ledgers through a `GateLedgerPort`.
+
 ## `chant operator status`
 
 Everything below is read from the `chant/lifecycle` orphan branch alone — no daemon needs to be running, and nothing here queries a live cluster:
