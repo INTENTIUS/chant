@@ -3,7 +3,18 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertOpWavesSpec, opWaveJobs, opWaveShare, type OpWavesSpec } from "./op-waves";
-import { recordOpWaveHeadPlans, runOpWave, type OpWaveExec, type OpWaveRunsFile, type OpWaveShowAtBase } from "./op-waves-run";
+import {
+  opWaveHooksAtBase,
+  readOpWaveHooksFile,
+  recordOpWaveHeadPlans,
+  runOpWave,
+  runOpWaveApplyHooks,
+  type OpWaveDecision,
+  type OpWaveExec,
+  type OpWaveHooksFile,
+  type OpWaveRunsFile,
+  type OpWaveShowAtBase,
+} from "./op-waves-run";
 import { memoryGateLedgerPort } from "./gate";
 import { waveSetDigest } from "../gated-waves";
 
@@ -470,6 +481,155 @@ describe("spent approvals (#3784)", () => {
     const result = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates });
     expect(result).toMatchObject({ exitCode: 1, applied: [] });
     expect(h.applies()).toBe(0);
+    h.done();
+  });
+});
+
+describe("apply-stage hooks run by the apply, under its lock (#3804)", () => {
+  const digest = (n: string) => `sha256:${n.repeat(64)}`;
+  const spec: OpWavesSpec = {
+    name: "migrations",
+    op: "migrate",
+    plan: ["tool", "plan", "{target}", "{plan}"],
+    apply: ["tool", "apply", "{target}", "{plan}"],
+    hooks: { apply: { runBy: "apply" }, before: { plan: [{ name: "lint", command: ["hook", "lint"] }] } },
+    waves: [
+      {
+        name: "prod",
+        runs: [{ target: "t1" }],
+        gate: "never",
+        hooks: {
+          before: { apply: [{ name: "lag", command: ["hook", "lag", "{target}"], perRun: true, onFailure: "approve" }] },
+          after: { apply: [{ name: "smoke", command: ["hook", "smoke", "{wave}"] }] },
+        },
+      },
+    ],
+  };
+
+  /**
+   * A job whose apply command is a product that takes its lock and runs the
+   * hooks it was handed, as SQL Yodeler's apply would. `obey: false` is an
+   * apply that ignores the hooks file.
+   */
+  function harness(atBase: OpWavesSpec | null, opts: { fails?: string[]; obey?: boolean } = {}) {
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-by-apply-"));
+    const calls: string[] = [];
+    const files: OpWaveHooksFile[] = [];
+    const inner: OpWaveExec = (argv) => {
+      calls.push(`  ${argv.join(" ")}`);
+      return (opts.fails ?? []).some((f) => argv.join(" ").startsWith(f)) ? 1 : 0;
+    };
+    const exec: OpWaveExec = (argv, dir, env) => {
+      calls.push(argv.join(" "));
+      if (argv[1] === "plan") writeFileSync(join(dir, argv[3]!), JSON.stringify({ planDigest: digest("1") }));
+      if (argv[1] === "apply") {
+        const file = readOpWaveHooksFile(env?.CHANT_HOOKS, dir)!;
+        files.push(file);
+        if (opts.obey === false) return 0;
+        calls.push("  lock");
+        const before = runOpWaveApplyHooks(file, "before-apply", { cwd: dir, exec: inner, log: () => {} });
+        if (!before.proceed) return before.held.length > 0 ? 3 : 4;
+        calls.push("  migrate");
+        const after = runOpWaveApplyHooks(file, "after-apply", { cwd: dir, exec: inner, log: () => {} });
+        return after.proceed ? 0 : 1;
+      }
+      return (opts.fails ?? []).some((f) => argv.join(" ").startsWith(f)) ? 1 : 0;
+    };
+    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: atBase === null ? null : JSON.stringify(atBase) });
+    const record = () => JSON.parse(readFileSync(join(cwd, ".chant/op-waves/migrations/wave-1.json"), "utf-8")) as OpWaveDecision;
+    return { cwd, calls, files, exec, show, record, done: () => rmSync(cwd, { recursive: true, force: true }) };
+  }
+  const set = waveSetDigest([{ member: "t1", planDigest: digest("1") }]);
+
+  test("the spec checks hooks.apply.runBy and keeps the rest as it was", () => {
+    const base = { name: "w", op: "o", plan: ["p", "{plan}"], waves: [{ name: "dev", runs: [{ target: "a" }] }] };
+    expect(() => assertOpWavesSpec({ ...base, hooks: { apply: { runBy: "apply" } } })).not.toThrow();
+    expect(() => assertOpWavesSpec({ ...base, hooks: { apply: { runBy: "later" } } } as unknown as OpWavesSpec)).toThrow(/hooks.apply.runBy is "later"/);
+    expect(() => assertOpWavesSpec({ ...base, hooks: { apply: [{ command: ["x"] }] } } as unknown as OpWavesSpec)).toThrow(/hooks.apply must be/);
+  });
+
+  test("chant hands the apply-stage hooks to the apply, which runs them under its lock; the outcomes come back", async () => {
+    const h = harness(spec);
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort() });
+    expect(result).toMatchObject({ exitCode: 0, applied: ["t1"], decision: { applyHooksRunBy: "apply" } });
+    expect(h.calls).toEqual([
+      "hook lint",
+      "tool plan t1 .chant/op-waves/migrations/wave-1/t1.plan.json",
+      "tool apply t1 .chant/op-waves/migrations/wave-1/t1.plan.json",
+      "  lock",
+      "  hook lag t1",
+      "  migrate",
+      "  hook smoke prod",
+    ]);
+    // The apply sees the outcomes of the hooks chant ran before it, and the hooks it runs itself.
+    expect(h.files[0]).toMatchObject({ runBy: "apply", approved: false, digest: set, outcomes: [{ moment: "before-plan", name: "lint", outcome: "passed" }] });
+    expect(Object.keys(h.files[0]!.hooks)).toEqual(["before-apply", "after-apply"]);
+    expect(result.hooks.map((o) => `${o.moment} ${o.name} ${o.outcome}`)).toEqual(["before-plan lint passed", "before-apply lag passed", "after-apply smoke passed"]);
+    expect(h.record().outcomes).toHaveLength(3);
+    h.done();
+  });
+
+  test("a hold inside the apply applies nothing and waits; with an approval of the digest the apply is called again and goes on", async () => {
+    const h = harness(spec, { fails: ["hook lag"] });
+    const waiting = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort() });
+    expect(waiting).toMatchObject({ exitCode: 3, applied: [], decision: { status: "waiting", heldBy: ["before-apply hook lag (t1)"] } });
+    expect(h.calls).not.toContain("  migrate");
+    h.done();
+
+    const again = harness(spec, { fails: ["hook lag"] });
+    const gates = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "migrations", gate: "migrations-wave-1", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: set }] });
+    const applied = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: again.cwd, exec: again.exec, show: again.show, gates });
+    expect(applied).toMatchObject({ exitCode: 0, applied: ["t1"], decision: { status: "approved", approvedBy: "alice" } });
+    expect(again.calls.filter((c) => c === "  lock")).toHaveLength(2);
+    expect(again.calls.filter((c) => c === "  migrate")).toHaveLength(1);
+    // The second call knows the approval stands, and which hook held the wave.
+    expect(again.files[1]).toMatchObject({ approved: true, heldBy: ["before-apply hook lag (t1)"] });
+    expect(applied.hooks.filter((o) => o.name === "lag").map((o) => o.outcome)).toEqual(["held", "held"]);
+    again.done();
+  });
+
+  test("an after-apply failure inside the apply counts the run applied and fails the wave", async () => {
+    const h = harness(spec, { fails: ["hook smoke"] });
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort() });
+    expect(result).toMatchObject({ exitCode: 1, applied: ["t1"], failed: [] });
+    expect(result.hooks.at(-1)).toMatchObject({ moment: "after-apply", name: "smoke", outcome: "failed" });
+    h.done();
+  });
+
+  test("an apply that ignores the hooks it was handed fails the wave", async () => {
+    const h = harness(spec, { obey: false });
+    const logs: string[] = [];
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort(), log: (l) => logs.push(l) });
+    expect(result).toMatchObject({ exitCode: 1, applied: ["t1"] });
+    expect(logs.join("\n")).toMatch(/without running its before-apply and after-apply hooks/);
+    h.done();
+  });
+
+  test("runBy is read at base: a change that sets it still has chant run the hooks, and the apply gets its outcomes", async () => {
+    const atBase: OpWavesSpec = { ...spec, hooks: { before: spec.hooks!.before } };
+    const h = harness(atBase);
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort(), log: () => {} });
+    expect(result.exitCode).toBe(0);
+    expect(h.calls.slice(0, 4)).toEqual(["hook lint", "tool plan t1 .chant/op-waves/migrations/wave-1/t1.plan.json", "hook lag t1", "tool apply t1 .chant/op-waves/migrations/wave-1/t1.plan.json"]);
+    expect(h.files[0]).toMatchObject({ runBy: "chant", hooks: {} });
+    expect(h.files[0]!.outcomes.map((o) => o.name)).toEqual(["lint", "lag"]);
+    h.done();
+  });
+
+  test("an apply outside the waves reads the same hooks at base and runs them itself; a hold stops it", () => {
+    const h = harness(spec);
+    writeFileSync(join(h.cwd, "waves.json"), JSON.stringify({ ...spec, hooks: undefined, waves: [{ ...spec.waves[0]!, hooks: undefined }] }));
+    const file = opWaveHooksAtBase({ specFile: "waves.json", wave: "prod", cwd: h.cwd, show: h.show, base: "HEAD^1" });
+    expect(file).toMatchObject({ opWaves: "migrations", wave: "prod", number: 1, approved: false, runBy: "apply", runs: [{ target: "t1", op: "migrate" }] });
+    expect(Object.keys(file.hooks)).toEqual(["before-plan", "before-apply", "after-apply"]);
+    const ran: string[] = [];
+    const exec: OpWaveExec = (argv) => (ran.push(argv.join(" ")), argv[1] === "lag" ? 1 : 0);
+    const before = runOpWaveApplyHooks(file, "before-apply", { cwd: h.cwd, exec, log: () => {} });
+    expect(before).toMatchObject({ proceed: false, held: ["before-apply hook lag (t1)"], outcomes: [{ name: "lag", target: "t1", exit: 1, outcome: "held" }] });
+    expect(runOpWaveApplyHooks(file, "after-plan", { cwd: h.cwd, exec, log: () => {} })).toMatchObject({ proceed: true, outcomes: [] });
+    expect(ran).toEqual(["hook lag t1"]);
+    const absent = opWaveHooksAtBase({ specFile: "waves.json", wave: "prod", cwd: h.cwd, show: () => ({ sha: "c".repeat(40), text: null }) });
+    expect(absent.hooks).toEqual({});
     h.done();
   });
 });

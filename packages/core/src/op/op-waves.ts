@@ -107,10 +107,22 @@ export type OpWaveHookMoment = "before-plan" | "after-plan" | "before-apply" | "
 
 export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-plan", "after-plan", "before-apply", "after-apply"];
 
+/**
+ * Who runs the `before.apply` and `after.apply` hooks (#3804). `chant`: the
+ * wave job, around the apply command. `apply`: the apply command itself,
+ * under its own lock, through `runOpWaveApplyHooks` and the file named by
+ * `CHANT_HOOKS`; it writes the outcomes back to `CHANT_HOOKS_RESULT`.
+ */
+export type OpWaveApplyHooksRunner = "chant" | "apply";
+
+export const OP_WAVE_APPLY_HOOKS_RUNNERS: readonly OpWaveApplyHooksRunner[] = ["chant", "apply"];
+
 /** Stage hooks (#3762), read from the spec at the base commit like the gate policy. */
 export interface OpWaveHooks {
   before?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
   after?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
+  /** Who runs the apply-stage hooks (#3804). Default `{ runBy: "chant" }`. A wave's own setting wins over the spec's. */
+  apply?: { runBy?: OpWaveApplyHooksRunner };
 }
 
 /** One Op run in a wave: an Op applied to one target (an environment, a database, a tenant). */
@@ -367,7 +379,17 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
     throw new Error(`${where}: \`hooks\` must be { "before"?: { "plan"?, "apply"? }, "after"?: { "plan"?, "apply"? } }.`);
   }
   for (const [side, stages] of Object.entries(hooks as Record<string, unknown>)) {
-    if (side !== "before" && side !== "after") throw new Error(`${where}: hooks.${side} is not a moment; use hooks.before or hooks.after.`);
+    if (side === "apply") {
+      const runBy = (stages as { runBy?: unknown } | null)?.runBy;
+      if (stages === null || typeof stages !== "object" || Array.isArray(stages) || Object.keys(stages).some((key) => key !== "runBy")) {
+        throw new Error(`${where}: hooks.apply must be { "runBy"?: "chant" | "apply" }.`);
+      }
+      if (runBy !== undefined && !OP_WAVE_APPLY_HOOKS_RUNNERS.includes(runBy as OpWaveApplyHooksRunner)) {
+        throw new Error(`${where}: hooks.apply.runBy is ${JSON.stringify(runBy)}; use ${OP_WAVE_APPLY_HOOKS_RUNNERS.map((r) => `"${r}"`).join(" or ")}.`);
+      }
+      continue;
+    }
+    if (side !== "before" && side !== "after") throw new Error(`${where}: hooks.${side} is not a moment; use hooks.before or hooks.after (or hooks.apply.runBy).`);
     if (stages === null || typeof stages !== "object" || Array.isArray(stages)) throw new Error(`${where}: hooks.${side} must be { "plan"?: [...], "apply"?: [...] }.`);
     for (const [stage, list] of Object.entries(stages as Record<string, unknown>)) {
       const at = `hooks.${side}.${stage}`;
@@ -403,6 +425,12 @@ export function opWaveHooksAt(spec: Pick<OpWavesSpec, "hooks" | "waves">, name: 
     return hooks?.[side]?.[stage] ?? [];
   };
   return Object.fromEntries(OP_WAVE_HOOK_MOMENTS.map((m) => [m, [...at(spec.hooks, m), ...at(wave?.hooks, m)]])) as Record<OpWaveHookMoment, OpWaveHook[]>;
+}
+
+/** Who runs wave `name`'s apply-stage hooks (#3804): the wave's `hooks.apply.runBy`, else the spec's, else `chant`. */
+export function opWaveApplyHooksRunBy(spec: Pick<OpWavesSpec, "hooks" | "waves">, name: string): OpWaveApplyHooksRunner {
+  const wave = spec.waves.find((w) => w.name === name);
+  return wave?.hooks?.apply?.runBy ?? spec.hooks?.apply?.runBy ?? "chant";
 }
 
 /**

@@ -32,7 +32,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `apply` | Applies one run. Default `chant run {op} --env {target}` |
 | `planWave` | Plans every run of a wave in one call ([Plan a wave in one call](#plan-a-wave-in-one-call)) |
 | `applyWave` | Applies a wave's approved set in one call, in place of `apply` |
-| `hooks` | Commands run before and after each wave's plan and apply, read at the base commit ([Stage hooks](#stage-hooks)) |
+| `hooks` | Commands run before and after each wave's plan and apply, read at the base commit ([Stage hooks](#stage-hooks)). `hooks.apply.runBy: "apply"` has the apply command run the apply-stage hooks under its own lock ([Hooks under the apply's lock](#hooks-under-the-applys-lock)) |
 | `approvals` | `{ "spend": true }` makes an approval good for one apply ([Spend an approval](#spend-an-approval)). Read at the base commit |
 | `gate` | The base gate name. Default: `name` |
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
@@ -174,6 +174,62 @@ The spec's `hooks` run first, then the wave's own `hooks`. The environment carri
 A hook with `onFailure: "approve"` that fails holds the wave instead. The wave then waits for an approval of its set digest whatever its `gate` says, `never` and empty plans included. Any hooks after it still run. The pending fact names the hooks that held it, and so does the decision (`heldBy`). Once that digest is approved, the wave applies on its next run. A hold before the apply, or in a share job, waits only when nobody has approved the digest yet. `approve` cannot be used after the apply, because the runs have already applied by then, so the spec refuses it.
 
 A wide wave's share jobs run the hooks their deciding job read at base, around their own slice.
+
+### Hooks under the apply's lock
+
+By default the wave job runs `before.apply` and `after.apply` hooks around the apply command. A product that takes a lock inside its apply (a database migration lock, a state lock) then checks the world before it holds the lock: two merges in quick succession run two wave jobs, the second waits minutes for the lock, and its `before.apply` check is stale by the time it applies. Set `runBy` to have the apply command run them itself, under its lock:
+
+```json
+{ "hooks": { "apply": { "runBy": "apply" } } }
+```
+
+`hooks.apply.runBy` is `chant` (the default) or `apply`. A wave's own setting wins over the spec's. Like the hooks it is read at the base commit, so a change that sets it is still applied with chant running the hooks.
+
+Every apply call, `apply` or `applyWave`, gets two environment variables:
+
+| Variable | Holds |
+|---|---|
+| `CHANT_HOOKS` | A JSON file: the wave, its digest, `approved` (an approval of the digest stands), `heldBy`, the runs this call applies, `outcomes` (every hook that already ran in this job and how it came out), and, under `runBy: "apply"`, the `before-apply` and `after-apply` hooks read at base |
+| `CHANT_HOOKS_RESULT` | Under `runBy: "apply"` only: where the apply's hook outcomes go, for chant to read back |
+
+The apply runs the hooks with `runOpWaveApplyHooks` from `@intentius/chant/op`:
+
+```ts
+import { readOpWaveHooksFile, runOpWaveApplyHooks } from "@intentius/chant/op";
+
+const hooks = readOpWaveHooksFile(); // CHANT_HOOKS, or null outside a wave job
+await withLock(async () => {
+  if (hooks) {
+    const before = runOpWaveApplyHooks(hooks, "before-apply");
+    if (!before.proceed) process.exit(before.held.length > 0 ? 3 : 4); // apply nothing
+  }
+  await migrate();
+  if (hooks && !runOpWaveApplyHooks(hooks, "after-apply").proceed) process.exit(1);
+});
+```
+
+Each call returns the outcomes (`moment`, `name`, `target`, `exit`, `outcome`), so the product can write them into its own history, and adds them to `CHANT_HOOKS_RESULT`. Pass `exec` to run a hook in process or keep its output. A moment the file has no hooks for runs nothing and proceeds, so the apply can make the calls whoever runs the hooks.
+
+After the apply exits, chant reads the result back:
+
+- The outcomes join the wave's result (`--json`, notifications) and the decision record's `outcomes`.
+- A `before-apply` hook that held the run, with no approval standing, makes the wave settle its gate. The apply must have applied nothing. If nobody has approved the digest, the wave waits (exit 3). If someone has, chant calls the apply again with `approved: true`, and the hooks run again under the lock.
+- An `after-apply` hook that failed counts the runs as applied and fails the wave (exit 1).
+- An apply that exits 0 without running the hooks it was handed fails the wave, though its runs count as applied.
+
+With a per-run `apply`, each run's call runs the apply-stage hooks for that run alone, so a hook that runs once for the wave runs once per run, under that run's lock.
+
+### Hooks outside the waves
+
+`chant run <op>` on its own has no spec file, so it runs no stage hooks. A product whose own apply command also runs outside the waves (`yodel apply dev` from a laptop) reads the same hooks at base with `opWaveHooksAtBase` and runs them the same way:
+
+```ts
+import { opWaveHooksAtBase, readOpWaveHooksFile, runOpWaveApplyHooks } from "@intentius/chant/op";
+
+const hooks = readOpWaveHooksFile() ?? opWaveHooksAtBase({ specFile: "yodel-waves.json", wave: env, base });
+```
+
+That file has all four moments' hooks, and nothing is approved, so a held hook stops the apply. If the hooks at base cannot be read, the runner runs none and does not proceed.
 
 The pull request job that records plans for `pr-review` (`--record-plans`) runs no hooks.
 

@@ -52,22 +52,38 @@ export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
 export { generateOpsPipeline, generateOpWavesPipeline, withOpSchedules } from "./generate-pipeline";
 export type { GenerateOpsPipelineResult, GenerateOpWavesPipelineResult } from "./generate-pipeline";
 export {
+  OP_WAVE_APPLY_HOOKS_RUNNERS,
   OP_WAVE_DEFAULT_APPLY,
   OP_WAVE_GATE_POLICIES,
   OP_WAVE_HOOK_MOMENTS,
   assertOpWaveHooks,
   assertOpWavesSpec,
+  opWaveApplyHooksRunBy,
   opWaveHooksAt,
   opWaveJobs,
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
-export type { OpWave, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesSpec } from "./op-waves";
-export { opWaveNeedsApproval, opWavePlansPath, opWaveRunsPath, parseOpWavesSpec, readOpWavePolicy, runOpWave } from "./op-waves-run";
+export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesSpec } from "./op-waves";
+export {
+  opWaveHooksAtBase,
+  opWaveNeedsApproval,
+  opWavePlansPath,
+  opWaveRunsPath,
+  parseOpWavesSpec,
+  readOpWaveHooksFile,
+  readOpWavePolicy,
+  runOpWave,
+  runOpWaveApplyHooks,
+} from "./op-waves-run";
 export type {
   OpWaveBaseRules,
   OpWaveDecision,
+  OpWaveApplyHooksRun,
   OpWaveHookOutcome,
+  OpWaveHookRun,
+  OpWaveHooksFile,
+  OpWaveHooksResult,
   OpWaveMember,
   OpWavePlanFile,
   OpWavePlansFile,
