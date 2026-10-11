@@ -181,6 +181,25 @@ describe("telemetry attribution (#3375)", () => {
   });
 });
 
+describe("project directory (#3751)", () => {
+  const readsDir: PostSynthCheck = {
+    id: "PROJECT_DIR",
+    description: "reports the project directory the context carries",
+    check(ctx) {
+      return [{ checkId: "PROJECT_DIR", severity: "warning", message: JSON.stringify(ctx.projectDir ?? null) }];
+    },
+  };
+
+  test("the build's config directory is threaded into the context", () => {
+    const diags = runPostSynthChecks([readsDir], createBuildResult(), undefined, { projectDir: "/work/app" });
+    expect(diags[0].message).toBe('"/work/app"');
+  });
+
+  test("a hand-built run leaves the field undefined", () => {
+    expect(runPostSynthChecks([readsDir], createBuildResult())[0].message).toBe("null");
+  });
+});
+
 describe("isPostSynthCheck", () => {
   test("accepts a well-formed check and rejects others", async () => {
     const { isPostSynthCheck } = await import("./post-synth");

@@ -585,7 +585,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   if (result.errors.length === 0 && options.plugins) {
-    for (const { plugin, diagnostics: postDiags } of runLexiconPostSynthChecks(options.plugins, result, env, { activityContracts, telemetry })) {
+    for (const { plugin, diagnostics: postDiags } of runLexiconPostSynthChecks(options.plugins, result, env, { activityContracts, telemetry, projectDir: configDir })) {
       // `lint.presets` (chant #2113) filters WHICH check ids are reported at
       // all, before `lint.rules`/inline suppression act on the reported
       // ones. It's a no-op for a lexicon that ships no `lintPresets()` (the
