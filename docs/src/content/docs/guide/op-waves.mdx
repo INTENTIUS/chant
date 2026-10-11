@@ -35,6 +35,9 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `hooks` | Commands run before and after each wave's plan and apply, read at the base commit ([Stage hooks](#stage-hooks)). `hooks.apply.runBy: "apply"` has the apply command run the apply-stage hooks under its own lock ([Hooks under the apply's lock](#hooks-under-the-applys-lock)) |
 | `approvals` | `{ "spend": true }` makes an approval good for one apply ([Spend an approval](#spend-an-approval)). Read at the base commit |
 | `gate` | The base gate name. Default: `name` |
+| `gateName` | The pattern of wave k's gate name: `{gate}` and `{k}` are filled in. Default `{gate}-wave-{k}` ([Keep a product's gate names](#keep-a-products-gate-names)) |
+| `digest` | `{ "over": "changing" }` makes the set digest cover only the runs whose plan is not empty. Default `{ "over": "all" }` |
+| `neverOverMcp` | The waves' pending facts carry `neverOverMcp`, so their gates are never approved over MCP or ACP. Read at the base commit too |
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
 | `waves[].runs` | One entry per target. A target appears once per wave |
@@ -125,6 +128,14 @@ The `planWave` command writes `{plans}` with one entry per run:
 ```
 
 The array alone is read too. Each entry means what a per-run plan file means. The wave's set digest and its gate decision come from this list exactly as they would from per-run plans, so an approval reads the same either way. A list that leaves out a run, names a target it was not asked to plan, or names one twice fails the wave. chant also writes each entry to the run's own plan file, so a per-run `apply` or hook still gets `{plan}`.
+
+The plans file may also carry `pending`, an object of fields the product adds to the wave's pending fact when the wave waits, such as the commit it planned or the members its own readers expect:
+
+```json
+{ "runs": [...], "pending": { "commit": "4f1c...", "members": [{ "member": "network/vpc", "planDigest": "jcs1-sha256:..." }] } }
+```
+
+chant's own fields win. A `pending` that sets one of them (`op`, `gate`, `planDigest`, `timestamp`, `expiresAt` and the rest) fails the wave; `description` is the one it may set.
 
 `applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed.
 
@@ -336,6 +347,28 @@ From then on every approval of that gate and digest made at or before `approvedA
 A wide wave's deciding job writes the line once, before its share jobs apply. The line is written before the apply starts, so an apply that fails has still spent its approval and needs a new one to run again. If the line cannot be written, the wave applies nothing and exits 1.
 
 The rule is read at the base commit with the policy. A change that turns `spend` off still has its own apply judged with it on. A change that turns it on records the approval its own apply runs under, and the rule decides from the next change on. The file sits in a directory under `_gates/`, so `chant approve` and the gate ledger readers never see its lines. `@intentius/chant/lifecycle/gate-audit` reads them as applies: `appliedGateApplies(parseAppliedGateLines(text))` from `@intentius/chant/gate-decision` gives the `applies` that `deriveGateAudit` ties to the approval each ran under.
+
+## Keep a product's gate names
+
+A product that ran its own wave gates before moving onto `chant run wave` has pending facts and approvals on `chant/lifecycle` under its own gate names, and maybe a plan note that shows a digest over the runs that change something. Three spec fields keep those valid across the move:
+
+```json
+{
+  "name": "tf-apply",
+  "op": "tf-apply",
+  "gateName": "wave-{k}",
+  "digest": { "over": "changing" },
+  "neverOverMcp": true,
+  "planWave": ["..."],
+  "waves": ["..."]
+}
+```
+
+- `gateName` names wave k's gate. With `"wave-{k}"` and `name` `tf-apply`, wave 2 waits on `chant approve tf-apply wave-2`, as before the move. The pattern needs `{k}`, and fills in `{gate}` (the base gate name) and `{k}` only.
+- `digest.over: "changing"` takes the set digest over the runs whose plan is not `empty`. When every run is empty, it covers them all, and the wave does not wait anyway. An approval of a digest the product computed the same way still counts.
+- `neverOverMcp` puts `neverOverMcp: true` on each pending fact the waves record, so `op-approve` over MCP or ACP refuses the gate. It is read at the base commit as well as from the change, and either one is enough.
+
+A pending fact the product recorded before the move still stands for its digest, so the wave records no second one, and an approval newer than it lets the wave apply.
 
 ## Where the policy is read from
 

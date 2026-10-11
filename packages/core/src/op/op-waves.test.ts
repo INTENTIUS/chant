@@ -663,3 +663,99 @@ describe("apply-stage hooks run by the apply, under its lock (#3804)", () => {
     h.done();
   });
 });
+
+describe("a product's wave gate moved onto the waves (#3821)", () => {
+  const digest = (n: string) => `sha256:${n.repeat(64)}`;
+  const tg: OpWavesSpec = {
+    name: "tf-apply",
+    op: "tf-apply",
+    gateName: "wave-{k}",
+    digest: { over: "changing" },
+    planWave: ["tg", "plan", "{wave}", "{runs}", "{plans}"],
+    applyWave: ["tg", "apply", "{wave}", "{runs}", "{plans}"],
+    waves: [{ name: "net", runs: [{ target: "vpc" }, { target: "dns" }, { target: "nat" }] }],
+  };
+  function harness(plans: Record<string, { planDigest: string; empty?: boolean }>, extra: Record<string, unknown> = {}, atBase: OpWavesSpec = tg) {
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-3821-"));
+    const calls: string[] = [];
+    const exec: OpWaveExec = (argv, dir) => {
+      calls.push(argv.join(" "));
+      const runs = JSON.parse(readFileSync(join(dir, argv[3]!), "utf-8")) as OpWaveRunsFile;
+      if (argv[1] === "plan") writeFileSync(join(dir, argv[4]!), JSON.stringify({ runs: runs.runs.map((r) => ({ target: r.target, ...plans[r.target] })), ...extra }));
+      return 0;
+    };
+    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: JSON.stringify(atBase) });
+    return { cwd, calls, exec, show, done: () => rmSync(cwd, { recursive: true, force: true }) };
+  }
+
+  test("the spec checks gateName, digest and neverOverMcp", () => {
+    expect(() => assertOpWavesSpec(tg)).not.toThrow();
+    expect(() => assertOpWavesSpec({ ...tg, gateName: "wave" })).toThrow(/pattern with \{k\}/);
+    expect(() => assertOpWavesSpec({ ...tg, gateName: "{op}-{k}" })).toThrow(/names \{op\}/);
+    expect(() => assertOpWavesSpec({ ...tg, digest: { over: "some" as "all" } })).toThrow(/digest.over/);
+    expect(() => assertOpWavesSpec({ ...tg, neverOverMcp: "yes" as unknown as boolean })).toThrow(/neverOverMcp/);
+  });
+
+  test("the gate keeps the product's name, and the digest covers only the runs that change something", async () => {
+    const plans = { vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2"), empty: true }, nat: { planDigest: digest("3") } };
+    const h = harness(plans);
+    const gates = memoryGateLedgerPort();
+    const result = await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates });
+    const changing = waveSetDigest([{ member: "vpc", planDigest: digest("1") }, { member: "nat", planDigest: digest("3") }]);
+    expect(result).toMatchObject({ exitCode: 3, decision: { gate: "wave-1", digest: changing, digestOver: "changing", status: "waiting" } });
+    expect(gates.appended[0]).toMatchObject({ op: "tf-apply", gate: "wave-1", planDigest: changing });
+    h.done();
+  });
+
+  test("an approval a product recorded for its gate and digest before the move lets the wave apply", async () => {
+    const plans = { vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2"), empty: true }, nat: { planDigest: digest("3") } };
+    const h = harness(plans);
+    const changing = waveSetDigest([{ member: "vpc", planDigest: digest("1") }, { member: "nat", planDigest: digest("3") }]);
+    const gates = memoryGateLedgerPort({
+      pending: [{ version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: "2026-10-10T00:00:00Z", expiresAt: "2026-10-12T00:00:00Z", planDigest: changing, neverOverMcp: true }],
+      resolutions: [{ version: 1, op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: "2026-10-10T01:00:00Z", planDigest: changing }],
+    });
+    const result = await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-10T02:00:00Z" });
+    expect(result).toMatchObject({ exitCode: 0, decision: { status: "approved", approvedBy: "alice" } });
+    expect(gates.appended).toEqual([]);
+    h.done();
+  });
+
+  test("a wave whose runs are all empty digests every run, as before", async () => {
+    const plans = { vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true }, nat: { planDigest: digest("3"), empty: true } };
+    const h = harness(plans);
+    const result = await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort() });
+    const all = waveSetDigest(["vpc", "dns", "nat"].map((t, i) => ({ member: t, planDigest: digest(String(i + 1)) })));
+    expect(result).toMatchObject({ exitCode: 0, decision: { digest: all, status: "not-required" } });
+    h.done();
+  });
+
+  test("the plans file's pending fields and the spec's neverOverMcp land on the pending fact; chant's own fields are refused", async () => {
+    const plans = { vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") }, nat: { planDigest: digest("3") } };
+    const members = [{ member: "vpc", planDigest: digest("1") }];
+    const h = harness(plans, { pending: { commit: "c".repeat(40), members, description: "wave 1 of 3: vpc, dns, nat" } });
+    // neverOverMcp at base counts even when the change drops it.
+    const gates = memoryGateLedgerPort();
+    const result = await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: () => ({ sha: "b".repeat(40), text: JSON.stringify({ ...tg, neverOverMcp: true }) }), gates });
+    expect(result.exitCode).toBe(3);
+    expect(gates.appended[0]).toMatchObject({ commit: "c".repeat(40), members, description: "wave 1 of 3: vpc, dns, nat", neverOverMcp: true, gate: "wave-1", op: "tf-apply" });
+    h.done();
+
+    const bad = harness(plans, { pending: { gate: "other" } });
+    await expect(runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: bad.cwd, exec: bad.exec, show: bad.show, gates: memoryGateLedgerPort() })).rejects.toThrow(/sets gate, which chant writes itself/);
+    bad.done();
+  });
+
+  test("a spec without the new fields names its gates and digests as before", async () => {
+    const plain: OpWavesSpec = { ...tg, gateName: undefined, digest: undefined, name: "roots" };
+    const plans = { vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2"), empty: true }, nat: { planDigest: digest("3") } };
+    const h = harness(plans, {}, plain);
+    const gates = memoryGateLedgerPort();
+    const result = await runOpWave({ spec: plain, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates });
+    const all = waveSetDigest(["vpc", "dns", "nat"].map((t, i) => ({ member: t, planDigest: digest(String(i + 1)) })));
+    expect(result.decision).toMatchObject({ gate: "roots-wave-1", digest: all });
+    expect(result.decision).not.toHaveProperty("digestOver");
+    expect(gates.appended[0]).not.toHaveProperty("neverOverMcp");
+    h.done();
+  });
+});

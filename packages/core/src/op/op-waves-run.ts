@@ -42,7 +42,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
-import { waveGateName, waveSetDigest, type WaveMember } from "../gated-waves";
+import { waveSetDigest, type WaveMember } from "../gated-waves";
 import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
 import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
@@ -56,6 +56,7 @@ import {
   assertOpWaveHooks,
   assertOpWavesSpec,
   opWaveApplyHooksRunBy,
+  opWaveGateName,
   opWaveHooksAt,
   opWaveRecordPath,
   opWaveShare,
@@ -81,7 +82,20 @@ export interface OpWavePlanFile {
 /** What a wave-level plan command writes to `{plans}` (#3762): one plan per run, by target. The array alone is read too. */
 export interface OpWavePlansFile {
   runs: Array<OpWavePlanFile & { target: string }>;
+  /**
+   * Fields the product adds to the wave's pending fact (#3821), such as the
+   * commit it planned or the members its own readers expect. chant's own
+   * fields win: a key chant writes (`op`, `gate`, `planDigest`, `timestamp`,
+   * ...) is refused, except `description`.
+   */
+  pending?: Record<string, unknown>;
 }
+
+/** Pending-fact keys chant writes itself, which a plans file's `pending` may not set (#3821). */
+export const OP_WAVE_PENDING_RESERVED = [
+  "version", "kind", "op", "gate", "timestamp", "expiresAt", "planDigest", "runId", "url", "resume",
+  "environment", "origin", "neverOverMcp", "approval", "answer",
+] as const;
 
 /** What chant writes to `{runs}` for a wave-level command or a hook (#3762). */
 export interface OpWaveRunsFile {
@@ -148,6 +162,12 @@ export interface OpWaveDecision {
   applyHooksRunBy?: "apply";
   /** Every hook's outcome so far in the job that wrote the record (#3804). */
   outcomes?: OpWaveHookOutcome[];
+  /** `changing`: the digest covers only the runs whose plan is not empty, as the spec's `digest.over` says (#3821). Absent: every run. */
+  digestOver?: "changing";
+  /** The fields the plans file added to the pending fact (#3821). */
+  pending?: Record<string, unknown>;
+  /** The pending fact carries `neverOverMcp`, set by the spec here or at base (#3821). */
+  neverOverMcp?: true;
 }
 
 /** One hook's run (#3762). */
@@ -214,6 +234,18 @@ export interface OpWaveHooksResult {
   /** The moments the apply ran, empty ones included. */
   moments: OpWaveHookMoment[];
   outcomes: OpWaveHookOutcome[];
+}
+
+/** The options of {@link runOpWaveApplyHooks} (#3825). */
+export interface RunOpWaveApplyHooksOptions {
+  /** Where the hooks run. Default `process.cwd()`. */
+  cwd?: string;
+  /** Runs one hook. Default: spawn it with the job's environment. */
+  exec?: OpWaveExec;
+  /** Default: stderr. */
+  log?: (line: string) => void;
+  /** Run nothing and record the moment as skipped, with this reason (#3811). */
+  skip?: string;
 }
 
 /** One call of {@link runOpWaveApplyHooks}. */
@@ -293,6 +325,8 @@ export interface OpWaveBaseRules {
   spend: boolean;
   /** Who runs the apply-stage hooks, as read at base (#3804). `chant` when the file, the wave or the hooks are missing there. */
   applyHooksRunBy: OpWaveApplyHooksRunner;
+  /** The spec at base sets `neverOverMcp` (#3821). */
+  neverOverMcp: boolean;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -313,7 +347,7 @@ export function readOpWavePolicy(
   show: OpWaveShowAtBase = gitShowAtBase,
 ): OpWaveBaseRules {
   const { sha, text } = show(base, specFile.replace(/^\.\//, "").split("\\").join(posix.sep), cwd);
-  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha, hooks: noHooks(), spend: false, applyHooksRunBy: "chant" as const };
+  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha, hooks: noHooks(), spend: false, applyHooksRunBy: "chant" as const, neverOverMcp: false };
   if (text === null) return absent;
   let spec: OpWavesSpec;
   try {
@@ -323,12 +357,13 @@ export function readOpWavePolicy(
   }
   // The spend rule is the spec's, so it holds for a wave the base does not have yet.
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
+  const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   const wave = spec.waves.find((w) => w.name === name);
-  if (!wave) return { ...absent, spend };
+  if (!wave) return { ...absent, spend, neverOverMcp };
   const policy = wave.gate ?? "always";
   // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
   const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
-  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, applyHooksRunBy: "chant" };
+  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, applyHooksRunBy: "chant", neverOverMcp };
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
@@ -481,9 +516,9 @@ function writeRunsFile(
  * for all of them (#3762). A wave plan is written out as each run's plan file
  * too, so a per-run `apply` or hook reads `{plan}` either way.
  */
-function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec }, runs: readonly OpWaveRun[]): OpWaveMember[] {
+function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec }, runs: readonly OpWaveRun[]): PlannedRuns {
   const { spec, k, wave, cwd, exec } = at;
-  if (!spec.planWave) return runs.map((run) => planRun({ spec, wave: k, cwd, exec }, wave.name, run));
+  if (!spec.planWave) return { members: runs.map((run) => planRun({ spec, wave: k, cwd, exec }, wave.name, run)) };
   const runsPath = writeRunsFile(at, runs);
   const plans = opWavePlansPath(spec, k);
   rmSync(join(cwd, plans), { force: true });
@@ -510,12 +545,40 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   }
   const missing = runs.filter((r) => !byTarget.has(r.target)).map((r) => r.target);
   if (missing.length > 0) throw new Error(`the plans file of wave ${k} (${plans}) has no plan for ${missing.join(", ")}`);
-  return runs.map((run) => {
+  const pending = Array.isArray(parsed) ? undefined : pendingFields((parsed as { pending?: unknown }).pending, `the plans file of wave ${k} (${plans})`);
+  const members = runs.map((run) => {
     const m = member(run.target, run.op ?? spec.op, byTarget.get(run.target)!);
     const path = join(cwd, opWavePlanPath(spec, k, run.target));
     writeFileSync(path, JSON.stringify({ planDigest: m.planDigest, ...(m.destructive ? { destructive: true } : {}), ...(m.empty ? { empty: true } : {}) }) + "\n");
     return m;
   });
+  return { members, ...(pending ? { pending } : {}) };
+}
+
+/** What planning a wave's runs gave: each run's plan, and the product's pending-fact fields (#3821). */
+interface PlannedRuns {
+  members: OpWaveMember[];
+  pending?: Record<string, unknown>;
+}
+
+/** A plans file's `pending` (#3821): an object whose keys chant does not write itself, `description` aside. Undefined when absent or empty. */
+function pendingFields(value: unknown, where: string): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${where}: \`pending\` must be an object of fields for the pending fact`);
+  const reserved = Object.keys(value).filter((key) => (OP_WAVE_PENDING_RESERVED as readonly string[]).includes(key));
+  if (reserved.length > 0) throw new Error(`${where}: \`pending\` sets ${reserved.join(", ")}, which chant writes itself`);
+  if ("description" in value && typeof (value as { description?: unknown }).description !== "string") throw new Error(`${where}: pending.description must be a string`);
+  return Object.keys(value).length > 0 ? (value as Record<string, unknown>) : undefined;
+}
+
+/**
+ * A wave's set digest (#3821): {@link waveSetDigest} over its runs' plans,
+ * or under `digest.over: "changing"` over the runs whose plan is not empty,
+ * falling back to every run when all of them are empty.
+ */
+export function opWaveSetDigest(spec: Pick<OpWavesSpec, "digest">, members: ReadonlyArray<WaveMember & { empty?: boolean }>): string {
+  const changing = spec.digest?.over === "changing" ? members.filter((m) => m.empty !== true) : [];
+  return waveSetDigest(changing.length > 0 ? changing : members);
 }
 
 /** What one moment's hooks came to. */
@@ -647,11 +710,7 @@ export function readOpWaveHooksFile(path: string | undefined = process.env.CHANT
  * chant counts the moment as handled. A skip without a reason throws. `exec` runs one hook; inject it to run a hook
  * in process or to keep its output.
  */
-export function runOpWaveApplyHooks(
-  file: OpWaveHooksFile,
-  moment: OpWaveHookMoment,
-  options: { cwd?: string; exec?: OpWaveExec; log?: (line: string) => void; skip?: string } = {},
-): OpWaveApplyHooksRun {
+export function runOpWaveApplyHooks(file: OpWaveHooksFile, moment: OpWaveHookMoment, options: RunOpWaveApplyHooksOptions = {}): OpWaveApplyHooksRun {
   const cwd = options.cwd ?? process.cwd();
   const log = options.log ?? ((line: string) => console.error(line));
   let run: OpWaveApplyHooksRun;
@@ -786,7 +845,7 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
     const slice = opWaveShare(wave.runs, options.share, shares);
     const before = runHooks(ctx, "before-plan", decision.hooks?.["before-plan"], slice);
     if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in share ${options.share} of wave ${k} was planned or applied`);
-    const members = planRuns(ctx, slice);
+    const { members } = planRuns(ctx, slice);
     const planned = new Map(members.map((m) => [m.member, m]));
     const after = runHooks(ctx, "after-plan", decision.hooks?.["after-plan"], slice, planned);
     if (after.failed) return failed(ctx, `a hook after the plan failed, so nothing in share ${options.share} of wave ${k} was applied`);
@@ -820,13 +879,14 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   }
   const before = runHooks(ctx, "before-plan", rules.hooks["before-plan"], wave.runs);
   if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`);
-  const members = planRuns(ctx, wave.runs);
+  const { members, pending } = planRuns(ctx, wave.runs);
   const planned = new Map(members.map((m) => [m.member, m]));
-  const digest = waveSetDigest(members);
+  const digest = opWaveSetDigest(spec, members);
+  const neverOverMcp = rules.neverOverMcp || spec.neverOverMcp === true;
   const after = runHooks(ctx, "after-plan", rules.hooks["after-plan"], wave.runs, planned, digest);
   if (after.failed) return failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`);
   holds.push(...before.holds, ...after.holds);
-  const gate = waveGateName(spec.gate ?? spec.name, k);
+  const gate = opWaveGateName(spec, k);
   const hooks = Object.fromEntries(Object.entries(rules.hooks).filter(([, list]) => list.length > 0));
   const decision: OpWaveDecision = {
     wave: k,
@@ -844,6 +904,9 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
     ...(holds.length > 0 ? { heldBy: holds } : {}),
     ...(rules.spend ? { spend: "base" as const } : spec.approvals?.spend === true ? { spend: "change" as const } : {}),
     ...(rules.applyHooksRunBy === "apply" ? { applyHooksRunBy: "apply" as const } : {}),
+    ...(spec.digest?.over === "changing" ? { digestOver: "changing" as const } : {}),
+    ...(pending ? { pending } : {}),
+    ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
   };
   if (opWaveNeedsApproval(policy, members) || holds.length > 0) await settleGate(options, ctx, decision);
   // A wide wave's shares apply under the deciding job's approval, so it is spent here, once.
@@ -905,9 +968,11 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     op: spec.name,
     gate,
     planDigest: digest,
-    description: `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
+    description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
     now,
     ...(spent ? { spent } : {}),
+    ...(decision.pending ? { fields: decision.pending } : {}),
+    ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {
     decision.status = "approved";
@@ -1279,8 +1344,8 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
     head,
     timestamp: options.now ?? new Date().toISOString(),
     waves: spec.waves.map((wave, i) => {
-      const members = planRuns({ spec, k: i + 1, wave, cwd, exec }, wave.runs);
-      return { wave: i + 1, name: wave.name, digest: waveSetDigest(members) };
+      const { members } = planRuns({ spec, k: i + 1, wave, cwd, exec }, wave.runs);
+      return { wave: i + 1, name: wave.name, digest: opWaveSetDigest(spec, members) };
     }),
   };
   await (options.write ?? ((p) => writeHeadPlans(p, cwd)))(plans);

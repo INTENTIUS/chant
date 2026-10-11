@@ -54,23 +54,27 @@ export type { GenerateOpsPipelineResult, GenerateOpWavesPipelineResult } from ".
 export {
   OP_WAVE_APPLY_HOOKS_RUNNERS,
   OP_WAVE_DEFAULT_APPLY,
+  OP_WAVE_DEFAULT_GATE_NAME,
   OP_WAVE_GATE_POLICIES,
   OP_WAVE_HOOK_MOMENTS,
   assertOpWaveHooks,
   assertOpWavesSpec,
   opWaveApplyHooksRunBy,
+  opWaveGateName,
   opWaveHooksAt,
   opWaveJobs,
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
-export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesSpec } from "./op-waves";
+export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesDigest, OpWavesSpec } from "./op-waves";
 export {
   opWaveHooksAtBase,
   opWaveNeedsApproval,
   opWavePlansPath,
   opWaveRunsPath,
+  opWaveSetDigest,
   parseOpWavesSpec,
+  recordOpWaveHeadPlans,
   readOpWaveHooksFile,
   readOpWavePolicy,
   runOpWave,
@@ -80,6 +84,7 @@ export type {
   OpWaveBaseRules,
   OpWaveDecision,
   OpWaveApplyHooksRun,
+  OpWaveExec,
   OpWaveHookOutcome,
   OpWaveHookRun,
   OpWaveHooksFile,
@@ -87,7 +92,11 @@ export type {
   OpWaveMember,
   OpWavePlanFile,
   OpWavePlansFile,
+  OpWavePolicySource,
   OpWaveRunsFile,
+  OpWaveShowAtBase,
+  RecordHeadPlansOptions,
+  RunOpWaveApplyHooksOptions,
   RunOpWaveOptions,
   RunOpWaveResult,
 } from "./op-waves-run";
