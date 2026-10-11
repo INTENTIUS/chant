@@ -29,7 +29,7 @@ import { isPendingGateExpired, latestPendingGate, DEFAULT_GATE_EXPIRY, resolveAp
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import { parseDuration } from "./duration";
 import type { GateLedgerPort } from "./gate";
-import { DEFAULT_GATE_POINT_PASS, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts } from "./gate-point";
+import { DEFAULT_GATE_POINT_PASS, defaultGatePointStore, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts, type GatePointStore } from "./gate-point";
 import { isPointWait, type WaitingPoint } from "./steward-points";
 
 /** The question a gate's point was asked, as the gate reads it. */
@@ -58,6 +58,8 @@ export interface GatePointRequest {
   facts: GatePointFacts;
   /** What the answer record's `constrains` names: {@link gateSubject}. */
   subject: string;
+  /** Where the question goes, as the gate's `point.store` declares it (#3815). Undefined leaves it to the asker. */
+  store?: GatePointStore;
 }
 
 /** How a gate asks its point. A test passes a stub; {@link workspaceGatePointAsker} is the real one. */
@@ -69,7 +71,9 @@ export interface GatePointAsker {
  * The real asker: the workspace that holds `cwd`. It reads the point's
  * declared inputs from `points`, adds the `gate.*` ones the point declares,
  * and asks through the decide activity. A point with no model decider is
- * asked with no backends, so the run needs no `decide.backends`.
+ * asked with no backends, so the run needs no `decide.backends`. A question
+ * goes where the gate's `point.store` says, and to the ledger in a CI job
+ * when it says nothing (`defaultGatePointStore`, #3815).
  */
 export function workspaceGatePointAsker(cwd: string): GatePointAsker {
   return {
@@ -86,7 +90,8 @@ export function workspaceGatePointAsker(cwd: string): GatePointAsker {
       const { runDecide } = await import("./activities/decide");
       const asksModel = point.deciders.some((d) => d.kind === "model");
       try {
-        const r = await runDecide({ point: request.point, inputs, subject: request.subject, cwd, ...(asksModel ? {} : { backends: {} }) });
+        const store = request.store ?? defaultGatePointStore();
+        const r = await runDecide({ point: request.point, inputs, subject: request.subject, cwd, ...(store ? { store } : {}), ...(asksModel ? {} : { backends: {} }) });
         return { id: r.id, point: request.point, path: r.path, state: r.state, answer: r.answer, decider: r.decider, answeredBy: r.answeredBy, subject: request.subject, steward: null };
       } catch (err) {
         if (!isPointWait(err)) throw err;
@@ -151,7 +156,7 @@ function resolvedByOf(q: GatePointQuestion): string {
 export async function evaluatePointGate(port: GateLedgerPort, asker: GatePointAsker, input: PointGateInput): Promise<PointGateCheck> {
   const now = input.now ?? new Date().toISOString();
   const facts: GatePointFacts = { component: input.op, name: input.gate, env: input.env ?? null, planDigest: input.planDigest ?? null };
-  const q = await asker.ask({ point: input.point.name, inputs: input.inputs ?? {}, facts, subject: gateSubject(input.op, input.gate, input.env) });
+  const q = await asker.ask({ point: input.point.name, inputs: input.inputs ?? {}, facts, subject: gateSubject(input.op, input.gate, input.env), ...(input.point.store ? { store: input.point.store } : {}) });
   const ref: GateAnswerRef = { point: q.point, id: q.id, path: q.path };
 
   if (q.state === "answered" && q.answer !== null) {

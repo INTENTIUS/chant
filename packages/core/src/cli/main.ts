@@ -546,6 +546,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace points ask <point> --subject <id>` (#2739): what the question is about.
       result.subject = args[++i];
       if (!result.subject || result.subject.startsWith("-")) throw new Error("--subject needs what the question is about, such as a work item id: --subject <id>");
+    } else if (arg === "--store") {
+      // `chant workspace points ask <point> --store ledger` (#3815): where a new question goes.
+      const store = args[++i];
+      if (store !== "tree" && store !== "ledger") throw new Error("--store is tree (the answer kind's directory in the working tree) or ledger (chant/lifecycle): --store <tree|ledger>");
+      result.store = store;
     } else if (arg === "--answer") {
       // `chant workspace points answer <id> --answer <value>` (#2739)
       result.answer = args[++i];
@@ -1212,13 +1217,15 @@ Workspace (level 1, #2524):
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
                         --open keeps the escalated and proposed ones (ws-058)
-  workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+  workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--store <tree|ledger>] [--kind <kind file>] [--dry-run]
                         Ask a point's table, model and quorum deciders and
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
                         /v1/systemone response the caller got; chant calls no model.
                         --candidates gives an ad-hoc point's question and
-                        candidates, { question, criteria }
+                        candidates, { question, criteria }. --store ledger
+                        holds the question on chant/lifecycle and pushes it,
+                        for a checkout that does not outlive the run (CI)
   workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
                         a model's proposal, once the point's quorum is met,

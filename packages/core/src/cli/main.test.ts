@@ -874,6 +874,9 @@ describe("workspace points (ws-058, #2739)", () => {
     expect(answer).toMatchObject({ extraPositional: "answer", answer: "medium", bys: ["alice", "bob"] });
     expect(parseArgs(["workspace", "points", "--open", "--json"])).toMatchObject({ open: true, json: true });
     expect(() => parseArgs(["workspace", "points", "ask", "p", "--response", "--json"])).toThrow(/--response needs a JSON file/);
+    // #3815: --store ledger holds the question on chant/lifecycle.
+    expect(parseArgs(["workspace", "points", "ask", "p", "--inputs", "-", "--store", "ledger"]).store).toBe("ledger");
+    expect(() => parseArgs(["workspace", "points", "ask", "p", "--store", "git"])).toThrow(/--store is tree .* or ledger/);
   });
 });
 

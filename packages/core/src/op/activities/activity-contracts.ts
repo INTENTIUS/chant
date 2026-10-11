@@ -320,6 +320,7 @@ export const decideContract = activityContract(
     cwd: z.string().optional(),
     backends: z.record(z.string(), backendSchema).optional(),
     dryRun: z.boolean().optional(),
+    store: z.enum(["tree", "ledger"]).optional(),
   }),
   z.strictObject({
     id: z.string(),
