@@ -33,6 +33,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `planWave` | Plans every run of a wave in one call ([Plan a wave in one call](#plan-a-wave-in-one-call)) |
 | `applyWave` | Applies a wave's approved set in one call, in place of `apply` |
 | `hooks` | Commands run before and after each wave's plan and apply, read at the base commit ([Stage hooks](#stage-hooks)) |
+| `approvals` | `{ "spend": true }` makes an approval good for one apply ([Spend an approval](#spend-an-approval)). Read at the base commit |
 | `gate` | The base gate name. Default: `name` |
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
@@ -244,9 +245,36 @@ chant approve migrations migrations-wave-3 --plan jcs1-sha256:... --actor github
 
 The signers file is read at the base commit, like the policy. A pull request that adds its author's key to it cannot use that key to approve its own waves. Without a signers file at base, no approval counts.
 
+## Spend an approval
+
+By default an approval of a digest passes that digest whenever it is planned. Re-run a wave job, or revert a change and merge it again, and the wave applies the same plans under the same approval. With `approvals.spend` an approval is good for one apply, as terragucci's wave gate has it:
+
+```json
+{ "name": "migrations", "op": "migrate", "approvals": { "spend": true }, "plan": ["..."], "waves": ["..."] }
+```
+
+Before a wave applies under an approval, it appends one line to `_gates/<name>/applied.jsonl` on `chant/lifecycle`:
+
+```json
+{"version":1,"kind":"applied","op":"migrations","gate":"migrations-wave-3","planDigest":"jcs1-sha256:...","approvedAt":"2026-10-10T09:00:00.000Z","approvedBy":"github:alice","timestamp":"2026-10-11T12:00:00.000Z","wave":{"number":3,"name":"prod"}}
+```
+
+From then on every approval of that gate and digest made at or before `approvedAt` is spent:
+
+| The approval | Without `spend` | With `spend` |
+|---|---|---|
+| of this digest, not yet applied under | the wave applies | the wave applies, and records the line |
+| of this digest, a wave already applied under it | the wave applies again | the wave waits for a new `chant approve` of the digest, and the log names the spent approval |
+| of another digest, a wave already applied under it | the gate names it as the approval of other plans | it counts for nothing, and the wave waits for an approval of its own digest |
+| the merged pull request's review, under `pr-review`, when a wave already applied this digest under a review of that head | the review is recorded again and the wave applies | the review is spent too, and the wave waits |
+
+A wide wave's deciding job writes the line once, before its share jobs apply. The line is written before the apply starts, so an apply that fails has still spent its approval and needs a new one to run again. If the line cannot be written, the wave applies nothing and exits 1.
+
+The rule is read at the base commit with the policy. A change that turns `spend` off still has its own apply judged with it on. A change that turns it on records the approval its own apply runs under, and the rule decides from the next change on. The file sits in a directory under `_gates/`, so `chant approve` and the gate ledger readers never see its lines. `@intentius/chant/lifecycle/gate-audit` reads them as applies: `appliedGateApplies(parseAppliedGateLines(text))` from `@intentius/chant/gate-decision` gives the `applies` that `deriveGateAudit` ties to the approval each ran under.
+
 ## Where the policy is read from
 
-The policy, the approval mode and the hooks for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
+The policy, the approval mode, the spend rule and the hooks for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
 
 The same goes for hooks. A change cannot add, edit or remove a hook that its own apply runs, and the log says so when the change's hooks differ from the ones at base. A wave or file missing at base has no hooks. If the hooks at base are malformed, none of them run and the wave waits for an approval.
 
@@ -279,14 +307,16 @@ A tool that runs its own waves can decide a gate by these rules without running 
 
 | Export | What it does |
 |---|---|
-| `decideGateApproval({ ledger, gate, planDigest, mode, signers, review })` | decides a plan-bound gate from its ledger lines under `ledger`, `pr-review` or `sealed`, and returns `approved` (with the resolution or the review) or `waiting` (with the standing pending fact, the approval of another digest, and each approval of this digest that did not count, with the reason) |
+| `decideGateApproval({ ledger, gate, planDigest, mode, signers, review, spend })` | decides a plan-bound gate from its ledger lines under `ledger`, `pr-review` or `sealed`, and returns `approved` (with the resolution or the review) or `waiting` (with the standing pending fact, the approval of another digest, and each approval of this digest that did not count, with the reason). With `spend` and `ledger.applied`, an approval a wave applied under counts for nothing and comes back as `spent` |
+| `parseAppliedGateLines(text)`, `isApprovalSpent(applied, approval)` | read `_gates/<op>/applied.jsonl`, and say whether an approval is spent by it |
+| `appliedGateApplies(records)` | the applied lines as `gate-audit` applies |
 | `baseCommit(repo)` | the first parent of HEAD, fetched when the checkout is shallow |
 | `gateSignersAt(repo, base)` | the signers file at base, at the path `.chant/trust.json` names there. An invalid trust.json turns attestation off, as it does in chant |
 | `gateSealRefusal(signers, approval)` | why a seal does not count for its approver, or null when it does |
 | `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates` |
 | `reviewApproval(merged, headDigest, digest)` | whether the merged pull request's review approves the digest, under `pr-review` |
 
-Reading the ledger and the forge's review is the caller's job, and so is recording a pending fact or the review's approval. The seal is checked with node:crypto, so the job needs no `ssh-keygen`, and it verifies every key type a signers file accepts. Bundled with esbuild for node, the module comes to about 27 KB. `gate-decision-bundle.test.ts` lists every module in that bundle and fails when TypeScript, zod or chant's git ledger code joins it.
+Reading the ledger and the forge's review is the caller's job, and so is recording a pending fact, the review's approval or the applied line. The seal is checked with node:crypto, so the job needs no `ssh-keygen`, and it verifies every key type a signers file accepts. Bundled with esbuild for node, the module comes to about 27 KB. `gate-decision-bundle.test.ts` lists every module in that bundle and fails when TypeScript, zod or chant's git ledger code joins it.
 
 ## The forge's own reviewers
 

@@ -21,6 +21,10 @@
  *   Under `pr-review` the pull request's pipeline runs `--record-plans`
  *   ({@link recordOpWaveHeadPlans}), which plans every wave at the head and
  *   records the digests a review of that head approves.
+ * - Spend (#3784): with `approvals.spend` at base, an approval a wave applied
+ *   under counts for nothing, and the wave records each approval it applies
+ *   under in `_gates/<name>/applied.jsonl` (`../lifecycle/gate-applied.ts`)
+ *   just before it applies (a wide wave's deciding job, before its shares).
  * - Apply: each run's `apply` command, or one `applyWave` call for the
  *   approved set (#3762). A share job (`--share i`) re-plans its
  *   slice first and refuses, without applying it, a run whose plan digest is
@@ -33,6 +37,7 @@ import { dirname, join, posix } from "node:path";
 import { waveGateName, waveSetDigest, type WaveMember } from "../gated-waves";
 import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
+import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import {
@@ -118,6 +123,17 @@ export interface OpWaveDecision {
   hooks?: Partial<Record<OpWaveHookMoment, OpWaveHook[]>>;
   /** The `onFailure: approve` hooks that failed: the wave needs an approval whatever its policy (#3762). */
   heldBy?: string[];
+  /**
+   * Spent approvals (#3784). `base`: the spec at base sets `approvals.spend`,
+   * so a spent approval counts for nothing and the approval this wave applies
+   * under is recorded. `change`: only the change sets it, so the approval is
+   * recorded and spent from the next decision on. Absent: neither.
+   */
+  spend?: "base" | "change";
+  /** The approval's own timestamp: what the applied record names. */
+  approvedAt?: string;
+  /** When the wave recorded that it applies under the approval, which spent it. */
+  spentAt?: string;
 }
 
 /** One hook's run (#3762). */
@@ -186,6 +202,8 @@ export interface OpWaveBaseRules {
   hooks: Record<OpWaveHookMoment, OpWaveHook[]>;
   /** Set when the hooks at base could not be read: none run, and the wave waits for a person. */
   hooksRefused?: string;
+  /** The spec at base sets `approvals.spend` (#3784). */
+  spend: boolean;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -206,7 +224,7 @@ export function readOpWavePolicy(
   show: OpWaveShowAtBase = gitShowAtBase,
 ): OpWaveBaseRules {
   const { sha, text } = show(base, specFile.replace(/^\.\//, "").split("\\").join(posix.sep), cwd);
-  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha, hooks: noHooks() };
+  const absent = { policy: "always" as const, approval: "ledger" as const, source: "absent-at-base" as const, base: sha, hooks: noHooks(), spend: false };
   if (text === null) return absent;
   let spec: OpWavesSpec;
   try {
@@ -214,12 +232,14 @@ export function readOpWavePolicy(
   } catch {
     return absent;
   }
+  // The spend rule is the spec's, so it holds for a wave the base does not have yet.
+  const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const wave = spec.waves.find((w) => w.name === name);
-  if (!wave) return absent;
+  if (!wave) return { ...absent, spend };
   const policy = wave.gate ?? "always";
   // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
   const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
-  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks() };
+  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend };
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
@@ -580,8 +600,11 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
     status: "not-required",
     ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     ...(holds.length > 0 ? { heldBy: holds } : {}),
+    ...(rules.spend ? { spend: "base" as const } : spec.approvals?.spend === true ? { spend: "change" as const } : {}),
   };
   if (opWaveNeedsApproval(policy, members) || holds.length > 0) await settleGate(options, ctx, decision);
+  // A wide wave's shares apply under the deciding job's approval, so it is spent here, once.
+  if (options.decide && !(await spendApproval(options, ctx, decision))) return ctx.result;
   mkdirSync(dirname(recordPath), { recursive: true });
   writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
   result.decision = decision;
@@ -632,6 +655,8 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     };
   }
   const now = options.now ?? new Date().toISOString();
+  // #3784: under the spend rule at base, an approval a wave already applied under counts for nothing.
+  const spent: AppliedGateRecord[] | undefined = decision.spend === "base" ? ((await ledger.readApplied?.(spec.name)) ?? []).filter((a) => a.gate === gate) : undefined;
   const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
   const check = await evaluateGate(port, {
     op: spec.name,
@@ -639,20 +664,27 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     planDigest: digest,
     description: `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
     now,
+    ...(spent ? { spent } : {}),
   });
   if (check.satisfied) {
     decision.status = "approved";
     decision.via = "ledger";
     decision.approvedBy = check.resolution.resolvedBy;
+    decision.approvedAt = check.resolution.timestamp;
     return;
   }
+  const used = spent?.filter((a) => isApprovalSpent([a], { gate, planDigest: digest, timestamp: a.approvedAt })).pop();
+  if (used) {
+    ctx.log(`wave ${k} (${wave.name}): the approval of ${digest} by ${used.approvedBy} at ${used.approvedAt} is spent: a wave applied under it at ${used.timestamp}. Applying it again needs a new approval`);
+  }
   if (approval === "pr-review") {
-    const byReview = await approveByReview(options, { op: spec.name, gate, k, digest, cwd, now, port: ledger });
+    const byReview = await approveByReview(options, { op: spec.name, gate, k, digest, cwd, now, port: ledger, ...(spent ? { spent } : {}) });
     decision.review = byReview.review;
     if (byReview.approved) {
       decision.status = "approved";
       decision.via = "pr-review";
       decision.approvedBy = byReview.review.approvers!.join(", ");
+      decision.approvedAt = now;
       return;
     }
     decision.status = "waiting";
@@ -697,6 +729,8 @@ async function applyStage(
     }
     log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}, and ${decision.approvedBy} approved its digest`);
   }
+  if (!(await spendApproval(options, ctx, decision))) return;
+  if (recordPath && decision.spentAt) writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
   if (spec.applyWave) {
     const runsPath = writeRunsFile(ctx, runs, planned, decision.digest);
     let code: number;
@@ -742,6 +776,44 @@ function applyRun(
   }
 }
 
+/**
+ * Record that the wave applies under its approval (#3784), which spends it:
+ * one line in `_gates/<name>/applied.jsonl`, before anything applies, as
+ * terragucci's wave gate writes it. Only an approved wave under the spend
+ * rule records, and only once. False when the line could not be written: the
+ * wave then fails and applies nothing, since an apply the record misses
+ * would leave its approval standing.
+ */
+async function spendApproval(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<boolean> {
+  if (!decision.spend || decision.status !== "approved" || decision.spentAt || !decision.approvedAt) return true;
+  const { spec, k, wave, cwd, log } = ctx;
+  const port = options.gates ?? gitGateLedgerPort({ cwd });
+  const now = options.now ?? new Date().toISOString();
+  const record: AppliedGateRecord = {
+    version: 1,
+    kind: "applied",
+    op: spec.name,
+    gate: decision.gate,
+    planDigest: decision.digest,
+    approvedAt: decision.approvedAt,
+    approvedBy: decision.approvedBy ?? "",
+    timestamp: now,
+    wave: { number: k, name: wave.name },
+    ...(decision.via === "pr-review" && decision.review ? { review: { ...(decision.review.pr !== undefined ? { pr: decision.review.pr } : {}), ...(decision.review.head ? { head: decision.review.head } : {}) } } : {}),
+  };
+  try {
+    if (!port.appendApplied) throw new Error("this gate ledger cannot record an applied approval");
+    const pushed = await port.appendApplied(record);
+    if (!pushed.pushed && pushed.pushWarning) log(`wave ${k} (${wave.name}): ${pushed.pushWarning}`);
+  } catch (err) {
+    failed(ctx, `wave ${k} (${wave.name}) could not record that it applies under the approval by ${record.approvedBy}, so nothing applied: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+  decision.spentAt = now;
+  log(`wave ${k} (${wave.name}) applies under the approval by ${record.approvedBy} at ${record.approvedAt}, which is now spent`);
+  return true;
+}
+
 /** What {@link approveByReview} found. */
 type ReviewOutcome = ReviewApproval;
 
@@ -753,7 +825,7 @@ type ReviewOutcome = ReviewApproval;
  */
 async function approveByReview(
   options: RunOpWaveOptions,
-  at: { op: string; gate: string; k: number; digest: string; cwd: string; now: string; port: GateLedgerPort },
+  at: { op: string; gate: string; k: number; digest: string; cwd: string; now: string; port: GateLedgerPort; spent?: readonly AppliedGateRecord[] },
 ): Promise<ReviewOutcome> {
   const review = await import("./gate-review");
   const head = options.head ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: at.cwd, encoding: "utf-8" }).trim();
@@ -769,6 +841,13 @@ async function approveByReview(
   const { reviewApproval } = await import("../gate-decision");
   const outcome = reviewApproval(merged, plans?.waves.find((w) => w.wave === at.k)?.digest, at.digest);
   if (!outcome.approved) return outcome;
+  // #3784: a review a wave already applied this digest under is spent, so it is not recorded again.
+  if (at.spent && isApprovalSpent(at.spent, { gate: at.gate, planDigest: at.digest, review: { head: merged.head } })) {
+    return {
+      approved: false,
+      review: { ...outcome.review, reason: `a wave already applied ${at.digest} under the review of #${merged.pr} at ${merged.head.slice(0, 12)}, so the review is spent` },
+    };
+  }
   const note = `approved by the review of #${merged.pr} at ${merged.head.slice(0, 12)}: ${merged.approvers.join(", ")}`;
   await at.port.appendResolution?.({
     op: at.op,

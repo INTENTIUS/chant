@@ -358,3 +358,118 @@ describe("runOpWave hooks (#3762)", () => {
     h.done();
   });
 });
+
+describe("spent approvals (#3784)", () => {
+  const spending: OpWavesSpec = { ...spec, approvals: { spend: true } };
+  const digest = (n: string) => `sha256:${n.repeat(64)}`;
+  const set = waveSetDigest([{ member: "staging", planDigest: digest("a") }]);
+  const approval = { version: 1 as const, op: "migrations", gate: "migrations-wave-2", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: set };
+  function harness(atBase: OpWavesSpec | null) {
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-spend-"));
+    const calls: string[] = [];
+    const exec: OpWaveExec = (argv, dir) => {
+      calls.push(argv.join(" "));
+      if (argv[1] === "plan") writeFileSync(join(dir, argv[4]!), JSON.stringify({ planDigest: digest(argv[2] === "staging" ? "a" : "b"), destructive: true }));
+      return 0;
+    };
+    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: atBase === null ? null : JSON.stringify(atBase) });
+    return { cwd, calls, exec, show, applies: () => calls.filter((c) => c.startsWith("tool apply")).length, done: () => rmSync(cwd, { recursive: true, force: true }) };
+  }
+
+  test("the spec checks approvals", () => {
+    expect(() => assertOpWavesSpec({ ...spec, approvals: { spend: "yes" } } as unknown as OpWavesSpec)).toThrow(/approvals.spend must be true or false/);
+    expect(() => assertOpWavesSpec({ ...spec, approvals: { burn: true } } as unknown as OpWavesSpec)).toThrow(/approvals.burn is not a setting/);
+    expect(() => assertOpWavesSpec(spending)).not.toThrow();
+  });
+
+  test("with spend at base, an approval passes the same wave once: the second run waits for a new approval", async () => {
+    const h = harness(spending);
+    const gates = memoryGateLedgerPort({ resolutions: [approval] });
+    const now = "2026-10-11T00:00:00Z";
+    const first = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now });
+    expect(first).toMatchObject({ exitCode: 0, applied: ["staging"], decision: { status: "approved", approvedBy: "alice", approvedAt: approval.timestamp, spend: "base", spentAt: now } });
+    expect(gates.applied).toEqual([
+      { version: 1, kind: "applied", op: "migrations", gate: "migrations-wave-2", planDigest: set, approvedAt: approval.timestamp, approvedBy: "alice", timestamp: now, wave: { number: 2, name: "staging" } },
+    ]);
+
+    const logs: string[] = [];
+    const second = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T01:00:00Z", log: (l) => logs.push(l) });
+    expect(second).toMatchObject({ exitCode: 3, applied: [], decision: { status: "waiting" } });
+    expect(h.applies()).toBe(1);
+    expect(logs.some((l) => /the approval of .* by alice at 2026-10-10T00:00:00Z is spent/.test(l))).toBe(true);
+    expect(gates.appended.at(-1)!.planDigest).toBe(set);
+
+    // A new approval of the same digest passes it once more, and is spent in turn.
+    await gates.appendResolution!({ op: "migrations", gate: "migrations-wave-2", resolvedBy: "bob", timestamp: "2026-10-11T02:00:00Z", planDigest: set });
+    const third = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T03:00:00Z" });
+    expect(third).toMatchObject({ exitCode: 0, decision: { approvedBy: "bob" } });
+    expect(gates.applied).toHaveLength(2);
+    h.done();
+  });
+
+  test("without spend at base, the approval passes the digest every time, and only a change that adds spend records it", async () => {
+    const off = harness(spec);
+    const gates = memoryGateLedgerPort({ resolutions: [approval] });
+    for (const now of ["2026-10-11T00:00:00Z", "2026-10-11T01:00:00Z"]) {
+      expect(await runOpWave({ spec, specFile: "waves.json", wave: 2, cwd: off.cwd, exec: off.exec, show: off.show, gates, now })).toMatchObject({ exitCode: 0 });
+    }
+    expect(gates.applied).toEqual([]);
+    off.done();
+
+    // The change turns spend on: this apply is recorded, and the rule holds from the next decision at base.
+    const adding = harness(spec);
+    const added = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: adding.cwd, exec: adding.exec, show: adding.show, gates, now: "2026-10-11T02:00:00Z" });
+    expect(added).toMatchObject({ exitCode: 0, decision: { spend: "change" } });
+    expect(gates.applied).toHaveLength(1);
+    adding.done();
+    const next = harness(spending);
+    expect(await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: next.cwd, exec: next.exec, show: next.show, gates, now: "2026-10-11T03:00:00Z" })).toMatchObject({ exitCode: 3 });
+    next.done();
+  });
+
+  test("a change cannot turn spend off for its own apply", async () => {
+    const h = harness(spending);
+    const gates = memoryGateLedgerPort({ resolutions: [approval] });
+    await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00Z" });
+    const again = await runOpWave({ spec, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T01:00:00Z" });
+    expect(again.exitCode).toBe(3);
+    h.done();
+  });
+
+  test("a spent approval of another digest does not refuse; the wave waits for its own", async () => {
+    const h = harness(spending);
+    const other = { ...approval, planDigest: "sha256:" + "f".repeat(64) };
+    const gates = memoryGateLedgerPort({
+      resolutions: [other],
+      applied: [{ version: 1, kind: "applied", op: "migrations", gate: "migrations-wave-2", planDigest: other.planDigest, approvedAt: other.timestamp, approvedBy: "alice", timestamp: "2026-10-10T01:00:00Z" }],
+    });
+    const result = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00Z" });
+    expect(result).toMatchObject({ exitCode: 3, decision: { status: "waiting" } });
+    h.done();
+  });
+
+  test("a wide wave's deciding job spends the approval once, before its shares apply", async () => {
+    const wide: OpWavesSpec = { ...spending, waves: spending.waves.map((w) => (w.name === "prod" ? { ...w, gate: "always" as const } : w)) };
+    const h = harness(wide);
+    const prodSet = waveSetDigest(["t1", "t2", "t3"].map((t) => ({ member: t, planDigest: digest("b") })));
+    const gates = memoryGateLedgerPort({ resolutions: [{ ...approval, gate: "migrations-wave-3", planDigest: prodSet }] });
+    const decided = await runOpWave({ spec: wide, specFile: "waves.json", wave: 3, decide: true, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00Z" });
+    expect(decided).toMatchObject({ exitCode: 0, decision: { status: "approved", spentAt: "2026-10-11T00:00:00Z" } });
+    expect(gates.applied).toHaveLength(1);
+    for (const share of [1, 2]) {
+      expect(await runOpWave({ spec: wide, specFile: "waves.json", wave: 3, share, cwd: h.cwd, exec: h.exec, show: h.show, gates })).toMatchObject({ exitCode: 0 });
+    }
+    expect(gates.applied).toHaveLength(1);
+    expect(h.applies()).toBe(3);
+    h.done();
+  });
+
+  test("a wave that cannot record the approval applies nothing", async () => {
+    const h = harness(spending);
+    const gates = { ...memoryGateLedgerPort({ resolutions: [approval] }), appendApplied: undefined };
+    const result = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates });
+    expect(result).toMatchObject({ exitCode: 1, applied: [] });
+    expect(h.applies()).toBe(0);
+    h.done();
+  });
+});

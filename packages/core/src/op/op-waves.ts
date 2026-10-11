@@ -34,6 +34,13 @@
  * request's review of its head, by a writer other than its author, when the
  * head planned the same digest). See `./gate-review.ts`.
  *
+ * ## Spent approvals (#3784)
+ *
+ * With `approvals: { spend: true }` (read at base, like the policy), a wave
+ * records each approval it applies under in `_gates/<name>/applied.jsonl` on
+ * `chant/lifecycle`, as terragucci's wave gate does, and that approval is
+ * spent: the same digest needs a new approval to apply again.
+ *
  * ## Wave-level commands and hooks (#3762)
  *
  * A product whose tool plans a whole wave in one call (Terragrunt's `run
@@ -189,6 +196,8 @@ export interface OpWavesSpec {
   applyWave?: string[];
   /** Stage hooks for every wave (#3762), run before each wave's own. Read at the base commit. */
   hooks?: OpWaveHooks;
+  /** What happens to an approval once a wave applies under it (#3784). Read at the base commit. */
+  approvals?: OpWavesApprovals;
   waves: OpWave[];
   /**
    * A scheduled job that starts again a wave job whose approval has arrived
@@ -207,6 +216,18 @@ export interface OpWavesSpec {
    * `../notify.ts`.
    */
   notify?: NotifyConfig;
+}
+
+/** What happens to an approval once a wave applies under it (#3784). */
+export interface OpWavesApprovals {
+  /**
+   * Spend it. Before a wave applies under an approval it records that in
+   * `_gates/<name>/applied.jsonl` on `chant/lifecycle`, and from then on the
+   * approval counts for nothing: applying the same digest again, by a re-run
+   * or a revert and re-merge, waits for a new approval. Default false: an
+   * approval of a digest passes that digest as often as it is planned.
+   */
+  spend?: boolean;
 }
 
 /** The scheduled resume job of an Op waves pipeline (#3683). */
@@ -289,6 +310,14 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
   if (spec.resume !== undefined && (typeof spec.resume.schedule !== "string" || spec.resume.schedule.trim().split(/\s+/).length !== 5)) {
     throw new Error(`${where}: resume.schedule must be a five-field cron expression, such as "*/10 * * * *".`);
+  }
+  if (spec.approvals !== undefined) {
+    const a = spec.approvals as unknown;
+    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false }.`);
+    for (const [key, value] of Object.entries(a as Record<string, unknown>)) {
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the one there is approvals.spend.`);
+      if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
+    }
   }
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");

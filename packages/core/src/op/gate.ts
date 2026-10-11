@@ -48,9 +48,10 @@ import {
 } from "../lifecycle/gate-ledger";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
+import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import { sortedJsonReplacer } from "../utils";
 import type { GateApprover, ResolvedGateApproval } from "./gate-approval";
-import { pushLifecycleReport, requireLifecycleLedger } from "../lifecycle/git";
+import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 import { resolveGateRunLocator } from "./gate-resume";
 
@@ -92,6 +93,10 @@ export interface GateLedgerPort {
    * Absent, every approval is judged as before.
    */
   approvalRule?(gate: string): Promise<GateApprovalRule | null>;
+  /** The approvals a wave applied under (#3784), from `_gates/<op>/applied.jsonl`. Absent on a port that never spends approvals. */
+  readApplied?(op: string): Promise<AppliedGateRecord[]>;
+  /** Record that a wave is about to apply under an approval (#3784), which spends it. */
+  appendApplied?(record: AppliedGateRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
 }
 
 /** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
@@ -140,20 +145,56 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       const { record } = await appendPendingGate(input, opts);
       return { record, ...(await pushLifecycleReport(opts)) };
     },
+    async readApplied(op) {
+      await requireLifecycleLedger(opts);
+      const { dir, file } = appliedGatePath(op);
+      const text = await readBlobFromPath(dir, file, opts);
+      return text ? parseAppliedGateLines(text) : [];
+    },
+    async appendApplied(record) {
+      const { dir, file } = appliedGatePath(record.op);
+      const line = JSON.stringify(record, sortedJsonReplacer);
+      let lastErr: unknown;
+      // The same append-and-retry as a ledger line: another writer to the branch is the ordinary case.
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const prior = await readPathSha(dir, file, opts);
+          const existing = prior ? await readBlobBySha(prior, opts) : null;
+          await writeBlobToPath(dir, file, existing ? `${existing.replace(/\n$/, "")}\n${line}\n` : `${line}\n`, `Applied under ${record.gate}`, {
+            ...opts,
+            expectPriorPathSha: prior,
+          });
+          return pushLifecycleReport(opts);
+        } catch (err) {
+          if (!(err instanceof RefCASConflictError)) throw err;
+          lastErr = err;
+        }
+      }
+      throw lastErr;
+    },
   };
 }
 
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
 export function memoryGateLedgerPort(
-  seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[] } = {},
-): GateLedgerPort & { appended: PendingGateRecord[]; resolved: GateResolutionRecord[] } {
+  seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[]; applied?: AppliedGateRecord[] } = {},
+): GateLedgerPort & { appended: PendingGateRecord[]; resolved: GateResolutionRecord[]; applied: AppliedGateRecord[] } {
   const resolutions = [...(seed.resolutions ?? [])];
   const pending = [...(seed.pending ?? [])];
   const appended: PendingGateRecord[] = [];
   const resolved: GateResolutionRecord[] = [];
+  const applied: AppliedGateRecord[] = [...(seed.applied ?? [])];
   return {
     appended,
     resolved,
+    applied,
+    async readApplied(op) {
+      return applied.filter((a) => a.op === op);
+    },
+    async appendApplied(record) {
+      applied.push(record);
+      return { pushed: true };
+    },
     async read() {
       return { resolutions: [...resolutions], pending: [...pending] };
     },
@@ -213,6 +254,12 @@ export interface GateCheckInput {
   approval?: ResolvedGateApproval;
   /** ISO-8601 "now" — supplied by the caller, so the decision is deterministic under test. */
   now?: string;
+  /**
+   * The approvals a wave already applied under (#3784). Given, an approval
+   * one of them spent counts for nothing: it neither satisfies the gate nor
+   * stands as a mismatch. Absent, nothing is spent.
+   */
+  spent?: readonly AppliedGateRecord[];
 }
 
 /**
@@ -472,7 +519,9 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     env === undefined
       ? ledger.resolutions
       : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env)
-  ).filter((r) => rule === null || r.gate !== input.gate || rule.refuses(r) === null);
+  )
+    .filter((r) => rule === null || r.gate !== input.gate || rule.refuses(r) === null)
+    .filter((r) => input.spent === undefined || r.gate !== input.gate || !isApprovalSpent(input.spent, r));
 
   const standing = latestPendingGate(pending, input.gate);
   const since = standing?.timestamp ?? EPOCH;
