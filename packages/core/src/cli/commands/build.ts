@@ -171,6 +171,42 @@ export interface BuildResult {
 }
 
 /**
+ * Run each lexicon plugin's own post-synth checks over a build result, each
+ * plugin seeing only its own lexicon's output. Shared by `chant build` and
+ * `chant lint` (#3750), so the two run the same checks over the same scoping;
+ * each caller then applies `lint.presets`, `lint.rules` and inline
+ * suppressions its own way. A plugin with no checks yields no entry.
+ */
+export function runLexiconPostSynthChecks(
+  plugins: readonly LexiconPlugin[],
+  result: Parameters<typeof runPostSynthChecks>[1],
+  env: string | undefined,
+  opts?: Parameters<typeof runPostSynthChecks>[3],
+): Array<{ plugin: LexiconPlugin; diagnostics: PostSynthDiagnostic[] }> {
+  const batches: Array<{ plugin: LexiconPlugin; diagnostics: PostSynthDiagnostic[] }> = [];
+  for (const plugin of plugins) {
+    if (!plugin.postSynthChecks) continue;
+    const checks = plugin.postSynthChecks();
+    if (checks.length === 0) continue;
+
+    // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't
+    // interfere. Outputs are keyed by the serializer's lexicon name (the
+    // build partition key), which differs from plugin.name for a dialect like
+    // forgejo (plugin "forgejo", serializer "github").
+    const outputKey = plugin.serializer.name;
+    const scopedOutputs = new Map<string, string | SerializerResult>();
+    const pluginOutput = result.outputs.get(outputKey);
+    if (pluginOutput !== undefined) {
+      scopedOutputs.set(outputKey, pluginOutput);
+    }
+
+    const scopedResult = { ...result, outputs: scopedOutputs };
+    batches.push({ plugin, diagnostics: runPostSynthChecks(checks, scopedResult, env, opts) });
+  }
+  return batches;
+}
+
+/**
  * Execute the build command
  */
 export async function buildCommand(options: BuildOptions): Promise<BuildResult> {
@@ -549,24 +585,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   if (result.errors.length === 0 && options.plugins) {
-    for (const plugin of options.plugins) {
-      if (!plugin.postSynthChecks) continue;
-      const checks = plugin.postSynthChecks();
-      if (checks.length === 0) continue;
-
-      // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't
-      // interfere. Outputs are keyed by the serializer's lexicon name (the
-      // build partition key), which differs from plugin.name for a dialect like
-      // forgejo (plugin "forgejo", serializer "github").
-      const outputKey = plugin.serializer.name;
-      const scopedOutputs = new Map<string, string | SerializerResult>();
-      const pluginOutput = result.outputs.get(outputKey);
-      if (pluginOutput !== undefined) {
-        scopedOutputs.set(outputKey, pluginOutput);
-      }
-
-      const scopedResult = { ...result, outputs: scopedOutputs };
-      const postDiags = runPostSynthChecks(checks, scopedResult, env, { activityContracts, telemetry });
+    for (const { plugin, diagnostics: postDiags } of runLexiconPostSynthChecks(options.plugins, result, env, { activityContracts, telemetry })) {
       // `lint.presets` (chant #2113) filters WHICH check ids are reported at
       // all, before `lint.rules`/inline suppression act on the reported
       // ones. It's a no-op for a lexicon that ships no `lintPresets()` (the

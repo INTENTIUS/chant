@@ -1,4 +1,4 @@
-import { resolve, join, relative } from "path";
+import { resolve, join, relative, dirname } from "path";
 import type { BuildParamProvenance } from "../../provenance";
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { runLint, parseDisableComments } from "../../lint/engine";
@@ -24,6 +24,14 @@ import { walkDiscovery, workspaceMemberDirs } from "../../discovery/walk";
 import { buildParamValues, resolveBuildParams } from "../../build-params";
 import { setBuildParams } from "../../params";
 import { isNoLexiconDetected } from "../../detectLexicon";
+import { build } from "../../build";
+import { loadChantConfigUpward, resolveOwnershipEnv, resolveOwnershipMarker } from "../../config";
+import { resolveBuildModes, resolveProjectBuildOptions } from "../build-options";
+import { resolveTelemetryAttribution } from "../../telemetry-attribution";
+import { applyConfiguredPreset, applyConfiguredSeverity, resolvePresetIds } from "../../lint/config";
+import { applyInlineSuppressions } from "../../lint/suppressions";
+import { getProvenance } from "../../provenance";
+import { runLexiconPostSynthChecks } from "./build";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
@@ -129,6 +137,16 @@ function lexiconResolutionDiagnostic(projectRoot: string, error: Error): LintDia
     message: error.message,
   };
 }
+
+/**
+ * The diagnostic id `chant lint` reports a lint target that does not build
+ * under (chant #3750). The lexicons' post-synth checks read a build result, so
+ * when the build fails they cannot run; this says so instead of letting the
+ * lint pass in silence. Like {@link LEXICON_RESOLUTION_RULE_ID} it is not a
+ * rule: it has no severity setting and no disable form. The message is the
+ * build's own.
+ */
+export const BUILD_FAILURE_RULE_ID = "LEX002";
 
 /**
  * The plugins of lexicons that the project's source imports from and that are not in `configured`, for their
@@ -631,6 +649,132 @@ async function runOpCheckDiagnostics(
 }
 
 /**
+ * Run each loaded lexicon's own post-synth checks (#3750), the ones `chant
+ * build` runs after it serializes, over an in-memory build of the lint target.
+ *
+ * The build is `chant build`'s: the same `build()` call with options from the
+ * same assembler (`../build-options.ts`), and the same per-lexicon scoping of
+ * outputs (`runLexiconPostSynthChecks`, ./build.ts). Nothing is written. It
+ * builds `infraPath`, the target the caller asked to lint, never the project
+ * root above it, so `chant lint <dir>` costs a build of `<dir>` and nothing
+ * more (the same scoping {@link runOpCheckDiagnostics} documents). It is
+ * skipped outright when no loaded lexicon ships post-synth checks, which keeps
+ * a project with no lexicon, and every core-only fixture, from building at
+ * all.
+ *
+ * A target that does not build reports each build error under
+ * {@link BUILD_FAILURE_RULE_ID} and skips the checks. Findings go through
+ * `lint.presets`, then `lint.rules`, then inline `chant-ignore` comments, the
+ * order `chant build` applies them in. A finding carries no line (see
+ * ../../lint/post-synth.ts's `PostSynthDiagnostic`), so it is reported at
+ * `1:1` in the file that declared its entity, or at the config file (the
+ * project root without one) when it names none.
+ */
+async function runLexiconPostSynthDiagnostics(
+  infraPath: string,
+  plugins: readonly LexiconPlugin[],
+  buildParams?: BuildParamProvenance[],
+  sandbox?: boolean,
+): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
+  const diagnostics: LintDiagnostic[] = [];
+  const suppressed: Array<LintDiagnostic & { reason?: string }> = [];
+  const withChecks = plugins.filter((plugin) => (plugin.postSynthChecks?.() ?? []).length > 0);
+  if (withChecks.length === 0) return { diagnostics, suppressed };
+
+  const projectRoot = findProjectRoot(infraPath);
+  const lintConfig = loadConfig(projectRoot);
+  // Where a finding that names no declared entity is reported: the config the
+  // build loads once it is known (past a lint-only fragment), else the nearest.
+  let fallbackFile = findProjectConfig(projectRoot).configPath ?? projectRoot;
+  const buildFailure = (message: string, at?: { file?: string; line?: number; column?: number }): LintDiagnostic => ({
+    file: at?.file ?? fallbackFile,
+    line: at?.line ?? 1,
+    column: at?.column ?? 1,
+    ruleId: BUILD_FAILURE_RULE_ID,
+    severity: "error",
+    message,
+  });
+
+  let result: Awaited<ReturnType<typeof build>>;
+  let env: string | undefined;
+  let telemetry: Awaited<ReturnType<typeof resolveTelemetryAttribution>>;
+  try {
+    const loaded = await loadChantConfigUpward(infraPath);
+    const config = loaded.config;
+    const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
+    if (loaded.configPath) fallbackFile = loaded.configPath;
+    // The caller's parameters when it resolved them (the CLI does, from the
+    // same upward config walk); otherwise the declared defaults and `env`
+    // mappings of the config this build loads. Not lintCommand's own fallback:
+    // that one reads the config at the lint root, which may be a lint-only
+    // fragment with no `buildParams` (a `src/chant.config.json`).
+    const params = buildParams ?? resolveBuildParams(config.buildParams, { env: process.env }).provenance;
+    env = resolveOwnershipEnv(config, params);
+    telemetry = await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env);
+    // Every lexicon the lint loaded, as `chant build` serializes with every
+    // lexicon it loaded: a check may read another lexicon's entities, and the
+    // outputs are scoped per plugin below either way.
+    result = await build(
+      infraPath,
+      plugins.map((plugin) => plugin.serializer),
+      undefined,
+      resolveProjectBuildOptions({
+        config,
+        configDir,
+        plugins,
+        modes: resolveBuildModes(config, { sandbox }),
+        ownership: resolveOwnershipMarker(config, params),
+        buildParams: params,
+        telemetry,
+      }),
+    );
+  } catch (err) {
+    diagnostics.push(buildFailure(err instanceof Error ? err.message : String(err)));
+    return { diagnostics, suppressed };
+  }
+
+  if (result.errors.length > 0) {
+    const seen = new Set<string>();
+    for (const error of result.errors) {
+      const at = error as unknown as { file?: string; line?: number; column?: number };
+      const key = `${at.file ?? ""}:${at.line ?? ""}:${error.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      diagnostics.push(buildFailure(error.message, at));
+    }
+    return { diagnostics, suppressed };
+  }
+
+  const activityContracts = await loadActivityContracts(plugins);
+  const fileOf = (entity?: string): string => {
+    const declared = entity ? result.entities.get(entity) : undefined;
+    return (declared && getProvenance(declared)?.sourceFile) || fallbackFile;
+  };
+  const toLint = (d: { checkId: string; severity: LintDiagnostic["severity"]; message: string; entity?: string; lexicon?: string }): LintDiagnostic => ({
+    file: fileOf(d.entity),
+    line: 1,
+    column: 1,
+    ruleId: d.checkId,
+    severity: d.severity,
+    message: `${d.entity ? `[${d.entity}] ` : ""}${d.message}`,
+  });
+
+  for (const { plugin, diagnostics: raw } of runLexiconPostSynthChecks(withChecks, result, env, { activityContracts, telemetry })) {
+    const presetIds = resolvePresetIds(plugin.lintPresets?.(), lintConfig.presets?.[plugin.name] ?? "recommended");
+    const afterPreset = applyConfiguredPreset(raw, presetIds, lintConfig.rules).diagnostics;
+    const afterConfig = applyConfiguredSeverity(afterPreset, lintConfig.rules).diagnostics;
+    const inline = applyInlineSuppressions(afterConfig, result.entities, lintConfig.rules);
+    for (const d of inline.diagnostics) diagnostics.push(toLint(d));
+    for (const d of inline.suppressed) suppressed.push({ ...toLint(d), reason: "chant-ignore" });
+    for (const m of inline.meta) {
+      diagnostics.push({ file: m.file, line: m.line, column: 1, ruleId: m.checkId, severity: m.severity, message: m.message });
+    }
+  }
+
+  return { diagnostics, suppressed };
+}
+
+/**
  * Apply fixes to a file
  */
 function applyFixes(filePath: string, fixes: LintFix[]): void {
@@ -815,6 +959,16 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     const postOpResult = await runOpCheckDiagnostics(infraPath, files, buildParams, loaded.plugins);
     diagnostics.push(...postOpResult.diagnostics);
     suppressed.push(...postOpResult.suppressed);
+  }
+
+  // chant #3750: each lexicon's own post-synth checks, over an in-memory
+  // build of the lint target. Run once, after any `--fix` above, so it sees
+  // the source as fixed; a post-synth finding has no fix of its own. Skipped
+  // when a lexicon failed to resolve, which LEX001 below already reports.
+  if (!loaded.lexiconError) {
+    const lexiconResult = await runLexiconPostSynthDiagnostics(infraPath, loaded.plugins, options.buildParams, options.sandbox);
+    diagnostics.push(...lexiconResult.diagnostics);
+    suppressed.push(...lexiconResult.suppressed);
   }
 
   // chant #2222: a lexicon the project declared but this run could not
