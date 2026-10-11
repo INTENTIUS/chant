@@ -85,6 +85,25 @@ export interface FoundComment {
   url?: string;
 }
 
+/** What {@link PrForge.addComment} posted. */
+export interface AddedComment {
+  /** The new comment's or note's id. */
+  id: number;
+  /** Its web URL, when the forge's answer carries one (GitHub and Forgejo do; a GitLab note does not). */
+  url?: string;
+}
+
+/** An open tracking issue {@link PrForge.findIssue} read back. */
+export interface FoundIssue {
+  /** The issue's number (GitHub, Forgejo) or iid (GitLab). */
+  number: number;
+  title: string;
+  body: string;
+  /** When the issue was opened: the forge's `created_at`, an ISO 8601 string. */
+  created?: string;
+  url?: string;
+}
+
 /** A finding to keep in a tracking issue. `body` carries the marker. */
 export interface IssueFinding {
   title: string;
@@ -123,6 +142,8 @@ export interface IssueResult {
   /** The issue's number (GitHub, Forgejo) or iid (GitLab). */
   number?: number;
   url?: string;
+  /** When the issue was opened (the forge's `created_at`, ISO 8601), for an issue that exists after the call or was just closed. */
+  created?: string;
 }
 
 export interface PrForge {
@@ -155,6 +176,13 @@ export interface PrForge {
    * GitLab's system notes are skipped.
    */
   findComment(pr: number, marker: string, opts?: MarkerMatch): Promise<FoundComment | undefined>;
+  /**
+   * Post a new comment on pull request `pr` (a new note on merge request
+   * `pr`). No marker is looked for or required, and an earlier comment is
+   * never edited: every call adds one. For replies, where
+   * {@link upsertComment} would overwrite the last.
+   */
+  addComment(pr: number, body: string): Promise<AddedComment>;
   setStatus(sha: string, status: ForgeStatus): Promise<void>;
   /**
    * Keep one OPEN tracking issue for `marker` in line with `finding`: open
@@ -164,6 +192,13 @@ export interface PrForge {
    * taken for issues. When several match, the oldest is kept.
    */
   trackIssue(marker: string, finding: IssueFinding | null, opts?: TrackIssueOptions): Promise<IssueResult>;
+  /**
+   * The OPEN issue {@link trackIssue} would keep for `marker`: the oldest one
+   * {@link MarkerMatch} finds, `author` honoured, pull requests left out.
+   * Undefined when there is none. Writes nothing, so a client built without a
+   * token reads a public repository's issue with it.
+   */
+  findIssue(marker: string, opts?: MarkerMatch): Promise<FoundIssue | undefined>;
   /**
    * {@link trackIssue} by prefix for a finding, without the body check,
    * resolving to the issue's web URL. `reconcilePr`'s `issue` mode's form.
@@ -247,6 +282,8 @@ interface Thread {
   title?: string;
   author?: string;
   url?: string;
+  /** An issue's `created_at`. */
+  created?: string;
 }
 
 /** The calls each forge makes for the shared comment and issue recipes. */
@@ -298,7 +335,8 @@ async function upsertCommentWith(t: Threads, pr: number, marker: string, body: s
 async function trackIssueWith(t: Threads, marker: string, finding: IssueFinding | null, opts: TrackIssueOptions, check: boolean): Promise<IssueResult> {
   if (finding && check) checkMarker("issue", marker, finding.body, opts.match);
   const mine = (await t.openIssues(marker)).filter(ownedBy(marker, opts)).sort((a, b) => a.id - b.id)[0];
-  const at = (i: Thread | undefined): Omit<IssueResult, "action"> => (i ? { number: i.id, ...(i.url ? { url: i.url } : {}) } : {});
+  const at = (i: Thread | undefined): Omit<IssueResult, "action"> =>
+    i ? { number: i.id, ...(i.url ? { url: i.url } : {}), ...(i.created ? { created: i.created } : {}) } : {};
   if (finding === null) {
     if (!mine) return { action: "none" };
     if (!opts.closeOnClear) return { action: "left", ...at(mine) };
@@ -318,8 +356,17 @@ function sameIssue(open: IssueFinding, finding: IssueFinding, sameWhen: TrackIss
 }
 
 /** The recipes every client shares, over its own {@link Threads}. */
-function threadCalls(t: Threads): Pick<PrForge, "upsertComment" | "upsertNote" | "findComment" | "trackIssue" | "upsertIssue"> {
+function threadCalls(t: Threads): Pick<PrForge, "upsertComment" | "upsertNote" | "findComment" | "addComment" | "trackIssue" | "findIssue" | "upsertIssue"> {
   return {
+    async addComment(pr, body) {
+      const made = await t.addComment(pr, body);
+      return { id: made?.id ?? 0, ...(made?.url ? { url: made.url } : {}) };
+    },
+    async findIssue(marker, opts = {}) {
+      if (!marker) throw new Error("the issue needs a marker to be found");
+      const i = (await t.openIssues(marker)).filter(ownedBy(marker, opts)).sort((a, b) => a.id - b.id)[0];
+      return i ? { number: i.id, title: i.title ?? "", body: i.body, ...(i.created ? { created: i.created } : {}), ...(i.url ? { url: i.url } : {}) } : undefined;
+    },
     async findComment(pr, marker, opts = {}) {
       const c = await ownComment(t, pr, marker, opts);
       return c ? { id: c.id, body: c.body, ...(c.url ? { url: c.url } : {}) } : undefined;
@@ -336,7 +383,8 @@ export interface GithubForgeOptions {
   apiBase: string;
   /** `owner/name`. */
   repo: string;
-  token: string;
+  /** Without one, no credential is sent: enough to read a public repository ({@link PrForge.findComment}, {@link PrForge.findIssue}). */
+  token?: string;
   /** The forge's host, for naming reviewers. Default github.com. */
   host?: string;
   runUrl?: string;
@@ -354,8 +402,8 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
   const api = transport(
     opts.apiBase,
     kind === "github"
-      ? { Authorization: `Bearer ${opts.token}`, Accept: "application/vnd.github+json" }
-      : { Authorization: `token ${opts.token}`, Accept: "application/json" },
+      ? { ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}), Accept: "application/vnd.github+json" }
+      : { ...(opts.token ? { Authorization: `token ${opts.token}` } : {}), Accept: "application/json" },
     opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch),
   );
   const repo = `/repos/${opts.repo}`;
@@ -368,7 +416,8 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     if (id === undefined) return undefined;
     const author = loginOf(v);
     const url = str(v.html_url);
-    return { id, body: str(v.body) ?? "", ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
+    const created = str(v.created_at);
+    return { id, body: str(v.body) ?? "", ...(created ? { created } : {}), ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
   };
   const threads = (items: unknown[]): Thread[] => items.map(thread).filter((t): t is Thread => t !== undefined);
   const t: Threads = {
@@ -452,7 +501,8 @@ export interface GitlabForgeOptions {
   apiBase: string;
   /** `$CI_PROJECT_ID`, or the URL-encoded path. */
   project: string;
-  token: string;
+  /** Without one, no credential is sent: enough to read a public project ({@link PrForge.findComment}, {@link PrForge.findIssue}). */
+  token?: string;
   /**
    * The header the token goes in: `PRIVATE-TOKEN` (the default) for an
    * access token, `JOB-TOKEN` for `CI_JOB_TOKEN`. One in the other's header
@@ -474,7 +524,7 @@ const GITLAB_STATE: Record<ForgeStatus["state"], string> = { pending: "pending",
  */
 export function gitlabForge(opts: GitlabForgeOptions): PrForge {
   const host = (opts.host ?? "gitlab.com").toLowerCase();
-  const api = transport(opts.apiBase, { [opts.tokenHeader ?? "PRIVATE-TOKEN"]: opts.token }, opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch));
+  const api = transport(opts.apiBase, opts.token ? { [opts.tokenHeader ?? "PRIVATE-TOKEN"]: opts.token } : {}, opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch));
   const project = `/projects/${encodeURIComponent(decodeURIComponent(opts.project))}`;
   const pageParams = (page: number) => `per_page=100&page=${page}`;
   const authorOf = (v: Record<string, unknown>): string | undefined => (isObject(v.author) ? str(v.author.username) : undefined);
@@ -491,7 +541,8 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     if (id === undefined) return undefined;
     const author = authorOf(v);
     const url = str(v.web_url);
-    return { id, body: str(v.description) ?? "", ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
+    const created = str(v.created_at);
+    return { id, body: str(v.description) ?? "", ...(created ? { created } : {}), ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
   };
   const notes = `${project}/merge_requests`;
   const t: Threads = {
