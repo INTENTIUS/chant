@@ -215,7 +215,16 @@ After the apply exits, chant reads the result back:
 - The outcomes join the wave's result (`--json`, notifications) and the decision record's `outcomes`.
 - A `before-apply` hook that held the run, with no approval standing, makes the wave settle its gate. The apply must have applied nothing. If nobody has approved the digest, the wave waits (exit 3). If someone has, chant calls the apply again with `approved: true`, and the hooks run again under the lock.
 - An `after-apply` hook that failed counts the runs as applied and fails the wave (exit 1).
-- An apply that exits 0 without running the hooks it was handed fails the wave, though its runs count as applied.
+- An apply that exits 0 without running the hooks it was handed fails the wave, though its runs count as applied. An apply that changed nothing says so instead (below).
+
+An apply that finds nothing to do (an empty plan, or everything already applied by the time it holds the lock) skips both moments with a reason:
+
+```ts
+runOpWaveApplyHooks(hooks, "before-apply", { skip: "nothing to apply" });
+runOpWaveApplyHooks(hooks, "after-apply", { skip: "nothing to apply" });
+```
+
+A skip runs no hook and records the moment with outcome `skipped` and the reason, in the wave's result and the decision record's `outcomes`. Chant counts the moment as handled, so the wave does not fail. A skip without a reason throws.
 
 With a per-run `apply`, each run's call runs the apply-stage hooks for that run alone, so a hook that runs once for the wave runs once per run, under that run's lock.
 

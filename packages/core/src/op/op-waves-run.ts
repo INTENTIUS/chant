@@ -157,7 +157,9 @@ export interface OpWaveHookOutcome {
   /** The run, for a `perRun` hook. */
   target?: string;
   exit: number;
-  outcome: "passed" | "failed" | "held";
+  outcome: "passed" | "failed" | "held" | "skipped";
+  /** Why the moment was skipped, for `skipped` (#3811). */
+  reason?: string;
 }
 
 /** One run as a hook sees it (#3804). */
@@ -640,18 +642,25 @@ export function readOpWaveHooksFile(path: string | undefined = process.env.CHANT
  * Each call adds its outcomes to the file's `result` (`CHANT_HOOKS_RESULT`),
  * which chant reads back after the apply exits: the outcomes join the wave's
  * result and decision record, and a hold makes the wave wait for, or find,
- * an approval of its digest. `exec` runs one hook; inject it to run a hook
+ * an approval of its digest. `skip: "<reason>"` runs nothing and records the
+ * moment as skipped with the reason (#3811), for an apply that changes nothing:
+ * chant counts the moment as handled. A skip without a reason throws. `exec` runs one hook; inject it to run a hook
  * in process or to keep its output.
  */
 export function runOpWaveApplyHooks(
   file: OpWaveHooksFile,
   moment: OpWaveHookMoment,
-  options: { cwd?: string; exec?: OpWaveExec; log?: (line: string) => void } = {},
+  options: { cwd?: string; exec?: OpWaveExec; log?: (line: string) => void; skip?: string } = {},
 ): OpWaveApplyHooksRun {
   const cwd = options.cwd ?? process.cwd();
   const log = options.log ?? ((line: string) => console.error(line));
   let run: OpWaveApplyHooksRun;
-  if (file.refused) {
+  if (options.skip !== undefined) {
+    const reason = options.skip.trim();
+    if (!reason) throw new Error(`skipping the ${moment} hooks needs a reason (skip: "nothing to apply")`);
+    log(`${moment} hooks skipped: ${reason}`);
+    run = { moment, outcomes: [{ moment, name: "skip", exit: 0, outcome: "skipped", reason }], held: [], proceed: true };
+  } else if (file.refused) {
     log(`${file.refused}, so none of the ${moment} hooks run and the apply does not go on`);
     run = { moment, outcomes: [], held: [file.refused], proceed: false };
   } else {

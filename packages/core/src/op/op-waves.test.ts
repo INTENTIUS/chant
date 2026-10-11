@@ -616,6 +616,36 @@ describe("apply-stage hooks run by the apply, under its lock (#3804)", () => {
     h.done();
   });
 
+  test("an apply that skips both moments for an empty run exits the wave ok, and the skip is recorded (#3811)", async () => {
+    const h = harness(spec);
+    const exec: OpWaveExec = (argv, dir, env) => {
+      if (argv[1] === "plan") writeFileSync(join(dir, argv[3]!), JSON.stringify({ planDigest: digest("1") }));
+      if (argv[1] === "apply") {
+        const file = readOpWaveHooksFile(env?.CHANT_HOOKS, dir)!;
+        runOpWaveApplyHooks(file, "before-apply", { cwd: dir, skip: "nothing to apply", log: () => {} });
+        runOpWaveApplyHooks(file, "after-apply", { cwd: dir, skip: "nothing to apply", log: () => {} });
+      }
+      return 0;
+    };
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec, show: h.show, gates: memoryGateLedgerPort(), log: () => {} });
+    expect(result).toMatchObject({ exitCode: 0, applied: ["t1"] });
+    const skipped = [
+      { moment: "before-apply", name: "skip", exit: 0, outcome: "skipped", reason: "nothing to apply" },
+      { moment: "after-apply", name: "skip", exit: 0, outcome: "skipped", reason: "nothing to apply" },
+    ];
+    expect(result.hooks.filter((o) => o.outcome === "skipped")).toEqual(skipped);
+    expect(h.record().outcomes).toEqual(expect.arrayContaining(skipped));
+    h.done();
+  });
+
+  test("a skip with no reason is refused", () => {
+    const h = harness(spec);
+    writeFileSync(join(h.cwd, "waves.json"), JSON.stringify(spec));
+    const file = opWaveHooksAtBase({ specFile: "waves.json", wave: "prod", cwd: h.cwd, show: h.show });
+    expect(() => runOpWaveApplyHooks(file, "before-apply", { cwd: h.cwd, skip: "  ", log: () => {} })).toThrow(/needs a reason/);
+    h.done();
+  });
+
   test("an apply outside the waves reads the same hooks at base and runs them itself; a hold stops it", () => {
     const h = harness(spec);
     writeFileSync(join(h.cwd, "waves.json"), JSON.stringify({ ...spec, hooks: undefined, waves: [{ ...spec.waves[0]!, hooks: undefined }] }));
