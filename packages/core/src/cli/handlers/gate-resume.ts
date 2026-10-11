@@ -60,6 +60,7 @@ export async function resumeStanding(
   standing: PendingGateRecord,
   resolutions: readonly GateResolutionRecord[],
   opts: ResumeGateOptions = {},
+  pending: readonly PendingGateRecord[] = [standing],
 ): Promise<GateResumeReport> {
   const base = {
     op: standing.op,
@@ -67,7 +68,7 @@ export async function resumeStanding(
     ...(standing.environment !== undefined ? { environment: standing.environment } : {}),
     ...(standing.resume?.url ? { url: standing.resume.url } : {}),
   };
-  const answer = resolutionAnswering(resolutions, standing);
+  const answer = resolutionAnswering(resolutions, standing, pending);
   if (!answer) return { ...base, status: "not-approved", message: "no approval answers it yet" };
   const approvedBy = { approvedBy: answer.resolvedBy };
   if (!isGateRunLocator(standing.resume)) {
@@ -99,7 +100,7 @@ export async function resumeOpGates(op: string, gate: string | undefined, opts: 
   const reports: GateResumeReport[] = [];
   for (const standing of standingFacts(ledger.pending, gate)) {
     if (isPendingGateExpired(standing, now)) continue;
-    reports.push(await resumeStanding(standing, ledger.resolutions, opts));
+    reports.push(await resumeStanding(standing, ledger.resolutions, opts, ledger.pending));
   }
   return reports;
 }

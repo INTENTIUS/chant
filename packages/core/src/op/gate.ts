@@ -326,7 +326,10 @@ export interface GateTally {
  * An approval counts only if it is newer than `sinceIso` (the standing pending
  * fact) and, on a plan-bound gate, recorded for `planDigest`. So a changed
  * plan invalidates every approval collected for the old one, the rule #2300
- * set for a single approval.
+ * set for a single approval. A human's approval may be older than the
+ * standing fact, back to `humansSinceIso` ({@link humanQuorumSince}), so a
+ * pending fact re-recorded for a changed mode or context keeps a partly
+ * filled quorum (#3206). It defaults to `sinceIso`.
  *
  * Of those, only a human's counts toward the quorum, once per `resolvedBy`,
  * and only with one of the quorum's roles when it names any. An agent counts
@@ -342,8 +345,10 @@ export function tallyGateApprovals(
   sinceIso: string,
   planDigest: string | undefined,
   approval: ResolvedGateApproval,
+  humansSinceIso: string = sinceIso,
 ): GateTally {
   const since = new Date(sinceIso).getTime();
+  const humansSince = Math.min(since, new Date(humansSinceIso).getTime());
   const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
   const roles = approval.quorum?.roles;
 
@@ -351,18 +356,22 @@ export function tallyGateApprovals(
   let permit: GateResolutionRecord | undefined;
   let mismatched: GateResolutionRecord | undefined;
   for (const r of records) {
-    if (r.gate !== gate || at(r) < since) continue;
+    if (r.gate !== gate || at(r) < humansSince) continue;
     if (planDigest !== undefined && !samePlanDigest(r.planDigest, planDigest)) {
-      if (!mismatched || at(r) >= at(mismatched)) mismatched = r;
+      if (at(r) >= since && (!mismatched || at(r) >= at(mismatched))) mismatched = r;
       continue;
     }
 
     const decision = r.policyDecision;
+    // #3206: an approval from before the standing fact can only be a human's
+    // toward the quorum. A permit is anchored on the standing fact, the one
+    // `chant approve` evaluated it under.
+    const sinceStanding = at(r) >= since;
     // #2512: the decision must also have been recorded under `enforce`. An
     // allow recorded while the gate was log-only was never binding, and a
     // later switch to enforce does not make it binding.
     if (
-      approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
+      sinceStanding && approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
       decision.mode === "enforce" &&
       decision.version === approval.policy.version && (!permit || at(r) >= at(permit))
     ) {
@@ -383,6 +392,38 @@ export function tallyGateApprovals(
     ...(permit ? { permit } : {}),
     ...(mismatched ? { mismatched } : {}),
   };
+}
+
+/**
+ * Where a gate's human quorum starts counting (#3206): the oldest pending fact
+ * in the unbroken run of facts, newest first from `standing`, recorded for
+ * `standing`'s plan and policy version.
+ *
+ * A pending fact is re-recorded when anything in the approval block changes,
+ * the mode and the context included, so `chant approve` evaluates the policy
+ * under what the gate now declares. A human's approval counts for the plan
+ * it names whatever the mode or context was, so re-recording for one of
+ * those must not drop it. The run stops at a fact for another plan or policy
+ * version, which needs fresh approvals, and at one that had expired by the
+ * time the next was recorded, which expiry already closed.
+ *
+ * `pending` may hold every pending fact in the ledger; only `standing`'s gate
+ * and environment are read.
+ */
+export function humanQuorumSince(pending: readonly PendingGateRecord[], standing: PendingGateRecord): string {
+  const at = (p: PendingGateRecord) => new Date(p.timestamp).getTime();
+  const version = (p: PendingGateRecord) => p.approval?.policy?.version;
+  const sameKey = (p: PendingGateRecord) =>
+    samePlanDigest(p.planDigest, standing.planDigest) && version(p) === version(standing);
+  const older = pending
+    .filter((p) => p !== standing && p.gate === standing.gate && p.environment === standing.environment && at(p) <= at(standing))
+    .sort((a, b) => at(b) - at(a));
+  let anchor = standing;
+  for (const p of older) {
+    if (!sameKey(p) || isPendingGateExpired(p, anchor.timestamp)) break;
+    anchor = p;
+  }
+  return anchor.timestamp;
 }
 
 /** Whether two resolved approval blocks are the same, so a standing pending fact still describes this gate. */
@@ -439,7 +480,14 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   let mismatched: GateResolutionRecord | undefined;
   let quorum: GateQuorumProgress | undefined;
   if (input.approval) {
-    const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval);
+    // #3206: the humans' anchor reaches back past facts re-recorded for this
+    // plan and policy version, so a mode or context change keeps the quorum.
+    const humansSince =
+      standing && samePlanDigest(standing.planDigest, input.planDigest) &&
+      standing.approval?.policy?.version === input.approval.policy?.version
+        ? humanQuorumSince(pending, standing)
+        : since;
+    const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval, humansSince);
     if (tally.permit) {
       return { satisfied: true, resolution: tally.permit, via: "policy", approvals: tally.counted };
     }

@@ -105,6 +105,45 @@ describe("github", () => {
     expect(await githubForge({ ...opts, fetch }).pullRequestFor(SHA)).toBe(9);
   });
 
+  test("resolves to the note's web URL", async () => {
+    const { fetch } = fakeFetch({
+      "GET /repos/acme/infra/issues/12/comments": [],
+      "POST /repos/acme/infra/issues/12/comments": { id: 3, html_url: "https://github.com/acme/infra/pull/12#issuecomment-3" },
+    });
+    expect(await githubForge({ ...opts, fetch }).upsertNote(12, "<!-- m -->", "<!-- m -->\nbody")).toBe(
+      "https://github.com/acme/infra/pull/12#issuecomment-3",
+    );
+  });
+
+  test("updates the open issue that starts with the marker, title and body, skipping pull requests (#3757)", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues": [
+        { number: 3, body: "<!-- m -->\nquoted", pull_request: { url: "x" } },
+        { number: 4, body: "unrelated", pull_request: null },
+        { number: 5, body: "<!-- m -->\nold" },
+      ],
+      "PATCH /repos/acme/infra/issues/5": { number: 5, html_url: "https://github.com/acme/infra/issues/5" },
+    });
+    const url = await githubForge({ ...opts, fetch }).upsertIssue("<!-- m -->", "Drift: 2", "<!-- m -->\nnew");
+    expect(url).toBe("https://github.com/acme/infra/issues/5");
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET https://api.github.com/repos/acme/infra/issues?state=open&per_page=100&page=1",
+      "PATCH https://api.github.com/repos/acme/infra/issues/5",
+    ]);
+    expect(calls[1].body).toEqual({ title: "Drift: 2", body: "<!-- m -->\nnew" });
+  });
+
+  test("opens an issue when no open one carries the marker (#3757)", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues": [{ number: 4, body: null }],
+      "POST /repos/acme/infra/issues": { number: 6, html_url: "https://github.com/acme/infra/issues/6" },
+    });
+    expect(await githubForge({ ...opts, fetch }).upsertIssue("<!-- m -->", "t", "<!-- m -->\nb")).toBe(
+      "https://github.com/acme/infra/issues/6",
+    );
+    expect(calls.at(-1)).toMatchObject({ method: "POST", body: { title: "t", body: "<!-- m -->\nb" } });
+  });
+
   test("an error status is a ForgeApiError naming the call", async () => {
     const { fetch } = fakeFetch({ [`POST /repos/acme/infra/statuses/${SHA}`]: 403 });
     await expect(githubForge({ ...opts, fetch }).setStatus(SHA, { context: "c", state: "success", description: "d" })).rejects.toBeInstanceOf(ForgeApiError);
@@ -127,6 +166,24 @@ describe("forgejo", () => {
       "GET https://codeberg.org/api/v1/repos/acme/infra/issues/4/comments?limit=50&page=1",
       "PATCH https://codeberg.org/api/v1/repos/acme/infra/issues/comments/9",
       `POST https://codeberg.org/api/v1/repos/acme/infra/statuses/${SHA}`,
+    ]);
+    expect(calls[0].headers.Authorization).toBe("token t0k");
+  });
+
+  test("keeps an issue under /api/v1 with Forgejo's page size (#3757)", async () => {
+    const page1 = Array.from({ length: 50 }, (_, i) => ({ number: i + 1, body: `other ${i}`, pull_request: null }));
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v1/repos/acme/infra/issues?page=1": page1,
+      "GET /api/v1/repos/acme/infra/issues?page=2": [{ number: 77, body: "<!-- m -->\nold", pull_request: null }],
+      "PATCH /api/v1/repos/acme/infra/issues/77": { number: 77, html_url: "https://codeberg.org/acme/infra/issues/77" },
+    });
+    expect(await forgejoForge({ ...opts, fetch }).upsertIssue("<!-- m -->", "t", "<!-- m -->\nb")).toBe(
+      "https://codeberg.org/acme/infra/issues/77",
+    );
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://codeberg.org/api/v1/repos/acme/infra/issues?state=open&limit=50&page=1",
+      "https://codeberg.org/api/v1/repos/acme/infra/issues?state=open&limit=50&page=2",
+      "https://codeberg.org/api/v1/repos/acme/infra/issues/77",
     ]);
     expect(calls[0].headers.Authorization).toBe("token t0k");
   });
