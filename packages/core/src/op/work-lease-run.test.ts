@@ -80,6 +80,11 @@ describe("the declaration", () => {
     ).toThrow(/scheduled, but its workLease names no item/);
     expect(declareSteward({ name: "box", ops: [dispatchOp({ workLease: {} })] }).ops).toHaveLength(1);
     expect(workLeaseProblems(dispatchOp({ workLease: { item: "../x" } }))[0]).toMatch(/can't key a work lease/);
+    for (const item of ["upgrade-.", "x.lock", "x.LOCK", "a..b"]) {
+      expect(workLeaseProblems(dispatchOp({ workLease: { item } }))[0], item).toMatch(/can't key a work lease/);
+    }
+    expect(workLeaseProblems(dispatchOp({ workLease: { item: ["W-1", "upgrade-."] } }))).toHaveLength(1);
+    expect(() => Op(dispatchOp({ workLease: { item: "upgrade-." } }))).toThrow(/can't key a work lease/);
     expect(workLeaseProblems(dispatchOp({ workLease: { item: "W-1", ttl: "1s" } }))[0]).toMatch(/shorter than 3s/);
     expect(workLeaseProblems(dispatchOp({ workLease: { item: stepOutput("nope", "id") } }))[0]).toMatch(/references step "nope"/);
     expect(workLeaseProblems(dispatchOp({ workLease: { item: "W-1" } }, [step("x", {}, { id: WORK_LEASE_STEP_ID })]))[0]).toMatch(/reserved/);

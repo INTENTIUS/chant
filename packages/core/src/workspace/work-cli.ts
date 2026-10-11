@@ -39,7 +39,8 @@ import {
   releaseWorkLease,
   renewWorkLease,
   workLeaseRef,
-  WORK_ITEM_ID_PATTERN,
+  isWorkItemId,
+  workItemIdProblem,
   WORK_LEASE_OUTCOMES,
   type KeptAttempt,
   type WorkLease,
@@ -203,7 +204,8 @@ export interface WorkLeaseRequest {
 export async function workLease(req: WorkLeaseRequest): Promise<WorkLeaseDocument> {
   const doc = { $schema: WORK_LEASE_OUTPUT_SCHEMA_ID, contract: WORK_LEASE_CONTRACT_VERSION };
   try {
-    if (!WORK_ITEM_ID_PATTERN.test(req.id) || req.id.includes("..")) throw new WorkError("write-usage-invalid", `${JSON.stringify(req.id)} is not a work item id`);
+    const idProblem = workItemIdProblem(req.id);
+    if (idProblem) throw new WorkError("write-usage-invalid", idProblem);
     if (req.outcome !== undefined && !isWorkLeaseOutcome(req.outcome)) {
       throw new WorkError("write-usage-invalid", `${JSON.stringify(req.outcome)} is not a lease outcome: use one of ${WORK_LEASE_OUTCOMES.join(", ")}`);
     }
@@ -381,7 +383,7 @@ export function attemptsOf(claims: readonly LeaseClaim[], limit: number | null):
 export async function workHistory(req: { id: string; cwd: string; kind?: string }): Promise<WorkHistoryDocument> {
   const head = { $schema: WORK_HISTORY_OUTPUT_SCHEMA_ID, contract: WORK_HISTORY_CONTRACT_VERSION, chant: readerVersion() };
   try {
-    if (!WORK_ITEM_ID_PATTERN.test(req.id) || req.id.includes("..")) throw new WorkError("work-item-unknown", `${JSON.stringify(req.id)} is not a work item id`);
+    if (!isWorkItemId(req.id)) throw new WorkError("work-item-unknown", `${JSON.stringify(req.id)} is not a work item id`);
     if (!gitRoot(req.cwd)) throw new WorkError("not-a-git-repository", "a work lease's history is on the chant/lifecycle branch, and this directory is not in a git repository");
     const { loaded, root, record } = await findWorkItem(req.id, req.cwd, req.kind);
     const leaseCwd = dirname(loaded.file);
