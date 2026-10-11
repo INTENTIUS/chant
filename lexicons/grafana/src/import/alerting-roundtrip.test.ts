@@ -69,7 +69,8 @@ async function importAndBuild(contents: string[]): Promise<Imported> {
       externalDatasources: built.externalDatasources,
       alerting: built.alerting ? [{ json: built.alerting as unknown as Json }] : [],
     });
-    const lint = await lintCommand({ path: srcDir, format: "stylish" });
+    // Source-rule cleanliness of the generated TypeScript only; the output is validated through `issues` above (#3750).
+    const lint = await lintCommand({ path: srcDir, format: "stylish", postSynth: false });
     return {
       source: sources.join("\n"),
       warnings,

@@ -313,6 +313,13 @@ export interface LintOptions {
    * `sandbox` option (../../components/discover.ts).
    */
   sandbox?: boolean;
+  /**
+   * chant #3750 — run each loaded lexicon's post-synth checks over an
+   * in-memory build of the target (default `true`, what the CLI always does).
+   * `false` lints source alone; it exists for test harnesses that check an
+   * example's source rules, not for hiding findings from a user.
+   */
+  postSynth?: boolean;
 }
 
 /**
@@ -965,7 +972,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // build of the lint target. Run once, after any `--fix` above, so it sees
   // the source as fixed; a post-synth finding has no fix of its own. Skipped
   // when a lexicon failed to resolve, which LEX001 below already reports.
-  if (!loaded.lexiconError) {
+  if (!loaded.lexiconError && options.postSynth !== false) {
     const lexiconResult = await runLexiconPostSynthDiagnostics(infraPath, loaded.plugins, options.buildParams, options.sandbox);
     diagnostics.push(...lexiconResult.diagnostics);
     suppressed.push(...lexiconResult.suppressed);

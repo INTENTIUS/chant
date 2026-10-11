@@ -41,7 +41,8 @@ describe("init templates", () => {
         expect(reported).toEqual([]);
       }
 
-      const lint = await lintCommand({ path: join(dir, "src"), format: "stylish", fix: false });
+      // Source rules only: the post-synth checks ran over the build just above (#3750).
+      const lint = await lintCommand({ path: join(dir, "src"), format: "stylish", fix: false, postSynth: false });
       expect(lint.errorCount + lint.warningCount, lint.output).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });

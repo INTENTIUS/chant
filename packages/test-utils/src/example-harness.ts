@@ -109,6 +109,8 @@ export function describeExample(
           path: srcDir,
           format: "stylish",
           fix: true,
+          // Source-rule cleanliness only: the example's post-synth findings are the build's concern (#3750).
+          postSynth: false,
         });
 
         if (!result.success || result.errorCount > 0 || result.warningCount > 0) {

@@ -97,7 +97,8 @@ async function importAndBuild(yaml: string): Promise<Imported> {
     const srcDir = join(dir, "src");
     for (const file of files) writeFileSync(join(srcDir, file.path), file.content);
     const result = await build(srcDir, [otelSerializer]);
-    const lint = await lintCommand({ path: srcDir, format: "stylish" });
+    // Source-rule cleanliness of the generated TypeScript only; the generated source's post-synth findings belong to the build (#3750).
+    const lint = await lintCommand({ path: srcDir, format: "stylish", postSynth: false });
     return {
       source: files.map((f) => `// ${f.path}\n${f.content}`).join("\n"),
       warnings: ir.warnings ?? [],
@@ -451,7 +452,8 @@ describe("chant import collector.yaml", () => {
         const built = await build(output, [otelSerializer]);
         expect(built.errors).toEqual([]);
         expect(normalize(primary(built.outputs.get("otel")))).toEqual(normalize(read("gateway.yaml")));
-        const lint = await lintCommand({ path: output, format: "stylish" });
+        // Source-rule cleanliness of the imported TypeScript only; its post-synth findings belong to the build (#3750).
+        const lint = await lintCommand({ path: output, format: "stylish", postSynth: false });
         expect(lint.errorCount + lint.warningCount, lint.output).toBe(0);
       } finally {
         rmSync(dir, { recursive: true, force: true });

@@ -798,7 +798,8 @@ describe("k8s-eks-microservice example", () => {
     const result = await lintCommand({
       path: srcDir,
       format: "stylish",
-      fix: true,
+      fix: true,      // Source-rule cleanliness only: the example's post-synth findings are the build's concern (#3750).
+      postSynth: false,
     });
     if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
       console.log(result.output);
@@ -1012,7 +1013,8 @@ describe("k8s-gke-microservice example", () => {
     const result = await lintCommand({
       path: srcDir,
       format: "stylish",
-      fix: true,
+      fix: true,      // Source-rule cleanliness only: the example's post-synth findings are the build's concern (#3750).
+      postSynth: false,
     });
     if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
       console.log(result.output);
@@ -1146,7 +1148,8 @@ describe("k8s-aks-microservice example", () => {
     const result = await lintCommand({
       path: srcDir,
       format: "stylish",
-      fix: true,
+      fix: true,      // Source-rule cleanliness only: the example's post-synth findings are the build's concern (#3750).
+      postSynth: false,
     });
     if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
       console.log(result.output);
@@ -1649,7 +1652,8 @@ describe("cockroachdb-multi-region-gke (#1704)", () => {
 
   test("all four stacks lint clean", async () => {
     for (const name of ["shared", "east", "central", "west"]) {
-      const result = await lintCommand({ path: stack(name), format: "stylish", fix: true });
+      // Source-rule cleanliness only: the stacks' post-synth findings are the build's concern (#3750).
+      const result = await lintCommand({ path: stack(name), format: "stylish", fix: true, postSynth: false });
       if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
         console.log(result.output);
       }

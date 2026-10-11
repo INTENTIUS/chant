@@ -973,20 +973,20 @@ describe("lintCommand — lexicon post-synth checks (#3750)", () => {
   const repoNodeModules = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../../../node_modules");
   let root: string;
 
-  const schema = (engine: string) =>
+  const schema = (engine: string, idType = "UInt64") =>
     'import { database, table } from "@intentius/chant-lexicon-sql/clickhouse";\n' +
     "export const shopDb = database`CREATE DATABASE shop ENGINE = Atomic`;\n" +
     "export const events = table`\n" +
-    "  CREATE TABLE ${shopDb}.events (id UInt64, kind String)\n" +
+    `  CREATE TABLE \${shopDb}.events (id ${idType}, kind String)\n` +
     `  ENGINE = ${engine}\n` +
     "  ORDER BY (kind, id)`;\n";
 
-  async function project(engine: string, rules?: Record<string, string>): Promise<void> {
+  async function project(engine: string, rules?: Record<string, string>, idType?: string): Promise<void> {
     await writeFile(
       join(root, "chant.config.json"),
       JSON.stringify({ lexicons: ["sql"], sql: { dialect: "clickhouse" }, ...(rules ? { lint: { rules } } : {}) }),
     );
-    await writeFile(join(root, "src", "schema.ts"), schema(engine));
+    await writeFile(join(root, "src", "schema.ts"), schema(engine, idType));
   }
 
   beforeEach(async () => {
@@ -1015,6 +1015,21 @@ describe("lintCommand — lexicon post-synth checks (#3750)", () => {
       expect([diag!.line, diag!.column]).toEqual([1, 1]);
       expect(result.output).toContain("SQLCH101");
     }
+  });
+
+  test("a column type the pinned server does not have is reported (SQLCH121)", async () => {
+    await project("MergeTree", undefined, "UInt46");
+    const result = await lintCommand({ path: root, format: "stylish" });
+    expect(result.success).toBe(false);
+    const diag = result.diagnostics.find((d) => d.ruleId === "SQLCH121");
+    expect(diag, result.output).toBeDefined();
+    expect(diag!.message).toContain("UInt46");
+  });
+
+  test("postSynth: false lints source alone", async () => {
+    await project("MergeTre");
+    const result = await lintCommand({ path: root, format: "stylish", postSynth: false });
+    expect(result.diagnostics.some((d) => d.ruleId === "SQLCH101")).toBe(false);
   });
 
   test("a clean project reports nothing from the post-synth pass", async () => {

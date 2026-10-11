@@ -126,7 +126,8 @@ async function importAndBuild(...yamls: string[]): Promise<Imported> {
       }
     }
     const result = await build(srcDir, [prometheusSerializer]);
-    const lint = await lintCommand({ path: srcDir, format: "stylish" });
+    // Source-rule cleanliness of the generated TypeScript only; the generated source's post-synth findings belong to the build (#3750).
+    const lint = await lintCommand({ path: srcDir, format: "stylish", postSynth: false });
     return {
       source: sources.join("\n"),
       files,

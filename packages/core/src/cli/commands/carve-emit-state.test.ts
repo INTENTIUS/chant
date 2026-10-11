@@ -317,9 +317,15 @@ resource "aws_s3_bucket_public_access_block" "assets" {
       expect(text).toContain("aws_s3_bucket_versioning.assets (VersioningConfiguration)");
       expect(text).toContain("aws_s3_bucket_public_access_block.assets (PublicAccessBlockConfiguration)");
 
-      // And the emitted project still lints clean (no errors).
+      // And the emitted project still lints clean (no errors). Since #3750 the
+      // lint runs the aws post-synth checks too, and WAW042 is expected here:
+      // the Terraform declares no bucket policy, so the carved bucket faithfully
+      // has no TLS-only deny either. The carve reproduces what was declared; it
+      // does not add policy, so that one finding is allowed and nothing else.
       const lint = await lintCommand({ path: out, format: "stylish" });
-      expect(lint.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+      const errors = lint.diagnostics.filter((d) => d.severity === "error");
+      expect(errors.filter((d) => d.ruleId !== "WAW042")).toEqual([]);
+      expect(errors.map((d) => d.ruleId)).toEqual(["WAW042"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
