@@ -51,6 +51,10 @@ export default defineConfig({
                               "slug": "sql-files"
                         },
                         {
+                              "label": "Typed Columns",
+                              "slug": "typed-columns"
+                        },
+                        {
                               "label": "Watching a Server for Drift",
                               "slug": "drift-watch"
                         },

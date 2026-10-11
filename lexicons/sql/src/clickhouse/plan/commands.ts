@@ -165,5 +165,10 @@ export const sqlCommands: CommandGroup = {
   commands: [
     { name: "diff", description: "Classify the change between two chant build outputs (offline); --statements prints the statements it takes, --topology renders them for single, cluster:<name>, replicated or cloud", handler: runDiff },
     { name: "plan", description: "Classify the change from an environment's server to a chant build output", handler: runPlan },
+    {
+      name: "types",
+      description: "Write sql-types.d.ts: typed columns for each table, view and dictionary the build declares, for tags given their name (table<\"app.users\">) and RowOf; --output <path> writes it elsewhere",
+      handler: async (ctx) => (await import("../../sql-types-command")).runTypes(ctx),
+    },
   ],
 };

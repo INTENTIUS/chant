@@ -23,6 +23,8 @@ import {
   type SkipIndexType,
   type SqlLiteral,
   type TableEngineName,
+  type UncheckedColumn,
+  type Unnamed,
 } from "./clickhouse";
 
 describe("the tags", () => {
@@ -32,9 +34,16 @@ describe("the tags", () => {
     const recent = view`CREATE VIEW ${db}.recent AS SELECT ${events.columns.user_id} FROM ${events}`;
 
     expectTypeOf(db).toEqualTypeOf<ClickHouseDatabase>();
-    expectTypeOf(events).toEqualTypeOf<ClickHouseTable>();
-    expectTypeOf(recent).toEqualTypeOf<ClickHouseView>();
-    expectTypeOf(events.columns.user_id).toEqualTypeOf<AttrRef>();
+    // No type argument: the relation is unnamed and its columns unchecked, each still an AttrRef.
+    expectTypeOf(events).toEqualTypeOf<ClickHouseTable<Unnamed>>();
+    expectTypeOf(recent).toEqualTypeOf<ClickHouseView<Unnamed>>();
+    expectTypeOf(events.columns.user_id).toEqualTypeOf<UncheckedColumn>();
+    expectTypeOf(events.columns.user_id).toExtend<AttrRef>();
+    expectTypeOf(events).toExtend<ClickHouseTable>();
+    // A name no generated declaration lists yet keeps unchecked columns too.
+    const fresh = table<"analytics.fresh">`CREATE TABLE ${db}.fresh (a UInt8) ENGINE = Log`;
+    expectTypeOf(fresh.columns.anything).toEqualTypeOf<UncheckedColumn>();
+    expectTypeOf(fresh).toExtend<ClickHouseTable>();
     expectTypeOf(events.entityType).toEqualTypeOf<"ClickHouse::Table">();
     expectTypeOf(db.entityType).toEqualTypeOf<"ClickHouse::Database">();
     expectTypeOf(recent.entityType).toEqualTypeOf<"ClickHouse::View" | "ClickHouse::MaterializedView">();

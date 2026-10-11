@@ -21,6 +21,7 @@
  * references cross schemas freely.
  */
 
+import { relationKey } from "../../core/typed";
 import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { TemplateIR } from "@intentius/chant/import/parser";
 import { isTrivia, tokenizeText, type Token } from "../tokens";
@@ -233,6 +234,11 @@ const indent = (body: string) =>
     .map((l, i) => (i === 0 || l.length === 0 ? l : `  ${l}`))
     .join("\n");
 
+const RELATIONS = new Set<string>([POSTGRES_ENTITY_TYPES.table, POSTGRES_ENTITY_TYPES.view, POSTGRES_ENTITY_TYPES.materializedView]);
+
+/** A table's or view's qualified name as its tag's type argument (#3751), so its columns are typed once `chant sql types` has run. */
+const typeArgument = (it: Item): string => (RELATIONS.has(it.type) ? `<${JSON.stringify(relationKey(it))}>` : "");
+
 export class PostgresGenerator implements TypeScriptGenerator {
   readonly ownsLayout = true;
 
@@ -256,7 +262,7 @@ export class PostgresGenerator implements TypeScriptGenerator {
     const lines: string[] = [];
     if (this.header) lines.push(...this.header.split("\n").map((l) => `// ${l}`), "");
     lines.push(`import { ${tags.join(", ")} } from "@intentius/chant-lexicon-sql/postgres";`, "");
-    for (const it of order) lines.push(`export const ${it.exportName} = ${TAG[it.type]}\`\n  ${indent(bodyText(bodies.get(it.exportName)!))}\`;`, "");
+    for (const it of order) lines.push(`export const ${it.exportName} = ${TAG[it.type]}${typeArgument(it)}\`\n  ${indent(bodyText(bodies.get(it.exportName)!))}\`;`, "");
     return [{ path: "schema.ts", content: `${lines.join("\n").trimEnd()}\n` }];
   }
 }

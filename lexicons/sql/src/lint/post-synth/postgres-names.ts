@@ -120,12 +120,16 @@ export interface PgProject {
 }
 
 export function projectOf(ctx: PostSynthContext): PgProject {
-  const objects = postgresObjects(ctx);
+  return projectFromObjects(postgresObjects(ctx), targetMajor(ctx));
+}
+
+/** The project a set of output objects declares, at `major`: for a reader that holds the build output itself (`chant sql types`). */
+export function projectFromObjects(objects: OutputObject[], major: number): PgProject {
   const byExport = new Map(objects.map((o) => [o.export, o]));
   const schemas = new Set(objects.filter((o) => o.type === "Postgres::Schema").map((o) => o.name));
   const exts = objects.filter((o) => o.type === "Postgres::Extension");
   return {
-    major: targetMajor(ctx),
+    major,
     objects,
     byExport,
     schemas,

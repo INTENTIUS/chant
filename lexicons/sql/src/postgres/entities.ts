@@ -62,11 +62,13 @@ import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxEr
 import { SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
 import type { LineageEdge } from "../core/references";
 import { SqlLiteral, SqlTemplateError, describeValue as describe, stripUnset, templateParts } from "../core/template";
+import { setTypedSlots, type ColumnsIn, type Named, type RowIn, type SlotsIn, type TypedSlot, type Unnamed } from "../core/typed";
 
 export { SQL_LEXICON } from "../core/entity";
 export type { LineageEdge } from "../core/references";
 export { SqlLiteral, SqlTemplateError } from "../core/template";
 export { quoteIdent } from "./keywords";
+export type { AnyColumn, Column, ColumnTraits, KeyColumn, Named, NotNullColumn, UncheckedColumn, Unnamed } from "../core/typed";
 
 export { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "./entity-types";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "./entity-types";
@@ -431,18 +433,31 @@ export interface PostgresSchema extends PostgresObject {
   readonly props: SchemaProps;
 }
 
-/** A table or a view: something with columns that SQL can reference. */
-export interface PostgresRelation extends PostgresObject {
+/**
+ * Every Postgres table and view the project declares, keyed by its qualified
+ * name (`shop.orders`). Empty here; the `sql-types.d.ts` that `chant sql
+ * types` writes augments it, and a tag given the name as its type argument
+ * reads its columns from there.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmented by the generated declarations
+export interface SqlSchema {}
+
+/**
+ * A table or a view: something with columns that SQL can reference. `N` is
+ * its qualified name when its tag was given one (`` table<"shop.orders">`...` ``):
+ * its columns are then the generated declarations' entry for that name.
+ */
+export interface PostgresRelation<N extends string = string> extends PostgresObject, Named<N> {
   /** One reference per column, by its folded name: `${users.columns.email}`. */
-  readonly columns: Readonly<Record<string, AttrRef>>;
+  readonly columns: ColumnsIn<SqlSchema, N>;
 }
 
-export interface PostgresTable extends PostgresRelation {
+export interface PostgresTable<N extends string = string> extends PostgresRelation<N> {
   readonly entityType: "Postgres::Table";
   readonly props: TableProps;
 }
 
-export interface PostgresView extends PostgresRelation {
+export interface PostgresView<N extends string = string> extends PostgresRelation<N> {
   readonly entityType: "Postgres::View" | "Postgres::MaterializedView";
   readonly props: ViewProps;
 }
@@ -501,6 +516,13 @@ export interface PostgresGrant extends PostgresObject {
   readonly entityType: "Postgres::Grant" | "Postgres::DefaultPrivileges";
   readonly props: GrantProps | DefaultPrivilegesProps;
 }
+
+/**
+ * A declared table's or view's row, for application code: `RowOf<typeof orders>`
+ * for a declaration given its name, or `RowOf<"shop.users">` by name, which
+ * also covers an object only a `.sql` file declares.
+ */
+export type RowOf<T extends keyof SqlSchema | Named<keyof SqlSchema & string>> = RowIn<SqlSchema, T>;
 
 export function isPostgresObject(value: unknown): value is PostgresObject {
   return isSqlObjectOf(value, "Postgres::");
@@ -814,6 +836,23 @@ function foreignKeyDef(ctx: Ctx, c: ConstraintNode, columns: string[]): ForeignK
     },
     ["columns", "refColumns"],
   );
+}
+
+/**
+ * The `${}` in a foreign key's referenced column list that each name one
+ * column, paired with the referencing column at the same position (#3751).
+ * `chant sql types` types each as a column comparing like that one.
+ */
+function referenceSlots(ctx: Ctx, c: ConstraintNode, columns: readonly string[]): TypedSlot[] {
+  const out: TypedSlot[] = [];
+  c.references!.columns.forEach((x, n) => {
+    const column = columns[n];
+    if (x.name || column === undefined) return;
+    const sig = ctx.tokens.slice(x.span.from, x.span.to).filter((t) => !isTrivia(t));
+    const t = sig[0];
+    if (sig.length === 1 && t?.kind === "ref" && isColumnRef(ctx.values[t.part])) out.push({ index: t.part, kind: "references", column });
+  });
+  return out;
 }
 
 function exclusionDef(ctx: Ctx, c: ConstraintNode): ExclusionDef {
@@ -1142,6 +1181,7 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   const ddl = untokenize(tokens, (i) => render(values[i], i)).trim().replace(/;\s*$/, "");
   const source = { strings: rawParts };
   const dependsOn = [...new Set([...values, ...(joined?.refs ?? [])].filter((v) => isPostgresObject(v) || isColumnRef(v)))];
+  const slots: TypedSlot[] = [];
   const make = <T extends PostgresObject>(type: PostgresEntityType, q: { schema?: string; name: string }, props: object, columnNames?: readonly string[]): T => {
     const entity = makeSqlEntity(PostgresObject.prototype as PostgresObject, type, sqlNameOf(q), props, columnNames, dependsOn) as T;
     const fed = ctx.fed.map((paths) => [...paths].sort());
@@ -1152,6 +1192,7 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       joined.original.forEach((orig, i) => (byOriginal[orig] = fed[i]!));
       setInterpolationFields(entity, byOriginal);
     }
+    setTypedSlots(entity, slots);
     return entity;
   };
 
@@ -1264,7 +1305,10 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       const foreignKeys: ForeignKeyDef[] = [];
       const exclusions: ExclusionDef[] = [];
       const file = (c: ConstraintNode, cols: string[]) => {
-        if (c.kind === "FOREIGN KEY") foreignKeys.push(foreignKeyDef(ctx, c, cols));
+        if (c.kind === "FOREIGN KEY") {
+          foreignKeys.push(foreignKeyDef(ctx, c, cols));
+          slots.push(...referenceSlots(ctx, c, cols));
+        }
         else if (c.kind === "PRIMARY KEY") {
           if (primaryKey) throw new SqlTemplateError(tag, `${sqlNameOf(q)} declares more than one primary key`, 0, 0);
           primaryKey = keyDef(ctx, c, cols, "primaryKey");
@@ -1554,9 +1598,14 @@ export function schema(strings: TemplateStringsArray, ...values: unknown[]): Pos
   return build("schema", strings, values) as PostgresSchema;
 }
 
-/** `` table`CREATE TABLE ...` ``: one Postgres table with its columns and constraints, parsed at build time. */
-export function table(strings: TemplateStringsArray, ...values: unknown[]): PostgresTable {
-  return build("table", strings, values) as PostgresTable;
+/**
+ * `` table`CREATE TABLE ...` ``: one Postgres table with its columns and
+ * constraints, parsed at build time. Given its qualified name as the type
+ * argument (`` table<"shop.orders">`...` ``), its columns are the ones
+ * `chant sql types` declared for that name.
+ */
+export function table<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): PostgresTable<N> {
+  return build("table", strings, values) as PostgresTable<N>;
 }
 
 /** `` index`CREATE [UNIQUE] INDEX [CONCURRENTLY] name ON ...` ``: one named index. */
@@ -1564,9 +1613,13 @@ export function index(strings: TemplateStringsArray, ...values: unknown[]): Post
   return build("index", strings, values) as PostgresIndex;
 }
 
-/** `` view`CREATE [MATERIALIZED] VIEW ...` ``: one view or materialized view, with what it reads and its column lineage. */
-export function view(strings: TemplateStringsArray, ...values: unknown[]): PostgresView {
-  return build("view", strings, values) as PostgresView;
+/**
+ * `` view`CREATE [MATERIALIZED] VIEW ...` ``: one view or materialized view,
+ * with what it reads and its column lineage. Takes its qualified name as the
+ * type argument, as {@link table} does.
+ */
+export function view<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): PostgresView<N> {
+  return build("view", strings, values) as PostgresView<N>;
 }
 
 /** `` sequence`CREATE SEQUENCE ...` ``: one sequence. Reference it as `nextval(${seq})`. */
