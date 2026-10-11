@@ -12,6 +12,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ghHostEnv } from "../op/activities/gh-host";
 
 const execFileAsync = promisify(execFile);
 
@@ -106,10 +107,13 @@ export async function rollbackToRevision(opts: {
 
     await git(["commit", "-m", rollbackTitle(env, ref)], wt);
     await git(["push", "-u", "origin", branch], wt);
+    // `gh pr create` names no host: tell it the one `origin` is on, or the
+    // CI job's forge, so a GitHub Enterprise Server or Forgejo checkout is not
+    // sent to github.com (#3780).
     const { stdout } = await execFileAsync(
       "gh",
       ["pr", "create", "--title", rollbackTitle(env, ref), "--body", rollbackBody(env, ref, sourceDir), "--head", branch],
-      { cwd: wt },
+      { cwd: wt, env: await ghHostEnv(process.env, wt) },
     );
     return { noop: false, branch, prUrl: stdout.trim() };
   } finally {
