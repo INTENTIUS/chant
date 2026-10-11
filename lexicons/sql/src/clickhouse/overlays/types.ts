@@ -26,16 +26,33 @@ const P = (name: string, kind: TypeParameter["kind"], extra: Partial<TypeParamet
 
 const TZ = P("timezone", "string", { optional: true });
 
+/**
+ * The server takes and ignores a MySQL-style display width on an integer
+ * (`INT(11)`, `UInt64(8)`), a precision and scale on a float (`DOUBLE(10, 2)`)
+ * and a length on a string (`VARCHAR(255)`), so each is an optional parameter
+ * here rather than a mistake.
+ */
+const WIDTH = [P("display_width", "number", { optional: true })];
+const FLOAT = [P("precision", "number", { optional: true }), P("scale", "number", { optional: true })];
+const INTEGERS = ["Int8", "Int16", "Int32", "Int64", "Int128", "Int256", "UInt8", "UInt16", "UInt32", "UInt64", "UInt128", "UInt256"];
+
 export const TYPE_PARAMETERS: Record<string, readonly TypeParameter[]> = {
-  Decimal: [P("precision", "number", { range: [1, 76] }), P("scale", "number", { optional: true })],
+  ...Object.fromEntries(INTEGERS.map((name) => [name, WIDTH])),
+  Float32: FLOAT,
+  Float64: FLOAT,
+  BFloat16: FLOAT,
+  String: [P("length", "number", { optional: true })],
+  /** A bare `Decimal` is `Decimal(10, 0)`. */
+  Decimal: [P("precision", "number", { optional: true, range: [1, 76] }), P("scale", "number", { optional: true, range: [0, 76] })],
   Decimal32: [P("scale", "number", { range: [0, 9] })],
   Decimal64: [P("scale", "number", { range: [0, 18] })],
   Decimal128: [P("scale", "number", { range: [0, 38] })],
   Decimal256: [P("scale", "number", { range: [0, 76] })],
   DateTime: [TZ],
   DateTime32: [TZ],
-  DateTime64: [P("precision", "number", { range: [0, 9] }), TZ],
-  Time64: [P("precision", "number", { range: [0, 9] })],
+  /** A bare `DateTime64` has precision 3. */
+  DateTime64: [P("precision", "number", { optional: true, range: [0, 9] }), TZ],
+  Time64: [P("precision", "number", { optional: true, range: [0, 9] })],
   FixedString: [P("length", "number", { range: [1, Number.MAX_SAFE_INTEGER] })],
   Enum: [P("member", "enum-member", { repeated: true })],
   Enum8: [P("member", "enum-member", { repeated: true })],

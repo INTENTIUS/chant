@@ -202,7 +202,7 @@ test("a prop that is not valid SQL is refused at the interpolation that carried 
 // ── What the lexicon's own checks say ──────────────────────────────────
 
 describe("the composites pass the lexicon's post-synth checks", () => {
-  test("SQLCH101-120 find nothing in any of them", () => {
+  test("SQL101 and SQLCH101-127 find nothing in any of them", () => {
     const source = events();
     const instances: Array<[string, CompositeInstance]> = [
       ["users", ReplacingTable({ name: "users", columns: "id UInt64, email String", orderBy: "id" })],
@@ -230,10 +230,11 @@ describe("the composites pass the lexicon's post-synth checks", () => {
     expect(doc.applyOrder.indexOf("hitsLocal")).toBeLessThan(doc.applyOrder.indexOf("hitsDistributed"));
 
     const ctx = makePostSynthCtx("sql", out.primary, entities);
-    const clickhouse = postSynthChecks.filter((c) => c.id.startsWith("SQLCH"));
+    const clickhouse = postSynthChecks.filter((c) => c.id.startsWith("SQLCH") || c.id === "SQL101");
     const ids = clickhouse.map((c) => c.id).sort();
-    expect(ids[0]).toBe("SQLCH101");
-    expect(ids.at(-1)).toBe("SQLCH120");
+    expect(ids[0]).toBe("SQL101");
+    expect(ids).toContain("SQLCH101");
+    expect(ids.at(-1)).toBe("SQLCH127");
     expect(clickhouse.flatMap((check) => check.check(ctx))).toEqual([]);
   });
 });

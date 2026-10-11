@@ -219,7 +219,7 @@ export function renderClickHouseModule(catalog: ClickHouseCatalog): RenderedModu
 
   const tables = [
     ...header("The tables lint and the LSP read, typed by ./clickhouse-types."),
-    `import type { CodecSpec, DatabaseEngineSpec, SettingSpec, SkipIndexSpec, TableEngineSpec, TypeFamilySpec } from "../clickhouse/catalog-types";`,
+    `import type { CodecSpec, DatabaseEngineSpec, FunctionSpec, SettingSpec, SkipIndexSpec, TableEngineSpec, TypeFamilySpec } from "../clickhouse/catalog-types";`,
     `import type { CodecName, ColumnTypeName, DatabaseEngineName, MergeTreeSettings, QuerySettings, SkipIndexType, TableEngineName } from "./clickhouse-types";`,
     "",
     `export * from "./clickhouse-types";`,
@@ -254,6 +254,20 @@ export function renderClickHouseModule(catalog: ClickHouseCatalog): RenderedModu
       return `  ${key(c.name)}: ${JSON.stringify(spec)},`;
     }),
     "};",
+    "",
+    `/** Every function the server has (\`system.functions\`, origin System), aliases included. */`,
+    `export const FUNCTIONS: Readonly<Record<string, FunctionSpec>> = {`,
+    ...catalog.functions.map(
+      (f) =>
+        `  ${key(f.name)}: ${JSON.stringify({ aggregate: f.aggregate, caseInsensitive: f.caseInsensitive, ...(f.aliasOf ? { aliasOf: f.aliasOf } : {}) })},`,
+    ),
+    "};",
+    "",
+    `/** The aggregate function combinators (\`system.aggregate_function_combinators\`): the suffixes of \`countIf\`, \`sumState\`. */`,
+    `export const AGGREGATE_COMBINATORS: readonly string[] = ${JSON.stringify(catalog.aggregateCombinators.map((c) => c.name))};`,
+    "",
+    `/** The table functions (\`system.table_functions\`): \`numbers\`, \`remote\`, \`s3\`. */`,
+    `export const TABLE_FUNCTIONS: readonly string[] = ${JSON.stringify(catalog.tableFunctions)};`,
     "",
     `export const SKIP_INDEX_TYPES: Readonly<Record<SkipIndexType, SkipIndexSpec>> = {`,
     ...indexLines,

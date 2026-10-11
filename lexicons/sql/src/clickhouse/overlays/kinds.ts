@@ -29,7 +29,7 @@ export interface ArgumentOverlay {
   kind: ArgumentKind;
   /** Overrides the syntax line's optionality, with `note` saying why. */
   optional?: boolean;
-  /** The legal values of a `keyword`. */
+  /** The legal values of a `keyword`, or of a `number` limited to a set (a codec's byte width: 1, 2, 4 or 8). */
   values?: readonly string[];
   /** The inclusive range of a `number`. */
   range?: readonly [number, number];
