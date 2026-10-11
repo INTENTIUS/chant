@@ -371,8 +371,8 @@ Every pull request gets the fast checks and nothing else. The end-to-end project
 |---|---|
 | `lexicon-artifacts` | each lexicon's `generate` and `bundle`, once, cached under a hash of their inputs |
 | `check` | typechecks, the boundary guards, lint, depcheck, and the example build, local Op run and supply-chain guards (seconds each) |
-| `test-shard (1/3)` to `(3/3)` | `npx vitest run --project unit --shard=N/3` |
-| `test` | passes only when all three shards passed |
+| `test-shard (1/4)` to `(4/4)` | `npx vitest run --project unit --shard=N/4` |
+| `test` | passes only when all four shards passed |
 | `trust` | `chant workspace verify` against the base branch (pull requests only) |
 | `validate` | each lexicon's `validate` and `build` with the release gate armed, then the lexicon completeness contract |
 

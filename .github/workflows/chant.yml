@@ -263,16 +263,18 @@ jobs:
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # The unit tests run as three vitest shards in parallel. vitest assigns each
+  # The unit tests run as four vitest shards in parallel. vitest assigns each
   # test file to exactly one shard (sorted by a hash of its path), so the
-  # three together run the same files `npx vitest run --project unit` does.
+  # four together run the same files `npx vitest run --project unit` does.
   # The end-to-end files (*.e2e.test.ts) are the `e2e` project; they run in
   # release-suites.yml, never on a push or pull request. Every unit test has a
   # 3s budget (test/unit-test-budget.setup.ts, #3793): one slow test sets the
   # length of its shard, and every PR waits on the slowest job. The required
-  # `test` check is the aggregate job below, not these.
+  # `test` check is the aggregate job below, not these. Four rather than
+  # three: vitest's module import is most of a shard's time, about 4 minutes
+  # of it per shard across its workers, and three shards ran 2m40s to 3m40s.
   test-shard:
-    name: test-shard (${{ matrix.shard }}/3)
+    name: test-shard (${{ matrix.shard }}/4)
     needs: [lexicon-artifacts]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -280,7 +282,7 @@ jobs:
       # Let every shard finish so one failing shard does not hide another's.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       # Recorded first so the timeout-report step below (#2076) can compute
       # how long the job actually ran before a job-level timeout cancelled it.
@@ -331,12 +333,12 @@ jobs:
         uses: actions/cache@v5
         with:
           path: node_modules/.vite/vitest
-          key: vitest-results-unit3-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: vitest-results-unit-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            vitest-results-unit3-${{ matrix.shard }}-
+            vitest-results-unit-${{ matrix.shard }}-
 
-      - name: Run unit tests (shard ${{ matrix.shard }}/3)
-        run: npx vitest run --project unit --shard=${{ matrix.shard }}/3
+      - name: Run unit tests (shard ${{ matrix.shard }}/4)
+        run: npx vitest run --project unit --shard=${{ matrix.shard }}/4
 
       # #2817: each run's length in its summary, so drift shows before it
       # becomes a timeout.
@@ -344,7 +346,7 @@ jobs:
         if: always()
         run: |
           elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
-          echo "test shard ${{ matrix.shard }}/3 ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "test shard ${{ matrix.shard }}/4 ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # #2076, a job-level timeout-minutes cancels the job rather than
       # failing it (GitHub Actions docs, "expressions": cancelled() is true
@@ -356,7 +358,7 @@ jobs:
         if: cancelled()
         run: |
           elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
-          message="test shard ${{ matrix.shard }}/3 timed out after ~${elapsed}m against its 10 minute ceiling. This is a CI timeout, not a test failure."
+          message="test shard ${{ matrix.shard }}/4 timed out after ~${elapsed}m against its 10 minute ceiling. This is a CI timeout, not a test failure."
           echo "::error::${message}"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
