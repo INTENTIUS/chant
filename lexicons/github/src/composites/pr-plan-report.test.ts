@@ -20,7 +20,7 @@ import type { SerializerResult } from "@intentius/chant/serializer";
  * loosely-typed instance directly.
  */
 interface StepLike {
-  props: { name?: string; run?: string };
+  props: { name?: string; run?: string; env?: Record<string, string> };
 }
 interface JobLike {
   props: {
@@ -123,6 +123,19 @@ describe("PrPlanReport composite (#1983)", () => {
     // No bare-path call survives: every `gh api` invocation is immediately
     // followed by `"$api_base/repos/`, never by `"repos/` on its own.
     expect(run).not.toMatch(/gh api[^\n]*"repos\//);
+  });
+
+  // #2352: `gh` sends GH_TOKEN only to github.com and ghe.com hosts. Checked
+  // against a real Forgejo 16.0.5 instance with no `gh auth login`: GH_TOKEN
+  // alone posted with no Authorization header and got 401; with
+  // GH_ENTERPRISE_TOKEN beside it the POST got 201 and a re-run PATCHed.
+  test("the post step carries the token as GH_ENTERPRISE_TOKEN too, which a non-github.com host reads (#2352)", () => {
+    const { job } = PrPlanReport({ environment: "prod" });
+    const postStep = steps(job).find((s) => s.props.name === "Post or update PR comment")!;
+    expect(postStep.props.env).toEqual({
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
+      GH_ENTERPRISE_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
+    });
   });
 
   test("the emitted workflow passes the github lexicon's own lint — no errors, pinned actions included", () => {

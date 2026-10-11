@@ -521,6 +521,12 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
     expect(script).not.toMatch(/gh api[^\n]*"repos\//);
   });
 
+  test("the notice job hands gh its token as GH_ENTERPRISE_TOKEN too, for a GHES host (#2352)", () => {
+    const env = pushDoc().jobs!["app-apply-gate-notice"].steps[0].env ?? {};
+    expect(env.GH_TOKEN).toBe("${{ github.token }}");
+    expect(env.GH_ENTERPRISE_TOKEN).toBe("${{ github.token }}");
+  });
+
   test("the notice job's permissions are its two posting paths and the lookup", () => {
     const notice = pushDoc().jobs!["app-apply-gate-notice"];
     expect(notice.permissions).toEqual({
