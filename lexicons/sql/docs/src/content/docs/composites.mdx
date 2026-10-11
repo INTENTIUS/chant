@@ -133,7 +133,7 @@ A ReplicatedMergeTree table on every node of a cluster, and the Distributed tabl
 
 ## Postgres composites
 
-Every Postgres composite takes `name`, unqualified, and `schema`, the schema entity or its name (default `public`); the members are created in that schema. The other props are SQL text unless the table says they are entities. All five pass SQLPG101 to SQLPG118: their views set `security_invoker`, and none uses a feature newer than the oldest supported major. `lexicons/sql/examples/postgres-composites` declares all five:
+Every Postgres composite takes `name`, unqualified, and `schema`, the schema entity or its name (default `public`); the members are created in that schema. The other props are SQL text unless the table says they are entities. All five pass SQLPG101 to SQLPG126: their views set `security_invoker`, and none uses a feature newer than the oldest supported major. `lexicons/sql/examples/postgres-composites` declares all five:
 
 ```typescript title="accounts.ts"
 import { SoftDeleteTable } from "@intentius/chant-lexicon-sql/postgres";

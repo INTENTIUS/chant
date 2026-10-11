@@ -54,3 +54,28 @@ export const SERIAL_TYPES: Record<string, string> = {
 
 /** An array suffix: `integer[]`, `text[3]`, `ARRAY`. Dimensions are documentation only to the server. */
 export const ARRAY_SUFFIX = { brackets: "[]", dimensioned: "[n]", keyword: "ARRAY" } as const;
+
+/**
+ * Spellings the grammar accepts that neither `pg_type` nor {@link TYPE_SPELLINGS}
+ * lists, and the canonical name each stands for (gram.y, `Numeric`,
+ * `Character`, `ConstDatetime`). Lint reads them beside the catalog so every
+ * spelling Postgres accepts resolves. `float(p)` is `real` for p up to 24 and
+ * `double precision` above; lint reads the precision.
+ */
+export const GRAMMAR_TYPE_SPELLINGS: Record<string, string> = {
+  dec: "numeric",
+  "char varying": "character varying",
+  "national character": "character",
+  "national char": "character",
+  nchar: "character",
+  "national character varying": "character varying",
+  "national char varying": "character varying",
+  "nchar varying": "character varying",
+};
+
+/** The serial spellings with a width suffix, beside {@link SERIAL_TYPES}. */
+export const SERIAL_WIDTH_SPELLINGS: Record<string, string> = {
+  serial2: "smallint",
+  serial4: "integer",
+  serial8: "bigint",
+};

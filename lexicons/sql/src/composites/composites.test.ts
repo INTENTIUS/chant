@@ -559,7 +559,7 @@ describe("the Postgres composites", () => {
     expect(() => TenantTable({ name: "notes", columns: "id bigint NOT NULL, (", primaryKey: "id", indexOn: "id" })).toThrow(SqlTemplateError);
   });
 
-  test("SQLPG101 to SQLPG118 find nothing in any of them", () => {
+  test("SQLPG101 to SQLPG126 find nothing in any of them", () => {
     const people = users();
     const teams = SoftDeleteTable({ name: "teams", schema: "app", columns: "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name text NOT NULL" });
     const members = JoinTable({ name: "memberships", schema: "app", left: people.table, leftColumn: "user_id", right: teams.table, rightColumn: "team_id" });
@@ -588,7 +588,7 @@ describe("the Postgres composites", () => {
 
     const ctx = makePostSynthCtx("sql", out.primary, entities);
     const checks = postSynthChecks.filter((c) => c.id.startsWith("SQLPG"));
-    expect(checks).toHaveLength(18);
+    expect(checks).toHaveLength(26);
     expect(checks.flatMap((check) => check.check(ctx).map((d) => `${check.id} ${d.message}`))).toEqual([]);
   });
 });

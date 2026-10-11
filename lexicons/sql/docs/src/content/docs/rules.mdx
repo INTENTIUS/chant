@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon provides **45** rules: 7 lint rules and 38 post-synth checks.
+The SQL lexicon provides **53** rules: 7 lint rules and 46 post-synth checks.
 
 ## Lint Rules
 
@@ -64,3 +64,11 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `SQLPG116` | An extension the target major no longer ships |
 | `SQLPG117` | A view without security_invoker runs with its owner's privileges |
 | `SQLPG118` | A table uses INHERITS where declarative partitioning replaced it |
+| `SQLPG119` | A column, domain or sequence type the target major does not have |
+| `SQLPG120` | A type modifier that does not fit the type |
+| `SQLPG121` | An identity column whose type is not smallint, integer or bigint |
+| `SQLPG122` | A table declares a column twice, or an enum lists a label twice |
+| `SQLPG123` | A key, index or grant column list names a column the table does not declare |
+| `SQLPG124` | A foreign key names a column the referenced table lacks, or one of another type category |
+| `SQLPG125` | An index access method or operator class the target major does not have, or not for that method |
+| `SQLPG126` | An expression calls a function the target major does not have |

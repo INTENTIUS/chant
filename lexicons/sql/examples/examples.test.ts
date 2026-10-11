@@ -235,7 +235,7 @@ describe("the postgres-column-rename example's Op", () => {
   });
 });
 
-describe("the Postgres examples pass SQLPG101 to SQLPG118", () => {
+describe("the Postgres examples pass SQLPG101 to SQLPG126", () => {
   test.each([
     "postgres-getting-started",
     "postgres-saas",
@@ -252,7 +252,7 @@ describe("the Postgres examples pass SQLPG101 to SQLPG118", () => {
     expect(result.errors).toEqual([]);
     const ctx = makePostSynthCtx("sql", (result.outputs.get("sql") as { primary: string }).primary, result.entities);
     const checks = postSynthChecks.filter((c) => c.id.startsWith("SQLPG"));
-    expect(checks.map((c) => c.id).sort()).toHaveLength(18);
+    expect(checks.map((c) => c.id).sort()).toHaveLength(26);
     expect(checks.flatMap((c) => c.check(ctx).map((d) => `${c.id} ${d.message}`))).toEqual([]);
   });
 });
