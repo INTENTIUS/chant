@@ -22,9 +22,11 @@
  *
  * ## The gate
  *
- * Wave k waits on `waveGateName(<gate>, k)`, recorded under the spec's name,
- * bound to {@link waveSetDigest} over its runs' plan digests (`../gated-waves.ts`,
- * the same digest a component fan-out's wave binds). Whether it waits at all
+ * Wave k waits on `waveGateName(<gate>, k)`, or the spec's `gateName` pattern
+ * ({@link opWaveGateName}, #3821), recorded under the spec's name, bound to
+ * {@link waveSetDigest} over its runs' plan digests (`../gated-waves.ts`, the
+ * same digest a component fan-out's wave binds), or with `digest.over:
+ * "changing"` over the runs whose plan changes something. Whether it waits at all
  * is the wave's gate policy, read from the base commit's copy of the spec
  * file, so a change cannot loosen the rule that gates its own merge.
  *
@@ -170,12 +172,28 @@ export interface OpWave {
  * `{plan}` is replaced per run.
  */
 export interface OpWavesSpec {
-  /** The pipeline's name, and the op the wave gates are recorded under (`chant approve <name> <gate>-wave-<k>`). */
+  /** The pipeline's name, and the op the wave gates are recorded under (`chant approve <name> <gate>-wave-<k>`, or the `gateName` pattern). */
   name: string;
   /** The Op a run runs when it names none. */
   op: string;
   /** The base gate name. Default: `name`. */
   gate?: string;
+  /**
+   * The name of wave k's gate (#3821): `{gate}` is the base gate name and
+   * `{k}` the wave's number. Default `"{gate}-wave-{k}"`. A product moving
+   * its own wave gates onto these waves names its old pattern here (such as
+   * `"wave-{k}"`), so the approvals already on the ledger keep their gate.
+   */
+  gateName?: string;
+  /** Which runs the set digest covers (#3821). Default: every run. */
+  digest?: OpWavesDigest;
+  /**
+   * The waves' pending facts carry `neverOverMcp` (#3821, chant#3485): their
+   * gates are never resolved over MCP or ACP, whichever channel reached
+   * them. Read at the base commit too, and either one setting it is enough,
+   * so a change cannot drop the rule for its own gates.
+   */
+  neverOverMcp?: boolean;
   /** Branches whose pushes run the waves. Default `["main"]`. */
   branches?: string[];
   /**
@@ -228,6 +246,28 @@ export interface OpWavesSpec {
    * `../notify.ts`.
    */
   notify?: NotifyConfig;
+}
+
+/** Which runs a wave's set digest covers (#3821). */
+export interface OpWavesDigest {
+  /**
+   * `all` (the default): every run's plan. `changing`: only the runs whose
+   * plan is not `empty`, or every run when all of them are empty. A product
+   * whose plan note shows a digest over the plans that change something
+   * names `changing`, so the digest the wave asks approval for is the one
+   * the note showed.
+   */
+  over?: "all" | "changing";
+}
+
+export const OP_WAVES_DIGEST_OVER = ["all", "changing"] as const;
+
+/** The default gate name pattern. */
+export const OP_WAVE_DEFAULT_GATE_NAME = "{gate}-wave-{k}";
+
+/** The gate wave `k` waits on (#3821): the spec's `gateName` pattern, by default `<gate>-wave-<k>`. */
+export function opWaveGateName(spec: Pick<OpWavesSpec, "name" | "gate" | "gateName">, k: number): string {
+  return (spec.gateName ?? OP_WAVE_DEFAULT_GATE_NAME).replaceAll("{gate}", spec.gate ?? spec.name).replaceAll("{k}", String(k));
 }
 
 /** What happens to an approval once a wave applies under it (#3784). */
@@ -331,6 +371,22 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
   }
+  if (spec.gateName !== undefined) {
+    if (typeof spec.gateName !== "string" || !spec.gateName.includes("{k}") || /\s/.test(spec.gateName)) {
+      throw new Error(`${where}: gateName must be a pattern with {k}, the wave's number, and no spaces, such as "${OP_WAVE_DEFAULT_GATE_NAME}" or "wave-{k}".`);
+    }
+    const left = spec.gateName.replaceAll("{gate}", "").replaceAll("{k}", "").match(/\{[^}]*\}/);
+    if (left) throw new Error(`${where}: gateName names ${left[0]}; the pattern fills in {gate} and {k} only.`);
+  }
+  if (spec.digest !== undefined) {
+    const d = spec.digest as unknown;
+    if (d === null || typeof d !== "object" || Array.isArray(d)) throw new Error(`${where}: \`digest\` must be { "over"?: "all" | "changing" }.`);
+    for (const [key, value] of Object.entries(d as Record<string, unknown>)) {
+      if (key !== "over") throw new Error(`${where}: digest.${key} is not a setting; the one there is digest.over.`);
+      if (!OP_WAVES_DIGEST_OVER.includes(value as "all")) throw new Error(`${where}: digest.over is ${JSON.stringify(value)}; use "all" or "changing".`);
+    }
+  }
+  if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
     if (problem) throw new Error(`${where}: ${problem}`);

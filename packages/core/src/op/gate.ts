@@ -260,6 +260,14 @@ export interface GateCheckInput {
    * stands as a mismatch. Absent, nothing is spent.
    */
   spent?: readonly AppliedGateRecord[];
+  /**
+   * Fields a caller adds to the pending fact it records (#3821), such as an
+   * Op waves product's commit and members. Every field this function writes
+   * itself wins over one of the same name.
+   */
+  fields?: Record<string, unknown>;
+  /** The pending fact it records carries `neverOverMcp` (#3821, chant#3485). */
+  neverOverMcp?: boolean;
 }
 
 /**
@@ -592,6 +600,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // #3683: in CI, where this job runs, so an approval can start it again.
   const resume = resolveGateRunLocator();
   const { record, pushed, pushWarning } = await port.appendPending({
+    ...(input.fields as Partial<PendingGateInput> | undefined),
     op: input.op,
     gate: input.gate,
     timestamp: now,
@@ -605,6 +614,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
     ...(env !== undefined ? { environment: env } : {}),
     ...(input.approval ? { approval: input.approval } : {}),
+    ...(input.neverOverMcp ? { neverOverMcp: true as const } : {}),
   });
   return {
     satisfied: false,
