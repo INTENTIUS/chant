@@ -26,6 +26,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { StagedUpgrade } from "../../workspace/lineage-upgrade";
+import { ghHostEnv } from "./gh-host";
 
 const execFileAsync = promisify(execFile);
 
@@ -79,7 +80,10 @@ export interface ProposeWorkspaceUpgradeResult {
   summary: string;
 }
 
-const defaultRun: CommandRunner = async (bin, args, cwd) => (await execFileAsync(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024 })).stdout;
+// `gh pr list/edit/create` name no host, so they are told the job's forge or
+// `origin`'s host (#3780); see `./gh-host.ts`.
+const defaultRun: CommandRunner = async (bin, args, cwd) =>
+  (await execFileAsync(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024, ...(bin === "gh" ? { env: await ghHostEnv(process.env, cwd) } : {}) })).stdout;
 
 /** The proposal branch for a scope. */
 export function proposalBranch(scope: string): string {

@@ -30,6 +30,7 @@ import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId, UpstreamPin } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
 import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
+import { ghHostEnv } from "./gh-host";
 import { postOrUpdateGithubIssue } from "./reconcile";
 
 export { bumpPackageJsonVersion };
@@ -345,6 +346,25 @@ function shellQuote(s: string): string {
 const defaultGh: GhRunner = async (cmd, opts) => execAsync(cmd, { ...opts });
 
 /**
+ * `run`, with the forge's host handed to every `gh` call that brings no
+ * environment of its own (#3780). `gh pr view`, `gh pr edit`, `gh pr create`,
+ * `gh label create` and the ambient `gh issue create` name no host, so on
+ * GitHub Enterprise Server or Forgejo they would not reach the job's own
+ * forge; see `./gh-host.ts`. A call that passes an `env` (the issue recipe's
+ * full-URL `gh api` calls, #2320) already names its host and keeps it. The
+ * environment is resolved once, on the first `gh` call. `git` calls pass
+ * through untouched.
+ */
+export function withGhHost(run: GhRunner, resolve: () => Promise<NodeJS.ProcessEnv> = () => ghHostEnv(process.env)): GhRunner {
+  let env: Promise<NodeJS.ProcessEnv> | undefined;
+  return async (cmd, opts) => {
+    if (!cmd.startsWith("gh ") || opts?.env) return run(cmd, opts);
+    env ??= resolve();
+    return run(cmd, { ...opts, env: await env });
+  };
+}
+
+/**
  * The hidden marker that makes this lexicon's upgrade-status issue findable
  * across re-runs (#2297): written as the issue body's first line, matched by
  * `startswith` — the same recipe reconcile.ts's `issueMarker` names for a
@@ -505,8 +525,9 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   const {
     lexicon,
     mode = "report",
-    _gh: gh = defaultGh,
+    _gh: rawGh = defaultGh,
   } = args;
+  const gh = withGhHost(rawGh);
 
   const lexiconDir = args.lexiconDir ?? `${process.cwd()}/lexicons/${lexicon}`;
 

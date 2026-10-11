@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   reconcilePr,
   reconcileSummary,
@@ -1465,5 +1465,35 @@ describe("postOrUpdateGithubIssue directly (#2297)", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("reconcilePr pull-request mode tells gh the forge's host (#3780)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("on GitHub Enterprise Server, gh pr create runs with GH_HOST and the enterprise token", async () => {
+    vi.stubEnv("GITHUB_SERVER_URL", "https://ghe.acme.internal");
+    vi.stubEnv("GH_TOKEN", "job-token");
+    vi.stubEnv("GH_HOST", "");
+    vi.stubEnv("GH_ENTERPRISE_TOKEN", "");
+    vi.stubEnv("GITHUB_ENTERPRISE_TOKEN", "");
+    ghReplies = [{ match: "gh pr create", stdout: "https://ghe.acme.internal/acme/infra/pull/9\n" }];
+    const result = await reconcilePr({ env: "prod", entries, mode: "pull-request" });
+    expect(result.prUrl).toBe("https://ghe.acme.internal/acme/infra/pull/9");
+    const create = ghCalls.find((c) => c.cmd.startsWith("gh pr create"))!;
+    expect(create.opts.env?.GH_HOST).toBe("ghe.acme.internal");
+    expect(create.opts.env?.GH_ENTERPRISE_TOKEN).toBe("job-token");
+    // git keeps the process environment.
+    expect(ghCalls.find((c) => c.cmd.startsWith("git push"))!.opts.env).toBeUndefined();
+  });
+
+  test("on github.com, gh pr create gets no GH_HOST", async () => {
+    vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
+    vi.stubEnv("GH_HOST", "");
+    await reconcilePr({ env: "prod", entries, mode: "pull-request" });
+    const create = ghCalls.find((c) => c.cmd.startsWith("gh pr create"))!;
+    expect(create.opts.env?.GH_HOST ?? "").toBe("");
   });
 });

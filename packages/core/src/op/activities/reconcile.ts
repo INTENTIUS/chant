@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { ForgeApiError, forgejoForge, githubForge, type ForgeFetch, type GithubShapedForge } from "../../pr-forge";
+import { ghHostEnv } from "./gh-host";
 
 const execAsync = promisify(exec);
 
@@ -1362,9 +1363,11 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
   await execAsync(`git add ${shellQuote(output)}`, { signal });
   await execAsync(`git commit -m ${shellQuote(title)}`, { signal });
   await execAsync(`git push -u origin ${shellQuote(branch)}`, { signal });
+  // `gh pr create` names no host, so on GitHub Enterprise Server or Forgejo
+  // it is told the job's own (#3780). See `./gh-host.ts`.
   const { stdout } = await execAsync(
     `gh pr create --title ${shellQuote(title)} --body ${shellQuote(summary)} --head ${shellQuote(branch)}`,
-    { signal },
+    { signal, env: await ghHostEnv(process.env) },
   );
 
   return { mode, branch, summary, entries, prUrl: stdout.trim() };
