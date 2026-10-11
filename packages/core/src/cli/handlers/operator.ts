@@ -44,7 +44,7 @@ import {
 } from "../../lifecycle/gate-ledger";
 import { isPlanDigest, samePlanDigest } from "../../lifecycle/plan-digest";
 import {
-  gatePolicyRequest, loadGatePolicyEvaluator,
+  gateContextDigest, gatePolicyRequest, loadGatePolicyEvaluator,
   type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
 } from "../../op/gate-approval";
 import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate";
@@ -1273,6 +1273,7 @@ export async function recordGateApproval(
         policy: approval.policy.name,
         version: approval.policy.version,
         mode: approval.mode,
+        contextDigest: gateContextDigest(approval.context),
         decision: answer.decision,
         determining: answer.determining,
         errors: answer.errors,

@@ -7,7 +7,7 @@
  */
 import { describe, test, expect } from "vitest";
 import {
-  gatePlanSummary, gatePolicyRequest, loadGatePolicyEvaluator, runOpLocally, stepOutput,
+  gatePlanSummary, gateContextDigest, gatePolicyRequest, loadGatePolicyEvaluator, runOpLocally, stepOutput,
   type ActivityFn, type GateApproval, type GateLedgerPort, type GatePolicyDecision, type OpConfig,
 } from "@intentius/chant/op";
 import type { ChangeSetEntry, ChangeSetPart } from "@intentius/chant/change-set";
@@ -91,7 +91,7 @@ async function agentApproves(ledger: ReturnType<typeof memoryLedger>, at: string
     ...(standing.planDigest ? { planDigest: standing.planDigest } : {}),
     ...(approval.context ? { context: approval.context } : {}),
   }));
-  const policyDecision: GatePolicyDecision = { policy: approval.policy!.name, version: approval.policy!.version, mode: approval.mode, ...answer };
+  const policyDecision: GatePolicyDecision = { policy: approval.policy!.name, version: approval.policy!.version, mode: approval.mode, contextDigest: gateContextDigest(approval.context), ...answer };
   ledger.resolutions.push({
     version: 1, op: standing.op, gate: standing.gate, resolvedBy: "deploy-bot", timestamp: at,
     approver: { kind: "agent" }, policyDecision, ...(standing.planDigest ? { planDigest: standing.planDigest } : {}),

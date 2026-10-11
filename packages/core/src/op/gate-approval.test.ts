@@ -10,7 +10,7 @@ import { resolutionAnswering } from "./gate-resume";
 import { gatesInLedger } from "../workspace/status-gates";
 import { describeApprovalProgress } from "../cli/handlers/operator";
 import { gate } from "./builders";
-import { gateApprovalProblems, gatePolicyRequest, gatePolicyVersion, type GatePolicyRef, type ResolvedGateApproval } from "./gate-approval";
+import { gateApprovalProblems, gateContextDigest, gatePolicyRequest, gatePolicyVersion, type GatePolicyRef, type ResolvedGateApproval } from "./gate-approval";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 
 const PLAN_A = `sha256:${"a".repeat(64)}`;
@@ -28,8 +28,9 @@ function approval(overrides: Partial<GateResolutionRecord> & { resolvedBy: strin
   return { version: 1, op: "release", gate: "ship", planDigest: PLAN_A, approver: { kind: "human" }, ...overrides };
 }
 
-function allow(mode: "log-only" | "enforce" = "enforce"): GateResolutionRecord["policyDecision"] {
-  return { policy: "ship", version: POLICY.version, mode, decision: "allow", determining: ["ship-0"], errors: [] };
+/** A recorded allow, evaluated under `context` (the context the tests' blocks resolve, by default). */
+function allow(mode: "log-only" | "enforce" = "enforce", context: Record<string, unknown> | undefined = { risk: "low" }): GateResolutionRecord["policyDecision"] {
+  return { policy: "ship", version: POLICY.version, mode, contextDigest: gateContextDigest(context), decision: "allow", determining: ["ship-0"], errors: [] };
 }
 
 async function decide(resolutions: GateResolutionRecord[], approvalBlock: ResolvedGateApproval, planDigest = PLAN_A) {
@@ -171,7 +172,7 @@ describe("gate approval — policy decisions (#2508)", () => {
   });
 
   test("enforce: an agent's permit passes the gate on its own", async () => {
-    const block: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "enforce" };
+    const block: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "enforce", context: { risk: "low" } };
     const { check } = await decide(
       [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow() })],
       block,
@@ -183,7 +184,7 @@ describe("gate approval — policy decisions (#2508)", () => {
   });
 
   test("enforce: a permit recorded under an older policy version does not count", async () => {
-    const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce" };
+    const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce", context: { risk: "low" } };
     const { check } = await decide(
       [approval({
         resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" },
@@ -256,7 +257,7 @@ describe("gate approval — policy decisions (#2508)", () => {
   });
 
   test("enforce: a recorded decision with no mode does not pass the gate (#2512)", async () => {
-    const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce" };
+    const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce", context: { risk: "low" } };
     const { mode: _mode, ...noMode } = allow()!;
     const { check } = await decide(
       [approval({
@@ -421,6 +422,61 @@ describe("gate approval — a re-recorded pending fact keeps a partly filled quo
 
     const lines = describeApprovalProgress(twoEnforce, sam, [alex], standing, pending);
     expect(lines).toContain("Quorum: 2 of 2 human approval(s) for this plan (alex, sam).");
+  });
+});
+
+describe("gate approval — a permit counts only under the context it was given for (#3774)", () => {
+  const low: ResolvedGateApproval = { policy: POLICY, mode: "enforce", context: { risk: "low" } };
+  const high: ResolvedGateApproval = { ...low, context: { risk: "high" } };
+  const bot = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("enforce", low.context) });
+
+  test("the permit passes the run whose context it was given for", async () => {
+    const { check } = await decide([bot], low);
+    expect(check.satisfied).toBe(true);
+    if (!check.satisfied) return;
+    expect(check.via).toBe("policy");
+  });
+
+  test("once the context changes, the permit does not pass, and the run re-records the fact under the new context", async () => {
+    // The standing fact is the low-risk one the permit was given against; this
+    // run resolved risk "high" and checks approvals before re-recording.
+    const port = memoryGateLedgerPort({ resolutions: [bot], pending: [{ ...PENDING, approval: low }] });
+    const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: high, now: NOW });
+    expect(check.satisfied).toBe(false);
+    if (check.satisfied) return;
+    expect(check.recorded).toBe(true);
+    expect(port.appended[0]?.approval?.context).toEqual({ risk: "high" });
+
+    // The next run, under the same high-risk context, still waits: nothing new was approved.
+    const ledger = await port.read("release");
+    const next = await evaluateGate(memoryGateLedgerPort(ledger), { op: "release", gate: "ship", planDigest: PLAN_A, approval: high, now: "2026-09-01T13:00:00.000Z" });
+    expect(next.satisfied).toBe(false);
+    if (next.satisfied) return;
+    expect(next.recorded).toBe(false);
+  });
+
+  test("context keys compare in any order, and nested values count", () => {
+    expect(gateContextDigest({ risk: "low", paths: ["a"] })).toBe(gateContextDigest({ paths: ["a"], risk: "low" }));
+    expect(gateContextDigest({ plan: { adds: 1, deletes: 0 } })).toBe(gateContextDigest({ plan: { deletes: 0, adds: 1 } }));
+    expect(gateContextDigest({ plan: { adds: 1, deletes: 0 } })).not.toBe(gateContextDigest({ plan: { adds: 1, deletes: 1 } }));
+    expect(gateContextDigest(undefined)).toBe(gateContextDigest({}));
+  });
+
+  test("a permit recorded before #3774, with no context on it, does not pass an enforced gate", async () => {
+    const { contextDigest: _c, ...legacy } = allow()!;
+    const { check } = await decide(
+      [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: legacy })],
+      low,
+    );
+    expect(check.satisfied).toBe(false);
+  });
+
+  test("a human's approval still counts toward the quorum after the context changes (#3206)", async () => {
+    const alex = approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z", policyDecision: allow("enforce", low.context) });
+    const { check } = await decide([alex], high);
+    expect(check.satisfied).toBe(true);
+    if (!check.satisfied) return;
+    expect(check.via).toBe("quorum");
   });
 });
 
