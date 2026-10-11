@@ -77,33 +77,34 @@ regen:
       npm run --prefix "$lex" bundle
     done
 
-# Run the unit tests, the vitest `unit` project that CI shards (builds missing
-# lexicon artifacts first — see _ensure-gen). The end-to-end project is
-# `just test-e2e`, which only a person starts.
+# Run the unit tests, the vitest `unit` project that pull request CI shards
+# (builds missing lexicon artifacts first — see _ensure-gen). The end-to-end
+# project is `just test-e2e`.
 test: _ensure-gen
     npx vitest run --project unit
 
 # The end-to-end tests, the vitest `e2e` project (*.e2e.test.ts). A large
-# suite: it asks a person to type `run` (scripts/human-gate.sh), and on GitHub
-# it runs only from a dispatch of large-suites.yml.
+# suite: it asks a person to type `run` (scripts/human-gate.sh). On GitHub
+# release-suites.yml runs it on main, on a schedule or a dispatch, and a
+# release only tags a commit it passed (#3793).
 test-e2e:
     @scripts/human-gate.sh test-e2e
     @just _ensure-gen
     npx vitest run --project e2e
 
 # chant #1025 — the fold-vs-run differential corpus, standalone with its
-# per-source report (fold / run-fallback / drift). Already part of `just
-# test`/CI's "Run tests" step (it's a normal vitest file, gated the same as
-# everything else there) — this target is for running just the differential
-# on demand and seeing its report without the rest of the suite's noise.
+# per-source report (fold / run-fallback / drift). Part of the e2e project
+# (`just test-e2e`, and release-suites.yml before a release) since #3793; this
+# target runs just the differential on demand and shows its report without
+# the rest of the suite's noise.
 fold-differential: _ensure-gen
-    npx vitest run examples/fold-differential.test.ts --reporter=verbose
+    npx vitest run examples/fold-differential.e2e.test.ts --reporter=verbose
 
 # chant #1045 Phase 2 — the sandboxed-run-vs-in-process-run differential.
 # Same corpus, same on-demand-report shape as `fold-differential` above.
-# Already part of `just test` too.
+# Also part of the e2e project.
 sandbox-differential: _ensure-gen
-    npx vitest run examples/sandbox-differential.test.ts --reporter=verbose
+    npx vitest run examples/sandbox-differential.e2e.test.ts --reporter=verbose
 
 # chant #1067 — the lexicon completeness contract, actually enforced. Runs
 # each lexicon's own tsconfig.build.json build, then `chant dev check-lexicon`

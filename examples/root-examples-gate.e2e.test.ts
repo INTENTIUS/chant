@@ -325,7 +325,7 @@ describe("every root example builds and lints", () => {
         expect(
           outcome.ok,
           `examples/${name} is on the root-examples gate allowlist ("${allowed.reason}") but now ` +
-            `passes. Delete its ALLOWLIST entry in examples/root-examples-gate.test.ts.`,
+            `passes. Delete its ALLOWLIST entry in examples/root-examples-gate.e2e.test.ts.`,
         ).toBe(false);
         return;
       }

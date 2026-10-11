@@ -45,14 +45,14 @@ npx vitest run lexicons/aws       # AWS lexicon only
 npx vitest run lexicons/k8s       # K8s lexicon only
 ```
 
-The suite is two vitest projects. `unit` is every test file except `*.e2e.test.ts`, and each of its tests has a 15 second budget: a test that runs longer fails with a message naming the budget. `e2e` is every `*.e2e.test.ts`, the tests that spawn the CLI, boot containers or release whole projects, all on the machine running the suite. They are not the cloud deployments on the [E2E Testing](/chant/contributing/e2e-testing/) page. CI runs the unit tests in four shards and the e2e tests in their own job, in parallel.
+The suite is two vitest projects. `unit` is every test file except `*.e2e.test.ts`, and each of its tests has a 5 second budget: a test that runs longer fails with a message naming the budget. `e2e` is every `*.e2e.test.ts`, the tests that spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects, all on the machine running the suite. They are not the cloud deployments on the [E2E Testing](/chant/contributing/e2e-testing/) page. Pull request CI runs only the unit tests, in four shards, beside the typechecks and lint. The e2e tests run in `release-suites.yml` on `main`, every three hours and when someone starts it, and a release only tags a commit they passed.
 
 ```bash
 npx vitest run --project unit     # unit tests only
 npx vitest run --project e2e      # end-to-end tests only
 ```
 
-A unit test over the budget either gets faster or moves into a `*.e2e.test.ts` file. `CHANT_UNIT_TEST_BUDGET_MS` sets a different budget for a local run, and `0` turns it off.
+A unit test over the budget either gets faster or moves into a `*.e2e.test.ts` file, and so does a test that runs the CLI or tsc over whole projects, or builds the example corpus. `CHANT_UNIT_TEST_BUDGET_MS` sets a different budget for a local run, and `0` turns it off.
 
 ### Lexicon artifacts on a fresh clone
 
@@ -93,7 +93,7 @@ Example tests are centralized — each lexicon has a single `examples.test.ts` t
 
 **Per-lexicon examples** live at `lexicons/<name>/examples/<example>/src/` and are tested by `lexicons/<name>/examples/examples.test.ts`.
 
-**Cross-lexicon examples** (e.g. AWS + K8s, GitLab + AWS) live at `examples/<name>/src/` and are tested by `examples/examples.test.ts`.
+**Cross-lexicon examples** (e.g. AWS + K8s, GitLab + AWS) live at `examples/<name>/src/` and are tested by `examples/examples.e2e.test.ts`.
 
 Both use the shared harness from `@intentius/chant-test-utils/example-harness`:
 

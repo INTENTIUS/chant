@@ -22,7 +22,7 @@
  *    The probes are then proven capable of firing, so a green result cannot
  *    come from a mock that never installed.
  *
- * Precedent: `examples/sandbox-execution-boundary.test.ts` (chant #1093/#1113/
+ * Precedent: `examples/sandbox-execution-boundary.e2e.test.ts` (chant #1093/#1113/
  * #1131), which proves the sibling property for project source under
  * `--sandbox`.
  */

@@ -1,6 +1,6 @@
 /**
  * Regenerate docs/src/content/docs/lint-rules/audit-rules.mdx from the audit
- * catalog. The page is derived data: `packages/core/src/audit/rules-doc.test.ts`
+ * catalog. The page is derived data: `packages/core/src/audit/rules-doc.e2e.test.ts`
  * fails when the committed page and `renderRulesReference()` disagree, so run
  * this after changing any lexicon's audit-catalog.ts or audit-lineage.ts.
  *

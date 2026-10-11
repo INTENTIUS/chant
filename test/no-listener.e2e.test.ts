@@ -19,7 +19,7 @@
  *
  * ## The mechanism, and how it differs from no-egress
  *
- * `test/no-egress.test.ts` patches the socket prototype at run time, because
+ * `test/no-egress.e2e.test.ts` patches the socket prototype at run time, because
  * egress can arrive through a dependency and a grep can't see it. A listener
  * is different: it is opened by a call chant's own code makes, and there are
  * only a few spellings of it. So this is a static scan, and it parses each

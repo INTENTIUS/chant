@@ -2,7 +2,7 @@
  * The terraform lexicon's chant audit catalog: metadata for its post-synth
  * checks, contributed through `terraformPlugin.auditCatalog()` (#687, #1346).
  * Every post-synth check needs an entry or it contributes nothing to
- * `chant audit`, silently, and `packages/core/src/audit/catalog.test.ts` fails.
+ * `chant audit`, silently, and `packages/core/src/audit/catalog.e2e.test.ts` fails.
  *
  * TF001 and TF024 through TF029 all read the chant model (`ctx.entities`),
  * never emitted output, so `yamlBased` is false for all of them. Prior-art
@@ -58,7 +58,7 @@ const AWS_ECR_TAG_IMMUTABILITY: Authority = {
 
 // The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
 // ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
-// security rules that fail a merge (packages/core/src/audit/catalog.test.ts
+// security rules that fail a merge (packages/core/src/audit/catalog.e2e.test.ts
 // holds both halves of that invariant), and these three are correctness and
 // best-practice rules (#2112).
 

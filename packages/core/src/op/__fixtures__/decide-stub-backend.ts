@@ -15,7 +15,7 @@
  * forces one (429 or 529, say). Every request it read is kept in `requests`.
  *
  * It lives under `__fixtures__` because it listens on a port, and no module
- * chant runs does (#2657, `test/no-listener.test.ts`): only tests start it.
+ * chant runs does (#2657, `test/no-listener.e2e.test.ts`): only tests start it.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";

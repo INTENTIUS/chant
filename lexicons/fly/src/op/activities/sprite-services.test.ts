@@ -207,7 +207,7 @@ describe("spriteServiceLogs", () => {
 //
 // The acceptance scenario from #2711, offline: create a sprite, create a
 // service with http_port, list/get it, stop and start it, delete it. The
-// docker-gated `sprite-services.docker.integration.test.ts` runs the same
+// docker-gated `sprite-services.docker.integration.e2e.test.ts` runs the same
 // scenario against real spritzer 0.6.0 in container mode.
 
 let fake: { url: string; close(): Promise<void> };

@@ -19,12 +19,27 @@
 # The steps run are the ones each lexicon's own prepack script names, in its
 # order, so this cannot drift from what `npm publish` runs.
 #
-# Usage: scripts/ci-lexicon-artifacts.sh [jobs]   (default: nproc)
+# --steps limits the run to some of those steps (#3793). chant.yml builds
+# what the unit tests and typechecks read (`--steps generate,bundle`: the
+# generated barrels and dist/meta.json) once, in one job, and caches it; its
+# validate job restores that and runs `--steps validate,build`. With no
+# --steps, every step runs, as `npm publish` would.
+#
+# Usage: scripts/ci-lexicon-artifacts.sh [--steps <step,...>] [jobs]   (default: nproc)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+only=""
+if [ "${1:-}" = "--steps" ]; then
+  only=",${2:?--steps needs a comma-separated list, such as generate,bundle},"
+  shift 2
+fi
 jobs="${1:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 logs="$(mktemp -d)"
+export only
+
+# Whether --steps (if given) includes this step.
+wanted() { [ -z "$only" ] || [[ "$only" == *",$1,"* ]]; }
 
 # The npm scripts a lexicon's prepack runs, in order: "generate bundle validate build".
 prepack_steps() {
@@ -43,10 +58,11 @@ for dir in lexicons/*/; do
   node -e 'process.exit(require(process.argv[1]).scripts?.prepack ? 0 : 1)' "$PWD/$dir/package.json" 2>/dev/null || continue
   lexicons+=("$dir")
 done
-echo "${#lexicons[@]} lexicons; generate one at a time, then the rest of each prepack with ${jobs} at once"
+echo "${#lexicons[@]} lexicons; generate one at a time, then the rest of each prepack with ${jobs} at once${only:+ (steps:${only//,/ })}"
 
 start=$(date +%s)
 for dir in "${lexicons[@]}"; do
+  wanted generate || break
   steps=$(prepack_steps "$dir")
   if [[ " $steps " == *" generate "* ]]; then
     echo "::group::generate $(basename "$dir")"
@@ -65,17 +81,18 @@ rest_of_prepack() {
   {
     for step in $steps; do
       [ "$step" = generate ] && continue
+      wanted "$step" || continue
       npm run --prefix "$dir" "$step" || { echo "FAILED: npm run --prefix $dir $step"; return 1; }
     done
   } > "$logs/$name.log" 2>&1 || { echo "$name" >> "$logs/failed"; }
   echo "$name $(( $(date +%s) - t0 ))s" >> "$logs/times"
 }
-export -f rest_of_prepack prepack_steps
+export -f rest_of_prepack prepack_steps wanted
 export logs
 
 start=$(date +%s)
 printf '%s\n' "${lexicons[@]}" | xargs -P "$jobs" -I{} bash -c 'rest_of_prepack "$1"' _ {}
-echo "bundle, validate, build: $(( $(date +%s) - start ))s"
+echo "the rest of each prepack: $(( $(date +%s) - start ))s"
 
 for dir in "${lexicons[@]}"; do
   name=$(basename "$dir")

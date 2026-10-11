@@ -4,8 +4,15 @@
  * the `unit` vitest project.
  */
 
-/** The default budget: 15 seconds per unit test. */
-export const DEFAULT_UNIT_TEST_BUDGET_MS = 15_000;
+/**
+ * The default budget: 5 seconds per unit test (#3793; 15 seconds before it).
+ * In three CI runs every test left in the unit project took under 2s on a
+ * loaded 4-core runner, but the next runs showed tests from that set at up to
+ * 3.7s when a worker loaded a large module cold. 5s leaves 2.5x headroom over
+ * the typical slowest time, while a test that runs the CLI, tsc or a build
+ * over projects takes longer and belongs in the e2e project.
+ */
+export const DEFAULT_UNIT_TEST_BUDGET_MS = 5_000;
 
 /**
  * The budget in milliseconds. `CHANT_UNIT_TEST_BUDGET_MS` overrides the
@@ -25,7 +32,7 @@ export function unitTestBudgetMs(env: Record<string, string | undefined>): numbe
 export function overBudgetMessage(name: string, elapsedMs: number, budgetMs: number): string {
   return [
     `"${name}" took ${(elapsedMs / 1000).toFixed(1)}s, over the ${budgetMs / 1000}s unit-test budget (chant #2817).`,
-    "Make it faster, or move it to a *.e2e.test.ts file: those are the e2e project (`just test-e2e`, or the test-e2e job of the large-suites workflow), which has no per-test budget and runs only when a person starts it.",
+    "Make it faster, or move it to a *.e2e.test.ts file: those are the e2e project (`just test-e2e`, and release-suites.yml on main before a release), which has no per-test budget and never runs on a pull request.",
     "CHANT_UNIT_TEST_BUDGET_MS changes the budget for a local run (0 turns it off).",
   ].join(" ");
 }

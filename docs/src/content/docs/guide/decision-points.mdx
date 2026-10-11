@@ -321,7 +321,7 @@ chant workspace points answer <answer id> --answer work-item --by alice
 chant workspace records amend W-003 --kind work --set keep.json   # {"state": "open"}
 ```
 
-Or the person gives another answer and drops the item. Once the item is committed, `graph --intent` shows the finding addressed by it, and asking the triage again for that finding, the table answers `leave`. `test/reference-workspace.test.ts` runs this flow against the stub backend.
+Or the person gives another answer and drops the item. Once the item is committed, `graph --intent` shows the finding addressed by it, and asking the triage again for that finding, the table answers `leave`. `test/reference-workspace.e2e.test.ts` runs this flow against the stub backend.
 
 ### From a change finding
 

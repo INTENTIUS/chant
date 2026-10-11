@@ -4,7 +4,7 @@
 //
 // A copy of docs/design/decisions/decision.kind.mjs in the chant repo, with
 // decision.schema.json beside it, so a workspace made from this one reads its
-// decisions without the chant repo. chant's test/reference-workspace.test.ts fails
+// decisions without the chant repo. chant's test/reference-workspace.e2e.test.ts fails
 // when this kind's data or the schema drifts from chant's.
 export const recordKind = {
   name: "decision",

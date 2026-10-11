@@ -67,7 +67,7 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 
 Everything under `lexicons/*/examples/` is the feature tier and is not listed individually here.
 
-This table is a gate, not a courtesy: `examples/root-examples-gate.test.ts` fails when a directory
+This table is a gate, not a courtesy: `examples/root-examples-gate.e2e.test.ts` fails when a directory
 under `examples/` holding a `chant.config.*` is missing from it, or when a name here has no
 directory. The same file builds and lints every one of those examples the way its own
 `package.json` scripts do, with an allowlist that carries a reason per entry.

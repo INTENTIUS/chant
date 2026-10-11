@@ -7,7 +7,7 @@
  * `importConfigModule` (`chant.config.ts`): one narrow module whose only job is
  * "execute project-authored code here", so that "did any project code run in
  * this process?" has one place to look and one place to instrument — see
- * `examples/sandbox-execution-boundary.test.ts`, which spies on all three.
+ * `examples/sandbox-execution-boundary.e2e.test.ts`, which spies on all three.
  *
  * Before chant #1131 `./policy.ts` called `await import(resolved)` inline,
  * which is why the corpus boundary gate could not see it even after #1113 put

@@ -6,7 +6,7 @@
  * both. A finding `check --changes` reports goes through the same triage
  * (#2794).
  *
- * Split from test/reference-workspace.test.ts (#2817): the first test's six CLI
+ * Split from test/reference-workspace.e2e.test.ts (#2817): the first test's six CLI
  * spawns put it at about 20s on CI, over the unit shards' per-test budget, so
  * both run in the test-e2e job.
  */

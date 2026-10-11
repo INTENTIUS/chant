@@ -40,12 +40,16 @@
         ],
         "validate": [
           "validate"
+        ],
+        "suites": [
+          "suites"
         ]
       },
       "require": [
         "check",
         "test",
-        "validate"
+        "validate",
+        "suites"
       ]
     }
   },

@@ -3,12 +3,19 @@ name: chant
 # Distinct title so it isn't confused with other workflows on the same commit.
 run-name: chant — ${{ github.head_ref || github.ref_name }}
 
-# The fast checks, on every change: typecheck and build guards (check), the
-# unit tests (test-shard, aggregated as test), the trust policy (trust) and
-# the lexicon prepacks under the release gate (validate). The large suites,
-# the end-to-end tests, the tests against real observability binaries and the
-# Docker npm smoke, are in large-suites.yml and run only when a person
-# dispatches it; the helm survey is helm-survey.yml, also dispatch only.
+# The fast checks, on every change, and nothing long (#3793): the lexicon
+# artifacts built once (lexicon-artifacts), typechecks, lint and small guards
+# (check), the unit tests (test-shard, aggregated as test), the trust policy
+# (trust) and the rest of every lexicon's prepack under the release gate plus
+# the completeness contract (validate).
+#
+# The long suites are not here. The e2e project (the CLI goldens, the corpus
+# differentials, the reference workspace, every *.e2e.test.ts) runs in
+# release-suites.yml on main, on a schedule or a dispatch; its `suites` check
+# is a required ci.green phase, so `just release` never tags a commit they
+# have not passed. The tests against real observability binaries and the
+# Docker npm smoke are in large-suites.yml, and the helm survey in
+# helm-survey.yml, both dispatch only.
 #
 # Run once per commit: on PRs (pull_request) and on pushes to main
 # (post-merge validation). Without scoping `push` to main, a commit on a
@@ -31,14 +38,89 @@ permissions:
   security-events: write
 
 jobs:
-  check:
+  # The lexicon artifacts the other jobs read, built once per run (#3793).
+  # Before, check and every test shard ran scripts/ci-lexicon-artifacts.sh
+  # (each lexicon's whole prepack) for 2 to 2.5 minutes each, and validate a
+  # sixth time. The unit tests and the typechecks read only what `generate`
+  # and `bundle` write (src/generated/ and dist/meta.json, dist/okf/; the same
+  # two steps `just test` runs through _ensure-gen), so this job runs those
+  # two and caches the result under a hash of what they read: the lexicons'
+  # sources, core's source, the lockfile and the script. A run whose inputs
+  # match an earlier run's restores that cache and skips the build. The
+  # dependent jobs restore it by the key this job outputs.
+  lexicon-artifacts:
     runs-on: ubuntu-latest
-    # 10 was the historical value and this job had crept to ~9m30s against it,
-    # so any upstream slowness cancelled the build rather than failing it —
-    # which reads as "your change broke CI" when it did not. Attempts are now
-    # individually bounded (packages/core/src/codegen/fetch.ts), so this is
-    # headroom rather than a licence to grow.
-    timeout-minutes: 20
+    timeout-minutes: 15
+    env:
+      CHANT_RELEASE_GATE: "1"
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+
+      - name: Key the artifacts by their inputs
+        id: key
+        run: echo "key=lexicon-artifacts-v1-${{ hashFiles('lexicons/**', '!lexicons/*/src/generated/**', '!lexicons/*/dist/**', '!lexicons/**/node_modules/**', '!lexicons/**/*.test.ts', 'packages/core/src/**', '!packages/core/src/**/*.test.ts', 'package.json', 'package-lock.json', 'scripts/ci-lexicon-artifacts.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Look for artifacts already built from these inputs
+        id: cached
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - uses: actions/setup-node@v6
+        if: steps.cached.outputs.cache-hit != 'true'
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: npm install
+
+      - name: Cache lexicon schemas
+        if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      # Every lexicon's generate one at a time, then every bundle with one
+      # lexicon per CPU (#2817).
+      - name: Generate and bundle every lexicon
+        if: steps.cached.outputs.cache-hit != 'true'
+        run: scripts/ci-lexicon-artifacts.sh --steps generate,bundle
+
+      - name: Save the artifacts
+        if: steps.cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "lexicon-artifacts ran $((elapsed / 60))m$((elapsed % 60))s (cache hit: ${{ steps.cached.outputs.cache-hit || 'false' }})" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  check:
+    needs: [lexicon-artifacts]
+    runs-on: ubuntu-latest
+    # Typechecks and guards on restored artifacts, about 2 minutes.
+    timeout-minutes: 10
     steps:
       # Recorded first so the timeout-report step below (#2076) can compute
       # how long the job actually ran before a job-level timeout cancelled it.
@@ -56,19 +138,21 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
           restore-keys: |
             lexicon-schemas-
 
-      # Every lexicon's prepack (generate, bundle, validate, build): the
-      # generates one at a time, then the rest with one lexicon per CPU
-      # (#2817). Run in sequence this step took 4 to 5 minutes in every job
-      # that needs the artifacts.
-      - name: Generate lexicon artifacts
-        run: scripts/ci-lexicon-artifacts.sh
+      - name: Restore the lexicon artifacts
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ needs.lexicon-artifacts.outputs.key }}
+          fail-on-cache-miss: true
 
       # #3088 — typechecks and every package and lexicon build run on
       # TypeScript 7 through scripts/tsc7.sh. `typescript` itself stays on 5.9
@@ -95,16 +179,9 @@ jobs:
 
       # The k8s API client (#1074) is its own package, so `just build`'s
       # core-only typecheck does not cover it. It is not a lexicon either, so
-      # check-lexicons below does not reach it.
+      # check-lexicons (in validate) does not reach it.
       - name: Typecheck the Kubernetes API client (#1074)
         run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/k8s-client/tsconfig.build.json
-
-      - name: Lexicon completeness contract (#1067)
-        # The prepack above ends with each lexicon's `npm run build`, the same
-        # tsc build check-lexicons runs; the second run doubled this step (#2817).
-        env:
-          CHECK_LEXICONS_SKIP_BUILD: "1"
-        run: npx tsx scripts/check-lexicons.ts
 
       # #1388 — the two typechecks above cover packages/core and k8s-client, and
       # check-lexicons builds each lexicon's tsconfig.build.json, which excludes
@@ -116,10 +193,11 @@ jobs:
       # #2657 (ws-052) — the chant and hud boundary. packages/core opens no
       # listener and imports no UI or agent-runtime package, and the owner
       # roster in docs/data/boundary.yaml matches the code's closed lists.
-      # Both read source only, so they run here as a named step and also in
-      # the test shards through vitest's include list, as no-egress does.
+      # Both read source only. The roster is a unit test and also runs in the
+      # shards; the no-listener scan of every source file is over the unit
+      # budget, so it is an e2e file that runs here by path (#3793).
       - name: Boundary guards (no listener, owner roster)
-        run: npx vitest run test/no-listener.test.ts test/boundary-roster.test.ts
+        run: npx vitest run test/no-listener.e2e.test.ts test/boundary-roster.test.ts
 
       - name: Lint aws reference composites (EVL regression guard, #916/#952)
         # The lexicon's own composites must obey the evaluability rules they teach.
@@ -128,6 +206,8 @@ jobs:
       - name: Audit runtime dependencies
         run: node scripts/depcheck.mjs
 
+      # The four example steps below take seconds each (under 3s, and 7s for
+      # the local Op run, on run 38171459002), so they stay (#3793).
       - name: Lint example project
         run: npx tsx packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
 
@@ -177,28 +257,27 @@ jobs:
         if: cancelled()
         run: |
           elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
-          message="check job timed out after ~${elapsed}m against its 20 minute ceiling. This is a CI timeout, not a check failure."
+          message="check job timed out after ~${elapsed}m against its 10 minute ceiling. This is a CI timeout, not a check failure."
           echo "::error::${message}"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # The unit tests run as four vitest shards in parallel. vitest assigns each
-  # test file to exactly one shard (sorted by a hash of its path), so the four
-  # together run the same files `npx vitest run --project unit` does. The
-  # end-to-end files (*.e2e.test.ts) are the `e2e` project; they run only
-  # from a dispatch of large-suites.yml, never on a push or pull request.
-  # Every unit test
-  # has a 15s budget (test/unit-test-budget.setup.ts): one slow test sets the
-  # length of its shard, and every PR and release waits on the slowest job.
-  # The required `test` check is the aggregate job below, not these.
+  # test file to exactly one shard (sorted by a hash of its path), so the
+  # four together run the same files `npx vitest run --project unit` does.
+  # The end-to-end files (*.e2e.test.ts) are the `e2e` project; they run in
+  # release-suites.yml, never on a push or pull request. Every unit test has a
+  # 5s budget (test/unit-test-budget.setup.ts, #3793): one slow test sets the
+  # length of its shard, and every PR waits on the slowest job. The required
+  # `test` check is the aggregate job below, not these. Four rather than
+  # three: vitest's module import is most of a shard's time, about 4 minutes
+  # of it per shard across its workers, and three shards ran 2m40s to 3m40s.
   test-shard:
     name: test-shard (${{ matrix.shard }}/4)
+    needs: [lexicon-artifacts]
     runs-on: ubuntu-latest
-    # The unsharded suite needed a 20 minute ceiling (#1993). A shard runs a
-    # quarter of the files after the same setup, so 15 leaves room for the
-    # setup plus runner variance.
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       # Let every shard finish so one failing shard does not hide another's.
       fail-fast: false
@@ -221,19 +300,21 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
           restore-keys: |
             lexicon-schemas-
 
-      # Every lexicon's prepack (generate, bundle, validate, build): the
-      # generates one at a time, then the rest with one lexicon per CPU
-      # (#2817). Run in sequence this step took 4 to 5 minutes in every job
-      # that needs the artifacts.
-      - name: Generate lexicon artifacts
-        run: scripts/ci-lexicon-artifacts.sh
+      - name: Restore the lexicon artifacts
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ needs.lexicon-artifacts.outputs.key }}
+          fail-on-cache-miss: true
 
       # The helm lexicon targets Helm 4 (epic #1228); the runner image ships
       # Helm 3. Pin the version the render tests run against.
@@ -256,12 +337,6 @@ jobs:
           restore-keys: |
             vitest-results-unit-${{ matrix.shard }}-
 
-      # Includes examples/fold-differential.test.ts (#1025, epic #1019) — the
-      # fold-vs-run zero-drift gate over examples/* + every lexicon's own
-      # examples/* fixtures. It's a normal vitest file (see
-      # vitest.config.ts's UNIT_INCLUDE), gated here like everything else in
-      # this step; `just fold-differential` runs it alone with its
-      # per-source report.
       - name: Run unit tests (shard ${{ matrix.shard }}/4)
         run: npx vitest run --project unit --shard=${{ matrix.shard }}/4
 
@@ -283,7 +358,7 @@ jobs:
         if: cancelled()
         run: |
           elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
-          message="test shard ${{ matrix.shard }}/4 timed out after ~${elapsed}m against its 15 minute ceiling. This is a CI timeout, not a test failure."
+          message="test shard ${{ matrix.shard }}/4 timed out after ~${elapsed}m against its 10 minute ceiling. This is a CI timeout, not a test failure."
           echo "::error::${message}"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
@@ -334,25 +409,29 @@ jobs:
         # --head is the pull request's own tip, not the merge commit GitHub makes for the run.
         run: npx tsx packages/core/src/cli/main.ts workspace verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
 
+  # The rest of every lexicon's prepack (validate, build) on the artifacts
+  # lexicon-artifacts built, then the completeness contract (#1067), which
+  # reads the builds. One job, beside the shards (#3793); before, this job ran
+  # every prepack a second time, one lexicon after another.
+  #
+  # #1481 — arm the release gate here, so this job runs the checks the
+  # publish workflow runs. `npm publish` re-runs each lexicon's prepack
+  # under CHANT_RELEASE_GATE=1, which adds the surface-snapshot check to
+  # validate. Before this, that gate ran only inside `npm publish`, and two
+  # releases in a row died on a check CI was structurally unable to see.
+  # Every input the gate depends on is pinned (the aws spec by content,
+  # #1511; k8s by version tag), so arming it on PRs is deterministic.
   validate:
+    needs: [lexicon-artifacts]
     runs-on: ubuntu-latest
-    # Same failure as the test job in #1993: runs land at 4m20s-4m49s against
-    # a 5 minute ceiling, so cancellation tracked runner variance rather than
-    # the change. Matches the other jobs in this workflow.
-    timeout-minutes: 20
-    # #1481 — arm the release gate here, so this job runs the prepack the
-    # publish workflow runs. `npm publish` re-runs each lexicon's prepack
-    # under CHANT_RELEASE_GATE=1, which adds the surface-snapshot check and
-    # (for aws) refuses a build that could not load the pinned spec. Before
-    # this, that gate ran only inside `npm publish`: release-preflight.sh
-    # trusted a green `chant` run that had never executed it, and two
-    # releases in a row died on a check CI was structurally unable to see.
-    # Every input the gate depends on is pinned (the aws spec by content,
-    # #1511; k8s by version tag), so arming it on PRs is deterministic —
-    # it moves only when a commit moves it.
+    timeout-minutes: 10
     env:
       CHANT_RELEASE_GATE: "1"
     steps:
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
@@ -363,76 +442,34 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
           restore-keys: |
             lexicon-schemas-
 
+      - name: Restore the lexicon artifacts
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ needs.lexicon-artifacts.outputs.key }}
+          fail-on-cache-miss: true
 
-      - name: Generate and validate AWS lexicon
-        run: npm run --prefix lexicons/aws prepack
+      - name: Validate and build every lexicon, under the release gate
+        run: scripts/ci-lexicon-artifacts.sh --steps validate,build
 
-      - name: Generate and validate GitLab lexicon
-        run: npm run --prefix lexicons/gitlab prepack
+      - name: Lexicon completeness contract (#1067)
+        # The step above ran each lexicon's `npm run build`, the same tsc
+        # build check-lexicons runs; a second run doubled this step (#2817).
+        env:
+          CHECK_LEXICONS_SKIP_BUILD: "1"
+        run: npx tsx scripts/check-lexicons.ts
 
-      - name: Generate and validate GitHub lexicon
-        run: npm run --prefix lexicons/github prepack
-
-      - name: Generate and validate Forgejo lexicon
-        run: npm run --prefix lexicons/forgejo prepack
-
-      - name: Generate and validate OTel lexicon
-        run: npm run --prefix lexicons/otel prepack
-
-      - name: Generate and validate Prometheus lexicon
-        run: npm run --prefix lexicons/prometheus prepack
-
-      - name: Generate and validate K8s lexicon
-        run: npm run --prefix lexicons/k8s prepack
-
-      - name: Generate and validate GCP lexicon
-        run: npm run --prefix lexicons/gcp prepack
-
-      - name: Generate and validate Azure lexicon
-        run: npm run --prefix lexicons/azure prepack
-
-      - name: Generate and validate Helm lexicon
-        run: npm run --prefix lexicons/helm prepack
-
-      - name: Generate and validate Docker lexicon
-        run: npm run --prefix lexicons/docker prepack
-
-      - name: Generate and validate Fly lexicon
-        run: npm run --prefix lexicons/fly prepack
-
-      - name: Generate and validate Fountain lexicon
-        run: npm run --prefix lexicons/fountain prepack
-
-      - name: Generate and validate K3d lexicon
-        run: npm run --prefix lexicons/k3d prepack
-
-      - name: Generate and validate K3s lexicon
-        run: npm run --prefix lexicons/k3s prepack
-
-      # cedar joins this job now that it has a real generate and a real
-      # validate (#1650) — 33 required names over the bundled default schema.
-      # Before that its prepack was bundle + build and had nothing to assert.
-      - name: Generate and validate Cedar lexicon
-        run: npm run --prefix lexicons/cedar prepack
-
-      - name: Generate and validate Render lexicon
-        run: npm run --prefix lexicons/render prepack
-
-      - name: Generate and validate Cpln lexicon
-        run: npm run --prefix lexicons/cpln prepack
-
-      - name: Generate and validate Terraform lexicon
-        run: npm run --prefix lexicons/terraform prepack
-
-      - name: Generate and validate Grafana lexicon
-        run: npm run --prefix lexicons/grafana prepack
-
-      - name: Generate and validate Sql lexicon
-        run: npm run --prefix lexicons/sql prepack
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "validate ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"

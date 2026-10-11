@@ -75,7 +75,7 @@ person (or a later review) moves a decision to `decided`. Build its fields as
 JSON. This is a complete example, a decision a session about the app's
 logging might produce:
 
-<!-- example-record: checked against the decision schema by test/reference-workspace.test.ts -->
+<!-- example-record: checked against the decision schema by test/reference-workspace.e2e.test.ts -->
 ```json
 {
   "schema": 1,

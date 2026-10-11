@@ -312,7 +312,7 @@ describe("OTEL127 resourcedetection detectors", () => {
 });
 
 // The issue's acceptance bar: what chant itself produces reports none of these.
-// The init templates and examples are covered by init-templates.test.ts and
+// The init templates and examples are covered by init-templates.e2e.test.ts and
 // examples/examples.test.ts, which require every check to pass.
 describe("OTEL119-OTEL127 on chant's own collector configs", () => {
   const backend = () => new OtlpExporter({ name: "backend", endpoint: "tempo:4317", tls: { insecure: true } });

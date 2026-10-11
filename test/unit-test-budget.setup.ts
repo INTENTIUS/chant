@@ -4,11 +4,11 @@ import { overBudgetMessage, unitTestBudgetMs } from "./unit-test-budget";
 /**
  * The per-test time budget for the `unit` vitest project (chant #2817).
  *
- * CI runs the unit tests as four shards, and one slow test sets the length of
- * its shard, which every PR and every release waits on. A unit test that takes
- * longer than the budget (15s by default) fails here with a message naming the
+ * Pull request CI runs the unit tests as shards, and one slow test sets the
+ * length of its shard, which every PR waits on. A unit test that takes longer
+ * than the budget (5s by default, #3793) fails here with a message naming the
  * budget. End-to-end tests belong in a `*.e2e.test.ts` file, which the `e2e`
- * project runs in its own CI job with no budget.
+ * project runs in release-suites.yml with no budget.
  *
  * The time counted is the test and its beforeEach/afterEach hooks, the same span
  * vitest reports for the test. A file's beforeAll is not counted.

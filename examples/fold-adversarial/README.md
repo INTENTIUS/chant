@@ -47,7 +47,7 @@ npx vitest run examples/fold-adversarial                  # the split, named fil
 
 `chant build .` on this directory reports one `DiscoveryError` and exits non-zero, for ever:
 `nullish-property-read.ts` throws when it is imported, which is the whole point of the #2328
-fixture. The root-examples build-and-lint gate (`examples/root-examples-gate.test.ts`) enumerates
+fixture. The root-examples build-and-lint gate (`examples/root-examples-gate.e2e.test.ts`) enumerates
 this directory like any other and carries an `expected-failure` allowlist entry for it, so the
 failure is asserted rather than tolerated — if the fixture ever stops failing, the gate says so.
 

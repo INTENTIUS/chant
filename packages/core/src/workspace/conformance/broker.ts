@@ -187,7 +187,7 @@ export type BrokerHttpHandler = (req: IncomingMessage, res: ServerResponse) => v
 /**
  * How the suite serves its upstreams: serve `handler` on a loopback port and
  * return its URL and how to stop it. The caller passes it because chant
- * itself never listens on a port (ws-052, ws-086, test/no-listener.test.ts);
+ * itself never listens on a port (ws-052, ws-086, test/no-listener.e2e.test.ts);
  * the test that runs the suite does.
  */
 export type BrokerListen = (handler: BrokerHttpHandler) => Promise<{ url: string; close(): Promise<void> | void }>;

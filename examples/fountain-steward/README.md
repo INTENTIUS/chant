@@ -148,7 +148,7 @@ has not shipped.
 
 ## What CI covers
 
-`examples/examples.test.ts` builds and lints this example on every change and
+`examples/examples.e2e.test.ts` builds and lints this example before every release and
 asserts the six documents — `Environment`, `Vault`, `Agent`, `Teammate` and
 two `Schedule`s, which is five kinds and no `Webhook` — along with the ACP
 agent fields and both schedule prompts. The live half — a real fountain
