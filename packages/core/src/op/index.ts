@@ -92,7 +92,7 @@ export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, 
 export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch, GateQuorumProgress, GateTally } from "./gate";
 export { tallyGateApprovals, humanQuorumSince, approverOf } from "./gate";
 export {
-  gateApprovalProblems, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES,
+  gateApprovalProblems, gateContextDigest, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES,
 } from "./gate-approval";
 export type {
   GateApproval, GateApprovalMode, GateApprover, GateContextValue, GatePolicyAnswer, GatePolicyDecision,

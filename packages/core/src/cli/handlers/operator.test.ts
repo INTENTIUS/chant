@@ -77,6 +77,7 @@ vi.mock("../../op/gate-approval", async () => {
 
 // Imported after the mocks above are registered.
 const { runOperator, runOperatorStatus, runOperatorLog, runApprove } = await import("./operator");
+const { gateContextDigest } = await import("../../op/gate-approval");
 
 function ctx(args: Partial<ParsedArgs>) {
   return {
@@ -1125,7 +1126,7 @@ describe("runApprove — a gate with an approval policy (#2508)", () => {
     expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({
       approver: { kind: "agent" },
       policyDecision: {
-        policy: "ship", version: "sha256:v1", mode: "enforce",
+        policy: "ship", version: "sha256:v1", mode: "enforce", contextDigest: gateContextDigest({ risk: "low" }),
         decision: "allow", determining: ["agent-low-risk"], errors: [],
       },
     }));

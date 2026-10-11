@@ -50,7 +50,7 @@ import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
 import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import { sortedJsonReplacer } from "../utils";
-import type { GateApprover, ResolvedGateApproval } from "./gate-approval";
+import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 import { resolveGateRunLocator } from "./gate-resume";
@@ -361,7 +361,7 @@ export interface GateTally {
   counted: GateResolutionRecord[];
   /** The quorum's count, 1 when the gate declares none. */
   need: number;
-  /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version. */
+  /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version and resolved context. */
   permit?: GateResolutionRecord;
   /** The newest approval of this gate for a different plan, when the gate binds one. */
   mismatched?: GateResolutionRecord;
@@ -381,8 +381,9 @@ export interface GateTally {
  * Of those, only a human's counts toward the quorum, once per `resolvedBy`,
  * and only with one of the quorum's roles when it names any. An agent counts
  * only through a recorded `allow` in `enforce` mode, evaluated under the
- * policy version the gate declares now and recorded while the gate was in
- * `enforce` (#2512). A `log-only` decision never changes the outcome, even
+ * policy version the gate declares now, recorded while the gate was in
+ * `enforce` (#2512), and evaluated under the context the gate resolves now
+ * (#3774). A `log-only` decision never changes the outcome, even
  * after the gate switches to `enforce`, and a `deny` never removes a human's approval: a policy can add
  * a way through the gate but cannot take one away.
  */
@@ -398,6 +399,7 @@ export function tallyGateApprovals(
   const humansSince = Math.min(since, new Date(humansSinceIso).getTime());
   const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
   const roles = approval.quorum?.roles;
+  const context = gateContextDigest(approval.context);
 
   const byActor = new Map<string, GateResolutionRecord>();
   let permit: GateResolutionRecord | undefined;
@@ -416,11 +418,13 @@ export function tallyGateApprovals(
     const sinceStanding = at(r) >= since;
     // #2512: the decision must also have been recorded under `enforce`. An
     // allow recorded while the gate was log-only was never binding, and a
-    // later switch to enforce does not make it binding.
+    // later switch to enforce does not make it binding. #3774: and under
+    // the context this run resolved, since the run checks approvals before it
+    // re-records the pending fact for a changed context.
     if (
       sinceStanding && approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
-      decision.mode === "enforce" &&
-      decision.version === approval.policy.version && (!permit || at(r) >= at(permit))
+      decision.mode === "enforce" && decision.version === approval.policy.version &&
+      decision.contextDigest === context && (!permit || at(r) >= at(permit))
     ) {
       permit = r;
     }

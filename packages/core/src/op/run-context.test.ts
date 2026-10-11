@@ -8,7 +8,7 @@ import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { runOpLocally } from "./local-executor";
 import { memoryGateLedgerPort } from "./gate";
 import { currentOpRun, type OpRunContext } from "./run-context";
-import { gatePolicyVersion, type GatePolicyRef, type ResolvedGateApproval } from "./gate-approval";
+import { gateContextDigest, gatePolicyVersion, type GatePolicyRef, type ResolvedGateApproval } from "./gate-approval";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 
 const PROFILES: Record<string, ActivityProfile> = {
@@ -81,7 +81,7 @@ describe("the Op run context (#2522)", () => {
     const permit = (mode: "log-only" | "enforce"): GateResolutionRecord => ({
       version: 1, op: "release", gate: "ship", resolvedBy: "release-bot", timestamp: "2026-09-05T11:00:00.000Z",
       approver: { kind: "agent" },
-      policyDecision: { policy: "ship", version: POLICY.version, mode, decision: "allow", determining: ["ship-0"], errors: [] },
+      policyDecision: { policy: "ship", version: POLICY.version, mode, contextDigest: gateContextDigest(undefined), decision: "allow", determining: ["ship-0"], errors: [] },
     });
 
     async function run(mode: "log-only" | "enforce") {

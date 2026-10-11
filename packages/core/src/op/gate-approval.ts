@@ -26,7 +26,9 @@
  * on the resolution with the policy's version, and a run counts a recorded
  * permit only while the gate still declares that same version. Editing the
  * policy invalidates every permit recorded under the old one, the way a new
- * plan invalidates every approval recorded for the old plan (#2300).
+ * plan invalidates every approval recorded for the old plan (#2300). The
+ * decision also records the digest of the context it was asked about, and a
+ * permit counts only while the run resolves that same context (#3774).
  *
  * The trust boundary is unchanged from `../lifecycle/gate-ledger.ts`: a
  * resolution is a local fact, not a signed one, and roles on it are what the
@@ -134,6 +136,14 @@ export interface GatePolicyDecision extends GatePolicyAnswer {
    * an allow recorded under `log-only` never binds after a switch.
    */
   mode: GateApprovalMode;
+  /**
+   * {@link gateContextDigest} of the resolved context the policy was asked
+   * about (#3774). A permit passes a gate only while the run's resolved
+   * context has this same digest, so a permit given for `risk: "low"` does
+   * not pass a run that now resolves `risk: "high"`. A decision recorded
+   * before #3774 has none and does not pass an enforced gate.
+   */
+  contextDigest?: string;
 }
 
 /** What a lexicon's `gate-policy` module exports. */
@@ -144,6 +154,22 @@ export interface GatePolicyEvaluator {
 /** The version of a gate policy: `sha256:` and the hex digest of its text. A lexicon's helper stamps it, and OPS015 checks it still matches. */
 export function gatePolicyVersion(text: string): string {
   return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+/**
+ * The digest of a gate's resolved approval context (#3774): `sha256:` and the
+ * hex digest of its JSON with keys sorted at every level. No context and an
+ * empty one digest the same.
+ */
+export function gateContextDigest(context: Record<string, unknown> | undefined): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(context ?? {}, sortedKeys)).digest("hex")}`;
+}
+
+function sortedKeys(_key: string, value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  }
+  return value;
 }
 
 export function isGatePolicyRef(value: unknown): value is GatePolicyRef {
