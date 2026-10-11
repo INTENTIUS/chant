@@ -9,6 +9,7 @@
  * esbuild's own list of what went in.
  */
 
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { describe, expect, test } from "vitest";
@@ -46,5 +47,24 @@ describe("the notify bundle", () => {
     expect(inputs).toEqual(["packages/core/src/notify-verify.ts"]);
     expect(imports).toEqual(["node:crypto"]);
     expect(bytes).toBeLessThan(4 * 1024);
+  });
+});
+
+describe("the compiled notify entries inside this repository (#3803)", () => {
+  // `./notify` and `./notify-verify` resolve their `import` condition to
+  // dist/*.js so plain Node can load an installed package. A checkout has no
+  // dist JS (the package build keeps it only for `npm pack`), so a lexicon or
+  // package here that imports either entry fails to load under `chant build`.
+  // The github lexicon's wave pipeline did, and the release suites' delivery
+  // project could not build. Source here imports from `src` paths instead.
+  test("no source outside packages/core imports @intentius/chant/notify or notify-verify", () => {
+    const found = spawnSync(
+      "git",
+      ["grep", "-l", "-E", "from [\"']@intentius/chant/notify(-verify)?[\"']", "--", "*.ts", "*.mts", "*.mjs", ":!packages/core/**"],
+      { cwd: REPO, encoding: "utf-8" },
+    );
+    // git grep exits 1 when nothing matches.
+    expect(found.status, found.stderr).toBe(1);
+    expect(found.stdout).toBe("");
   });
 });
