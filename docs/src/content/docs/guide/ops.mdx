@@ -366,7 +366,7 @@ A gate passes on `true` by default. A choice or score point names the answers th
 
 ## Running under a work lease
 
-An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item.
+An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item. An item id has to be a valid git ref name segment (letters, digits, `.`, `_` and `-`, no `..`, no trailing `.`, no `.lock` suffix), and a literal id that isn't is refused when the Op is built ([#2815](https://github.com/INTENTIUS/chant/issues/2815)).
 
 ```typescript
 import { Op, phase, activity, workLeaseOutput } from "@intentius/chant/op";
