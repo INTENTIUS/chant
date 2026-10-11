@@ -361,6 +361,52 @@ describe("upsertComment (#3759)", () => {
   });
 });
 
+describe("findComment (#3802)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+
+  test("reads back the comment upsertComment would update, author honoured, oldest first", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues/12/comments": [
+        { id: 1, body: "<!-- y -->\nsubject: planted", user: { login: "mallory" } },
+        { id: 5, body: "<!-- y -->\nsubject: newer", user: { login: "yodel-bot" }, html_url: "https://h/5" },
+        { id: 3, body: "<!-- y -->\nsubject: abc", user: { login: "Yodel-Bot" }, html_url: "https://h/3" },
+      ],
+    });
+    const forge = githubForge({ ...gh, fetch });
+    expect(await forge.findComment(12, "<!-- y -->", { author: "yodel-bot" })).toEqual({ id: 3, body: "<!-- y -->\nsubject: abc", url: "https://h/3" });
+    expect((await forge.findComment(12, "<!-- y -->"))?.id).toBe(1);
+    expect(await forge.findComment(12, "<!-- other -->")).toBeUndefined();
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  test("Forgejo pages with limit, and anywhere finds a marker inside the body", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v1/repos/acme/infra/issues/4/comments": [{ id: 7, body: "plan\n<!-- y -->", user: { login: "bot" }, html_url: "https://cb/7" }],
+    });
+    const forge = forgejoForge({ ...gh, apiBase: "https://codeberg.org/api/v1", host: "codeberg.org", fetch });
+    expect(await forge.findComment(4, "<!-- y -->", { match: "anywhere" })).toEqual({ id: 7, body: "plan\n<!-- y -->", url: "https://cb/7" });
+    expect(await forge.findComment(4, "<!-- y -->")).toBeUndefined();
+    expect(new URL(calls[0].url).searchParams.get("limit")).toBe("50");
+  });
+
+  test("GitLab skips system notes and reads the note without a URL", async () => {
+    const { fetch } = fakeFetch({
+      "GET /api/v4/projects/42/merge_requests/5/notes": [
+        { id: 30, body: "<!-- y -->\nsys", system: true },
+        { id: 31, body: "<!-- y -->\nmine", author: { username: "bot" } },
+      ],
+    });
+    const forge = gitlabForge({ apiBase: "https://gitlab.example.com/api/v4", project: "42", token: "glpat", fetch });
+    expect(await forge.findComment(5, "<!-- y -->", { author: "bot" })).toEqual({ id: 31, body: "<!-- y -->\nmine" });
+  });
+
+  test("an empty marker is refused", async () => {
+    const { fetch, calls } = fakeFetch({});
+    await expect(githubForge({ ...gh, fetch }).findComment(12, "")).rejects.toThrow(/needs a marker/);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("trackIssue (#3759)", () => {
   const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
   const open = [
@@ -406,6 +452,27 @@ describe("trackIssue (#3759)", () => {
     expect(await githubForge({ ...gh, fetch: changed.fetch }).trackIssue("<!-- d -->", { title: "Drift: prod", body: "<!-- d -->\n3 changes" })).toMatchObject({ action: "updated", number: 8 });
     const none = fakeFetch({ "GET /repos/acme/infra/issues": [], "POST /repos/acme/infra/issues": { number: 10, html_url: "https://h/issues/10" } });
     expect(await githubForge({ ...gh, fetch: none.fetch }).trackIssue("<!-- d -->", { title: "t", body: "<!-- d -->\nb" })).toEqual({ action: "opened", number: 10, url: "https://h/issues/10" });
+  });
+
+  test("sameWhen counts a body that differs only in run-specific text as unchanged (#3802)", async () => {
+    const issues = [{ number: 8, title: "Drift: prod", body: "<!-- d -->\nfingerprint f1\nrun 100", html_url: "https://h/issues/8" }];
+    const next = { title: "Drift: prod", body: "<!-- d -->\nfingerprint f1\nrun 101" };
+    const same = fakeFetch({ "GET /repos/acme/infra/issues": issues });
+    expect(await githubForge({ ...gh, fetch: same.fetch }).trackIssue("<!-- d -->", next, { sameWhen: "fingerprint f1" })).toEqual({
+      action: "unchanged",
+      number: 8,
+      url: "https://h/issues/8",
+    });
+    expect(same.calls.map((c) => c.method)).toEqual(["GET"]);
+    const strip = (b: string) => b.replace(/\nrun \d+/, "");
+    const fn = fakeFetch({ "GET /repos/acme/infra/issues": issues });
+    expect(
+      (await githubForge({ ...gh, fetch: fn.fetch }).trackIssue("<!-- d -->", next, { sameWhen: (o, f) => o.title === f.title && strip(o.body) === strip(f.body) })).action,
+    ).toBe("unchanged");
+    const retitled = fakeFetch({ "GET /repos/acme/infra/issues": issues, "PATCH /repos/acme/infra/issues/8": { number: 8 } });
+    expect((await githubForge({ ...gh, fetch: retitled.fetch }).trackIssue("<!-- d -->", { ...next, title: "Drift: prod (2)" }, { sameWhen: "fingerprint f1" })).action).toBe("updated");
+    const moved = fakeFetch({ "GET /repos/acme/infra/issues": issues, "PATCH /repos/acme/infra/issues/8": { number: 8 } });
+    expect((await githubForge({ ...gh, fetch: moved.fetch }).trackIssue("<!-- d -->", { ...next, body: "<!-- d -->\nfingerprint f2" }, { sameWhen: "fingerprint f2" })).action).toBe("updated");
   });
 
   test("GitLab searches open issues by description, writes description, and closes with a note", async () => {
@@ -522,6 +589,14 @@ describe("forgeTargetFromEnv (#3759)", () => {
     expect(calls[0].headers["PRIVATE-TOKEN"]).toBeUndefined();
   });
 
+  test("the default token order: CHANT_GITHUB_TOKEN on GitHub, FORGEJO_TOKEN before GITHUB_TOKEN on Forgejo (#3802)", () => {
+    const base = { GITHUB_REPOSITORY: "a/b", GITHUB_SERVER_URL: "https://codeberg.org" };
+    expect(forgeTargetFromEnv({ GITHUB_ACTIONS: "true", ...base, CHANT_FORGEJO_TOKEN: "fj", GITHUB_TOKEN: "gh" }).tokenSource).toBe("GITHUB_TOKEN");
+    expect(forgeTargetFromEnv({ GITHUB_ACTIONS: "true", ...base, CHANT_GITHUB_TOKEN: "c", GH_TOKEN: "g" }).tokenSource).toBe("CHANT_GITHUB_TOKEN");
+    expect(forgeTargetFromEnv({ FORGEJO_ACTIONS: "true", ...base, FORGEJO_TOKEN: "f", GITHUB_TOKEN: "g" }).tokenSource).toBe("FORGEJO_TOKEN");
+    expect(forgeTargetFromEnv({ FORGEJO_ACTIONS: "true", ...base, CHANT_FORGEJO_TOKEN: "c", FORGEJO_TOKEN: "f" }).tokenSource).toBe("CHANT_FORGEJO_TOKEN");
+  });
+
   test("says every missing piece, and when the forge is unknown", () => {
     let err: unknown;
     try {
@@ -533,7 +608,7 @@ describe("forgeTargetFromEnv (#3759)", () => {
     expect((err as ForgeEnvironmentError).missing).toEqual([
       "GITHUB_REPOSITORY",
       "a pull request (a pull_request event, or refs/pull/<n>/ in GITHUB_REF)",
-      "a token (CHANT_FORGEJO_TOKEN, GH_TOKEN, GITHUB_TOKEN)",
+      "a token (CHANT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN)",
     ]);
     expect(() => forgeTargetFromEnv({})).toThrow(/forge is not known/);
   });
