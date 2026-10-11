@@ -29,16 +29,14 @@
  * the runner can fetch it.
  *
  * `comment` (#2231) crosses over, since chant #2291: it posts onto the
- * triggering pull request by shelling to `gh` against `${GITHUB_API_URL}`,
- * and a Forgejo Actions job already sets that (and `github.token`) the same
- * way a GitHub Actions job does. This generator used to refuse the mode by
- * name here, on the premise that chant had no way to point `gh` at a Forgejo
- * instance; that premise was checked against a real Forgejo
- * 12.0.4+gitea-1.22.0 instance during INTENTIUS/choudoufu#1027 and found
- * false — the failure was `gh api` resolving a *relative* path against
- * `/api/v3`, which Forgejo does not serve, not an unreachable forge. See
- * `reconcilePr`'s `postOrUpdateComment` (`packages/core/src/op/activities/reconcile.ts`)
- * for the fix.
+ * triggering pull request against `${GITHUB_API_URL}`, and a Forgejo Actions
+ * job already sets that (and `github.token`) the same way a GitHub Actions
+ * job does. This generator used to refuse the mode by name here, on the
+ * premise that chant had no way to reach a Forgejo instance; that premise
+ * was checked against a real Forgejo 12.0.4+gitea-1.22.0 instance during
+ * INTENTIUS/choudoufu#1027 and found false. Since chant #3757 the post goes
+ * through the Forgejo client in `packages/core/src/pr-forge.ts` over `fetch`
+ * rather than through `gh`, so the job's image needs no `gh` either.
  *
  * `issue` (`gh issue create`/`postOrUpdateGithubIssue`) does not cross over,
  * and chant #2315 is why: it remained un-refused-but-unverified after #2304

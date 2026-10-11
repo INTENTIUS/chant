@@ -69,6 +69,8 @@ chant operator --lease-ttl 5m        # default; long enough for a normal tick, s
 
 ## Crash recovery
 
+An operator that is stopped cleanly (Ctrl-C or SIGTERM) releases the Op leases it holds, so a restart ticks on its first round instead of printing `skipped=1(lease-held:<old holder>)` until they expire ([#2879](https://github.com/INTENTIUS/chant/issues/2879)). A killed one cannot, and that is the case the TTL covers.
+
 There is no special crash-recovery code path — restarting is ticking. A killed operator simply stops renewing its lease; the lease expires on its own TTL; the next round (this process restarted, a different machine's operator, or a bare `chant run <name>` from cron) re-acquires and re-ticks. A converge tick re-derives everything from live observation every time (`ConvergeOp`'s own design), so re-ticking after a crash and ticking on a normal schedule are the same act, not two different code paths to test and trust separately.
 
 All operator state — ticks, gates, leases — lives on git. `rm -rf` of any local scratch directory changes nothing: the tick history is on the `chant/lifecycle` orphan branch, and the lease is a ref, both re-fetchable from the remote.
@@ -149,6 +151,21 @@ steward's turn ends at the gate rather than sitting on the thread waiting, and
 the thread once the resolution is written, so the sandbox re-runs and reads
 the fact.
 </Aside>
+
+### Reading the ledger as an audit trail
+
+`@intentius/chant/lifecycle/gate-audit` turns `_gates/<op>.jsonl` lines into typed audit entries and reports what the ledger is missing. It is a pure function that takes ledger lines and returns entries and gaps. It touches no git, clock or file, and it bundles small enough for a product's single CI file. The product keeps storage and rendering.
+
+```ts
+import { deriveGateAudit, gateLedgerLines } from "@intentius/chant/lifecycle/gate-audit";
+
+const { entries, gaps } = deriveGateAudit({
+  ledgers: [{ op: "tf-apply", lines: gateLedgerLines(fileText) }],
+  applies: [{ ref: "reports/1", at, gate: "wave-1", digest }],
+});
+```
+
+Entry kinds are `approval-requested`, `approved` (with `seal`, `signer`, `approver`, `relayedBy` and `review`), `override-requested`, `override-recorded` (reason in `note`), `revoked`, and, for the applies a product passes in, `applied` (with the approval it ran under) and `override-spent`. A line a commit removed is a revocation: feed `gateLedgerLinesFromLog` the text of `git log -p --unified=0` over the file. An override gate is one of op `policy-override` or named `override-<rule>` unless `isOverride` says otherwise. Gaps are `approval-without-request`, `unsealed` (when `sealed(op, gate)` says the gate needs a seal), `approval` and `override` (an apply with no approval or override behind it), and `malformed-line`. `readGateAuditLedgers(port, ops)` reads the current ledgers through a `GateLedgerPort`.
 
 ## `chant operator status`
 

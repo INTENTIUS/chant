@@ -18,7 +18,7 @@ chant workspace work evidence <id> --holder <name> --token <token> --from <file|
 
 A work lease says who is working on a [work item](/chant/guide/work-items/) right now ([ws-055](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-055-dev-model-ledgers.md), [#2732](https://github.com/INTENTIUS/chant/issues/2732)). A runner claims an item before it starts and renews the lease while its agent works. It releases the lease when the work ends. The item's record doesn't change. The lease lives outside the working branch, so it never shows up in a release's diff or in a write-scope check.
 
-The lease is the [operator lease](/chant/cli/operator/) under another key. Its ref is `refs/chant/lease/work/<id>`. The ref points at a lease record holding the holder and a fencing token, with the times it was claimed and expires. A claim is one compare-and-set of that ref. When two workers claim the same item at once, one wins and the other is refused with the winner named.
+The lease is the [operator lease](/chant/cli/operator/) under another key. Its ref is `refs/chant/lease/work/<id>`. The ref points at a lease record holding the holder and a fencing token, with the times it was claimed and expires. The id lands in git refs and a file name, so it has to pass `git check-ref-format` as a ref path segment. Ids start with a letter or digit and run to at most 100 characters of letters, digits and `.` `_` `-`. Git also refuses a name that ends in `.` or `.lock` or holds `..`, so `upgrade-.` and `x.lock` are refused. A bad id is refused with `write-usage-invalid` before any git call ([#2815](https://github.com/INTENTIUS/chant/issues/2815)). A claim is one compare-and-set of that ref. When two workers claim the same item at once, one wins and the other is refused with the winner named.
 
 | Verb | Effect |
 |---|---|
@@ -202,7 +202,7 @@ An error prints `{ "$schema", "contract", "error": { "code", "message" } }`. The
 
 | Code | Cause |
 |---|---|
-| `write-usage-invalid` | A missing verb, id or `--holder`, a flag the verb doesn't take, or an `--outcome` outside the [outcomes](#outcomes). |
+| `write-usage-invalid` | A missing verb, id or `--holder`, an id git rejects as a ref name, a flag the verb doesn't take, or an `--outcome` outside the [outcomes](#outcomes). |
 | `kind-unreadable` | The work kind or its records could not be read. |
 | `work-kind-missing` | `--kind` is not a work kind, or the declaration names none. |
 | `work-kind-ambiguous` | More than one declared work kind has a record with the id; pass `--kind`. |

@@ -429,6 +429,35 @@ describe("runOperatorForever — interval/timer behavior", () => {
     });
   }, 10_000);
 
+  test("releases the Ops' leases when it stops, so a restarted operator ticks at once (#2879)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      writeFixtureConvergeOp(dir, "staging-converge", "staging");
+      const activities = fakeTickActivities(dir, "staging", "staging-converge");
+
+      const controller = new AbortController();
+      const rounds: unknown[] = [];
+      const loop = runOperatorForever({
+        cwd: dir,
+        holder: "op-a",
+        intervalMs: 40,
+        activities,
+        profiles: PROFILES,
+        signal: controller.signal,
+        onRound: () => rounds.push(1),
+      });
+      await waitForRoundCount(rounds, 1);
+      expect((await readLease("staging-converge", { cwd: dir })).record?.holder).toBe("op-a");
+
+      controller.abort();
+      await loop;
+      expect((await readLease("staging-converge", { cwd: dir })).record).toBeUndefined();
+
+      const events = await runOperatorRound({ cwd: dir, holder: "op-b", activities, profiles: PROFILES });
+      expect(events.map((e) => e.kind)).toEqual(["ticked"]);
+    });
+  }, 10_000);
+
   test("default interval is used when none is given", () => {
     expect(DEFAULT_OPERATOR_INTERVAL_MS).toBeGreaterThan(0);
   });
