@@ -393,10 +393,19 @@ describe("chant #1984 — the phases an adopter runs reach no network", () => {
   }, CORPUS_PHASE_TIMEOUT_MS);
 
   test("chant lint: no rule, no post-synth check and no policy reaches out", async () => {
+    // The source rules and policies run over the whole corpus. The post-synth
+    // checks (#3750) make lint build each project in memory, which is chant
+    // build's pipeline and is already guarded over the whole corpus above, so
+    // they run over one project per group to keep the test inside the unit budget.
     const violations: string[] = [];
     for (const entry of CORPUS) {
       const mark = attempts.length;
-      await withoutEgress(`lint ${entry.name}`, () => lintCommand({ path: entry.srcDir, format: "json" }));
+      await withoutEgress(`lint ${entry.name}`, () => lintCommand({ path: entry.srcDir, format: "json", postSynth: false }));
+      violations.push(...attemptsSince(mark));
+    }
+    for (const entry of REPRESENTATIVE) {
+      const mark = attempts.length;
+      await withoutEgress(`lint post-synth ${entry.name}`, () => lintCommand({ path: entry.srcDir, format: "json" }));
       violations.push(...attemptsSince(mark));
     }
     report.push({ phase: "chant lint", projects: CORPUS.length, violations: violations.length });
