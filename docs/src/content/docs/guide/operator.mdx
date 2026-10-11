@@ -69,6 +69,8 @@ chant operator --lease-ttl 5m        # default; long enough for a normal tick, s
 
 ## Crash recovery
 
+An operator that is stopped cleanly (Ctrl-C or SIGTERM) releases the Op leases it holds, so a restart ticks on its first round instead of printing `skipped=1(lease-held:<old holder>)` until they expire ([#2879](https://github.com/INTENTIUS/chant/issues/2879)). A killed one cannot, and that is the case the TTL covers.
+
 There is no special crash-recovery code path — restarting is ticking. A killed operator simply stops renewing its lease; the lease expires on its own TTL; the next round (this process restarted, a different machine's operator, or a bare `chant run <name>` from cron) re-acquires and re-ticks. A converge tick re-derives everything from live observation every time (`ConvergeOp`'s own design), so re-ticking after a crash and ticking on a normal schedule are the same act, not two different code paths to test and trust separately.
 
 All operator state — ticks, gates, leases — lives on git. `rm -rf` of any local scratch directory changes nothing: the tick history is on the `chant/lifecycle` orphan branch, and the lease is a ref, both re-fetchable from the remote.
