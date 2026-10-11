@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 215 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 216 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -407,6 +407,7 @@ Each row follows, in the order of the table above.
 | reason code | `answer-not-candidate` | chant | points-write.schema.json | The people's answer is not one of the question's candidates. |
 | reason code | `quorum-not-met` | chant | points-write.schema.json | Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any. |
 | reason code | `answer-in-steward-turn` | chant | points-write.schema.json | The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell. |
+| reason code | `answer-never-over-mcp` | chant | points-write.schema.json | The answer or retraction came over MCP or ACP, or from a process a session on one started, and the question constrains a gate that is never resolved there (#3817). |
 | reason code | `answer-not-answered` | chant | points-write.schema.json | points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351). |
 | reason code | `answer-field-unsupported` | chant | points-write.schema.json | The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a retraction or an ad-hoc question's asked, and chant refuses rather than drop it (#3351, #3403). |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |

@@ -93,6 +93,7 @@ import { IdentityError, refuseUnidentified } from "./identity";
 import { scopeSource } from "./write-scope";
 import { RefCASConflictError } from "../lifecycle/git";
 import { readLedgerAnswers, refreshLedger, withLedgerAnswers, writeLedgerAnswer, type LedgerAnswers } from "./answers-ledger";
+import { currentGateOrigin, isModelAuthored, type GateOrigin } from "../lifecycle/gate-origin";
 
 /** The version of the write documents `points ask`, `points answer` and `points retract` print. */
 export const POINTS_WRITE_CONTRACT_VERSION = 1;
@@ -122,6 +123,8 @@ export const POINTS_WRITE_ERROR_CODES = [
   "record-id-taken",
   /** The answer was given during a steward's turn (#2749): a steward never answers a question, its own or another's. */
   "answer-in-steward-turn",
+  /** The answer or retraction came over MCP or ACP, and the question constrains a gate that is never resolved there (#3817). */
+  "answer-never-over-mcp",
   /** An answerer is named by a bare name, and identity.attribution at base is identified (#3163). */
   "principal-unidentified",
   /** `points retract` names a question that has no answer: escalated or proposed (#3351). */
@@ -715,6 +718,13 @@ export interface AnswerPointOptions {
   kind?: string;
   on?: string;
   dryRun?: boolean;
+  /**
+   * The channel the answer came through (#3817). Defaults to this process's
+   * (`currentGateOrigin`). Over MCP or ACP nobody `by` names counts toward
+   * the quorum, and a question that constrains a `neverOverMcp` gate is
+   * refused outright.
+   */
+  origin?: GateOrigin;
 }
 
 /**
@@ -821,18 +831,81 @@ async function findQuestion(cwd: string, kind: string | undefined, id: string): 
   throw new PointsWriteError("record-not-found", `no answer record has id ${id}`);
 }
 
-/** Count `by` toward the point's quorum, or refuse with `quorum-not-met`. */
-function meetQuorum(name: string, by: string[], quorum: { count: number; roles?: string[] }, root: string, steward: string | undefined, verb: "answer" | "retract"): { counted: string[] } {
-  const tally = tallyQuorum(by, quorum, policyFor(root), steward);
+/** A model-authored channel's name, as a person reads it. */
+const channelName = (origin: GateOrigin): string => (origin === "acp" ? "ACP" : "MCP");
+
+/**
+ * Count `by` toward the point's quorum, or refuse with `quorum-not-met`.
+ *
+ * Over MCP or ACP (#3817) the names are the model's to choose, as a gate's
+ * approver is (`lifecycle/gate-origin.ts`), so the answer is an agent's and
+ * nobody it names counts: a person answers at a shell or through hud.
+ */
+function meetQuorum(name: string, by: string[], quorum: { count: number; roles?: string[] }, root: string, steward: string | undefined, verb: "answer" | "retract", origin: GateOrigin): { counted: string[] } {
+  const overModel = isModelAuthored(origin);
+  const tally = overModel
+    ? { counted: [] as string[], left: by.map((n) => ({ name: n, why: `was named over ${channelName(origin)}, where an answer is an agent's` })), met: false }
+    : tallyQuorum(by, quorum, policyFor(root), steward);
   if (!tally.met) {
     const got = tally.counted.length;
     const left = tally.left.length ? `; not counted: ${tally.left.map((l) => `${l.name}, who ${l.why}`).join("; ")}` : "";
+    const remedy = overModel ? `: a person ${verb === "answer" ? "answers" : "retracts it"} at a shell with \`chant workspace points ${verb}\`, or through hud` : "";
     throw new PointsWriteError(
       "quorum-not-met",
-      `${name} needs ${quorum.count} ${quorum.count === 1 ? "person" : "people"}${quorum.roles ? ` holding ${quorum.roles.join(" or ")}` : ""} to ${verb === "answer" ? "answer" : "retract an answer"}, and ${got} ${got === 1 ? "counts" : "count"}${got ? ` (${tally.counted.join(", ")})` : ""}${left}`,
+      `${name} needs ${quorum.count} ${quorum.count === 1 ? "person" : "people"}${quorum.roles ? ` holding ${quorum.roles.join(" or ")}` : ""} to ${verb === "answer" ? "answer" : "retract an answer"}, and ${got} ${got === 1 ? "counts" : "count"}${got ? ` (${tally.counted.join(", ")})` : ""}${left}${remedy}`,
     );
   }
   return tally;
+}
+
+/** The gates a question's `constrains` names, as `gate:<op>/<gate>` with an optional `@<env>` (`op/gate-point.ts`'s `gateSubject`). */
+function constrainedGates(d: Record<string, unknown>): { op: string; gate: string }[] {
+  const out: { op: string; gate: string }[] = [];
+  for (const c of Array.isArray(d.constrains) ? d.constrains : []) {
+    if (typeof c !== "string" || !c.startsWith("gate:")) continue;
+    const rest = c.slice("gate:".length);
+    const at = rest.lastIndexOf("@");
+    const named = at > 0 ? rest.slice(0, at) : rest;
+    const slash = named.indexOf("/");
+    if (slash > 0 && slash < named.length - 1) out.push({ op: named.slice(0, slash), gate: named.slice(slash + 1) });
+  }
+  return out;
+}
+
+/**
+ * Refuse an answer or retraction over MCP or ACP to a question that
+ * constrains a gate never resolved there (#3817, #3485): the gate-only op
+ * names chant knows, a pending fact on the gate ledger that says so (as
+ * terragucci's records do), or the Op's own `neverOverMcp`. `op-approve`
+ * refuses the same gates.
+ */
+async function refuseNeverOverMcp(id: string, d: Record<string, unknown>, root: string, origin: GateOrigin, does: "answers" | "retracts"): Promise<void> {
+  if (!isModelAuthored(origin)) return;
+  const gates = constrainedGates(d);
+  if (gates.length === 0) return;
+  const { isNeverOverMcpGateOp } = await import("../op/gate-name");
+  const { readGateLedger } = await import("../lifecycle/gate-ledger");
+  let configs: Map<string, { config: { neverOverMcp?: boolean } }> | undefined;
+  for (const { op, gate } of gates) {
+    let never = isNeverOverMcpGateOp(op);
+    if (!never) {
+      const { pending } = await readGateLedger(op, { cwd: root }).catch(() => ({ pending: [] as { gate: string; neverOverMcp?: true }[] }));
+      never = pending.some((p) => p.gate === gate && p.neverOverMcp === true);
+    }
+    if (!never) {
+      if (configs === undefined) {
+        const { discoverOps } = await import("../op/discover");
+        configs = await discoverOps({ cwd: root }).then((r) => r.ops as Map<string, { config: { neverOverMcp?: boolean } }>).catch(() => new Map());
+      }
+      never = Boolean(configs.get(op)?.config.neverOverMcp);
+    }
+    if (never) {
+      throw new PointsWriteError(
+        "answer-never-over-mcp",
+        `${id} constrains gate "${gate}" on "${op}", which is never resolved over ${channelName(origin)}, so its question is not ${does === "answers" ? "answered" : "retracted"} there either: a person ${does === "answers" ? "answers" : "retracts the answer to"} it at a shell with \`chant workspace points ${does === "answers" ? "answer" : "retract"} ${id}\`, or through hud`,
+      );
+    }
+  }
 }
 
 /**
@@ -884,8 +957,10 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     if (value === undefined || !allowed.includes(value)) {
       throw new PointsWriteError("answer-not-candidate", `${opts.id} takes one of ${allowed.map((c) => JSON.stringify(c)).join(", ")}, not ${JSON.stringify(opts.answer)}`);
     }
+    const origin = opts.origin ?? currentGateOrigin();
+    await refuseNeverOverMcp(opts.id, d, o.root, origin, "answers");
     const quorum = quorumOf(point);
-    const tally = meetQuorum(name, opts.by, quorum, o.root, askedByOf(d)?.steward, "answer");
+    const tally = meetQuorum(name, opts.by, quorum, o.root, askedByOf(d)?.steward, "answer", origin);
     const on = opts.on ?? today();
     const decider = d.decider as Record<string, unknown>;
     const confirmed = target.state === "proposed" && decider.kind === "model" && d.answer === value;
@@ -960,6 +1035,8 @@ export interface RetractAnswerOptions {
   kind?: string;
   on?: string;
   dryRun?: boolean;
+  /** The channel the retraction came through, counted as for an answer (#3817). */
+  origin?: GateOrigin;
 }
 
 /**
@@ -998,8 +1075,10 @@ async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWr
     const name = String(d.point);
     const point = pointOf(opened.points, name);
     if (!point) throw new PointsWriteError("point-unknown", `${opts.id} answers ${name}, which ${opened.pointsFile} no longer declares, so no quorum can take the answer back: ask the point as it is declared now`);
+    const origin = opts.origin ?? currentGateOrigin();
+    await refuseNeverOverMcp(opts.id, d, o.root, origin, "retracts");
     const quorum = quorumOf(point);
-    const tally = meetQuorum(name, opts.by, quorum, o.root, askedByOf(d)?.steward, "retract");
+    const tally = meetQuorum(name, opts.by, quorum, o.root, askedByOf(d)?.steward, "retract", origin);
     const on = opts.on ?? today();
     const type = String(d.question_type);
     const decider = d.decider !== null && typeof d.decider === "object" && !Array.isArray(d.decider) ? (d.decider as Record<string, unknown>) : { kind: "quorum" };
