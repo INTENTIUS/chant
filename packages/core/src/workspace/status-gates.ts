@@ -16,13 +16,14 @@
  * gate in its environment is the anchor, only approvals recorded since it and
  * for its plan count, and a gate with an `approval` block counts them with
  * `tallyGateApprovals`, as `describeApprovalProgress` does after an approve.
+ * Its human quorum reaches back to `humanQuorumSince` (#3206), as a run's does.
  */
 
 import { execFileSync } from "node:child_process";
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
-import { tallyGateApprovals, type GateApprovalRule } from "../op/gate";
+import { humanQuorumSince, tallyGateApprovals, type GateApprovalRule } from "../op/gate";
 import type { ReasonCode } from "./reason-codes";
 
 /** Why a member's gates can't be listed. Closed: a new code is a contract change. */
@@ -139,7 +140,7 @@ export function approveCommand(component: string, gate: string, env: string | nu
 const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal: r.resolvedBy, channel: r.origin ?? null, relayedBy: r.relayedBy ?? null, at: r.timestamp });
 
 /** One gate in one environment, decided against its newest pending fact. */
-function decide(component: string, standing: PendingGateRecord, all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null): StatusGate {
+function decide(component: string, standing: PendingGateRecord, facts: PendingGateRecord[], all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null): StatusGate {
   const gate = standing.gate;
   // #3163: under identity.gates, an unsigned approval, or one from outside the class, doesn't count, as a run reads it.
   const resolutions = rule === null ? all : all.filter((r) => r.gate !== gate || rule.refuses(r) === null);
@@ -155,7 +156,8 @@ function decide(component: string, standing: PendingGateRecord, all: GateResolut
   let needed = 1;
   let mismatched: GateResolutionRecord | undefined;
   if (standing.approval) {
-    const tally = tallyGateApprovals(own, gate, since, planDigest, standing.approval);
+    // #3206: a human approval from before a fact re-recorded for a mode or context change still counts.
+    const tally = tallyGateApprovals(own, gate, since, planDigest, standing.approval, humanQuorumSince(facts, standing));
     approved = tally.permit !== undefined || tally.counted.length >= tally.need;
     approvals = tally.permit && !tally.counted.includes(tally.permit) ? [...tally.counted, tally.permit] : tally.counted;
     needed = tally.need;
@@ -207,7 +209,8 @@ export function gatesInLedger(component: string, content: string, envs: readonly
       byEnv.set(env, [...(byEnv.get(env) ?? []), p]);
     }
     for (const env of [...byEnv.keys()].sort((a, b) => envs.indexOf(a ?? "") - envs.indexOf(b ?? ""))) {
-      gates.push(decide(component, latestPendingGate(byEnv.get(env)!, gate)!, resolutions, now, rules(gate)));
+      const envFacts = byEnv.get(env)!;
+      gates.push(decide(component, latestPendingGate(envFacts, gate)!, envFacts, resolutions, now, rules(gate)));
     }
   }
   return { gates, malformed };

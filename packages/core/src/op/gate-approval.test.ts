@@ -5,7 +5,10 @@
  * lexicon's and is tested there.
  */
 import { describe, test, expect } from "vitest";
-import { evaluateGate, memoryGateLedgerPort, tallyGateApprovals } from "./gate";
+import { evaluateGate, humanQuorumSince, memoryGateLedgerPort, tallyGateApprovals } from "./gate";
+import { resolutionAnswering } from "./gate-resume";
+import { gatesInLedger } from "../workspace/status-gates";
+import { describeApprovalProgress } from "../cli/handlers/operator";
 import { gate } from "./builders";
 import { gateApprovalProblems, gatePolicyRequest, gatePolicyVersion, type GatePolicyRef, type ResolvedGateApproval } from "./gate-approval";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
@@ -309,6 +312,115 @@ describe("gate approval — policy decisions (#2508)", () => {
     expect(check.satisfied).toBe(true);
     if (!check.satisfied) return;
     expect(check.via).toBeUndefined();
+  });
+});
+
+describe("gate approval — a re-recorded pending fact keeps a partly filled quorum (#3206)", () => {
+  const twoLogOnly: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "log-only", context: { risk: "low" } };
+  const twoEnforce: ResolvedGateApproval = { ...twoLogOnly, mode: "enforce" };
+  const alex = approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z", policyDecision: allow("log-only") });
+  const sam = approval({ resolvedBy: "sam", timestamp: "2026-09-01T13:00:00.000Z" });
+
+  /** Run the gate once under `before`'s pending fact with `next`, then again after `later` approvals. */
+  async function switchThenApprove(before: ResolvedGateApproval, next: ResolvedGateApproval, later: GateResolutionRecord[], planDigest = PLAN_A) {
+    const port = memoryGateLedgerPort({ resolutions: [alex], pending: [{ ...PENDING, approval: before }] });
+    const first = await evaluateGate(port, { op: "release", gate: "ship", planDigest, approval: next, now: NOW });
+    const ledger = await port.read("release");
+    const after = await evaluateGate(
+      memoryGateLedgerPort({ resolutions: [...ledger.resolutions, ...later], pending: ledger.pending }),
+      { op: "release", gate: "ship", planDigest, approval: next, now: "2026-09-01T14:00:00.000Z" },
+    );
+    return { first, after, pending: ledger.pending };
+  }
+
+  test("log-only then enforce: the switch re-records the fact, and the human approval from before it still counts", async () => {
+    const { first, after } = await switchThenApprove(twoLogOnly, twoEnforce, [sam]);
+    expect(first.satisfied).toBe(false);
+    if (first.satisfied) return;
+    expect(first.recorded).toBe(true);
+    expect(first.quorum).toEqual({ approvers: ["alex"], need: 2 });
+
+    expect(after.satisfied).toBe(true);
+    if (!after.satisfied) return;
+    expect(after.via).toBe("quorum");
+    expect(after.approvals?.map((r) => r.resolvedBy)).toEqual(["alex", "sam"]);
+  });
+
+  test("a changed context keeps the quorum too", async () => {
+    const { after } = await switchThenApprove(twoLogOnly, { ...twoLogOnly, context: { risk: "high" } }, [sam]);
+    expect(after.satisfied).toBe(true);
+  });
+
+  test("one approval of two is still one after the switch, so the gate waits", async () => {
+    const { after } = await switchThenApprove(twoLogOnly, twoEnforce, []);
+    expect(after.satisfied).toBe(false);
+    if (after.satisfied) return;
+    expect(after.quorum).toEqual({ approvers: ["alex"], need: 2 });
+  });
+
+  test("a changed policy version starts the count again", async () => {
+    const text = TEXT.replace("low", "medium");
+    const edited: GatePolicyRef = { ...POLICY, version: gatePolicyVersion(text), text };
+    const { after } = await switchThenApprove(twoLogOnly, { ...twoLogOnly, policy: edited }, [sam]);
+    expect(after.satisfied).toBe(false);
+    if (after.satisfied) return;
+    expect(after.quorum).toEqual({ approvers: ["sam"], need: 2 });
+  });
+
+  test("a fact for another plan in between starts the count again", async () => {
+    const pending: PendingGateRecord[] = [
+      { ...PENDING, approval: twoLogOnly },
+      { ...PENDING, timestamp: "2026-09-01T02:00:00.000Z", planDigest: PLAN_B, approval: twoLogOnly },
+      { ...PENDING, timestamp: "2026-09-01T03:00:00.000Z", approval: twoEnforce },
+    ];
+    expect(humanQuorumSince(pending, pending[2]!)).toBe(pending[2]!.timestamp);
+    const check = await evaluateGate(
+      memoryGateLedgerPort({ resolutions: [alex, sam], pending }),
+      { op: "release", gate: "ship", planDigest: PLAN_A, approval: twoEnforce, now: "2026-09-01T14:00:00.000Z" },
+    );
+    expect(check.satisfied).toBe(false);
+  });
+
+  test("a fact that had expired before the next was recorded starts the count again", async () => {
+    const pending: PendingGateRecord[] = [
+      { ...PENDING, approval: twoLogOnly, expiresAt: "2026-09-01T02:00:00.000Z" },
+      { ...PENDING, timestamp: "2026-09-01T03:00:00.000Z", approval: twoEnforce },
+    ];
+    expect(humanQuorumSince(pending, pending[1]!)).toBe(pending[1]!.timestamp);
+    const unexpired = [{ ...pending[0]!, expiresAt: PENDING.expiresAt }, pending[1]!];
+    expect(humanQuorumSince(unexpired, unexpired[1]!)).toBe(PENDING.timestamp);
+  });
+
+  test("a permit from before the standing fact still never passes, even one recorded under enforce", async () => {
+    const bot = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:30:00.000Z", approver: { kind: "agent" }, policyDecision: allow("enforce") });
+    const enforceHigh: ResolvedGateApproval = { ...twoEnforce, context: { risk: "high" } };
+    const pending: PendingGateRecord[] = [
+      { ...PENDING, approval: enforceHigh },
+      { ...PENDING, timestamp: "2026-09-01T02:00:00.000Z", approval: twoEnforce },
+    ];
+    const check = await evaluateGate(
+      memoryGateLedgerPort({ resolutions: [bot], pending }),
+      { op: "release", gate: "ship", planDigest: PLAN_A, approval: twoEnforce, now: NOW },
+    );
+    expect(check.satisfied).toBe(false);
+    if (check.satisfied) return;
+    expect(check.recorded).toBe(false);
+  });
+
+  test("workspace status, the resume check and chant approve's progress line count it the same way", async () => {
+    const { pending } = await switchThenApprove(twoLogOnly, twoEnforce, []);
+    const standing = pending[pending.length - 1]!;
+
+    const content = [...pending, alex, sam].map((r) => JSON.stringify(r)).join("\n") + "\n";
+    const gate = gatesInLedger("release", content, [], "2026-09-01T14:00:00.000Z").gates[0];
+    expect(gate?.state).toBe("approved");
+    expect(gate?.approvals.map((a) => a.principal)).toEqual(["alex", "sam"]);
+
+    expect(resolutionAnswering([alex, sam], standing, pending)?.resolvedBy).toBe("sam");
+    expect(resolutionAnswering([alex, sam], standing)).toBeUndefined();
+
+    const lines = describeApprovalProgress(twoEnforce, sam, [alex], standing, pending);
+    expect(lines).toContain("Quorum: 2 of 2 human approval(s) for this plan (alex, sam).");
   });
 });
 

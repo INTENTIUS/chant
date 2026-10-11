@@ -42,12 +42,12 @@ import {
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
   resolveApprovalUrl, isApprovalUrl,
 } from "../../lifecycle/gate-ledger";
-import { isPlanDigest } from "../../lifecycle/plan-digest";
+import { isPlanDigest, samePlanDigest } from "../../lifecycle/plan-digest";
 import {
   gatePolicyRequest, loadGatePolicyEvaluator,
   type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
 } from "../../op/gate-approval";
-import { approverOf, tallyGateApprovals } from "../../op/gate";
+import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate";
 import { FAN_OUT_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
@@ -1310,7 +1310,7 @@ export async function recordGateApproval(
     ));
   }
   if (approval) {
-    for (const line of describeApprovalProgress(approval, record, ledger.resolutions, standingForOrigin)) {
+    for (const line of describeApprovalProgress(approval, record, ledger.resolutions, standingForOrigin, ledger.pending)) {
       console.error(formatInfo(line));
     }
   }
@@ -1328,6 +1328,7 @@ export function describeApprovalProgress(
   record: GateResolutionRecord,
   prior: GateResolutionRecord[],
   standing: PendingGateRecord | undefined,
+  pending: readonly PendingGateRecord[] = standing ? [standing] : [],
 ): string[] {
   const lines: string[] = [];
   const decision = record.policyDecision;
@@ -1343,13 +1344,10 @@ export function describeApprovalProgress(
     for (const error of decision.errors) lines.push(`Policy evaluation error: ${error}`);
   }
 
-  const tally = tallyGateApprovals(
-    [...prior, record],
-    record.gate,
-    standing?.timestamp ?? new Date(0).toISOString(),
-    record.planDigest,
-    approval,
-  );
+  const since = standing?.timestamp ?? new Date(0).toISOString();
+  // #3206: count the humans the way the run will, back past facts re-recorded for this plan.
+  const humansSince = standing && samePlanDigest(standing.planDigest, record.planDigest) ? humanQuorumSince(pending, standing) : since;
+  const tally = tallyGateApprovals([...prior, record], record.gate, since, record.planDigest, approval, humansSince);
   const roles = approval.quorum?.roles ? ` with role ${approval.quorum.roles.join(" or ")}` : "";
   const who = tally.counted.map((r) => r.resolvedBy).join(", ") || "none yet";
   lines.push(`Quorum: ${tally.counted.length} of ${tally.need} human approval(s)${roles} for this plan (${who}).`);
