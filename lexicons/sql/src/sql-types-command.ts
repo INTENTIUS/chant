@@ -1,5 +1,5 @@
 /**
- * `chant sql types [--output <path>]` (#3751): build the project the way
+ * `chant sql types [--output <path>] [--check]` (#3751): build the project the way
  * `chant build` does, folded, and write the declarations
  * {@link renderSqlTypes} renders from its entities, so a tag given its
  * qualified name as the type argument has typed columns.
@@ -9,28 +9,31 @@
  * it too. `--output` puts it elsewhere, as a workspace `generated` entry's
  * generator does. The command refuses to write beside a `sql-types.ts`: tsc
  * resolves the `.ts` first and would drop the declarations. `chant build`
- * never writes the file.
+ * never writes the file. `--check` renders the same text and compares it with
+ * the file instead of writing it: exit 1, naming the file, when they differ.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { CommandGroupContext } from "@intentius/chant/cli/command-group";
 import { renderSqlTypes, SQL_TYPES_FILE } from "./sql-types";
 
-const USAGE = "usage: chant sql types [--output <path>]";
+const USAGE = "usage: chant sql types [--output <path>] [--check]";
 
 /** The `--output` value, or an error message. */
-function parseArgs(args: readonly string[]): { output?: string } | { error: string } {
+function parseArgs(args: readonly string[]): { output?: string; check: boolean } | { error: string } {
   let output: string | undefined;
+  let check = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--output") {
       output = args[++i];
       if (!output) return { error: "--output needs a path" };
-    } else if (a.startsWith("--output=")) output = a.slice("--output=".length);
+    } else if (a === "--check") check = true;
+    else if (a.startsWith("--output=")) output = a.slice("--output=".length);
     else return { error: `unknown argument ${a}` };
   }
-  return output === undefined ? {} : { output };
+  return output === undefined ? { check } : { output, check };
 }
 
 /** The file tsc would read instead of `path`: `sql-types.ts` beside `sql-types.d.ts`. */
@@ -72,10 +75,25 @@ export async function runTypes(ctx: CommandGroupContext): Promise<number> {
     return 1;
   }
   const text = renderSqlTypes(result.entities, { projectDir, config: config as unknown as Record<string, unknown> });
+  const shown = relative(cwd, output);
+  const named = shown && !shown.startsWith("..") ? shown : output;
+  if (args.check) {
+    // Compares only; the file is never written.
+    const onDisk = existsSync(output) ? readFileSync(output, "utf8") : undefined;
+    if (onDisk === text) {
+      console.log(`${named} is current`);
+      return 0;
+    }
+    console.error(
+      onDisk === undefined
+        ? `chant sql types: ${named} does not exist; run \`chant sql types\` to write it`
+        : `chant sql types: ${named} differs from what the build declares; run \`chant sql types\` to rewrite it`,
+    );
+    return 1;
+  }
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, text);
   const count = (text.match(/^ {4}"/gm) ?? []).length;
-  const shown = relative(cwd, output);
-  console.log(`wrote ${shown && !shown.startsWith("..") ? shown : output}: ${count} relation${count === 1 ? "" : "s"}`);
+  console.log(`wrote ${named}: ${count} relation${count === 1 ? "" : "s"}`);
   return 0;
 }

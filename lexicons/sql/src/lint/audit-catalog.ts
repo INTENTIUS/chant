@@ -86,6 +86,14 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "Keep one declaration of the object and import it where the other was used.",
     { category: "correctness" },
   ),
+  SQL102: auditRule(
+    "SQL102",
+    "merge-worthy",
+    "guidance",
+    "sql-types.d.ts differs from what the build declares",
+    "Run chant sql types to rewrite the file.",
+    { category: "correctness" },
+  ),
   ...sqlPostSynthAuditEntries,
   ...postgresPostSynthAuditEntries,
 };
