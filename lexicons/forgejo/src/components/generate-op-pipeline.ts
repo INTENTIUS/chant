@@ -38,51 +38,19 @@
  * through the Forgejo client in `packages/core/src/pr-forge.ts` over `fetch`
  * rather than through `gh`, so the job's image needs no `gh` either.
  *
- * `issue` (`gh issue create`/`postOrUpdateGithubIssue`) does not cross over,
- * and chant #2315 is why: it remained un-refused-but-unverified after #2304
- * lifted `comment`'s refusal, and settling that gap the same way — against a
- * real instance rather than a mock — found a real failure, so the refusal
- * below is reinstated rather than lifted. Tested against the same
- * 12.0.4+gitea-1.22.0 image (`codeberg.org/forgejo/forgejo:12`) with a repo,
- * an issue, and a pull request created on it: the *read* half of
- * `postOrUpdateGithubIssue` checks out fine on Forgejo — plain paginated
- * `GET .../issues?state=open` (no `/search/issues`, confirmed absent from a
- * live Forgejo's own OpenAPI spec) returns pull requests interleaved with
- * issues exactly as GitHub's endpoint does, and the `.pull_request == null`
- * filter and the marker `startswith` match both behave identically to
- * GitHub. The *write* half did not: `postOrUpdateGithubIssue`'s POST and
- * PATCH calls carried only `GH_TOKEN` (in fact, on the `issue` path, not even
- * that — `reconcilePr` handed it `execAsync` with no `env` override at all,
- * chant #2320), and `gh`'s own documented environment variables (`gh help
- * environment`) scope `GH_TOKEN`/`GITHUB_TOKEN` to "github.com or a subdomain
- * of ghe.com" — never a self-hosted Forgejo. A `GH_DEBUG=api` POST against
- * the live instance, with `GH_TOKEN` and `GITHUB_API_URL` set exactly as the
- * generated workflow sets them, sent no `Authorization` header at all and
- * Forgejo answered `{"message":"token is required"}` (HTTP 401); adding
- * `GH_HOST` alongside `GH_TOKEN` made no difference. The same shape was what
- * `postOrUpdateComment`'s writes carried too, which is why #2304's "verified
- * against a real Forgejo instance" could not have gone through the generated
- * workflow's own credential path — either that session had a `gh auth login`
- * already stored for the test instance, which a real Actions job's fresh
- * checkout never has, or a different `gh` build was in play.
- *
- * Chant #2333 fixed that credential for both modes: `ghCredentialEnv` now
- * forwards the resolved token as `GH_ENTERPRISE_TOKEN` beside `GH_TOKEN`,
- * which is the variable `gh` reads for a host in neither of the two classes
- * above. #2333's own probe against the same image also narrowed the claim
- * made here: `GH_ENTERPRISE_TOKEN` authenticated the identical call *without*
- * a `GH_HOST` beside it, because the full URL #2291 built already names the
- * host. So the premise this refusal was reinstated on no longer holds, and
- * both halves of `postOrUpdateGithubIssue` — the paginated read and the
- * POST/PATCH write — were driven green end to end against a live
- * 12.0.4+gitea-1.22.0 instance under #2333, from a shell with no stored
- * `gh auth login`.
- *
- * The refusal below is nonetheless left standing here, because lifting it is
- * a generator behavior change with its own YAML surface to settle and #2333
- * was scoped to the credential. Lifting it is filed separately; this comment
- * is corrected rather than acted on so the stated reason does not outlive the
- * fact it rested on.
+ * `issue` crosses over too, since chant #2351. It was refused here from
+ * #2332 on, after chant #2315 drove the mode against a real Forgejo
+ * 12.0.4+gitea-1.22.0 instance: the paginated read and the `.pull_request ==
+ * null` filter behaved as on GitHub, but every POST and PATCH answered
+ * `{"message":"token is required"}` (HTTP 401), because `gh` sends
+ * `GH_TOKEN` only to github.com and `ghe.com` hosts. #2333 fixed that
+ * credential, and #3757 moved the mode off `gh` onto the Forgejo client in
+ * `packages/core/src/pr-forge.ts`, which sends `Authorization: token …`
+ * itself. The job this emits for a cron `issue` Op is github's, unchanged:
+ * the same trigger, and the same `GH_TOKEN`/`GITHUB_TOKEN` from
+ * `github.token` on the run step, which is the credential the mode reads.
+ * Only `permissions:` is dropped, as for every mode, so what that token may
+ * write on a scheduled run is the runner's configuration.
  *
  * A spec's `environment` (#2257) is dropped on the same terms as
  * `permissions:`, and for a stronger reason: Forgejo Actions has no
@@ -184,26 +152,9 @@ export function generateForgejoOpPipeline(
   options: ComponentPipelineOptions = {},
   dialectOptions: ForgejoDialectOptions = {},
 ): OpPipelineResult {
-  // `findingMode: "comment"` used to be refused by name here (#2231); lifted
-  // in #2291 once a real Forgejo instance showed the forge itself was never
-  // the obstacle — see the module doc above.
-
-  // `findingMode: "issue"` is refused by name here (#2315): unlike `comment`,
-  // a real Forgejo instance did not clear it — see the module doc above for
-  // the reproduction.
-  for (const spec of ops) {
-    if (spec.findingMode === "issue") {
-      throw new Error(
-        `Scheduled Op "${spec.name}" has findingMode "issue", which opens or edits a GitHub-shaped issue by ` +
-          `shelling to \`gh\`. Checked against a real Forgejo 12.0.4+gitea-1.22.0 instance (chant #2315): the ` +
-          `search this mode does works there, but the POST/PATCH it writes with does not — \`gh\`'s own ` +
-          `GH_TOKEN/GITHUB_TOKEN only authenticate a request to github.com or a ghe.com subdomain, never a ` +
-          `self-hosted Forgejo, and neither this mode nor its caller sets GH_HOST or GH_ENTERPRISE_TOKEN, so ` +
-          `every write fails with Forgejo's "token is required" (HTTP 401). Use findingMode "comment" on a ` +
-          `pull_request trigger here, or generate this Op for github.`,
-      );
-    }
-  }
+  // `findingMode: "comment"` used to be refused by name here (#2231), and
+  // `findingMode: "issue"` from #2332 to #2351. Neither is now: both post
+  // through the Forgejo client — see the module doc above.
 
   // `emitGatedOutputs: false` (#2294): forgejo never carries a gate-notice job
   // (`gatedNoticeDoc` never crosses the dialect, below), so the job outputs
