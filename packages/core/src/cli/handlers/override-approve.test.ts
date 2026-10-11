@@ -84,4 +84,20 @@ describe("chant approve policy-override", () => {
     expect(await runOverrideApprove(ctx({ rules: ["no-drop", "no-lock"], reason: "why", plan: PLAN }))).toBe(0);
     expect(await runOverrideApprove(ctx({ rules: ["no-drop", "no-lock"], reason: "why", plan: DENIAL.planDigest }))).toBe(0);
   });
+
+  describe("the overriders check (#3824)", () => {
+    const args = { rules: ["no-drop", "no-lock"], reason: "why" };
+    test("warns when this checkout lists no overriders", async () => {
+      vi.stubEnv("CHANT_OVERRIDERS_FROM", "");
+      expect(await runOverrideApprove(ctx(args))).toBe(0);
+      expect(printed()).toMatch(/has no \.chant\/overriders/);
+    });
+    test("is skipped when the caller says where it reads its overriders", async () => {
+      vi.stubEnv("CHANT_OVERRIDERS_FROM", "policy.override in terragucci.config.ts");
+      expect(await runOverrideApprove(ctx(args))).toBe(0);
+      expect(printed()).toMatch(/overrides the denial of prod/);
+      expect(printed()).not.toMatch(/overriders/);
+      vi.unstubAllEnvs();
+    });
+  });
 });

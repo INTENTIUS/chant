@@ -148,6 +148,11 @@ describe("decideOverride", () => {
       expect(parseAppliedOverrides(`${JSON.stringify(applied)}\nnot json\n{"version":1,"kind":"finished"}\n`)).toEqual([applied]);
     });
 
+    test("takes just the subject, digest, time and approver (#3823)", () => {
+      const slim = appliedOverride({ subject: ROOT, digest: DIGEST, at: first.timestamp, by: "github:alice" }, { timestamp: "2026-10-11T11:05:00.000Z", runId: "42", commit: "c".repeat(40) });
+      expect(slim).toEqual(applied);
+    });
+
     test("a spent override does not count for the same plan again", () => {
       const d = decideOverride(input([first], { applied: [applied] }));
       expect(d.status === "none" && d.refusals).toEqual([expect.stringMatching(/is spent: a run applied under it at 2026-10-11T11:05:00/)]);

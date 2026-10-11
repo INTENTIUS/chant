@@ -359,8 +359,14 @@ export function decideOverride(input: OverrideInput): OverrideDecision {
   };
 }
 
-/** The applied record a run appends before it applies under `override`, which spends it. Appending it is the caller's. */
-export function appliedOverride(override: StandingOverride, at: { timestamp: string; runId?: string; commit?: string }): AppliedOverrideRecord {
+/**
+ * The applied record a run appends before it applies under `override`, which
+ * spends it. Appending it is the caller's. It reads only the subject, the
+ * override digest and the override's time and approver, so a product that
+ * carries those through its own record can pass them without the ledger line
+ * (#3823); a whole {@link StandingOverride} still works.
+ */
+export function appliedOverride(override: Pick<StandingOverride, "subject" | "digest" | "at" | "by">, at: { timestamp: string; runId?: string; commit?: string }): AppliedOverrideRecord {
   return {
     version: 1,
     kind: "applied",

@@ -10,7 +10,9 @@
  * recorded: the approver says what they are letting through. Whether the
  * override counts is decided by the run, against the overriders and signers
  * at base; this command only warns when the checkout's own overriders file
- * would not count it.
+ * would not count it. A product that keeps its overriders in its own config
+ * sets `CHANT_OVERRIDERS_FROM` (to where it reads them, e.g. `policy.override
+ * in terragucci.config.ts`), and the checkout check is skipped (#3824).
  */
 
 import { currentGateOrigin, isModelAuthored } from "../../lifecycle/gate-origin";
@@ -93,9 +95,11 @@ export async function runOverrideApprove(ctx: CommandContext): Promise<number> {
     `This overrides the denial of ${subject} by ${rules.join(", ")} for the plan ${denial.plan || denial.planDigest}. ` +
       `The next run that plans it applies it once; a plan that moves, or rules that change, need their own override.`,
   ));
+  const from = process.env.CHANT_OVERRIDERS_FROM?.trim();
+  if (from) return 0;
   const here = overridersAt(process.cwd(), "HEAD");
   if (!here.active) {
-    console.error(formatWarning({ message: `This checkout has no ${OVERRIDERS_PATH}: unless the run reads its overriders from elsewhere at base, no override counts` }));
+    console.error(formatWarning({ message: `This checkout has no ${OVERRIDERS_PATH}: unless the run reads its overriders from elsewhere at base, no override counts (a tool that does sets CHANT_OVERRIDERS_FROM to say so)` }));
   } else if (!here.principals.map(norm).includes(norm(outcome.record.resolvedBy))) {
     console.error(formatWarning({ message: `${outcome.record.resolvedBy} is not in ${OVERRIDERS_PATH} here (${here.principals.join(", ") || "nobody"}), so a run that reads it at base does not count this override` }));
   }
