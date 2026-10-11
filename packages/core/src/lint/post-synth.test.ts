@@ -195,6 +195,16 @@ describe("project directory (#3751)", () => {
     expect(diags[0].message).toBe('"/work/app"');
   });
 
+  test("the loaded config is threaded too", () => {
+    const readsConfig: PostSynthCheck = {
+      id: "PROJECT_CONFIG",
+      description: "reports the config the context carries",
+      check: (ctx) => [{ checkId: "PROJECT_CONFIG", severity: "warning", message: JSON.stringify(ctx.projectConfig ?? null) }],
+    };
+    expect(runPostSynthChecks([readsConfig], createBuildResult(), undefined, { projectConfig: { sourceDir: "src" } })[0].message).toBe('{"sourceDir":"src"}');
+    expect(runPostSynthChecks([readsConfig], createBuildResult())[0].message).toBe("null");
+  });
+
   test("a hand-built run leaves the field undefined", () => {
     expect(runPostSynthChecks([readsDir], createBuildResult())[0].message).toBe("null");
   });

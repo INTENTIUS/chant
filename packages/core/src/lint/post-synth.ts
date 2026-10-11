@@ -71,6 +71,13 @@ export interface PostSynthContext {
    * where a check that reads the disk stays silent.
    */
   readonly projectDir?: string;
+  /**
+   * The project config the build loaded (#3751), as source lint rules get it
+   * in `LintContext.projectConfig`. A check that renders output again, as the
+   * sql lexicon's does for `sql-types.d.ts`, needs the settings the build ran
+   * with. Absent from a hand-built context.
+   */
+  readonly projectConfig?: Record<string, unknown>;
   /** Raw build result object */
   buildResult: {
     outputs: Map<string, string | SerializerResult>;
@@ -226,13 +233,14 @@ export function isPostSynthCheck(value: unknown): value is PostSynthCheck {
  * `opts.activityContracts` (chant #2101) carries the build's cross-lexicon
  * activity-contract map to the checks that validate Op steps against it.
  * `opts.telemetry` is the build's resolved telemetry attribution, and
- * `opts.projectDir` the directory of the config the build loaded.
+ * `opts.projectDir` and `opts.projectConfig` the config the build loaded and
+ * its directory.
  */
 export function runPostSynthChecks(
   checks: PostSynthCheck[],
   buildResult: PostSynthContext["buildResult"],
   env?: string,
-  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract>; telemetry?: TelemetryAttribution; projectDir?: string },
+  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract>; telemetry?: TelemetryAttribution; projectDir?: string; projectConfig?: Record<string, unknown> },
 ): PostSynthDiagnostic[] {
   const getDocs = createDocsAccessor(buildResult.outputs);
   const ctx: PostSynthContext = {
@@ -243,6 +251,7 @@ export function runPostSynthChecks(
     ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
     ...(opts?.telemetry ? { telemetry: opts.telemetry } : {}),
     ...(opts?.projectDir ? { projectDir: opts.projectDir } : {}),
+    ...(opts?.projectConfig ? { projectConfig: opts.projectConfig } : {}),
     get docs(): OutputDoc[] {
       return getDocs();
     },
