@@ -13,6 +13,9 @@ import { generateGithubOpPipeline } from "@intentius/chant-lexicon-github/compon
 import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 
 interface ParsedJob {
+  needs?: string;
+  if?: string;
+  permissions?: Record<string, string>;
   "runs-on"?: string;
   container?: string;
   environment?: Record<string, string>;
@@ -247,14 +250,18 @@ describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
     expect(step?.run).toContain("chant run app-apply --gated-exit 0 --json");
   });
 
-  test("the notice job does not: it shells to `gh`, which no Forgejo runner points at its own instance", () => {
+  test("the notice job crosses over too, posting through pr-forge rather than gh (#3773)", () => {
     const fj = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
-    const gh = parseFile(generateGithubOpPipeline([pushSpec]).files[0].yaml);
-    // Dropped the same way `permissions:` is dropped — by not being carried
-    // onto the rebuilt doc — and github still has it, so the omission is
-    // forgejo's rather than the shared builder's.
-    expect(Object.keys(fj.jobs ?? {})).toEqual(["app-apply"]);
-    expect(gh.jobs).toHaveProperty("app-apply-gate-notice");
+    expect(Object.keys(fj.jobs ?? {})).toEqual(["app-apply", "app-apply-gate-notice"]);
+    const notice = fj.jobs!["app-apply-gate-notice"];
+    expect(notice.needs).toBe("app-apply");
+    expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
+    expect(notice.container).toBe("node:22");
+    // The dialect drops the job's permissions like every scope but id-token.
+    expect(notice.permissions).toBeUndefined();
+    const script = notice.steps[0].run ?? "";
+    expect(script).toContain('from "@intentius/chant/pr-forge"');
+    expect(script).not.toMatch(/(^|\s)gh\s/m);
   });
 
   /**
@@ -465,41 +472,23 @@ describe("generateForgejoOpPipeline: per-Op variables land on the job, not the w
 });
 
 /**
- * chant #2294 — the gated-apply outputs survive the notice job that consumed
- * them. Asserted directly against forgejo's own output: no `outputs:` on the
- * push job, no `node -e` line writing to `$GITHUB_OUTPUT`, while github's
- * generator (same spec) still carries both because its notice job still reads
- * them.
+ * chant #2294 dropped the gated-apply outputs on Forgejo while nothing read
+ * them; #3773 brings back the notice job that does, and the outputs with it.
  */
-describe("generateForgejoOpPipeline: no unconsumed outputs (#2294)", () => {
+describe("generateForgejoOpPipeline: the outputs the notice job reads (#2294, #3773)", () => {
   const pushSpec: ScheduledOpSpec = { name: "live-apply", trigger: { kind: "push", branches: ["main"] } };
 
-  test("the push job carries no outputs: block", () => {
+  test("the push job publishes what it stopped on, as on github", () => {
     const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
-    expect(doc.jobs!["live-apply"].outputs).toBeUndefined();
-  });
-
-  test("the run step carries no node -e line writing to $GITHUB_OUTPUT", () => {
-    const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
-    const step = doc.jobs!["live-apply"].steps.find((s) => s.id === "chant-run");
-    expect(step?.run).not.toContain("node -e");
-    expect(step?.run).not.toContain("GITHUB_OUTPUT");
-    // The tee'd invocation survives — it's what puts the run's own record in
-    // the log, gate-notice job or not.
-    expect(step?.run).toContain("| tee");
-    expect(step?.run).toContain("chant run live-apply --gated-exit 0 --json");
-  });
-
-  test("github, generated from the same spec, still carries both — the drop is forgejo's dialect, not the shared builder", () => {
-    const gh = parseFile(generateGithubOpPipeline([pushSpec]).files[0].yaml);
-    const ghStep = gh.jobs!["live-apply"].steps.find((s) => s.id === "chant-run");
-    expect(gh.jobs!["live-apply"].outputs).toEqual({
+    expect(doc.jobs!["live-apply"].outputs).toEqual({
       gated: "${{ steps.chant-run.outputs.gated }}",
       op: "${{ steps.chant-run.outputs.op }}",
       gate: "${{ steps.chant-run.outputs.gate }}",
       approve: "${{ steps.chant-run.outputs.approve }}",
     });
-    expect(ghStep?.run).toContain("node -e");
+    const step = doc.jobs!["live-apply"].steps.find((s) => s.id === "chant-run");
+    expect(step?.run).toContain("GITHUB_OUTPUT");
+    expect(step?.run).toContain("chant run live-apply --gated-exit 0 --json");
   });
 
   test("a non-push (cron) job carries no outputs and no gate script either way", () => {

@@ -11,6 +11,7 @@
  *     is a single edit reflected in every generated file.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, test, expect } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { generateGithubOpPipeline } from "./generate-op-pipeline";
@@ -492,39 +493,38 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
     const notice = pushDoc().jobs!["app-apply-gate-notice"];
     expect(notice.needs).toBe("app-apply");
     expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
-    // It shells to `gh`, which a hosted runner carries and the Op's own
-    // container image does not.
-    expect(notice.container).toBeUndefined();
+    // The Op's own image, which has node and npm, rather than gh on a hosted
+    // runner image (#3773).
+    expect(notice.container).toBe("node:22");
     const script = notice.steps[0].run ?? "";
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
-    expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');
-    expect(script).toContain("gh issue create");
+    expect(script).toContain('import { forgeClient, forgeTargetFromEnv } from "@intentius/chant/pr-forge";');
+    expect(script).toContain('const marker = "<!-- chant-gate:" + op + " -->";');
+    expect(script).toContain("forge.pullRequestFor(target.sha)");
+    expect(script).toContain("forge.upsertNote(pr, marker, body)");
+    expect(script).toContain('forge.upsertIssue(marker, op + " is waiting on gate " + gate, body)');
+    expect(script).toContain("node --import tsx notice.mjs");
   });
 
-  // chant #2305 — same anti-pattern `stickyCommentScript`
-  // (`lexicons/github/src/composites/pr-plan-report.ts`) and `reconcilePr`'s
-  // `postOrUpdateComment` (#2291) had: a bare relative path, which `gh`
-  // resolves against `/api/v3` for any host but github.com. This job never
-  // reaches Forgejo today (the forgejo generator never carries
-  // `gatedNoticeDoc` across the dialect, #2294), so the fix changes nothing
-  // observable on github.com or GHES — it only stops a future Forgejo notice
-  // job from inheriting the same bug.
-  test("the notice job's gh api calls resolve their base from $GITHUB_API_URL, not a bare path (#2305)", () => {
+  // #3773 (and #3780 for its `gh issue create`): no `gh` call is left to
+  // default to github.com on a GHES or Forgejo host. The forge, the REST base
+  // and the host come from the job's environment through pr-forge.
+  test("the notice job runs no gh at all", () => {
+    const notice = pushDoc().jobs!["app-apply-gate-notice"];
+    expect(notice.steps[0].run ?? "").not.toMatch(/(^|\s)gh\s/m);
+    const env = notice.steps[0].env ?? {};
+    expect(env.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(env).not.toHaveProperty("GH_REPO");
+  });
+
+  test("the notice job installs the chant release this lexicon was generated with", () => {
+    const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
     const script = pushDoc().jobs!["app-apply-gate-notice"].steps[0].run ?? "";
-    expect(script).toContain('api_base="${GITHUB_API_URL%/}"');
-    expect(script).toContain('api_base="${api_base:-https://api.github.com}"');
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments"');
-    expect(script).toContain('gh api --method PATCH "$api_base/repos/$GITHUB_REPOSITORY/issues/comments/$id"');
-    expect(script).toContain('gh api --method POST "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments"');
-    // No bare-path call survives.
-    expect(script).not.toMatch(/gh api[^\n]*"repos\//);
+    expect(script).toContain(`npm install --omit=peer --no-audit --no-fund --loglevel=error @intentius/chant@${version}`);
   });
 
-  test("the notice job hands gh its token as GH_ENTERPRISE_TOKEN too, for a GHES host (#2352)", () => {
-    const env = pushDoc().jobs!["app-apply-gate-notice"].steps[0].env ?? {};
-    expect(env.GH_TOKEN).toBe("${{ github.token }}");
-    expect(env.GH_ENTERPRISE_TOKEN).toBe("${{ github.token }}");
+  test("the notice job runs in options.image when one is given", () => {
+    const doc = parseFile(generateGithubOpPipeline([pushSpec], { image: "registry.example/node:22" }).files[0].yaml);
+    expect(doc.jobs!["app-apply-gate-notice"].container).toBe("registry.example/node:22");
   });
 
   test("the notice job's permissions are its two posting paths and the lookup", () => {
