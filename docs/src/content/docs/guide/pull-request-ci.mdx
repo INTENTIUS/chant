@@ -72,7 +72,7 @@ chant build --components --generate gitlab --pr-loop --env prod --output .gitlab
 
 `--gate <name>` renames the gate from `pr-apply`. `--branch <name>` names the branch pull requests target, `main` by default on GitHub and Forgejo and the project's default branch on GitLab.
 
-Both commands measure the change with git, so the pipeline checks out the full history. The default image is `node:22-slim`, which has no git and no Terraform. Pick an image that has git, chant and your Terraform binary, or install them in the generator's `beforeScript`.
+Both commands measure the change with git, so the pipeline checks out the full history. The default image is `node:22`, which has git but no Terraform. Pick an image that has git, chant and your Terraform binary, or install them in the generator's `beforeScript`.
 
 ### GitHub
 

@@ -271,7 +271,7 @@ describe("generateForgejoOpPipeline: the gated apply on push (#2243)", () => {
   test("the exit-code capture crosses the Forgejo dialect with no shell override — its job runs in a container, whose default shell is sh", () => {
     const doc = parseFile(generateForgejoOpPipeline([pushSpec]).files[0].yaml);
     const job = doc.jobs!["app-apply"];
-    expect(job.container).toBe("node:22-slim");
+    expect(job.container).toBe("node:22");
     const step = job.steps.find((s) => s.id === "chant-run");
     expect(step?.shell).toBeUndefined();
     expect(step?.run).not.toContain("pipefail");
@@ -327,7 +327,7 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
       "jobs:",
       "  actions-audit:",
       "    runs-on: docker",
-      "    container: node:22-slim",
+      "    container: node:22",
       "    steps:",
       "      - uses: https://code.forgejo.org/actions/checkout@v7",
       "      - run: chant run actions-audit",

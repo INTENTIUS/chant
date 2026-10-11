@@ -124,7 +124,7 @@ function toJobName(opName: string): string {
   return opName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
-const DEFAULT_IMAGE = "node:22-slim";
+const DEFAULT_IMAGE = "node:22";
 
 /**
  * Default stage every generated job runs in, and the default base of the

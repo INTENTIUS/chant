@@ -471,7 +471,7 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
       "",
       "actions-audit:",
       "  stage: ops",
-      "  image: node:22-slim",
+      "  image: node:22",
       "  resource_group: actions-audit",
       "  rules:",
       `    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "actions-audit"'`,

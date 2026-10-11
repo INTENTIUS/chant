@@ -678,6 +678,8 @@ const result = await generateOpsPipeline(
 );
 ```
 
+The generated jobs default to the `node:22` image rather than `node:22-slim`, because `chant run` reads and writes its run and gate ledgers on the `chant/lifecycle` branch and needs `git` on the PATH. The slim image has none. The same default applies on GitHub, GitLab and Forgejo; pass `image` to use your own, which must include git.
+
 That writes one `ops.gitlab-ci.yml`, whose header names the `GITLAB_TOKEN` CI/CD variable the `comment` note needs:
 
 ```yaml
@@ -686,7 +688,7 @@ stages:
 
 app-plan:
   stage: ops
-  image: node:22-slim
+  image: node:22
   resource_group: app-plan
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
@@ -695,7 +697,7 @@ app-plan:
 
 app-apply:
   stage: ops
-  image: node:22-slim
+  image: node:22
   resource_group: app-apply
   id_tokens:
     CHANT_ID_TOKEN:

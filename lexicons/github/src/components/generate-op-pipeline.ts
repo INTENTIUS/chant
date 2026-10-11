@@ -153,7 +153,7 @@ function toJobName(opName: string): string {
   return opName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
-const DEFAULT_IMAGE = "node:22-slim";
+const DEFAULT_IMAGE = "node:22";
 
 /**
  * Default branch assumed for a `push` trigger with no `branches` override
@@ -381,7 +381,7 @@ function gateNoticeScript(): string {
  * gated, and puts the pending state somewhere other than the Actions log.
  *
  * No `container:`. It needs `gh`, which GitHub-hosted runner images carry and
- * an Op's own image (`node:22-slim` by default) does not; it reads nothing out
+ * an Op's own image (`node:22` by default) does not; it reads nothing out
  * of the repository, so it also needs no checkout.
  *
  * Its `permissions:` are its own, replacing the workflow-level set for this

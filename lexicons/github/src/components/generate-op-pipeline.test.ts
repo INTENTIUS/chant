@@ -550,7 +550,7 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
 
   /**
    * chant #2299 — every Op job carries `container:` (this generator sets one
-   * unconditionally, default `node:22-slim`), and a container job's default
+   * unconditionally, default `node:22`), and a container job's default
    * shell on GitHub Actions is `sh`, not bash. `sh` rejects `set -o pipefail`
    * outright (`Illegal option -o pipefail`) and fails the step before `chant`
    * is ever reached, which is exactly what happened on a real run (choudoufu
@@ -561,7 +561,7 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
   test("the run step needs no shell override — its script is POSIX sh, not bash (#2299)", () => {
     const doc = pushDoc();
     const job = doc.jobs!["app-apply"];
-    expect(job.container).toBe("node:22-slim");
+    expect(job.container).toBe("node:22");
     const step = job.steps.find((s) => s.id === "chant-run");
     expect(step?.shell).toBeUndefined();
     expect(step?.run).not.toContain("pipefail");
@@ -626,7 +626,7 @@ describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2
       "jobs:",
       "  actions-audit:",
       "    runs-on: ubuntu-latest",
-      "    container: node:22-slim",
+      "    container: node:22",
       "    steps:",
       "      - uses: actions/checkout@v7",
       "      - run: chant run actions-audit",
