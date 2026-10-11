@@ -5,13 +5,14 @@
  */
 
 /**
- * The default budget: 3 seconds per unit test (#3793; 15 seconds before it).
+ * The default budget: 5 seconds per unit test (#3793; 15 seconds before it).
  * In three CI runs every test left in the unit project took under 2s on a
- * loaded 4-core runner, so 3s leaves 1.5x headroom for runner variance, while
- * a test that runs the CLI, tsc or a build over projects takes longer and
- * belongs in the e2e project.
+ * loaded 4-core runner, but the next runs showed tests from that set at up to
+ * 3.7s when a worker loaded a large module cold. 5s leaves 2.5x headroom over
+ * the typical slowest time, while a test that runs the CLI, tsc or a build
+ * over projects takes longer and belongs in the e2e project.
  */
-export const DEFAULT_UNIT_TEST_BUDGET_MS = 3_000;
+export const DEFAULT_UNIT_TEST_BUDGET_MS = 5_000;
 
 /**
  * The budget in milliseconds. `CHANT_UNIT_TEST_BUDGET_MS` overrides the

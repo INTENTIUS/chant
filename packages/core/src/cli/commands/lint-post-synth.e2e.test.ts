@@ -7,7 +7,7 @@ import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // Each case builds a small project against the workspace's sql lexicon and runs its post-synth
-// checks; the first loads the lexicon and took over the unit project's 3s budget on CI, so the
+// checks; the first loads the lexicon and took 3.1s on CI, near the unit project's 5s budget, so the
 // block is an e2e file (#3793). The rest of lintCommand's tests are in lint.test.ts.
 
 /**

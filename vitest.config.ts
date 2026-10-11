@@ -41,7 +41,7 @@ const forkHeapMb = Math.max(
  *
  * `unit` is everything below, minus `*.e2e.test.ts`. Pull request CI runs it
  * as shards, and each of its tests has a time budget (`test/unit-test-budget.setup.ts`,
- * 3s by default): a test that takes longer fails with a message naming the
+ * 5s by default): a test that takes longer fails with a message naming the
  * budget. One slow test sets the length of its whole shard, and every PR
  * waits on the slowest shard.
  *

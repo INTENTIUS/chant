@@ -349,7 +349,7 @@ The test suite is designed to run in continuous integration:
 
 `vitest.config.ts` defines two projects (#2817):
 
-- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 3 second budget (#3793; 15 before), set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
+- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 5 second budget (#3793; 15 before), set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
 - `e2e`: every `*.e2e.test.ts` under `packages/`, `lexicons/` and `test/`, and the corpus walkers in `examples/*.e2e.test.ts`. These spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects. They have no budget beyond their own timeouts.
 
 ```bash
@@ -359,7 +359,7 @@ npx vitest run --project e2e      # the end-to-end tests only
 CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run path/to/file.test.ts   # no budget, for a debugger
 ```
 
-A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it. The 3 second budget comes from three CI runs (#3793): every test left in the unit project took under 2 seconds on a loaded 4-core runner, which leaves 1.5x headroom for runner variance.
+A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it. The 5 second budget comes from CI runs (#3793): in three runs every test left in the unit project took under 2 seconds on a loaded 4-core runner, and in the next runs some of those reached 3.7 seconds when a worker loaded a large module cold. 5 seconds leaves 2.5x headroom over the slowest typical time.
 
 ### What runs when
 

@@ -268,7 +268,7 @@ jobs:
   # four together run the same files `npx vitest run --project unit` does.
   # The end-to-end files (*.e2e.test.ts) are the `e2e` project; they run in
   # release-suites.yml, never on a push or pull request. Every unit test has a
-  # 3s budget (test/unit-test-budget.setup.ts, #3793): one slow test sets the
+  # 5s budget (test/unit-test-budget.setup.ts, #3793): one slow test sets the
   # length of its shard, and every PR waits on the slowest job. The required
   # `test` check is the aggregate job below, not these. Four rather than
   # three: vitest's module import is most of a shard's time, about 4 minutes
