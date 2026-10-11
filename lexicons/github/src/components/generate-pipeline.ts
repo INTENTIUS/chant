@@ -282,7 +282,7 @@ function toJobName(componentName: string): string {
   return componentName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
-const DEFAULT_IMAGE = "node:22-slim";
+const DEFAULT_IMAGE = "node:22";
 
 /** The file a producer dumps its resolved outputs to, and a dependent seeds from — one per component, matching gitlab's naming so both generators produce interchangeable artifacts. */
 function outputsFile(name: string): string {

@@ -1030,7 +1030,7 @@ async function findOwnedNote(
  *
  * Over `fetch` rather than a CLI: `glab` is on no GitLab runner by default,
  * and a job whose finding step depended on it would fail on the ordinary
- * `node:22-slim` image the generator emits. The GitHub and Forgejo half
+ * `node:22` image the generator emits. The GitHub and Forgejo half
  * follows the same rule since #3757.
  */
 async function postOrUpdateNote(

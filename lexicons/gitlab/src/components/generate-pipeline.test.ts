@@ -288,7 +288,7 @@ describe("generateGitlabPipeline: a promote job (#2575)", () => {
     expect(result.stages).toEqual(["wave-1", "wave-2"]);
     expect(parsed["promote-prod"]).toEqual({
       stage: "promote",
-      image: "node:22-slim",
+      image: "node:22",
       script: ['chant components promote --from staging --to prod --digest "api=$(cut -d= -f2- api.digest)"'],
       needs: ["api", "shared-alb"],
     });

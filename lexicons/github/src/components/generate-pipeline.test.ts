@@ -338,7 +338,7 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
 
     const promote = jobs["promote-prod"];
     expect(promote.needs).toEqual(["api", "shared-alb", "worker"]);
-    expect(promote.container).toBe("node:22-slim");
+    expect(promote.container).toBe("node:22");
     const downloads = promote.steps.filter((s) => s.uses === "actions/download-artifact@v4");
     expect(downloads.map((s) => s.with)).toEqual([
       { name: "api-archive", path: "dist/images" },

@@ -566,7 +566,7 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     expect(notice, "the push workflow carries the notice job").toBeDefined();
     expect(notice.needs).toBe("app-apply");
     expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
-    // It needs `gh`, which a hosted runner image carries and `node:22-slim`
+    // It needs `gh`, which a hosted runner image carries and `node:22`
     // does not, so it runs outside the Op's container.
     expect(notice.container).toBeUndefined();
     expect(notice["runs-on"]).toBe("ubuntu-latest");

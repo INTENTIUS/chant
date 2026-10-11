@@ -52,7 +52,7 @@ function toJobName(componentName: string): string {
   return componentName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
-const DEFAULT_IMAGE = "node:22-slim";
+const DEFAULT_IMAGE = "node:22";
 
 /**
  * Synthesize a `.gitlab-ci.yml` pipeline from a set of components: one stage

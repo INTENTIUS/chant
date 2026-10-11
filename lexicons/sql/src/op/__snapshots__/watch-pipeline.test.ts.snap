@@ -15,7 +15,7 @@ concurrency:
 jobs:
   schema-watch:
     runs-on: docker
-    container: node:22-slim
+    container: node:22
     env:
       CLICKHOUSE_READER_USER: chant_reader
       CLICKHOUSE_READER_PASSWORD: '\${{ secrets.CLICKHOUSE_READER_PASSWORD }}'
@@ -47,7 +47,7 @@ permissions:
 jobs:
   schema-watch:
     runs-on: ubuntu-latest
-    container: node:22-slim
+    container: node:22
     env:
       CLICKHOUSE_READER_USER: chant_reader
       CLICKHOUSE_READER_PASSWORD: '\${{ secrets.CLICKHOUSE_READER_PASSWORD }}'
@@ -78,7 +78,7 @@ stages:
 
 schema-watch:
   stage: ops
-  image: node:22-slim
+  image: node:22
   resource_group: schema-watch
   variables:
     CLICKHOUSE_READER_USER: chant_reader
