@@ -9,7 +9,7 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 
 | Ids | What they are | Where they run |
 |---|---|---|
-| SQL101 | a post-synth check over the build output, both dialects | `chant build` and `chant lint` |
+| SQL101, SQL102 | post-synth checks over the build output, both dialects | `chant build` and `chant lint` |
 | SQLCH001 to SQLCH004 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLCH101 to SQLCH127 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
@@ -93,6 +93,7 @@ These read the pinned catalog too: the type families and their aliases (`system.
 | Id | Severity | Flags | What to change |
 |---|---|---|---|
 | SQL101 | error | Two exports declare the same object: the same kind under the same qualified name, `shop.events` or `app.orders` twice. The build writes both `CREATE` statements, so the second fails on the server or, under `OR REPLACE`, replaces the first. The message names both exports. Grants, row policies, triggers and policies (named per table) and Postgres functions and procedures (which overload) are not compared | Keep one declaration and import it where the other was used |
+| SQL102 | error | `sql-types.d.ts` in the source directory differs from what the build declares, so tsc checks columns, foreign keys and sort keys against out-of-date types. Silent when the file does not exist. See [Typed Columns](../typed-columns/#keep-the-file-current) | Run `chant sql types`, and run `chant sql types --check` in CI |
 
 ### Postgres
 

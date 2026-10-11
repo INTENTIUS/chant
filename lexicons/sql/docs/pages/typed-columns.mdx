@@ -71,6 +71,32 @@ Commit the file, and run the command again after a schema change. The checks bel
 
 The command refuses to write `sql-types.d.ts` when a `sql-types.ts` sits beside it, since tsc would read the `.ts` file and drop the declarations.
 
+## Keep the file current
+
+Four checks catch a file that no longer matches the schema.
+
+- `chant sql types --check` renders the file in memory and compares it with the one on disk. It writes nothing, and exits 1 naming the file when it differs or does not exist. Put it in CI. `--output <path>` checks that path instead.
+- SQL102 is the same comparison as a post-synth check, so `chant build` and `chant lint` fail on a stale file. It is silent when the project has no `sql-types.d.ts` in its source directory, so a project that has not adopted typed columns sees nothing.
+- SQLPG005 and SQLCH004 are source lint rules. A type argument must be the qualified name its template declares (an error), and it should be listed in the nearest `sql-types.d.ts` above the file (a warning, until `chant sql types` runs). Without them, a mistyped argument falls back to unchecked columns without a word.
+- In a workspace, list the file as a `generated` entry of the member, and `chant workspace check --generated` fails when it differs:
+
+```json
+{
+  "name": "shop",
+  "dir": "services/shop",
+  "kind": "chant",
+  "generated": [
+    {
+      "path": "src/sql-types.d.ts",
+      "generator": "chant sql types --output src/sql-types.d.ts",
+      "sources": ["src"]
+    }
+  ]
+}
+```
+
+The workspace check points `--output` at a temporary file and compares it with `path`, so the tree is not written. A plain `chant workspace check` runs no generator, since a generator runs member code. See [Generated files](/chant/reference/workspace-declaration/#generated-files).
+
 ## What tsc checks
 
 A column that does not exist is a compile error, with a suggestion:

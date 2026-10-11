@@ -12,11 +12,11 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 
 | Ids | What they are | Where they run |
 |---|---|---|
-| SQL101 | a post-synth check over the build output, both dialects | `chant build` and `chant lint` |
-| SQLCH001 to SQLCH003 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
+| SQL101, SQL102 | post-synth checks over the build output, both dialects | `chant build` and `chant lint` |
+| SQLCH001 to SQLCH004 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLCH101 to SQLCH127 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
-| SQLPG001 to SQLPG004 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
+| SQLPG001 to SQLPG005 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLPG101 to SQLPG126 | Postgres post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLPG200 to SQLPG270 | the Postgres change classifier's rules | `chant sql diff`, `chant sql plan`, `postgresApply`; see [Postgres Locks and the Change Classifier](../postgres-change-classifier/) |
 
@@ -29,10 +29,12 @@ The [All Rules](../rules/) page is the generated list. This page says what each 
 | SQLCH001 | error | The DDL in a `database`, `table` or `view` template does not parse, or the template holds a different statement than its tag (a `CREATE VIEW` in `table`). Reported at the token, as a line and column in the `.ts` file. Lint reads every interpolation as a reference, so an error inside text a string interpolation supplies is reported by the build instead | Fix the statement, or use the tag for the statement it holds |
 | SQLCH002 | error | A `Nullable` column, `LowCardinality(Nullable(...))` included, as a key part of `ORDER BY` or `PRIMARY KEY`. ClickHouse refuses the table ("Sorting key contains nullable columns") unless it sets `allow_nullable_key = 1`. A function of the column is not reported | Make the column non-nullable, or set `allow_nullable_key = 1` and accept that `NULL` sorts as a value of its own |
 | SQLCH003 | error | `${events.kind}` where `${events.columns.kind}` was meant, for an entity the file declares or imports from a project file. `kind`, `props`, `lexicon`, `entityType`, `sqlName` and `dependsOn` are the entity's own fields, so the tag would splice in their value as SQL text and the statement would mean something else | Reach the column through `.columns` |
+| SQLCH004 | error, or warning | A typed `table`, `view` or `dictionary` tag (``table<"shop.events">`CREATE TABLE ...` ``) whose type argument is not the qualified name its template declares (error), or names an object the nearest `sql-types.d.ts` above the file does not list (warning, since `chant sql types` has not run since the object was added). A database supplied by an interpolation is not compared. With no generated file, only the first check runs | Make the type argument the declared name, and run `chant sql types` |
 | SQLPG001 | error | The DDL in a Postgres template does not parse, the template holds another statement than its tag (a `CREATE INDEX` in `table`) or a second `CREATE`, or an index has no name. Reported at the token, as a line and column in the `.ts` file; a default that is not a `b_expr` (`DEFAULT 1 IN (1, 2)`) is reported at `IN`. An index's name is its identity on the server, so an unnamed one, which Postgres would name itself, is refused | Fix the statement, use the tag for the statement it holds, and name every index |
 | SQLPG002 | error | `${users.kind}` where `${users.columns.kind}` was meant, as SQLCH003 for Postgres templates | Reach the column through `.columns` |
 | SQLPG003 | warning | An object named in a string where Postgres reads a `regclass`: `nextval('app.ticket_seq')`, `currval`, `setval`, or `'app.t'::regclass`. A name in a string records no reference, so the build can create the table before the sequence | Interpolate the declared object: `nextval(${ticketSeq})` renders `nextval('app.ticket_seq'::regclass)`, as the catalog prints it, and keeps the dependency |
 | SQLPG004 | error | An `extension` template creates an extension the provider named in `sql.provider` (or in the one provider every profile names) does not allow: `CREATE EXTENSION pg_stat_monitor` on Neon. The lists are snapshots of each provider's documentation, dated in `providerData(provider).sources`; a provider whose list is partial (Supabase) is not reported for a name outside it. Silent when no provider is set | Use an extension the provider lists, change `sql.provider`, or disable the rule on the line if the provider has added the extension since the list was read |
+| SQLPG005 | error, or warning | As SQLCH004 for the Postgres `table` and `view` tags. The name is compared as Postgres folds it: `view<"app.order_totals">` against `CREATE VIEW App."order_totals"` agrees | Make the type argument the declared name, and run `chant sql types` |
 
 ## Post-synth checks
 
@@ -94,6 +96,7 @@ These read the pinned catalog too: the type families and their aliases (`system.
 | Id | Severity | Flags | What to change |
 |---|---|---|---|
 | SQL101 | error | Two exports declare the same object: the same kind under the same qualified name, `shop.events` or `app.orders` twice. The build writes both `CREATE` statements, so the second fails on the server or, under `OR REPLACE`, replaces the first. The message names both exports. Grants, row policies, triggers and policies (named per table) and Postgres functions and procedures (which overload) are not compared | Keep one declaration and import it where the other was used |
+| SQL102 | error | `sql-types.d.ts` in the source directory differs from what the build declares, so tsc checks columns, foreign keys and sort keys against out-of-date types. Silent when the file does not exist. See [Typed Columns](../typed-columns/#keep-the-file-current) | Run `chant sql types`, and run `chant sql types --check` in CI |
 
 ### Postgres
 
