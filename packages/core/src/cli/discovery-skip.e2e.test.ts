@@ -37,8 +37,8 @@ describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", (
   let ranPath: string;
 
   /** Write the project config; `extra` is spliced into the default export. */
-  async function writeConfig(extra: string): Promise<void> {
-    await writeFile(join(testDir, "chant.config.ts"), `export default { lexicons: ["k8s"]${extra} };\n`);
+  async function writeConfig(extra: string, lexicons = '"k8s"'): Promise<void> {
+    await writeFile(join(testDir, "chant.config.ts"), `export default { lexicons: [${lexicons}]${extra} };\n`);
   }
 
   /** The runner from the issue, optionally headed by `header`. */
@@ -158,11 +158,26 @@ describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", (
   }, TIMEOUT);
 
   test("the control: without exclude, `chant lint` lints the script", async () => {
-    await writeConfig("");
+    // No lexicon, so lint runs its source rules only. With a lexicon that ships
+    // post-synth checks, `chant lint` also builds the target (#3750) and imports
+    // the script, which ends the process before any diagnostic prints; the next
+    // test covers that.
+    await writeConfig("", "");
     await writeRunner();
 
     const lint = runCli(["lint", testDir, "--format", "json"]);
     const diagnostics = JSON.parse(lint.stdout) as Array<{ file: string; ruleId: string }>;
     expect(diagnostics.some((d) => d.file.endsWith(join("ops", "run.ts")) && d.ruleId === "EVL003")).toBe(true);
+  }, TIMEOUT);
+
+  test("the control: without exclude, `chant lint` with a lexicon imports the script, as build does", async () => {
+    await writeConfig("");
+    await writeRunner();
+
+    const { status, stderr } = runCli(["lint", testDir, "--format", "json"]);
+
+    expect(status).toBe(2);
+    expect(stderr).toContain("no op named");
+    expect(existsSync(ranPath)).toBe(true);
   }, TIMEOUT);
 });
