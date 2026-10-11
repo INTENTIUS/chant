@@ -13,7 +13,10 @@ import {
   gateSignersAt,
   identityGatesAt,
   reviewApproval,
+  appliedGateApplies,
+  parseAppliedGateLines,
   GATE_SEAL_NAMESPACE,
+  type AppliedGateRecord,
   type GateApprovalInput,
   type GateResolutionRecord,
   type MergedReview,
@@ -22,6 +25,7 @@ import {
 import { evaluateGate, memoryGateLedgerPort, type GateLedgerPort } from "./op/gate";
 import { sealedApprovalRule, trustPolicyAt } from "./op/gate-review";
 import { hasSshKeygen, TestRepo } from "./workspace/trust/test-repo";
+import { deriveGateAudit } from "./lifecycle/gate-audit";
 
 const GATE = "migrations-wave-1";
 const D1 = "jcs1-sha256:1111";
@@ -94,6 +98,68 @@ describe("pr-review", () => {
     expect(decideGateApproval({ ledger: { pending: [], resolutions: [] }, gate: GATE, planDigest: D1, mode: "ledger", review, now: NOW }).status).toBe("waiting");
   });
 });
+
+describe("spent approvals (#3784)", () => {
+  const appliedUnder = (r: GateResolutionRecord, timestamp = "2026-10-11T11:30:00.000Z", extra: Partial<AppliedGateRecord> = {}): AppliedGateRecord => ({
+    version: 1, kind: "applied", op: "migrations", gate: GATE, planDigest: r.planDigest!, approvedAt: r.timestamp, approvedBy: r.resolvedBy, timestamp, ...extra,
+  });
+  const a1 = approved("2026-10-11T11:00:00.000Z");
+
+  test("with spend, an approval a wave applied under does not pass the same digest twice", () => {
+    const ledger = { pending: [pending("2026-10-11T10:00:00.000Z")], resolutions: [a1], applied: [appliedUnder(a1)] };
+    expect(decideGateApproval({ ledger, gate: GATE, planDigest: D1, now: NOW })).toMatchObject({ status: "approved" });
+    expect(decideGateApproval({ ledger, gate: GATE, planDigest: D1, spend: true, now: NOW })).toMatchObject({ status: "waiting", spent: a1, standing: { planDigest: D1 } });
+    // A newer approval of the digest is not spent by the older apply.
+    const again = approved("2026-10-11T11:45:00.000Z", D1, { resolvedBy: "bob" });
+    expect(decideGateApproval({ ledger: { ...ledger, resolutions: [a1, again] }, gate: GATE, planDigest: D1, spend: true, now: NOW })).toMatchObject({ status: "approved", resolution: { resolvedBy: "bob" } });
+  });
+
+  test("a spent approval of another digest stands as no mismatch, as in terragucci's decideGate", () => {
+    const a2 = approved("2026-10-11T11:00:00.000Z", D2);
+    const ledger = { pending: [], resolutions: [a2], applied: [appliedUnder(a2)] };
+    expect(decideGateApproval({ ledger, gate: GATE, planDigest: D1, now: NOW })).toMatchObject({ status: "waiting", mismatched: a2 });
+    const d = decideGateApproval({ ledger, gate: GATE, planDigest: D1, spend: true, now: NOW });
+    expect(d).toMatchObject({ status: "waiting", spent: a2 });
+    expect(d).not.toHaveProperty("mismatched");
+  });
+
+  test("decideGateApproval and evaluateGate spend the same approvals", async () => {
+    const ledger = { pending: [], resolutions: [a1] };
+    const spent = [appliedUnder(a1)];
+    expect(decided({ ledger: { ...ledger, applied: spent }, gate: GATE, planDigest: D1, spend: true })).toEqual(
+      await evaluatedSpending(memoryGateLedgerPort(ledger), { planDigest: D1, spent }),
+    );
+  });
+
+  test("a pull request review a wave applied this digest under is spent", () => {
+    const head = "c".repeat(40);
+    const review = reviewApproval({ pr: 7, head, author: "github:carol", approvers: ["github:bob"], refused: [] }, D1, D1);
+    const recorded = approved("2026-10-11T11:00:00.000Z", D1, { resolvedBy: "github:bob", review: { pr: 7, head, approvers: ["github:bob"] } });
+    const ledger = { pending: [], resolutions: [recorded], applied: [appliedUnder(recorded, undefined, { review: { pr: 7, head } })] };
+    const d = decideGateApproval({ ledger, gate: GATE, planDigest: D1, mode: "pr-review", review, spend: true, now: NOW });
+    expect(d).toMatchObject({ status: "waiting", review: { reason: expect.stringMatching(/review is spent/) } });
+  });
+
+  test("the applied lines parse, and gate-audit reads them as applies under their approval", () => {
+    const line = appliedUnder(a1);
+    const text = `${JSON.stringify(line)}\nnot json\n${JSON.stringify({ ...line, kind: "finished" })}\n`;
+    expect(parseAppliedGateLines(text)).toEqual([line]);
+    const audit = deriveGateAudit({
+      ledgers: [{ op: "migrations", lines: [{ record: pending("2026-10-11T10:00:00.000Z") }, { record: a1 }] }],
+      applies: appliedGateApplies(parseAppliedGateLines(text)),
+    });
+    const approvedEntry = audit.entries.find((e) => e.kind === "approved")!;
+    expect(audit.entries.find((e) => e.kind === "applied")).toMatchObject({ gate: GATE, digest: D1, under: approvedEntry.id, detail: { approvedAt: a1.timestamp, approvedBy: "alice" } });
+    expect(audit.gaps).toEqual([]);
+  });
+});
+
+async function evaluatedSpending(port: GateLedgerPort, input: { planDigest: string; spent: AppliedGateRecord[] }) {
+  const check = await evaluateGate(port, { op: "migrations", gate: GATE, now: NOW, ...input });
+  return check.satisfied
+    ? { status: "approved", by: check.resolution.resolvedBy, at: check.resolution.timestamp }
+    : { status: "waiting", mismatched: check.mismatch?.resolvedBy ?? null, recorded: check.recorded };
+}
 
 describe.skipIf(!hasSshKeygen)("sealed, read at base", () => {
   const repos: TestRepo[] = [];

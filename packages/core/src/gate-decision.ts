@@ -16,6 +16,10 @@
  *   approving review, when its head planned this digest
  *   ({@link reviewApproval}).
  *
+ * With `spend` (#3784), an approval a wave already applied under is spent and
+ * counts for nothing, as terragucci's wave gate has it: the caller hands in
+ * the lines of `_gates/<op>/applied.jsonl` ({@link parseAppliedGateLines}).
+ *
  * The module reads the ledger lines and the review it is handed; reading
  * them is the caller's. It imports no TypeScript, esbuild, zod, lint, fold or
  * codegen module, and none of chant's git ledger code, which
@@ -31,6 +35,7 @@ import {
   latestResolutionForPlan,
 } from "./lifecycle/gate-ledger-select";
 import { samePlanDigest } from "./lifecycle/plan-digest";
+import { isApprovalSpent, type AppliedGateRecord } from "./lifecycle/gate-applied";
 import { gateSealRefusal, type GateSigners } from "./workspace/trust/gate-seal";
 import {
   DEFAULT_SIGNERS_PATH,
@@ -70,6 +75,13 @@ export {
   type SignerSet,
 } from "./workspace/trust/trust-files";
 export type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
+export {
+  appliedGateApplies,
+  appliedGatePath,
+  isApprovalSpent,
+  parseAppliedGateLines,
+  type AppliedGateRecord,
+} from "./lifecycle/gate-applied";
 export type { MergedReview } from "./op/gate-review";
 
 // ── reading at base ──────────────────────────────────────────────────────
@@ -199,6 +211,8 @@ export function reviewApproval(merged: MergedReview, headDigest: string | undefi
 export interface GateLedgerLines {
   resolutions: GateResolutionRecord[];
   pending: PendingGateRecord[];
+  /** The approvals a wave applied under, from `_gates/<op>/applied.jsonl`. Read only with `spend`. */
+  applied?: AppliedGateRecord[];
 }
 
 export interface GateApprovalInput {
@@ -218,6 +232,11 @@ export interface GateApprovalInput {
   review?: ReviewApproval;
   /** ISO-8601 now, for whether the standing pending fact has expired. */
   now?: string;
+  /**
+   * An approval a wave applied under is spent (#3784): it neither passes the
+   * digest again nor stands as the approval of another. Default false.
+   */
+  spend?: boolean;
 }
 
 /** An approval of this gate and digest that a rule did not count, and why. */
@@ -239,6 +258,8 @@ export type GateApprovalDecision =
       uncounted: UncountedApproval[];
       /** Under `pr-review`, why the review did not approve. */
       review?: ReviewApproval["review"];
+      /** With `spend`, the newest approval of this gate a wave already applied under, which therefore counted for nothing. */
+      spent?: GateResolutionRecord;
     };
 
 const EPOCH = new Date(0).toISOString();
@@ -268,14 +289,22 @@ export function decideGateApproval(input: GateApprovalInput): GateApprovalDecisi
   const since = standingFact?.timestamp ?? EPOCH;
   const counted: GateResolutionRecord[] = [];
   const uncounted: UncountedApproval[] = [];
+  let spent: GateResolutionRecord | undefined;
   for (const r of mine) {
+    if (input.spend && isApprovalSpent(input.ledger.applied ?? [], r)) {
+      if (new Date(r.timestamp).getTime() >= new Date(since).getTime() && (!spent || new Date(r.timestamp).getTime() >= new Date(spent.timestamp).getTime())) spent = r;
+      continue;
+    }
     const reason = why(r);
     if (reason === null) counted.push(r);
     else if (samePlanDigest(r.planDigest, planDigest) && new Date(r.timestamp).getTime() >= new Date(since).getTime()) uncounted.push({ resolution: r, reason });
   }
   const found = latestResolutionForPlan(counted, gate, since, planDigest);
   if (found.resolution) return { status: "approved", via: "ledger", resolution: found.resolution };
-  if (mode === "pr-review" && input.review?.approved) return { status: "approved", via: "pr-review", review: input.review.review };
+  const reviewSpent =
+    input.spend === true && input.review?.approved === true &&
+    isApprovalSpent(input.ledger.applied ?? [], { gate, planDigest, review: { ...(input.review.review.head ? { head: input.review.review.head } : {}) } });
+  if (mode === "pr-review" && input.review?.approved && !reviewSpent) return { status: "approved", via: "pr-review", review: input.review.review };
 
   const now = input.now ?? new Date().toISOString();
   const standing = standingFact && !isPendingGateExpired(standingFact, now) && samePlanDigest(standingFact.planDigest, planDigest) ? standingFact : undefined;
@@ -284,6 +313,9 @@ export function decideGateApproval(input: GateApprovalInput): GateApprovalDecisi
     ...(standing ? { standing } : {}),
     ...(found.mismatched ? { mismatched: found.mismatched } : {}),
     uncounted: uncounted.sort((a, b) => new Date(a.resolution.timestamp).getTime() - new Date(b.resolution.timestamp).getTime()),
-    ...(mode === "pr-review" && input.review ? { review: input.review.review } : {}),
+    ...(mode === "pr-review" && input.review
+      ? { review: reviewSpent ? { ...input.review.review, reason: `a wave already applied this digest under the review of ${input.review.review.head?.slice(0, 12) ?? "its head"}, so the review is spent` } : input.review.review }
+      : {}),
+    ...(spent ? { spent } : {}),
   };
 }

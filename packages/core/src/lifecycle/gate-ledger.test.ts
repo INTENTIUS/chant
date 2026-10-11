@@ -419,3 +419,25 @@ describe("readGateLedger — a corrupted planDigest is malformed (#2300)", () =>
     });
   });
 });
+
+describe("applied approvals on chant/lifecycle (#3784)", () => {
+  test("the git port appends and reads _gates/<op>/applied.jsonl, which the gate ledger reader never sees", async () => {
+    const { gitGateLedgerPort } = await import("../op/gate");
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const port = gitGateLedgerPort({ cwd: dir });
+      await appendGateResolution({ op: "migrations", gate: "migrations-wave-1", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00.000Z", planDigest: "sha256:aa" }, { cwd: dir });
+      const line = {
+        version: 1 as const, kind: "applied" as const, op: "migrations", gate: "migrations-wave-1", planDigest: "sha256:aa",
+        approvedAt: "2026-10-10T00:00:00.000Z", approvedBy: "alice", timestamp: "2026-10-11T00:00:00.000Z",
+      };
+      await port.appendApplied!(line);
+      await port.appendApplied!({ ...line, timestamp: "2026-10-11T01:00:00.000Z" });
+      expect(await port.readApplied!("migrations")).toEqual([line, { ...line, timestamp: "2026-10-11T01:00:00.000Z" }]);
+      expect(await readBlobFromPath("_gates/migrations", "applied.jsonl", { cwd: dir })).toMatch(/^\{.*\}\n\{.*\}\n$/);
+      const ledger = await port.read("migrations");
+      expect(ledger.resolutions).toHaveLength(1);
+      expect(ledger.pending).toHaveLength(0);
+    });
+  });
+});
