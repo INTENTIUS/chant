@@ -404,6 +404,12 @@ chant approve policy-override envs/prod/vpc --rule no-public-s3 --reason "the bu
 
 `chant approve` finds the subject's newest denial and refuses when `--rule` does not name exactly the rules that denied it, when there is no reason, or when an agent or an MCP or ACP session records it. `--note` is accepted in place of `--reason`.
 
+After recording, `chant approve` warns when this checkout's `.chant/overriders` is missing or does not list the approver, since a run that reads that file at base would not count the override. A tool that keeps its overriders in its own config (such as `policy.override`) sets `CHANT_OVERRIDERS_FROM` to where it reads them, and the check is skipped:
+
+```bash
+CHANT_OVERRIDERS_FROM="policy.override in terragucci.config.ts" chant approve policy-override envs/prod/vpc --rule no-public-s3 --reason "..."
+```
+
 The run decides with `decideOverride`. An override counts when all of these hold:
 
 - The line is newer than the subject's newest denial and names this digest.
@@ -424,7 +430,7 @@ An override is spent once a run applies under it. The same plan denied again wai
 | `overrideDigest(subject, planDigest, rules)` | the digest an override binds |
 | `overridePending({ subject, planDigest, rules, timestamp, expiresAt })` | the denial's pending fact |
 | `decideOverride({ ledger, applied, subject, planDigest, rules, overriders, mode, signers })` | the decision |
-| `appliedOverride(override, { timestamp })` | the applied record that spends it |
+| `appliedOverride(override, { timestamp })` | the applied record that spends it; `override` needs only `subject`, `digest`, `at` and `by`, so a decision result's `override` or a product's own record both work |
 | `overridersAt(repo, base, path?)` | the overriders file at base |
 | `parseAppliedOverrides(text)`, `recordedDenials(pending)` | read the applied file and the standing denials |
 | `overrideAuditApplies(applied)` | the applied records as applies for `@intentius/chant/lifecycle/gate-audit`, which reads the op as overrides and lists each spend as `override-spent` |
