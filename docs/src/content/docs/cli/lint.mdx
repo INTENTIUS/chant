@@ -48,7 +48,7 @@ chant lint --sandbox
 
 ## Lexicon post-synth checks
 
-Each lexicon the project loads can ship post-synth checks, which read the built output rather than the source (SQLCH101 for a ClickHouse engine the pinned server does not have, for example). `chant lint` builds the lint path in memory, as [`chant build`](/chant/cli/build/) would build that path, writes nothing, and runs every loaded lexicon's post-synth checks over the result. Their findings are reported with the source rules, under the check's own ID. `lint.rules` changes their severity or turns them off, and `lint.presets` applies as it does in `chant build`. A post-synth finding has no source line, so it is reported at `1:1` in the file that declared the resource it names, or at the config file when it names none.
+Each lexicon the project loads can ship post-synth checks, which read the built output rather than the source (SQLCH101 for a ClickHouse engine the pinned server does not have, for example). `chant lint` builds the lint path in memory, as [`chant build`](/chant/cli/build/) would, without writing anything, then runs every loaded lexicon's post-synth checks over the result. Their findings are reported with the source rules, under the check's own ID. `lint.rules` changes their severity or turns them off, and `lint.presets` applies as it does in `chant build`. A post-synth finding has no source line, so it is reported at `1:1` in the file that declared the resource it names, or at the config file when it names none.
 
 When the lint path does not build, each build error is reported as a `LEX002` error and the post-synth checks are skipped. Like `LEX001`, `LEX002` is not a rule and cannot be turned off. A project whose lexicons ship no post-synth checks is not built at all.
 
