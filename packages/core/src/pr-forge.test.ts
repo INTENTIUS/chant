@@ -6,8 +6,12 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  detectForge,
   ForgeApiError,
+  forgeClient,
+  ForgeEnvironmentError,
   forgeFromEnv,
+  forgeTargetFromEnv,
   forgejoForge,
   forgePrincipalOf,
   githubForge,
@@ -290,5 +294,247 @@ describe("forgeFromEnv", () => {
     expect(() => forgeFromEnv("gitlab", { CI_API_V4_URL: "https://gitlab.com/api/v4", CI_PROJECT_ID: "1", CI_JOB_TOKEN: "j" })).toThrow(
       /CHANT_FORGE_TOKEN/,
     );
+  });
+});
+
+// ── #3759: comment, status and tracking issue by marker, for the products ──
+
+describe("upsertComment (#3759)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+
+  test("leaves a comment whose body is already current, and says which it did", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues/12/comments": [{ id: 4, body: "<!-- m -->\nsame", html_url: "https://h/4" }],
+    });
+    expect(await githubForge({ ...gh, fetch }).upsertComment(12, "<!-- m -->", "<!-- m -->\nsame")).toEqual({
+      action: "unchanged",
+      id: 4,
+      url: "https://h/4",
+    });
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+  });
+
+  test("created and updated carry the comment's id and URL", async () => {
+    const created = fakeFetch({
+      "GET /repos/acme/infra/issues/12/comments": [],
+      "POST /repos/acme/infra/issues/12/comments": { id: 9, html_url: "https://h/9" },
+    });
+    expect(await githubForge({ ...gh, fetch: created.fetch }).upsertComment(12, "<!-- m -->", "<!-- m -->\nb")).toEqual({ action: "created", id: 9, url: "https://h/9" });
+    const updated = fakeFetch({
+      "GET /repos/acme/infra/issues/12/comments": [{ id: 3, body: "<!-- m -->\nold" }],
+      "PATCH /repos/acme/infra/issues/comments/3": { id: 3, html_url: "https://h/3" },
+    });
+    expect(await githubForge({ ...gh, fetch: updated.fetch }).upsertComment(12, "<!-- m -->", "<!-- m -->\nnew")).toEqual({ action: "updated", id: 3, url: "https://h/3" });
+  });
+
+  test("a body without its marker is refused before any call", async () => {
+    const { fetch, calls } = fakeFetch({});
+    await expect(githubForge({ ...gh, fetch }).upsertComment(12, "<!-- m -->", "no marker")).rejects.toThrow(/does not start with its marker/);
+    expect(calls).toEqual([]);
+  });
+
+  test("anywhere matches a marker inside the body, and author keeps only the bot's own", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues/12/comments": [
+        { id: 1, body: "quote: <!-- yodel:env=prod -->", user: { login: "mallory" } },
+        { id: 2, body: "plan\n<!-- yodel:env=prod -->", user: { login: "yodel-bot" } },
+      ],
+      "PATCH /repos/acme/infra/issues/comments/2": { id: 2 },
+    });
+    const r = await githubForge({ ...gh, fetch }).upsertComment(12, "<!-- yodel:env=prod -->", "new\n<!-- yodel:env=prod -->", { match: "anywhere", author: "Yodel-Bot" });
+    expect(r.action).toBe("updated");
+    expect(calls.at(-1)?.url).toBe("https://api.github.com/repos/acme/infra/issues/comments/2");
+  });
+
+  test("GitLab skips system notes, keeps the oldest of several, and edits with PUT", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/42/merge_requests/5/notes": [
+        { id: 30, body: "<!-- m -->\nb", system: true },
+        { id: 21, body: "<!-- m -->\nnewer", author: { username: "bot" } },
+        { id: 20, body: "<!-- m -->\nolder", author: { username: "bot" } },
+      ],
+      "PUT /api/v4/projects/42/merge_requests/5/notes/20": { id: 20 },
+    });
+    const forge = gitlabForge({ apiBase: "https://gitlab.example.com/api/v4", project: "42", token: "glpat", fetch });
+    expect(await forge.upsertComment(5, "<!-- m -->", "<!-- m -->\nnow")).toEqual({ action: "updated", id: 20 });
+    expect(calls.at(-1)).toMatchObject({ method: "PUT", body: { body: "<!-- m -->\nnow" } });
+  });
+});
+
+describe("trackIssue (#3759)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+  const open = [
+    { number: 8, title: "Drift: prod", body: "<!-- d -->\n2 changes", html_url: "https://h/issues/8" },
+    { number: 9, title: "pr", body: "<!-- d -->", pull_request: { url: "x" } },
+  ];
+
+  test("a cleared finding leaves the issue open unless close-on-clear is set", async () => {
+    const { fetch, calls } = fakeFetch({ "GET /repos/acme/infra/issues": open });
+    expect(await githubForge({ ...gh, fetch }).trackIssue("<!-- d -->", null)).toEqual({ action: "left", number: 8, url: "https://h/issues/8" });
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+  });
+
+  test("close-on-clear comments, then closes, on GitHub and Forgejo", async () => {
+    for (const [make, base] of [
+      [(f: ForgeFetch) => githubForge({ ...gh, fetch: f }), "/repos/acme/infra"],
+      [(f: ForgeFetch) => forgejoForge({ ...gh, apiBase: "https://codeberg.org/api/v1", host: "codeberg.org", fetch: f }), "/api/v1/repos/acme/infra"],
+    ] as const) {
+      const { fetch, calls } = fakeFetch({
+        [`GET ${base}/issues`]: open,
+        [`POST ${base}/issues/8/comments`]: {},
+        [`PATCH ${base}/issues/8`]: {},
+      });
+      const r = await make(fetch).trackIssue("<!-- d -->", null, { closeOnClear: true, clearComment: "No drift now." });
+      expect(r).toEqual({ action: "closed", number: 8, url: "https://h/issues/8" });
+      expect(calls.slice(1).map((c) => [c.method, new URL(c.url).pathname, c.body])).toEqual([
+        ["POST", `${base}/issues/8/comments`, { body: "No drift now." }],
+        ["PATCH", `${base}/issues/8`, { state: "closed" }],
+      ]);
+    }
+  });
+
+  test("a cleared finding with no open issue does nothing", async () => {
+    const { fetch, calls } = fakeFetch({ "GET /repos/acme/infra/issues": [] });
+    expect(await githubForge({ ...gh, fetch }).trackIssue("<!-- d -->", null, { closeOnClear: true })).toEqual({ action: "none" });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("a finding opens, updates, or leaves an issue that already says it", async () => {
+    const same = fakeFetch({ "GET /repos/acme/infra/issues": open });
+    expect(await githubForge({ ...gh, fetch: same.fetch }).trackIssue("<!-- d -->", { title: "Drift: prod", body: "<!-- d -->\n2 changes" })).toMatchObject({ action: "unchanged", number: 8 });
+    const changed = fakeFetch({ "GET /repos/acme/infra/issues": open, "PATCH /repos/acme/infra/issues/8": { number: 8, html_url: "https://h/issues/8" } });
+    expect(await githubForge({ ...gh, fetch: changed.fetch }).trackIssue("<!-- d -->", { title: "Drift: prod", body: "<!-- d -->\n3 changes" })).toMatchObject({ action: "updated", number: 8 });
+    const none = fakeFetch({ "GET /repos/acme/infra/issues": [], "POST /repos/acme/infra/issues": { number: 10, html_url: "https://h/issues/10" } });
+    expect(await githubForge({ ...gh, fetch: none.fetch }).trackIssue("<!-- d -->", { title: "t", body: "<!-- d -->\nb" })).toEqual({ action: "opened", number: 10, url: "https://h/issues/10" });
+  });
+
+  test("GitLab searches open issues by description, writes description, and closes with a note", async () => {
+    const issues = [{ iid: 3, title: "Drift", description: "<!-- d -->\nold", web_url: "https://gl/i/3" }];
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/group%2Fapp/issues": issues,
+      "PUT /api/v4/projects/group%2Fapp/issues/3": { iid: 3, web_url: "https://gl/i/3" },
+      "POST /api/v4/projects/group%2Fapp/issues/3/notes": {},
+    });
+    const forge = gitlabForge({ apiBase: "https://gitlab.example.com/api/v4", project: "group/app", token: "glpat", fetch });
+    expect(await forge.trackIssue("<!-- d -->", { title: "Drift", body: "<!-- d -->\nnew" })).toEqual({ action: "updated", number: 3, url: "https://gl/i/3" });
+    const list = new URL(calls[0].url);
+    expect([list.searchParams.get("state"), list.searchParams.get("search"), list.searchParams.get("in")]).toEqual(["opened", "<!-- d -->", "description"]);
+    expect(calls[1].body).toEqual({ title: "Drift", description: "<!-- d -->\nnew" });
+    expect(await forge.trackIssue("<!-- d -->", null, { closeOnClear: true, clearComment: "gone" })).toMatchObject({ action: "closed", number: 3 });
+    expect(calls.slice(-2).map((c) => [c.method, new URL(c.url).pathname, c.body])).toEqual([
+      ["POST", "/api/v4/projects/group%2Fapp/issues/3/notes", { body: "gone" }],
+      ["PUT", "/api/v4/projects/group%2Fapp/issues/3", { state_event: "close" }],
+    ]);
+  });
+
+  test("GitLab's upsertIssue opens one when none carries the marker", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/42/issues": [],
+      "POST /api/v4/projects/42/issues": { iid: 1, web_url: "https://gl/i/1" },
+    });
+    expect(await gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "x", fetch }).upsertIssue("<!-- d -->", "t", "<!-- d -->\nb")).toBe("https://gl/i/1");
+    expect(calls.at(-1)?.body).toEqual({ title: "t", description: "<!-- d -->\nb" });
+  });
+});
+
+describe("commit status (#3759)", () => {
+  test("cuts the description to what each forge keeps, and passes GitLab's pipeline", async () => {
+    const long = "x".repeat(400);
+    const gh = fakeFetch({ [`POST /repos/acme/infra/statuses/${SHA}`]: {} });
+    await githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", token: "t", fetch: gh.fetch }).setStatus(SHA, { context: "c", state: "success", description: long });
+    expect((gh.calls[0].body as { description: string }).description).toHaveLength(140);
+    const gl = fakeFetch({ [`POST /api/v4/projects/42/statuses/${SHA}`]: {} });
+    await gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch: gl.fetch }).setStatus(SHA, { context: "c", state: "pending", description: long, pipelineId: 7 });
+    expect(gl.calls[0].body).toMatchObject({ state: "pending", pipeline_id: 7 });
+    expect((gl.calls[0].body as { description: string }).description).toHaveLength(255);
+  });
+
+  test("GitLab's 400 for a status already in that state is not an error; another 400 is", async () => {
+    const answer = (text: string): ForgeFetch => async () => ({ ok: false, status: 400, text: async () => text });
+    const forge = (f: ForgeFetch) => gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch: f });
+    await expect(forge(answer('{"message":"Cannot transition status via :success from :success"}')).setStatus(SHA, { context: "c", state: "success", description: "d" })).resolves.toBeUndefined();
+    await expect(forge(answer('{"message":"name is invalid"}')).setStatus(SHA, { context: "c", state: "success", description: "d" })).rejects.toBeInstanceOf(ForgeApiError);
+  });
+});
+
+describe("forgeTargetFromEnv (#3759)", () => {
+  test("detects the forge from the job's environment", () => {
+    expect(detectForge({ GITHUB_ACTIONS: "true", GITHUB_API_URL: "https://api.github.com" })).toBe("github");
+    expect(detectForge({ GITHUB_ACTIONS: "true", GITHUB_API_URL: "https://forgejo.example/api/v1" })).toBe("forgejo");
+    expect(detectForge({ GITHUB_ACTIONS: "true", FORGEJO_ACTIONS: "true" })).toBe("forgejo");
+    expect(detectForge({ GITLAB_CI: "true" })).toBe("gitlab");
+    expect(detectForge({})).toBeUndefined();
+  });
+
+  test("GitHub: repository, pull request and head from the event payload, token in the documented order, run link", () => {
+    const t = forgeTargetFromEnv(
+      {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REPOSITORY: "acme/infra",
+        GITHUB_SERVER_URL: "https://github.com",
+        GITHUB_RUN_ID: "77",
+        GITHUB_SHA: "m".repeat(40),
+        GITHUB_EVENT_PATH: "/event.json",
+        GITHUB_TOKEN: "late",
+        GH_TOKEN: "early",
+      },
+      { readFile: () => JSON.stringify({ number: 12, pull_request: { number: 12, head: { sha: SHA } } }) },
+    );
+    expect(t).toEqual({
+      kind: "github",
+      apiBase: "https://api.github.com",
+      repo: "acme/infra",
+      host: "github.com",
+      token: "early",
+      tokenSource: "GH_TOKEN",
+      pr: 12,
+      sha: SHA,
+      runUrl: "https://github.com/acme/infra/actions/runs/77",
+    });
+    expect(forgeClient(t).kind).toBe("github");
+  });
+
+  test("Forgejo: FORGEJO_* first, the API under the server, the pull request from the ref, a named token variable", () => {
+    const t = forgeTargetFromEnv(
+      { FORGEJO_ACTIONS: "true", FORGEJO_REPOSITORY: "a/b", GITHUB_SERVER_URL: "https://codeberg.org/", GITHUB_REF: "refs/pull/4/head", FORGEJO_TOKEN: "f", CHANT_FORGEJO_TOKEN: "c" },
+      { tokenEnv: "FORGEJO_TOKEN" },
+    );
+    expect(t).toMatchObject({ kind: "forgejo", apiBase: "https://codeberg.org/api/v1", repo: "a/b", host: "codeberg.org", pr: 4, token: "f", tokenSource: "FORGEJO_TOKEN" });
+    const forge = forgeClient(t, fakeFetch({}).fetch);
+    expect(forge.principalOf("Ana")).toBe("forgejo@codeberg.org:ana");
+  });
+
+  test("GitLab: the merge request's project, its iid, and the job token in its own header", async () => {
+    const t = forgeTargetFromEnv({
+      GITLAB_CI: "true",
+      CI_API_V4_URL: "https://gitlab.example.com/api/v4",
+      CI_SERVER_URL: "https://gitlab.example.com",
+      CI_PROJECT_ID: "9",
+      CI_MERGE_REQUEST_PROJECT_ID: "42",
+      CI_MERGE_REQUEST_IID: "5",
+      CI_COMMIT_SHA: SHA,
+      CI_JOB_TOKEN: "job",
+    });
+    expect(t).toMatchObject({ kind: "gitlab", repo: "42", pr: 5, sha: SHA, host: "gitlab.example.com", tokenSource: "CI_JOB_TOKEN", tokenHeader: "JOB-TOKEN" });
+    const { fetch, calls } = fakeFetch({ "GET /api/v4/projects/42/merge_requests/5/notes": [], "POST /api/v4/projects/42/merge_requests/5/notes": { id: 1 } });
+    await forgeClient(t, fetch).upsertComment(5, "<!-- m -->", "<!-- m -->");
+    expect(calls[0].headers["JOB-TOKEN"]).toBe("job");
+    expect(calls[0].headers["PRIVATE-TOKEN"]).toBeUndefined();
+  });
+
+  test("says every missing piece, and when the forge is unknown", () => {
+    let err: unknown;
+    try {
+      forgeTargetFromEnv({ GITHUB_ACTIONS: "true" }, { requirePr: true });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ForgeEnvironmentError);
+    expect((err as ForgeEnvironmentError).missing).toEqual([
+      "GITHUB_REPOSITORY",
+      "a pull request (a pull_request event, or refs/pull/<n>/ in GITHUB_REF)",
+      "a token (CHANT_FORGEJO_TOKEN, GH_TOKEN, GITHUB_TOKEN)",
+    ]);
+    expect(() => forgeTargetFromEnv({})).toThrow(/forge is not known/);
   });
 });

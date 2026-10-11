@@ -594,7 +594,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     primitives: ["fetch"],
     phase: "apply",
     destination: "the forge that hosts the pull request: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or a GitLab instance's API",
-    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). Only those CI paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). terragucci and SQL Yodeler import it from `@intentius/chant/pr-forge` for their own notes, statuses and tracking issues (#3759). Only those CI paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
   },
   {
     file: "packages/core/src/op/activities/reconcile.ts",
