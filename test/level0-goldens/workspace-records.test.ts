@@ -154,7 +154,11 @@ describe("chant #2546 — workspace records", () => {
       const run = await runChant(root, ["workspace", "records", "--kind", KIND, "--current", "--json"]);
       expect(run.exit).toBe(0);
       const doc = JSON.parse(run.stdout) as RecordsDoc;
-      const reasons = Object.fromEntries(doc.records.slice(0, 3).map((r) => [r.path.split("/").pop(), r.reasons.map((x) => x.code)]));
+      // By name: the directory holds other prefixes too (sql-001, #3751), which sort first.
+      const edited = new Set(["ws-001-trust-root.md", "ws-002-local-promise.md", "ws-003-seal-scope.md"]);
+      const reasons = Object.fromEntries(
+        doc.records.map((r) => [r.path.split("/").pop()!, r.reasons.map((x) => x.code)] as const).filter(([name]) => edited.has(name)),
+      );
       expect(reasons).toEqual({
         "ws-001-trust-root.md": ["record-unparseable"],
         "ws-002-local-promise.md": ["record-schema-invalid"],
