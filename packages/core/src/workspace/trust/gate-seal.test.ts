@@ -1,8 +1,9 @@
 /**
- * #3763: a gate approval's seal, checked with node:crypto, answers as
- * ssh-keygen does. Each seal is made by `ssh-keygen -Y sign` and checked both
- * ways: {@link gateSealRefusal} here, and `checkGateSeal` (ssh-keygen) in
- * `./seal.ts`.
+ * #3763, #3785: a gate approval's seal, checked with node:crypto, answers as
+ * ssh-keygen does. Each seal is made by `ssh-keygen -Y sign` and checked three
+ * ways: {@link gateSealRefusal} here, `checkGateSeal` (which now uses the same
+ * verifier), and `ssh-keygen -Y verify` run directly against the same signers
+ * text, so the agreement does not rest on chant's own code alone.
  */
 
 import { execFileSync } from "node:child_process";
@@ -43,14 +44,35 @@ function approval(over: Partial<SealedGateApproval> = {}): SealedGateApproval {
   return { op: "migrations", gate: "migrations-wave-1", planDigest: "jcs1-sha256:abc", resolvedBy: "alice", timestamp: "2026-10-11T00:00:00.000Z", ...over };
 }
 
+const signersText = new WeakMap<TrustPolicy, string>();
+
 function policyOf(text: string): TrustPolicy {
   const set = parseAllowedSigners(text);
-  return { ...emptyPolicy("0".repeat(40)), active: true, signers: set.signers, excluded: set.excluded };
+  const policy: TrustPolicy = { ...emptyPolicy("0".repeat(40)), active: true, signers: set.signers, excluded: set.excluded };
+  signersText.set(policy, text);
+  return policy;
 }
 
 /** Both checks, as `{ ours, keygen }`: null or the refusal, and whether ssh-keygen attested it. */
 function both(policy: TrustPolicy, a: SealedGateApproval): { ours: string | null; keygen: boolean } {
-  return { ours: gateSealRefusal(policy as GateSigners, a), keygen: checkGateSeal(policy, a).attested === true };
+  const ours = gateSealRefusal(policy as GateSigners, a);
+  // checkGateSeal shares the verifier; it must answer as the rule does.
+  expect(checkGateSeal(policy, a).attested === true).toBe(ours === null);
+  // ssh-keygen -Y verify, run directly, against the same signers text.
+  const seal = a.seal as { signature?: string } | undefined;
+  let keygen = false;
+  if (typeof seal?.signature === "string") {
+    const f = join(dir, `v-${Math.random().toString(36).slice(2)}`);
+    writeFileSync(`${f}.signers`, signersText.get(policy) ?? "");
+    writeFileSync(`${f}.sig`, seal.signature);
+    try {
+      execFileSync("ssh-keygen", ["-Y", "verify", "-f", `${f}.signers`, "-I", a.resolvedBy.normalize("NFKC").trim().toLowerCase(), "-n", GATE_SEAL_NAMESPACE, "-s", `${f}.sig`], { input: gateSealPayload(a), stdio: ["pipe", "ignore", "ignore"] });
+      keygen = true;
+    } catch {
+      keygen = false;
+    }
+  }
+  return { ours, keygen };
 }
 
 describe.skipIf(!hasSshKeygen)("an SSHSIG checked with node:crypto", () => {

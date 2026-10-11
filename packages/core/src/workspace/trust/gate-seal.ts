@@ -2,9 +2,10 @@
  * A gate approval's seal (#3163, ws-080), checked with node:crypto (#3763).
  *
  * `chant approve --sign` seals an approval with `ssh-keygen -Y sign` in the
- * `chant-gate` namespace, over {@link gateSealPayload}. `./seal.ts` checks a
- * seal with `ssh-keygen -Y verify`. This module checks the same seal with no
- * ssh-keygen and no zod, so a tool that decides a gate from one bundled file
+ * `chant-gate` namespace, over {@link gateSealPayload}. Signing shells to
+ * ssh-keygen; checking does not. This module checks a seal with node:crypto
+ * and no zod, and `checkGateSeal` (`./seal.ts`) and `sealedApprovalRule` use
+ * it, so an apply job needs no ssh-keygen. A tool that decides a gate from one bundled file
  * (terragucci's apply job) runs the same rule: `@intentius/chant/gate-decision`
  * exports it.
  *
@@ -171,6 +172,23 @@ export function verifySshSignatureWith(armored: string, message: Buffer, namespa
   }
 }
 
+/**
+ * The key blob an armored SSHSIG carries, or null when it is not one. For
+ * `ssh-keygen -Y check-novalidate`'s question, whether the signature is
+ * intact whoever's key it is: verify against this key.
+ */
+export function sshSignatureKey(armored: string): Buffer | null {
+  try {
+    const body = /-----BEGIN SSH SIGNATURE-----([^-]*)-----END SSH SIGNATURE-----/.exec(armored)?.[1];
+    if (body === undefined) return null;
+    const take = reader(Buffer.from(body.replace(/\s+/g, ""), "base64"));
+    if (take(6).toString() !== "SSHSIG" || take(4).readUInt32BE(0) !== 1) return null;
+    return Buffer.from(take());
+  } catch {
+    return null;
+  }
+}
+
 // ── the rule ─────────────────────────────────────────────────────────────
 
 /**
@@ -193,7 +211,7 @@ export interface GateSigners {
 const normalise = (name: string): string => name.normalize("NFKC").trim().toLowerCase();
 
 /** Whether ssh-keygen's `namespaces="..."` pattern list admits `namespace`: a `*`/`?` pattern matches, and a `!` pattern that matches refuses. */
-function namespaceAllowed(list: string | undefined, namespace: string): boolean {
+export function namespaceAllowed(list: string | undefined, namespace: string): boolean {
   if (list === undefined) return true;
   let allowed = false;
   for (const raw of list.split(",")) {
