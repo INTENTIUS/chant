@@ -146,6 +146,8 @@ chant workspace points answer slice-tier-074b660bbaad --answer medium --by alice
 
 Giving the answer the model proposed confirms it. Any other answer is the quorum's, and the proposal is kept in the record's `escalations`. The quorum counts distinct people. It never counts anyone holding the `agent` role in the trust policy, and when it names roles it counts only their holders. `--note` keeps what they say with the answer.
 
+An answer that comes over MCP or ACP is an agent's, whatever names it gives ([#3817](https://github.com/INTENTIUS/chant/issues/3817)). The `points-answer` tool of `chant serve mcp`, an ACP session, and `chant workspace points answer` run by a process either one started (which carries `CHANT_GATE_ORIGIN`) count nobody toward the quorum, so the answer is refused with `quorum-not-met`. A question whose `constrains` names a gate that is never resolved over MCP (`neverOverMcp` on the Op or on the gate's pending fact) is refused there outright with `answer-never-over-mcp`. `points retract` follows the same rules. People answer at a shell or through hud, the same rule `chant approve` keeps for a gate.
+
 An answered question never changes in place. People who want to change an answer retract it, and the question is open for them again ([#3351](https://github.com/INTENTIUS/chant/issues/3351)):
 
 ```bash

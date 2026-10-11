@@ -67,22 +67,39 @@ export const UNATTESTED_APPROVER = "unattested";
 let ambient: GateOrigin = "cli";
 
 /**
+ * The environment variable a model-authored channel carries into child
+ * processes (chant#3817), as a steward's turn carries `CHANT_STEWARD`: a
+ * `chant workspace points answer` or `chant approve` a process on MCP or ACP
+ * starts is that channel's too. Only `mcp` and `acp` are read from it, so it
+ * can make a process model-authored and never make one a person's.
+ */
+export const GATE_ORIGIN_ENV = "CHANT_GATE_ORIGIN";
+
+/**
  * Declare the channel this process serves. Called once at an entry point, not
  * per call: `chant mcp` sets `"mcp"` before it serves anything, `chant acp`
- * sets `"acp"`, and the CLI leaves the default.
+ * sets `"acp"`, and the CLI leaves the default. A model-authored channel is
+ * also exported as {@link GATE_ORIGIN_ENV}, so a child process knows it too.
  */
 export function setGateOrigin(origin: GateOrigin): void {
   ambient = origin;
+  if (isModelAuthored(origin)) process.env[GATE_ORIGIN_ENV] = origin;
 }
 
-/** The channel this process serves. `"cli"` unless an entry point said otherwise. */
+/**
+ * The channel this process serves. `"cli"` unless an entry point said
+ * otherwise, or this process was started by one on MCP or ACP.
+ */
 export function currentGateOrigin(): GateOrigin {
-  return ambient;
+  if (ambient !== "cli") return ambient;
+  const inherited = process.env[GATE_ORIGIN_ENV];
+  return inherited === "mcp" || inherited === "acp" ? inherited : ambient;
 }
 
 /** Restore the default. For tests, which must not leak a channel into each other. */
 export function resetGateOrigin(): void {
   ambient = "cli";
+  delete process.env[GATE_ORIGIN_ENV];
 }
 
 /**

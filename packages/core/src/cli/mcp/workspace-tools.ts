@@ -28,7 +28,11 @@
  *   `clientInfo`. Computed provenance, from git, is unchanged.
  *
  * Nothing here listens on a port or authenticates anyone (ws-052): the server
- * speaks over stdio, and `by` is recorded as given, as `--by` is.
+ * speaks over stdio, and `by` is recorded as given, as `--by` is. A decision
+ * point's answer is the exception (#3817): `chant serve mcp` makes every call
+ * the model's (`lifecycle/gate-origin.ts`), so `points-answer` and
+ * `points-retract` count nobody `by` names toward a point's quorum, as
+ * `op-approve` records its approver as an agent.
  *
  * An agent session (#2548): a server started with `CHANT_AGENT` set writes in
  * that session, bound to its one member, and its writes are refused outside
@@ -289,7 +293,7 @@ export const workspaceWriteTools: ToolDefinition[] = [
   {
     name: "points-answer",
     description:
-      "Record people's answer to an open decision point question, or confirm a model's proposal: chant workspace points answer. Refused unless the point's quorum is met: distinct people, none holding the agent role, each holding one of the quorum's roles when it names any. An answered question never changes in place: points-retract takes it back. " +
+      "Record people's answer to an open decision point question, or confirm a model's proposal: chant workspace points answer. Refused unless the point's quorum is met: distinct people, none holding the agent role, each holding one of the quorum's roles when it names any. On a server started with `chant serve mcp`, every call is the model's, so nobody named in by counts toward the quorum (quorum-not-met), and a question whose gate is neverOverMcp is refused outright (answer-never-over-mcp): people answer at a shell or through hud. An answered question never changes in place: points-retract takes it back. " +
       PROTOCOL,
     inputSchema: {
       type: "object",
@@ -308,7 +312,7 @@ export const workspaceWriteTools: ToolDefinition[] = [
   {
     name: "points-retract",
     description:
-      "Take back people's answer to a decision point question: chant workspace points retract. The question is escalated to people again, and the answer, who gave it and its note stay in the record's retractions with who retracted it, when and why. Refused unless the point's quorum is met, counted as for an answer. " +
+      "Take back people's answer to a decision point question: chant workspace points retract. The question is escalated to people again, and the answer, who gave it and its note stay in the record's retractions with who retracted it, when and why. Refused unless the point's quorum is met, counted as for an answer, so over MCP it is refused as an answer is. " +
       PROTOCOL,
     inputSchema: {
       type: "object",
