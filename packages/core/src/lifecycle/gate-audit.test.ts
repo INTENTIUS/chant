@@ -84,6 +84,48 @@ describe("lifecycle/gate-audit", () => {
     expect(entries.filter((e) => e.kind === "approved")).toHaveLength(1);
   });
 
+  test("each ledger entry names its line: path, number and text as passed in", () => {
+    const text = `${pending()}\n\n${resolution()}\n`;
+    const { entries } = deriveGateAudit({ ledgers: [{ op: "tf-apply", path: "gates/tf.jsonl", lines: gateLedgerLines(text) }] });
+    expect(entries.map((e) => [e.source.path, e.source.line, e.source.text])).toEqual([
+      ["gates/tf.jsonl", 1, pending()],
+      ["gates/tf.jsonl", 3, resolution()],
+    ]);
+    const records = deriveGateAudit({ ledgers: [{ op: "tf-apply", lines: [{ record: JSON.parse(pending()) }, { record: JSON.parse(resolution()) }] }] });
+    expect(records.entries.map((e) => [e.source.line, e.source.text])).toEqual([[1, undefined], [2, undefined]]);
+  });
+
+  test("a caller's id replaces the default, and applies run under it", () => {
+    const ledgers = [ledger("tf-apply", pending(), resolution())];
+    const id = (e: { source: { path: string; text?: string }; kind: string; id: string }) => (e.source.text ? `mine:${e.source.path}:${e.source.text.length}` : e.id);
+    const plain = deriveGateAudit({ ledgers });
+    const { entries } = deriveGateAudit({ ledgers, id, applies: [{ ref: "reports/1", at: "2026-10-01T12:00:00.000Z", gate: "wave-1", digest: D1 }] });
+    const approved = entries.find((e) => e.kind === "approved")!;
+    expect(approved.id).toBe(`mine:_gates/tf-apply.jsonl:${resolution().length}`);
+    expect(entries.find((e) => e.kind === "applied")?.under).toBe(approved.id);
+    expect(plain.entries.map((e) => e.id)).not.toContain(approved.id);
+  });
+
+  test("an approval read from history names who committed it", () => {
+    const log = `\x1ec1\x1fmallory\x1f2026-10-01T11:05:00+00:00\x1fm@x.io\n\ndiff --git a/x b/x\n+${pending()}\n+${resolution()}\n`;
+    const lines = gateLedgerLinesFromLog(log);
+    expect(lines[1]).toEqual({ text: resolution(), commit: "c1", added: { at: "2026-10-01T11:05:00.000Z", by: "mallory", email: "m@x.io" } });
+    const { entries } = deriveGateAudit({ ledgers: [{ op: "tf-apply", lines }] });
+    const approved = entries.find((e) => e.kind === "approved")!;
+    expect(approved).toMatchObject({ by: "alex", committedBy: "mallory", source: { commit: "c1", author: { by: "mallory", email: "m@x.io", at: "2026-10-01T11:05:00.000Z" } } });
+    expect(entries.find((e) => e.kind === "approval-requested")?.source.author?.by).toBe("mallory");
+    const noEmail = gateLedgerLinesFromLog(`\x1ec2\x1fbo\x1f2026-10-01T11:05:00+00:00\n\n+${resolution()}\n`);
+    expect(noEmail[0]?.added).toEqual({ at: "2026-10-01T11:05:00.000Z", by: "bo" });
+  });
+
+  test("a sealed pull request approval is a review, with the seal beside it", () => {
+    const seal = { signer: "bot", signature: "-----BEGIN" };
+    const { entries } = deriveGateAudit({ ledgers: [ledger("tf-apply", pending(), resolution({ seal, via: "pr-review", pr: 4 }), resolution({ seal, timestamp: "2026-10-01T12:00:00.000Z" }))] });
+    const approved = entries.filter((e) => e.kind === "approved");
+    expect(approved.map((e) => [e.seal, e.sealed, e.signer])).toEqual([["review", true, "bot"], ["sealed", true, "bot"]]);
+    expect(approved[0]?.review).toEqual({ pr: 4 });
+  });
+
   test("applies: under an approval, without one, waived, and spending an override", () => {
     const ledgers = [ledger("tf-apply", pending(), resolution()), ledger("policy-override", resolution({ op: "policy-override", gate: "root/a", planDigest: "sha256:ov" }))];
     const ok = { ref: "reports/1", at: "2026-10-01T12:00:00.000Z", gate: "wave-1", digest: D1 };
