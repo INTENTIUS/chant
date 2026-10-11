@@ -234,10 +234,10 @@ When the gated apply runs as an [Op waves](/chant/guide/op-waves/) job whose
 spec has `notify`, a blocked wave fails its job, and the job posts a `failed`
 event to Slack, Teams or a signed webhook ([Notify](/chant/guide/notify/)).
 
-> **Signed override (deferred).** Pausing for a human, signed, audited override
-> to proceed *despite* a violation requires conditional gating in the generated
-> workflow — it is tracked as a follow-on, not in this version. Today `policyGate`
-> blocks; loosen the policy or fix the violation to proceed.
+`policyGate` blocks until the policy is loosened or the violation is fixed. A
+tool that lets a person apply a denied plan anyway records the decision on the
+[override gate](/chant/guide/ops/#overriding-a-denied-plan). The override is
+bound to the plan digest and the rules that denied it, and it counts once.
 
 ## Try it
 

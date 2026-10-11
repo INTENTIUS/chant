@@ -364,6 +364,55 @@ The answer record names the gate back: its `constrains` is `gate:<op>/<gate>`, w
 
 A gate passes on `true` by default. A choice or score point names the answers that pass with `point: { name: "prod-apply", pass: ["apply"] }`, and `inputs` gives the point any other inputs it declares, step-output references included. A gate with `point` takes no `approval` block, because the point's quorum is the gate's. `chant approve` refuses a gate whose standing pending fact names a question and prints the `points answer` line instead, and `chant workspace status` lists that line as the gate's `approve` command, with the question under `answer`.
 
+### Overriding a denied plan
+
+A policy can deny a plan that a person still decides to apply, such as a public bucket for a docs site or a dropped column nobody reads. The override gate records that decision ([#3760](https://github.com/INTENTIUS/chant/issues/3760)). The policy engine stays in the tool that runs it (OPA, conftest, a product's own rules). It reports that the plan is denied and by which rules, and the gate records and decides the override.
+
+An override binds the subject the plan applies to (a Terraform root or an environment) and the plan digest together with the ids of the rules that denied it. `overrideDigest(subject, planDigest, rules)` hashes them into one `sha256:` digest, so a moved plan or a changed rule set needs a new override.
+
+The lines live on `chant/lifecycle` under the op `policy-override`, gate the subject:
+
+| Line | File | Written by |
+|---|---|---|
+| The denial: a pending fact whose `planDigest` is the override digest, with `plan` and `rules` | `_gates/policy-override.jsonl` | the run, when the policy denies the plan and no override counts |
+| The override: an approval of that digest, with the reason as its `note` | `_gates/policy-override.jsonl` | `chant approve policy-override <subject> --rule <id>... --reason <text>` |
+| The applied record: the override digest and the override's time | `_gates/policy-override/applied.jsonl` | the run, before it applies under the override |
+
+```bash
+chant approve policy-override envs/prod/vpc --rule no-public-s3 --reason "the bucket is the public docs site" --actor github:alice
+# under approval: sealed
+chant approve policy-override envs/prod/vpc --rule no-public-s3 --reason "the bucket is the public docs site" --actor github:alice --sign
+```
+
+`chant approve` finds the subject's newest denial and refuses when `--rule` does not name exactly the rules that denied it, when there is no reason, or when an agent or an MCP or ACP session records it. `--note` is accepted in place of `--reason`.
+
+The run decides with `decideOverride`. An override counts when all of these hold:
+
+- The line is newer than the subject's newest denial and names this digest.
+- A person wrote the line. One that carries `via` or a forge `review`, or one an agent recorded, does not count.
+- The overriders at base list its approver. They are read from `.chant/overriders` (one principal per line), or from a list the tool keeps in its own config at base.
+- The line gives a reason.
+- Under `sealed`, its seal verifies for its approver against the signers file at base, as a [sealed gate approval](/chant/guide/op-waves/#deciding-a-gate-in-your-own-tool) does. The seal covers the override digest and the approver but not the reason.
+- No applied record has spent the override.
+
+`overridden` means the run may apply the plan once it has recorded the applied record. `moved` means an override counts for another digest, so the plan or its rules changed after it was written. `none` lists each override of this digest that did not count, with the reason, and returns the standing denial so the run records no second one. Decide before recording a denial: an override written after an expired denial still counts for the same plan, and recording a fresh denial first would make it look older than that denial.
+
+An override is spent once a run applies under it. The same plan denied again waits for its own override, and an earlier override that was already applied is reported as `spent` rather than as a moved plan.
+
+`@intentius/chant/override-gate` holds the decision and the line shapes, and bundles to about 16 KB with no TypeScript, zod or git ledger code, so a tool built into one file can use it:
+
+| Export | What it does |
+|---|---|
+| `overrideDigest(subject, planDigest, rules)` | the digest an override binds |
+| `overridePending({ subject, planDigest, rules, timestamp, expiresAt })` | the denial's pending fact |
+| `decideOverride({ ledger, applied, subject, planDigest, rules, overriders, mode, signers })` | the decision |
+| `appliedOverride(override, { timestamp })` | the applied record that spends it |
+| `overridersAt(repo, base, path?)` | the overriders file at base |
+| `parseAppliedOverrides(text)`, `recordedDenials(pending)` | read the applied file and the standing denials |
+| `overrideAuditApplies(applied)` | the applied records as applies for `@intentius/chant/lifecycle/gate-audit`, which reads the op as overrides and lists each spend as `override-spent` |
+
+Inside chant, `readOverrideLedger`, `recordOverrideDenial` and `recordOverridesApplied` in `lifecycle/override-ledger` read and write the same lines on `chant/lifecycle`.
+
 ## Running under a work lease
 
 An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item. An item id has to be a valid git ref name segment (letters, digits, `.`, `_` and `-`, no `..`, no trailing `.`, no `.lock` suffix), and a literal id that isn't is refused when the Op is built ([#2815](https://github.com/INTENTIUS/chant/issues/2815)).

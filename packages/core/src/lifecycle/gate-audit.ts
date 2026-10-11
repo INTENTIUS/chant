@@ -24,9 +24,11 @@
  *
  * An override gate is, by default, any gate of the op `policy-override`
  * (terragucci writes one gate per root) or named `override-<rule>` (SQL
- * Yodeler's `yodel override`). {@link GateAuditOptions.isOverride} replaces
- * that rule, so the override gate chant adds later (#3760) fits without a
- * change here. Anything a line carries beyond the typed fields is kept in
+ * Yodeler's `yodel override`). chant's override gate (#3760,
+ * `../override-gate.ts`) records under the op `policy-override`, so the
+ * default reads it, and its `overrideAuditApplies` turns applied records into
+ * applies that cite the override they spent. {@link GateAuditOptions.isOverride}
+ * replaces the rule. Anything a line carries beyond the typed fields is kept in
  * `detail`, and `kind` is checked against {@link GATE_AUDIT_KINDS} only by
  * the type, never by the reader.
  *

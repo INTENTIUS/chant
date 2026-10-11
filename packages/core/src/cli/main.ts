@@ -696,6 +696,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       result[arg.slice(2) as "unit" | "decision"] = value;
     } else if (arg === "--note") {
       result.note = args[++i];
+    } else if (arg === "--reason") {
+      // `chant approve policy-override <subject> --reason <text>` (#3760): why the denied plan goes out anyway.
+      result.reason = args[++i];
+      if (result.reason === undefined || result.reason.startsWith("-")) throw new Error("--reason needs the text of the reason: --reason <text>");
+    } else if (arg === "--rule") {
+      // `chant approve policy-override <subject> --rule <id>` (#3760), once per rule that denied the plan.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--rule needs a rule id: --rule <id>");
+      (result.rules ??= []).push(value);
     } else if (arg === "--expire") {
       result.expire = true;
     } else if (arg === "--role") {
@@ -999,6 +1008,12 @@ Ops:
                         --resume then starts the CI job that waits at the
                         gate again (GitHub re-run, GitLab retry, Forgejo
                         dispatch) with CHANT_FORGE_TOKEN
+                        On op policy-override the gate is the subject a
+                        policy denied: --rule <id> names each rule that
+                        denied it and --reason <text> says why the plan goes
+                        out anyway; the next run that plans the same digest
+                        applies it once, if .chant/overriders at base lists
+                        --actor
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,

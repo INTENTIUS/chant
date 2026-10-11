@@ -346,6 +346,14 @@ describe("parseArgs", () => {
     expect(result.url).toBe("https://github.com/org/repo/pull/1");
   });
 
+  test("parses --rule (repeated) and --reason for an override (#3760)", () => {
+    const result = parseArgs(["approve", "policy-override", "prod", "--rule", "no-drop", "--rule", "no-lock", "--reason", "the table is empty"]);
+    expect(result.rules).toEqual(["no-drop", "no-lock"]);
+    expect(result.reason).toBe("the table is empty");
+    expect(() => parseArgs(["approve", "policy-override", "prod", "--rule"])).toThrow(/--rule needs a rule id/);
+    expect(() => parseArgs(["approve", "policy-override", "prod", "--reason"])).toThrow(/--reason needs the text/);
+  });
+
   // ── --no-release-record (#597) ───────────────────────────────────────────
 
   test("--promote-to <env> sets promoteTo, and a missing value is refused (#2575)", () => {
