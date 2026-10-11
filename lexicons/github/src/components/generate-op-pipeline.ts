@@ -70,6 +70,7 @@
  * that job either, same as `environment:` above does not).
  */
 
+import { readFileSync } from "node:fs";
 import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { memberPathFilter, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
@@ -130,11 +131,10 @@ export interface GithubOpPipelineDoc {
   jobsDoc: Record<string, unknown>;
   /**
    * The gated-apply notice job (#2243), when this Op's trigger is `push`.
-   * Kept out of {@link jobsDoc} so a dialect that cannot run it drops it by
-   * simply not copying it: the job shells to `gh` against the GitHub API and
-   * needs `gh` on the runner, which is the same reason the `comment` finding
-   * mode is refused on forgejo (#2231). {@link emitOpPipelineYAML} merges it
-   * into `jobs:` for the forges that can. GitLab reaches the same outcome
+   * Kept out of {@link jobsDoc} so a dialect transforms it on its own terms;
+   * the forgejo generator carries it across since #3773, when the job moved
+   * off `gh` onto `@intentius/chant/pr-forge`. {@link emitOpPipelineYAML}
+   * merges it into `jobs:`. GitLab reaches the same outcome
    * without this job at all: its push job writes the pending block to an
    * artifact instead (#2256).
    */
@@ -287,18 +287,14 @@ const GATE_OUTPUT_SCRIPT =
  *
  * The `node -e` line and the job's own `outputs:` mapping exist for exactly
  * one reader: the gate-notice job beside it, which is `needs:`-only readable
- * through `steps.<id>.outputs`/`needs.<job>.outputs`. `emitOutputs: false`
- * (forgejo, #2294 — the notice job does not cross the dialect at all) drops
- * that line: nothing on Forgejo reads `$GITHUB_OUTPUT` for this job, and
- * keeping the line would be a wired-up mechanism with no reader, which is the
- * exact thing #2294 is about. The tee'd invocation survives either way — it's
- * what puts the run's own JSON record in the log, gate-notice job or not.
+ * through `steps.<id>.outputs`/`needs.<job>.outputs`. Forgejo dropped both
+ * while it had no notice job (#2294) and carries them again since #3773. The
+ * tee'd invocation is what puts the run's own JSON record in the log.
  */
 function gatedRunStep(
   id: string,
   op: string,
   invocation: string,
-  emitOutputs: boolean,
   env: Record<string, string>,
 ): Record<string, unknown> {
   const lines = [
@@ -309,70 +305,86 @@ function gatedRunStep(
     'code=$(cat "$status")',
     '[ "$code" -eq 0 ] || exit "$code"',
   ];
-  if (emitOutputs) lines.push(`node -e '${GATE_OUTPUT_SCRIPT}' "$json"`);
+  lines.push(`node -e '${GATE_OUTPUT_SCRIPT}' "$json"`);
   return { id, run: lines.join("\n"), env };
 }
 
 /**
- * The notice body's `printf` format. Kept out of {@link gateNoticeScript} so
- * the shell quoting stays readable: it is single-quoted in the emitted script
- * because it carries markdown backticks, which a double-quoted shell string
- * would run as command substitution.
+ * The chant release the notice job installs: this lexicon's own version.
+ * The github lexicon and `@intentius/chant` release in lockstep, so the pr-forge
+ * a generated workflow runs is the one this generator was built against, and
+ * it changes only when the workflow is regenerated, the same as a pinned
+ * action ref.
  */
-const NOTICE_BODY_FORMAT =
-  "%s\\n\\nThe `%s` apply for %s stopped at gate `%s` and is waiting for an approval. Nothing was applied." +
-  "\\n\\n```\\n%s --approver <you>\\n```\\n\\nThe pending fact is on `_gates/%s.jsonl` on the " +
-  "`chant/lifecycle` branch. Approving is a commit: push it and this workflow runs again and applies.\\n";
+function chantVersion(): string {
+  const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version?: unknown };
+  if (typeof pkg.version !== "string" || pkg.version === "") {
+    throw new Error("the github lexicon's package.json has no version to pin the gate-notice job's chant to");
+  }
+  return pkg.version;
+}
 
 /**
- * What the notice job posts. The sticky-comment recipe `reconcilePr`'s
- * `comment` mode already uses (#2231), spelled in shell because this job runs
- * no Op: a hidden marker as the body's first line, found again with
- * `startswith` on the next run, PATCHed when it is there and POSTed when it is
- * not. So a branch that merges three times before anyone approves carries one
- * comment saying what is pending, not three.
+ * What the notice job runs under node (#3773): the sticky-comment recipe
+ * `reconcilePr`'s `comment` mode uses, through the same
+ * `@intentius/chant/pr-forge` clients, so it posts on GitHub, GitHub
+ * Enterprise Server and Forgejo alike. `forgeTargetFromEnv` reads the forge,
+ * the REST base, the repository, the commit and the token off the job's
+ * environment (`CHANT_FORGEJO_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`),
+ * and `pullRequestFor` is the commit-to-pull-request lookup each forge spells
+ * its own way (`commits/{sha}/pulls` on GitHub, `commits/{sha}/pull` on
+ * Forgejo). A commit with no pull request, a direct push, gets a tracking
+ * issue keyed on the same marker, so a second gated push edits it rather
+ * than opening another.
  *
- * A GitHub `push` event carries no pull request, so the target is looked up:
- * `repos/{repo}/commits/{sha}/pulls` is the commit's own associated-pull-request
- * endpoint, exact rather than a search index, and on a merge commit it answers
- * with the pull request that just merged. When it answers with nothing — a
- * direct push to the branch, a merge whose commit the API does not associate —
- * the notice becomes an issue instead, which is the `issue` finding mode's own
- * recipe and the reason this job carries `issues: write`.
- *
- * `$api_base` (chant #2305), resolved the same way `stickyCommentScript`
- * (`lexicons/github/src/composites/pr-plan-report.ts`) and `reconcilePr`'s
- * `githubApiBaseFrom` (`packages/core/src/op/activities/reconcile.ts`)
- * resolve it: `$GITHUB_API_URL` with a trailing slash trimmed, falling back
- * to `https://api.github.com`. This job never crosses to Forgejo today — the
- * forgejo generator's `gatedNoticeDoc` is never carried across the dialect
- * (#2294) — so github.com and GitHub Enterprise Server are the only hosts
- * that run this script, and both already resolved correctly under `gh`'s own
- * bare-path guess. Built from `$api_base` instead, the URL is byte-identical
- * on those two hosts, and the same anti-pattern that broke Forgejo elsewhere
- * (#2291, #2305) does not get a second copy here in case a future notice job
- * does reach Forgejo.
+ * Plain JavaScript in double-quoted strings, so the markdown backticks need
+ * no escaping and nothing in it reads as a `${{ }}` expression.
  */
-function gateNoticeScript(): string {
+const NOTICE_SCRIPT = [
+  'import { forgeClient, forgeTargetFromEnv } from "@intentius/chant/pr-forge";',
+  "const { CHANT_OP: op, CHANT_GATE: gate, CHANT_APPROVE: approve } = process.env;",
+  "const target = forgeTargetFromEnv(process.env);",
+  "const forge = forgeClient(target);",
+  'const marker = "<!-- chant-gate:" + op + " -->";',
+  'const fence = "```";',
+  "const body = [",
+  "  marker,",
+  '  "",',
+  '  "The `" + op + "` apply for " + target.sha + " stopped at gate `" + gate + "` and is waiting for an approval. Nothing was applied.",',
+  '  "",',
+  "  fence,",
+  '  approve + " --approver <you>",',
+  "  fence,",
+  '  "",',
+  '  "The pending fact is on `_gates/" + op + ".jsonl` on the `chant/lifecycle` branch. Approving is a commit: push it and this workflow runs again and applies.",',
+  '].join("\\n") + "\\n";',
+  "const pr = target.sha ? await forge.pullRequestFor(target.sha) : null;",
+  "const url = pr",
+  "  ? await forge.upsertNote(pr, marker, body)",
+  '  : await forge.upsertIssue(marker, op + " is waiting on gate " + gate, body);',
+  'console.log(url ?? (pr ? "commented on #" + pr : "kept the tracking issue"));',
+].join("\n");
+
+/**
+ * The notice step's shell (#3773). It installs the pinned chant into the
+ * runner's temp directory and runs {@link NOTICE_SCRIPT} with tsx, which
+ * chant depends on and which is how `chant` itself runs its TypeScript.
+ * `--omit=peer` keeps chant's optional vitest peer out: about 17 packages,
+ * a few seconds. The `package.json` written first stops npm from walking up
+ * to some other project root. No checkout and no `beforeScript`: the job
+ * reads nothing out of the repository.
+ */
+function gateNoticeScript(version: string): string {
   return [
-    'api_base="${GITHUB_API_URL%/}"',
-    'api_base="${api_base:-https://api.github.com}"',
-    'marker="<!-- chant-gate:$CHANT_OP -->"',
-    "body=$(printf '" + NOTICE_BODY_FORMAT + "' " +
-      '"$marker" "$CHANT_OP" "$GITHUB_SHA" "$CHANT_GATE" "$CHANT_APPROVE" "$CHANT_OP")',
-    'pr=$(gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq ".[0].number // empty")',
-    'if [ -z "$pr" ]; then',
-    '  gh issue create --title "$CHANT_OP is waiting on gate $CHANT_GATE" --body "$body"',
-    "  exit 0",
-    "fi",
-    'id=$(gh api "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments" --paginate ' +
-      '--jq "map(select(.body | startswith(\\"$marker\\"))) | .[0].id // empty" ' +
-      '| grep -m1 -E "^[0-9]+$" || true)',
-    'if [ -n "$id" ]; then',
-    '  gh api --method PATCH "$api_base/repos/$GITHUB_REPOSITORY/issues/comments/$id" -f "body=$body" --jq .html_url',
-    "else",
-    '  gh api --method POST "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f "body=$body" --jq .html_url',
-    "fi",
+    'dir="${RUNNER_TEMP:-/tmp}/chant-gate-notice"',
+    'mkdir -p "$dir"',
+    'cd "$dir"',
+    "echo '{\"private\":true}' > package.json",
+    `npm install --omit=peer --no-audit --no-fund --loglevel=error @intentius/chant@${version}`,
+    "cat > notice.mjs <<'NOTICE'",
+    NOTICE_SCRIPT,
+    "NOTICE",
+    "node --import tsx notice.mjs",
   ].join("\n");
 }
 
@@ -380,37 +392,35 @@ function gateNoticeScript(): string {
  * The follow-up job: `needs:` the apply, runs only when the apply reported
  * gated, and puts the pending state somewhere other than the Actions log.
  *
- * No `container:`. It needs `gh`, which GitHub-hosted runner images carry and
- * an Op's own image (`node:22` by default) does not; it reads nothing out
- * of the repository, so it also needs no checkout.
+ * It runs in the Op's own image, which carries node and npm by construction
+ * (the apply's `node -e` output step needs them too), so it runs the same on
+ * GitHub's hosted runners and on a Forgejo runner. It checks nothing out.
  *
  * Its `permissions:` are its own, replacing the workflow-level set for this
  * job alone: `contents: read` for the commit-to-pull-request lookup,
  * `pull-requests: write` for the sticky comment, `issues: write` for the
- * fallback when the push has no pull request. Nothing wider — it opens no
- * branch and merges nothing.
+ * tracking issue when the push has no pull request. Nothing wider: it opens
+ * no branch and merges nothing. The Forgejo dialect drops them, as it drops
+ * every scope but `id-token`.
  */
-function gateNoticeJob(applyJobName: string): Record<string, unknown> {
+function gateNoticeJob(applyJobName: string, image: string): Record<string, unknown> {
   const output = (name: string) => "${{ needs." + applyJobName + ".outputs." + name + ' }}';
   return {
     needs: applyJobName,
     if: `needs.${applyJobName}.outputs.gated == 'true'`,
     "runs-on": "ubuntu-latest",
+    container: image,
     permissions: { contents: "read", issues: "write", "pull-requests": "write" },
     steps: [
       {
         name: "Report the pending gate",
         env: {
-          GH_TOKEN: "${{ github.token }}",
-          // What `gh` reads for a host other than github.com and ghe.com, so
-          // the notice authenticates on GitHub Enterprise Server too (#2352).
-          GH_ENTERPRISE_TOKEN: "${{ github.token }}",
-          GH_REPO: "${{ github.repository }}",
+          GITHUB_TOKEN: "${{ github.token }}",
           CHANT_OP: output("op"),
           CHANT_GATE: output("gate"),
           CHANT_APPROVE: output("approve"),
         },
-        run: gateNoticeScript(),
+        run: gateNoticeScript(chantVersion()),
       },
     ],
   };
@@ -643,24 +653,6 @@ function setupStepDoc(step: OpSetupStep): Record<string, unknown> {
 }
 
 /**
- * Internal knobs beside the public {@link GenerateGithubOpOptions} — not part
- * of that type because they are not something a project author sets, only
- * something a dialect on top of this builder (forgejo, #2294) needs to
- * change about the shape this function emits for every spec alike.
- */
-export interface BuildGithubOpPipelineDocsInternalOptions {
-  /**
-   * Whether a `push` job's outputs (`gated`/`op`/`gate`/`approve`) and the
-   * `node -e` step that writes them to `$GITHUB_OUTPUT` are emitted (#2294).
-   * Default true (github's own behavior, unchanged): the gate-notice job
-   * beside it reads them. The forgejo generator passes `false` — it never
-   * carries a gate-notice job (`gatedNoticeDoc` never crosses the dialect),
-   * so nothing would ever read them there.
-   */
-  emitGatedOutputs?: boolean;
-}
-
-/**
  * Build one `GithubOpPipelineDoc` per scheduled Op: its trigger, its `setup`
  * steps, least-privilege `permissions:` for its finding-mode plus whatever
  * the spec adds, one job that runs `chant run <name>`. Every
@@ -675,9 +667,7 @@ export interface BuildGithubOpPipelineDocsInternalOptions {
 export function buildGithubOpPipelineDocs(
   ops: ScheduledOpSpec[],
   options: GenerateGithubOpOptions = {},
-  internalOptions: BuildGithubOpPipelineDocsInternalOptions = {},
 ): { files: GithubOpPipelineFile[]; jobs: OpPipelineJob[] } {
-  const emitGatedOutputs = internalOptions.emitGatedOutputs ?? true;
   const image = options.image ?? DEFAULT_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "{name}"];
   const beforeScript = options.beforeScript ?? [];
@@ -718,7 +708,7 @@ export function buildGithubOpPipelineDocs(
     for (const line of beforeScript) steps.push({ run: line });
     steps.push(
       gated
-        ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, emitGatedOutputs, stepEnv)
+        ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, stepEnv)
         : { run: invocation, env: stepEnv },
     );
     for (const line of extraScript) steps.push({ run: line });
@@ -750,7 +740,7 @@ export function buildGithubOpPipelineDocs(
           // behind the same reviewer would hold the message back until
           // somebody had already acted.
           ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
-          ...(gated && emitGatedOutputs
+          ...(gated
             ? {
                 outputs: Object.fromEntries(
                   ["gated", "op", "gate", "approve"].map((name) => [
@@ -763,7 +753,7 @@ export function buildGithubOpPipelineDocs(
           steps,
         },
       },
-      ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName) } } : {}),
+      ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName, image) } } : {}),
     };
 
     files.push({ name: `${spec.name}.yml`, doc });
@@ -830,9 +820,8 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   if (doc.env && Object.keys(doc.env).length > 0) sections.push(emitYAMLEntry("env", doc.env));
   sections.push(emitYAMLEntry("concurrency", doc.concurrency));
   if (Object.keys(doc.permissions).length > 0) sections.push(emitYAMLEntry("permissions", doc.permissions));
-  // The gated-apply notice job rides in `jobs:` beside the Op's own job, but
-  // is carried separately on the doc so a dialect that cannot run it (forgejo,
-  // whose runner has no `gh` pointed at its own instance) drops it by omission.
+  // The gated-apply notice job rides in `jobs:` beside the Op's own job; it
+  // is carried separately on the doc so a dialect transforms it on its own.
   sections.push(emitYAMLEntry("jobs", { ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }));
   return sections.join("\n\n") + "\n";
 }

@@ -279,6 +279,7 @@ jobs:
     needs: app-apply
     if: needs.app-apply.outputs.gated == 'true'
     runs-on: ubuntu-latest
+    container: node:22
     permissions:
       contents: read
       issues: write
@@ -286,13 +287,13 @@ jobs:
     steps:
       - name: Report the pending gate
         env:
-          GH_TOKEN: '${{ github.token }}'
-          GH_REPO: '${{ github.repository }}'
+          GITHUB_TOKEN: '${{ github.token }}'
           CHANT_OP: '${{ needs.app-apply.outputs.op }}'
           CHANT_GATE: '${{ needs.app-apply.outputs.gate }}'
           CHANT_APPROVE: '${{ needs.app-apply.outputs.approve }}'
         run: |
-          ...find the merged PR for $GITHUB_SHA, post or edit the marker comment, or open an issue...
+          ...npm install @intentius/chant@<this release>, then a node script through @intentius/chant/pr-forge:
+          ...find the merged PR for the commit, post or edit the marker comment, or keep a marker issue...
 ```
 
 The runner has no terraform on it, so the install is a `beforeScript` line pinned to a release rather than taken from a package repo: the version that plans is then the version the file names, which matters for a root with a `required_version` floor. `beforeScript` lines are emitted as plain `run:` steps ahead of the invocation, so the Op's first step is never a missing binary. A `setup` entry could carry `hashicorp/setup-terraform` instead; a curl and an unzip need no action to express.
@@ -315,9 +316,9 @@ The push run stops at the apply's gate. It reaches the gate, finds no resolution
 
 **A gated merge is a green run with a visible pending state** ([#2243](https://github.com/INTENTIUS/chant/issues/2243)). Actions has no neutral conclusion for a `run:` step, so exit 3 used to mark main as broken on every merge until someone approved. The push job now runs `chant run app-apply --gated-exit 0 --json`: `chant run` maps that one outcome, so a run that fails for any other reason still exits 1 and the job is still red. The gate, the `chant approve` line and the `_gates/app-apply.jsonl` ledger path go to `GITHUB_STEP_SUMMARY`, which is where the run page shows them.
 
-The pending state also leaves the Actions log. The `app-apply-gate-notice` job above `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so it asks `repos/{repo}/commits/{sha}/pulls` for the one the pushed commit belongs to — the commit's own associated-pull-request endpoint, exact rather than a search index — and posts there through the same hidden-marker recipe `findingMode: "comment"` uses, editing one comment rather than stacking one per merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead, which is why the job carries `issues: write` alongside `pull-requests: write`. Those permissions are the job's own and replace the workflow's for it alone, so the apply beside it stays `contents: read`.
+The pending state also leaves the Actions log. The `app-apply-gate-notice` job above `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so it asks the forge for the one the pushed commit belongs to (`repos/{repo}/commits/{sha}/pulls` on GitHub, the commit's own associated-pull-request endpoint, exact rather than a search index) and posts there through the same hidden-marker recipe `findingMode: "comment"` uses, editing one comment rather than stacking one per merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead, kept by the same marker, which is why the job carries `issues: write` alongside `pull-requests: write`. Those permissions are the job's own and replace the workflow's for it alone, so the apply beside it stays `contents: read`.
 
-Forgejo takes the mapping and the step summary and drops the notice job: it is a `gh` script that runs outside the Op's container, on GitHub's hosted runner image, and a Forgejo runner offers no such image. GitLab takes neither, since its Op generator refuses a `push` trigger outright.
+The job runs in the Op's own image, installs the chant release the workflow was generated with, and posts through `@intentius/chant/pr-forge` ([#3773](https://github.com/INTENTIUS/chant/issues/3773)), so it needs no `gh` and no checkout. That is also why Forgejo takes all three: the same job, with Forgejo's `commits/{sha}/pull` lookup and its `/api/v1` base read off the job's environment. GitLab takes neither, since its Op generator refuses a `push` trigger outright.
 
 **The apply also runs in a GitHub environment, which is a second gate in front of the first** ([#2257](https://github.com/INTENTIUS/chant/issues/2257)). `environment: { name: "production" }` on the apply spec emits `environment: production` on that job, and a `production` environment configured in the repository with required reviewers then holds the job before its first step. The two gates stop different things. The reviewer stops the job from starting at all, so nothing is checked out and no role is assumed until somebody releases it; chant's gate stops the apply inside a run that already started, on a plan that already exists, and is cleared by a `chant approve` commit rather than by a button. Wanting both is the common case, and neither is required by the other: the reviewer alone pairs with `gate: "never"` on the root, and chant's gate alone is what a Forgejo estate gets, since Forgejo Actions has no environments and its generator drops the key with a header comment saying so. The plan half names no environment, because it deploys nothing and a reviewer prompt on every pull request is the fastest way to teach people to click through one.
 

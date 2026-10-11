@@ -63,25 +63,18 @@
  * still holds the apply here is chant's own gate (#2119), which is a fact on
  * the `chant/lifecycle` branch and needs nothing from the forge.
  *
- * The gated-apply notice job (#2243) does not cross over either, for the same
- * reason and by the same mechanism as `permissions:`: it shells to `gh`, which
- * a Forgejo `act_runner` neither ships nor can point at its own instance, and
- * it runs outside the Op's container image, where a hosted GitHub runner's
- * preinstalled tools would be. So the doc rebuilt below simply does not carry
- * `gatedNoticeDoc`, and the job is dropped. What does cross over is the half
- * that needs no forge API: a `push` job still runs with `--gated-exit 0`, so a
- * Forgejo apply that stops at its gate is a green run rather than a red one,
- * and `chant run` still writes the gate and the approve command to
- * `GITHUB_STEP_SUMMARY`, which Forgejo Actions sets like GitHub does.
- *
- * The gate-notice job's own reason for being — `outputs: { gated, op, gate,
- * approve }` on the Op's job, and the `node -e` step that writes them to
- * `$GITHUB_OUTPUT` — does not survive it either (#2294). Both existed only for
- * that job to read via `needs.<job>.outputs`; with the job gone, so is every
- * reader, and `buildGithubOpPipelineDocs` is asked for neither
- * (`emitGatedOutputs: false` below) rather than emitting them here and
- * stripping them back out. Should the Forgejo posting work in #2291 grow a
- * notice job of its own, this is the one flag that brings both back.
+ * The gated-apply notice job (#2243) crosses over since #3773. It used to
+ * shell to `gh` on GitHub's hosted runner image, which a Forgejo runner
+ * neither ships nor can point at its own instance, so it was dropped here
+ * along with the apply job's `gated`/`op`/`gate`/`approve` outputs that
+ * only it read (#2294). It now runs in the Op's own image and posts through
+ * `@intentius/chant/pr-forge`, whose Forgejo client finds the pull request
+ * a commit merged with `commits/{sha}/pull` and sends `Authorization: token`
+ * itself. So the doc rebuilt below carries `gatedNoticeDoc` through the
+ * same dialect transform as the jobs, which drops its `permissions:` the
+ * way it drops every scope but `id-token`. A `push` job also still runs
+ * with `--gated-exit 0`, and `chant run` still writes the gate and the
+ * approve command to `GITHUB_STEP_SUMMARY`.
  *
  * A spec's own `variables` (#2290) crosses over unchanged: forgejo reuses the
  * same job-level `env:` github's builder emits, and the dialect transform
@@ -156,10 +149,7 @@ export function generateForgejoOpPipeline(
   // `findingMode: "issue"` from #2332 to #2351. Neither is now: both post
   // through the Forgejo client — see the module doc above.
 
-  // `emitGatedOutputs: false` (#2294): forgejo never carries a gate-notice job
-  // (`gatedNoticeDoc` never crosses the dialect, below), so the job outputs
-  // and the `node -e` step that populate them would have no reader.
-  const { files, jobs } = buildGithubOpPipelineDocs(ops, options, { emitGatedOutputs: false });
+  const { files, jobs } = buildGithubOpPipelineDocs(ops, options);
 
   return {
     // One file per spec, in spec order, which is what lets the header below
@@ -176,6 +166,8 @@ export function generateForgejoOpPipeline(
         concurrency: forgejoize(doc.concurrency, dialectOptions),
         permissions: {},
         jobsDoc: forgejoize(withoutEnvironment(doc.jobsDoc), dialectOptions),
+        // The gate-notice job (#3773), dialect applied like the Op's own job.
+        ...(doc.gatedNoticeDoc ? { gatedNoticeDoc: forgejoize(doc.gatedNoticeDoc, dialectOptions) } : {}),
       };
       return { name, yaml: emitOpPipelineYAML(forgejoDoc) };
     }),
