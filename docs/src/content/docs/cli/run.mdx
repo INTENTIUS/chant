@@ -201,7 +201,7 @@ chant run wave --spec waves.json --wave 3 --decide
 chant run wave --spec waves.json --wave 3 --share 1
 ```
 
-The wave's runs are planned with the spec's `plan` command, and its gate policy is read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. `--json` prints the decision and which runs applied.
+The wave's runs are planned with the spec's `plan` command, or with one `planWave` call. Its gate policy and its stage hooks are read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. A hook with `onFailure: approve` that fails makes the wave wait whatever its policy. `--json` prints the decision, which runs applied and how each hook ran.
 
 ### `run resume`
 

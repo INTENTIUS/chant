@@ -33,6 +33,17 @@
  * against the signers file at base) or `pr-review` (also the merged pull
  * request's review of its head, by a writer other than its author, when the
  * head planned the same digest). See `./gate-review.ts`.
+ *
+ * ## Wave-level commands and hooks (#3762)
+ *
+ * A product whose tool plans a whole wave in one call (Terragrunt's `run
+ * --all`, an apply by rows) gives `planWave` and `applyWave` in place of the
+ * per-run `plan` and `apply`: one call plans every run and lists each run's
+ * plan, and the wave's digest and gate come from that list as from per-run
+ * plans. Stage hooks (`hooks`) run commands before and after the plan and the
+ * apply; like the policy they are read from the spec at the base commit, and
+ * one whose `onFailure` is `approve` holds the wave for an approval whatever
+ * its policy says.
  */
 
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
@@ -58,6 +69,41 @@ export type GateApprovalSource =
   | "sealed";
 
 export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "pr-review", "sealed"];
+
+/** What a failing hook does: fail the wave, or hold it for an approval of its set digest. */
+export type OpWaveHookFailure = "fail" | "approve";
+
+export const OP_WAVE_HOOK_FAILURES: readonly OpWaveHookFailure[] = ["fail", "approve"];
+
+/** One stage hook (#3762): a command run before or after a wave's plan or apply. */
+export interface OpWaveHook {
+  /** The hook's name in the log and the result. Default: its command. */
+  name?: string;
+  /**
+   * Argv template. `{op}`, `{wave}` and `{runs}` (the runs file, see
+   * `opWaveRunsPath`) are filled in; a `perRun` hook also gets `{target}`
+   * and, once the run is planned, `{plan}`.
+   */
+  command: string[];
+  /** Default `"fail"`. `"approve"` holds the wave for an approval of its set digest whatever its policy says. Not allowed after apply. */
+  onFailure?: OpWaveHookFailure;
+  /** Run once per run of the wave, rather than once for the wave. */
+  perRun?: boolean;
+}
+
+/** The stages a hook runs around. */
+export type OpWaveHookStage = "plan" | "apply";
+
+/** When a hook runs. */
+export type OpWaveHookMoment = "before-plan" | "after-plan" | "before-apply" | "after-apply";
+
+export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-plan", "after-plan", "before-apply", "after-apply"];
+
+/** Stage hooks (#3762), read from the spec at the base commit like the gate policy. */
+export interface OpWaveHooks {
+  before?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
+  after?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
+}
 
 /** One Op run in a wave: an Op applied to one target (an environment, a database, a tenant). */
 export interface OpWaveRun {
@@ -94,6 +140,8 @@ export interface OpWave {
   variables?: Record<string, string>;
   /** Steps this wave's jobs run after the checkout, as `ScheduledOpSpec.setup`. */
   setup?: OpSetupStep[];
+  /** This wave's stage hooks (#3762), run after the spec's own. Read at the base commit. */
+  hooks?: OpWaveHooks;
 }
 
 /**
@@ -119,11 +167,27 @@ export interface OpWavesSpec {
    * Plan one run and write its plan file to `{plan}`: JSON `{ "planDigest":
    * string, "destructive"?: boolean, "empty"?: boolean }`. `destructive` is
    * what `on-destructive` waits on; a wave whose runs are all `empty` never
-   * waits.
+   * waits. Give this or `planWave`.
    */
-  plan: string[];
+  plan?: string[];
   /** Apply one run whose plan is at `{plan}`. Default `chant run {op} --env {target}`. */
   apply?: string[];
+  /**
+   * Plan every run of a wave in one call (#3762), in place of `plan`. `{runs}`
+   * is a file chant writes, `{ "wave", "number", "runs": [{ "target", "op" }] }`;
+   * the command writes `{plans}`: `{ "runs": [{ "target", "planDigest",
+   * "destructive"?, "empty"? }] }` (or the array alone), one entry per run.
+   */
+  planWave?: string[];
+  /**
+   * Apply a wave's approved set in one call (#3762), in place of `apply`.
+   * `{runs}` lists the runs to apply with the plan digest each was approved
+   * at; `{plans}` is the wave plan's file. A non-zero exit fails every run in
+   * the set.
+   */
+  applyWave?: string[];
+  /** Stage hooks for every wave (#3762), run before each wave's own. Read at the base commit. */
+  hooks?: OpWaveHooks;
   waves: OpWave[];
   /**
    * A scheduled job that starts again a wave job whose approval has arrived
@@ -184,12 +248,34 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   const where = `Op waves "${spec.name}"`;
   if (!NAME.test(spec.name)) throw new Error(`${where}: the name must be lowercase letters, digits, "-" and "_"`);
   if (!spec.op) throw new Error(`${where} names no \`op\`. Name the Op a run runs when it names none.`);
-  if (!Array.isArray(spec.plan) || spec.plan.length === 0) {
-    throw new Error(`${where} has no \`plan\` command. Each wave plans its runs to bind its gate to their plan digests.`);
+  if (spec.plan !== undefined && spec.planWave !== undefined) {
+    throw new Error(`${where} has both \`plan\` and \`planWave\`. A wave is planned one run at a time or all at once; give one.`);
   }
-  if (!spec.plan.some((part) => part.includes("{plan}"))) {
-    throw new Error(`${where}: the \`plan\` command never names {plan}, the file it writes the plan digest to.`);
+  if (spec.apply !== undefined && spec.applyWave !== undefined) {
+    throw new Error(`${where} has both \`apply\` and \`applyWave\`. A wave is applied one run at a time or all at once; give one.`);
   }
+  if (spec.planWave !== undefined) {
+    assertArgv(where, "planWave", spec.planWave);
+    if (!spec.planWave.some((part) => part.includes("{plans}"))) {
+      throw new Error(`${where}: the \`planWave\` command never names {plans}, the file it writes each run's plan digest to.`);
+    }
+  } else {
+    if (!Array.isArray(spec.plan) || spec.plan.length === 0) {
+      throw new Error(`${where} has no \`plan\` command. Each wave plans its runs to bind its gate to their plan digests; give \`plan\` or \`planWave\`.`);
+    }
+    assertArgv(where, "plan", spec.plan);
+    if (!spec.plan.some((part) => part.includes("{plan}"))) {
+      throw new Error(`${where}: the \`plan\` command never names {plan}, the file it writes the plan digest to.`);
+    }
+  }
+  if (spec.apply !== undefined) assertArgv(where, "apply", spec.apply);
+  if (spec.applyWave !== undefined) {
+    assertArgv(where, "applyWave", spec.applyWave);
+    if (!spec.applyWave.some((part) => part.includes("{runs}"))) {
+      throw new Error(`${where}: the \`applyWave\` command never names {runs}, the file listing the approved runs it applies.`);
+    }
+  }
+  assertOpWaveHooks(where, spec.hooks);
   if (spec.waves.length === 0) throw new Error(`${where} has no waves.`);
   if (spec.resume !== undefined && (typeof spec.resume.schedule !== "string" || spec.resume.schedule.trim().split(/\s+/).length !== 5)) {
     throw new Error(`${where}: resume.schedule must be a five-field cron expression, such as "*/10 * * * *".`);
@@ -207,6 +293,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (wave.approval !== undefined && !GATE_APPROVAL_SOURCES.includes(wave.approval)) {
       throw new Error(`${where}: wave "${wave.name}" has approval "${wave.approval}"; use ${GATE_APPROVAL_SOURCES.join(", ")}.`);
     }
+    assertOpWaveHooks(`${where}, wave "${wave.name}"`, wave.hooks);
     if (wave.runs.length === 0) throw new Error(`${where}: wave "${wave.name}" has no runs.`);
     const targets = new Set<string>();
     for (const run of wave.runs) {
@@ -222,6 +309,57 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       throw new Error(`${where}: wave "${wave.name}" has ${shares} shares for ${wave.runs.length} runs, so a share would apply nothing.`);
     }
   }
+}
+
+function assertArgv(where: string, field: string, argv: unknown): void {
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every((part) => typeof part === "string") || argv[0] === "") {
+    throw new Error(`${where}: \`${field}\` must be a command as argv, a non-empty array of strings.`);
+  }
+}
+
+/** Refuse hooks no runner could run, naming what is wrong (#3762). */
+export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined): void {
+  if (hooks === undefined) return;
+  if (hooks === null || typeof hooks !== "object" || Array.isArray(hooks)) {
+    throw new Error(`${where}: \`hooks\` must be { "before"?: { "plan"?, "apply"? }, "after"?: { "plan"?, "apply"? } }.`);
+  }
+  for (const [side, stages] of Object.entries(hooks as Record<string, unknown>)) {
+    if (side !== "before" && side !== "after") throw new Error(`${where}: hooks.${side} is not a moment; use hooks.before or hooks.after.`);
+    if (stages === null || typeof stages !== "object" || Array.isArray(stages)) throw new Error(`${where}: hooks.${side} must be { "plan"?: [...], "apply"?: [...] }.`);
+    for (const [stage, list] of Object.entries(stages as Record<string, unknown>)) {
+      const at = `hooks.${side}.${stage}`;
+      if (stage !== "plan" && stage !== "apply") throw new Error(`${where}: ${at} is not a stage; a hook runs before or after plan or apply.`);
+      if (!Array.isArray(list)) throw new Error(`${where}: ${at} must be a list of hooks.`);
+      list.forEach((hook: OpWaveHook, i: number) => {
+        const which = `${at}[${i}]${hook && typeof hook === "object" && typeof hook.name === "string" ? ` (${hook.name})` : ""}`;
+        if (!hook || typeof hook !== "object") throw new Error(`${where}: ${which} must be { "command": [...], "onFailure"?, "perRun"? }.`);
+        assertArgv(where, `${which}.command`, hook.command);
+        if (hook.onFailure !== undefined && !OP_WAVE_HOOK_FAILURES.includes(hook.onFailure)) {
+          throw new Error(`${where}: ${which} has onFailure "${hook.onFailure}"; use ${OP_WAVE_HOOK_FAILURES.join(" or ")}.`);
+        }
+        if (hook.onFailure === "approve" && side === "after" && stage === "apply") {
+          throw new Error(`${where}: ${which} has onFailure "approve", but after the apply there is nothing left to hold. Use "fail".`);
+        }
+        if (hook.perRun !== undefined && typeof hook.perRun !== "boolean") throw new Error(`${where}: ${which}.perRun must be true or false.`);
+        if (!hook.perRun) {
+          const named = hook.command.find((part) => part.includes("{target}") || part.includes("{plan}"));
+          if (named) throw new Error(`${where}: ${which} runs once for the wave, so it has no {target} or {plan} ("${named}"). Set "perRun": true, or read the runs from {runs}.`);
+        } else if (side === "before" && stage === "plan" && hook.command.some((part) => part.includes("{plan}"))) {
+          throw new Error(`${where}: ${which} runs before the plan, so it has no {plan} yet.`);
+        }
+      });
+    }
+  }
+}
+
+/** The hooks of each moment for wave `name`: the spec's, then the wave's own. */
+export function opWaveHooksAt(spec: Pick<OpWavesSpec, "hooks" | "waves">, name: string): Record<OpWaveHookMoment, OpWaveHook[]> {
+  const wave = spec.waves.find((w) => w.name === name);
+  const at = (hooks: OpWaveHooks | undefined, moment: OpWaveHookMoment): OpWaveHook[] => {
+    const [side, stage] = moment.split("-") as ["before" | "after", OpWaveHookStage];
+    return hooks?.[side]?.[stage] ?? [];
+  };
+  return Object.fromEntries(OP_WAVE_HOOK_MOMENTS.map((m) => [m, [...at(spec.hooks, m), ...at(wave?.hooks, m)]])) as Record<OpWaveHookMoment, OpWaveHook[]>;
 }
 
 /**

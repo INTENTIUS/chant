@@ -49,4 +49,19 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(files[1]!.yaml).toContain("run: chant run wave --spec waves.json --record-plans");
     expect(files[0]!.yaml).toMatch(/permissions:\n\s+contents: write\n\s+pull-requests: read/);
   });
+
+  test("a wave-level plan and apply, and stage hooks, render the same jobs: chant run wave runs them (#3762)", () => {
+    const { plan: _plan, ...rest } = spec;
+    const waveLevel: OpWavesSpec = {
+      ...rest,
+      planWave: ["./bin/plan-wave", "{runs}", "{plans}"],
+      applyWave: ["./bin/apply-wave", "{runs}"],
+      hooks: { before: { apply: [{ command: ["./bin/check", "{runs}"], onFailure: "approve" }] } },
+    };
+    const plain = generateGithubOpWavesPipeline(spec, { specFile: "waves.json" });
+    const rendered = generateGithubOpWavesPipeline(waveLevel, { specFile: "waves.json" });
+    expect(rendered.files).toEqual(plain.files);
+    expect(rendered.jobs).toEqual(plain.jobs);
+    expect(() => generateGithubOpWavesPipeline({ ...waveLevel, hooks: { after: { apply: [{ command: ["./bin/smoke"], onFailure: "approve" }] } } }, { specFile: "waves.json" })).toThrow(/nothing left to hold/);
+  });
 });
