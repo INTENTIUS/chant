@@ -35,7 +35,7 @@
 import { ForgeApiError, type ForgeFetch, type ForgeKind } from "../pr-forge";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { latestResolutionForPlan } from "../lifecycle/gate-ledger";
-import { tallyGateApprovals } from "./gate";
+import { humanQuorumSince, tallyGateApprovals } from "./gate";
 
 /** Where the job that recorded a pending fact runs, and what its forge needs to start it again. */
 export interface GateRunLocator {
@@ -237,18 +237,21 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
 
 /**
  * The resolution that answers `standing`, read the way a run decides the gate
- * (the plan, the environment, the quorum), or undefined. A workspace's
+ * (the plan, the environment, the quorum), or undefined. `pending` is the
+ * gate ledger's pending facts, which place the human quorum's anchor (#3206);
+ * without them it is `standing` itself. A workspace's
  * `identity.gates` rule is not applied here: the resumed job applies it, and
  * waits again when the approval does not count.
  */
 export function resolutionAnswering(
   resolutions: readonly GateResolutionRecord[],
   standing: PendingGateRecord,
+  pending: readonly PendingGateRecord[] = [standing],
 ): GateResolutionRecord | undefined {
   const env = standing.environment;
   const mine = resolutions.filter((r) => env === undefined || r.environment === env);
   if (standing.approval) {
-    const tally = tallyGateApprovals(mine, standing.gate, standing.timestamp, standing.planDigest, standing.approval);
+    const tally = tallyGateApprovals(mine, standing.gate, standing.timestamp, standing.planDigest, standing.approval, humanQuorumSince(pending, standing));
     if (tally.permit) return tally.permit;
     return tally.counted.length >= tally.need ? tally.counted[tally.counted.length - 1] : undefined;
   }
