@@ -29,18 +29,15 @@ import { join, resolve } from "node:path";
 import type { SealCode } from "../records";
 import { type TrustPolicy } from "./policy";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
+import { GATE_SEAL_NAMESPACE, gateSealPayload, type SealedGateApproval } from "./gate-seal";
+
+export { GATE_SEAL_NAMESPACE, gateSealPayload, type SealedGateApproval } from "./gate-seal";
 
 /** The ssh signature namespace of a verdict seal. */
 export const REVIEW_SEAL_NAMESPACE = "chant-review";
 
 /** The ssh signature namespace of a record's author seal (#2688). */
 export const RECORD_SEAL_NAMESPACE = "chant-record";
-
-/**
- * The ssh signature namespace of a gate approval's seal (#3163, ws-080), so a
- * verdict, record or commit signature can't stand in for one.
- */
-export const GATE_SEAL_NAMESPACE = "chant-gate";
 
 /** A seal as a review entry holds it. */
 export interface VerdictSeal {
@@ -85,33 +82,6 @@ export function reviewSealPayload(record: string, digest: string, verdict: strin
  */
 export function recordSealPayload(record: string, digest: string, author: string, state: string | null): Buffer {
   return Buffer.from(`${record}\n${digest}\n${author}\n${state ?? ""}`, "utf-8");
-}
-
-/** The gate approval a seal covers (#3163): the fields of a gate resolution line that say what was approved, by whom and when. */
-export interface SealedGateApproval {
-  op: string;
-  gate: string;
-  environment?: string;
-  planDigest?: string;
-  resolvedBy: string;
-  /** Who relayed the approval for `resolvedBy` (#3402), when someone did. */
-  relayedBy?: string;
-  timestamp: string;
-  seal?: unknown;
-}
-
-/**
- * The bytes a gate approval's seal signs (#3163): the op (or component), the
- * gate, the environment, the plan digest, the approver and the time, joined
- * by LF with no final newline. An approval that binds no environment or plan
- * signs an empty line for it. A relayed approval (#3402) signs a seventh line,
- * `relayed-by <principal>`, so the relay can't be added, changed or removed
- * after sealing; an approval nobody relayed signs the six lines it always did,
- * so seals made before #3402 still verify.
- */
-export function gateSealPayload(a: SealedGateApproval): Buffer {
-  const relay = a.relayedBy !== undefined ? `\nrelayed-by ${a.relayedBy}` : "";
-  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}`, "utf-8");
 }
 
 /** The record an author seal covers (#2688). */

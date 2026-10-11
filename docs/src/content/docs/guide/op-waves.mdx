@@ -177,6 +177,21 @@ This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. T
 | 3 | The wave is waiting for an approval of its set digest; nothing in it ran |
 | 4 | A share job refused a run whose plan moved since the decision |
 
+## Deciding a gate in your own tool
+
+A tool that runs its own waves can decide a gate by these rules without running `chant run wave`. `@intentius/chant/gate-decision` exports the decision and the seal check:
+
+| Export | What it does |
+|---|---|
+| `decideGateApproval({ ledger, gate, planDigest, mode, signers, review })` | decides a plan-bound gate from its ledger lines under `ledger`, `pr-review` or `sealed`, and returns `approved` (with the resolution or the review) or `waiting` (with the standing pending fact, the approval of another digest, and each approval of this digest that did not count, with the reason) |
+| `baseCommit(repo)` | the first parent of HEAD, fetched when the checkout is shallow |
+| `gateSignersAt(repo, base)` | the signers file at base, at the path `.chant/trust.json` names there. An invalid trust.json turns attestation off, as it does in chant |
+| `gateSealRefusal(signers, approval)` | why a seal does not count for its approver, or null when it does |
+| `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates` |
+| `reviewApproval(merged, headDigest, digest)` | whether the merged pull request's review approves the digest, under `pr-review` |
+
+Reading the ledger and the forge's review is the caller's job, and so is recording a pending fact or the review's approval. The seal is checked with node:crypto, so the job needs no `ssh-keygen`, and it verifies every key type a signers file accepts. Bundled with esbuild for node, the module comes to about 27 KB. `gate-decision-bundle.test.ts` lists every module in that bundle and fails when TypeScript, zod or chant's git ledger code joins it.
+
 ## The forge's own reviewers
 
 A wave's `environment` lands on its jobs on GitHub and GitLab, where a protected environment can hold the job for a reviewer before it starts. Forgejo Actions has no environments, so the Forgejo workflow drops the key and its header says so. The chant gate holds the wave on all three.

@@ -25,6 +25,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { waveGateName, waveSetDigest, type WaveMember } from "../gated-waves";
+import { reviewApproval, type ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
@@ -382,10 +383,7 @@ function applyRun(
 }
 
 /** What {@link approveByReview} found. */
-interface ReviewOutcome {
-  approved: boolean;
-  review: NonNullable<OpWaveDecision["review"]>;
-}
+type ReviewOutcome = ReviewApproval;
 
 /**
  * Under `pr-review` (#3684): the merged pull request's review approves the
@@ -406,25 +404,10 @@ async function approveByReview(
     return { approved: false, review: { reason: `the forge's review could not be read: ${err instanceof Error ? err.message : String(err)}` } };
   }
   if (!merged) return { approved: false, review: { reason: `no merged pull request produced ${head.slice(0, 12)}` } };
-  const seen = { pr: merged.pr, head: merged.head, ...(merged.url ? { url: merged.url } : {}) };
-  if (merged.approvers.length === 0) {
-    const why = merged.refused.length > 0 ? merged.refused.join("; ") : "nobody approved it";
-    return { approved: false, review: { ...seen, reason: `no writer other than its author approved the head of #${merged.pr}: ${why}` } };
-  }
-  const plans = await (options.headPlans ?? ((name, h) => readHeadPlans(name, h, at.cwd)))(options.spec.name, merged.head);
-  const planned = plans?.waves.find((w) => w.wave === at.k);
-  if (!planned) {
-    return {
-      approved: false,
-      review: { ...seen, approvers: merged.approvers, reason: `no plans are recorded for the head ${merged.head.slice(0, 12)} of #${merged.pr} (its pipeline runs \`chant run wave --record-plans\`)` },
-    };
-  }
-  if (planned.digest !== at.digest) {
-    return {
-      approved: false,
-      review: { ...seen, approvers: merged.approvers, reason: `the plan moved after the review: the head planned ${planned.digest}, and the merge plans ${at.digest}` },
-    };
-  }
+  // The head's plans are read only when a writer approved it.
+  const plans = merged.approvers.length === 0 ? null : await (options.headPlans ?? ((name, h) => readHeadPlans(name, h, at.cwd)))(options.spec.name, merged.head);
+  const outcome = reviewApproval(merged, plans?.waves.find((w) => w.wave === at.k)?.digest, at.digest);
+  if (!outcome.approved) return outcome;
   const note = `approved by the review of #${merged.pr} at ${merged.head.slice(0, 12)}: ${merged.approvers.join(", ")}`;
   await at.port.appendResolution?.({
     op: at.op,
@@ -437,7 +420,7 @@ async function approveByReview(
     ...(merged.url ? { url: merged.url } : {}),
     review: { pr: merged.pr, head: merged.head, approvers: merged.approvers },
   });
-  return { approved: true, review: { ...seen, approvers: merged.approvers } };
+  return outcome;
 }
 
 async function readHeadPlans(name: string, head: string, cwd: string): Promise<HeadPlans | null> {
