@@ -54,14 +54,27 @@ export type { GenerateOpsPipelineResult, GenerateOpWavesPipelineResult } from ".
 export {
   OP_WAVE_DEFAULT_APPLY,
   OP_WAVE_GATE_POLICIES,
+  OP_WAVE_HOOK_MOMENTS,
+  assertOpWaveHooks,
   assertOpWavesSpec,
+  opWaveHooksAt,
   opWaveJobs,
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
-export type { OpWave, OpWaveGatePolicy, OpWaveJob, OpWaveRun, OpWavesSpec } from "./op-waves";
-export { opWaveNeedsApproval, parseOpWavesSpec, readOpWavePolicy, runOpWave } from "./op-waves-run";
-export type { OpWaveDecision, OpWaveMember, OpWavePlanFile, RunOpWaveOptions, RunOpWaveResult } from "./op-waves-run";
+export type { OpWave, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesSpec } from "./op-waves";
+export { opWaveNeedsApproval, opWavePlansPath, opWaveRunsPath, parseOpWavesSpec, readOpWavePolicy, runOpWave } from "./op-waves-run";
+export type {
+  OpWaveBaseRules,
+  OpWaveDecision,
+  OpWaveHookOutcome,
+  OpWaveMember,
+  OpWavePlanFile,
+  OpWavePlansFile,
+  OpWaveRunsFile,
+  RunOpWaveOptions,
+  RunOpWaveResult,
+} from "./op-waves-run";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
 export type { ActivityFn } from "./activity-registry";
 export { loadActivityContracts, mergeActivityContracts } from "./activity-contract-registry";

@@ -28,8 +28,11 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 |---|---|
 | `name` | The pipeline's name, and the op every wave gate is recorded under |
 | `op` | The Op a run runs when the run names none (`runs[].op` overrides it) |
-| `plan` | Plans one run and writes its plan file to `{plan}` |
+| `plan` | Plans one run and writes its plan file to `{plan}`. Give this or `planWave` |
 | `apply` | Applies one run. Default `chant run {op} --env {target}` |
+| `planWave` | Plans every run of a wave in one call ([Plan a wave in one call](#plan-a-wave-in-one-call)) |
+| `applyWave` | Applies a wave's approved set in one call, in place of `apply` |
+| `hooks` | Commands run before and after each wave's plan and apply, read at the base commit ([Stage hooks](#stage-hooks)) |
 | `gate` | The base gate name. Default: `name` |
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
@@ -37,6 +40,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
 | `waves[].approval` | `ledger`, `pr-review` or `sealed`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
+| `waves[].hooks` | This wave's own hooks, run after the spec's |
 | `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
 | `resume` | `{ "schedule": "<cron>" }` renders a scheduled job that resumes waiting waves whose approval arrived ([Resume the waiting job](#resume-the-waiting-job)) |
 
@@ -64,9 +68,11 @@ Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push 
 
 `chant run wave --spec waves.json --wave <k>` does three things:
 
-1. Plans every run in wave `k` with the `plan` command and reads each plan file.
-2. Reads the wave's `gate` from the spec file at the base commit, and decides.
-3. Applies every run with the `apply` command.
+1. Reads the wave's `gate`, `approval` and hooks from the spec file at the base commit.
+2. Plans every run in wave `k` with the `plan` command (or once with `planWave`), and decides.
+3. Runs `apply` for each run, or `applyWave` once for the set.
+
+The hooks run around steps 2 and 3.
 
 When the policy asks for an approval, the wave waits on gate `<gate>-wave-<k>` under op `<name>`. The gate is bound to the wave's set digest: one digest over every run's `{ target, planDigest }`, the same set digest a component fan-out's wave binds. An approval of that digest lets the wave apply. If any run's plan changes, the digest changes, and so does what has to be approved.
 
@@ -83,6 +89,91 @@ chant approve migrations migrations-wave-3 --plan jcs1-sha256:...
 ```
 
 Approve it, then start the job again: by hand in the forge (GitHub and Forgejo call it re-running failed jobs, GitLab calls it a retry), or with `--resume` as the next section shows. The wave plans again and applies once it finds the approval for its digest.
+
+## Plan a wave in one call
+
+Some tools plan a whole wave at once: Terragrunt's `run --all plan` over a wave's units, or an apply that works through a table of rows. For those, give `planWave` in place of `plan`, and `applyWave` in place of `apply` if the apply is one call too:
+
+```json
+{
+  "name": "roots",
+  "op": "tf-apply",
+  "planWave": ["./bin/plan-wave", "{wave}", "{runs}", "{plans}"],
+  "applyWave": ["./bin/apply-wave", "{wave}", "{runs}", "{plans}"],
+  "waves": [
+    { "name": "network", "runs": [{ "target": "network/vpc" }, { "target": "network/dns" }], "gate": "on-destructive" },
+    { "name": "apps", "runs": [{ "target": "apps/api" }, { "target": "apps/web" }] }
+  ]
+}
+```
+
+chant writes the runs file at `{runs}` before the call:
+
+```json
+{ "wave": "network", "number": 1, "runs": [{ "target": "network/vpc", "op": "tf-apply" }, { "target": "network/dns", "op": "tf-apply" }] }
+```
+
+The `planWave` command writes `{plans}` with one entry per run:
+
+```json
+{ "runs": [
+  { "target": "network/vpc", "planDigest": "jcs1-sha256:...", "destructive": true },
+  { "target": "network/dns", "planDigest": "jcs1-sha256:...", "empty": true }
+] }
+```
+
+The array alone is read too. Each entry means what a per-run plan file means. The wave's set digest and its gate decision come from this list exactly as they would from per-run plans, so an approval reads the same either way. A list that leaves out a run, names a target it was not asked to plan, or names one twice fails the wave. chant also writes each entry to the run's own plan file, so a per-run `apply` or hook still gets `{plan}`.
+
+`applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed.
+
+`plan` and `planWave` cannot both be given, and neither can `apply` and `applyWave`. Either kind of plan can go with either kind of apply.
+
+`shares` keeps working. The deciding job plans the whole wave in one call. Each share job calls `planWave` with a runs file of its own slice, and calls `applyWave` with only the runs whose plan digest still matches the decision.
+
+## Stage hooks
+
+Hooks are commands that run before and after a wave's plan and apply, inside the wave's job:
+
+```json
+{
+  "hooks": {
+    "before": { "plan": [{ "name": "lint", "command": ["./bin/lint-config"] }] },
+    "after": { "plan": [{ "name": "policy", "command": ["./bin/policy", "{target}", "{plan}"], "perRun": true, "onFailure": "approve" }] }
+  },
+  "waves": [
+    {
+      "name": "prod",
+      "runs": [{ "target": "prod" }],
+      "hooks": {
+        "before": { "apply": [{ "name": "backup", "command": ["./bin/backup", "{runs}"] }] },
+        "after": { "apply": [{ "name": "smoke", "command": ["./bin/smoke", "{wave}"] }] }
+      }
+    }
+  ]
+}
+```
+
+| Hook field | Meaning |
+|---|---|
+| `command` | Argv. `{op}`, `{wave}` and `{runs}` are filled in. A `perRun` hook also gets `{target}`, and `{plan}` once the run is planned |
+| `name` | The hook's name in the log and in `--json`. Default: its command |
+| `perRun` | Run the hook once per run, rather than once for the wave |
+| `onFailure` | `fail` (default) or `approve` |
+
+The spec's `hooks` run first, then the wave's own `hooks`. The environment carries `CHANT_OP_WAVES`, `CHANT_WAVE`, `CHANT_WAVE_NUMBER`, `CHANT_HOOK` (such as `after-plan`) and `CHANT_RUNS`, plus `CHANT_TARGET` and, once the run is planned, `CHANT_PLAN` for a `perRun` hook. The runs file at `{runs}` lists each run, with its plan once planned.
+
+| When | Runs | A failure with `fail` |
+|---|---|---|
+| `before.plan` | before the wave is planned | the wave exits 1; nothing is planned |
+| `after.plan` | after the plan, before the gate decides | the wave exits 1; nothing is applied |
+| `before.apply` | once the gate lets the wave through, before the apply | the wave exits 1; nothing is applied |
+| `after.apply` | once every run applied | the wave exits 1; the runs stay applied |
+
+A hook with `onFailure: "approve"` that fails holds the wave instead. The wave then waits for an approval of its set digest whatever its `gate` says, `never` and empty plans included. Any hooks after it still run. The pending fact names the hooks that held it, and so does the decision (`heldBy`). Once that digest is approved, the wave applies on its next run. A hold before the apply, or in a share job, waits only when nobody has approved the digest yet. `approve` cannot be used after the apply, because the runs have already applied by then, so the spec refuses it.
+
+A wide wave's share jobs run the hooks their deciding job read at base, around their own slice.
+
+The pull request job that records plans for `pr-review` (`--record-plans`) runs no hooks.
 
 ## Resume the waiting job
 
@@ -154,7 +245,9 @@ The signers file is read at the base commit, like the policy. A pull request tha
 
 ## Where the policy is read from
 
-The policy and the approval mode for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
+The policy, the approval mode and the hooks for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
+
+The same goes for hooks. A change cannot add, edit or remove a hook that its own apply runs, and the log says so when the change's hooks differ from the ones at base. A wave or file missing at base has no hooks. If the hooks at base are malformed, none of them run and the wave waits for an approval.
 
 Everything else in the spec is read from the commit being applied.
 
@@ -173,8 +266,8 @@ This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. T
 | Code | Meaning |
 |---|---|
 | 0 | The wave applied, or the deciding job decided it may apply |
-| 1 | A plan or an apply failed |
-| 3 | The wave is waiting for an approval of its set digest; nothing in it ran |
+| 1 | A plan, an apply or a hook failed |
+| 3 | The wave is waiting for an approval of its set digest, because its policy or a hook holds it; nothing in it was applied |
 | 4 | A share job refused a run whose plan moved since the decision |
 
 ## Deciding a gate in your own tool
