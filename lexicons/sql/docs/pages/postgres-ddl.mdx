@@ -66,6 +66,8 @@ A partition is a table of its own that names its parent by reference:
 
 `REFERENCES ${users} (${users.columns.id})` makes the referenced table a dependency, so the build creates it first. A foreign key to a table the project does not declare can name it as text, `REFERENCES billing.accounts (id)`; the build then cannot order the two.
 
+What the build checks about a column: its type against the target major's catalog in any spelling Postgres accepts, or against the types the project declares (SQLPG119), the type's modifiers (SQLPG120), an identity column's type (SQLPG121), that no column is declared twice (SQLPG122), the functions its `DEFAULT` or generated expression calls (SQLPG126), and, for a foreign key to a `${}` table, that the referenced column exists and its type compares (SQLPG124). Column names in key, index and grant lists are checked against the table (SQLPG123); column names inside expressions are left to the server.
+
 Name the constraints you expect to change. A constraint left unnamed gets a name from the server (`orders_amount_check`); a plan matches it by what it says rather than by that name, so it is not reported as changed, but a `COMMENT ON CONSTRAINT` needs the name in the declaration.
 
 ## Indexes
@@ -223,4 +225,4 @@ Inside a template whose tag is imported from `/postgres`, `chant serve lsp` comp
 
 ## What the build records
 
-Each entity's parsed definition, its references and its lineage are in the build output; see [Serialization](../serialization/). [Lint Rules and Checks](../lint-rules/) lists SQLPG001 to SQLPG004, which run over the source, and SQLPG101 to SQLPG118, which run over the build.
+Each entity's parsed definition, its references and its lineage are in the build output; see [Serialization](../serialization/). [Lint Rules and Checks](../lint-rules/) lists SQLPG001 to SQLPG004, which run over the source, and SQLPG101 to SQLPG126, which run over the build.

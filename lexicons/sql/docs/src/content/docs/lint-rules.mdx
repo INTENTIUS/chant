@@ -16,7 +16,7 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 | SQLCH101 to SQLCH120 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
 | SQLPG001 to SQLPG004 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
-| SQLPG101 to SQLPG118 | Postgres post-synth checks over the build output | `chant build` and `chant lint` |
+| SQLPG101 to SQLPG126 | Postgres post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLPG200 to SQLPG270 | the Postgres change classifier's rules | `chant sql diff`, `chant sql plan`, `postgresApply`; see [Postgres Locks and the Change Classifier](../postgres-change-classifier/) |
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
@@ -34,6 +34,8 @@ The [All Rules](../rules/) page is the generated list. This page says what each 
 | SQLPG004 | error | An `extension` template creates an extension the provider named in `sql.provider` (or in the one provider every profile names) does not allow: `CREATE EXTENSION pg_stat_monitor` on Neon. The lists are snapshots of each provider's documentation, dated in `providerData(provider).sources`; a provider whose list is partial (Supabase) is not reported for a name outside it. Silent when no provider is set | Use an extension the provider lists, change `sql.provider`, or disable the rule on the line if the provider has added the extension since the list was read |
 
 ## Post-synth checks
+
+What the checks hold a declaration to, in both dialects: a name the pinned catalog answers for (a type, a function, an engine, a codec, an access method, an operator class, a setting) is checked against the target release everywhere it appears; a column name is checked only where it is a bare name in a list (a key, an index's columns, a grant's column list); an expression (a `CHECK`, a generated column, a policy, a view's query, an index expression) and a plain-text name of an object the project does not declare (`REFERENCES billing.accounts (id)`, `billing.money`) are left to the server.
 
 ### Engines, codecs and settings
 
@@ -74,7 +76,7 @@ These read the pinned server's catalog, so a pin move can change their verdicts 
 
 ### Postgres
 
-The Postgres checks read the build output, and the three that depend on the version read the major it records (`postgresMajor`: `sql.postgresMajor`, else 18) against the per-major catalogs (see [The Postgres Pin and Supported Majors](../postgres-majors/)). Several follow rules of [squawk](https://squawkhq.com), [strong_migrations](https://github.com/ankane/strong_migrations) and the PostgreSQL wiki's "Don't Do This" page, credited in the audit catalog.
+The Postgres checks read the build output, and the ones that depend on the version read the major it records (`postgresMajor`: `sql.postgresMajor`, else 18) against the per-major catalogs (see [The Postgres Pin and Supported Majors](../postgres-majors/)). Several follow rules of [squawk](https://squawkhq.com), [strong_migrations](https://github.com/ankane/strong_migrations) and the PostgreSQL wiki's "Don't Do This" page, credited in the audit catalog.
 
 | Id | Severity | Flags | What to change |
 |---|---|---|---|
@@ -96,6 +98,14 @@ The Postgres checks read the build output, and the three that depend on the vers
 | SQLPG116 | error | An extension the target major no longer ships, such as `adminpack` from 17 | Remove it, or target an older major |
 | SQLPG117 | warning | A view without `security_invoker`, which runs with its owner's privileges and bypasses the reader's row-level security | Set `security_invoker = true` in its `WITH` options |
 | SQLPG118 | warning | A table using `INHERITS` where declarative partitioning replaced it | Use `PARTITION BY` and `PARTITION OF` |
+| SQLPG119 | error | A column, array element, domain base or sequence `AS` type the target major does not have: `numerik(12,2)`, `intt[]`, `app.mood` when the project declares schema `app` and no type `mood`. Every spelling Postgres accepts counts: the catalog's `pg_type` and `format_type()` names (`int4`, `integer`, `timestamptz`), the grammar's own (`int`, `decimal`, `double precision`, `time with time zone`, `bit varying`), and types the project declares (`type`, `domain`, a table's row type) by `${}` or by name. A type in a schema the project does not declare is left alone. A **warning** instead when the project declares an extension, since extension types are not in the core catalog; `citext`, `geometry`, `hstore`, `vector` and the other types of common extensions pass once their extension is declared, and are an error naming the extension when it is not | Fix the name, declare the type, or declare the extension that provides it |
+| SQLPG120 | error | A type modifier that does not fit: one on a type that takes none (`bigint(8)`), `numeric` precision outside 1 to 1000 or scale outside -1000 to 1000 (0 to the precision before 15), `varchar(n)` or `char(n)` outside 1 to 10485760, `timestamp`, `time` or `interval` precision outside 0 to 6, `bit(n)` below 1, `float(p)` outside 1 to 53. A declared or extension type's modifiers are its own | Drop the modifier, or bring it into range |
+| SQLPG121 | error | An identity column whose type is not `smallint`, `integer` or `bigint` (`id text GENERATED ALWAYS AS IDENTITY`) | Make it `smallint`, `integer` or `bigint` |
+| SQLPG122 | error | A table that declares a column twice (`(id bigint, id int)`), or an enum that lists a label twice (`ENUM ('a', 'a')`) | Remove or rename the repeat |
+| SQLPG123 | error | A bare column name the table does not declare in `PRIMARY KEY`, `UNIQUE` or their `INCLUDE`, a foreign key's own columns, an index's columns or `INCLUDE` on a `${}` table, or a `GRANT`/`REVOKE` column list on a `${}` table. A partition or an inheriting table reads its declared parent's columns; a table with `LIKE`, `OF type` or a plain-text parent is skipped | Fix the name, or write `${table.columns.name}` so the build checks it |
+| SQLPG124 | error | A foreign key to a `${}` table that names a column the table does not declare (`REFERENCES ${customers} (idd)`), or whose column types do not compare: their `pg_type` categories differ (`text` to `bigint`), or, in the catch-all user-defined category, the types do (`uuid` to `bytea`). `integer` to `bigint` passes. A domain compares as its base type | Reference a declared column with a type of the same category |
+| SQLPG125 | error | An index access method (`USING btreee`) or operator class (`numeric_opz`) the target major does not have, or an operator class that is not for the index's method (`jsonb_path_ops` on a btree index). An extension's (`gin_trgm_ops` from `pg_trgm`, `hnsw` from `vector`) passes when the project declares that extension and is an error naming it when it does not; a **warning** when the project declares some extension and the name is in neither the catalog nor the lexicon's list of common extension objects | Use a method and operator class the target major has, or declare the extension |
+| SQLPG126 | error | A function the target major does not have, called in a column `DEFAULT`, a generated column, a table's or a domain's `CHECK`, or an index expression: `DEFAULT noww()`, or `uuidv7()` before 18. A name counts when it is in the major's `pg_proc`, declared by the project (`func`, `procedure`), a type name used as a cast (`int4(x)`), or qualified with a schema the project does not declare. Only a name followed by `(` outside a string literal is a call; `COALESCE`, `NULLIF`, `GREATEST`, `LEAST`, `CAST`, `EXTRACT`, `ROW`, `ARRAY`, `EXISTS`, `IN`, `ANY`, `ALL`, `SOME` and the key word forms of `OVERLAY`, `POSITION`, `SUBSTRING` and `TRIM` are grammar, not functions. A **warning** when the project declares an extension | Fix the name, declare the function, or declare the extension that provides it |
 
 ## Suppressing a finding
 

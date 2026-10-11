@@ -410,6 +410,43 @@ export function renderPostgresModule(catalogs: readonly PostgresCatalog[]): Rend
     "};",
   ];
 
+  // Names lint checks a declaration against, each with the majors that have it
+  // (`true`: every supported major). Read straight off the catalogs, internal
+  // functions included: a column default may call `pg_current_xact_id()`.
+  const presence = (lists: ReadonlyArray<readonly string[]>): Map<string, number[]> => {
+    const out = new Map<string, number[]>();
+    lists.forEach((names, i) => {
+      for (const n of new Set(names)) out.set(n, [...(out.get(n) ?? []), majors[i]!]);
+    });
+    return out;
+  };
+  const majorsLiteral = (ms: readonly number[]): string => (ms.length === majors.length ? "true" : JSON.stringify(ms));
+  const presenceTable = (m: Map<string, number[]>, indent: string): string[] =>
+    sorted(m.keys()).map((n) => `${indent}${JSON.stringify(n)}: ${majorsLiteral(m.get(n)!)},`);
+  const functionTable = [
+    `/** Every function, aggregate and procedure name in \`pg_proc\`, to the majors that have it (\`true\`: all of them). */`,
+    `export const FUNCTIONS: Readonly<Record<string, true | readonly number[]>> = {`,
+    ...presenceTable(presence(catalogs.map((c) => c.functions.map((f) => f.name))), "  "),
+    "};",
+  ];
+  const methodTable = [
+    `/** The index access methods, to the majors that have each (\`true\`: all of them). */`,
+    `export const INDEX_ACCESS_METHODS: Readonly<Record<string, true | readonly number[]>> = {`,
+    ...presenceTable(presence(catalogs.map((c) => c.accessMethods.filter((a) => a.type === "i").map((a) => a.name))), "  "),
+    "};",
+  ];
+  const opclassAms = sorted(catalogs.flatMap((c) => c.opclasses.map((o) => o.am)));
+  const opclassTable = [
+    `/** The operator classes of each index access method, to the majors that have each (\`true\`: all of them). */`,
+    `export const OPERATOR_CLASSES: Readonly<Record<string, Readonly<Record<string, true | readonly number[]>>>> = {`,
+    ...opclassAms.flatMap((am) => [
+      `  ${key(am)}: {`,
+      ...presenceTable(presence(catalogs.map((c) => c.opclasses.filter((o) => o.am === am).map((o) => o.name))), "    "),
+      "  },",
+    ]),
+    "};",
+  ];
+
   const tables = [
     ...header("The tables lint and the LSP read, typed by ./postgres-types."),
     `import type { ColumnTypeSpec, SettingSpec, StorageParameterSpec } from "../postgres/catalog-types";`,
@@ -424,6 +461,12 @@ export function renderPostgresModule(catalogs: readonly PostgresCatalog[]): Rend
     ...typeTable,
     "",
     ...keywordTable,
+    "",
+    ...functionTable,
+    "",
+    ...methodTable,
+    "",
+    ...opclassTable,
     "",
   ].join("\n");
 
