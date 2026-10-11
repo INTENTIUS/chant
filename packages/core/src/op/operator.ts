@@ -196,6 +196,17 @@ export function createBesideState(): BesideState {
   return { running: new Map(), started: new Map(), ended: [] };
 }
 
+/**
+ * Release the per-Op leases a stopped operator still holds (#2879), best
+ * effort: a lease that is gone or taken over since is left alone, and one that
+ * can't be released expires on its TTL as before.
+ */
+export async function releaseHeldLeases(held: Map<string, string>, holder: string, opts: { cwd?: string } = {}): Promise<void> {
+  const entries = [...held];
+  held.clear();
+  await Promise.allSettled(entries.map(([op, token]) => releaseLease(op, holder, token, opts)));
+}
+
 /** Wait for every run in flight beside the turns to end. `chant operator --steward --once` does before it exits. */
 export async function waitForBesideRuns(state: BesideState): Promise<void> {
   await Promise.all([...state.running.values()].map((r) => r.handle.done));
@@ -263,6 +274,13 @@ export interface OperatorRoundOptions {
    * it returns.
    */
   besideState?: BesideState;
+  /**
+   * The per-Op leases this process holds after its ticks, Op name to the
+   * token of the newest acquire (#2879). A round records each lease it takes
+   * or renews here. `runOperatorForever` owns one and releases what is left when it stops, so
+   * a restarted operator does not skip its Ops until the old leases expire.
+   */
+  heldLeases?: Map<string, string>;
   /** How a run beside the turns is started. Default: `chant run <op>` in a process of its own ({@link spawnBesideRun}). */
   launchBeside?: BesideLauncher;
   /** The environment the steward operator was started for (`--env`), passed on to a run it starts beside its turns. */
@@ -540,6 +558,7 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     }
 
     const lease = acquired.lease as LeaseRecord;
+    opts.heldLeases?.set(config.name, lease.token);
 
     // A local steward is one turn at a time (#2750): a hand run (`chant run
     // <op>`) holds this same lease for as long as it runs, so a round never
@@ -556,12 +575,14 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
         // catch above: report it and stop, rather than let it propagate and
         // leak the per-op lease this round just took.
         await releaseLease(config.name, holder, lease.token, { cwd: opts.cwd }).catch(() => false);
+        opts.heldLeases?.delete(config.name);
         const message = err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err);
         events.push({ kind: "lease-error", op: stewardTurnLeaseName(steward.name), env, error: message });
         break;
       }
       if (!turn.acquired) {
         await releaseLease(config.name, holder, lease.token, { cwd: opts.cwd }).catch(() => false);
+        opts.heldLeases?.delete(config.name);
         events.push({ kind: "turn-busy", op: config.name, env, steward: steward.name, heldBy: turn.heldBy?.holder });
         break;
       }
@@ -898,6 +919,8 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
   // The runs a steward starts beside its turns (#2861), for the life of the
   // loop. When the loop stops, so do they.
   const besideState = opts.besideState ?? createBesideState();
+  // The per-Op leases the rounds leave held (#2879), released when the loop stops.
+  const heldLeases = opts.heldLeases ?? new Map<string, string>();
   const intervalMs = opts.intervalMs ?? DEFAULT_OPERATOR_INTERVAL_MS;
   const subscribers = opts.subscribers ?? [];
 
@@ -906,13 +929,14 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
   if (subscribers.length === 0) {
     try {
       while (!opts.signal?.aborted) {
-        const events = await runOperatorRound({ ...opts, holder, scheduleState, besideState });
+        const events = await runOperatorRound({ ...opts, holder, scheduleState, besideState, heldLeases });
         opts.onRound?.(events);
         if (opts.signal?.aborted) break;
         await sleepAbortable(intervalMs, opts.signal);
       }
     } finally {
       await stopBesideRuns(besideState);
+      await releaseHeldLeases(heldLeases, holder, { cwd: opts.cwd });
     }
     return;
   }
@@ -965,7 +989,7 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
     while (!opts.signal?.aborted) {
       gate.roundStarted();
       const startedAt = Date.now();
-      const events = await runOperatorRound({ ...opts, holder, scheduleState, besideState });
+      const events = await runOperatorRound({ ...opts, holder, scheduleState, besideState, heldLeases });
       opts.onRound?.(events);
       if (opts.signal?.aborted) break;
 
@@ -980,6 +1004,7 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
   } finally {
     await closeAll();
     await stopBesideRuns(besideState);
+    await releaseHeldLeases(heldLeases, holder, { cwd: opts.cwd });
   }
 }
 
