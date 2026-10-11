@@ -618,6 +618,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The handlers of `chant approve --resume` and `chant run resume` (#3683) pass an injected `fetch` through to `resumeGateRun`; they open no connection of their own.",
   },
   {
+    file: "packages/core/src/notify.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the URLs the environment variables named by an Op waves spec's `notify` hold: a Slack or Microsoft Teams incoming webhook, or the team's own webhook",
+    why: "Notify (#3761): `chant run wave` posts an event when a wave waits for an approval, refuses a moved plan or fails, and products built on chant send the same event. Only a spec with `notify` reaches it, a failed delivery never changes the exit code, and `sendNotify` takes an injected `fetch`, so no unit test opens a socket.",
+  },
+  {
     file: "packages/core/src/op/gate-review.ts",
     primitives: ["fetch"],
     phase: "apply",

@@ -1,0 +1,120 @@
+---
+title: Notify
+description: Post an event to chat or a signed webhook when a wave needs a person
+diataxis: how-to
+---
+
+This guide is for a team that wants to hear when a wave waits for an approval or a run goes wrong, without watching the pipeline. chant posts one event, `chant.notify/v1`, to chat incoming webhooks (Slack and Microsoft Teams) and to a webhook of your own. The webhook's copy is signed so the receiver can check it came from your pipeline.
+
+Op waves send these events when their spec says where. Products built on chant send the same event through `@intentius/chant/notify`, and each decides when to send.
+
+## Name the webhooks
+
+Add `notify` to the [Op waves](/chant/guide/op-waves/) spec. Each value is the name of an environment variable. The spec never holds a URL or a key, and chant never prints either.
+
+```json
+{
+  "name": "migrations",
+  "op": "migrate",
+  "plan": ["./bin/plan", "{target}", "{plan}"],
+  "waves": [{ "name": "prod", "runs": [{ "target": "prod" }] }],
+  "notify": {
+    "slack": "CHANT_SLACK_WEBHOOK",
+    "teams": "CHANT_TEAMS_WEBHOOK",
+    "webhook": "CHANT_WEBHOOK",
+    "key": "CHANT_WEBHOOK_KEY",
+    "events": ["waiting", "refused", "failed"]
+  }
+}
+```
+
+| Setting | The variable holds |
+|---|---|
+| `slack` | A Slack incoming webhook's URL |
+| `teams` | A Teams incoming webhook's URL (a Workflows webhook that takes an Adaptive Card) |
+| `webhook` | Your own receiver's URL. It needs `key` |
+| `key` | The shared secret the webhook's events are signed with |
+| `events` | Not a variable: the events to send. Default: all of them |
+
+A value that looks like a URL, a webhook without a key, or an unknown setting fails the spec before any wave runs.
+
+## Put the secrets in the pipeline
+
+On GitHub and Forgejo, `chant run --generate` maps each variable `notify` names from the repository secret of the same name. Create one secret per variable, with the same name. A value in the generator's `options.variables` takes precedence over that mapping. On GitLab, add them as masked CI/CD variables of the project; GitLab passes them to every job.
+
+## What each wave job sends
+
+| The job | Exit | Event |
+|---|---|---|
+| A wave waits for an approval of its digest | 3 | `waiting`, with the targets, the digest, the `chant approve` command and the run's link. Under `pr-review`, the pull request whose review would approve it |
+| A share job refuses a run whose plan moved since the decision | 4 | `refused`, naming the runs it refused |
+| A plan, an apply or a stage hook fails | 1 | `failed`, naming the runs or the hooks that failed, or the error |
+
+A share job of a waiting wave sends nothing, because its deciding job already did. The exception is a share job that one of its own hooks holds, which sends `waiting` naming the hook. A wave that applies sends nothing.
+
+A delivery that fails is logged on stderr, without its URL, and the job exits with the code the wave decided. A 5xx answer or a network error is tried three times; a 4xx is not retried. The webhook is never posted to unsigned: with `key` unset, the job logs that and skips it.
+
+## Check a delivery
+
+The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<timestamp>.<body>`, where the timestamp is in seconds since the epoch:
+
+| Header | Value |
+|---|---|
+| `x-chant-signature` | `sha256=<hex>` |
+| `x-chant-timestamp` | The seconds the signature covers |
+| `x-chant-event` | `waiting`, `refused`, `failed` or `drift` |
+| `x-chant-delivery` | The event's `id` |
+
+`@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`, so a receiver can bundle it alone:
+
+```ts
+import { verifyWebhook } from "@intentius/chant/notify-verify";
+
+const checked = verifyWebhook({ body: rawBody, headers: req.headers, key: process.env.CHANT_WEBHOOK_KEY });
+if (!checked.ok) return reply(401, checked.reason);
+handle(checked.event);
+```
+
+Pass the body exactly as received, before parsing it. `verifyWebhook` compares the signature in constant time and refuses a timestamp more than five minutes from now (`toleranceSeconds` changes that), so a delivery recorded and replayed later fails. The event's `id` is the same for every send of one event about one digest, so a receiver can also drop a re-run's repeat.
+
+## The event
+
+The JSON Schema ships in the package as `@intentius/chant/notify.schema.json`, with `$id` `https://intentius.io/chant/schemas/notify/v1/notify.schema.json`. Readers ignore fields they do not know; a field is only ever added within a version.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `chant.notify/v1` |
+| `id`, `event`, `at` | The delivery id, what happened, and when it was sent |
+| `source`, `project`, `summary` | The product that sent it (`chant`), the repository, and one line a person can read |
+| `wave` | `{ number, name, gate }` for a product that applies in waves |
+| `environment` | For a product that applies per environment |
+| `targets` | What the event concerns: a wave's runs or roots, an environment's migrations |
+| `digest`, `approve` | The plan digest an approval binds, and on `waiting` the command that approves it (`approve.command`, and `approve.review` under `pr-review`) |
+| `status`, `reason`, `exitCode` | The product's word for the outcome, why it was refused or failed, and the exit code |
+| `drift` | On `drift`: `changed`, `missing`, `failed` and a `fingerprint` |
+| `run` | The CI run's `url`, `forge`, `repository`, `commit` and `pr` |
+| `reportUrl`, `detail` | A report page, and the product's own outcome record carried whole |
+
+## Send from a product
+
+A product builds the event and sends it. `sendNotify` reads the URLs and the key from the environment when it sends, never throws, and returns one result per target:
+
+```ts
+import { makeNotifyEvent, sendNotify } from "@intentius/chant/notify";
+
+const event = makeNotifyEvent({
+  source: "sql-yodeler",
+  event: "drift",
+  summary: "prod drifted: orders changed",
+  environment: "prod",
+  drift: { changed: ["orders"], missing: [], fingerprint },
+});
+await sendNotify({ slack: "SLACK_WEBHOOK_URL", webhook: "YODEL_WEBHOOK_URL", key: "YODEL_WEBHOOK_KEY" }, event, { prefix: "x-yodel" });
+```
+
+`prefix` keeps a product's existing header names (`x-yodel-signature`), and `verifyWebhook` takes the same `prefix`. `render.slack` and `render.teams` replace the default Slack text and Teams card, for a product that adds its own buttons. `@intentius/chant/notify` reaches only `node:crypto` and the verifier, so a product's bundled CLI stays small.
+
+## See also
+
+- [Op Waves](/chant/guide/op-waves/): the waves, their gates and exit codes
+- [Organizational Policy](/chant/guide/organizational-policy/): what refuses a run before it applies

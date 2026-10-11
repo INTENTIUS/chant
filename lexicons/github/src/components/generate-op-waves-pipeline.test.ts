@@ -31,6 +31,15 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(yaml).toContain("environment:\n      name: production");
   });
 
+  test("notify maps each variable it names from the secret of that name, and options.variables wins (#3761)", () => {
+    const notify = { webhook: "CHANT_WEBHOOK", key: "CHANT_WEBHOOK_KEY", slack: "CHANT_SLACK_WEBHOOK" };
+    const yaml = generateGithubOpWavesPipeline({ ...spec, notify }, { specFile: "waves.json", variables: { CHANT_SLACK_WEBHOOK: "${{ vars.SLACK }}" } }).files[0]!.yaml;
+    expect(yaml).toContain("env:\n  CHANT_WEBHOOK: '${{ secrets.CHANT_WEBHOOK }}'");
+    expect(yaml).toContain("CHANT_WEBHOOK_KEY: '${{ secrets.CHANT_WEBHOOK_KEY }}'");
+    expect(yaml).toContain("CHANT_SLACK_WEBHOOK: '${{ vars.SLACK }}'");
+    expect(generateGithubOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml).not.toContain("secrets.");
+  });
+
   test("resume renders a scheduled workflow that re-runs approved waves with actions: write (#3683)", () => {
     const { files } = generateGithubOpWavesPipeline({ ...spec, resume: { schedule: "*/10 * * * *" } }, { specFile: "waves.json" });
     expect(files.map((f) => f.name)).toEqual([`${spec.name}.yml`, `${spec.name}-resume.yml`]);

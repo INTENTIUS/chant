@@ -5,7 +5,9 @@
 
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { notifyOpWave } from "../../op/op-waves-notify";
 import { parseOpWavesSpec, recordOpWaveHeadPlans, runOpWave } from "../../op/op-waves-run";
+import type { OpWavesSpec } from "../../op/op-waves";
 import { formatError } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -35,9 +37,11 @@ export async function runOpWaveCommand(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "--decide and --share are two different jobs; pass one" }));
     return 1;
   }
+  let spec: OpWavesSpec | undefined;
+  const job = args.share !== undefined ? { share: args.share } : {};
   try {
     const path = resolve(specFile);
-    const spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
+    spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
     const result = await runOpWave({
       spec,
       specFile: relative(process.cwd(), path),
@@ -47,9 +51,13 @@ export async function runOpWaveCommand(ctx: CommandContext): Promise<number> {
       ...(args.base ? { base: args.base } : {}),
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
+    // #3761: tell people, when the spec says where. Delivery never changes the exit code.
+    await notifyOpWave(spec, args.wave, { result }, job);
     return result.exitCode;
   } catch (err) {
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(formatError({ message }));
+    if (spec) await notifyOpWave(spec, args.wave, { error: message }, job);
     return 1;
   }
 }

@@ -23,8 +23,13 @@
  * `pull-requests: read`, so a wave can read the merged pull request's
  * reviews, and a second workflow, `<name>-plans.yml`, runs `chant run wave
  * --record-plans` on each pull request to record the digests its head plans.
+ *
+ * With `notify` on the spec (#3761), the workflow maps each variable it names
+ * from the repository secret of the same name, so a wave job can post to
+ * Slack, Teams or a signed webhook. `options.variables` wins over the mapping.
  */
 
+import { notifyVariables } from "@intentius/chant/notify";
 import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { actionRef } from "../action-pins";
@@ -102,10 +107,12 @@ export function buildGithubOpWavesDoc(
     };
   }
 
+  // #3761: the notify variables come from the secrets of the same name.
+  const env = { ...Object.fromEntries(notifyVariables(spec.notify).map((n) => [n, `\${{ secrets.${n} }}`])), ...(options.variables ?? {}) };
   const doc: GithubOpPipelineDoc = {
     name: spec.name,
     on: { push: { branches: spec.branches?.length ? spec.branches : ["main"] }, workflow_dispatch: {} },
-    ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
     concurrency: { group: spec.name, "cancel-in-progress": false },
     permissions: { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) },
     jobsDoc,

@@ -75,6 +75,8 @@ export type {
   RunOpWaveOptions,
   RunOpWaveResult,
 } from "./op-waves-run";
+export { notifyOpWave, opWaveNotifyFields } from "./op-waves-notify";
+export type { OpWaveOutcome } from "./op-waves-notify";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";
 export type { ActivityFn } from "./activity-registry";
 export { loadActivityContracts, mergeActivityContracts } from "./activity-contract-registry";
