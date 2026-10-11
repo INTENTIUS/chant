@@ -28,8 +28,9 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SealCode } from "../records";
 import { type TrustPolicy } from "./policy";
+import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
-import { GATE_SEAL_NAMESPACE, gateSealPayload, type SealedGateApproval } from "./gate-seal";
+import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "./gate-seal";
 
 export { GATE_SEAL_NAMESPACE, gateSealPayload, type SealedGateApproval } from "./gate-seal";
 
@@ -209,14 +210,28 @@ function checkSeal(policy: TrustPolicy, s: SealSubject): SealCheck {
   if (listed.length === 0) {
     return { attested: false, code: "seal-signer-unlisted", message: `${s.principal} has no key in ${where}, so the seal can't count` };
   }
-  const r = verifySshSignature(listed, s.payload, seal.signature, s.namespace);
+  const r = s.namespace === GATE_SEAL_NAMESPACE ? verifyGate(listed, s.payload, seal.signature) : verifySshSignature(listed, s.payload, seal.signature, s.namespace);
   if (r.ok) return { attested: true, message: `sealed by ${r.principal}${r.key ? ` with ${r.key}` : ""}, a signer ${where} lists`, ...(r.key ? { key: r.key } : {}) };
   if (r.missing) return { attested: null, code: "seal-unverifiable", message: `the seal by ${s.principal} can't be checked here: ${r.reason}` };
   return { attested: false, code: "seal-signature-invalid", message: `the seal does not verify for ${s.principal} against ${where}: ${r.reason}` };
 }
 
+/** A gate seal checked with node:crypto (#3785) against the keys `listed` for the approver in the gate namespace. */
+function verifyGate(listed: Signer[], payload: Buffer, signature: string): { ok: true; principal: string; key: string; missing?: undefined } | { ok: false; missing?: false; reason: string } {
+  const keys = listed.filter((x) => namespaceAllowed(x.namespaces, GATE_SEAL_NAMESPACE)).map((x) => Buffer.from(x.key.split(" ")[1] ?? "", "base64"));
+  const r = verifySshSignatureWith(signature, payload, GATE_SEAL_NAMESPACE, keys);
+  return r.ok ? { ok: true, principal: listed[0]!.principal, key: r.key } : { ok: false, reason: r.reason };
+}
+
 /** A seal checked with no signers file: is the signature over these bytes intact? */
 function checkIntegrity(principal: string, payload: Buffer, signature: string, namespace: string): SealCheck {
+  if (namespace === GATE_SEAL_NAMESPACE) {
+    // A gate seal is checked with node:crypto (#3785), against the key it carries.
+    const pk = sshSignatureKey(signature);
+    const r = pk ? verifySshSignatureWith(signature, payload, namespace, [pk]) : ({ ok: false, reason: "it is not an SSHSIG" } as const);
+    if (!r.ok) return { attested: false, code: "seal-signature-invalid", message: `the seal by ${principal} does not verify over this approval, even without a signers file` };
+    return { attested: null, code: "seal-unverifiable", message: `the signature is intact (${r.key}), and there is no signers file at base to say whose key it is`, key: r.key };
+  }
   const dir = mkdtempSync(join(tmpdir(), "chant-seal-"));
   try {
     const sigFile = join(dir, "signature");

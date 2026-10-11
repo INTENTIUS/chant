@@ -30,7 +30,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { checkGateSeal } from "../workspace/trust/seal";
+import { gateSealRefusal } from "../workspace/trust/gate-seal";
 import { readTrustPolicy, type TrustPolicy } from "../workspace/trust/policy";
 import { gitRevisionSource } from "../workspace/record-source";
 import { forgePrincipalOf, ForgeApiError, type ForgeFetch, type ForgeKind } from "../pr-forge";
@@ -48,18 +48,15 @@ export function trustPolicyAt(cwd: string, base: string): TrustPolicy {
 
 /**
  * The rule a `sealed` gate judges approvals by: a seal that verifies for the
- * approver against `policy`, the signers at base. With no signers file at
+ * approver against `policy`, the signers at base, checked with node:crypto
+ * (#3785), so an apply job needs no ssh-keygen. With no signers file at
  * base nothing verifies, so nothing passes the gate.
  */
 export function sealedApprovalRule(gate: string, policy: TrustPolicy): GateApprovalRule {
   return {
     requirement: { gate, class: null },
     refuses(approval: GateResolutionRecord): string | null {
-      if (!policy.active) {
-        return `the gate is sealed, and there is no signers file (${policy.signersPath}) at base ${policy.base?.slice(0, 12) ?? ""}`.trim();
-      }
-      const check = checkGateSeal(policy, approval);
-      return check.attested === true ? null : check.message;
+      return gateSealRefusal(policy, approval);
     },
   };
 }
