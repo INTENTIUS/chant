@@ -26,7 +26,8 @@
  * is that column's type; any other expression is `unknown`.
  */
 
-import { relative, sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
 import { GENERATED_MARKER } from "@intentius/chant/discovery/files";
 import { getProvenance } from "@intentius/chant/provenance";
@@ -48,6 +49,31 @@ import type { OutputObject } from "./lint/post-synth/sql-helpers";
 
 /** The file `chant sql types` writes, in the project's source directory. */
 export const SQL_TYPES_FILE = "sql-types.d.ts";
+
+/**
+ * Where `chant sql types` writes the file by default: the project's
+ * `sourceDir`, or the project root when it is unset.
+ */
+export function sqlTypesPath(projectDir: string, config: Record<string, unknown> | undefined): string {
+  const sourceDir = typeof config?.sourceDir === "string" ? config.sourceDir : ".";
+  return join(resolve(projectDir, sourceDir), SQL_TYPES_FILE);
+}
+
+/** The file on disk against what the build's entities render: `missing`, `stale` or `current`. */
+export function sqlTypesState(
+  entities: ReadonlyMap<string, Declarable>,
+  file: string,
+  opts: RenderSqlTypesOptions = {},
+): "missing" | "stale" | "current" {
+  if (!existsSync(file)) return "missing";
+  let onDisk: string;
+  try {
+    onDisk = readFileSync(file, "utf8");
+  } catch {
+    return "missing";
+  }
+  return onDisk === renderSqlTypes(entities, opts) ? "current" : "stale";
+}
 
 /** The module each dialect's `SqlSchema` is augmented in. */
 export const SQL_TYPES_MODULE: Readonly<Record<SqlDialect, string>> = {

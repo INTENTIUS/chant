@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon provides **61** rules: 7 lint rules and 54 post-synth checks.
+The SQL lexicon provides **64** rules: 9 lint rules and 55 post-synth checks.
 
 ## Lint Rules
 
@@ -15,10 +15,12 @@ The SQL lexicon provides **61** rules: 7 lint rules and 54 post-synth checks.
 | `SQLCH001` | error | correctness | the DDL in a ClickHouse template (`database`, `table`, `view`, `dictionary`, `func`, `user`, `role`, `policy`, `grant`) does not parse, or holds another statement than its tag. |
 | `SQLCH002` | error | correctness | a `Nullable` column in a table's sort key or primary key. |
 | `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
+| `SQLCH004` | error | correctness | a typed ClickHouse tag whose type argument does not name the |
 | `SQLPG001` | error | correctness | the DDL in a Postgres template does not parse, or does not hold |
 | `SQLPG002` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
 | `SQLPG003` | warning | correctness | an object named in a string where Postgres reads a `regclass`: |
 | `SQLPG004` | error | correctness | a declared extension the configured provider does not allow. |
+| `SQLPG005` | error | correctness | a typed Postgres tag whose type argument does not name the object |
 
 ## Post-Synth Checks
 
@@ -27,6 +29,7 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | ID | Description |
 |----|-------------|
 | `SQL101` | Two exports declare the same object |
+| `SQL102` | sql-types.d.ts differs from what the build declares |
 | `SQLCH101` | A ClickHouse object names an engine the pinned server does not have |
 | `SQLCH102` | A PRIMARY KEY is not a prefix of ORDER BY |
 | `SQLCH103` | An engine's version, sign or is_deleted column has an unsupported type |

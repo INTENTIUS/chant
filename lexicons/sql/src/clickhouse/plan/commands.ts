@@ -167,7 +167,7 @@ export const sqlCommands: CommandGroup = {
     { name: "plan", description: "Classify the change from an environment's server to a chant build output", handler: runPlan },
     {
       name: "types",
-      description: "Write sql-types.d.ts: typed columns for each table, view and dictionary the build declares, for tags given their name (table<\"app.users\">) and RowOf; --output <path> writes it elsewhere",
+      description: "Write sql-types.d.ts: typed columns for each table, view and dictionary the build declares, for tags given their name (table<\"app.users\">) and RowOf; --output <path> writes it elsewhere; --check compares instead of writing and exits 1 when the file differs",
       handler: async (ctx) => (await import("../../sql-types-command")).runTypes(ctx),
     },
   ],

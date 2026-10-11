@@ -34,6 +34,12 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "A column interpolated without .columns reads the entity's own field instead",
     "Write ${table.columns.name}.",
   ),
+  SQLCH004: sourceRule(
+    "SQLCH004",
+    "correctness",
+    "A typed ClickHouse tag's type argument does not name the object its template declares, or is not in sql-types.d.ts",
+    "Make the type argument the qualified name the template declares, then run chant sql types.",
+  ),
   SQLPG001: sourceRule(
     "SQLPG001",
     "correctness",
@@ -58,6 +64,12 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "A declared extension the configured Postgres provider does not allow",
     "Use an extension the provider lists, or set sql.provider to the service the project deploys to.",
   ),
+  SQLPG005: sourceRule(
+    "SQLPG005",
+    "correctness",
+    "A typed Postgres tag's type argument does not name the object its template declares, or is not in sql-types.d.ts",
+    "Make the type argument the qualified name the template declares, then run chant sql types.",
+  ),
   SQLCH101: auditRule(
     "SQLCH101",
     "merge-worthy",
@@ -72,6 +84,14 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Two exports declare the same object",
     "Keep one declaration of the object and import it where the other was used.",
+    { category: "correctness" },
+  ),
+  SQL102: auditRule(
+    "SQL102",
+    "merge-worthy",
+    "guidance",
+    "sql-types.d.ts differs from what the build declares",
+    "Run chant sql types to rewrite the file.",
     { category: "correctness" },
   ),
   ...sqlPostSynthAuditEntries,

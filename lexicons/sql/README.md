@@ -11,7 +11,7 @@ chant is spec-true per dialect, not database-agnostic. A dialect's engines, colu
 What the package holds:
 
 - SQL-shaped tagged templates that parse each dialect's DDL at build time into entities, with references, dependency order and column-level lineage for views. ClickHouse has `database`, `table`, `view` and materialized views; Postgres has schemas, tables, indexes, views, materialized views, sequences, enum types, domains and extensions. `chant build` writes a JSON schema document and the statements, in creation order, to `clickhouse.sql` or `postgres.sql`.
-- Lint at the token (SQLCH001 to SQLCH003, SQLPG001 to SQLPG004) and after the build (SQLCH101 to SQLCH120, SQLPG101 to SQLPG118), checked against what the pinned server accepts.
+- Lint at the token (SQLCH001 to SQLCH004, SQLPG001 to SQLPG005) and after the build (SQLCH101 to SQLCH120, SQLPG101 to SQLPG118), checked against what the pinned server accepts.
 - Type catalogs generated from pinned servers and committed as snapshots: `clickhouse/clickhouse-server:26.8.15.10`'s `system.*` tables, and one Postgres server per major from 14 to 18, with hand-written overlays for the grammar a catalog does not carry.
 - Composites for both dialects, among them events, audit-log, soft-delete and tenant tables, rollup and refreshed views, and a CDC mirror.
 

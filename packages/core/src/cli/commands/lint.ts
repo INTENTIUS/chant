@@ -705,10 +705,13 @@ async function runLexiconPostSynthDiagnostics(
   let result: Awaited<ReturnType<typeof build>>;
   let env: string | undefined;
   let telemetry: Awaited<ReturnType<typeof resolveTelemetryAttribution>>;
+  let configDir = infraPath;
+  let loadedConfig: Record<string, unknown> | undefined;
   try {
     const loaded = await loadChantConfigUpward(infraPath);
     const config = loaded.config;
-    const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
+    loadedConfig = config as unknown as Record<string, unknown>;
+    configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
     if (loaded.configPath) fallbackFile = loaded.configPath;
     // The caller's parameters when it resolved them (the CLI does, from the
     // same upward config walk); otherwise the declared defaults and `env`
@@ -766,7 +769,7 @@ async function runLexiconPostSynthDiagnostics(
     message: `${d.entity ? `[${d.entity}] ` : ""}${d.message}`,
   });
 
-  for (const { plugin, diagnostics: raw } of runLexiconPostSynthChecks(withChecks, result, env, { activityContracts, telemetry })) {
+  for (const { plugin, diagnostics: raw } of runLexiconPostSynthChecks(withChecks, result, env, { activityContracts, telemetry, projectDir: configDir, ...(loadedConfig ? { projectConfig: loadedConfig } : {}) })) {
     const presetIds = resolvePresetIds(plugin.lintPresets?.(), lintConfig.presets?.[plugin.name] ?? "recommended");
     const afterPreset = applyConfiguredPreset(raw, presetIds, lintConfig.rules).diagnostics;
     const afterConfig = applyConfiguredSeverity(afterPreset, lintConfig.rules).diagnostics;
