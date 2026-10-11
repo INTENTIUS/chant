@@ -138,6 +138,13 @@ describe("workspace work history (#2785)", () => {
     expect(formatWorkHistory(doc)).toContain(`kept: ${kept}`);
   });
 
+  test("an id git rejects as a ref name is refused before any git call (#2815)", async () => {
+    for (const id of ["upgrade-.", "x.lock", "a..b"]) {
+      const doc = await workLease({ verb: "claim", id, holder: "worker-b", cwd: root });
+      expect(doc).toMatchObject({ error: { code: "write-usage-invalid" } });
+    }
+  });
+
   test("a release outside the closed list of outcomes is refused (#3147)", async () => {
     await expect(releaseWorkLease("W-002", "worker-b", { cwd: kindDir, outcome: "skipped" })).rejects.toThrow(/not a work lease outcome/);
     const doc = await workLease({ verb: "release", id: "W-002", holder: "worker-b", cwd: root, outcome: "skipped" });

@@ -75,7 +75,7 @@ export { currentOpRun, withOpRunContext } from "./run-context";
 export type { OpRunContext, PassedGate } from "./run-context";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch, gateIsSealed } from "./gate";
 export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch, GateQuorumProgress, GateTally } from "./gate";
-export { tallyGateApprovals, approverOf } from "./gate";
+export { tallyGateApprovals, humanQuorumSince, approverOf } from "./gate";
 export {
   gateApprovalProblems, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES,
 } from "./gate-approval";

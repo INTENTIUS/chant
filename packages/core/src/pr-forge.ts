@@ -2,6 +2,8 @@
  * What the pull-request loop (#3183) asks of a forge: keep one note on the
  * pull request up to date, set a commit status per stage, list who approved
  * the pull request, and find the pull request that merged a commit.
+ * `reconcilePr`'s `comment` and `issue` finding modes post through the same
+ * clients (#3757), so a finding needs no `gh` on the runner.
  *
  * GitHub and Forgejo speak the same REST shapes for the first three, at
  * different base URLs (`$GITHUB_API_URL` is right on both, #2305); they part
@@ -44,13 +46,33 @@ export interface PrForge {
   runUrl?: string;
   /** How #3163 names `login` on this forge. */
   principalOf(login: string): string;
-  /** Update the note on `pr` whose body starts with `marker`, or add one. */
-  upsertNote(pr: number, marker: string, body: string): Promise<void>;
+  /**
+   * Update the note on `pr` whose body starts with `marker`, or add one.
+   * Resolves to the note's web URL when the forge's answer carries one
+   * (GitHub and Forgejo do; a GitLab note does not).
+   */
+  upsertNote(pr: number, marker: string, body: string): Promise<string | undefined>;
   setStatus(sha: string, status: ForgeStatus): Promise<void>;
   /** Logins whose standing review approves `pr`. */
   approvers(pr: number): Promise<string[]>;
   /** The merged pull request that produced `sha`, or null. */
   pullRequestFor(sha: string): Promise<number | null>;
+}
+
+/**
+ * A GitHub or Forgejo client, which also keeps one open repository issue: the
+ * `issue` finding mode of `reconcilePr` (#3757). GitLab's counterpart lives
+ * beside that activity, over GitLab's own issue search.
+ */
+export interface GithubShapedForge extends PrForge {
+  kind: "github" | "forgejo";
+  /**
+   * Update the OPEN issue whose body starts with `marker`, title and body
+   * both, or open one. Resolves to the issue's web URL. Never closes or
+   * reopens: an issue closed by hand is left closed, and the next finding
+   * opens a fresh one.
+   */
+  upsertIssue(marker: string, title: string, body: string): Promise<string | undefined>;
 }
 
 /** Thrown when a forge answers a call with an error status. */
@@ -112,6 +134,9 @@ function transport(base: string, headers: Record<string, string>, fetchImpl: For
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const loginOf = (v: unknown): string | undefined => (isObject(v) && isObject(v.user) && typeof v.user.login === "string" ? v.user.login : undefined);
+const htmlUrlOf = (v: unknown): string | undefined => (isObject(v) && typeof v.html_url === "string" ? v.html_url : undefined);
+const idOf = (v: unknown): number | string | undefined =>
+  isObject(v) && (typeof v.id === "number" || typeof v.id === "string") ? v.id : undefined;
 
 export interface GithubForgeOptions {
   /** `$GITHUB_API_URL`: `https://api.github.com`, `<host>/api/v3`, or Forgejo's `<host>/api/v1`. */
@@ -126,7 +151,7 @@ export interface GithubForgeOptions {
 }
 
 /** Which of the two GitHub-shaped forges a client is talking to. */
-function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): PrForge {
+function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): GithubShapedForge {
   const host = (opts.host ?? "github.com").toLowerCase();
   const api = transport(
     opts.apiBase,
@@ -146,12 +171,28 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): PrF
     principalOf: (login) => forgePrincipalOf(kind, host, login),
     async upsertNote(pr, marker, body) {
       const comments = await api.list(`${repo}/issues/${pr}/comments`, pageParams, pageSize);
-      const mine = comments.find((c) => isObject(c) && typeof c.body === "string" && c.body.startsWith(marker));
-      if (isObject(mine) && (typeof mine.id === "number" || typeof mine.id === "string")) {
-        await api.call("PATCH", `${repo}/issues/comments/${mine.id}`, { body });
-      } else {
-        await api.call("POST", `${repo}/issues/${pr}/comments`, { body });
-      }
+      const mine = idOf(comments.find((c) => isObject(c) && typeof c.body === "string" && c.body.startsWith(marker)));
+      return htmlUrlOf(
+        mine !== undefined
+          ? await api.call("PATCH", `${repo}/issues/comments/${mine}`, { body })
+          : await api.call("POST", `${repo}/issues/${pr}/comments`, { body }),
+      );
+    },
+    async upsertIssue(marker, title, body) {
+      // Paged in full rather than searched: GitHub's search index lags a
+      // write, so a run straight after another would miss the issue it just
+      // opened, and Forgejo has no `/search/issues` at all. Both list pull
+      // requests among issues; one of those is never ours.
+      const issues = await api.list(`${repo}/issues?state=open`, pageParams, pageSize);
+      const mine = issues.find(
+        (i) => isObject(i) && !isObject(i.pull_request) && typeof i.body === "string" && i.body.startsWith(marker),
+      );
+      const number = isObject(mine) && typeof mine.number === "number" ? mine.number : undefined;
+      return htmlUrlOf(
+        number !== undefined
+          ? await api.call("PATCH", `${repo}/issues/${number}`, { title, body })
+          : await api.call("POST", `${repo}/issues`, { title, body }),
+      );
     },
     async setStatus(sha, status) {
       await api.call("POST", `${repo}/statuses/${sha}`, {
@@ -197,12 +238,12 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): PrF
 }
 
 /** A GitHub client (github.com or GitHub Enterprise Server). */
-export function githubForge(opts: GithubForgeOptions): PrForge {
+export function githubForge(opts: GithubForgeOptions): GithubShapedForge {
   return githubShaped("github", opts);
 }
 
 /** A Forgejo (or Gitea) client. `host` is required: Forgejo has no default host. */
-export function forgejoForge(opts: GithubForgeOptions & { host: string }): PrForge {
+export function forgejoForge(opts: GithubForgeOptions & { host: string }): GithubShapedForge {
   return githubShaped("forgejo", opts);
 }
 
@@ -239,6 +280,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       } else {
         await api.call("POST", `${project}/merge_requests/${mr}/notes`, { body });
       }
+      return undefined;
     },
     async setStatus(sha, status) {
       await api.call("POST", `${project}/statuses/${sha}`, {

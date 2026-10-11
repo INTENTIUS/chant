@@ -50,6 +50,7 @@ import {
 import { dirname } from "node:path";
 import type { ReasonCode } from "../workspace/reason-codes";
 import { resolveMemberLedger } from "./member-ledger";
+import { WORK_ITEM_ID_PATTERN, isWorkItemId, workItemIdProblem } from "./work-item-id";
 
 /** The key prefix of a work lease under the operator lease's ref namespace. */
 export const WORK_LEASE_KEY_PREFIX = "work/";
@@ -60,8 +61,7 @@ export const LEASES_DIR = "_leases";
 /** How long a claim lasts unless renewed: chud's default, which its dispatcher renews at a third of. */
 export const DEFAULT_WORK_LEASE_TTL_MS = 10 * 60_000;
 
-/** A work item id a lease can be keyed by: one ref path segment and one file name. */
-export const WORK_ITEM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export { WORK_ITEM_ID_PATTERN, isWorkItemId, workItemIdProblem };
 
 /** How long a claim waits out another process's lock on the ref before calling it stale. */
 const LOCK_WAIT_MS = 2_000;
@@ -245,9 +245,8 @@ function toWorkLease(item: string, r: LeaseRecord): WorkLease {
 }
 
 function checkId(id: string): void {
-  if (!WORK_ITEM_ID_PATTERN.test(id) || id.includes("..")) {
-    throw new Error(`${JSON.stringify(id)} can't key a work lease: use letters, digits, ".", "_" and "-", starting with a letter or digit`);
-  }
+  const problem = workItemIdProblem(id);
+  if (problem) throw new Error(problem);
 }
 
 const REASONS: Record<string, WorkLeaseRefusal> = {

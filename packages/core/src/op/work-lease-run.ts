@@ -64,7 +64,8 @@ import {
   releaseWorkLease,
   renewWorkLease,
   workLeaseRef,
-  WORK_ITEM_ID_PATTERN,
+  isWorkItemId,
+  workItemIdProblem,
   type WorkLease,
 } from "../lifecycle/work-lease";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
@@ -216,8 +217,8 @@ export class RunWorkLease {
     if (value === undefined || value === null || value === "") return [];
     const list = Array.isArray(value) ? value : [value];
     return list.filter((v) => v !== undefined && v !== null && v !== "").map((v) => {
-      if (typeof v !== "string" || !WORK_ITEM_ID_PATTERN.test(v) || v.includes("..")) {
-        throw new Error(`Op "${this.config.name}": workLease.item resolved to ${JSON.stringify(v)}, which can't key a work lease`);
+      if (!isWorkItemId(v)) {
+        throw new Error(`Op "${this.config.name}": workLease.item resolved to ${JSON.stringify(v)}, which can't key a work lease${typeof v === "string" ? ` (${workItemIdProblem(v)})` : ""}`);
       }
       return v;
     });

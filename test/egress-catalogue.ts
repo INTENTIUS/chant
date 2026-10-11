@@ -594,7 +594,14 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     primitives: ["fetch"],
     phase: "apply",
     destination: "the forge that hosts the pull request: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or a GitLab instance's API",
-    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. Only those two CI commands reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). Only those CI paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+  },
+  {
+    file: "packages/core/src/op/activities/reconcile.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge a reconcile finding is posted to: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
+    why: "`reconcilePr`'s `comment` and `issue` finding modes keep one pull request comment, merge request note or issue (#2256, #2292, #3757): GitLab over its REST API here, GitHub and Forgejo through `pr-forge.ts`'s clients. Only an Op step in one of those modes reaches it.",
   },
   {
     file: "packages/core/src/op/gate-resume.ts",
@@ -698,10 +705,17 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
   // ── emulator ───────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/op/emulator-lifecycle.ts",
+    primitives: ["fetch", "node:net"],
+    phase: "emulator",
+    destination: "the just-started emulator container on localhost, and 127.0.0.1 ports",
+    why: "The shared boot loop polls the container's health endpoint until it answers, and `hostPortInUse` opens a connect to 127.0.0.1 to see whether a host port is taken before a container is bound to it; loopback only, and the image pull it depends on is the container runtime's.",
+  },
+  {
+    file: "lexicons/sql/src/op/activities/clickhouse-emulator.ts",
     primitives: ["fetch"],
     phase: "emulator",
-    destination: "the just-started emulator container on localhost",
-    why: "The shared boot loop polls the container's health endpoint until it answers; loopback only, and the image pull it depends on is the container runtime's.",
+    destination: "the ClickHouse emulator's HTTP endpoint, as `chant emulator status` prints it",
+    why: "The identity probe asks the server for its UUID and version (#3673) so a server of another origin on the same port is told apart from the emulator; the endpoint is the container `chant emulator up` started, on localhost.",
   },
 
   // ── include ────────────────────────────────────────────────────────────────

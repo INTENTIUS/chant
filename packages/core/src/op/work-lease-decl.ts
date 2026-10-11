@@ -7,10 +7,11 @@
 
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
+import { WORK_ITEM_ID_PATTERN, workItemIdProblem } from "../lifecycle/work-item-id";
 import { WORK_LEASE_STEP_ID, type OpConfig, type PhaseDefinition } from "./types";
 
 /** A work item id a lease can be keyed by: the same pattern as `WORK_ITEM_ID_PATTERN` in `../lifecycle/work-lease.ts`. */
-export const WORK_LEASE_ITEM_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const WORK_LEASE_ITEM_PATTERN = WORK_ITEM_ID_PATTERN;
 
 /** The ids of the activity steps in an Op's main phases, in order. */
 function mainStepIds(phases: readonly PhaseDefinition[]): string[] {
@@ -42,9 +43,8 @@ export function workLeaseProblems(config: Pick<OpConfig, "name" | "phases" | "wo
     problems.push(`Op "${name}": step id "${WORK_LEASE_STEP_ID}" is reserved for the run's work lease; rename the step`);
   }
   const checkId = (id: unknown) => {
-    if (typeof id !== "string" || !WORK_LEASE_ITEM_PATTERN.test(id) || id.includes("..")) {
-      problems.push(`Op "${name}": workLease.item ${JSON.stringify(id)} can't key a work lease (letters, digits, ".", "_" and "-")`);
-    }
+    const problem = workItemIdProblem(id);
+    if (problem) problems.push(`Op "${name}": workLease.item ${problem}`);
   };
   const item = spec.item;
   if (isStepOutputRef(item)) {
