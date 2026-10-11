@@ -26,6 +26,7 @@ Post-synth checks validate the serialized output after the build pipeline comple
 
 | ID | Description |
 |----|-------------|
+| `SQL101` | Two exports declare the same object |
 | `SQLCH101` | A ClickHouse object names an engine the pinned server does not have |
 | `SQLCH102` | A PRIMARY KEY is not a prefix of ORDER BY |
 | `SQLCH103` | An engine's version, sign or is_deleted column has an unsupported type |
@@ -46,6 +47,13 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `SQLCH118` | A MergeTree setting is not one the pinned server has |
 | `SQLCH119` | An object uses a deprecated or experimental engine |
 | `SQLCH120` | A MergeTree engine uses the deprecated positional arguments |
+| `SQLCH121` | A column type names a family the pinned server does not have |
+| `SQLCH122` | A column type's parameters do not fit its family |
+| `SQLCH123` | A Nullable wraps a type ClickHouse does not allow inside Nullable |
+| `SQLCH124` | A table declares a column twice |
+| `SQLCH125` | A codec parameter is outside what the codec takes |
+| `SQLCH126` | A GRANT column list names a column the table does not declare |
+| `SQLCH127` | An expression calls a function the pinned server does not have |
 | `SQLPG101` | A table declares no primary key |
 | `SQLPG102` | A foreign key's referencing columns have no index |
 | `SQLPG103` | A serial column where an identity column is preferred |

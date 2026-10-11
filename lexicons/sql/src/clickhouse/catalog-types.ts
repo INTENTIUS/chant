@@ -56,6 +56,15 @@ export interface TypeFamilySpec {
   caseInsensitive: boolean;
 }
 
+/** A function the server has: \`system.functions\`. */
+export interface FunctionSpec {
+  aggregate: boolean;
+  /** The server resolves the name in any case. */
+  caseInsensitive: boolean;
+  /** The function this name is an alias of. */
+  aliasOf?: string;
+}
+
 export interface CodecSpec {
   compression: boolean;
   generic: boolean;

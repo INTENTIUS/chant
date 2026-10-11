@@ -169,4 +169,4 @@ References become dependency edges and, for a view, column lineage. See [Referen
 
 ## Checks
 
-Lint parses every template as you type: SQLCH001 reports a statement that does not parse at the token, SQLCH002 a `Nullable` column in a sort or primary key, and SQLCH003 a column written without `.columns`. The build then runs the post-synth checks, SQLCH101 to SQLCH120, against what the pinned server accepts. [Lint Rules and Checks](../lint-rules/) lists each one.
+Lint parses every template as you type: SQLCH001 reports a statement that does not parse at the token, SQLCH002 a `Nullable` column in a sort or primary key, and SQLCH003 a column written without `.columns`. The build then runs the post-synth checks, SQL101 and SQLCH101 to SQLCH127, against what the pinned server accepts. For each column that means its type's family, parameters and `Nullable` nesting, its codec's name and parameters, and the functions its `DEFAULT`, `MATERIALIZED`, `ALIAS`, `EPHEMERAL` and TTL expressions call; a column declared twice fails too. Column names inside those expressions are left to the server. [Lint Rules and Checks](../lint-rules/) lists each one.

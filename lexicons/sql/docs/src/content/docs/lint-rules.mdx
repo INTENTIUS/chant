@@ -8,18 +8,21 @@ diataxis: reference
     Edit lexicons/sql/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
 
 
-The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialect would be `SQL` plus three digits; there are none yet. ClickHouse rules are `SQLCH` plus three digits and Postgres rules `SQLPG` plus three digits, each grouped by the hundreds digit:
+The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialect are `SQL` plus three digits. ClickHouse rules are `SQLCH` plus three digits and Postgres rules `SQLPG` plus three digits, each grouped by the hundreds digit:
 
 | Ids | What they are | Where they run |
 |---|---|---|
+| SQL101 | a post-synth check over the build output, both dialects | `chant build` and `chant lint` |
 | SQLCH001 to SQLCH003 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
-| SQLCH101 to SQLCH120 | post-synth checks over the build output | `chant build` and `chant lint` |
+| SQLCH101 to SQLCH127 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
 | SQLPG001 to SQLPG004 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLPG101 to SQLPG126 | Postgres post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLPG200 to SQLPG270 | the Postgres change classifier's rules | `chant sql diff`, `chant sql plan`, `postgresApply`; see [Postgres Locks and the Change Classifier](../postgres-change-classifier/) |
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
+
+What the checks hold a declaration to: every name the server keeps a catalog of (an engine, a type family, a codec, a function, a setting) is checked against the pinned catalog, wherever it appears. A column name is checked only where it stands bare in a list (a sort key, an engine argument, a grant's column list, a key or index column list), against the columns the declared table has. Column names inside an expression (`PARTITION BY toYYYYMM(att)`, a TTL, a `CHECK`, a generated column, a projection, a view's plain-text select list) and a plain-text name of an object the project does not declare are left to the server.
 
 ## Lint rules
 
@@ -45,10 +48,22 @@ These read the pinned server's catalog, so a pin move can change their verdicts 
 |---|---|---|---|
 | SQLCH101 | error | A table, materialized view or database names an engine the pinned server does not have (`system.table_engines`, `system.database_engines`): a misspelling, or an engine a release removed | Use an engine the server lists |
 | SQLCH114 | error | A column `CODEC` names a codec the pinned server does not have (`system.codecs`) | Use a codec the server lists |
+| SQLCH125 | error | A codec's parameters do not fit it: more than it takes (`LZ4(1)`), a level outside its range (`ZSTD(99)`, `LZ4HC(13)`), or a byte width other than 1, 2, 4 or 8 (`Delta(3)`). The ranges are the lexicon's codec overlay; the experimental codecs whose parameters are undocumented (`ALP`, `SZ3`, `ZXC`, `Quantized`) are not checked | Use a parameter in range, or drop it for the default |
 | SQLCH117 | warning | A MergeTree `SETTINGS` entry the pinned server marks obsolete. The server accepts it and ignores it, so the table does not behave as the setting suggests | Remove it |
 | SQLCH118 | error | A MergeTree `SETTINGS` entry the pinned server does not have, usually a typo or a setting a later release added. The `CREATE` fails with "Unknown setting" | Fix the name, or drop the setting |
 | SQLCH119 | warning | An engine the pinned catalog describes as deprecated or experimental, such as the `Ordinary` database engine | Move to the engine that replaced it (`Atomic` for `Ordinary`) |
 | SQLCH120 | warning | A MergeTree engine written with the legacy positional arguments, `MergeTree(date, (key), 8192)` | Write a bare `MergeTree` with `ORDER BY`, `PARTITION BY` and `SETTINGS` |
+
+### Column types and functions
+
+These read the pinned catalog too: the type families and their aliases (`system.data_type_families`), the functions and aggregate combinators (`system.functions`, `system.aggregate_function_combinators`), and the lexicon's overlay of type parameters, which no system table holds.
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQLCH121 | error | A column type names a family the pinned server does not have: `UInt46`, `Nullabel(String)`, or `uint64`, since a family name is case-sensitive unless the catalog marks it case-insensitive (`bigint`, `datetime` and `text` are). Aliases count (`BIGINT UNSIGNED`). Checked at every depth: inside `Array`, `Map`, `Tuple`, `Nested`, `Nullable`, `LowCardinality`, `Variant`, and the argument types of `AggregateFunction` and `SimpleAggregateFunction`. Table, view and dictionary columns are all read | Use a family the server lists, in its case |
+| SQLCH122 | error | A type's parameters do not fit its family: a parameter on a family that takes none (`UUID(4)`), a required one missing (`FixedString`, `Enum8`), too many (`Decimal(10, 2, 1)`), or a number outside its range (`Decimal(100, 2)`, `DateTime64(12)`). The server takes and ignores a MySQL display width on an integer (`INT(11)`), a precision on a float and a length on a string (`VARCHAR(255)`), so those pass. `JSON` and `Dynamic` settings are left to the server | Give the family the parameters it takes |
+| SQLCH123 | error | `Nullable` around `Array`, `Map`, `Nested`, `LowCardinality`, `Variant` or another `Nullable`, which the server refuses. `Nullable(Tuple(...))` is not reported: the server takes it when its profile sets `enable_nullable_tuple_type` | Move `Nullable` inside: `Array(Nullable(T))`, `LowCardinality(Nullable(T))` |
+| SQLCH127 | error | A function the pinned server does not have, called in a column's `DEFAULT`, `MATERIALIZED`, `ALIAS`, `EPHEMERAL` or TTL expression, in `ORDER BY`, `PRIMARY KEY`, `PARTITION BY`, `SAMPLE BY` or the table TTL, or in a skip index expression: `DEFAULT noww()`, `PARTITION BY toYYYYMMM(at)`. A call is a name directly followed by `(`, outside string literals and quoted names. A name counts when the catalog has it (in its case, aliases included), when it is an aggregate function with combinator suffixes (`countIf`, `sumState`, `uniqMerge`), or when the project declares it with `func`. Keywords that take parentheses (`IN`, `EXISTS`, `ARRAY`, `INTERVAL`) and the forms the server's parser reads itself (`EXTRACT(... FROM ...)`, `TRIM(BOTH ...)`, `SUBSTRING`, `POSITION`, `DATE_ADD`, `DATE_DIFF`) are not calls | Fix the name, or declare the function with `func` |
 
 ### Keys and columns
 
@@ -63,6 +78,8 @@ These read the pinned server's catalog, so a pin move can change their verdicts 
 | SQLCH111 | warning | A `String` column that a `CHECK` constraint limits to at most 100 values (`col IN (...)` or `col = 'a' OR col = 'b'`). `LowCardinality` dictionary-encodes such a column | Use `LowCardinality(String)` |
 | SQLCH112 | warning | A `PARTITION BY` finer than a day: a bare DateTime column, or a sub-day truncation such as `toStartOfHour`. Every partition is a separate set of parts, and the server stops inserts when a table has too many | Partition by day or coarser, `toYYYYMM(ts)` usually |
 | SQLCH113 | error | A MergeTree table with neither `ORDER BY` nor `PRIMARY KEY`. The server refuses the `CREATE` | Add a sort key, or `ORDER BY tuple()` for none |
+| SQLCH124 | error | A table, view or dictionary declares a column twice: `(id UInt64, id UInt32)`. The server refuses the `CREATE` | Remove or rename one |
+| SQLCH126 | error | A `GRANT` column list names a column the interpolated table does not declare: `GRANT SELECT(kindd) ON ${events}`. A target written as a plain name, and a view that takes its columns from its `SELECT`, are left to the server | Fix the column name |
 | SQLCH115 | warning | A column named like a secret or personal data (`password`, `token`, `api_key`, `ssn`, `credit_card`, `iban` and similar) with no `COMMENT`, no TTL and no encryption codec. The table's own TTL counts for the whole row | Say what the column holds in a `COMMENT`, bound how long it is kept with a TTL, or encrypt it with `AES_128_GCM_SIV` or `AES_256_GCM_SIV` |
 
 ### Databases and views
@@ -73,6 +90,12 @@ These read the pinned server's catalog, so a pin move can change their verdicts 
 | SQLCH109 | warning | A materialized view that selects `*`. Its output columns become whatever the source has today, so adding a column to the source changes what the view writes | List the columns |
 | SQLCH110 | warning | A materialized view writes an output column its `TO` target does not declare. ClickHouse matches the columns by name, so that column is not stored. Judged against a target the same build declares, and only when the select list names its columns | Alias the select item to a target column, or add the column to the target |
 | SQLCH116 | warning | A view declared `SQL SECURITY DEFINER` without a `DEFINER`. Its access then depends on whoever ran the `CREATE`, so the same declaration grants different access in each environment | Name the `DEFINER` |
+
+### Both dialects
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQL101 | error | Two exports declare the same object: the same kind under the same qualified name, `shop.events` or `app.orders` twice. The build writes both `CREATE` statements, so the second fails on the server or, under `OR REPLACE`, replaces the first. The message names both exports. Grants, row policies, triggers and policies (named per table) and Postgres functions and procedures (which overload) are not compared | Keep one declaration and import it where the other was used |
 
 ### Postgres
 

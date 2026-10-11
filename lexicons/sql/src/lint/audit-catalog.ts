@@ -66,6 +66,14 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "Use an engine from the pinned server's system.table_engines (or system.database_engines for a database).",
     { category: "correctness" },
   ),
+  SQL101: auditRule(
+    "SQL101",
+    "merge-worthy",
+    "guidance",
+    "Two exports declare the same object",
+    "Keep one declaration of the object and import it where the other was used.",
+    { category: "correctness" },
+  ),
   ...sqlPostSynthAuditEntries,
   ...postgresPostSynthAuditEntries,
 };

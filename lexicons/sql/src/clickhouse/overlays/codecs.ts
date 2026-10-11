@@ -29,6 +29,7 @@ const WIDTH: ArgumentOverlay & { name: string } = {
   name: "bytes",
   kind: "number",
   optional: true,
+  values: ["1", "2", "4", "8"],
   note: "1, 2, 4 or 8; the column type's width when omitted.",
 };
 
@@ -40,7 +41,10 @@ export const CODEC_OVERLAY: Record<string, CodecOverlay> = {
     role: "compression",
   },
   ZSTD: {
-    parameters: [{ name: "level", kind: "number", optional: true, range: [1, 22], note: "1 when omitted." }],
+    parameters: [
+      { name: "level", kind: "number", optional: true, range: [1, 22], note: "1 when omitted." },
+      { name: "window_log", kind: "number", optional: true, range: [10, 31], note: "Turns on long-range matching with this window log." },
+    ],
     role: "compression",
   },
   Delta: { parameters: [WIDTH], role: "preprocessing" },
@@ -54,7 +58,7 @@ export const CODEC_OVERLAY: Record<string, CodecOverlay> = {
   FPC: {
     parameters: [
       { name: "level", kind: "number", optional: true, range: [1, 28], note: "12 when omitted." },
-      { name: "float_size", kind: "number", optional: true, note: "4 or 8; the column type's width when omitted." },
+      { name: "float_size", kind: "number", optional: true, values: ["4", "8"], note: "4 or 8; the column type's width when omitted." },
     ],
     role: "compression",
   },
