@@ -386,6 +386,16 @@ A gate passes on `true` by default. A choice or score point names the answers th
 
 An answer sent over MCP or ACP does not pass the gate, as an approval sent there does not ([#3817](https://github.com/INTENTIUS/chant/issues/3817)). It is recorded as an agent's, so nobody it names counts toward the point's quorum and the gate keeps waiting. A gate that is `neverOverMcp` refuses such an answer outright with `answer-never-over-mcp`. The person answers at a shell or through hud.
 
+A tool built into one file decides such a gate with `@intentius/chant/point-decision` ([#3816](https://github.com/INTENTIUS/chant/issues/3816)). It holds the decision chant's own runs use and bundles to about 11 KB with no workspace, CLI, TypeScript, zod or git ledger code. The tool injects how the point is asked and how the gate ledger is read and written:
+
+| Export | What it does |
+|---|---|
+| `evaluatePointGate(port, asker, { op, gate, point, planDigest?, env?, timeout?, description?, runId?, now? })` | asks the point, then records the pending fact that cites an open question or the resolution that cites a passing answer, once per answer and plan, and returns the `PointGateCheck` |
+| `chantGatePointAsker({ command, cwd? })` | an asker that runs the chant bin: `chant workspace points --json` for the point's inputs, then `points ask --subject gate:<op>/<gate>`, with `--store` from `point.store` or the ledger in a CI job. chant calls no model, so a model decider is not asked here |
+| `gatePointInputs`, `gateSubject`, `defaultGatePointStore`, `gatePointProblems` | the gate's `gate.*` inputs, the subject its answer record names, where its question goes, and what is wrong with a `point` |
+
+The port is `{ read(op), appendPending(input), appendResolution(input) }`, as `PointGateLedgerPort` types it, and the asker is a `GatePointAsker`. Inside chant, `workspaceGatePointAsker` and `gitGateLedgerPort` from `@intentius/chant/op` are the workspace and `chant/lifecycle` ones.
+
 ### Overriding a denied plan
 
 A policy can deny a plan that a person still decides to apply, such as a public bucket for a docs site or a dropped column nobody reads. The override gate records that decision ([#3760](https://github.com/INTENTIUS/chant/issues/3760)). The policy engine stays in the tool that runs it (OPA, conftest, a product's own rules). It reports that the plan is denied and by which rules, and the gate records and decides the override.

@@ -161,6 +161,8 @@ The retracted answer stays in the record's `retractions` with who gave it, its n
 
 An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The [`decide` activity](#the-decide-activity) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.
 
+A gate can ask a point too, and pass on its answer ([A gate that asks a decision point](/chant/guide/ops/#a-gate-that-asks-a-decision-point)). A tool built into one file decides such a gate with `@intentius/chant/point-decision`, which asks through the chant bin and needs none of the workspace code ([#3816](https://github.com/INTENTIUS/chant/issues/3816)).
+
 ```ts
 import { askPointInRun, type BrokeredModelAsk } from "@intentius/chant/op";
 

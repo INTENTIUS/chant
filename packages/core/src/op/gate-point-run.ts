@@ -25,47 +25,20 @@
  * and, when the point declares them, in its `gate.*` inputs.
  */
 
-import { isPendingGateExpired, latestPendingGate, DEFAULT_GATE_EXPIRY, resolveApprovalUrl, type GateAnswerRef, type GateResolutionRecord, type PendingGateRecord } from "../lifecycle/gate-ledger";
-import { samePlanDigest } from "../lifecycle/plan-digest";
-import { parseDuration } from "./duration";
-import type { GateLedgerPort } from "./gate";
-import { DEFAULT_GATE_POINT_PASS, defaultGatePointStore, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts, type GatePointStore } from "./gate-point";
-import { isPointWait, type WaitingPoint } from "./steward-points";
+import { defaultGatePointStore, gatePointInputs } from "./gate-point";
+import { isPointWait } from "./steward-points";
+import type { GatePointAsker } from "../point-decision";
 
-/** The question a gate's point was asked, as the gate reads it. */
-export interface GatePointQuestion {
-  /** The answer record's id: what `points answer` takes. */
-  id: string;
-  point: string;
-  /** The record, from the repository root. */
-  path: string;
-  state: "escalated" | "proposed" | "answered";
-  /** The answer, or null while the question is open. */
-  answer: string | boolean | null;
-  /** The decider that gave the recorded state: table, model or quorum. */
-  decider: string;
-  answeredBy: string[];
-  subject: string | null;
-  /** The steward whose turn asked it, or null. */
-  steward: string | null;
-}
-
-/** What a gate asks its point with. */
-export interface GatePointRequest {
-  point: string;
-  /** The authored inputs, references resolved. */
-  inputs: Record<string, unknown>;
-  facts: GatePointFacts;
-  /** What the answer record's `constrains` names: {@link gateSubject}. */
-  subject: string;
-  /** Where the question goes, as the gate's `point.store` declares it (#3815). Undefined leaves it to the asker. */
-  store?: GatePointStore;
-}
-
-/** How a gate asks its point. A test passes a stub; {@link workspaceGatePointAsker} is the real one. */
-export interface GatePointAsker {
-  ask(request: GatePointRequest): Promise<GatePointQuestion>;
-}
+// The decision itself bundles without the workspace (#3816): `@intentius/chant/point-decision`.
+export {
+  evaluatePointGate,
+  type GatePointAsker,
+  type GatePointQuestion,
+  type GatePointRequest,
+  type PointGateCheck,
+  type PointGateInput,
+  type PointGateLedgerPort,
+} from "../point-decision";
 
 /**
  * The real asker: the workspace that holds `cwd`. It reads the point's
@@ -100,113 +73,4 @@ export function workspaceGatePointAsker(cwd: string): GatePointAsker {
       }
     },
   };
-}
-
-/** What the run needs to decide a gate that asks a point. */
-export interface PointGateInput {
-  op: string;
-  gate: string;
-  point: GatePoint;
-  /** The authored inputs, references resolved. */
-  inputs?: Record<string, unknown>;
-  description?: string;
-  timeout?: string;
-  runId?: string;
-  planDigest?: string;
-  /** The environment the run was started for: the `gate.env` input. Op gate facts on the ledger record none. */
-  env?: string;
-  now?: string;
-}
-
-/** What reaching a gate that asks a point decided. */
-export type PointGateCheck =
-  | {
-      satisfied: true;
-      /** The resolution that cites the answer: this run's, or one an earlier run wrote for the same answer and plan. */
-      resolution: GateResolutionRecord;
-      answer: GateAnswerRef;
-      /** Whether this run appended the resolution. */
-      recorded: boolean;
-      pushed?: boolean;
-      pushWarning?: string;
-    }
-  | {
-      satisfied: false;
-      /** The question is answered, with an answer the gate does not pass on. */
-      refused: string;
-      answer: GateAnswerRef;
-    }
-  | {
-      satisfied: false;
-      /** The open question the run waits on. */
-      waiting: WaitingPoint;
-      /** The pending fact that cites it. */
-      pending: PendingGateRecord;
-      recorded: boolean;
-      pushed?: boolean;
-      pushWarning?: string;
-    };
-
-/** Who a resolution written for an answer is by: the people who answered, or the decider that did. */
-function resolvedByOf(q: GatePointQuestion): string {
-  return q.answeredBy.length > 0 ? q.answeredBy.join(", ") : q.decider;
-}
-
-/** Decide a gate that asks a point: ask it, then record the pending fact or the resolution that cites the answer. */
-export async function evaluatePointGate(port: GateLedgerPort, asker: GatePointAsker, input: PointGateInput): Promise<PointGateCheck> {
-  const now = input.now ?? new Date().toISOString();
-  const facts: GatePointFacts = { component: input.op, name: input.gate, env: input.env ?? null, planDigest: input.planDigest ?? null };
-  const q = await asker.ask({ point: input.point.name, inputs: input.inputs ?? {}, facts, subject: gateSubject(input.op, input.gate, input.env), ...(input.point.store ? { store: input.point.store } : {}) });
-  const ref: GateAnswerRef = { point: q.point, id: q.id, path: q.path };
-
-  if (q.state === "answered" && q.answer !== null) {
-    const answer: GateAnswerRef = { ...ref, answer: q.answer, decider: q.decider, ...(q.answeredBy.length > 0 ? { answeredBy: q.answeredBy } : {}) };
-    const pass = input.point.pass ?? DEFAULT_GATE_POINT_PASS;
-    if (!pass.includes(q.answer)) {
-      return {
-        satisfied: false,
-        answer,
-        refused:
-          `decision point ${q.point} answered ${JSON.stringify(q.answer)} (${q.id}, by ${resolvedByOf(q)}), and gate "${input.gate}" passes only on ${pass.map((a) => JSON.stringify(a)).join(" or ")}. ` +
-          `To ask again, take the answer back: chant workspace points retract ${q.id} --by <name>`,
-      };
-    }
-    const ledger = await port.read(input.op);
-    const standing = ledger.resolutions.find(
-      (r) => r.gate === input.gate && r.answer?.id === q.id && r.environment === undefined && samePlanDigest(r.planDigest, input.planDigest),
-    );
-    if (standing) return { satisfied: true, resolution: standing, answer, recorded: false };
-    if (!port.appendResolution) throw new Error(`gate "${input.gate}" asks decision point ${q.point}, and this gate ledger cannot record the resolution that cites its answer`);
-    const { record, pushed, pushWarning } = await port.appendResolution({
-      op: input.op,
-      gate: input.gate,
-      resolvedBy: resolvedByOf(q),
-      timestamp: now,
-      note: `answered through decision point ${q.point} (${q.id})`,
-      ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
-      approver: { kind: q.decider === "quorum" || q.answeredBy.length > 0 ? "human" : "agent" },
-      answer,
-    });
-    return { satisfied: true, resolution: record, answer, recorded: true, pushed, ...(pushWarning ? { pushWarning } : {}) };
-  }
-
-  const waiting: WaitingPoint = { id: q.id, point: q.point, state: q.state === "proposed" ? "proposed" : "escalated", path: q.path, subject: q.subject, steward: q.steward };
-  const ledger = await port.read(input.op);
-  const standing = latestPendingGate(ledger.pending.filter((p) => p.environment === undefined), input.gate);
-  if (standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) && standing.answer?.id === q.id) {
-    return { satisfied: false, waiting, pending: standing, recorded: false };
-  }
-  const url = resolveApprovalUrl();
-  const { record, pushed, pushWarning } = await port.appendPending({
-    op: input.op,
-    gate: input.gate,
-    timestamp: now,
-    expiresAt: new Date(new Date(now).getTime() + parseDuration(input.timeout ?? DEFAULT_GATE_EXPIRY)).toISOString(),
-    ...(input.description ? { description: input.description } : {}),
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(url ? { url } : {}),
-    ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
-    answer: ref,
-  });
-  return { satisfied: false, waiting, pending: record, recorded: true, pushed, ...(pushWarning ? { pushWarning } : {}) };
 }
