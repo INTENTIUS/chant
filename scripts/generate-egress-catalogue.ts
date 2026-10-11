@@ -5,7 +5,7 @@
  *
  * Run this after adding, removing or re-describing a row in
  * `EGRESS_CATALOGUE`, then commit the regenerated page alongside the change.
- * `test/no-egress.test.ts` asserts the committed block equals what this
+ * `test/no-egress.e2e.test.ts` asserts the committed block equals what this
  * renders, so a forgotten run fails CI rather than shipping a page that
  * disagrees with the tree.
  *

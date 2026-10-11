@@ -1,10 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { describeWorkspaceReaderConformance, readerCallProblems, sameReadDocument } from "./workspace-reader-conformance";
-import { minimalReader } from "./minimal-reader";
+import { readerCallProblems, sameReadDocument } from "./workspace-reader-conformance";
 
-describeWorkspaceReaderConformance({ name: "the minimal reader", reader: minimalReader });
-
-// The same reader over chant serve mcp (#2707) is in workspace-reader-conformance.e2e.test.ts (#3019).
+// The conformance suite itself runs the CLI for every case, so it is in the e2e project: the
+// minimal reader over the command line in workspace-reader-conformance-cli.e2e.test.ts, and over
+// chant serve mcp (#2707) in workspace-reader-conformance.e2e.test.ts (#3019).
 
 describe("readerCallProblems", () => {
   const kind = ["--kind", "decisions/decision.kind.mjs"];

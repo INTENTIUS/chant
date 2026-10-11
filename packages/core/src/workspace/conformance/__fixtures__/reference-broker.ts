@@ -8,7 +8,7 @@
  *
  * It is a test fixture and the package does not export it: chant never runs
  * a broker or listens on a port (ws-052, ws-086), so it lives under
- * `__fixtures__`, which test/no-listener.test.ts leaves out like a test file.
+ * `__fixtures__`, which test/no-listener.e2e.test.ts leaves out like a test file.
  * `startReferenceBroker(env)` has the shape of the suite's `start`.
  */
 

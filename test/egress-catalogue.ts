@@ -6,7 +6,7 @@
  * does chant talk to" answers the question once and is wrong after the next
  * PR that adds a `fetch`. So the catalogue is not prose: it is
  * {@link EGRESS_CATALOGUE}, checked from three sides by
- * `test/no-egress.test.ts`.
+ * `test/no-egress.e2e.test.ts`.
  *
  *  1. **Closure.** {@link scanEgressSites} walks `packages/`, `lexicons/`,
  *     `scripts/` and `ops/` for modules that name a network primitive. Every
@@ -124,7 +124,7 @@ export interface OfflinePhase {
   /** What it does without a network. */
   note: string;
   /**
-   * Whether `test/no-egress.test.ts` drives this command over the corpus with
+   * Whether `test/no-egress.e2e.test.ts` drives this command over the corpus with
    * the network primitives replaced by throwing stubs. A `false` here is a
    * claim from the static scan alone and says so in the generated page.
    */
@@ -133,7 +133,7 @@ export interface OfflinePhase {
 
 /**
  * The offline half. Every entry with `guarded: true` is executed by
- * `test/no-egress.test.ts` against a real corpus project, with
+ * `test/no-egress.e2e.test.ts` against a real corpus project, with
  * `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing
  * stubs — so the claim is tested, not asserted.
  */
@@ -206,7 +206,7 @@ export interface ShellOut {
  * rather than covered — the acceptance criterion in #1984 is that the test
  * names them rather than implying total coverage.
  *
- * `test/no-egress.test.ts` records every spawn the guarded phases make and
+ * `test/no-egress.e2e.test.ts` records every spawn the guarded phases make and
  * fails on a binary that is not listed here, so this list is closed the same
  * way the catalogue is.
  */
@@ -265,7 +265,7 @@ export interface NetworkShellOut {
 /**
  * Child processes that a command spawns in order to reach a network. The scan
  * below finds in-process primitives only, so these are listed by hand, and
- * `test/no-egress.test.ts` checks that each module still spawns what its
+ * `test/no-egress.e2e.test.ts` checks that each module still spawns what its
  * entry says.
  */
 export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
@@ -396,7 +396,7 @@ export interface EgressSite {
  * network primitive directly.
  *
  * Adding a row is the deliberate, reviewed act #1984 asks for. Adding a fetch
- * without a row fails `test/no-egress.test.ts`.
+ * without a row fails `test/no-egress.e2e.test.ts`.
  */
 export const EGRESS_CATALOGUE: readonly EgressSite[] = [
   // ── apply ──────────────────────────────────────────────────────────────────
@@ -1067,7 +1067,7 @@ export function renderEgressCatalogueBlock(): string {
 
   lines.push("## Phases with no egress", "");
   lines.push(
-    "A guarded row is executed by `test/no-egress.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.",
+    "A guarded row is executed by `test/no-egress.e2e.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.",
     "",
   );
   lines.push("| Command | Behaviour | Guarded by test |", "|---|---|---|");

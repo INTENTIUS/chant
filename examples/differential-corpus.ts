@@ -442,7 +442,7 @@ export function outputsEqual(a: NormalizedOutputs, b: NormalizedOutputs): boolea
  *
  * One definition rather than a copy per suite, for the same reason
  * {@link classifyFoldMode} is: two hand-written copies of "which entries may
- * error" — `k8s-client-boundary.test.ts` and `test/no-egress.test.ts` — would
+ * error" — `k8s-client-boundary.test.ts` and `test/no-egress.e2e.test.ts` — would
  * drift, and the drift would show up as a suite quietly not checking
  * something. Named and never counted, so a NEW erroring entry is a regression
  * both of them fail on.

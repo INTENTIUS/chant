@@ -30,7 +30,7 @@
  * policy tool (1,888 lines, 222 cited URLs, attached to that issue as
  * comments). The tools and documents below are what the survey found worth
  * crediting from across that research. #2108 added none of them to
- * `PRIOR_ART`: `packages/core/src/audit/catalog.test.ts`'s "every registered
+ * `PRIOR_ART`: `packages/core/src/audit/catalog.e2e.test.ts`'s "every registered
  * tool is credited" test fails on an entry no shipped rule cites yet, and
  * neither TF001 nor TF101 cites anything. #2109 (TF002-TF005) is the first to
  * draw from this list: `tflint-ruleset-terraform`, `terraform-sentinel-policies`,

@@ -19,7 +19,7 @@ The network chant needs at apply time is the substrate itself — the AWS, Azure
 So the story stays an integration pattern, documented here, with the offline half guaranteed by test rather than by claim.
 
 <Aside type="note" title="What is guaranteed and what is enumerated">
-The offline phases are guaranteed: `test/no-egress.test.ts` runs them over every project in the example corpus with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs, and fails on any call. That one socket patch covers the whole in-process TCP surface — `fetch`, `http`, `https`, `net`, `tls` — regardless of how a module imported it.
+The offline phases are guaranteed: `test/no-egress.e2e.test.ts` runs them over every project in the example corpus with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs, and fails on any call. That one socket patch covers the whole in-process TCP surface — `fetch`, `http`, `https`, `net`, `tls` — regardless of how a module imported it.
 
 A child process is not in that process. Rather than imply coverage it does not have, the guard records every spawn and fails on a binary that is not enumerated in the second table below. What a child does of its own — what `git fetch` talks to, what a container runtime pulls — is outside the guard and stated as such.
 
@@ -30,7 +30,7 @@ That enumeration is not decoration. Its first finding was a `helm template` on t
 
 ## Phases with no egress
 
-A guarded row is executed by `test/no-egress.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.
+A guarded row is executed by `test/no-egress.e2e.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.
 
 | Command | Behaviour | Guarded by test |
 |---|---|---|
@@ -233,7 +233,7 @@ Container images that chant itself produces travel in the [build archive](/chant
 
 ## How this page stays true
 
-`test/egress-catalogue.ts` holds the catalogue as data. `test/no-egress.test.ts` checks it from three sides on every run:
+`test/egress-catalogue.ts` holds the catalogue as data. `test/no-egress.e2e.test.ts` checks it from three sides on every run:
 
 - **Closure.** A scan of `packages/`, `lexicons/`, `scripts/` and `ops/` finds every module naming a network primitive. It must equal the catalogue exactly — so an added `fetch` fails, and so does a stale row for a call that no longer exists.
 - **Accuracy.** Each row declares which primitives it reaches for, and the scan must agree.

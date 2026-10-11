@@ -3,7 +3,7 @@
  * line: standard input, exit codes and the refusal document, from the CLI a
  * user runs. Each test spawns the CLI several times, which put them near 20s
  * on CI, over the unit shards' per-test budget, so they run in the test-e2e
- * job (#2817). The commands' own behaviour is covered in records-write.test.ts.
+ * job (#2817). The commands' own behaviour is covered in records-write-commands.e2e.test.ts.
  */
 
 import { execFileSync } from "node:child_process";

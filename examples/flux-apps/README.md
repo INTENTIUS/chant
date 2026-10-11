@@ -35,7 +35,7 @@ src/
 ```
 
 **12 resources** in the combined build: 2 platform + 2 api + 4 web + the
-`GitRepository` and 3 `Kustomization`s. (`examples/examples.test.ts` asserts
+`GitRepository` and 3 `Kustomization`s. (`examples/examples.e2e.test.ts` asserts
 this count — keep them in lockstep.)
 
 Four build outputs:

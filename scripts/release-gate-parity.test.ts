@@ -37,8 +37,6 @@ function stepsRunning(job: Job, pattern: RegExp): Step[] {
   return (job.steps ?? []).filter((s) => s.run && pattern.test(s.run));
 }
 
-const AWS_PREPACK = /npm run --prefix lexicons\/aws prepack/;
-
 describe("release gate parity (#1481)", () => {
   const publish = workflow("publish.yml");
   const chant = workflow("chant.yml");
@@ -59,13 +57,29 @@ describe("release gate parity (#1481)", () => {
     expect(publish.jobs.publish.needs).toEqual(expect.arrayContaining(["test"]));
   });
 
-  it("the chant workflow runs the aws prepack under the gate in at least one job", () => {
-    // One armed job is enough to turn the workflow red; release-preflight.sh
-    // gates on the whole run's conclusion.
-    const armed = Object.entries(chant.jobs).filter(([, job]) =>
-      stepsRunning(job, AWS_PREPACK).some((step) => envOf(job, step, "CHANT_RELEASE_GATE") === gate),
-    );
-    expect(armed.map(([name]) => name)).toContain("validate");
+  // #3793: chant.yml no longer runs `npm run prepack` per lexicon. One job
+  // runs every lexicon's generate and bundle and caches them; validate runs
+  // the rest (validate, build) on that cache. Together, with the gate armed,
+  // they must cover every step a prepack names.
+  it("the chant workflow runs every prepack step under the gate, validate's steps in the validate job", () => {
+    const ARTIFACTS = /scripts\/ci-lexicon-artifacts\.sh(?:\s+--steps\s+([\w,]+))?/;
+    const covered = new Set<string>();
+    const stepsIn = (name: string) => {
+      const job = chant.jobs[name];
+      const out = new Set<string>();
+      for (const step of stepsRunning(job, ARTIFACTS)) {
+        if (envOf(job, step, "CHANT_RELEASE_GATE") !== gate) continue;
+        const m = ARTIFACTS.exec(step.run!)!;
+        for (const s of m[1] ? m[1].split(",") : ["generate", "bundle", "validate", "build"]) out.add(s);
+      }
+      return out;
+    };
+    for (const name of Object.keys(chant.jobs)) for (const s of stepsIn(name)) covered.add(s);
+    const aws = JSON.parse(readFileSync(join(root, "lexicons", "aws", "package.json"), "utf8")) as { scripts: Record<string, string> };
+    const prepack = aws.scripts.prepack.split("&&").map((x) => x.trim().replace(/^npm run /, ""));
+    expect(prepack).toEqual(expect.arrayContaining(["generate", "validate"]));
+    expect([...covered].sort()).toEqual(expect.arrayContaining(prepack));
+    expect([...stepsIn("validate")]).toEqual(expect.arrayContaining(["validate"]));
   });
 
   it("a failed tag release deletes its tag", () => {
@@ -99,16 +113,34 @@ describe("release gate parity (#1481)", () => {
   });
 });
 
-// The fast checks run on every change; a large suite runs only when a person
-// starts it. On GitHub that is a workflow_dispatch, locally a person typing
-// `run` at scripts/human-gate.sh.
-describe("large suites run only when a person starts them", () => {
+// The fast checks run on every change. The e2e project runs on main in
+// release-suites.yml, whose `suites` check the release gates on (#3793). The
+// other large suites run only when a person starts them. On GitHub that is a
+// workflow_dispatch, locally a person typing `run` at scripts/human-gate.sh.
+describe("large suites stay out of pull request CI", () => {
   it("chant.yml runs no end-to-end, binary or Docker suite", () => {
     const chant = workflow("chant.yml");
     for (const name of Object.keys(chant.jobs)) {
       expect(stepsRunning(chant.jobs[name], /--project e2e|ci-observability-binaries\.sh test|smoke\.sh|docker build/)).toEqual([]);
     }
     expect(chant.jobs.test.needs).toEqual(["test-shard"]);
+  });
+
+  it("release-suites runs the e2e project on main, never on a push or pull request, and the release requires its suites check", () => {
+    const suites = workflow("release-suites.yml");
+    expect(Object.keys(suites.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    expect(stepsRunning(suites.jobs.e2e, /npx vitest run --project e2e/)).toHaveLength(1);
+    expect(suites.jobs.suites.needs).toEqual(["e2e"]);
+    expect(suites.jobs.suites.if).toMatch(/always\(\)/);
+    const declaration = JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf8")) as {
+      ci: { green: { branch: string; phases: Record<string, string[]>; require: string[] } };
+    };
+    expect(declaration.ci.green.branch).toBe("main");
+    expect(declaration.ci.green.phases.suites).toEqual(["suites"]);
+    expect(declaration.ci.green.require).toEqual(expect.arrayContaining(["check", "test", "validate", "suites"]));
+    // The tick runs when release-suites completes, not only on its 15-minute schedule.
+    const tick = workflow("chant-ci-green.yml").on.workflow_run as { workflows: string[] };
+    expect(tick.workflows).toContain("release-suites");
   });
 
   it("the large-suite workflows and the release gate start only from a dispatch", () => {

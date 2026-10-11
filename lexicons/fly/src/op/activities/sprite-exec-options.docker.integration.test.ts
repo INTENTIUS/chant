@@ -9,7 +9,7 @@ import { spritesContainerUp, spritesContainerDown } from "./sprites-emulator";
 // runs against) has no notion of `env`/`dir` at all — only container mode runs
 // a real process, so it is the only place `env`/`dir` reaching the command can
 // be proven against spritzer rather than the in-process fake.
-// `sprite-services.docker.integration.test.ts` runs the same container-mode
+// `sprite-services.docker.integration.e2e.test.ts` runs the same container-mode
 // suite for the Services activities; this file is the `spriteExec` twin.
 // Docker required; deterministically skipped in CI (GitHub runners have
 // Docker, so relying on absence would pull the image on every run) — run

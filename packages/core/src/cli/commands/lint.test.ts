@@ -887,7 +887,7 @@ describe("lintCommand — a declared lexicon that cannot be resolved (#2222)", (
  * `lintCommand` has no flags to read and passed nothing, so `params` stayed
  * empty and OPS012 reported the activity contract violated for source that
  * lints clean from a shell. That is how the root-examples gate
- * (examples/root-examples-gate.test.ts) went red on github-pr-preview while
+ * (examples/root-examples-gate.e2e.test.ts) went red on github-pr-preview while
  * `chant lint .` in the same directory exited 0, and it applied equally to
  * `handleLint` over MCP and to test-utils' example harness.
  *

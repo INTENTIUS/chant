@@ -349,8 +349,8 @@ The test suite is designed to run in continuous integration:
 
 `vitest.config.ts` defines two projects (#2817):
 
-- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 15 second budget, set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
-- `e2e`: every `*.e2e.test.ts` under `packages/`, `lexicons/` and `test/`. These spawn the CLI, boot containers or release whole projects. They have no budget beyond their own timeouts.
+- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 3 second budget (#3793; 15 before), set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
+- `e2e`: every `*.e2e.test.ts` under `packages/`, `lexicons/` and `test/`, and the corpus walkers in `examples/*.e2e.test.ts`. These spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects. They have no budget beyond their own timeouts.
 
 ```bash
 npx vitest run                    # both projects
@@ -359,35 +359,38 @@ npx vitest run --project e2e      # the end-to-end tests only
 CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run path/to/file.test.ts   # no budget, for a debugger
 ```
 
-A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it.
+A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it. The 3 second budget comes from three CI runs (#3793): every test left in the unit project took under 2 seconds on a loaded 4-core runner, which leaves 1.5x headroom for runner variance.
 
 ### What runs when
 
-Every change gets the fast checks, and no other test suite runs on its own. The large suites run only when a person starts them, and a change never waits on one.
+Every pull request gets the fast checks and nothing else. The end-to-end project runs on `main` before a release can tag a commit. The other large suites run only when a person starts them.
 
 `.github/workflows/chant.yml` runs on every pull request and on every push to main:
 
 | Job | What it runs |
 |---|---|
-| `check` | typechecks, the lexicon completeness contract, lint and build guards |
-| `test-shard (1/4)` to `(4/4)` | `npx vitest run --project unit --shard=N/4` |
-| `test` | passes only when all four shards passed |
+| `lexicon-artifacts` | each lexicon's `generate` and `bundle`, once, cached under a hash of their inputs |
+| `check` | typechecks, the boundary guards, lint, depcheck, and the example build, local Op run and supply-chain guards (seconds each) |
+| `test-shard (1/3)` to `(3/3)` | `npx vitest run --project unit --shard=N/3` |
+| `test` | passes only when all three shards passed |
 | `trust` | `chant workspace verify` against the base branch (pull requests only) |
-| `validate` | every lexicon's prepack with the release gate armed |
+| `validate` | each lexicon's `validate` and `build` with the release gate armed, then the lexicon completeness contract |
 
 Branch protection requires `check`, `test` and `validate`. The `test` job is how the shards become required.
 
-Every job that needs lexicon artifacts builds them with `scripts/ci-lexicon-artifacts.sh`. It runs each lexicon's `generate` one at a time and the rest of its prepack (bundle, validate, build) with one lexicon per CPU. The shards keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
+`lexicon-artifacts` builds what the unit tests and typechecks read with `scripts/ci-lexicon-artifacts.sh --steps generate,bundle`: each lexicon's `generate` one at a time, then every `bundle` with one lexicon per CPU. It caches `lexicons/*/src/generated` and `lexicons/*/dist` under a hash of the lexicon sources, core's source, the lockfile and the script, and skips the build when a cache with that key exists. `check`, the shards and `validate` restore that cache instead of building it again. The shards keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
+
+`.github/workflows/release-suites.yml` runs the e2e project in three shards on `main` every three hours, and when a person starts it. Its `suites` job is a required phase of `ci.green` in `chant.workspace.json`, beside `check`, `test` and `validate`, so `chant ci tick` tags a commit `ci/green/<sha>` only when the long suites passed on it, and `just release` tags the newest such commit. Start the workflow by hand to make main's head releasable without waiting for the schedule.
 
 Locally the same fast gate is `just check`: the core typecheck, lint, `just test` (the unit project) and the lexicon contract. A change merges on it.
 
 ### Large suites
 
-These run only when a person starts them. On GitHub each is a `workflow_dispatch` workflow with no push, pull request or schedule trigger:
+`just test-e2e` runs the e2e project locally. The suites below gate nothing and run only when a person starts them. On GitHub each is a `workflow_dispatch` workflow with no push, pull request or schedule trigger:
 
 | Workflow | Jobs |
 |---|---|
-| `large-suites.yml` | `test-e2e` (`npx vitest run --project e2e`), `test-binaries` (the tests against real otelcol-contrib, promtool, amtool and tofu), `smoke-npm` (the npm tarball Docker smoke). Pick one or `all` when you start it. |
+| `large-suites.yml` | `test-binaries` (the tests against real otelcol-contrib, promtool, amtool and tofu), `smoke-npm` (the npm tarball Docker smoke). Pick one or `all` when you start it. |
 | `helm-survey.yml` | the pinnability survey over the upstream chart corpus |
 
 Locally the `just` targets for the large suites start with `scripts/human-gate.sh`: `test-e2e`, `smoke`, `smoke-workspace`, `smoke-npm`, `smoke-build-examples`, `smoke-npm-registry`, `smoke-sql-registry`, `helm-survey`, `bench`, `leftness-capture`, `testing-harness-e2e` and every runtime and cloud `*-e2e` target. At a terminal it asks you to type `run`. Without a terminal on stdin and stdout, which covers scripts, pipes and coding agents, it prints a STOP message and exits 3. A coding agent that hits it does not run the suite, does not work around the gate and does not wait for anyone to run it; it merges on the fast gates and goes on. The gate lets a GitHub Actions run through (`GITHUB_ACTIONS=true` with `GITHUB_RUN_ID` set), so a dispatched workflow can call the same targets.

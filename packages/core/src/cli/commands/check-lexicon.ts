@@ -709,7 +709,9 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     pass: hasTypecheckTest,
   });
 
-  const hasRoundtripTest = findFiles(join(dir, "src"), (n) => n === "roundtrip.test.ts").length > 0;
+  // A round trip over a large corpus can be an end-to-end test, kept out of the unit project's
+  // per-test budget under the e2e name.
+  const hasRoundtripTest = findFiles(join(dir, "src"), (n) => n === "roundtrip.test.ts" || n === "roundtrip.e2e.test.ts").length > 0;
   items.push({
     name: "roundtrip.test.ts exists",
     tier: 3,

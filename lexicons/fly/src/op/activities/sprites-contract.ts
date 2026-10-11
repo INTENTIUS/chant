@@ -32,7 +32,7 @@
  * has no per-verb entry in `/_spritzer/health` (real.go reports the whole
  * `/v1/sprites/{id}/services/...` proxy as one wildcard line — nothing to
  * normalize-compare against a specific verb). They're exercised instead by
- * `sprite-services.docker.integration.test.ts` against real container-mode
+ * `sprite-services.docker.integration.e2e.test.ts` against real container-mode
  * spritzer. `spriteUrl` is absent for the same reason, plus its target
  * (`/s/{name}/...`) isn't under `/v1/sprites` at all.
  */

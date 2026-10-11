@@ -12,7 +12,7 @@ Workspaces ([#2524](https://github.com/INTENTIUS/chant/issues/2524)) come in lev
 |---|---|
 | `chant build`, `chant graph` (the Op view, `--stacks` and `--format ir`), `chant lint --format json`, `chant audit --format json` and `chant run list` | CLI goldens in `test/level0-goldens/goldens/`, one file per command and example |
 | Files a command leaves in the project, such as `build` writing `dist/ops/<op>/op.json` | the `wrote` section of each golden |
-| Ledger paths on the `chant/lifecycle` branch: `<env>/runs__<op>.jsonl` and `_gates/<op>.jsonl`, also for a project in a subdirectory of its repository | `test/level0-goldens/level0-ledger.test.ts` |
+| Ledger paths on the `chant/lifecycle` branch: `<env>/runs__<op>.jsonl` and `_gates/<op>.jsonl`, also for a project in a subdirectory of its repository | `test/level0-goldens/level0-ledger.e2e.test.ts` |
 | Ownership markers: `app.kubernetes.io/managed-by`, `chant.intentius.io/stack` and `chant.intentius.io/env` | the same ledger fixture, plus the build goldens |
 | No workspace code loads | every golden run records the modules its process loaded and fails on any file under core's `workspace/` directory, or any chant module whose name starts with `workspace` |
 

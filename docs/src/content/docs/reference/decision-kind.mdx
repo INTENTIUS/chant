@@ -65,6 +65,6 @@ A plugin or workspace that carries the decision kind:
 1. Copies `decision.kind.mjs` and `decision.schema.json` into one directory. Only the comments in the kind file may differ.
 2. Declares the copy in its `chant.workspace.json`, as `{ "kind": "<path>/decision.kind.mjs" }` under `records` or a member's `records`.
 3. Keeps the name `decision` and the schema id `urn:intentius:chant:decision:1`. A kind that changes the schema takes a new id and a new name, since readers key on both.
-4. Tests that its `recordKind` equals chant's and its schema file equals chant's, so a change in chant shows up as a failing test. The reference workspace does this in [`test/reference-workspace.test.ts`](https://github.com/INTENTIUS/chant/blob/main/test/reference-workspace.test.ts).
+4. Tests that its `recordKind` equals chant's and its schema file equals chant's, so a change in chant shows up as a failing test. The reference workspace does this in [`test/reference-workspace.e2e.test.ts`](https://github.com/INTENTIUS/chant/blob/main/test/reference-workspace.test.ts).
 
 chant reads the copy the same way it reads its own: `chant workspace records --json` at the workspace root lists the decisions with their digest, quorum and seal state.

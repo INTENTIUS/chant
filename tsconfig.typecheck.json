@@ -22,7 +22,7 @@
     "",
     "lexicons/sql/test-fixtures/ is excluded (chant #3751): its generated declarations augment",
     "the sql lexicon's SqlSchema, which would leak into every other file, and its errors are",
-    "planted. lexicons/sql/src/typed-columns.test.ts checks it with its own program."
+    "planted. lexicons/sql/src/typed-columns.e2e.test.ts checks it with its own program."
   ],
   "extends": "./tsconfig.json",
   "compilerOptions": {
