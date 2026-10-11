@@ -445,7 +445,9 @@ export interface AskPointOptions {
    * or the lifecycle ledger (#2786). Defaults to the ledger in a steward's
    * turn (`steward` given, or this process a steward's turn), since a steward
    * never writes the checkout, and to the tree otherwise. A question already
-   * held on the ledger is rewritten there whatever this says.
+   * held on the ledger is rewritten there whatever this says. Outside a
+   * steward's turn, `points ask --store ledger` and a gate's `point.store`
+   * reach it (#3815), for a checkout that does not outlive the run.
    */
   store?: "tree" | "ledger";
   /** The date written as asked_on, and answered_on for a table's answer, YYYY-MM-DD. Defaults to today, in UTC. */
@@ -823,7 +825,10 @@ async function findQuestion(cwd: string, kind: string | undefined, id: string): 
   if (kinds.length === 0) throw new PointsWriteError("points-undeclared", "no record kind with an answers block is declared: name one with --kind, or declare one in chant.workspace.json");
   for (const k of kinds) {
     const opened = await openAnswers(k, cwd);
-    // A question a steward asked is on the ledger (#2786), and people's answer goes back there.
+    // A question a steward asked is on the ledger (#2786), and people's answer goes back there. So is
+    // one a CI job asked with --store ledger (#3815), from a checkout that is gone: fetch the
+    // branch first, so a clone that never ran the job finds the question.
+    await refreshLedger(opened.o.loaded.file);
     const read = await readWithLedger(opened.o);
     const target = read.before.find((e) => e.id === id);
     if (target && target.data !== null) return { opened, before: read.before, read, target: target as FoundQuestion["target"] };

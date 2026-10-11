@@ -85,6 +85,8 @@ async function shell(verb: "answer" | "retract", id: string, by: string[], answe
 
 beforeAll(() => {
   root = workspace(POINTS);
+  // The questions go to the working tree, as outside CI: a CI job asks into the ledger by default (#3815).
+  vi.stubEnv("CI", "");
   mkdirSync(join(root, ".chant"), { recursive: true });
   writeFileSync(join(root, ".chant", "trust.json"), JSON.stringify({ schema: 1, roles: { agent: ["bot"], lead: ["alice", "bob"] } }));
   git(root, "add", "-A");

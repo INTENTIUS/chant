@@ -121,6 +121,13 @@ export interface AskPointInRunOptions {
   on?: string;
   /** The steward turn, when the caller has it. Default: this process's (`currentStewardTurn`). */
   turn?: StewardTurn | null;
+  /**
+   * Where a new question goes (#3815): the working tree, or `chant/lifecycle`.
+   * Default: the ledger in a steward's turn and the tree otherwise
+   * (`askPoint`'s rule). A run whose checkout does not outlive it, such as a
+   * CI job, passes `"ledger"` so a person can answer after the job ends.
+   */
+  store?: "tree" | "ledger";
 }
 
 /** What a steward reaches through its broker, read from its declaration when the turn named only the steward. */
@@ -178,6 +185,7 @@ export async function askPointInRun(opts: AskPointInRunOptions): Promise<{ answe
     ...(opts.kind !== undefined ? { kind: opts.kind } : {}),
     ...(ask ? { ask } : {}),
     ...(opts.on !== undefined ? { on: opts.on } : {}),
+    ...(opts.store !== undefined ? { store: opts.store } : {}),
     ...(turn ? { steward: { name: turn.steward, ...(turn.run ? { run: turn.run } : {}) } } : {}),
   });
   if ("error" in doc) throw new Error(`decision point ${opts.point}: ${doc.error.code}: ${doc.error.message}`);

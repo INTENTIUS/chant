@@ -366,6 +366,8 @@ export interface ParsedArgs {
   response?: string;
   /** `chant workspace points ask <point> --subject <id>` (#2739): what the question is about. */
   subject?: string;
+  /** `chant workspace points ask <point> --store ledger` (#3815): hold the question on chant/lifecycle rather than in the working tree. */
+  store?: "tree" | "ledger";
   /** `chant workspace points answer <id> --answer <value>` (#2739): the people's answer. */
   answer?: string;
   /** `chant workspace graph --no-cache` (#2876): read every member, bypassing the per-member cache. */

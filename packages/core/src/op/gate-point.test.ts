@@ -61,7 +61,7 @@ describe("a gate's point declaration (#3170)", () => {
     expect(() => gate("apply", { point: "Prod Apply" })).toThrow(/decision point's name/);
     expect(() => gate("apply", { point: { name: "prod-apply", inputs: { "gate.planDigest": PLAN } } })).toThrow(/which the gate passes itself/);
     expect(gatePointProblems({ name: "prod-apply", pass: [] })).toEqual(["`point.pass` is a non-empty list of the answers that pass the gate"]);
-    expect(gatePointProblems({ name: "prod-apply", quorum: 2 })).toEqual(["`point` takes name, inputs and pass, not quorum"]);
+    expect(gatePointProblems({ name: "prod-apply", quorum: 2 })).toEqual(["`point` takes name, inputs, pass and store, not quorum"]);
   });
 
   test("the gate passes the gate.* inputs the point declares, beside the authored ones", () => {

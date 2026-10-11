@@ -65,6 +65,8 @@ export interface DecideArgs {
   backends?: Record<string, DecideBackend>;
   /** Ask, but write nothing, and return the question whatever its state: an open one does not stop the run. */
   dryRun?: boolean;
+  /** Where a new question goes (#3815): `"ledger"` holds it on chant/lifecycle, for a run whose checkout does not outlive it. Default: the ledger in a steward's turn, the tree otherwise. */
+  store?: "tree" | "ledger";
 }
 
 export interface DecideResult {
@@ -234,6 +236,7 @@ export async function runDecide(args: DecideArgs, deps: DecideDeps = {}, signal?
     inputs,
     ...(args.subject !== undefined ? { subject: args.subject } : {}),
     ...(args.kind !== undefined ? { kind: args.kind } : {}),
+    ...(args.store !== undefined ? { store: args.store } : {}),
     ...(deps.on ? { on: deps.on } : {}),
   };
 

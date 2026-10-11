@@ -31,6 +31,29 @@ export interface GatePoint {
   inputs?: Record<string, unknown>;
   /** The answers that pass the gate. Default `[true]`: a noul point's yes. Any other answer fails the step. */
   pass?: Array<string | boolean>;
+  /**
+   * Where the question goes when the run asks it (#3815): `"tree"`, the
+   * answer kind's directory in the working tree, or `"ledger"`,
+   * `chant/lifecycle`, pushed, so a person can answer it after a checkout
+   * that does not outlive the run is gone. Default: the ledger in a steward's
+   * turn or a CI job (`CI` set), and the tree otherwise.
+   */
+  store?: GatePointStore;
+}
+
+/** Where a gate's question is held: the working tree or `chant/lifecycle`. */
+export type GatePointStore = "tree" | "ledger";
+
+/**
+ * Where a gate's question goes when its `point` names no `store` (#3815): the
+ * ledger in a CI job, whose checkout is thrown away when the job ends, so the
+ * question outlives it; otherwise undefined, and `points ask`'s own rule
+ * holds (the ledger in a steward's turn, the tree otherwise). A CI job is one
+ * whose environment sets `CI`, as GitHub Actions and GitLab CI do.
+ */
+export function defaultGatePointStore(env: Readonly<Record<string, string | undefined>> = process.env): GatePointStore | undefined {
+  const ci = env.CI?.trim().toLowerCase();
+  return ci && ci !== "false" && ci !== "0" ? "ledger" : undefined;
 }
 
 /** The answers a gate passes on when it names none: a noul point's yes. */
@@ -49,8 +72,8 @@ export function gatePointProblems(point: unknown, withApproval = false): string[
   const problems: string[] = [];
   if (withApproval) problems.push("a gate that asks a decision point takes its quorum from the point: give `approval` or `point`, not both");
   const p = typeof point === "string" ? { name: point } : point;
-  if (p === null || typeof p !== "object" || Array.isArray(p)) return [...problems, "`point` is a decision point's name or { name, inputs?, pass? }"];
-  const { name, inputs, pass, ...rest } = p as Record<string, unknown>;
+  if (p === null || typeof p !== "object" || Array.isArray(p)) return [...problems, "`point` is a decision point's name or { name, inputs?, pass?, store? }"];
+  const { name, inputs, pass, store, ...rest } = p as Record<string, unknown>;
   if (typeof name !== "string" || !POINT_NAME.test(name)) problems.push("`point.name` is a decision point's name: lower case letters, digits and hyphens, starting with a letter");
   if (inputs !== undefined && (inputs === null || typeof inputs !== "object" || Array.isArray(inputs))) problems.push("`point.inputs` is an object of input name to value");
   if (inputs && typeof inputs === "object") {
@@ -60,8 +83,9 @@ export function gatePointProblems(point: unknown, withApproval = false): string[
   if (pass !== undefined && (!Array.isArray(pass) || pass.length === 0 || pass.some((a) => typeof a !== "string" && typeof a !== "boolean"))) {
     problems.push("`point.pass` is a non-empty list of the answers that pass the gate");
   }
+  if (store !== undefined && store !== "tree" && store !== "ledger") problems.push("`point.store` is tree or ledger: where the question is held");
   const extra = Object.keys(rest);
-  if (extra.length > 0) problems.push(`\`point\` takes name, inputs and pass, not ${extra.join(", ")}`);
+  if (extra.length > 0) problems.push(`\`point\` takes name, inputs, pass and store, not ${extra.join(", ")}`);
   return problems;
 }
 

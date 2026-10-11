@@ -75,6 +75,8 @@ async function pointsAnswer(id: string, answer: string, by: string): Promise<Rec
 
 beforeAll(() => {
   root = workspace(POINTS);
+  // The questions go to the working tree, as outside CI: a CI job asks into the ledger by default (#3815).
+  vi.stubEnv("CI", "");
 });
 
 afterAll(cleanScratch);

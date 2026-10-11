@@ -304,7 +304,7 @@ export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
       if (!("value" in response)) return print(response);
       ask = responseAsk(response.value);
     }
-    return print(await askPoint({ cwd, point, inputs: inputs.value, candidates: given, subject: args.subject, kind: args.kind, ask, dryRun: args.dryRun }));
+    return print(await askPoint({ cwd, point, inputs: inputs.value, candidates: given, subject: args.subject, kind: args.kind, ask, ...(args.store ? { store: args.store } : {}), dryRun: args.dryRun }));
   }
   if (verb === "answer") {
     const id = args.extraPositional2;
