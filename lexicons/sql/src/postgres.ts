@@ -69,6 +69,16 @@ export {
   type DefaultPrivilegesProps,
   type PrivilegeDef,
   type LineageEdge,
+  type SqlSchema,
+  type RowOf,
+  type Column,
+  type ColumnTraits,
+  type AnyColumn,
+  type UncheckedColumn,
+  type KeyColumn,
+  type NotNullColumn,
+  type Named,
+  type Unnamed,
 } from "./postgres/entities";
 
 export {

@@ -64,7 +64,7 @@ describe("import, build, import again", () => {
       "ClickHouse::View",
       "ClickHouse::Table",
     ]);
-    expect(file!.content).toContain("export const events = table`");
+    expect(file!.content).toContain(`export const events = table<"analytics.events">\``);
   });
 
   test("the declarations build back to one statement per object, dependencies first", async () => {

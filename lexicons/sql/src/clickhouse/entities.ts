@@ -46,10 +46,12 @@ import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxEr
 import { SQL_LEXICON, SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
 import type { LineageEdge } from "../core/references";
 import { SqlLiteral, SqlTemplateError, describeValue as describe, stripUnset as strip, templateParts } from "../core/template";
+import { setTypedSlots, type ColumnsIn, type Named, type RowIn, type SlotsIn, type TypedSlot, type Unnamed } from "../core/typed";
 
 export { SQL_LEXICON } from "../core/entity";
 export type { LineageEdge } from "../core/references";
 export { SqlLiteral, SqlTemplateError, templateParts, unescapeTemplateDelimiters } from "../core/template";
+export type { AnyColumn, Column, ColumnTraits, KeyColumn, Named, NotNullColumn, UncheckedColumn, Unnamed } from "../core/typed";
 
 export const CLICKHOUSE_ENTITY_TYPES = {
   database: "ClickHouse::Database",
@@ -198,18 +200,31 @@ export interface ClickHouseDatabase extends ClickHouseObject {
   readonly props: DatabaseProps;
 }
 
-/** A table or a view: something with columns that SQL can reference. */
-export interface ClickHouseRelation extends ClickHouseObject {
+/**
+ * Every ClickHouse table, view and dictionary the project declares, keyed by
+ * its qualified name (`shop.events`). Empty here; the `sql-types.d.ts` that
+ * `chant sql types` writes augments it, and a tag given the name as its type
+ * argument reads its columns from there.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmented by the generated declarations
+export interface SqlSchema {}
+
+/**
+ * A table or a view: something with columns that SQL can reference. `N` is
+ * its qualified name when its tag was given one (`` table<"shop.events">`...` ``):
+ * its columns are then the generated declarations' entry for that name.
+ */
+export interface ClickHouseRelation<N extends string = string> extends ClickHouseObject, Named<N> {
   /** One reference per column, by name: `${events.columns.user_id}`. */
-  readonly columns: Readonly<Record<string, AttrRef>>;
+  readonly columns: ColumnsIn<SqlSchema, N>;
 }
 
-export interface ClickHouseTable extends ClickHouseRelation {
+export interface ClickHouseTable<N extends string = string> extends ClickHouseRelation<N> {
   readonly entityType: "ClickHouse::Table";
   readonly props: TableProps;
 }
 
-export interface ClickHouseView extends ClickHouseRelation {
+export interface ClickHouseView<N extends string = string> extends ClickHouseRelation<N> {
   readonly entityType: "ClickHouse::View" | "ClickHouse::MaterializedView";
   readonly props: ViewProps;
 }
@@ -312,7 +327,7 @@ export interface ClickHouseGrant extends ClickHouseObject {
 }
 
 /** A dictionary: its attributes are columns `dictGet` reads, so SQL can reference them. */
-export interface ClickHouseDictionary extends ClickHouseRelation {
+export interface ClickHouseDictionary<N extends string = string> extends ClickHouseRelation<N> {
   readonly entityType: "ClickHouse::Dictionary";
   readonly props: DictionaryProps;
 }
@@ -326,6 +341,14 @@ function makeEntity(
 ): ClickHouseObject {
   return makeSqlEntity(ClickHouseObject.prototype as ClickHouseObject, entityType, sqlName, props, columnNames, dependsOn);
 }
+
+/**
+ * A declared table's, view's or dictionary's row, for application code:
+ * `RowOf<typeof events>` for a declaration given its name, or
+ * `RowOf<"shop.users">` by name, which also covers an object only a `.sql`
+ * file declares.
+ */
+export type RowOf<T extends keyof SqlSchema | Named<keyof SqlSchema & string>> = RowIn<SqlSchema, T>;
 
 export function isClickHouseObject(value: unknown): value is ClickHouseObject {
   return isSqlObjectOf(value, "ClickHouse::");
@@ -444,6 +467,42 @@ function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
   return pieces.length >= 2 ? { database: pieces[pieces.length - 2], name: pieces[pieces.length - 1]! } : { name: pieces[0] ?? "" };
 }
 
+/**
+ * The `${}` that stand alone as an element of a sort key (`ORDER BY ${t.columns.a}`,
+ * `ORDER BY (${t.columns.a}, b)`), each a column that must not be Nullable
+ * (#3751). An element inside an expression (`ifNull(${...}, '')`) is not one.
+ */
+function sortKeySlots(ctx: Ctx, span: Span | undefined): TypedSlot[] {
+  if (!span) return [];
+  let sig = ctx.tokens.slice(span.from, span.to).filter((t) => !isTrivia(t));
+  const isPunct = (i: number, p: string) => sig[i]?.kind === "punct" && sig[i]!.text === p;
+  if (isPunct(0, "(") && isPunct(sig.length - 1, ")")) {
+    let depth = 0;
+    let closesAt = -1;
+    for (let i = 0; i < sig.length && closesAt < 0; i++) {
+      if (isPunct(i, "(")) depth++;
+      else if (isPunct(i, ")") && --depth === 0) closesAt = i;
+    }
+    if (closesAt === sig.length - 1) sig = sig.slice(1, -1);
+  }
+  const out: TypedSlot[] = [];
+  let depth = 0;
+  let element: typeof sig = [];
+  const flush = () => {
+    const t = element[0];
+    if (element.length === 1 && t?.kind === "ref" && isColumnRef(ctx.values[t.part])) out.push({ index: t.part, kind: "sortKey" });
+    element = [];
+  };
+  for (const t of sig) {
+    if (t.kind === "punct" && t.text === "(") depth++;
+    else if (t.kind === "punct" && t.text === ")") depth--;
+    if (depth === 0 && t.kind === "punct" && t.text === ",") flush();
+    else element.push(t);
+  }
+  flush();
+  return out;
+}
+
 type Expect = "database" | "table" | "view" | "dictionary" | "func";
 
 function build(tag: Expect, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
@@ -484,6 +543,7 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
   };
   const done = <T extends ClickHouseObject>(entity: T): T => {
     setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));
+    if (node.statement === "table" || node.statement === "view") setTypedSlots(entity, [...sortKeySlots(ctx, node.orderBy), ...sortKeySlots(ctx, node.primaryKey)]);
     return entity;
   };
 
@@ -625,17 +685,22 @@ export function database(strings: TemplateStringsArray, ...values: unknown[]): C
   return build("database", strings, values) as ClickHouseDatabase;
 }
 
-/** `` table`CREATE TABLE ...` ``: one ClickHouse table, parsed at build time. */
-export function table(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseTable {
-  return build("table", strings, values) as ClickHouseTable;
+/**
+ * `` table`CREATE TABLE ...` ``: one ClickHouse table, parsed at build time.
+ * Given its qualified name as the type argument (`` table<"shop.events">`...` ``),
+ * its columns are the ones `chant sql types` declared for that name.
+ */
+export function table<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): ClickHouseTable<N> {
+  return build("table", strings, values) as ClickHouseTable<N>;
 }
 
 /**
  * `` view`CREATE [MATERIALIZED] VIEW ...` ``: one view or materialized view,
- * with the tables it reads and its column lineage.
+ * with the tables it reads and its column lineage. Takes its qualified name
+ * as the type argument, as {@link table} does.
  */
-export function view(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseView {
-  return build("view", strings, values) as ClickHouseView;
+export function view<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): ClickHouseView<N> {
+  return build("view", strings, values) as ClickHouseView<N>;
 }
 
 /**
@@ -643,8 +708,8 @@ export function view(strings: TemplateStringsArray, ...values: unknown[]): Click
  * key, source, layout and lifetime, parsed at build time (#3682). Its
  * attributes are columns: `${rates.columns.rate}`.
  */
-export function dictionary(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseDictionary {
-  return build("dictionary", strings, values) as ClickHouseDictionary;
+export function dictionary<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): ClickHouseDictionary<N> {
+  return build("dictionary", strings, values) as ClickHouseDictionary<N>;
 }
 
 /**

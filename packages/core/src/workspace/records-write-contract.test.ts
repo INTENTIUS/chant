@@ -104,14 +104,15 @@ describe("real output validates", () => {
   });
 
   test("records new, as a dry run against the chant repo's own decisions", async () => {
-    const doc = await newRecord({ kind: KIND, fields, dryRun: true, cwd: REPO });
+    // The repo holds ws- and sql- decisions (#3751), so a new one names its prefix.
+    const doc = await newRecord({ kind: KIND, fields, prefix: "ws", dryRun: true, cwd: REPO });
     expectValid(newSchema, doc);
     expect(doc).toMatchObject({ dryRun: true, path: expect.stringMatching(/^docs\/design\/decisions\/ws-\d{3}-a-decision-written-through-chant\.md$/) });
   });
 
   test("each command written, dry-run and refused", async () => {
     const root = copyDecisions();
-    const made = await newRecord({ kind: KIND, fields, cwd: root });
+    const made = await newRecord({ kind: KIND, fields, prefix: "ws", cwd: root });
     expectValid(newSchema, made);
     if ("error" in made) throw new Error(made.error.message);
     expectValid(newSchema, await newRecord({ kind: KIND, fields: "[]", cwd: root }));

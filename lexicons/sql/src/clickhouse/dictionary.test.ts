@@ -171,7 +171,7 @@ describe("importing a dictionary", () => {
     ]);
     const [file] = new ClickHouseGenerator().generate(ir);
     expect(file!.content).toContain('import { database, dictionary } from "@intentius/chant-lexicon-sql/clickhouse";');
-    expect(file!.content).toContain("export const ratesDict = dictionary`");
+    expect(file!.content).toContain(`export const ratesDict = dictionary<"shop.rates_dict">\``);
     expect(file!.content).toContain("CREATE DICTIONARY ${shopDb}.rates_dict");
   });
 });

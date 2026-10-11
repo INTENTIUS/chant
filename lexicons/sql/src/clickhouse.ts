@@ -50,6 +50,16 @@ export {
   type LineageEdge,
   type TableProps,
   type ViewProps,
+  type SqlSchema,
+  type RowOf,
+  type Column,
+  type ColumnTraits,
+  type AnyColumn,
+  type UncheckedColumn,
+  type KeyColumn,
+  type NotNullColumn,
+  type Named,
+  type Unnamed,
 } from "./clickhouse/entities";
 export * from "./generated/clickhouse";
 export * from "./composites/clickhouse";

@@ -18,7 +18,11 @@
     "no-consumer-apps ruling, the lexicon-artifacts guard, the no-egress guard — and every",
     "one of them was typechecked by nothing, which is the same gap this config was created",
     "to close for lexicon tests. Three files in the tree still used Bun's import.meta.dir;",
-    "they became import.meta.dirname rather than baseline entries."
+    "they became import.meta.dirname rather than baseline entries.",
+    "",
+    "lexicons/sql/test-fixtures/ is excluded (chant #3751): its generated declarations augment",
+    "the sql lexicon's SqlSchema, which would leak into every other file, and its errors are",
+    "planted. lexicons/sql/src/typed-columns.test.ts checks it with its own program."
   ],
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -39,6 +43,7 @@
     "**/dist/**",
     "**/docs/**",
     "packages/core/src/cli/commands/__fixtures__/**",
-    "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts"
+    "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts",
+    "lexicons/sql/test-fixtures/**"
   ]
 }

@@ -25,6 +25,9 @@
  *   (`classifier.ts`);
  * - normalization helpers that are not a database's grammar, such as the
  *   `-- previously:` hint (`normalize.ts`);
+ * - typed columns: the brands, `ColumnsIn`, `SlotsIn` and `RowIn` each
+ *   dialect's `SqlSchema` is read through, and the slot record a tag leaves
+ *   for `chant sql types` (`typed.ts`);
  * - the ownership trailer on an object's comment (`ownership.ts`);
  * - receipts kept on the server (`receipts.ts`);
  * - the applier's tri-state outcome, its envelope projection and the build
@@ -54,6 +57,7 @@ export * from "./references";
 export * from "./diff";
 export * from "./classifier";
 export * from "./normalize";
+export * from "./typed";
 export * from "./ownership";
 export * from "./receipts";
 export * from "./apply";

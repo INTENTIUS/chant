@@ -177,6 +177,7 @@
     "**/dist/**",
     "**/docs/**",
     "**/*.test.ts",
-    "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts"
+    "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts",
+    "lexicons/sql/test-fixtures/**"
   ]
 }

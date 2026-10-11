@@ -6,6 +6,7 @@
  * without import cycles.
  */
 
+import { relationKey } from "../../core/typed";
 import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { TemplateIR } from "@intentius/chant/import/parser";
 import { isTrivia, tokenizeText, type Token } from "../tokens";
@@ -162,6 +163,11 @@ function indent(body: string): string {
   return lines.map((l, i) => (i === 0 || l.length === 0 ? l : `  ${l}`)).join("\n");
 }
 
+const RELATIONS = new Set<string>([CLICKHOUSE_ENTITY_TYPES.table, CLICKHOUSE_ENTITY_TYPES.view, CLICKHOUSE_ENTITY_TYPES.materializedView, CLICKHOUSE_ENTITY_TYPES.dictionary]);
+
+/** A table's, view's or dictionary's qualified name as its tag's type argument (#3751), so its columns are typed once `chant sql types` has run. */
+const typeArgument = (it: Item): string => (RELATIONS.has(it.type) ? `<${JSON.stringify(relationKey(it))}>` : "");
+
 export class ClickHouseGenerator implements TypeScriptGenerator {
   readonly ownsLayout = true;
 
@@ -186,7 +192,7 @@ export class ClickHouseGenerator implements TypeScriptGenerator {
     if (this.header) lines.push(...this.header.split("\n").map((l) => `// ${l}`), "");
     lines.push(`import { ${tags.join(", ")} } from "@intentius/chant-lexicon-sql/clickhouse";`, "");
     for (const it of order) {
-      lines.push(`export const ${it.exportName} = ${CLICKHOUSE_TAG_OF[it.type]}\`\n  ${indent(bodyText(bodies.get(it.exportName)!))}\`;`, "");
+      lines.push(`export const ${it.exportName} = ${CLICKHOUSE_TAG_OF[it.type]}${typeArgument(it)}\`\n  ${indent(bodyText(bodies.get(it.exportName)!))}\`;`, "");
     }
     return [{ path: "schema.ts", content: `${lines.join("\n").trimEnd()}\n` }];
   }
