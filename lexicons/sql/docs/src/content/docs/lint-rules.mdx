@@ -22,8 +22,6 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
 
-What the checks hold a declaration to: every name the server keeps a catalog of (an engine, a type family, a codec, a function, a setting) is checked against the pinned catalog, wherever it appears. A column name is checked only where it stands bare in a list (a sort key, an engine argument, a grant's column list, a key or index column list), against the columns the declared table has. Column names inside an expression (`PARTITION BY toYYYYMM(att)`, a TTL, a `CHECK`, a generated column, a projection, a view's plain-text select list) and a plain-text name of an object the project does not declare are left to the server.
-
 ## Lint rules
 
 | Id | Severity | Flags | What to change |
@@ -38,7 +36,7 @@ What the checks hold a declaration to: every name the server keeps a catalog of 
 
 ## Post-synth checks
 
-What the checks hold a declaration to, in both dialects: a name the pinned catalog answers for (a type, a function, an engine, a codec, an access method, an operator class, a setting) is checked against the target release everywhere it appears; a column name is checked only where it is a bare name in a list (a key, an index's columns, a grant's column list); an expression (a `CHECK`, a generated column, a policy, a view's query, an index expression) and a plain-text name of an object the project does not declare (`REFERENCES billing.accounts (id)`, `billing.money`) are left to the server.
+What the checks hold a declaration to, in both dialects: a name the pinned catalog answers for (a type, a function, an engine, a codec, an access method, an operator class, a setting) is checked against the target release everywhere it appears; a column name is checked only where it is a bare name in a list (a key, a sort key, an engine argument, an index's columns, a grant's column list); an expression (a `CHECK`, a generated column, a policy, a view's query, an index expression, `PARTITION BY toYYYYMM(att)`, a TTL, a projection) and a plain-text name of an object the project does not declare (`REFERENCES billing.accounts (id)`, `billing.money`) are left to the server.
 
 ### Engines, codecs and settings
 
