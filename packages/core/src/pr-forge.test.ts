@@ -613,3 +613,65 @@ describe("forgeTargetFromEnv (#3759)", () => {
     expect(() => forgeTargetFromEnv({})).toThrow(/forge is not known/);
   });
 });
+
+describe("addComment and findIssue (#3818)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+
+  test("addComment posts a new comment every time, with no read and no marker", async () => {
+    const { fetch, calls } = fakeFetch({ "POST /repos/acme/infra/issues/12/comments": { id: 9, html_url: "https://h/9" } });
+    const forge = githubForge({ ...gh, fetch });
+    expect(await forge.addComment(12, "terragucci: locked")).toEqual({ id: 9, url: "https://h/9" });
+    await forge.addComment(12, "terragucci: locked");
+    expect(calls.map((c) => c.method)).toEqual(["POST", "POST"]);
+    expect(calls[0].body).toEqual({ body: "terragucci: locked" });
+  });
+
+  test("addComment on Forgejo and GitLab", async () => {
+    const fj = fakeFetch({ "POST /api/v1/repos/acme/infra/issues/4/comments": { id: 2, html_url: "https://cb/2" } });
+    expect(await forgejoForge({ ...gh, apiBase: "https://codeberg.org/api/v1", host: "codeberg.org", fetch: fj.fetch }).addComment(4, "hi")).toEqual({ id: 2, url: "https://cb/2" });
+    const gl = fakeFetch({ "POST /api/v4/projects/42/merge_requests/5/notes": { id: 77, body: "hi" } });
+    const r = await gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch: gl.fetch }).addComment(5, "hi");
+    expect(r).toEqual({ id: 77 });
+    expect(gl.calls).toHaveLength(1);
+    expect(gl.calls[0].body).toEqual({ body: "hi" });
+  });
+
+  test("trackIssue says when the issue was opened", async () => {
+    const open = { number: 8, title: "Drift", body: "<!-- d -->\nold", html_url: "https://h/issues/8", created_at: "2026-10-01T00:00:00Z" };
+    const upd = fakeFetch({ "GET /repos/acme/infra/issues": [open], "PATCH /repos/acme/infra/issues/8": { ...open, body: "<!-- d -->\nnew" } });
+    expect(await githubForge({ ...gh, fetch: upd.fetch }).trackIssue("<!-- d -->", { title: "Drift", body: "<!-- d -->\nnew" })).toEqual({
+      action: "updated", number: 8, url: "https://h/issues/8", created: "2026-10-01T00:00:00Z",
+    });
+    const made = fakeFetch({ "GET /repos/acme/infra/issues": [], "POST /repos/acme/infra/issues": { ...open, number: 9, html_url: "https://h/issues/9", created_at: "2026-10-11T00:00:00Z" } });
+    expect(await githubForge({ ...gh, fetch: made.fetch }).trackIssue("<!-- d -->", { title: "Drift", body: "<!-- d -->\nb" })).toMatchObject({ action: "opened", number: 9, created: "2026-10-11T00:00:00Z" });
+    const gl = fakeFetch({ "GET /api/v4/projects/42/issues": [{ iid: 3, title: "Drift", description: "<!-- d -->\nold", web_url: "https://gl/i/3", created_at: "2026-09-30T00:00:00Z" }] });
+    const r = await gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch: gl.fetch }).trackIssue("<!-- d -->", null);
+    expect(r).toEqual({ action: "left", number: 3, url: "https://gl/i/3", created: "2026-09-30T00:00:00Z" });
+  });
+
+  test("findIssue reads the oldest open match with no write and no token", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues": [
+        { number: 5, title: "PR", body: "<!-- d -->", pull_request: {} },
+        { number: 7, title: "newer", body: "<!-- d -->\nb", user: { login: "bot" }, created_at: "2026-10-05T00:00:00Z", html_url: "https://h/issues/7" },
+        { number: 6, title: "planted", body: "<!-- d -->\nx", user: { login: "mallory" }, created_at: "2026-10-04T00:00:00Z" },
+      ],
+    });
+    const forge = githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", fetch });
+    expect(await forge.findIssue("<!-- d -->", { author: "bot" })).toEqual({ number: 7, title: "newer", body: "<!-- d -->\nb", created: "2026-10-05T00:00:00Z", url: "https://h/issues/7" });
+    expect((await forge.findIssue("<!-- d -->"))?.number).toBe(6);
+    expect(await forge.findIssue("<!-- none -->")).toBeUndefined();
+    expect(calls.every((c) => c.method === "GET" && !("Authorization" in c.headers))).toBe(true);
+  });
+
+  test("findIssue on GitLab and Forgejo, tokenless", async () => {
+    const gl = fakeFetch({ "GET /api/v4/projects/42/issues": [{ iid: 3, title: "Drift", description: "<!-- d -->\nb", web_url: "https://gl/i/3", created_at: "2026-09-30T00:00:00Z" }] });
+    const g = gitlabForge({ apiBase: "https://gl/api/v4", project: "42", fetch: gl.fetch });
+    expect(await g.findIssue("<!-- d -->")).toEqual({ number: 3, title: "Drift", body: "<!-- d -->\nb", created: "2026-09-30T00:00:00Z", url: "https://gl/i/3" });
+    expect(Object.keys(gl.calls[0].headers)).toEqual([]);
+    const fj = fakeFetch({ "GET /api/v1/repos/acme/infra/issues": [{ number: 2, title: "t", body: "<!-- d -->", created_at: "2026-10-02T00:00:00Z" }] });
+    const f = forgejoForge({ apiBase: "https://codeberg.org/api/v1", repo: "acme/infra", host: "codeberg.org", fetch: fj.fetch });
+    expect((await f.findIssue("<!-- d -->"))?.created).toBe("2026-10-02T00:00:00Z");
+    expect(fj.calls[0].headers.Authorization).toBeUndefined();
+  });
+});
