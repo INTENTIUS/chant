@@ -65,7 +65,7 @@ The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<t
 | `x-chant-event` | `waiting`, `refused`, `failed` or `drift` |
 | `x-chant-delivery` | The event's `id` |
 
-`@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`, so a receiver can bundle it alone:
+`@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`. The package ships it, and `@intentius/chant/notify`, as compiled JavaScript, so a receiver can import it under plain Node with no TypeScript loader, or bundle it alone:
 
 ```ts
 import { verifyWebhook } from "@intentius/chant/notify-verify";

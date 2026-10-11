@@ -96,6 +96,18 @@
       "types": "./dist/agents/index.d.ts",
       "default": "./src/agents/index.ts"
     },
+    "./notify-verify": {
+      "development": "./src/notify-verify.ts",
+      "types": "./dist/notify-verify.d.ts",
+      "import": "./dist/notify-verify.js",
+      "default": "./src/notify-verify.ts"
+    },
+    "./notify": {
+      "development": "./src/notify.ts",
+      "types": "./dist/notify.d.ts",
+      "import": "./dist/notify.js",
+      "default": "./src/notify.ts"
+    },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
@@ -103,7 +115,7 @@
     }
   },
   "scripts": {
-    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) ! -path dist/notify.js ! -path dist/notify-verify.js -delete",
     "prepack": "npm run build"
   },
   "dependencies": {
