@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintContext, LintDiagnostic, LintRule } from "@intentius/chant/lint/rule";
 import { findPostgresTemplates as findTemplates } from "./postgres-templates";
 

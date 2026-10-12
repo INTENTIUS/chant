@@ -16,7 +16,7 @@ The lambda-api example includes a full custom rule implementation:
 
 ```typescript title="api-timeout.ts"
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 const API_FACTORIES = new Set(["LambdaApi", "SecureApi", "HighMemoryApi"]);
 

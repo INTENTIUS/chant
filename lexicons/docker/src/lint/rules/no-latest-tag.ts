@@ -7,7 +7,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 function isLatestImage(imageValue: string): boolean {
   const trimmed = imageValue.trim();

@@ -6,7 +6,7 @@
  * ClickHouse's).
  */
 
-import type * as ts from "typescript";
+import type { ts } from "@intentius/chant/lint/typescript";
 import { tokenize, type Token } from "../../postgres/tokens";
 import type { PostgresTag } from "../../postgres/entities";
 import { findSqlTemplates, type FoundTemplate, type TemplateSource } from "../../core/find-templates";

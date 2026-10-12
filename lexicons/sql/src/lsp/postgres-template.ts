@@ -4,7 +4,7 @@
  * rules, so the editor and `chant lint` agree on which tags are Postgres's.
  */
 
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { isTrivia, tokenize, type Token } from "../postgres/tokens";
 import { parseStatements, type Span } from "../postgres/parser";
 import type { PostgresTag } from "../postgres/entities";

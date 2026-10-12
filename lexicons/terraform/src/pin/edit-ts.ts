@@ -16,7 +16,7 @@
  * #3421) does not import it. The rollout takes it as `editTs`.
  */
 
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { PinCallResult, PinEditResult, PinRequest } from "./edit";
 import { movePin } from "./source";
 

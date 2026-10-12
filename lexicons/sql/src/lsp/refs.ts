@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { declarations, type Declared } from "./template";
 
 function importedFrom(content: string, local: string, fileName: string): { declared: Declared; file: string } | undefined {

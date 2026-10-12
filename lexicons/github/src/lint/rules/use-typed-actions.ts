@@ -5,7 +5,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { knownActions } from "./data/known-actions";
 
 export const useTypedActionsRule: LintRule = {

@@ -5,7 +5,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 const VALID_CONTEXTS = ["github.", "secrets.", "matrix.", "steps.", "needs.", "inputs.", "env.", "vars.", "runner.", "always()", "failure()", "success()", "cancelled()", "contains(", "startsWith(", "endsWith(", "format(", "join(", "toJSON(", "fromJSON(", "hashFiles("];
 

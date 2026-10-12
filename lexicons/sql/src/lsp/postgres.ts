@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import {
   describeRange,

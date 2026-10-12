@@ -7,7 +7,7 @@
  * jobs that were never missing anything).
  */
 
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * The module specifier a top-level import bound `name` to, whether via a

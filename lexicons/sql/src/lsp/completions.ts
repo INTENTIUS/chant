@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { CompletionContext, CompletionItem } from "@intentius/chant/lsp/types";
 import { lexiconCompletions } from "@intentius/chant/lsp/lexicon-providers";
 import { catalogIndex, type CatalogIndex } from "./catalog";

@@ -8,7 +8,7 @@
  * is a dialect's by the module it is imported from, never by its name.
  */
 
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { Token } from "./tokens";
 import { unescapeTemplateDelimiters } from "./template";
 

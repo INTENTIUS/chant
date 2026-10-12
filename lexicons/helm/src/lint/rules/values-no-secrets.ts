@@ -10,7 +10,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 const SENSITIVE_KEY_PATTERN = /^(password|secret|token|apiKey|api_key|private_key|privateKey)$/i;
 const SAFE_PATTERNS = /existing|ref|key_name|keyName|secretName/i;
