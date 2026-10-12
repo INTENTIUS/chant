@@ -202,7 +202,10 @@ describe.skipIf(!hasSshKeygen)("identity.gates", () => {
 
     const roster = memoryGateLedgerPort({ pending: [pending], resolutions: [approval("alex")] });
     expect((await evaluateGate(roster, input)).satisfied).toBe(true);
-    expect((await evaluateGate({ ...roster, approvalRule: async () => rule }, input)).satisfied).toBe(false);
+    const held = await evaluateGate({ ...roster, approvalRule: async () => rule }, input);
+    expect(held.satisfied).toBe(false);
+    // #3841: the approval the rule refused is named, with why.
+    expect(!held.satisfied && held.refused?.map((x) => [x.resolution.resolvedBy, x.reason])).toEqual([["alex", expect.stringMatching(/not signed/)]]);
     const sealed = memoryGateLedgerPort({ pending: [pending], resolutions: [approval("alex"), signed(alice, approval("github:alice"))] });
     const check = await evaluateGate({ ...sealed, approvalRule: async () => rule }, input);
     expect(check.satisfied && check.resolution.resolvedBy).toBe("github:alice");

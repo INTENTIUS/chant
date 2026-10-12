@@ -155,7 +155,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
 export function readOnlyLedger(port: GateLedgerPort): GateLedgerPort {
   return {
     read: (op) => port.read(op),
-    ...(port.approvalRule ? { approvalRule: (gate: string) => port.approvalRule!(gate) } : {}),
+    ...(port.approvalRule ? { approvalRule: (gate: string, at?: { base?: string }) => port.approvalRule!(gate, at) } : {}),
     async appendPending(input) {
       return { record: { version: 1, kind: "pending", ...input }, pushed: false, pushWarning: "not recorded: the plan stage writes nothing" };
     },

@@ -7,7 +7,7 @@ import { waveSetDigest } from "../gated-waves";
 import { sealGateApproval } from "../workspace/trust/seal";
 import { TestRepo, hasSshKeygen } from "../workspace/trust/test-repo";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
-import { memoryGateLedgerPort } from "./gate";
+import { gitGateLedgerPort, memoryGateLedgerPort } from "./gate";
 import { githubReviews, forgejoReviews, gitlabReviews, type MergedReview, type ReviewSource } from "./gate-review";
 import type { OpWavesSpec } from "./op-waves";
 import { recordOpWaveHeadPlans, runOpWave, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
@@ -221,5 +221,57 @@ describe.skipIf(!hasSshKeygen)("a sealed wave (#3684)", () => {
 
   test("a seal by a signer listed at base applies the wave", async () => {
     expect(await run([approval("alice", alice.file)])).toMatchObject({ exitCode: 0, applied: ["prod"], decision: { status: "approved", approvedBy: "alice" } });
+  });
+});
+
+describe.skipIf(!hasSshKeygen)("identity.gates is read at the wave's --base (#3841)", () => {
+  const repo = new TestRepo("3841-base");
+  const alice = repo.key("alice");
+  afterAll(() => rmSync(join(repo.dir, ".."), { recursive: true, force: true }));
+  const GATE = "migrations-wave-1";
+  const waves = (approval: "ledger" | "sealed"): OpWavesSpec => ({ ...spec("sealed"), waves: [{ name: "prod", runs: [{ target: "prod" }], approval }] });
+  const workspace = (gates?: Record<string, object>) => JSON.stringify({ name: "acme", schema: 1, members: [], ...(gates ? { identity: { gates } } : {}) });
+
+  // Two commits on main: --base names the first, and main (the base a bare read falls back to) is the second.
+  function commits(atBase: string, atMain: string, approval: "ledger" | "sealed"): string {
+    repo.write("waves.json", JSON.stringify(waves(approval)));
+    repo.write(".chant/allowed_signers", `alice ${alice.pub}\n`);
+    repo.write("chant.workspace.json", atBase);
+    const base = repo.commit(`base (${approval})`);
+    repo.write("chant.workspace.json", atMain);
+    repo.commit(`main (${approval})`);
+    return base;
+  }
+
+  const plan = digest("a");
+  const set = waveSetDigest([{ member: "prod", planDigest: plan }]);
+  const approval = (by: string, keyFile?: string): GateResolutionRecord => {
+    const a = { op: "migrations", gate: GATE, resolvedBy: by, timestamp: "2026-10-10T00:00:00Z", planDigest: set };
+    return { version: 1, ...a, ...(keyFile ? { seal: sealGateApproval(keyFile, a) } : {}) };
+  };
+  const run = async (approvalMode: "ledger" | "sealed", base: string, resolutions: GateResolutionRecord[]) => {
+    const h = harness(plan, repo.dir);
+    const lines: string[] = [];
+    // The memory ledger, with the real port's identity.gates rule.
+    const gates = { ...memoryGateLedgerPort({ resolutions }), approvalRule: gitGateLedgerPort({ cwd: repo.dir }).approvalRule };
+    const result = await runOpWave({ spec: waves(approvalMode), specFile: "waves.json", wave: 1, base, cwd: repo.dir, exec: h.exec, gates, now: "2026-10-10T01:00:00Z", log: (l) => lines.push(l) });
+    return { result, lines };
+  };
+
+  test("a gate --base seals holds the wave, though main does not seal it, and the log says why", async () => {
+    const base = commits(workspace({ [GATE]: {} }), workspace(), "ledger");
+    expect(repo.head()).not.toBe(base);
+    const { result, lines } = await run("ledger", base, [approval("alice")]);
+    expect(result).toMatchObject({ exitCode: 3, applied: [], decision: { status: "waiting", base } });
+    expect(lines.join("\n")).toMatch(/the approval by alice at 2026-10-10T00:00:00Z does not count: .*not signed/);
+    // A seal by a signer at base passes both.
+    expect((await run("ledger", base, [approval("alice", alice.file)])).result).toMatchObject({ exitCode: 0, applied: ["prod"] });
+  });
+
+  test("a rule main adds does not judge a wave whose --base has none", async () => {
+    // At main the gate needs a class no pinned package supplies, which nothing passes.
+    const base = commits(workspace(), workspace({ [GATE]: { class: "operator" } }), "sealed");
+    const { result } = await run("sealed", base, [approval("alice", alice.file)]);
+    expect(result).toMatchObject({ exitCode: 0, applied: ["prod"], decision: { status: "approved", approvedBy: "alice" } });
   });
 });
