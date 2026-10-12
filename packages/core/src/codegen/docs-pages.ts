@@ -16,6 +16,7 @@
  * - `group`: a nested subgroup label inside the quadrant (e.g. "Vendor Composites").
  * - `order`: number; lower sorts first within its group. Unordered pages follow, by label.
  * - `hidden`: `true` keeps the page out of the sidebar (reachable by URL only).
+ * - `prompt`: optional `|` block; the agent prompt shown under the title. Kept.
  *
  * `group` / `order` / `hidden` / `label` are stripped from the written copy so
  * Starlight's schema never sees them; `diataxis` stays, and the generated

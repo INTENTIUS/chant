@@ -133,6 +133,18 @@ chant build src --lexicon docker -o docker-compose.yml
 chant build src --lexicon aws -o template.json
 \`\`\``;
 
+// "Optional: hand this page to your coding agent", shown under the overview's
+// title. The Dockerfile shape is the ordered \`steps\` list from chant #3926.
+const prompt = `Read https://intentius.io/chant/lexicons/docker/ and https://intentius.io/chant/lexicons/docker/dockerfiles/ first.
+Bring this project's Docker files into chant TypeScript under src/.
+Import each existing file: \`chant import --lexicon docker docker-compose.yml -o src/compose.ts\`, and \`chant import --lexicon docker Dockerfile -o src/dockerfile.ts\` for each Dockerfile.
+Write every Dockerfile stage as an ordered \`steps\` list, one instruction per step, with FROM as the stage's \`from\` and ARGs before the first FROM in \`globalArgs\`:
+  steps: [{ workdir: "/app" }, { copy: "package*.json ./" }, { run: "npm ci" }, { copy: ". ." }, { user: "node" }, { cmd: ["node", "dist/index.js"] }]
+Where two Dockerfiles repeat a stage or a run of steps, export it once (a \`DockerfileStage\` or a \`DockerfileStep[]\`) from its own module and import it in both.
+Run \`chant build src --lexicon docker -o docker-compose.yml\` and \`chant lint src\`. Run \`chant lint src --fix\` for DKRS002 (per-kind fields to \`steps\`), fix every other finding by hand, and repeat until lint is clean.
+Report the generated docker-compose.yml and each Dockerfile.<name>, and any finding you left and why.
+Never push an image, run \`docker compose up\` against anything but the local Docker daemon, or change files outside this project.`;
+
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
   const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -145,6 +157,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     basePath: "/chant/lexicons/docker/",
     overview,
     outputFormat,
+    prompt,
   };
 
   const result = docsPipeline(config);

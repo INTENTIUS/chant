@@ -1,0 +1,153 @@
+---
+// "Optional: hand this page to your coding agent": a card under the page title
+// with the first lines of the page's `prompt:` front matter showing, a button
+// that copies the whole prompt, one that copies a link to the card, and a
+// toggle that shows it all. The main docs site and every lexicon docs site
+// render it from their PageTitle override; lexicon sites get a copy of this
+// file from writeDocsSite (docs.ts). The content schema refuses a prompt with
+// no "Never" line. No Starlight import here, so the file works from any site.
+interface Props {
+	text?: string;
+}
+const prompt = (Astro.props.text ?? Astro.locals.starlightRoute?.entry.data.prompt)?.trim();
+---
+{prompt && (
+	<figure class="chant-prompt not-content" id="agent-prompt">
+		<figcaption>Optional: hand this page to your coding agent</figcaption>
+		<details>
+			<summary>
+				<pre class="peek" aria-hidden="true">{prompt}</pre>
+				<span class="more">Show the whole prompt</span>
+			</summary>
+			<pre class="full"><code>{prompt}</code></pre>
+		</details>
+		<div class="actions">
+			<button type="button" class="copy" data-copy={prompt} data-done="Copied">Copy prompt</button>
+			<button type="button" class="link" data-link data-done="Link copied">Copy link</button>
+		</div>
+	</figure>
+)}
+
+<script>
+	const flash = (button: HTMLButtonElement, text: string) => {
+		const was = button.textContent;
+		button.textContent = text;
+		setTimeout(() => (button.textContent = was), 1600);
+	};
+	for (const button of document.querySelectorAll<HTMLButtonElement>('.chant-prompt button')) {
+		button.addEventListener('click', async () => {
+			const card = button.closest('figure')!;
+			const text = button.dataset.link !== undefined ? `${location.origin}${location.pathname}#${card.id}` : (button.dataset.copy ?? '');
+			try {
+				await navigator.clipboard.writeText(text);
+				flash(button, button.dataset.done ?? 'Copied');
+			} catch {
+				// No clipboard (an insecure origin, a denied permission): open the
+				// prompt and select it so the reader can copy it by hand.
+				card.querySelector('details')?.setAttribute('open', '');
+				const code = card.querySelector('.full code');
+				if (code) window.getSelection()?.selectAllChildren(code);
+				flash(button, 'Selected');
+			}
+		});
+	}
+</script>
+
+<style>
+	/* Minimal: zinc greys from Starlight's scale and one blue. */
+	.chant-prompt {
+		--chant-prompt-blue: #2563eb;
+		margin: 1.25rem 0 0;
+		width: min(100%, 44rem);
+		border: 1px solid var(--sl-color-gray-5);
+		border-left: 2px solid var(--chant-prompt-blue);
+		border-radius: 0.5rem;
+		background: var(--sl-color-gray-7, var(--sl-color-black));
+		overflow: hidden;
+	}
+	:global([data-theme='dark']) .chant-prompt {
+		--chant-prompt-blue: #60a5fa;
+	}
+	figcaption {
+		padding: 0.7rem 1rem 0.4rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+	summary {
+		display: block;
+		list-style: none;
+		cursor: pointer;
+		padding: 0 1rem;
+	}
+	summary::-webkit-details-marker {
+		display: none;
+	}
+	pre {
+		margin: 0;
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		background: none;
+		border: 0;
+		padding: 0;
+	}
+	/* Two lines of the prompt, fading out, say it is there. */
+	.peek {
+		max-height: 2.4rem;
+		overflow: hidden;
+		mask-image: linear-gradient(to bottom, #000 40%, transparent);
+	}
+	.more,
+	details[open] summary::after {
+		display: inline-block;
+		margin-top: 0.2rem;
+		font-size: 0.72rem;
+		color: var(--chant-prompt-blue);
+	}
+	details[open] .peek,
+	details[open] .more {
+		display: none;
+	}
+	details[open] summary::after {
+		content: 'Hide the prompt';
+	}
+	.full {
+		padding: 0.25rem 1rem 0;
+	}
+	.actions {
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.7rem 1rem 0.8rem;
+	}
+	button {
+		font: inherit;
+		font-size: 0.78rem;
+		font-weight: 600;
+		border-radius: 0.4rem;
+		padding: 0.35rem 0.85rem;
+		cursor: pointer;
+	}
+	.copy {
+		color: #fff;
+		background: var(--chant-prompt-blue);
+		border: 1px solid var(--chant-prompt-blue);
+	}
+	:global([data-theme='dark']) .copy {
+		color: #09090b;
+	}
+	.copy:hover {
+		filter: brightness(1.1);
+	}
+	.link {
+		color: var(--sl-color-white);
+		background: none;
+		border: 1px solid var(--sl-color-gray-5);
+	}
+	.link:hover {
+		border-color: var(--chant-prompt-blue);
+	}
+</style>

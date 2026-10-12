@@ -11,6 +11,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Docker',
+      components: { PageTitle: './src/components/PageTitle.astro' },
       sidebar: [
             {
                   "label": "← chant docs",

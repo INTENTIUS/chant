@@ -21,6 +21,13 @@ export interface DocsConfig {
   packageJsonPath?: string;
   /** Lexicon-specific overview content (markdown) */
   overview?: string;
+  /**
+   * The overview page's agent prompt: "Optional: hand this page to your coding
+   * agent", shown under the title (docs-site/AgentPrompt.astro). Imperative
+   * steps, what to report back, and a line starting "Never". An authored page
+   * under `pagesDir` carries its own as a `prompt:` front-matter field.
+   */
+  prompt?: string;
   /** Output format description (e.g. "CloudFormation JSON template") */
   outputFormat?: string;
   /** Custom service grouping from resource type (e.g. "AWS::S3::Bucket" → "S3") */
