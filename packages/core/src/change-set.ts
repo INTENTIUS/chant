@@ -11,7 +11,9 @@
  * Each planner reaches it through an adapter that returns a
  * {@link ChangeSetPart}: one member and its entries. The lifecycle and
  * reconcile adapters are here; the terraform-family ones live in the
- * terraform lexicon's `change-set` subpath. {@link composeChangeSet} joins
+ * terraform lexicon's `change-set` subpath and the SQL ones in the sql
+ * lexicon's. A part another process wrote to a file reads back through
+ * {@link readChangeSetPartFile}. {@link composeChangeSet} joins
  * the parts.
  *
  * ## The digest
@@ -60,7 +62,15 @@ export const CHANGE_SET_ACTIONS: readonly ChangeSetAction[] = ["create", "update
 export type ChangeSetDisruption = "in-place" | "rolling" | "replace" | "destroy" | "unknown";
 
 /** Which tool produced a member's plan. */
-export type ChangeSetPlanner = "terraform" | "tofu" | "choudoufu" | "chant" | "warden";
+/**
+ * Which tool produced a member's plan. `sql` is a SQL schema change: a
+ * versioned plan (a product's migrations) or one of the sql lexicon's
+ * migration Ops' plans, through `@intentius/chant-lexicon-sql/change-set`.
+ */
+export type ChangeSetPlanner = "terraform" | "tofu" | "choudoufu" | "chant" | "warden" | "sql";
+
+/** Every planner, in the order the schema lists them. */
+export const CHANGE_SET_PLANNERS: readonly ChangeSetPlanner[] = ["terraform", "tofu", "choudoufu", "chant", "warden", "sql"];
 
 /** One attribute a change writes, at top-level granularity. */
 export interface ChangeSetAttribute {
@@ -480,5 +490,45 @@ export function reconcilePlanPart(input: ReconcilePlanPartInput): ChangeSetPart 
       holes: [],
     },
     entries,
+  };
+}
+
+// ── a part written to a file ───────────────────────────────────────────────────
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * A part an adapter in another process wrote as JSON, read back as `member`'s
+ * part. The `sql` planner's plans arrive this way: the sql lexicon's
+ * `change-set` adapters, or a product that fills them, write the part, and
+ * `readChangeSetPart` with `planner: "sql"` reads it.
+ *
+ * The part must name `planner` on its member and on every entry, and say
+ * `status`, `planDigest` and `holes`. Its member and entries are renamed to
+ * `member`, so the file need not know the name the run gives it; a `lexicon`
+ * given here replaces the part's. Nothing is recomputed: the plan digest is
+ * the one the writer took, over a plan this process never sees.
+ */
+export function readChangeSetPartFile(part: unknown, planner: ChangeSetPlanner, member: string, lexicon?: string): ChangeSetPart {
+  const where = `the ${planner} part for ${member}`;
+  if (!isRecord(part) || !isRecord(part.member) || !Array.isArray(part.entries)) throw new Error(`${where} is not a change-set part: it needs member and entries`);
+  const m = part.member;
+  if (m.planner !== planner) throw new Error(`${where} names planner ${String(m.planner)}, not ${planner}`);
+  if (m.status !== "planned" && m.status !== "failed") throw new Error(`${where} has no status`);
+  if (m.planDigest !== null && typeof m.planDigest !== "string") throw new Error(`${where} has no planDigest`);
+  if (m.status === "planned" && m.planDigest === null) throw new Error(`${where} planned but has no planDigest`);
+  if (!Array.isArray(m.holes)) throw new Error(`${where} has no holes array`);
+  const entries = part.entries.map((e, i) => {
+    if (!isRecord(e) || typeof e.address !== "string" || typeof e.type !== "string" || typeof e.action !== "string" || !Array.isArray(e.attributes)) {
+      throw new Error(`${where}: entries[${i}] needs address, type, action and attributes`);
+    }
+    if (!(CHANGE_SET_ACTIONS as readonly string[]).includes(e.action)) throw new Error(`${where}: entries[${i}] has action ${e.action}`);
+    if (e.planner !== planner) throw new Error(`${where}: entries[${i}] names planner ${String(e.planner)}, not ${planner}`);
+    return { ...(e as unknown as ChangeSetEntry), member, ...(lexicon !== undefined ? { lexicon } : {}) };
+  });
+  return {
+    member: { ...(m as unknown as ChangeSetMember), member, ...(lexicon !== undefined ? { lexicon } : {}) },
+    entries,
+    ...(Array.isArray(part.sideEffects) ? { sideEffects: part.sideEffects as ChangeSetPart["sideEffects"] } : {}),
   };
 }

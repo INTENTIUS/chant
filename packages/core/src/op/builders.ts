@@ -428,7 +428,7 @@ export const lifecyclePlanChangeSet = (args: WithStepRefs<LifecyclePlanChangeSet
   return activity("lifecyclePlanChangeSet", rest, { profile: profile ?? "longInfra", ...(id ? { id } : {}) });
 };
 
-/** A member's change-set part from a plan file a chant or warden run wrote (#3181). Its `part` feeds {@link composeChangeSet}. */
+/** A member's change-set part from a plan file a chant, warden or sql run wrote (#3181, #3767). Its `part` feeds {@link composeChangeSet}. */
 export const readChangeSetPart = (args: WithStepRefs<ReadChangeSetPartArgs> & StepOpts): NamedActivityStep => {
   const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
   return activity("readChangeSetPart", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });

@@ -34,6 +34,9 @@ import type { ClickHouseRebuildArgs } from "../../clickhouse/rebuild/op";
 import { CLASSIFIER_RULES } from "../../clickhouse/plan/rules";
 import { clusterSharding } from "../../clickhouse/rebuild/shards";
 import { resolveMarker } from "./clickhouse-apply";
+import { statementChange, type StatementChange } from "../../core/statements";
+import { clickhouseRebuildPart } from "../../change-set";
+import type { ChangeSetPart } from "@intentius/chant/change-set";
 
 export type { ClickHouseRebuildArgs } from "../../clickhouse/rebuild/op";
 
@@ -104,6 +107,10 @@ export interface RebuildPlanResult {
   planDigest?: string;
   /** Each classified change, as `<rule> <field>: <before> -> <after>`. */
   changes: string[];
+  /** The same changes, structured. */
+  classified: StatementChange[];
+  /** The plan as a change-set part (#3767), member the table: what `composeChangeSet` takes, and a gate's Cedar `context.plan`. */
+  part: ChangeSetPart;
   summary: string;
 }
 
@@ -125,7 +132,10 @@ async function plan(args: ClickHouseRebuildArgs, signal: AbortSignal | undefined
         : `${o.names.key} holds its declaration; nothing to rebuild`;
   run.log(`-- ${summary}`);
   for (const c of changes) run.log(`--   ${c}`);
-  return { state: o.state, table: o.names.key, ...(o.state === "rebuild" ? { planDigest: rebuildPlanDigest(o, run.dualWrite) } : {}), changes, summary };
+  const classified = o.changes.map(statementChange);
+  const result = { state: o.state, table: o.names.key, ...(o.state === "rebuild" ? { planDigest: rebuildPlanDigest(o, run.dualWrite) } : {}), changes, classified };
+  const part = clickhouseRebuildPart({ member: o.names.key, plan: result, ...(args.environment !== undefined ? { environment: args.environment } : {}) });
+  return { ...result, part, summary };
 }
 
 export async function clickhouseRebuildCreate(args: ClickHouseRebuildArgs, signal?: AbortSignal, deps: ClickHouseRebuildDeps = {}): Promise<CreateResult> {

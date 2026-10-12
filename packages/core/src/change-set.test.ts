@@ -23,11 +23,13 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  CHANGE_SET_PLANNERS,
   CHANGE_SET_SCHEMA_ID,
   changeSetDigest,
   changeSetDocumentDigest,
   composeChangeSet,
   lifecyclePlanPart,
+  readChangeSetPartFile,
   reconcilePlanPart,
   verifyChangeSetDigest,
   type ChangeSetPart,
@@ -241,5 +243,51 @@ describe("the digest", () => {
     expect(doc.summary.types.terraform_data).toEqual({ create: 2, update: 2, replace: 1, delete: 1, "no-op": 1 });
     expect(doc.summary.deletes.map((d) => `${d.member}:${d.address}`)).toEqual(["estate:terraform_data.old", "warden:team.contractors"]);
     expect(doc.summary.replacements.map((d) => `${d.member}:${d.address}`)).toEqual(["estate:terraform_data.worker"]);
+  });
+});
+
+describe("readChangeSetPartFile (#3767)", () => {
+  /** A part as the sql lexicon's adapter writes it; `lexicons/sql/src/change-set.test.ts` pins the adapter itself. */
+  const sqlPart = (): ChangeSetPart => ({
+    member: { member: "written-as", lexicon: "sql", planner: "sql", scope: "prod", status: "planned", planDigest: computePlanDigest("sql-versioned-plan", { id: "0002" }), holes: [] },
+    entries: [
+      { member: "written-as", lexicon: "sql", planner: "sql", address: "analytics.events", type: "ClickHouse::Table", action: "update", disruption: "rolling", scope: "prod", attributes: [{ path: "sql", after: ["ALTER TABLE analytics.events ADD COLUMN region String"] }] },
+    ],
+  });
+
+  test("the schema lists every planner, sql included", () => {
+    const planners = (schema as { $defs: { member: { properties: { planner: { enum: string[] } } }; entry: { properties: { planner: { enum: string[] } } } } }).$defs;
+    expect(planners.member.properties.planner.enum).toEqual([...CHANGE_SET_PLANNERS]);
+    expect(planners.entry.properties.planner.enum).toEqual([...CHANGE_SET_PLANNERS]);
+  });
+
+  test("reads a written part back as the run's member, through JSON, and composes it", () => {
+    const part = readChangeSetPartFile(JSON.parse(JSON.stringify(sqlPart())), "sql", "warehouse");
+    expect(part.member.member).toBe("warehouse");
+    expect(part.entries.map((e) => e.member)).toEqual(["warehouse"]);
+    expect(part.member.planDigest).toBe(sqlPart().member.planDigest);
+    expect(readChangeSetPartFile(sqlPart(), "sql", "warehouse", "clickhouse").entries[0].lexicon).toBe("clickhouse");
+    const doc = composeChangeSet([part, reconcilePlanPart({ member: "warden", plan: wardenPlan() })]);
+    expectValid(doc);
+    expect(doc.summary.byMember.warehouse).toEqual({ update: 1 });
+    // The name the run gives it is what the set digest pairs with the writer's plan digest.
+    expect(composeChangeSet([readChangeSetPartFile(sqlPart(), "sql", "other")]).digest).not.toBe(composeChangeSet([part]).digest);
+  });
+
+  test("refuses what is not a part of that planner", () => {
+    const p = sqlPart();
+    expect(() => readChangeSetPartFile([], "sql", "w")).toThrow(/not a change-set part/);
+    expect(() => readChangeSetPartFile({ ...p, member: { ...p.member, planner: "chant" } }, "sql", "w")).toThrow(/names planner chant, not sql/);
+    expect(() => readChangeSetPartFile({ ...p, member: { ...p.member, planDigest: null } }, "sql", "w")).toThrow(/planned but has no planDigest/);
+    expect(() => readChangeSetPartFile({ ...p, member: { ...p.member, holes: undefined } }, "sql", "w")).toThrow(/no holes array/);
+    expect(() => readChangeSetPartFile({ ...p, entries: [{ ...p.entries[0], planner: "terraform" }] }, "sql", "w")).toThrow(/entries\[0\] names planner terraform/);
+    expect(() => readChangeSetPartFile({ ...p, entries: [{ ...p.entries[0], action: "upsert" }] }, "sql", "w")).toThrow(/entries\[0\] has action upsert/);
+    expect(() => readChangeSetPartFile({ ...p, entries: [{ address: "x" }] }, "sql", "w")).toThrow(/entries\[0\] needs address/);
+  });
+
+  test("a failed member keeps a null digest", () => {
+    const p = sqlPart();
+    const failed = readChangeSetPartFile({ ...p, member: { ...p.member, status: "failed", error: "out of order", planDigest: null } }, "sql", "w");
+    expect(failed.member).toMatchObject({ status: "failed", error: "out of order", planDigest: null });
   });
 });

@@ -323,7 +323,7 @@ OPS015 rejects an `approval` block at build when it is malformed, for example a 
 
 #### The plan in the policy's context
 
-A gate whose `plan` names the step that planned the change gets the plan's summary as `context.plan`, with no context code in the Op ([#3182](https://github.com/INTENTIUS/chant/issues/3182)). The summary comes from that step's [change set](/chant/reference/change-set/): `terraformPlan` returns one, and so do `lifecyclePlanChangeSet`, `readChangeSetPart` and `composeChangeSet`. `TerraformApplyOp` takes the gate's approval block as `gateApproval`.
+A gate whose `plan` names the step that planned the change gets the plan's summary as `context.plan`, with no context code in the Op ([#3182](https://github.com/INTENTIUS/chant/issues/3182)). The summary comes from that step's [change set](/chant/reference/change-set/): `terraformPlan` returns one, and so do `lifecyclePlanChangeSet`, `readChangeSetPart`, `composeChangeSet` and the sql lexicon's `clickhouseRebuildPlan` and `postgresMigrationPlan`. `TerraformApplyOp` takes the gate's approval block as `gateApproval`.
 
 | Field | Type | What it holds |
 |---|---|---|
