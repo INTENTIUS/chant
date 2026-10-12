@@ -434,7 +434,12 @@ export abstract class PostgresObject extends SqlObject {
   declare readonly sqlName: string;
 }
 
-export interface PostgresSchema extends PostgresObject {
+/**
+ * A schema. `N` is its name when its tag was given one
+ * (`` schema<"shop">`CREATE SCHEMA shop` ``), which is how a composite placed
+ * in it knows its members' qualified names (chant#3787).
+ */
+export interface PostgresSchema<N extends string = string> extends PostgresObject, Named<N> {
   readonly entityType: "Postgres::Schema";
   readonly props: SchemaProps;
 }
@@ -1601,9 +1606,13 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   }
 }
 
-/** `` schema`CREATE SCHEMA ...` ``: one Postgres schema, parsed at build time. */
-export function schema(strings: TemplateStringsArray, ...values: unknown[]): PostgresSchema {
-  return build("schema", strings, values) as PostgresSchema;
+/**
+ * `` schema`CREATE SCHEMA ...` ``: one Postgres schema, parsed at build time.
+ * Given its name as the type argument (`` schema<"shop">`...` ``), a composite
+ * placed in it types its members' columns (chant#3787).
+ */
+export function schema<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: unknown[]): PostgresSchema<N> {
+  return build("schema", strings, values) as PostgresSchema<N>;
 }
 
 /**

@@ -89,4 +89,21 @@ describe("chant sql types, through tsc", () => {
       expect.stringMatching(/^src\/by-country\.ts\(7\): TS2345 Argument of type 'Column<"Nullable\(String\)", .*' is not assignable to parameter of type 'NotNullColumn'/),
     ]);
   }, 120_000);
+
+  // chant#3787 — a composite's members are typed from the names its props give
+  // them: `schema<"app">` or a schema by name, and the `name` prop, Postgres
+  // folding both. A name or schema the type system cannot read stays unchecked.
+  test("Postgres composites: a misspelled column on a member fails; every member's row is its generated entry's", async () => {
+    const dir = join(fixtures, "postgres-composites");
+    expect(await rendered(dir)).toBe(readFileSync(join(dir, "src", SQL_TYPES_FILE), "utf8"));
+    expect(tscErrors(dir)).toEqual([
+      expect.stringMatching(/^checks\/misspelled\.ts\(4\): TS2551 Property 'emial' does not exist .* Did you mean 'email'\?$/),
+    ]);
+  }, 120_000);
+
+  test("ClickHouse composites: a misspelled column on a member fails; every member's row is its generated entry's", async () => {
+    const dir = join(fixtures, "clickhouse-composites");
+    expect(await rendered(dir)).toBe(readFileSync(join(dir, "src", SQL_TYPES_FILE), "utf8"));
+    expect(tscErrors(dir)).toEqual([expect.stringMatching(/^checks\/rows\.ts\(12\): TS2339 Property 'knid' does not exist on type/)]);
+  }, 120_000);
 });

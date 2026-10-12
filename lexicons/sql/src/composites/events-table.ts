@@ -10,6 +10,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { table, type ClickHouseTable } from "../clickhouse/entities";
+import type { ClickHouseMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface EventsTableProps {
   /** The table's name, `name` or `database.name`. */
@@ -28,12 +30,15 @@ export interface EventsTableProps {
   partitionBy?: string;
 }
 
-export type EventsTableMembers = {
-  table: ClickHouseTable;
+/** `Table` is the table's name, when the call's props give it (chant#3787). */
+export type EventsTableMembers<Table extends string = string> = {
+  table: ClickHouseTable<Table>;
 };
 
+type EventsTableCall = <const N extends string>(props: EventsTableProps & { name: N }) => Instance<EventsTableMembers<ClickHouseMemberName<N>>>;
+
 /** An append-only MergeTree events table, partitioned by its timestamp and expired by TTL. */
-export const EventsTable = Composite<EventsTableProps, EventsTableMembers>((props) => {
+export const EventsTable = Composite<EventsTableProps, EventsTableMembers, TypedComposite<EventsTableProps, EventsTableMembers, EventsTableCall>>((props) => {
   const ts = props.timestamp ?? "ts";
   const events = table`
     CREATE TABLE ${props.name} (

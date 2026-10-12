@@ -14,6 +14,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { table, view, type ClickHouseRelation, type ClickHouseTable, type ClickHouseView } from "../clickhouse/entities";
+import type { ClickHouseMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface RollupViewProps {
   /** The target table's name. The view is `<name>_mv`. */
@@ -34,13 +36,18 @@ export interface RollupViewProps {
   partitionBy?: string;
 }
 
-export type RollupViewMembers = {
-  table: ClickHouseTable;
-  view: ClickHouseView;
+/** `Table` and `View` are the target table's and the view's names, when the call's props give them (chant#3787). */
+export type RollupViewMembers<Table extends string = string, View extends string = string> = {
+  table: ClickHouseTable<Table>;
+  view: ClickHouseView<View>;
 };
 
+type RollupViewCall = <const N extends string>(
+  props: RollupViewProps & { name: N },
+) => Instance<RollupViewMembers<ClickHouseMemberName<N>, ClickHouseMemberName<N, "_mv">>>;
+
 /** A materialized view that rolls a source table up into a target table it declares beside it. */
-export const RollupView = Composite<RollupViewProps, RollupViewMembers>((props) => {
+export const RollupView = Composite<RollupViewProps, RollupViewMembers, TypedComposite<RollupViewProps, RollupViewMembers, RollupViewCall>>((props) => {
   const target = table`
     CREATE TABLE ${props.name} (${props.columns})
     ENGINE = ${props.engine ?? "SummingMergeTree"}

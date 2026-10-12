@@ -109,6 +109,46 @@ export type RowIn<Registry, T> = T extends string
   ? RowFromColumns<ColumnsIn<Registry, T>>
   : T extends Named<infer N> ? RowFromColumns<ColumnsIn<Registry, N>> : never;
 
+// ── Composite members ───────────────────────────────────────────────────
+
+/** Whether `S` is a name the type system knows: a literal, not `string` and not {@link Unnamed}. */
+type Known<S> = [S] extends [Unnamed] ? false : string extends S ? false : true;
+
+/** A piece of a name a composite's props give: the literal, the name a {@link Named} entity carries, or {@link Unnamed}. */
+type NamePiece<V> = [V] extends [string]
+  ? Known<V> extends true ? V : Unnamed
+  : [V] extends [Named<infer N>] ? (Known<N> extends true ? N : Unnamed) : Unnamed;
+
+/**
+ * chant#3787 — the qualified name of a relation a Postgres composite declares
+ * as `${schema}.${name}${suffix}`: `schema` is the composite's `schema` prop (a
+ * string, or a schema whose tag was given its name, `schema<"app">`), `name`
+ * its `name` prop. Postgres folds both, as the build does. {@link Unnamed},
+ * so the columns stay unchecked, when either piece is not a known literal.
+ */
+export type PostgresMemberName<Schema, Name, Suffix extends string = ""> = [NamePiece<Schema>, NamePiece<Name>] extends [
+  infer S extends string,
+  infer N extends string,
+]
+  ? Known<S> extends true
+    ? Known<N> extends true
+      ? `${Lowercase<S>}.${Lowercase<N>}${Suffix}`
+      : Unnamed
+    : Unnamed
+  : Unnamed;
+
+/**
+ * chant#3787 — the name of a relation a ClickHouse composite declares,
+ * `${name}${suffix}`, where `name` is its `name` prop as written (`events` or
+ * `analytics.events`). ClickHouse does not fold names. {@link Unnamed} when
+ * the name is not a known literal.
+ */
+export type ClickHouseMemberName<Name, Suffix extends string = ""> = NamePiece<Name> extends infer N extends string
+  ? Known<N> extends true
+    ? `${N}${Suffix}`
+    : Unnamed
+  : Unnamed;
+
 // ── The slot record ─────────────────────────────────────────────────────
 
 /**

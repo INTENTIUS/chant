@@ -13,6 +13,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { index, table, type PostgresIndex, type PostgresSchema, type PostgresTable } from "../postgres/entities";
+import type { PostgresMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface AuditLogTableProps {
   /** The table's name, unqualified. The default partition is `<name>_default`. */
@@ -25,14 +27,19 @@ export interface AuditLogTableProps {
   actor?: string;
 }
 
-export type AuditLogTableMembers = {
-  table: PostgresTable;
-  defaultPartition: PostgresTable;
+/** `Table` and `Default` are the table's and its default partition's qualified names, when the call's props give them (chant#3787). */
+export type AuditLogTableMembers<Table extends string = string, Default extends string = string> = {
+  table: PostgresTable<Table>;
+  defaultPartition: PostgresTable<Default>;
   actorIndex: PostgresIndex;
 };
 
+type AuditLogTableCall = <const N extends string, const S extends PostgresSchema | string = "public">(
+  props: AuditLogTableProps & { name: N; schema?: S },
+) => Instance<AuditLogTableMembers<PostgresMemberName<S, N>, PostgresMemberName<S, N, "_default">>>;
+
 /** An append-only audit log partitioned by month on its timestamp, with a default partition and an index by actor. */
-export const AuditLogTable = Composite<AuditLogTableProps, AuditLogTableMembers>((props) => {
+export const AuditLogTable = Composite<AuditLogTableProps, AuditLogTableMembers, TypedComposite<AuditLogTableProps, AuditLogTableMembers, AuditLogTableCall>>((props) => {
   const schema = props.schema ?? "public";
   const ts = props.timestamp ?? "occurred_at";
   const actor = props.actor ?? "actor";

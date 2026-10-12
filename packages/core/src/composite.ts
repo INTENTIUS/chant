@@ -115,11 +115,23 @@ export class CompositeRegistry {
  * });
  * export const storage = SecureStorage({ name: "data" });
  * ```
+ *
+ * `D` (chant#3787) lets a lexicon give the definition a more precise call
+ * signature than `(props: P) => M`, such as a generic one whose members' types
+ * depend on the literal props it is called with. It is a type only: the value
+ * is the same definition, and `D` must still be a `CompositeDefinition<P, M>`,
+ * so an intersection with the precise signature first is the usual form. It
+ * is passed as a type argument rather than by casting the result, because the
+ * fold recognizes a composite by its `export const X = Composite(...)` shape.
  */
-export function Composite<P, M extends CompositeFactoryMembers = CompositeMembers>(
+export function Composite<
+  P,
+  M extends CompositeFactoryMembers = CompositeMembers,
+  D extends CompositeDefinition<P, M> = CompositeDefinition<P, M>,
+>(
   factory: (props: P) => M,
   name?: string,
-): CompositeDefinition<P, M> {
+): D {
   const id = Symbol();
   const compositeName = name ?? "anonymous";
 
@@ -163,7 +175,7 @@ export function Composite<P, M extends CompositeFactoryMembers = CompositeMember
 
   CompositeRegistry.register(definition as CompositeDefinition<unknown>);
 
-  return definition;
+  return definition as D;
 }
 
 /** Non-enumerable, symbol-keyed: invisible to serializers, spreads and comparisons, like provenance. */

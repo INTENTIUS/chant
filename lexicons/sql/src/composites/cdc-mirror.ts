@@ -11,6 +11,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { table, view, type ClickHouseTable, type ClickHouseView } from "../clickhouse/entities";
+import type { ClickHouseMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface CdcMirrorProps {
   /** The mirror table's name. The view of live rows is `<name>_current`. */
@@ -27,13 +29,18 @@ export interface CdcMirrorProps {
   partitionBy?: string;
 }
 
-export type CdcMirrorMembers = {
-  table: ClickHouseTable;
-  current: ClickHouseView;
+/** `Table` and `Current` are the mirror's and its view's names, when the call's props give them (chant#3787). */
+export type CdcMirrorMembers<Table extends string = string, Current extends string = string> = {
+  table: ClickHouseTable<Table>;
+  current: ClickHouseView<Current>;
 };
 
+type CdcMirrorCall = <const N extends string>(
+  props: CdcMirrorProps & { name: N },
+) => Instance<CdcMirrorMembers<ClickHouseMemberName<N>, ClickHouseMemberName<N, "_current">>>;
+
 /** A ReplacingMergeTree mirror of a CDC-fed source table, with a view of the rows not deleted. */
-export const CdcMirror = Composite<CdcMirrorProps, CdcMirrorMembers>((props) => {
+export const CdcMirror = Composite<CdcMirrorProps, CdcMirrorMembers, TypedComposite<CdcMirrorProps, CdcMirrorMembers, CdcMirrorCall>>((props) => {
   const version = props.version ?? "_version";
   const deleted = props.deleted ?? "_is_deleted";
   const mirror = table`
