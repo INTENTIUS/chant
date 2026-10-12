@@ -824,6 +824,64 @@ describe("pull requests over REST (#3798)", () => {
     expect(l.calls.map((c) => c.body)).toEqual([{ description: "d" }, { add_labels: "minor,breaking" }]);
   });
 
+  test("Forgejo's 404 on the pull list of a just-pushed empty repository is no pull request (#3845)", async () => {
+    const empty = fakeFetch({ "GET /api/v1/repos/acme/infra": { default_branch: "main" } });
+    expect(await forgejoForge({ ...fjOpts, fetch: empty.fetch }).findPullRequest("chant/x")).toBeUndefined();
+    // A repository that is really missing 404s on its own read, and that still throws.
+    const gone = fakeFetch({});
+    await expect(forgejoForge({ ...fjOpts, fetch: gone.fetch }).findPullRequest("chant/x")).rejects.toThrow(/404/);
+    // GitHub's list 404 stays an error.
+    await expect(githubForge({ ...gh, fetch: fakeFetch({}).fetch }).findPullRequest("chant/x")).rejects.toThrow(/404/);
+  });
+
+  const answering = (status: number, body: unknown, calls: Call[] = []): ForgeFetch => async (url, init) => {
+    calls.push({ method: init.method, url, headers: init.headers, ...(init.body ? { body: JSON.parse(init.body) } : {}) });
+    return { ok: status < 400, status, text: async () => (body === undefined ? "" : JSON.stringify(body)) };
+  };
+
+  test("mergePullRequest merges only at the reviewed sha on GitHub", async () => {
+    const f = fakeFetch({
+      "PUT /repos/acme/infra/pulls/5/merge": { merged: true, sha: "m1" },
+      "GET /repos/acme/infra/pulls/5": { number: 5, head: { ref: "chant/x", repo: { full_name: "acme/infra" } } },
+      "DELETE /repos/acme/infra/git/refs/heads/chant/x": null,
+    });
+    const r = await githubForge({ ...gh, fetch: f.fetch }).mergePullRequest(5, { sha: SHA, method: "squash", title: "t", message: "m", deleteBranch: true });
+    expect(r).toEqual({ merged: true, sha: "m1" });
+    expect(f.calls[0].body).toEqual({ sha: SHA, merge_method: "squash", commit_title: "t", commit_message: "m" });
+    expect(f.calls.map((c) => c.method)).toEqual(["PUT", "GET", "DELETE"]);
+    const calls: Call[] = [];
+    const moved = await githubForge({ ...gh, fetch: answering(409, { message: "Head branch was modified. Review and try the merge again." }, calls) }).mergePullRequest(5, { sha: SHA });
+    expect(moved).toEqual({ merged: false, reason: "Head branch was modified. Review and try the merge again." });
+    expect(calls[0].body).toEqual({ sha: SHA, merge_method: "merge" });
+    const blocked = await githubForge({ ...gh, fetch: answering(405, { message: "Required status check is expected." }) }).mergePullRequest(5, { sha: SHA });
+    expect(blocked.merged).toBe(false);
+    await expect(githubForge({ ...gh, fetch: answering(401, { message: "Bad credentials" }) }).mergePullRequest(5, { sha: SHA })).rejects.toThrow(/401/);
+  });
+
+  test("mergePullRequest on Forgejo sends head_commit_id and reads the merge commit back", async () => {
+    const f = fakeFetch({
+      "POST /api/v1/repos/acme/infra/pulls/5/merge": null,
+      "GET /api/v1/repos/acme/infra/pulls/5": { number: 5, merge_commit_sha: "m2" },
+    });
+    const r = await forgejoForge({ ...fjOpts, fetch: f.fetch }).mergePullRequest(5, { sha: SHA, method: "rebase", title: "t", message: "m", deleteBranch: true });
+    expect(r).toEqual({ merged: true, sha: "m2" });
+    expect(f.calls[0].body).toEqual({ Do: "rebase", head_commit_id: SHA, MergeTitleField: "t", MergeMessageField: "m", delete_branch_after_merge: true });
+    const moved = await forgejoForge({ ...fjOpts, fetch: answering(409, { message: "head commit id does not match" }) }).mergePullRequest(5, { sha: SHA });
+    expect(moved).toEqual({ merged: false, reason: "head commit id does not match" });
+    expect((await forgejoForge({ ...fjOpts, fetch: answering(405, undefined) }).mergePullRequest(5, { sha: SHA })).merged).toBe(false);
+  });
+
+  test("mergePullRequest on GitLab passes sha and squash, and refuses rebase", async () => {
+    const f = fakeFetch({ "PUT /api/v4/projects/group%2Finfra/merge_requests/7/merge": { state: "merged", merge_commit_sha: "m3" } });
+    const g = gitlabForge({ ...gl, fetch: f.fetch });
+    expect(await g.mergePullRequest(7, { sha: SHA, method: "squash", title: "t", message: "m", deleteBranch: true })).toEqual({ merged: true, sha: "m3" });
+    expect(f.calls[0].body).toEqual({ sha: SHA, squash: true, squash_commit_message: "t\n\nm", merge_commit_message: "t\n\nm", should_remove_source_branch: true });
+    const moved = await gitlabForge({ ...gl, fetch: answering(409, { message: "SHA does not match HEAD of source branch" }) }).mergePullRequest(7, { sha: SHA });
+    expect(moved).toEqual({ merged: false, reason: "SHA does not match HEAD of source branch" });
+    expect((await gitlabForge({ ...gl, fetch: answering(405, { message: "Branch cannot be merged" }) }).mergePullRequest(7, { sha: SHA })).merged).toBe(false);
+    await expect(g.mergePullRequest(7, { sha: SHA, method: "rebase" })).rejects.toThrow(/rebase/);
+  });
+
   test("a repository with no default branch is refused by name", async () => {
     const { fetch } = fakeFetch({ "GET /api/v1/repos/acme/infra": {} });
     await expect(forgejoForge({ ...fjOpts, fetch }).openPullRequest({ head: "h", title: "t", body: "b" })).rejects.toThrow(/no default branch.*pass base/);
