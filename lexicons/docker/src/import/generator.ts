@@ -102,7 +102,7 @@ function generateDockerfile(df: DockerfileIR, warnings: string[]): string {
     for (const { instruction, value } of stage.instructions) {
       const key = instruction.toLowerCase();
       if (STEP_KEYS.has(key)) {
-        out.push(`${indent}  { ${key}: ${JSON.stringify(value)} },`);
+        out.push(`${indent}  { ${key}: ${quote(value)} },`);
       } else {
         warnings.push(`Dockerfile ${df.name}: ${instruction} has no step and was left as a comment`);
         out.push(`${indent}  // ${instruction} ${value.replace(/\n/g, " ")}`);
@@ -129,6 +129,12 @@ function generateDockerfile(df: DockerfileIR, warnings: string[]): string {
   }
   out.push(`});`);
   return out.join("\n");
+}
+
+/** A string literal, single-quoted when that avoids escaping double quotes (exec form: `'["node", "a.js"]'`). */
+function quote(value: string): string {
+  if (value.includes('"') && !/['\\\n]/.test(value)) return `'${value}'`;
+  return JSON.stringify(value);
 }
 
 function sanitizeName(name: string): string {
