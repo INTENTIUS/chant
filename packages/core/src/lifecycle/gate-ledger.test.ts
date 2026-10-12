@@ -446,7 +446,13 @@ describe("gate ledger newline termination (#3849)", () => {
   test("every append ends the file in a newline, with no blank or merged lines", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
-      await appendPendingGate({ op: "nl-op", gate: "g1", planDigest: "sha256:" + "a".repeat(64) } as never, { cwd: dir });
+      await appendPendingGate(
+        {
+          op: "nl-op", gate: "g1", planDigest: "sha256:" + "a".repeat(64),
+          timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2026-01-08T00:00:00.000Z",
+        },
+        { cwd: dir },
+      );
       const one = await readBlobFromPath("_gates", "nl-op.jsonl", { cwd: dir });
       expect(one!.endsWith("\n")).toBe(true);
       await appendGateResolution(

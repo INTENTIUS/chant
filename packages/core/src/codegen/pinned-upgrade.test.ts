@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, beforeAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -185,6 +185,13 @@ function makeWorkingLexicon(
 }
 
 describe("checkPinnedUpgrade — no upgrade paths", () => {
+  // The first checkPinnedUpgrade loads the k8s lexicon plugin from source, which
+  // takes 1.6s on a quiet machine and over the 5s unit budget on a loaded CI
+  // shard. beforeAll is outside the per-test budget, so pay it there once.
+  beforeAll(async () => {
+    await loadUpstreamPin("k8s");
+  }, 60_000);
+
   test("reports no upgrade when upstream equals pin", async () => {
     const root = mkdtempSync(join(tmpdir(), "chant-up-"));
     try {
