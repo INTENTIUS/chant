@@ -26,6 +26,8 @@ export interface FakeOptions {
   version?: string;
   /** The SQL user-defined functions `system.functions` lists. Default: none. */
   functions?: Array<{ name: string; statement: string }>;
+  /** What the undeclarable-kind probes (`../live/undeclarable.ts`) find, by the coverage table's kind. Default: nothing. */
+  undeclarable?: Array<{ kind: string; database?: string; name: string }>;
 }
 
 const row = (o: Record<string, unknown>) => `${JSON.stringify(o)}\n`;
@@ -38,6 +40,9 @@ export async function fakeClickHouse(objects: FakeObject[], options: FakeOptions
     queries.push(body);
     if (options.fail) return { status: options.fail.status, text: options.fail.body };
     if (/version\(\)/.test(body)) return ok(row({ v: options.version ?? "26.8.15.10" }));
+    // A probe for one undeclarable kind (`../live/undeclarable.ts`), which its comment names.
+    const probe = /^\/\* chant undeclarable: (.+?) \*\//.exec(body);
+    if (probe) return ok((options.undeclarable ?? []).filter((u) => u.kind === probe[1]).map((u) => row({ database: u.database ?? "", name: u.name })).join(""));
     if (/FROM system\.databases/.test(body)) {
       return ok(
         objects

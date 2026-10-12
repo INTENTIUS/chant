@@ -16,6 +16,11 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["graph", "--traffic"])).toThrow(/--traffic needs a level/);
   });
 
+  test("--skip-undeclarable reaches live import (#3911)", () => {
+    expect(parseArgs(["import", "--from", "prod"]).skipUndeclarable).toBeUndefined();
+    expect(parseArgs(["import", "--from", "prod", "--skip-undeclarable"]).skipUndeclarable).toBe(true);
+  });
+
   test("--fold and --no-fold set the tri-state fold option (#1134)", () => {
     expect(parseArgs(["build", "src"]).fold).toBeUndefined();
     expect(parseArgs(["build", "src", "--fold"]).fold).toBe(true);

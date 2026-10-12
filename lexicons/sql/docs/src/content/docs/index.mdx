@@ -139,6 +139,9 @@ Both dialects:
 - [Composites](./composites/): five ClickHouse and five Postgres composites.
 - [Lint Rules and Checks](./lint-rules/): every lint rule and post-synth
   check.
+- [Object Coverage](./object-coverage/): every kind of object the pinned
+  servers can create, declared, refused or out of scope, and what import
+  does with each.
 
 ## Schema changes and `chant migrate`
 
@@ -156,14 +159,14 @@ it cannot make runs as a gated migration Op: `ClickHouseRebuildOp` (see
 
 | Metric | Count |
 |--------|-------|
-| Resources | 26 |
+| Resources | 13 |
 | Property types | 0 |
 | Services | 2 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
 | Lint rules | 64 |
 
-**Lexicon version:** 0.121.1  
+**Lexicon version:** 0.124.18  
 **Namespace:** `SQL`
 
 - [All Rules](./rules) — 64 rules

@@ -11,6 +11,8 @@ export interface FakeCatalog {
   tables?: Array<{ schema: string; name: string; comment?: string; columns?: Array<{ name: string; type: string; notnull?: boolean; dflt?: string }> }>;
   views?: Array<{ schema: string; name: string; def: string; materialized?: boolean; comment?: string }>;
   indexes?: Array<{ schema: string; name: string; table: string; def: string }>;
+  /** What the undeclarable-kind probes (`../live/undeclarable.ts`) find, by the coverage table's kind. Default: nothing. */
+  undeclarable?: Array<{ kind: string; schema?: string; name: string }>;
 }
 
 export function fakeClient(catalog: FakeCatalog, log: string[] = []): PostgresClient {
@@ -20,6 +22,9 @@ export function fakeClient(catalog: FakeCatalog, log: string[] = []): PostgresCl
     async query<T>(sql: string): Promise<T[]> {
       log.push(sql);
       const rows = (r: unknown[]) => r as T[];
+      // A probe for one undeclarable kind (`../live/undeclarable.ts`), which its comment names.
+      const probe = /^\/\* chant undeclarable: (.+?) \*\//.exec(sql);
+      if (probe) return rows((catalog.undeclarable ?? []).filter((u) => u.kind === probe[1]).map((u) => ({ schema: u.schema ?? null, name: u.name, owner: null })));
       if (sql.includes("FROM pg_catalog.pg_namespace n WHERE")) return rows((catalog.schemas ?? []).map((s, i) => ({ oid: String(100 + i), name: s.name, comment: s.comment ?? null })));
       if (sql.includes("c.relkind IN ('r', 'p')")) {
         return rows(tables.map((t) => ({ oid: t.oid, schema: t.schema, name: t.name, kind: "r", persistence: "p", ispartition: false, typed: false, partkey: null, bound: null, parents: [], reloptions: null, am: "heap", tablespace: null, comment: t.comment ?? null })));

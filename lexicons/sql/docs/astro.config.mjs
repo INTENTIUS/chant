@@ -130,6 +130,10 @@ export default defineConfig({
                               "slug": "lint-rules"
                         },
                         {
+                              "label": "Object Coverage",
+                              "slug": "object-coverage"
+                        },
+                        {
                               "label": "All Rules",
                               "slug": "rules"
                         },

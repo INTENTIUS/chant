@@ -9,7 +9,9 @@
  * anything else is ClickHouse.
  *
  * A statement that declares nothing, or does not parse, is an error naming
- * it (`./sql-files.ts`); none is left out. A clause the parser does not know
+ * it (`./sql-files.ts`); none is left out. So is a `CREATE` of a kind chant
+ * cannot declare (#3911, `./coverage.ts`): `--parser-option
+ * skipUndeclarable` imports the rest and lists those as warnings. A clause the parser does not know
  * (#3872) is kept in the template as written.
  */
 
@@ -52,13 +54,19 @@ export function dialectOption(options: ParserOptions | undefined): SqlDialect | 
 }
 
 export class SqlFileParser implements TemplateParser {
-  constructor(private readonly dialect?: SqlDialect) {}
+  constructor(
+    private readonly dialect?: SqlDialect,
+    private readonly options: { skipUndeclarable?: boolean } = {},
+  ) {}
 
   parse(content: string): TemplateIR {
     const dialect = this.dialect ?? guessDialect(content);
     const problems: string[] = [];
-    const ir = dialect === "postgres" ? pgObjectsToIR(readPostgres(content, { origin: "the DDL" }, problems)) : chObjectsToIR(readClickHouse(content, { origin: "the DDL" }, problems));
+    const skipped: string[] = [];
+    const read = { origin: "the DDL", ...(this.options.skipUndeclarable ? { undeclarable: skipped } : {}) };
+    const ir = dialect === "postgres" ? pgObjectsToIR(readPostgres(content, read, problems)) : chObjectsToIR(readClickHouse(content, read, problems));
     if (problems.length > 0) throw new SqlFileError(`the ${dialect === "postgres" ? "Postgres" : "ClickHouse"} DDL`, problems);
-    return ir;
+    if (skipped.length === 0) return ir;
+    return { ...ir, warnings: [...(ir.warnings ?? []), ...skipped.map((s) => `left out (skipUndeclarable): ${s}`)] };
   }
 }

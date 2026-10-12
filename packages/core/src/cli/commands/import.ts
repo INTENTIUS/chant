@@ -645,6 +645,8 @@ export interface LiveImportOptions {
   owned?: boolean;
   /** Keep server-defaulted fields instead of stripping to declared shape. */
   verbatim?: boolean;
+  /** Import what can be declared, and warn about the live objects no declaration can hold instead of failing. */
+  skipUndeclarable?: boolean;
 }
 
 /**
@@ -745,6 +747,8 @@ export async function liveImportFromPlugins(
   // Collect IR from every exporter, tagging which lexicon produced output.
   let irParts: ExportedTemplate[] = [];
   let generatorLexicon: LexiconPlugin | undefined;
+  // An exporter that fails (an sql import refusing objects it cannot declare, #3911) is the error when nothing else exported.
+  const failures: string[] = [];
   for (const plugin of exporters) {
     let ir: ExportedTemplate;
     try {
@@ -754,9 +758,10 @@ export async function liveImportFromPlugins(
         selector: options.selector,
         owned: options.owned,
         verbatim: options.verbatim,
+        ...(options.skipUndeclarable ? { skipUndeclarable: true } : {}),
       });
     } catch (err) {
-      warnings.push(`${plugin.name}: live export failed — ${err instanceof Error ? err.message : String(err)}`);
+      failures.push(`${plugin.name}: live export failed — ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
     // What the exporter left out or could not carry (#3336).
@@ -771,9 +776,10 @@ export async function liveImportFromPlugins(
       success: false,
       generatedFiles: [],
       warnings,
-      error: `No resources exported from environment "${options.environment}".`,
+      error: failures.length > 0 ? failures.join("\n") : `No resources exported from environment "${options.environment}".`,
     };
   }
+  warnings.push(...failures);
 
   if (exporters.length > 1 && irParts.length > 1) {
     warnings.push("Multiple lexicons exported resources; generated with the first. Use --lexicon to target one.");

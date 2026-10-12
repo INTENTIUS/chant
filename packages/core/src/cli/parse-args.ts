@@ -33,6 +33,7 @@ const BOOLEAN_FLAGS = new Set([
   "--explain",
   "--owned",
   "--verbatim",
+  "--skip-undeclarable",
   "--apply-rewrites",
   "--write",
   "--strict",
@@ -216,6 +217,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.namespace || result.namespace.startsWith("-")) throw new Error("--namespace needs a namespace: --namespace <ns>");
     } else if (arg === "--verbatim") {
       result.verbatim = true;
+    } else if (arg === "--skip-undeclarable") {
+      result.skipUndeclarable = true;
     } else if (arg === "--state") {
       result.statePath = args[++i];
     } else if (arg === "--select") {

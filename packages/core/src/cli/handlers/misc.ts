@@ -349,7 +349,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     const { config } = await loadChantConfig(resolve("."));
     if (config.stacks && config.stacks.length > 0) {
       const perStack = await importFromLiveStacks(
-        { environment: args.migrateFrom, lexicon: args.lexicon, force: args.force, selector, owned: args.owned, verbatim: args.verbatim },
+        { environment: args.migrateFrom, lexicon: args.lexicon, force: args.force, selector, owned: args.owned, verbatim: args.verbatim, skipUndeclarable: args.skipUndeclarable },
         config.stacks,
       );
       let anyFailure = false;
@@ -369,6 +369,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       selector,
       owned: args.owned,
       verbatim: args.verbatim,
+      skipUndeclarable: args.skipUndeclarable,
     });
 
     printImportResult(result);

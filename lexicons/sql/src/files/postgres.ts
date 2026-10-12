@@ -26,7 +26,7 @@ import * as tags from "../postgres/entities";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../postgres/entity-types";
 import { POSTGRES_TAG_OF } from "../postgres/import/generator";
 import type { ImportedPgObject } from "../postgres/import/ir";
-import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, type FileLine, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, undeclarableStatement, type FileLine, type ReadOptions } from "./common";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
 
@@ -89,6 +89,11 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     }
     if (!word(sig[0], "CREATE", "COMMENT", "GRANT", "REVOKE", "ALTER")) {
       problems.push(`not a statement that declares an object: ${firstLine(sql)}`);
+      continue;
+    }
+    const undeclarable = undeclarableStatement("postgres", sql);
+    if (undeclarable) {
+      (options.undeclarable ?? problems).push(undeclarable);
       continue;
     }
     try {

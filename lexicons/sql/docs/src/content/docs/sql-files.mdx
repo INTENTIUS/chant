@@ -112,7 +112,7 @@ Two files' objects that reference each other in a cycle are a build error, as tw
 
 ## Turn a file into templates
 
-`chant import <file>.sql --lexicon sql` writes the file's objects as one `schema.ts` of tagged templates, the same declarations the build reads from the file. The dialect is read off the statements: an `ENGINE =` clause, a `CREATE DATABASE`, a `CREATE DICTIONARY`, a `CREATE ROW POLICY` or a lambda `CREATE FUNCTION f AS (x) -> ...` is ClickHouse, and a statement only Postgres has (`CREATE SCHEMA`, `CREATE INDEX`, `COMMENT ON`, `ALTER TABLE`, `GRANT`) or a `CREATE TABLE` with no engine is Postgres. `--parser-option dialect=postgres` names it. A statement the import cannot read stops it, named, as on a build.
+`chant import <file>.sql --lexicon sql` writes the file's objects as one `schema.ts` of tagged templates, the same declarations the build reads from the file. The dialect is read off the statements: an `ENGINE =` clause, a `CREATE DATABASE`, a `CREATE DICTIONARY`, a `CREATE ROW POLICY` or a lambda `CREATE FUNCTION f AS (x) -> ...` is ClickHouse, and a statement only Postgres has (`CREATE SCHEMA`, `CREATE INDEX`, `COMMENT ON`, `ALTER TABLE`, `GRANT`) or a `CREATE TABLE` with no engine is Postgres. `--parser-option dialect=postgres` names it. A statement the import cannot read stops it, named, as on a build. A `CREATE` of a kind chant cannot declare (an aggregate, a cast, a quota; see [Object Coverage](../object-coverage/)) is named with its kind and why; `--parser-option skipUndeclarable` imports the rest of the file and lists those statements as warnings.
 
 ## From code
 

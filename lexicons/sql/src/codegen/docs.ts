@@ -9,6 +9,7 @@ import { writeFileSync } from "fs";
 import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
 import { renderClassifierPage } from "./classifier-page";
 import { renderPostgresClassifierPage } from "./postgres-classifier-page";
+import { renderCoveragePage } from "./coverage-page";
 
 const overview = `The sql lexicon declares database schema in TypeScript. It has two dialects,
 each a subpath of the one package: ClickHouse at
@@ -143,6 +144,9 @@ Both dialects:
 - [Composites](./composites/): five ClickHouse and five Postgres composites.
 - [Lint Rules and Checks](./lint-rules/): every lint rule and post-synth
   check.
+- [Object Coverage](./object-coverage/): every kind of object the pinned
+  servers can create, declared, refused or out of scope, and what import
+  does with each.
 
 ## Schema changes and \`chant migrate\`
 
@@ -201,6 +205,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
 
   writeFileSync(join(pkgDir, "docs", "pages", "change-classifier.mdx"), renderClassifierPage());
   writeFileSync(join(pkgDir, "docs", "pages", "postgres-change-classifier.mdx"), renderPostgresClassifierPage());
+  writeFileSync(join(pkgDir, "docs", "pages", "object-coverage.mdx"), renderCoveragePage());
 
   const config: DocsConfig = {
     name: "sql",

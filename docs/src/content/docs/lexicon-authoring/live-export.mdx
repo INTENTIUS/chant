@@ -32,6 +32,7 @@ Every option maps to a flag on [`chant import --from <env>`](/chant/cli/import/)
 | `selector.name` | `--name <name>` | |
 | `owned` | `--owned` | |
 | `verbatim` | `--verbatim` | Default strips server-defaulted fields to the declared shape. |
+| `skipUndeclarable` | `--skip-undeclarable` | An export that refuses live objects no declaration can hold (throwing an error that names them) returns them as warnings instead. A thrown error is the import's error when no other lexicon exported anything. |
 | `stack` | none | Core supplies it per declared stack when the project configures `stacks`; a single-stack project keeps the convention of the stack named after the environment. |
 
 `-d, --lexicon <name>` restricts the run to one lexicon and never reaches your implementation. `chant import --from` warns before writing that live config may carry secrets, so it is the caller's review step rather than yours.
