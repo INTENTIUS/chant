@@ -53,9 +53,21 @@
  * apply; like the policy they are read from the spec at the base commit, and
  * one whose `onFailure` is `approve` holds the wave for an approval whatever
  * its policy says.
+ *
+ * ## A gate that asks a decision point (#3836)
+ *
+ * With `point` (on the spec, or on a wave, whose own wins), read at base like
+ * the policy, a wave that needs an approval asks that workspace decision
+ * point instead of reading the ledger for a `chant approve`, the way an Op
+ * gate with a `point` does (#3170): `gate.planDigest` is the wave's set
+ * digest, so each plan is its own question. An open question waits (exit 3,
+ * the pending fact cites it), an answer the gate passes on records the
+ * resolution that cites it and the wave goes on, and any other answer refuses
+ * the wave (exit 8). See `./op-waves-run.ts`.
  */
 
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
+import { gatePointProblems, type GatePoint } from "./gate-point";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 
 /**
@@ -91,6 +103,40 @@ export const GATE_APPROVAL_SOURCES: readonly GateApprovalSource[] = ["ledger", "
 
 /** What a failing hook does: fail the wave, or hold it for an approval of its set digest. */
 export type OpWaveHookFailure = "fail" | "approve";
+
+/**
+ * The decision point a wave's gate asks (#3836): a point's name, or `{ name,
+ * inputs?, pass?, store?, timeout? }` as an Op gate's `point` takes, plus the
+ * pending fact's `timeout` (default 48h). The point must declare the input
+ * `gate.planDigest`, which is the wave's set digest.
+ */
+export type OpWavePoint = GatePoint & {
+  /** How long the pending fact that cites an open question stands, such as `"48h"`. */
+  timeout?: string;
+};
+
+/** A wave's or a spec's `point` as an {@link OpWavePoint}, or undefined when it names none. */
+export function opWavePointOf(point: string | OpWavePoint | undefined): OpWavePoint | undefined {
+  if (point === undefined) return undefined;
+  return typeof point === "string" ? { name: point } : point;
+}
+
+/** What is wrong with a wave's `point`, empty when nothing is (#3836). */
+export function opWavePointProblems(point: unknown): string[] {
+  if (point !== null && typeof point === "object" && !Array.isArray(point) && "timeout" in point) {
+    const { timeout, ...rest } = point as Record<string, unknown>;
+    const problems = gatePointProblems(rest);
+    if (typeof timeout !== "string" || !/^(\d+(ms|s|m|h|d))+$/.test(timeout)) problems.push("`point.timeout` is a duration such as \"48h\"");
+    return problems;
+  }
+  return gatePointProblems(point);
+}
+
+/** The point wave `name`'s gate asks (#3836): the wave's own, else the spec's, else none. */
+export function opWavePointAt(spec: Pick<OpWavesSpec, "point" | "waves">, name: string): OpWavePoint | undefined {
+  const wave = spec.waves.find((w) => w.name === name);
+  return opWavePointOf(wave?.point ?? spec.point);
+}
 
 export const OP_WAVE_HOOK_FAILURES: readonly OpWaveHookFailure[] = ["fail", "approve"];
 
@@ -182,6 +228,11 @@ export interface OpWave {
    */
   approval?: GateApprovalSource;
   /**
+   * The decision point this wave's gate asks (#3836), in place of the spec's.
+   * Read at base like `gate`. See {@link OpWavesSpec.point}.
+   */
+  point?: string | OpWavePoint;
+  /**
    * Split the wave into a deciding job and this many share jobs, each
    * applying a slice of the runs. Default 1: one job plans, decides and
    * applies.
@@ -266,6 +317,15 @@ export interface OpWavesSpec {
    * the rules (`@intentius/chant/override-gate`).
    */
   override?: OpWavesOverride;
+  /**
+   * The decision point every wave's gate asks (#3836), unless a wave names its
+   * own. Read at the base commit, like the policy: a wave that needs an
+   * approval asks the point with `gate.planDigest` set to its set digest, and
+   * only an answer the point's `pass` names (default yes) for that digest
+   * lets it apply. `chant approve` does not pass such a gate, and the wave's
+   * `approval` mode does not apply: the point's deciders and quorum decide.
+   */
+  point?: string | OpWavePoint;
   waves: OpWave[];
   /**
    * A scheduled job that starts again a wave job whose approval has arrived
@@ -442,6 +502,10 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       if (typeof value !== "string" || value.trim() === "") throw new Error(`${where}: override.overriders must be a path, such as ".chant/overriders".`);
     }
   }
+  if (spec.point !== undefined) {
+    const problems = opWavePointProblems(spec.point);
+    if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+  }
   if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
@@ -461,6 +525,10 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       throw new Error(`${where}: wave "${wave.name}" has approval "${wave.approval}"; use ${GATE_APPROVAL_SOURCES.join(", ")}.`);
     }
     assertOpWaveHooks(`${where}, wave "${wave.name}"`, wave.hooks);
+    if (wave.point !== undefined) {
+      const problems = opWavePointProblems(wave.point);
+      if (problems.length > 0) throw new Error(`${where}: wave "${wave.name}": ${problems.join("; ")}.`);
+    }
     if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
     if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
     if (wave.discover) {
