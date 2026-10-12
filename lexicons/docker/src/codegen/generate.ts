@@ -10,8 +10,9 @@ import { join } from "path";
 import { generateComposePipeline } from "./generate-compose";
 import { generateDockerfilePipeline } from "./generate-dockerfile";
 import { entityTypeToTsName } from "./naming";
+import { PER_KIND_ORDER } from "../dockerfile-order";
 import type { ComposeParseResult } from "../spec/parse-compose";
-import type { DockerfileParseResult } from "../spec/parse-engine";
+import type { DockerfileParseResult, DockerfileInstruction } from "../spec/parse-engine";
 
 export interface DockerGenerateResult {
   resources: number;
@@ -72,9 +73,13 @@ function generateLexiconJSON(compose: ComposeParseResult[], dockerfile: Dockerfi
     resourceType: dockerfile.typeName,
     kind: "resource",
     description: dockerfile.description ?? "",
-    properties: Object.fromEntries(
-      dockerfile.instructions.map((i) => [i.name, { description: i.description ?? "" }]),
-    ),
+    properties: {
+      ...Object.fromEntries(
+        dockerfile.instructions.filter((i) => !i.stepOnly).map((i) => [i.name, { description: i.description ?? "" }]),
+      ),
+      globalArgs: { description: "ARG instructions written before the first FROM" },
+      steps: { description: "Instructions after FROM, written in the order given; one instruction per step" },
+    },
   };
 
   return JSON.stringify(entries, null, 2);
@@ -100,21 +105,7 @@ function generateTypesDTS(compose: ComposeParseResult[], dockerfile: DockerfileP
   }
 
   const dfName = entityTypeToTsName(dockerfile.typeName);
-  lines.push(`export interface DockerfileStage {`);
-  lines.push(`  from: string;`);
-  lines.push(`  as?: string;`);
-  for (const i of dockerfile.instructions.filter((i) => i.name !== "from")) {
-    lines.push(`  ${i.name}?: ${i.multi ? "string[]" : "string"};`);
-  }
-  lines.push(`}`);
-  lines.push(`export interface DockerfileProps {`);
-  lines.push(`  name?: string;`);
-  lines.push(`  from?: string;`);
-  lines.push(`  stages?: DockerfileStage[];`);
-  for (const i of dockerfile.instructions.filter((i) => i.name !== "from")) {
-    lines.push(`  ${i.name}?: ${i.multi ? "string[]" : "string"};`);
-  }
-  lines.push(`}`);
+  lines.push(...dockerfileTypeLines(dockerfile));
   lines.push(`export declare const ${dfName}: new (props?: DockerfileProps) => Declarable;`);
   lines.push("");
 
@@ -137,8 +128,75 @@ function generateIndexTS(compose: ComposeParseResult[], dockerfile: DockerfilePa
   const dfName = entityTypeToTsName(dockerfile.typeName);
   lines.push(`export const ${dfName} = createResource("${dockerfile.typeName}", "docker", {});`);
   lines.push("");
+  // The Dockerfile prop types are exported from here too (not only from
+  // index.d.ts, which index.ts shadows) so a module can type a shared stage
+  // or step list: `export const install: DockerfileStep[] = [...]`.
+  lines.push(...dockerfileTypeLines(dockerfile));
+  lines.push("");
 
   return lines.join("\n");
+}
+
+/**
+ * The Dockerfile prop types: one `DockerfileStep` variant per instruction,
+ * the stage, and the props. The per-kind fields keep the instructions they
+ * always had; SHELL, STOPSIGNAL and ONBUILD are steps only.
+ */
+function dockerfileTypeLines(dockerfile: DockerfileParseResult): string[] {
+  const lines: string[] = [];
+  const stepInstructions = dockerfile.instructions.filter((i) => i.name !== "from");
+  const perKind = stepInstructions.filter((i) => !i.stepOnly);
+  const stepValue = (i: DockerfileInstruction): string =>
+    ["string", ...(i.numeric ? ["number"] : []), ...(i.execForm ? ["string[]"] : [])].join(" | ");
+  const fixed = PER_KIND_ORDER.map((k) => k.toUpperCase()).join(", ");
+
+  lines.push(`/** The Dockerfile instructions a step can name. FROM is the stage's own \`from\` field. */`);
+  lines.push(`export type DockerfileInstructionName = ${stepInstructions.map((i) => JSON.stringify(i.name)).join(" | ")};`);
+  lines.push(`type DockerfileStepOf<K extends DockerfileInstructionName, V> = { [P in K]: V } & { [P in Exclude<DockerfileInstructionName, K>]?: never };`);
+  lines.push(`/**`);
+  lines.push(` * One Dockerfile instruction, named by its single key: \`{ run: "npm ci" }\` is \`RUN npm ci\`.`);
+  lines.push(` * A string[] value (run, cmd, entrypoint, shell) is written in JSON exec form.`);
+  lines.push(` */`);
+  lines.push(`export type DockerfileStep =`);
+  for (const i of stepInstructions) {
+    lines.push(`  /** ${i.name.toUpperCase()}: ${i.description ?? ""} */`);
+    lines.push(`  | DockerfileStepOf<${JSON.stringify(i.name)}, ${stepValue(i)}>`);
+  }
+  lines[lines.length - 1] += ";";
+
+  const fields = (): void => {
+    lines.push(`  /** Instructions after FROM, written exactly in this order. Can't be combined with the per-kind fields. */`);
+    lines.push(`  steps?: DockerfileStep[];`);
+    for (const i of perKind) {
+      lines.push(`  /** ${i.name.toUpperCase()} as a per-kind field, written in the fixed order. Use \`steps\` to choose the order. */`);
+      lines.push(`  ${i.name}?: ${i.multi ? "string[]" : "string"};`);
+    }
+  };
+  const fixedDoc = ` * Without \`steps\`, the per-kind fields are written in a fixed order: ${fixed}.`;
+
+  lines.push(`/**`);
+  lines.push(` * One build stage: FROM, then its instructions.`);
+  lines.push(fixedDoc);
+  lines.push(` */`);
+  lines.push(`export interface DockerfileStage {`);
+  lines.push(`  from: string;`);
+  lines.push(`  as?: string;`);
+  fields();
+  lines.push(`}`);
+  lines.push(`/**`);
+  lines.push(` * A Dockerfile: \`stages\` for a multi-stage build, or \`from\` and the stage fields for one stage.`);
+  lines.push(fixedDoc);
+  lines.push(` */`);
+  lines.push(`export interface DockerfileProps {`);
+  lines.push(`  name?: string;`);
+  lines.push(`  /** ARG instructions written before the first FROM, e.g. \`["NODE_VERSION=20"]\`. */`);
+  lines.push(`  globalArgs?: string[];`);
+  lines.push(`  from?: string;`);
+  lines.push(`  as?: string;`);
+  lines.push(`  stages?: DockerfileStage[];`);
+  fields();
+  lines.push(`}`);
+  return lines;
 }
 
 /**

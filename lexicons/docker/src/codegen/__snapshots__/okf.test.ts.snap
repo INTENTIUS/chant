@@ -23,8 +23,17 @@ okf_version: '0.2'
 * [DKRD003](/rules/DKRD003.md) - Service exposes SSH port (22) externally — this is a security risk
 * [DKRD010](/rules/DKRD010.md) - apt-get install without --no-install-recommends adds unnecessary packages
 * [DKRD011](/rules/DKRD011.md) - Prefer COPY over ADD when not fetching URLs or extracting archives
-* [DKRD012](/rules/DKRD012.md) - Dockerfile has no USER instruction — container runs as root
+* [DKRD012](/rules/DKRD012.md) - Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
+* [DKRD013](/rules/DKRD013.md) - Whole build context copied before a dependency install — every source change re-runs the install
+* [DKRD014](/rules/DKRD014.md) - RUN needs root but comes after USER switched to a non-root user
+* [DKRD015](/rules/DKRD015.md) - More than one CMD or ENTRYPOINT in a stage — only the last one takes effect
+* [DKRD016](/rules/DKRD016.md) - COPY --from names a stage that is not defined before it
+* [DKRD017](/rules/DKRD017.md) - ARG before the first FROM is not used by any FROM or stage
+* [DKRD018](/rules/DKRD018.md) - Relative WORKDIR before any absolute WORKDIR in the stage
+* [DKRD019](/rules/DKRD019.md) - ADD fetches a remote URL without --checksum
+* [DKRD020](/rules/DKRD020.md) - apt-get update in a different RUN from apt-get install — the install can use a stale package index
 * [DKRS001](/rules/DKRS001.md) - No Latest Tag
+* [DKRS002](/rules/DKRS002.md) - Per-kind Dockerfile fields written in a different order
 ",
     "path": "index.md",
   },
@@ -119,20 +128,140 @@ Prefer COPY over ADD when not fetching URLs or extracting archives
     "content": "---
 type: post-synth-check
 title: DKRD012
-description: Dockerfile has no USER instruction — container runs as root
+description: Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
 id: DKRD012
 severity: error
 category: post-synth
 lexicon: docker
 docs: https://intentius.io/chant/lexicons/docker/rules/
 ---
-Dockerfile has no USER instruction — container runs as root
+Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
 
 ## Applies to
 
 - [Dockerfile](/types/Dockerfile.md)
 ",
     "path": "rules/DKRD012.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD013
+description: Whole build context copied before a dependency install — every source change re-runs the install
+id: DKRD013
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Whole build context copied before a dependency install — every source change re-runs the install
+",
+    "path": "rules/DKRD013.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD014
+description: RUN needs root but comes after USER switched to a non-root user
+id: DKRD014
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+RUN needs root but comes after USER switched to a non-root user
+",
+    "path": "rules/DKRD014.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD015
+description: More than one CMD or ENTRYPOINT in a stage — only the last one takes effect
+id: DKRD015
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+More than one CMD or ENTRYPOINT in a stage — only the last one takes effect
+",
+    "path": "rules/DKRD015.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD016
+description: COPY --from names a stage that is not defined before it
+id: DKRD016
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+COPY --from names a stage that is not defined before it
+",
+    "path": "rules/DKRD016.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD017
+description: ARG before the first FROM is not used by any FROM or stage
+id: DKRD017
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+ARG before the first FROM is not used by any FROM or stage
+",
+    "path": "rules/DKRD017.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD018
+description: Relative WORKDIR before any absolute WORKDIR in the stage
+id: DKRD018
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Relative WORKDIR before any absolute WORKDIR in the stage
+",
+    "path": "rules/DKRD018.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD019
+description: ADD fetches a remote URL without --checksum
+id: DKRD019
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+ADD fetches a remote URL without --checksum
+",
+    "path": "rules/DKRD019.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD020
+description: apt-get update in a different RUN from apt-get install — the install can use a stale package index
+id: DKRD020
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+apt-get update in a different RUN from apt-get install — the install can use a stale package index
+",
+    "path": "rules/DKRD020.md",
   },
   {
     "content": "---
@@ -152,6 +281,25 @@ No Latest Tag
 - [Service](/types/Service.md)
 ",
     "path": "rules/DKRS001.md",
+  },
+  {
+    "content": "---
+type: lint-rule
+title: DKRS002
+description: Per-kind Dockerfile fields written in a different order
+id: DKRS002
+severity: warning
+category: correctness
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Per-kind Dockerfile fields written in a different order
+
+## Applies to
+
+- [Dockerfile](/types/Dockerfile.md)
+",
+    "path": "rules/DKRS002.md",
   },
   {
     "content": "---
@@ -201,10 +349,13 @@ A Dockerfile definition with ordered build instructions
 - \`entrypoint\`: Set the entrypoint executable
 - \`cmd\`: Default command arguments
 - \`healthcheck\`: Health check instruction
+- \`globalArgs\`: ARG instructions written before the first FROM
+- \`steps\`: Instructions after FROM, written in the order given; one instruction per step
 
 ## Governed by
 
-- [DKRD012](/rules/DKRD012.md): Dockerfile has no USER instruction — container runs as root
+- [DKRD012](/rules/DKRD012.md): Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
+- [DKRS002](/rules/DKRS002.md): Per-kind Dockerfile fields written in a different order
 ",
     "path": "types/Dockerfile.md",
   },
