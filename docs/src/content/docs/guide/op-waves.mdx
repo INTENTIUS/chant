@@ -74,6 +74,30 @@ Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their wo
 
 Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push to the branch runs wave 1. If a wave waits or fails, the waves after it do not run.
 
+## Run waves in a slim image
+
+A wave job runs four commands: `run wave`, `run resume`, `approve` and `workspace points`. `@intentius/chant` also ships those four bundled into one file, `dist/wave-runtime.mjs`. The file is about 1.5 MB, 440 KB gzipped. Its only imports are Node's built-in modules, so plain `node` 20 or later runs it with nothing installed beside it. No TypeScript compiler or bundler is in it; the libraries it does use, zod and ajv among them, are inlined.
+
+Installing chant puts about 70 MB in `node_modules`. The compiler and the bundler are regular dependencies of the package, so `--omit=optional` and `--omit=peer` leave them in. To keep them out of an image, copy in the one file instead of installing chant. `npm pack` fetches the package without installing it:
+
+```bash
+npm pack @intentius/chant@<version>
+tar -xzf intentius-chant-<version>.tgz package/dist/wave-runtime.mjs
+install -D -m 755 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs
+printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant
+chmod +x /usr/local/bin/chant
+```
+
+With that `chant` on the `PATH`, the generated jobs run unchanged. Where chant is installed anyway, run the file as `node node_modules/@intentius/chant/dist/wave-runtime.mjs run wave ...` or through the `chant-wave` bin. Its package export is `@intentius/chant/wave-runtime.mjs`.
+
+The four commands are the CLI's own code behind the same argument parser. Their flags and exit codes match `chant`'s, and so do the ledger lines they write. A gate ledger written by one is read by the other. Build the image from the same chant version the rest of the product runs; `node wave-runtime.mjs --version` prints the version the file was built from. Any other command exits 1 and says it needs the full CLI. Three things need a TypeScript loader, and the file doesn't do them:
+
+- It never evaluates `chant.config.ts`, so `--env` isn't checked against the declared `environments`.
+- `approve` can't load `*.op.ts` files, so it warns that the op was not found among them and records the resolution anyway, as it does for every wave gate.
+- An approval of a gate whose `approval` block names a lexicon's policy can't load that lexicon, so `approve` refuses it, as it would in a checkout without the lexicon.
+
+The file is built by the package's `build` script, which `npm pack` runs before every publish, so it ships in the `@intentius/chant` tarball at the package's version. It needs no package or trusted-publisher record of its own.
+
 ## What a wave job does
 
 `chant run wave --spec waves.json --wave <k>` does three things:

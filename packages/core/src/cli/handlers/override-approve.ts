@@ -22,7 +22,7 @@ import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { OVERRIDE_OP, OVERRIDERS_PATH, overrideCommand, overridersAt, recordedDenials, sortedRules } from "../../override-gate";
 import { formatError, formatInfo, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
-import { recordGateApproval } from "./operator";
+import { recordGateApproval } from "./approve";
 
 const norm = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
 

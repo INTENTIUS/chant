@@ -18,13 +18,13 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import schema from "./workspace-kinds.schema.json" with { type: "json" };
 import type { WorkspaceTree } from "./tree";
 import { joinPath, skippedDir } from "./tree";
 import { checkPinIntegrity } from "./pin-integrity";
 import { dataExportTarget, findInstalledPackage } from "./class-data";
+import { loadAjv2020 } from "./ajv2020";
 
 export const KINDS_SCHEMA_ID = schema.$id;
 
@@ -353,10 +353,7 @@ type Validate = ((data: unknown) => boolean) & { errors?: AjvError[] | null };
 let compiled: Validate | undefined;
 function validator(): Validate {
   if (compiled) return compiled;
-  const require = createRequire(import.meta.url);
-  // ajv is CommonJS; its class is the default export, or that export's own default.
-  const mod = require("ajv/dist/2020") as { default?: unknown };
-  const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+  const Ajv = loadAjv2020() as new (opts: object) => { compile(s: object): Validate };
   compiled = new Ajv({ allErrors: true, strict: true }).compile(schema);
   return compiled;
 }

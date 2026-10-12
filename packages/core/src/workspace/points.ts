@@ -33,12 +33,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import schema from "./decision-points.schema.json" with { type: "json" };
 import type { ReasonCode } from "./reason-codes";
 import type { RecordSource } from "./record-source";
 import type { LoadedRecordKind, ReadRecordsOptions, RecordEntry } from "./records";
+import { loadAjv2020 } from "./ajv2020";
 
 export const DECISION_POINTS_SCHEMA_ID = schema.$id;
 
@@ -200,10 +200,7 @@ type Validate = ((data: unknown) => boolean) & { errors?: AjvError[] | null };
 let compiled: Validate | undefined;
 function validator(): Validate {
   if (compiled) return compiled;
-  const require = createRequire(import.meta.url);
-  // ajv is CommonJS; its class is the default export, or that export's own default.
-  const mod = require("ajv/dist/2020") as { default?: unknown };
-  const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+  const Ajv = loadAjv2020() as new (opts: object) => { compile(s: object): Validate };
   compiled = new Ajv({ allErrors: true, strict: false }).compile(schema);
   return compiled;
 }

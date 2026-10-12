@@ -16,15 +16,14 @@
  * runs. The level-0 goldens (#2526) fail if a level-0 command loads it.
  */
 
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import type { ReasonCode } from "./reason-codes";
 import { joinPath, type WorkspaceTree } from "./tree";
+import { loadAjv2020 } from "./ajv2020";
+import { readChantPackageVersion } from "../package-version";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
 export const DECLARATION_FILES = ["chant.workspace.json", "chant.workspace.jsonc"] as const;
@@ -601,9 +600,7 @@ let readerVersionCache: string | undefined;
  * well under a millisecond.
  */
 export function readerVersion(): string {
-  readerVersionCache ??= (
-    JSON.parse(readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf-8")) as { version: string }
-  ).version;
+  readerVersionCache ??= readChantPackageVersion();
   return readerVersionCache;
 }
 
@@ -638,10 +635,7 @@ type Validate = ((data: unknown) => boolean) & { errors?: AjvError[] | null };
 let compiled: Validate | undefined;
 function validator(): Validate {
   if (compiled) return compiled;
-  const require = createRequire(import.meta.url);
-  // ajv is CommonJS; its class is the default export, or that export's own default.
-  const mod = require("ajv/dist/2020") as { default?: unknown };
-  const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+  const Ajv = loadAjv2020() as new (opts: object) => { compile(s: object): Validate };
   compiled = new Ajv({ allErrors: true, strict: true }).compile(schema);
   return compiled;
 }

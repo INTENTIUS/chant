@@ -12,7 +12,7 @@ const readOverrideLedgerMock = vi.fn();
 const requireLifecycleLedgerMock = vi.fn();
 const originMock = vi.fn(() => "cli");
 
-vi.mock("./operator", () => ({ recordGateApproval: (...a: unknown[]) => recordGateApprovalMock(...a) }));
+vi.mock("./approve", () => ({ recordGateApproval: (...a: unknown[]) => recordGateApprovalMock(...a) }));
 vi.mock("../../lifecycle/override-ledger", () => ({ readOverrideLedger: (...a: unknown[]) => readOverrideLedgerMock(...a) }));
 vi.mock("../../lifecycle/git", () => ({ requireLifecycleLedger: (...a: unknown[]) => requireLifecycleLedgerMock(...a) }));
 vi.mock("../../lifecycle/gate-origin", async () => {
