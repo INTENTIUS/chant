@@ -51,7 +51,16 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
-import { decideWaveGate, waveDigestMembers, waveSetDigest, writeWaveRecordFile, type WaveMember } from "../wave-engine";
+import {
+  decideWaveGate,
+  runWaveLoop,
+  waveDigestMembers,
+  waveSetDigest,
+  writeWaveRecordFile,
+  type WaveAttempt,
+  type WaveMember,
+  type WaveStep,
+} from "../wave-engine";
 import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateDigestMismatch, type GateLedgerPort } from "./gate";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
@@ -1224,7 +1233,13 @@ function noteHooksAtBase(ctx: WaveContext, rules: OpWaveBaseRules): void {
   }
 }
 
-/** Plan, decide and apply one wave, or one part of a wide wave. */
+/**
+ * Plan, decide and apply one wave, or one part of a wide wave: the wave
+ * engine's loop (`runWaveLoop`, #3766) over this module's steps. An apply
+ * that comes back `replan` plans the wave again (#3821), at most
+ * {@link OP_WAVE_MAX_REPLANS} times; a `rest` wave goes on through the waves
+ * its plan command found.
+ */
 export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveResult> {
   const { spec } = options;
   assertOpWavesSpec(spec);
@@ -1232,36 +1247,88 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   const last = spec.waves[spec.waves.length - 1]!;
   const applied: string[] = [];
   const rest: NonNullable<RunOpWaveResult["rest"]> = [];
-  for (let k = options.wave; ; k++) {
-    let result: RunOpWaveResult | undefined;
-    let prior: OpWaveDecision | undefined;
-    // #3821: an apply that came back "replan" plans the wave again, a bounded number of times.
-    for (let pass = 0; ; pass++) {
-      result = await runOneWave(options, k, prior, pass);
-      if (!result.replan) break;
-      if (pass + 1 >= OP_WAVE_MAX_REPLANS) {
-        log(`wave ${k}: its apply asked to plan again ${OP_WAVE_MAX_REPLANS} times, so the wave stops here`);
-        result.exitCode = 1;
-        break;
-      }
-      log(`wave ${k}: the apply applied nothing and asks to plan again${result.replan.reason ? ` (${result.replan.reason})` : ""}; planning again`);
-      prior = result.decision;
-    }
-    applied.push(...result.applied);
-    // #3821: a `rest` wave goes on through the waves its plan command found.
-    const found = result.decision?.discovered?.waves;
-    const onward = k >= spec.waves.length && last.rest === true && options.share === undefined && !options.decide && result.exitCode === 0 && found !== undefined && k < found;
-    if (rest.length > 0 || onward) rest.push({ wave: k, exitCode: result.exitCode, ...(result.decision ? { digest: result.decision.digest } : {}) });
-    if (!onward) return { ...result, applied, ...(rest.length > 0 ? { rest } : {}) };
-    log(`wave ${k} applied; the plan found ${found} waves, so this job goes on to wave ${k + 1}`);
-  }
+  const result = await runWaveLoop<OpWavePlanned, OpWaveDecided, RunOpWaveResult>({
+    first: options.wave,
+    plan: (at) => planOpWave(options, at),
+    // A share job applies under the digest its deciding job recorded; it does not take the set digest again.
+    digest: (_at, planned) => (planned.kind === "share" ? planned.decision.digest : opWaveSetDigest(spec, planned.members, planned.extras)),
+    decide: (at, planned, digest) => (planned.kind === "share" ? shareUnmoved(planned) : decideOpWave(options, at, planned, digest)),
+    apply: (_at, planned, decided) => applyOpWave(options, planned, decided),
+    replan: (_at, outcome) => outcome.replan !== undefined,
+    maxPasses: OP_WAVE_MAX_REPLANS,
+    passesSpent({ k }, outcome) {
+      log(`wave ${k}: its apply asked to plan again ${OP_WAVE_MAX_REPLANS} times, so the wave stops here`);
+      outcome.exitCode = 1;
+      return outcome;
+    },
+    replanning({ k }, outcome) {
+      log(`wave ${k}: the apply applied nothing and asks to plan again${outcome.replan!.reason ? ` (${outcome.replan!.reason})` : ""}; planning again`);
+    },
+    onward(k, outcome) {
+      applied.push(...outcome.applied);
+      // #3821: a `rest` wave goes on through the waves its plan command found.
+      const found = outcome.decision?.discovered?.waves;
+      const onward = k >= spec.waves.length && last.rest === true && options.share === undefined && !options.decide && outcome.exitCode === 0 && found !== undefined && k < found;
+      if (rest.length > 0 || onward) rest.push({ wave: k, exitCode: outcome.exitCode, ...(outcome.decision ? { digest: outcome.decision.digest } : {}) });
+      if (onward) log(`wave ${k} applied; the plan found ${found} waves, so this job goes on to wave ${k + 1}`);
+      return onward;
+    },
+  });
+  return { ...result, applied, ...(rest.length > 0 ? { rest } : {}) };
 }
 
 /** How many times one wave job plans again when its apply asks to (#3821). */
 export const OP_WAVE_MAX_REPLANS = 10;
 
-/** Plan, decide and apply wave `k`, or one part of a wide wave. `prior`: the decision of the pass whose apply asked to plan again. */
-async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDecision | undefined, pass: number): Promise<RunOpWaveResult> {
+/**
+ * What planning one pass of a wave gave. `decide`: the deciding job (or a
+ * narrow wave's only job), with the rules read at base and the decision it
+ * fills in. `share`: a share job (`--share i`), with its deciding job's
+ * decision and the slice it planned again.
+ */
+type OpWavePlanned =
+  | {
+      kind: "decide";
+      ctx: WaveContext;
+      recordPath: string;
+      rules: OpWaveBaseRules;
+      decision: OpWaveDecision;
+      /** The holds so far: the hooks at base that cannot be run (#3762). */
+      holds: string[];
+      /** The holds of the before-plan hooks. */
+      before: string[];
+      members: OpWaveMember[];
+      planned: Map<string, OpWaveMember>;
+      pending?: Record<string, unknown>;
+      overriders?: string[];
+      overridersSource?: string;
+      extras?: WaveMember[];
+    }
+  | {
+      kind: "share";
+      ctx: WaveContext;
+      decision: OpWaveDecision;
+      slice: OpWaveRun[];
+      planned: Map<string, OpWaveMember>;
+      /** The holds of the before-plan and after-plan hooks. */
+      holds: string[];
+    };
+
+/** What a decided wave applies: these runs, with the holds of the hooks so far, writing the record at `recordPath` when the job owns it. */
+interface OpWaveDecided {
+  runs: readonly OpWaveRun[];
+  earlierHolds: readonly string[];
+  recordPath?: string;
+}
+
+/**
+ * Plan wave `k`: read its rules at base and run the before-plan hooks
+ * around planning its runs, or for a share job, read the deciding job's
+ * decision and plan the share's slice between its hooks. Ends the wave when
+ * a hook fails or holds it on another gate, or a share's decision waits or
+ * was refused.
+ */
+async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<RunOpWaveResult>): Promise<WaveStep<OpWavePlanned, RunOpWaveResult>> {
   const { spec } = options;
   const cwd = options.cwd ?? process.cwd();
   const exec = options.exec ?? spawnExec;
@@ -1290,7 +1357,7 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     ctx.gateRule = { approval: decision.approval, base: decision.base, neverOverMcp: decision.neverOverMcp === true };
     if (decision.status === "waiting" || decision.status === "refused") {
       log(`wave ${k} (${wave.name}) is ${decision.status === "refused" ? "refused by its policy" : `waiting on ${decision.heldOn?.gate ?? decision.gate}`}; nothing applied. ${decision.approve ?? ""}`.trim());
-      return { ...result, exitCode: decision.status === "refused" ? refusedExit(decision) : 3 };
+      return { end: { ...result, exitCode: decision.status === "refused" ? refusedExit(decision) : 3 } };
     }
     // The share runs the hooks its deciding job read at base, around its own slice.
     if (wave.discover) {
@@ -1300,30 +1367,14 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     }
     const slice = opWaveShare(wave.runs, options.share, shares);
     const before = await runHooks(ctx, "before-plan", decision.hooks?.["before-plan"], slice);
-    if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in share ${options.share} of wave ${k} was planned or applied`);
-    if (before.waitingOn) return waitOnOther(ctx, decision, before.waitingOn);
+    if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in share ${options.share} of wave ${k} was planned or applied`) };
+    if (before.waitingOn) return { end: await waitOnOther(ctx, decision, before.waitingOn) };
     const { members } = planRuns(ctx, slice);
     const planned = new Map(members.map((m) => [m.member, m]));
     const after = await runHooks(ctx, "after-plan", decision.hooks?.["after-plan"], slice, planned);
-    if (after.failed) return failed(ctx, `a hook after the plan failed, so nothing in share ${options.share} of wave ${k} was applied`);
-    if (after.waitingOn) return waitOnOther(ctx, decision, after.waitingOn);
-    const decided = new Map(decision.members.map((m) => [m.member, m.planDigest]));
-    const unmoved: OpWaveRun[] = [];
-    for (const run of slice) {
-      const now = planned.get(run.target)!;
-      if (decided.get(run.target) !== now.planDigest) {
-        log(
-          `${run.target}: its plan moved since wave ${k} was decided, so it was not applied. ` +
-            `decided: ${decided.get(run.target) ?? "(not in the decision)"}; planned now: ${now.planDigest}`,
-        );
-        result.moved.push(run.target);
-        continue;
-      }
-      unmoved.push(run);
-    }
-    await applyStage(options, ctx, decision, unmoved, planned, [...before.holds, ...after.holds]);
-    if (result.exitCode === 0 && result.moved.length > 0) result.exitCode = 4;
-    return result;
+    if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in share ${options.share} of wave ${k} was applied`) };
+    if (after.waitingOn) return { end: await waitOnOther(ctx, decision, after.waitingOn) };
+    return { go: { kind: "share", ctx, decision, slice, planned, holds: [...before.holds, ...after.holds] } };
   }
 
   // The policy, the approval mode and the hooks, read at base before anything runs.
@@ -1333,7 +1384,7 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
   ctx.gateRule = { approval, base, neverOverMcp };
   noteHooksAtBase(ctx, rules);
   // #3836: a point at base that cannot be asked fails the wave; the ledger never stands in for it.
-  if (rules.pointRefused) return failed(ctx, `wave ${k} (${wave.name}): ${rules.pointRefused}, so nothing in it was planned or applied`);
+  if (rules.pointRefused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${rules.pointRefused}, so nothing in it was planned or applied`) };
   const own = opWavePointAt(spec, wave.name);
   if (JSON.stringify(own) !== JSON.stringify(rules.point)) {
     log(`wave ${k} (${wave.name}): its gate's decision point is read at ${base.slice(0, 12)} (${rules.point?.name ?? "none"}), and this change's differs (${own?.name ?? "none"}); the one at base holds`);
@@ -1365,8 +1416,8 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     ...(rules.point ? { point: { ...rules.point } } : {}),
   };
   const before = await runHooks(ctx, "before-plan", rules.hooks["before-plan"], wave.runs);
-  if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`);
-  if (before.waitingOn) return decided(ctx, decision, recordPath, before.waitingOn);
+  if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
+  if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
   const { members, pending, overriders, overridersSource, extras, waves: found } = planRuns(ctx, wave.runs, wave.discover === true);
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
@@ -1375,33 +1426,91 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     log(`wave ${k} (${wave.name}): the plan found ${members.length} run${members.length === 1 ? "" : "s"}${found !== undefined ? ` of ${found} waves` : ""}${members.length ? `: ${members.map((m) => m.member).join(", ")}` : ""}`);
   }
   const planned = new Map(members.map((m) => [m.member, m]));
-  const digest = opWaveSetDigest(spec, members, extras);
+  return {
+    go: {
+      kind: "decide",
+      ctx,
+      recordPath,
+      rules,
+      decision,
+      holds,
+      before: before.holds,
+      members,
+      planned,
+      ...(pending ? { pending } : {}),
+      ...(overriders ? { overriders } : {}),
+      ...(overridersSource ? { overridersSource } : {}),
+      ...(extras ? { extras } : {}),
+    },
+  };
+}
+
+/**
+ * A share job's decision is its deciding job's: it applies the runs of its
+ * slice whose plan has not moved since, and names each one that has.
+ */
+async function shareUnmoved(planned: Extract<OpWavePlanned, { kind: "share" }>): Promise<WaveStep<OpWaveDecided, RunOpWaveResult>> {
+  const { ctx, decision, slice, holds } = planned;
+  const decidedDigests = new Map(decision.members.map((m) => [m.member, m.planDigest]));
+  const unmoved: OpWaveRun[] = [];
+  for (const run of slice) {
+    const now = planned.planned.get(run.target)!;
+    if (decidedDigests.get(run.target) !== now.planDigest) {
+      ctx.log(
+        `${run.target}: its plan moved since wave ${ctx.k} was decided, so it was not applied. ` +
+          `decided: ${decidedDigests.get(run.target) ?? "(not in the decision)"}; planned now: ${now.planDigest}`,
+      );
+      ctx.result.moved.push(run.target);
+      continue;
+    }
+    unmoved.push(run);
+  }
+  return { go: { runs: unmoved, earlierHolds: holds } };
+}
+
+/**
+ * Decide wave `k` against its set digest: run the after-plan hooks, settle
+ * the product's denials and the gate under the rules read at base, write the
+ * decision record and run the after-gate hooks. Ends the wave when it waits,
+ * is refused or failed, and for a deciding job (`--decide`), which spends the
+ * approval and overrides its shares apply under and applies nothing.
+ */
+async function decideOpWave(
+  options: RunOpWaveOptions,
+  { prior }: WaveAttempt<RunOpWaveResult>,
+  planned: Extract<OpWavePlanned, { kind: "decide" }>,
+  digest: string,
+): Promise<WaveStep<OpWaveDecided, RunOpWaveResult>> {
+  const { ctx, recordPath, decision, holds, members, pending, overriders, overridersSource, extras } = planned;
+  const { k, wave, log, result } = ctx;
+  const { policy, source, base } = planned.rules;
   decision.digest = digest;
   decision.members = members;
   if (extras) decision.extras = extras;
   if (pending) decision.pending = pending;
-  const after = await runHooks(ctx, "after-plan", rules.hooks["after-plan"], wave.runs, planned, digest);
-  if (after.failed) return failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`);
-  holds.push(...before.holds, ...after.holds);
+  const after = await runHooks(ctx, "after-plan", planned.rules.hooks["after-plan"], wave.runs, planned.planned, digest);
+  if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`) };
+  holds.push(...planned.before, ...after.holds);
   if (holds.length > 0) decision.heldBy = holds;
-  if (after.waitingOn) return decided(ctx, decision, recordPath, after.waitingOn);
+  if (after.waitingOn) return { end: await decided(ctx, decision, recordPath, after.waitingOn) };
   // #3821: a run the product's policy denied applies only under an override; with none the wave is refused, and no approval is waited for.
-  const kept = prior !== undefined && (prior.status === "approved" || prior.status === "not-required") && prior.digest === digest;
+  const was = prior?.decision;
+  const kept = was !== undefined && (was.status === "approved" || was.status === "not-required") && was.digest === digest;
   if (kept) {
     // The overrides this job applied under, and spent, still let the same plans through.
-    const byRun = new Map(prior.members.map((m) => [m.member, m.override]));
+    const byRun = new Map(was.members.map((m) => [m.member, m.override]));
     for (const m of members) if (m.denied && byRun.get(m.member)) m.override = byRun.get(m.member);
-    if (prior.overridesSpentAt) decision.overridesSpentAt = prior.overridesSpentAt;
+    if (was.overridesSpentAt) decision.overridesSpentAt = was.overridesSpentAt;
   }
   if (members.some((m) => m.denied && !m.override)) await settleDenials(ctx, decision, overriders, overridersSource);
-  if (kept && prior.status === "approved" && decision.status !== "refused") {
+  if (kept && was.status === "approved" && decision.status !== "refused") {
     // #3821: planned again after the apply asked to, to the same digest: the approval this job found still holds, and is not spent twice.
-    for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt"] as const) if (prior[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = prior[key];
+    for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt"] as const) if (was[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = was[key];
     decision.status = "approved";
-    log(`wave ${k} (${wave.name}): planned again to the same digest, so the approval by ${prior.approvedBy} still holds`);
+    log(`wave ${k} (${wave.name}): planned again to the same digest, so the approval by ${was.approvedBy} still holds`);
   } else if (decision.status !== "refused" && (opWaveNeedsApproval(policy, members) || holds.length > 0)) await settleGate(options, ctx, decision);
   const code = await decided(ctx, decision, recordPath);
-  if (code.exitCode !== 0) return code;
+  if (code.exitCode !== 0) return { end: code };
   log(
     `wave ${k} (${wave.name}): gate ${policy} (read at ${base.slice(0, 12)}${source === "absent-at-base" ? ", where the wave is absent" : ""}), ` +
       `digest ${digest}: ${decision.status}${decision.approvedBy ? ` by ${decision.approvedBy}` : ""}` +
@@ -1410,12 +1519,19 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
   );
   // A wide wave's shares apply under the deciding job's approval and overrides, so they are spent here, once.
   if (options.decide) {
-    if (!(await spendApproval(options, ctx, decision)) || !(await spendOverrides(ctx, decision))) return ctx.result;
+    if (!(await spendApproval(options, ctx, decision)) || !(await spendOverrides(ctx, decision))) return { end: ctx.result };
     if (decision.spentAt || decision.overridesSpentAt) writeRecord(recordPath, decision, result);
-    return result;
+    return { end: result };
   }
-  await applyStage(options, ctx, decision, wave.runs, planned, [], recordPath);
-  return result;
+  return { go: { runs: wave.runs, earlierHolds: [], recordPath } };
+}
+
+/** Apply a decided wave, or a share's unmoved runs (exit 4 when any moved). */
+async function applyOpWave(options: RunOpWaveOptions, planned: OpWavePlanned, decidedWave: OpWaveDecided): Promise<RunOpWaveResult> {
+  const { ctx, decision } = planned;
+  await applyStage(options, ctx, decision, decidedWave.runs, planned.planned, decidedWave.earlierHolds, decidedWave.recordPath);
+  if (planned.kind === "share" && ctx.result.exitCode === 0 && ctx.result.moved.length > 0) ctx.result.exitCode = 4;
+  return ctx.result;
 }
 
 /**

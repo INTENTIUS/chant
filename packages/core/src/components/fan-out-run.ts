@@ -31,9 +31,10 @@
  * ## Or one approval per wave
  *
  * `waveGate` (#3049) is the other mode. Each wave is planned once the waves
- * before it applied, and its gate binds that wave's set digest. Gate names,
- * the digest and the gate decision come from the wave engine
- * (`../wave-engine.ts`, #3766), which `chant run wave` uses too. See
+ * before it applied, and its gate binds that wave's set digest. The loop,
+ * gate names, the digest and the gate decision come from the wave engine
+ * (`../wave-engine.ts`, #3766), which `chant run wave` uses too; this module
+ * hands it the steps a fan-out plans, decides and applies a wave with. See
  * {@link runGatedWaves}.
  */
 
@@ -46,13 +47,13 @@ import {
 } from "./driver";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import { downstreamWithin, remainingFanOut, type FanOutPlan, type FanOutProgress, type FanOutSkip } from "./fan-out";
-import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import { evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "../op/gate";
 import type { RunProgressEvent } from "./run-progress";
 import type { CapabilityRegistry } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
-import { decideWaveGate, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
+import { decideWaveGate, runWaveLoop, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
 
 /**
  * One gate per wave (#3049), each bound to its wave's set digest. The other
@@ -392,137 +393,164 @@ async function runGatedWaves(
 
   options.onProgress?.({ type: "run-start", waves: plan.waves });
 
-  for (const [waveIndex, wave] of plan.waves.entries()) {
-    const waveNum = waveIndex + 1;
-    const runnable = wave.filter((name) => left.has(name) && !blockedBy.has(name));
-    if (waveGate.only !== undefined && waveNum < waveGate.only) {
-      if (runnable.length > 0) throw new EarlierWaveNotAppliedError(waveGate.only, waveNum, runnable);
-      continue;
-    }
-    if (waveGate.only !== undefined && waveNum > waveGate.only) break;
-    if (runnable.length === 0) continue;
-
-    const gateName = waveGateName(waveGate.gate, waveNum);
-    const contexts = new Map(runnable.map((name) => [name, fanOutContext(options, name)]));
-    const planned = await Promise.all(
-      runnable.map((name) => planComponent(byName.get(name)!, contexts.get(name)!, componentOutputs)),
-    );
-
-    const members: WaveMember[] = [];
-    const plansFor = new Map<string, Record<string, unknown>>();
-    const waveFailures: Array<{ component: string; error?: string }> = [];
-    for (const p of planned) {
-      if ("error" in p) {
-        waveFailures.push({ component: p.component, error: p.error });
-        continue;
-      }
-      members.push(...p.members);
-      plansFor.set(p.component, p.plans);
-    }
-
-    let digest: string;
-    try {
-      // A wave where nothing planned has no set, and so no digest.
-      digest = members.length > 0 ? waveSetDigest(members) : "";
-    } catch (err) {
-      // Two components planning the same root: there is no one plan for it.
-      const error = err instanceof Error ? err.message : String(err);
-      for (const name of plansFor.keys()) waveFailures.push({ component: name, error });
-      plansFor.clear();
-      digest = "";
-    }
-    for (const f of waveFailures) {
-      failed.push(f.component);
-      results.push(planFailure(f.component, f.error ?? "plan failed"));
-      markBlocked(f.component);
-    }
-
-    const toRun = runnable.filter((name) => plansFor.has(name));
-    const record: WaveRecord = {
-      wave: waveNum,
-      op: waveGate.op,
-      gate: gateName,
-      components: [...runnable].sort(),
-      digest,
-      members: [...members].sort((a, b) => a.member.localeCompare(b.member)),
-      status: "failed",
-      ...(waveFailures.length > 0 ? { failed: waveFailures } : {}),
-    };
-    if (toRun.length === 0) {
-      waves.push(record);
-      options.onWaveSettled?.(record);
-      continue;
-    }
-
-    const check = await decideWaveGate(gates.port, {
-      op: waveGate.op,
-      gate: gateName,
-      digest,
-      description: waveGate.description ?? `wave ${waveNum} of ${plan.waves.length}: ${toRun.join(", ")}`,
-      ...(waveGate.timeout ? { timeout: waveGate.timeout } : {}),
-      ...(options.now ? { now: options.now } : {}),
-    });
-    if (!check.satisfied) {
-      // Nothing in this wave ran, and no later wave is planned: its plan
-      // would read outputs this wave has not written.
-      const stopped: WaveRecord = {
-        ...record,
-        status: "gated",
-        ...(check.mismatch?.approved ? { approved: check.mismatch.approved } : {}),
-      };
-      waves.push(stopped);
-      options.onWaveSettled?.(stopped);
-      gatedFact = check.pending;
-      break;
-    }
-
-    options.onProgress?.({ type: "wave-start", wave: waveNum, components: toRun });
-    const waveResults = await Promise.all(
-      toRun.map(async (name) => {
-        options.onProgress?.({ type: "component-start", wave: waveNum, component: name });
-        const plans = plansFor.get(name)!;
-        const ctx = { ...contexts.get(name)!, ...(Object.keys(plans).length > 0 ? { plans } : {}) };
-        const result = await runComponentDeploy(byName.get(name)!, ctx, registry, componentOutputs, options.onProgress, gates);
-        options.onProgress?.({
-          type: "component-done",
-          wave: waveNum,
-          component: name,
-          status: result.status === "fail" ? "failed" : result.status,
-        });
-        options.onComponentSettled?.(result, componentOutputs[name]);
-        return result;
-      }),
-    );
-    results.push(...waveResults);
-
-    for (const result of waveResults) {
-      if (result.status === "ok") {
-        completed.push(result.component);
-        continue;
-      }
-      if (result.status === "fail") {
-        failed.push(result.component);
-        waveFailures.push({ component: result.component });
-      } else {
-        gatedFact ??= result.gate;
-      }
-      markBlocked(result.component);
-    }
-
-    const settled: WaveRecord = {
-      ...record,
-      status: waveFailures.length > 0 ? "failed" : "applied",
-      approvedBy: check.resolution.resolvedBy,
-      ...(waveFailures.length > 0 ? { failed: waveFailures } : {}),
-    };
-    waves.push(settled);
-    options.onWaveSettled?.(settled);
-    options.onProgress?.({
-      type: "wave-done",
-      wave: waveNum,
-      status: waveFailures.length > 0 ? "failed" : waveResults.some((r) => r.status === "gated") ? "gated" : "ok",
-    });
+  /** What planning one wave gave. */
+  interface Planned {
+    runnable: string[];
+    gateName: string;
+    contexts: Map<string, DeployContext>;
+    members: WaveMember[];
+    plansFor: Map<string, Record<string, unknown>>;
+    waveFailures: Array<{ component: string; error?: string }>;
   }
+  /** `next`: go on to the next wave. `stop`: the run ends here. */
+  type Outcome = "next" | "stop";
+
+  await runWaveLoop<Planned, { check: Extract<GateCheck, { satisfied: true }>; record: WaveRecord; toRun: string[] }, Outcome>({
+    first: 1,
+    onward: (_k, outcome) => outcome === "next",
+
+    async plan({ k: waveNum }) {
+      const wave = plan.waves[waveNum - 1];
+      if (!wave) return { end: "stop" };
+      const runnable = wave.filter((name) => left.has(name) && !blockedBy.has(name));
+      if (waveGate.only !== undefined && waveNum < waveGate.only) {
+        if (runnable.length > 0) throw new EarlierWaveNotAppliedError(waveGate.only, waveNum, runnable);
+        return { end: "next" };
+      }
+      if (waveGate.only !== undefined && waveNum > waveGate.only) return { end: "stop" };
+      if (runnable.length === 0) return { end: "next" };
+
+      const gateName = waveGateName(waveGate.gate, waveNum);
+      const contexts = new Map(runnable.map((name) => [name, fanOutContext(options, name)]));
+      const planned = await Promise.all(
+        runnable.map((name) => planComponent(byName.get(name)!, contexts.get(name)!, componentOutputs)),
+      );
+
+      const members: WaveMember[] = [];
+      const plansFor = new Map<string, Record<string, unknown>>();
+      const waveFailures: Array<{ component: string; error?: string }> = [];
+      for (const p of planned) {
+        if ("error" in p) {
+          waveFailures.push({ component: p.component, error: p.error });
+          continue;
+        }
+        members.push(...p.members);
+        plansFor.set(p.component, p.plans);
+      }
+      return { go: { runnable, gateName, contexts, members, plansFor, waveFailures } };
+    },
+
+    digest(_at, { members, plansFor, waveFailures }) {
+      try {
+        // A wave where nothing planned has no set, and so no digest.
+        return members.length > 0 ? waveSetDigest(members) : "";
+      } catch (err) {
+        // Two components planning the same root: there is no one plan for it.
+        const error = err instanceof Error ? err.message : String(err);
+        for (const name of plansFor.keys()) waveFailures.push({ component: name, error });
+        plansFor.clear();
+        return "";
+      }
+    },
+
+    async decide({ k: waveNum }, { runnable, gateName, members, plansFor, waveFailures }, digest) {
+      for (const f of waveFailures) {
+        failed.push(f.component);
+        results.push(planFailure(f.component, f.error ?? "plan failed"));
+        markBlocked(f.component);
+      }
+
+      const toRun = runnable.filter((name) => plansFor.has(name));
+      const record: WaveRecord = {
+        wave: waveNum,
+        op: waveGate.op,
+        gate: gateName,
+        components: [...runnable].sort(),
+        digest,
+        members: [...members].sort((a, b) => a.member.localeCompare(b.member)),
+        status: "failed",
+        ...(waveFailures.length > 0 ? { failed: waveFailures } : {}),
+      };
+      if (toRun.length === 0) {
+        waves.push(record);
+        options.onWaveSettled?.(record);
+        return { end: "next" };
+      }
+
+      const check = await decideWaveGate(gates.port, {
+        op: waveGate.op,
+        gate: gateName,
+        digest,
+        description: waveGate.description ?? `wave ${waveNum} of ${plan.waves.length}: ${toRun.join(", ")}`,
+        ...(waveGate.timeout ? { timeout: waveGate.timeout } : {}),
+        ...(options.now ? { now: options.now } : {}),
+      });
+      if (!check.satisfied) {
+        // Nothing in this wave ran, and no later wave is planned: its plan
+        // would read outputs this wave has not written.
+        const stopped: WaveRecord = {
+          ...record,
+          status: "gated",
+          ...(check.mismatch?.approved ? { approved: check.mismatch.approved } : {}),
+        };
+        waves.push(stopped);
+        options.onWaveSettled?.(stopped);
+        gatedFact = check.pending;
+        return { end: "stop" };
+      }
+      return { go: { check, record, toRun } };
+    },
+
+    async apply({ k: waveNum }, { contexts, plansFor, waveFailures }, { check, record, toRun }) {
+      options.onProgress?.({ type: "wave-start", wave: waveNum, components: toRun });
+      const waveResults = await Promise.all(
+        toRun.map(async (name) => {
+          options.onProgress?.({ type: "component-start", wave: waveNum, component: name });
+          const plans = plansFor.get(name)!;
+          const ctx = { ...contexts.get(name)!, ...(Object.keys(plans).length > 0 ? { plans } : {}) };
+          const result = await runComponentDeploy(byName.get(name)!, ctx, registry, componentOutputs, options.onProgress, gates);
+          options.onProgress?.({
+            type: "component-done",
+            wave: waveNum,
+            component: name,
+            status: result.status === "fail" ? "failed" : result.status,
+          });
+          options.onComponentSettled?.(result, componentOutputs[name]);
+          return result;
+        }),
+      );
+      results.push(...waveResults);
+
+      for (const result of waveResults) {
+        if (result.status === "ok") {
+          completed.push(result.component);
+          continue;
+        }
+        if (result.status === "fail") {
+          failed.push(result.component);
+          waveFailures.push({ component: result.component });
+        } else {
+          gatedFact ??= result.gate;
+        }
+        markBlocked(result.component);
+      }
+
+      const settled: WaveRecord = {
+        ...record,
+        status: waveFailures.length > 0 ? "failed" : "applied",
+        approvedBy: check.resolution.resolvedBy,
+        ...(waveFailures.length > 0 ? { failed: waveFailures } : {}),
+      };
+      waves.push(settled);
+      options.onWaveSettled?.(settled);
+      options.onProgress?.({
+        type: "wave-done",
+        wave: waveNum,
+        status: waveFailures.length > 0 ? "failed" : waveResults.some((r) => r.status === "gated") ? "gated" : "ok",
+      });
+      return "next";
+    },
+  });
 
   const blocked: FanOutSkip[] = [...blockedBy.entries()]
     .sort(([a], [b]) => a.localeCompare(b))

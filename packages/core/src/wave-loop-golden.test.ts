@@ -413,7 +413,7 @@ describe("Op waves golden transcripts (#3766)", () => {
         { name: "rest", runs: [], discover: true, rest: true, gate: "never" },
       ],
     };
-    const layers = [{ "a/vpc": { planDigest: digest("1") } }, { "b/db": { planDigest: digest("2") } }, { "c/app": { planDigest: digest("3") } }, { "d/dns": { planDigest: digest("4") } }];
+    const layers: Array<Record<string, PlanEntry>> = [{ "a/vpc": { planDigest: digest("1") } }, { "b/db": { planDigest: digest("2") } }, { "c/app": { planDigest: digest("3") } }, { "d/dns": { planDigest: digest("4") } }];
     await opScenario("discover-rest", disc, { layers }, [{ wave: 1 }, { wave: 2 }]);
     const failsOn = (target: string): Script["apply"] => (argv, _env, dir) =>
       (JSON.parse(readFileSync(join(dir, argv[3]!), "utf-8")) as OpWaveRunsFile).runs.some((r) => r.target === target) ? 1 : 0;

@@ -17,7 +17,7 @@ import { planFanOut } from "./components/fan-out";
 import { runFanOut } from "./components/fan-out-run";
 import { CapabilityRegistry } from "./components/capability";
 import type { DriverComponent } from "./components/driver";
-import { waveGateName, waveGateNameFrom, waveSetDigest, waveShare, WAVE_GATE_NAME_PATTERN } from "./wave-engine";
+import { runWaveLoop, waveGateName, waveGateNameFrom, waveSetDigest, waveShare, WAVE_GATE_NAME_PATTERN, type WaveLoopSteps } from "./wave-engine";
 
 const digest = (n: string) => `sha256:${n.repeat(64)}`;
 /** The runs both runners plan: a member name and its plan digest. */
@@ -103,5 +103,42 @@ describe("one wave engine (#3766)", () => {
       }
     }
     expect(opWaveShare(runs, 1, 2).map((r) => r.target)).toEqual(["t1", "t2", "t3"]);
+  });
+
+  test("the loop: plan, digest, decide, apply per wave; a replan is bounded; onward walks on; an ended step skips the rest", async () => {
+    const seen: string[] = [];
+    type R = { k: number; replan?: boolean; stop?: boolean };
+    const steps = (over: Partial<WaveLoopSteps<string, string, R>> = {}): WaveLoopSteps<string, string, R> => ({
+      first: 2,
+      async plan({ k, pass, prior }) {
+        seen.push(`plan ${k}.${pass}${prior ? " after a replan" : ""}`);
+        return k === 3 ? { end: { k } } : { go: `p${k}` };
+      },
+      digest: ({ k }, planned) => (seen.push(`digest ${k} of ${planned}`), `d${k}`),
+      async decide({ k }, _planned, digest) {
+        seen.push(`decide ${k} at ${digest}`);
+        return { go: `g${k}` };
+      },
+      async apply({ k, pass }, planned, decided) {
+        seen.push(`apply ${k} ${planned} ${decided}`);
+        return { k, replan: k === 2 && pass === 0 };
+      },
+      replan: (_at, r) => r.replan === true,
+      maxPasses: 2,
+      onward: (k) => k < 4,
+      ...over,
+    });
+    expect(await runWaveLoop(steps())).toEqual({ k: 4, replan: false });
+    expect(seen).toEqual([
+      "plan 2.0", "digest 2 of p2", "decide 2 at d2", "apply 2 p2 g2",
+      "plan 2.1 after a replan", "digest 2 of p2", "decide 2 at d2", "apply 2 p2 g2",
+      "plan 3.0",
+      "plan 4.0", "digest 4 of p4", "decide 4 at d4", "apply 4 p4 g4",
+    ]);
+
+    seen.length = 0;
+    const spent = await runWaveLoop(steps({ maxPasses: 1, onward: () => false, passesSpent: (_at, r) => ({ ...r, stop: true }) }));
+    expect(spent).toEqual({ k: 2, replan: true, stop: true });
+    expect(seen.filter((l) => l.startsWith("plan"))).toEqual(["plan 2.0"]);
   });
 });
