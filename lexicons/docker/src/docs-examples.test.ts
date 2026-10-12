@@ -76,7 +76,7 @@ function buildBlock(code: string, pageModules: Map<string, Record<string, unknow
     if (value && typeof value === "object" && "entityType" in value) entities.set(name, value as Declarable);
   }
   const result = dockerSerializer.serialize(entities);
-  return typeof result === "string" ? {} : result.files;
+  return typeof result === "string" ? {} : (result.files ?? {});
 }
 
 const PAGES = [

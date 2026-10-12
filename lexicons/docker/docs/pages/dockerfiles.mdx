@@ -2,6 +2,13 @@
 title: "Dockerfiles"
 description: "Writing Dockerfiles with ordered steps, sharing stages between modules, and the older per-kind fields"
 diataxis: reference
+prompt: |
+  Read https://intentius.io/chant/lexicons/docker/dockerfiles/ first.
+  Move every Dockerfile in this project's chant source to ordered `steps`, one instruction per step.
+  Run `chant lint src --fix` to rewrite per-kind fields (`run: [...]`, `copy: [...]`, `user`) as steps in the order they were being written, then reorder the steps so manifests are copied and installed before the source, and root setup comes before `USER`.
+  Where Dockerfiles repeat a stage or a run of steps, export it once as a const `DockerfileStage` or `DockerfileStep[]` and import it.
+  Run `chant build src --lexicon docker -o build/docker-compose.yml` and `chant lint src` until both are clean, and report each Dockerfile whose instruction order you changed and why.
+  Never push an image or change files outside this project.
 ---
 
 The `Dockerfile` constructor writes a `Dockerfile.{name}` file next to `docker-compose.yml`. The export name is the suffix: `export const server = new Dockerfile(...)` writes `Dockerfile.server`.
