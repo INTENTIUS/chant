@@ -103,6 +103,14 @@ export interface OpWavePlansFile {
    * `override.overriders` file at base, else `.chant/overriders` at base.
    */
   overriders?: string[];
+  /**
+   * Digest members that are not runs (#3821), such as the wave's monthly cost
+   * when a cost threshold applies, so an approval at one cost does not apply
+   * at another. Each needs a name no run has.
+   */
+  members?: WaveMember[];
+  /** On a discovering wave (#3821): how many waves the product found, which a `rest` wave walks to. */
+  waves?: number;
 }
 
 /** Pending-fact keys chant writes itself, which a plans file's `pending` may not set (#3821). */
@@ -119,6 +127,8 @@ export interface OpWaveRunsFile {
   number: number;
   /** The wave's set digest, once it is decided. On `applyWave`, the digest the set was approved or let through at. */
   digest?: string;
+  /** Set when the wave discovers its runs (#3821): `runs` is empty, and the plan command plans the runs it finds for this wave. */
+  discover?: true;
   /** Each run, with its plan once planned. On `applyWave`, the runs to apply. */
   runs: Array<{ target: string; op: string; planDigest?: string; destructive?: boolean; empty?: boolean }>;
 }
@@ -208,7 +218,28 @@ export interface OpWaveDecision {
   heldOn?: OpWaveHeldOn;
   /** When the wave recorded the overrides it applies under (#3821), which spent them. */
   overridesSpentAt?: string;
+  /** Digest members that are no run, from the plans file (#3821), such as the wave's cost. */
+  extras?: WaveMember[];
+  /** On a discovering wave (#3821): how many waves the plan command found. */
+  discovered?: { waves?: number };
 }
+
+/**
+ * What an apply call writes to `CHANT_APPLY_OUTCOME` when it applied nothing
+ * for a reason that is not a failure (#3821). `stood-down`: a newer run (a
+ * newer push on the branch) applies instead, exit 6. `held`: another run
+ * holds what the apply changes and the apply does not wait for it, exit 5.
+ * `replan`: the run it waited for let go, so the plans may have moved and
+ * the wave plans again in the same job. An apply that applied writes nothing.
+ */
+export interface OpWaveApplyOutcome {
+  outcome: "stood-down" | "held" | "replan";
+  reason?: string;
+  /** The run holding what the apply changes, for `held`. */
+  holder?: { run: string; url?: string };
+}
+
+export const OP_WAVE_APPLY_OUTCOMES = ["stood-down", "held", "replan"] as const;
 
 /** What a hook asks for when it holds a wave on another gate (#3821): it writes this to `CHANT_HOLD` and exits non-zero. */
 export interface OpWaveHoldRequest {
@@ -505,8 +536,20 @@ export interface RunOpWaveOptions {
 }
 
 export interface RunOpWaveResult {
-  /** 0 applied (or decided), 1 a run or a hook failed, 3 waiting for an approval, 4 a plan moved since the decision, 7 the product's policy denied a run and no override counts (#3821). */
+  /**
+   * 0 applied (or decided), 1 a run or a hook failed, 3 waiting for an
+   * approval, 4 a plan moved since the decision, 5 the apply applied nothing
+   * because another run holds what it changes, 6 the apply stood down for a
+   * newer run, 7 the product's policy denied a run and no override counts
+   * (5, 6 and 7: #3821).
+   */
   exitCode: number;
+  /** Set when the apply applied nothing and stood down or was held by another run (#3821): not a failure. */
+  outcome?: OpWaveApplyOutcome;
+  /** Set when the apply asked to plan again (#3821); {@link runOpWave} does, so a caller sees it only on a pass that gave up. */
+  replan?: { reason?: string };
+  /** The waves a `rest` wave's job ran (#3821), in order, with how each ended. */
+  rest?: Array<{ wave: number; exitCode: number; digest?: string }>;
   decision?: OpWaveDecision;
   applied: string[];
   failed: string[];
@@ -573,11 +616,13 @@ function writeRunsFile(
   members?: ReadonlyMap<string, OpWaveMember>,
   digest?: string,
   path: string = opWaveRunsPath(at.spec, at.k),
+  discover = false,
 ): string {
   const file: OpWaveRunsFile = {
     wave: at.wave.name,
     number: at.k,
     ...(digest ? { digest } : {}),
+    ...(discover ? { discover: true as const } : {}),
     runs: runs.map((run) => {
       const m = members?.get(run.target);
       return {
@@ -597,10 +642,10 @@ function writeRunsFile(
  * for all of them (#3762). A wave plan is written out as each run's plan file
  * too, so a per-run `apply` or hook reads `{plan}` either way.
  */
-function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec }, runs: readonly OpWaveRun[]): PlannedRuns {
+function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec }, runs: readonly OpWaveRun[], discover = false): PlannedRuns {
   const { spec, k, wave, cwd, exec } = at;
   if (!spec.planWave) return { members: runs.map((run) => planRun({ spec, wave: k, cwd, exec }, wave.name, run)) };
-  const runsPath = writeRunsFile(at, runs);
+  const runsPath = writeRunsFile(at, runs, undefined, undefined, undefined, discover);
   const plans = opWavePlansPath(spec, k);
   rmSync(join(cwd, plans), { force: true });
   const code = exec(opWaveArgv(spec.planWave, { op: spec.op, wave: wave.name, runs: runsPath, plans }), cwd);
@@ -615,8 +660,15 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   if (!Array.isArray(entries)) throw new Error(`the plans file of wave ${k} (${plans}) must hold { "runs": [{ "target", "planDigest" }] }`);
   const wanted = new Set(runs.map((r) => r.target));
   const byTarget = new Map<string, OpWavePlanFile>();
-  for (const entry of entries as Array<Partial<OpWavePlanFile & { target: string }>>) {
+  // #3821: a discovering wave's runs are the ones the plans file names.
+  const found: OpWaveRun[] = [];
+  for (const entry of entries as Array<Partial<OpWavePlanFile & { target: string; op: string }>>) {
     const target = entry?.target;
+    if (discover && typeof target === "string" && target !== "" && !byTarget.has(target)) {
+      if (entry.op !== undefined && (typeof entry.op !== "string" || entry.op === "")) throw new Error(`the plans file of wave ${k} (${plans}) gives ${target} an op that is not a name`);
+      found.push({ target, ...(entry.op && entry.op !== spec.op ? { op: entry.op } : {}) });
+      wanted.add(target);
+    }
     if (typeof target !== "string" || !wanted.has(target)) {
       throw new Error(`the plans file of wave ${k} (${plans}) plans ${JSON.stringify(target)}, which is not a run it was asked to plan`);
     }
@@ -626,6 +678,10 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   }
   const missing = runs.filter((r) => !byTarget.has(r.target)).map((r) => r.target);
   if (missing.length > 0) throw new Error(`the plans file of wave ${k} (${plans}) has no plan for ${missing.join(", ")}`);
+  if (discover) runs = found;
+  const extras = Array.isArray(parsed) ? undefined : extraMembers((parsed as { members?: unknown }).members, new Set(runs.map((r) => r.target)), `the plans file of wave ${k} (${plans})`);
+  const count = Array.isArray(parsed) ? undefined : (parsed as { waves?: unknown }).waves;
+  if (count !== undefined && (!Number.isInteger(count) || (count as number) < 0)) throw new Error(`the plans file of wave ${k} (${plans}): \`waves\` must be the number of waves found, a whole number`);
   const pending = Array.isArray(parsed) ? undefined : pendingFields((parsed as { pending?: unknown }).pending, `the plans file of wave ${k} (${plans})`);
   const members = runs.map((run) => {
     const m = member(run.target, run.op ?? spec.op, byTarget.get(run.target)!);
@@ -637,7 +693,13 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   if (overriders !== undefined && (!Array.isArray(overriders) || !overriders.every((o) => typeof o === "string"))) {
     throw new Error(`the plans file of wave ${k} (${plans}): \`overriders\` must be a list of principals`);
   }
-  return { members, ...(pending ? { pending } : {}), ...(overriders ? { overriders: overriders as string[] } : {}) };
+  return {
+    members,
+    ...(pending ? { pending } : {}),
+    ...(overriders ? { overriders: overriders as string[] } : {}),
+    ...(extras ? { extras } : {}),
+    ...(count !== undefined ? { waves: count as number } : {}),
+  };
 }
 
 /** What planning a wave's runs gave: each run's plan, and the product's pending-fact fields (#3821). */
@@ -646,6 +708,26 @@ interface PlannedRuns {
   pending?: Record<string, unknown>;
   /** The plans file's overriders (#3821). */
   overriders?: string[];
+  /** Digest members that are not runs, such as the wave's cost (#3821). */
+  extras?: WaveMember[];
+  /** How many waves the product found (#3821), for a `rest` wave. */
+  waves?: number;
+}
+
+/** A plans file's `members` (#3821): digest members that are no run, each named once and by no run's target. */
+function extraMembers(value: unknown, targets: ReadonlySet<string>, where: string): WaveMember[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${where}: \`members\` must be a list of { "member", "planDigest" }`);
+  const seen = new Set<string>();
+  const out: WaveMember[] = [];
+  for (const m of value as Array<Partial<WaveMember>>) {
+    if (!m || typeof m.member !== "string" || m.member === "" || typeof m.planDigest !== "string" || m.planDigest === "") throw new Error(`${where}: each of \`members\` needs a member and a planDigest`);
+    if (targets.has(m.member)) throw new Error(`${where}: member ${m.member} is also a run's target; a digest member that is no run needs a name of its own`);
+    if (seen.has(m.member)) throw new Error(`${where}: names member ${m.member} twice`);
+    seen.add(m.member);
+    out.push({ member: m.member, planDigest: m.planDigest });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /** A plans file's `pending` (#3821): an object whose keys chant does not write itself, `description` aside. Undefined when absent or empty. */
@@ -661,11 +743,12 @@ function pendingFields(value: unknown, where: string): Record<string, unknown> |
 /**
  * A wave's set digest (#3821): {@link waveSetDigest} over its runs' plans,
  * or under `digest.over: "changing"` over the runs whose plan is not empty,
- * falling back to every run when all of them are empty.
+ * falling back to every run when all of them are empty. `extras`, the plans
+ * file's members that are no run (a cost), are always in it.
  */
-export function opWaveSetDigest(spec: Pick<OpWavesSpec, "digest">, members: ReadonlyArray<WaveMember & { empty?: boolean }>): string {
+export function opWaveSetDigest(spec: Pick<OpWavesSpec, "digest">, members: ReadonlyArray<WaveMember & { empty?: boolean }>, extras: readonly WaveMember[] = []): string {
   const changing = spec.digest?.over === "changing" ? members.filter((m) => m.empty !== true) : [];
-  return waveSetDigest(changing.length > 0 ? changing : members);
+  return waveSetDigest([...(changing.length > 0 ? changing : members), ...extras]);
 }
 
 /** What one moment's hooks came to. */
@@ -1024,12 +1107,49 @@ function noteHooksAtBase(ctx: WaveContext, rules: OpWaveBaseRules): void {
 
 /** Plan, decide and apply one wave, or one part of a wide wave. */
 export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveResult> {
-  const { spec, wave: k } = options;
+  const { spec } = options;
   assertOpWavesSpec(spec);
+  const log = options.log ?? ((line: string) => console.error(line));
+  const last = spec.waves[spec.waves.length - 1]!;
+  const applied: string[] = [];
+  const rest: NonNullable<RunOpWaveResult["rest"]> = [];
+  for (let k = options.wave; ; k++) {
+    let result: RunOpWaveResult | undefined;
+    let prior: OpWaveDecision | undefined;
+    // #3821: an apply that came back "replan" plans the wave again, a bounded number of times.
+    for (let pass = 0; ; pass++) {
+      result = await runOneWave(options, k, prior, pass);
+      if (!result.replan) break;
+      if (pass + 1 >= OP_WAVE_MAX_REPLANS) {
+        log(`wave ${k}: its apply asked to plan again ${OP_WAVE_MAX_REPLANS} times, so the wave stops here`);
+        result.exitCode = 1;
+        break;
+      }
+      log(`wave ${k}: the apply applied nothing and asks to plan again${result.replan.reason ? ` (${result.replan.reason})` : ""}; planning again`);
+      prior = result.decision;
+    }
+    applied.push(...result.applied);
+    // #3821: a `rest` wave goes on through the waves its plan command found.
+    const found = result.decision?.discovered?.waves;
+    const onward = k >= spec.waves.length && last.rest === true && options.share === undefined && !options.decide && result.exitCode === 0 && found !== undefined && k < found;
+    if (rest.length > 0 || onward) rest.push({ wave: k, exitCode: result.exitCode, ...(result.decision ? { digest: result.decision.digest } : {}) });
+    if (!onward) return { ...result, applied, ...(rest.length > 0 ? { rest } : {}) };
+    log(`wave ${k} applied; the plan found ${found} waves, so this job goes on to wave ${k + 1}`);
+  }
+}
+
+/** How many times one wave job plans again when its apply asks to (#3821). */
+export const OP_WAVE_MAX_REPLANS = 10;
+
+/** Plan, decide and apply wave `k`, or one part of a wide wave. `prior`: the decision of the pass whose apply asked to plan again. */
+async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDecision | undefined, pass: number): Promise<RunOpWaveResult> {
+  const { spec } = options;
   const cwd = options.cwd ?? process.cwd();
   const exec = options.exec ?? spawnExec;
   const log = options.log ?? ((line: string) => console.error(line));
-  const wave = spec.waves[k - 1];
+  const last = spec.waves[spec.waves.length - 1]!;
+  // #3821: past the spec's waves, a `rest` wave stands for each wave its plan command found.
+  let wave = spec.waves[k - 1] ?? (last.rest ? last : undefined);
   if (!wave) throw new Error(`Op waves "${spec.name}" has ${spec.waves.length} waves; there is no wave ${k}.`);
   const shares = wave.shares ?? 1;
   if (options.share !== undefined && (options.share < 1 || options.share > shares)) {
@@ -1038,6 +1158,7 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   const recordPath = join(cwd, opWaveRecordPath(spec, k));
   const result: RunOpWaveResult = { exitCode: 0, applied: [], failed: [], moved: [], hooks: [] };
   const ctx: WaveContext = { spec, k, wave, cwd, exec, log, result, options, gateRule: { approval: "ledger", base: "HEAD", neverOverMcp: spec.neverOverMcp === true } };
+  if (pass > 0) log(`wave ${k} (${wave.name}): plan ${pass + 1}`);
 
   if (options.share !== undefined) {
     let decision: OpWaveDecision;
@@ -1053,6 +1174,11 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
       return { ...result, exitCode: decision.status === "refused" ? 7 : 3 };
     }
     // The share runs the hooks its deciding job read at base, around its own slice.
+    if (wave.discover) {
+      // #3821: a discovering wave's runs are the ones its deciding job planned.
+      wave = { ...wave, runs: decision.members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
+      ctx.wave = wave;
+    }
     const slice = opWaveShare(wave.runs, options.share, shares);
     const before = await runHooks(ctx, "before-plan", decision.hooks?.["before-plan"], slice);
     if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in share ${options.share} of wave ${k} was planned or applied`);
@@ -1115,11 +1241,18 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   const before = await runHooks(ctx, "before-plan", rules.hooks["before-plan"], wave.runs);
   if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`);
   if (before.waitingOn) return decided(ctx, decision, recordPath, before.waitingOn);
-  const { members, pending, overriders } = planRuns(ctx, wave.runs);
+  const { members, pending, overriders, extras, waves: found } = planRuns(ctx, wave.runs, wave.discover === true);
+  if (wave.discover) {
+    wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
+    ctx.wave = wave;
+    decision.discovered = { ...(found !== undefined ? { waves: found } : {}) };
+    log(`wave ${k} (${wave.name}): the plan found ${members.length} run${members.length === 1 ? "" : "s"}${found !== undefined ? ` of ${found} waves` : ""}${members.length ? `: ${members.map((m) => m.member).join(", ")}` : ""}`);
+  }
   const planned = new Map(members.map((m) => [m.member, m]));
-  const digest = opWaveSetDigest(spec, members);
+  const digest = opWaveSetDigest(spec, members, extras);
   decision.digest = digest;
   decision.members = members;
+  if (extras) decision.extras = extras;
   if (pending) decision.pending = pending;
   const after = await runHooks(ctx, "after-plan", rules.hooks["after-plan"], wave.runs, planned, digest);
   if (after.failed) return failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`);
@@ -1127,8 +1260,20 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   if (holds.length > 0) decision.heldBy = holds;
   if (after.waitingOn) return decided(ctx, decision, recordPath, after.waitingOn);
   // #3821: a run the product's policy denied applies only under an override; with none the wave is refused, and no approval is waited for.
-  if (members.some((m) => m.denied)) await settleDenials(ctx, decision, overriders);
-  if (decision.status !== "refused" && (opWaveNeedsApproval(policy, members) || holds.length > 0)) await settleGate(options, ctx, decision);
+  const kept = prior !== undefined && (prior.status === "approved" || prior.status === "not-required") && prior.digest === digest;
+  if (kept) {
+    // The overrides this job applied under, and spent, still let the same plans through.
+    const byRun = new Map(prior.members.map((m) => [m.member, m.override]));
+    for (const m of members) if (m.denied && byRun.get(m.member)) m.override = byRun.get(m.member);
+    if (prior.overridesSpentAt) decision.overridesSpentAt = prior.overridesSpentAt;
+  }
+  if (members.some((m) => m.denied && !m.override)) await settleDenials(ctx, decision, overriders);
+  if (kept && prior.status === "approved" && decision.status !== "refused") {
+    // #3821: planned again after the apply asked to, to the same digest: the approval this job found still holds, and is not spent twice.
+    for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt"] as const) if (prior[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = prior[key];
+    decision.status = "approved";
+    log(`wave ${k} (${wave.name}): planned again to the same digest, so the approval by ${prior.approvedBy} still holds`);
+  } else if (decision.status !== "refused" && (opWaveNeedsApproval(policy, members) || holds.length > 0)) await settleGate(options, ctx, decision);
   const code = await decided(ctx, decision, recordPath);
   if (code.exitCode !== 0) return code;
   log(
@@ -1250,7 +1395,7 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
   const still: string[] = [];
   let moved = false;
   for (const m of decision.members) {
-    if (!m.denied) continue;
+    if (!m.denied || m.override) continue;
     const verdict = og.decideOverride({
       ledger,
       applied,
@@ -1423,8 +1568,23 @@ async function settleHolds(
   return true;
 }
 
-/** How one apply call came out. `applied` with a `problem`: the runs applied, and the wave still fails. */
-type ApplyCall = { outcome: "applied"; problem?: string } | { outcome: "failed" | "waiting" };
+/** How one apply call came out. `applied` with a `problem`: the runs applied, and the wave still fails. `applied-nothing`: the apply said why (#3821). */
+type ApplyCall = { outcome: "applied"; problem?: string } | { outcome: "failed" | "waiting" } | { outcome: "applied-nothing"; said: OpWaveApplyOutcome };
+
+/** Read what an apply wrote to `CHANT_APPLY_OUTCOME` (#3821), or undefined when it wrote nothing. A file that says something else is logged and ignored. */
+function readApplyOutcome(path: string, label: string, log: (line: string) => void): OpWaveApplyOutcome | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const o = JSON.parse(readFileSync(path, "utf-8")) as Partial<OpWaveApplyOutcome>;
+    if (!OP_WAVE_APPLY_OUTCOMES.includes(o.outcome as "held")) throw new Error(`outcome ${JSON.stringify(o.outcome)} is none of ${OP_WAVE_APPLY_OUTCOMES.join(", ")}`);
+    if (o.reason !== undefined && typeof o.reason !== "string") throw new Error("its reason is not text");
+    const holder = o.holder && typeof o.holder === "object" && typeof o.holder.run === "string" ? { run: o.holder.run, ...(typeof o.holder.url === "string" ? { url: o.holder.url } : {}) } : undefined;
+    return { outcome: o.outcome as OpWaveApplyOutcome["outcome"], ...(o.reason ? { reason: o.reason } : {}), ...(holder ? { holder } : {}) };
+  } catch (err) {
+    log(`${label}: the apply wrote an outcome that cannot be read (${err instanceof Error ? err.message : String(err)}), so its exit code decides`);
+    return undefined;
+  }
+}
 
 /**
  * Call one apply command (#3804) with `CHANT_HOOKS` and `CHANT_HOOKS_RESULT`.
@@ -1448,6 +1608,7 @@ async function callApply(
   const dir = `.chant/op-waves/${spec.name}/wave-${k}`;
   const filePath = `${dir}/${call.key}.json`;
   const resultPath = `${dir}/${call.key}-result.json`;
+  const outcomePath = `${dir}/${call.key}-outcome.json`;
   const handed: Partial<Record<OpWaveHookMoment, OpWaveHook[]>> = {};
   if (byApply) {
     for (const m of ["before-apply", "after-apply"] as const) if (decision.hooks?.[m]?.length) handed[m] = decision.hooks[m];
@@ -1474,12 +1635,27 @@ async function callApply(
     mkdirSync(join(cwd, dir), { recursive: true });
     writeFileSync(join(cwd, filePath), JSON.stringify(file, null, 2) + "\n");
     rmSync(join(cwd, resultPath), { force: true });
+    rmSync(join(cwd, outcomePath), { force: true });
     let code: number;
     try {
-      code = exec(argv, cwd, { CHANT_HOOKS: filePath, ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) });
+      code = exec(argv, cwd, { CHANT_HOOKS: filePath, CHANT_APPLY_OUTCOME: outcomePath, ...(byApply ? { CHANT_HOOKS_RESULT: resultPath } : {}) });
     } catch (err) {
       log(`${call.label}: the apply did not run: ${err instanceof Error ? err.message : String(err)}`);
       code = 127;
+    }
+    // #3821: an apply that applied nothing, and says why, is not a failure.
+    const said = readApplyOutcome(join(cwd, outcomePath), call.label, log);
+    if (said) {
+      if (byApply) {
+        try {
+          const back = JSON.parse(readFileSync(join(cwd, resultPath), "utf-8")) as OpWaveHooksResult;
+          if (Array.isArray(back?.outcomes)) result.hooks.push(...back.outcomes);
+        } catch {
+          // No hooks ran.
+        }
+      }
+      log(`${call.label}: the apply applied nothing: ${said.outcome}${said.reason ? ` (${said.reason})` : ""}${said.holder ? `, held by run ${said.holder.run}` : ""}`);
+      return { outcome: "applied-nothing", said };
     }
     if (!byApply) return { outcome: code === 0 ? "applied" : "failed" };
     let back: OpWaveHooksResult | null = null;
@@ -1559,11 +1735,13 @@ async function applyStage(
   if (recordPath && (decision.spentAt || decision.overridesSpentAt)) writeRecord(recordPath, decision, result);
   const problems: string[] = [];
   let waiting = false;
+  let nothing: OpWaveApplyOutcome | undefined;
   if (spec.applyWave) {
     const runsPath = writeRunsFile(ctx, runs, planned, decision.digest);
     const argv = opWaveArgv(spec.applyWave, { op: spec.op, wave: wave.name, runs: runsPath, plans: opWavePlansPath(spec, k) });
     const got = await callApply(options, ctx, decision, runs, planned, argv, { label: `wave ${k} (${wave.name})`, key: "hooks", runsPath }, recordPath);
-    if (got.outcome === "applied") {
+    if (got.outcome === "applied-nothing") nothing = got.said;
+    else if (got.outcome === "applied") {
       result.applied.push(...runs.map((r) => r.target));
       if (got.problem) problems.push(got.problem);
     } else if (got.outcome === "waiting") waiting = true;
@@ -1578,6 +1756,10 @@ async function applyStage(
       const runsPath = byApply ? writeRunsFile(ctx, [run], planned, decision.digest, `.chant/op-waves/${spec.name}/wave-${k}/${key}.runs.json`) : opWaveRunsPath(spec, k);
       const argv = opWaveArgv(spec.apply ?? OP_WAVE_DEFAULT_APPLY, { op: run.op ?? spec.op, target: run.target, wave: wave.name, plan: opWavePlanPath(spec, k, run.target) });
       const got = await callApply(options, ctx, decision, [run], planned, argv, { label: run.target, key: `${key}.hooks`, runsPath }, recordPath);
+      if (got.outcome === "applied-nothing") {
+        nothing = got.said;
+        break;
+      }
       if (got.outcome === "waiting") {
         waiting = true;
         break;
@@ -1592,6 +1774,17 @@ async function applyStage(
     }
   }
   if (recordPath && byApply) writeRecord(recordPath, decision, result);
+  if (nothing) {
+    // #3821: no run counts as failed; the wave stops here, or plans again.
+    if (nothing.outcome === "replan") {
+      result.replan = { ...(nothing.reason ? { reason: nothing.reason } : {}) };
+      return;
+    }
+    result.outcome = nothing;
+    result.exitCode = nothing.outcome === "stood-down" ? 6 : 5;
+    if (recordPath) writeRecord(recordPath, decision, result);
+    return;
+  }
   if (waiting) {
     result.exitCode = 3;
     return;
@@ -1743,11 +1936,16 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
     name: spec.name,
     head,
     timestamp: options.now ?? new Date().toISOString(),
-    waves: spec.waves.map((wave, i) => {
-      const { members } = planRuns({ spec, k: i + 1, wave, cwd, exec }, wave.runs);
-      return { wave: i + 1, name: wave.name, digest: opWaveSetDigest(spec, members) };
-    }),
+    waves: [],
   };
+  // A `rest` wave (#3821) goes on through the waves the plan command found.
+  const last = spec.waves[spec.waves.length - 1]!;
+  for (let k = 1; ; k++) {
+    const wave = spec.waves[k - 1] ?? last;
+    const { members, extras, waves: found } = planRuns({ spec, k, wave, cwd, exec }, wave.runs, wave.discover === true);
+    plans.waves.push({ wave: k, name: wave.name, digest: opWaveSetDigest(spec, members, extras) });
+    if (k >= spec.waves.length && !(last.rest && found !== undefined && k < found)) break;
+  }
   await (options.write ?? ((p) => writeHeadPlans(p, cwd)))(plans);
   return plans;
 }

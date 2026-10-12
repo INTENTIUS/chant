@@ -68,6 +68,8 @@ export {
 } from "./op-waves";
 export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesDigest, OpWavesOverride, OpWavesSpec } from "./op-waves";
 export {
+  OP_WAVE_APPLY_OUTCOMES,
+  OP_WAVE_MAX_REPLANS,
   opWaveHooksAtBase,
   opWaveNeedsApproval,
   opWavePlansPath,
@@ -84,6 +86,7 @@ export type {
   OpWaveBaseRules,
   OpWaveDecision,
   OpWaveApplyHooksRun,
+  OpWaveApplyOutcome,
   OpWaveExec,
   OpWaveHeldOn,
   OpWaveHoldRequest,

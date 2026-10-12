@@ -6,7 +6,9 @@
  * review. A share job that refused a run whose plan moved (exit 4) sends
  * `refused`. A wave whose plan, apply or stage hook failed (exit 1) sends
  * `failed`. A wave the product's policy refused (exit 7, #3821) sends
- * `refused` with the runs it denied. A share job of a waiting wave sends nothing, since its deciding
+ * `refused` with the runs it denied, and one whose apply was held by another
+ * run (exit 5) sends `refused` with status `held`; one that stood down for a
+ * newer run (exit 6) sends nothing. A share job of a waiting wave sends nothing, since its deciding
  * job already did, unless a hook in the share job itself held it (#3762). Delivery is `../notify.ts`: it never throws, and the job's exit code
  * is what the wave decided.
  */
@@ -68,6 +70,19 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
         decision.refused.reason === "override-moved"
           ? "an override stands for an earlier plan or other rules, so it counts for nothing"
           : "the policy denied these runs, and no override counts for them",
+    };
+  }
+  // #3821: an apply that stood down for a newer run is no news; one held by another run is refused.
+  if (result.exitCode === 6 && result.outcome?.outcome === "stood-down") return undefined;
+  if (result.exitCode === 5 && result.outcome?.outcome === "held") {
+    const holder = result.outcome.holder;
+    return {
+      ...base,
+      event: "refused",
+      status: "held",
+      summary: `${label} applied nothing: another run${holder ? ` (${holder.run})` : ""} holds what it changes`,
+      targets: decision?.members.map((m) => m.member) ?? [],
+      reason: result.outcome.reason ?? `another run${holder ? `, ${holder.run},` : ""} holds what the apply changes; apply again once it is done`,
     };
   }
   if (result.exitCode === 4) {

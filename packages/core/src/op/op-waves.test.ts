@@ -892,3 +892,138 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     again.done();
   });
 });
+
+describe("discovered waves, a cost member and applies that apply nothing (#3821)", () => {
+  const digest = (n: string) => `sha256:${n.repeat(64)}`;
+  const tg: OpWavesSpec = {
+    name: "tf-apply",
+    op: "tf-apply",
+    gateName: "wave-{k}",
+    digest: { over: "changing" },
+    planWave: ["tg", "plan", "{wave}", "{runs}", "{plans}"],
+    applyWave: ["tg", "apply", "{wave}", "{runs}", "{plans}"],
+    waves: [
+      { name: "layer", runs: [], discover: true, gate: "never" },
+      { name: "rest", runs: [], discover: true, rest: true, gate: "never" },
+    ],
+  };
+  /** `layers[k-1]` is what wave k's plan finds; `apply` says what each apply call writes to CHANT_APPLY_OUTCOME. */
+  function harness(layers: Array<Record<string, { planDigest: string; empty?: boolean }>>, opts: { extra?: (k: number) => Record<string, unknown>; apply?: (k: number, n: number) => unknown; atBase?: OpWavesSpec } = {}) {
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-3821c-"));
+    const calls: string[] = [];
+    const runsFiles: OpWaveRunsFile[] = [];
+    const applies = new Map<number, number>();
+    const exec: OpWaveExec = (argv, dir, env = {}) => {
+      calls.push(argv.join(" "));
+      const runs = JSON.parse(readFileSync(join(dir, argv[3]!), "utf-8")) as OpWaveRunsFile;
+      runsFiles.push(runs);
+      if (argv[1] === "plan") {
+        const found = layers[runs.number - 1] ?? {};
+        const entries = runs.discover ? Object.entries(found).map(([target, p]) => ({ target, ...p })) : runs.runs.map((r) => ({ target: r.target, ...found[r.target] }));
+        writeFileSync(join(dir, argv[4]!), JSON.stringify({ runs: entries, waves: layers.length, ...(opts.extra?.(runs.number) ?? {}) }));
+      }
+      if (argv[1] === "apply") {
+        const n = (applies.get(runs.number) ?? 0) + 1;
+        applies.set(runs.number, n);
+        const said = opts.apply?.(runs.number, n);
+        if (said) writeFileSync(join(dir, env.CHANT_APPLY_OUTCOME!), JSON.stringify(said));
+      }
+      return 0;
+    };
+    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: JSON.stringify(opts.atBase ?? tg) });
+    return { cwd, calls, runsFiles, exec, show, done: () => rmSync(cwd, { recursive: true, force: true }) };
+  }
+  const run = (h: ReturnType<typeof harness>, wave: number, gates = memoryGateLedgerPort(), spec: OpWavesSpec = tg) =>
+    runOpWave({ spec, specFile: "waves.json", wave, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00.000Z", log: () => {} });
+
+  test("the spec checks discover and rest", () => {
+    expect(() => assertOpWavesSpec(tg)).not.toThrow();
+    expect(() => assertOpWavesSpec({ ...tg, planWave: undefined, plan: ["p", "{plan}"] })).toThrow(/only `planWave` can report/);
+    expect(() => assertOpWavesSpec({ ...tg, waves: [{ name: "a", runs: [{ target: "x" }], discover: true }] })).toThrow(/lists none/);
+    expect(() => assertOpWavesSpec({ ...tg, waves: [{ name: "a", runs: [], rest: true, discover: true }, { name: "b", runs: [], discover: true }] })).toThrow(/only the last wave/);
+    expect(() => assertOpWavesSpec({ ...tg, waves: [{ name: "a", runs: [], rest: true }] })).toThrow(/set discover too/);
+    expect(() => assertOpWavesSpec({ ...tg, waves: [{ name: "a", runs: [], discover: true, rest: true, shares: 2 }] })).toThrow(/cannot be split/);
+  });
+
+  test("a wave plans the runs its plan command finds, and the rest wave walks on to the last wave it found", async () => {
+    const layers: Array<Record<string, { planDigest: string }>> = [{ "a/vpc": { planDigest: digest("1") } }, { "b/db": { planDigest: digest("2") } }, { "c/app": { planDigest: digest("3") } }, { "d/dns": { planDigest: digest("4") } }];
+    const h = harness(layers);
+    const first = await run(h, 1);
+    expect(first).toMatchObject({ exitCode: 0, applied: ["a/vpc"], decision: { gate: "wave-1", discovered: { waves: 4 } } });
+    expect(h.runsFiles[0]).toMatchObject({ discover: true, runs: [] });
+    const rest = await run(h, 2);
+    expect(rest).toMatchObject({ exitCode: 0, applied: ["b/db", "c/app", "d/dns"], decision: { wave: 4, gate: "wave-4", name: "rest" } });
+    expect(rest.rest!.map((r) => [r.wave, r.exitCode])).toEqual([[2, 0], [3, 0], [4, 0]]);
+    h.done();
+
+    // A repo with fewer waves than jobs: the later job finds nothing to apply.
+    const short = harness([{ "a/vpc": { planDigest: digest("1") } }]);
+    expect(await run(short, 2)).toMatchObject({ exitCode: 0, applied: [] });
+    short.done();
+  });
+
+  test("a wide discovering wave hands its found runs to its shares", async () => {
+    const spec: OpWavesSpec = { ...tg, waves: [{ name: "layer", runs: [], discover: true, gate: "never", shares: 2 }] };
+    const layers = [{ "a/1": { planDigest: digest("1") }, "a/2": { planDigest: digest("2") }, "a/3": { planDigest: digest("3") } }];
+    const h = harness(layers, { atBase: spec });
+    expect(await runOpWave({ spec, specFile: "waves.json", wave: 1, decide: true, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort(), log: () => {} })).toMatchObject({ exitCode: 0, applied: [] });
+    const share = await runOpWave({ spec, specFile: "waves.json", wave: 1, share: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates: memoryGateLedgerPort(), log: () => {} });
+    expect(share).toMatchObject({ exitCode: 0, applied: ["a/3"] });
+    h.done();
+  });
+
+  test("a cost member joins the digest, so an approval at one cost does not apply at another", async () => {
+    const spec: OpWavesSpec = { ...tg, waves: [{ name: "layer", runs: [], discover: true, gate: "always" }] };
+    const layers = [{ "a/vpc": { planDigest: digest("1") }, "a/idle": { planDigest: digest("2"), empty: true } }];
+    const cost = (usd: string) => ({ members: [{ member: "cost", planDigest: `usd:${usd}` }] });
+    const h = harness(layers, { extra: () => cost("120.00"), atBase: spec });
+    const gates = memoryGateLedgerPort();
+    const result = await run(h, 1, gates, spec);
+    const priced = waveSetDigest([{ member: "a/vpc", planDigest: digest("1") }, { member: "cost", planDigest: "usd:120.00" }]);
+    expect(result).toMatchObject({ exitCode: 3, decision: { digest: priced, extras: [{ member: "cost", planDigest: "usd:120.00" }] } });
+    h.done();
+
+    const dearer = harness(layers, { extra: () => cost("900.00"), atBase: spec });
+    const approved = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: priced }] });
+    expect(await run(dearer, 1, approved, spec)).toMatchObject({ exitCode: 3, decision: { mismatch: { approved: priced } } });
+    dearer.done();
+
+    const clash = harness([{ cost: { planDigest: digest("1") } }], { extra: () => cost("1"), atBase: spec });
+    await expect(run(clash, 1, memoryGateLedgerPort(), spec)).rejects.toThrow(/also a run's target/);
+    clash.done();
+  });
+
+  test("an apply that stood down or was held applies nothing and fails nothing; one that asks plans again", async () => {
+    const layers = [{ "a/vpc": { planDigest: digest("1") } }];
+    const down = harness(layers, { apply: () => ({ outcome: "stood-down", reason: "a newer push is on main" }) });
+    const stood = await run(down, 1);
+    expect(stood).toMatchObject({ exitCode: 6, applied: [], failed: [], outcome: { outcome: "stood-down", reason: "a newer push is on main" } });
+    const { opWaveNotifyFields } = await import("./op-waves-notify");
+    expect(opWaveNotifyFields(tg, 1, { result: stood })).toBeUndefined();
+    down.done();
+
+    const busy = harness(layers, { apply: () => ({ outcome: "held", holder: { run: "github:123", url: "https://example.test/run/123" } }) });
+    const held = await run(busy, 1);
+    expect(held).toMatchObject({ exitCode: 5, applied: [], failed: [], outcome: { outcome: "held", holder: { run: "github:123" } } });
+    expect(opWaveNotifyFields(tg, 1, { result: held })).toMatchObject({ event: "refused", status: "held", targets: ["a/vpc"] });
+    busy.done();
+
+    const again = harness(layers, { apply: (_k, n) => (n === 1 ? { outcome: "replan", reason: "run 123 let go" } : undefined) });
+    const replanned = await run(again, 1);
+    expect(replanned).toMatchObject({ exitCode: 0, applied: ["a/vpc"] });
+    expect(again.calls.filter((c) => c.startsWith("tg plan"))).toHaveLength(2);
+    again.done();
+  });
+
+  test("planned again to the same digest, the approval the job found still holds and is not spent twice", async () => {
+    const spec: OpWavesSpec = { ...tg, approvals: { spend: true }, waves: [{ name: "layer", runs: [], discover: true, gate: "always" }] };
+    const layers = [{ "a/vpc": { planDigest: digest("1") } }];
+    const set = waveSetDigest([{ member: "a/vpc", planDigest: digest("1") }]);
+    const h = harness(layers, { apply: (_k, n) => (n === 1 ? { outcome: "replan" } : undefined), atBase: spec });
+    const gates = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: set }] });
+    const result = await run(h, 1, gates, spec);
+    expect(result).toMatchObject({ exitCode: 0, applied: ["a/vpc"], decision: { status: "approved", approvedBy: "alice" } });
+    expect(gates.applied).toHaveLength(1);
+    h.done();
+  });
+});

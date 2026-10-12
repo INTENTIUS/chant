@@ -42,6 +42,8 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
 | `waves[].runs` | One entry per target. A target appears once per wave |
+| `waves[].discover` | The runs come from `planWave` at plan time, not the spec ([Runs found at plan time](#runs-found-at-plan-time)) |
+| `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
 | `waves[].approval` | `ledger`, `pr-review` or `sealed`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
@@ -138,11 +140,47 @@ The plans file may also carry `pending`, an object of fields the product adds to
 
 chant's own fields win. A `pending` that sets one of them (`op`, `gate`, `planDigest`, `timestamp`, `expiresAt` and the rest) fails the wave; `description` is the one it may set.
 
+The plans file may also carry `members`: digest members that are not runs, each with a name no run has. A product whose approval depends on more than the plans puts that in the digest this way. With a cost threshold, for example, the wave's monthly cost goes in, so an approval at one cost does not apply at another:
+
+```json
+{ "runs": [...], "members": [{ "member": "cost", "planDigest": "usd-monthly:1240.50" }] }
+```
+
+They are in the digest whatever `digest.over` says, and they never run.
+
 `applyWave` gets a runs file that lists the approved set: each run with the `planDigest` it was approved or let through at, and the wave's `digest`. A non-zero exit counts every run in the set as failed.
+
+Every apply call, `apply` or `applyWave`, also gets `CHANT_APPLY_OUTCOME`, a path. An apply that applied nothing, for a reason that is not a failure, writes one of these there:
+
+| `outcome` | When | The wave |
+|---|---|---|
+| `stood-down` | a newer run (a newer push on the branch) applies instead | exits 6. No run counts as failed, and no notification goes out |
+| `held` | another run holds what the apply changes, and the apply does not wait for it. `holder: { run, url? }` names it | exits 5. No run counts as failed. Notify sends `refused` with status `held` |
+| `replan` | the run the apply waited for let go, so the plans may have moved | plans the wave again in the same job, up to 10 times. Planned again to the same digest, the approval the job found still holds, and it is not spent twice |
+
+`reason` is optional text. An apply that applied, or failed, writes nothing, and its exit code decides as before.
 
 `plan` and `planWave` cannot both be given, and neither can `apply` and `applyWave`. Either kind of plan can go with either kind of apply.
 
 `shares` keeps working. The deciding job plans the whole wave in one call. Each share job calls `planWave` with a runs file of its own slice, and calls `applyWave` with only the runs whose plan digest still matches the decision.
+
+## Runs found at plan time
+
+Some tools find a wave's runs at run time. A Terragrunt repo's waves are its units' dependency layers from `terragrunt find`, and a repo can grow a layer after its pipeline was rendered. Mark those waves `discover`, and the last one `rest`:
+
+```json
+{
+  "planWave": ["./bin/plan-wave", "{wave}", "{runs}", "{plans}"],
+  "waves": [
+    { "name": "layer", "runs": [], "discover": true },
+    { "name": "rest", "runs": [], "discover": true, "rest": true }
+  ]
+}
+```
+
+A discovering wave's runs file has `"discover": true` and no runs. `planWave` plans the runs it finds for wave `number`, lists them in `{plans}` (an entry may name its `op`), and says how many waves it found in `waves`. A wave number past the last one it found finds no runs, so the wave applies nothing and exits 0.
+
+A `rest` wave applies its own wave and then goes on to wave k+1, k+2 and so on, up to the `waves` its plan reports. It stops at the first wave that does not apply. Each of those waves plans in turn, waits on its own gate (`gateName` with its number), and is read at base under the `rest` wave's name. `--json` lists them under `rest`. A `rest` wave cannot have `shares`. A discovering wave with `shares` hands its share jobs the runs its deciding job found. `--record-plans` follows the `rest` waves too.
 
 ## Stage hooks
 
@@ -445,6 +483,8 @@ With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event say
 | 1 | A plan, an apply or a hook failed |
 | 3 | The wave is waiting for an approval of its set digest, because its policy or a hook holds it; nothing in it was applied |
 | 4 | A share job refused a run whose plan moved since the decision |
+| 5 | The apply applied nothing: another run holds what it changes |
+| 6 | The apply stood down for a newer run |
 | 7 | The product's policy denied a run and no override counts for it; nothing in the wave was applied |
 
 ## Deciding a gate in your own tool

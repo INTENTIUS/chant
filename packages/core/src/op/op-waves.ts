@@ -154,7 +154,23 @@ export interface OpWaveRun {
 export interface OpWave {
   /** The wave's name, usually its environment. Lowercase letters, digits, `-` and `_`. */
   name: string;
+  /** The wave's runs. Empty or absent on a `discover` wave. */
   runs: OpWaveRun[];
+  /**
+   * The runs come from the product at plan time (#3821): `planWave` gets a
+   * runs file with no runs and `discover: true`, and plans the runs it finds
+   * for wave k (a Terragrunt repo's dependency layer from `terragrunt find`).
+   * Needs `planWave`.
+   */
+  discover?: boolean;
+  /**
+   * The last wave only, with `discover` (#3821): once it applies, the job
+   * goes on to wave k+1, k+2, ... while `planWave` reports more waves
+   * (`waves` in its plans file), each behind its own gate and read at base
+   * by this wave's name. For a pipeline whose wave count is not known up
+   * front.
+   */
+  rest?: boolean;
   /**
    * When the wave waits. Default `"always"`. The runner reads this from the
    * spec file at the base commit, never from the change being applied.
@@ -445,7 +461,23 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       throw new Error(`${where}: wave "${wave.name}" has approval "${wave.approval}"; use ${GATE_APPROVAL_SOURCES.join(", ")}.`);
     }
     assertOpWaveHooks(`${where}, wave "${wave.name}"`, wave.hooks);
-    if (wave.runs.length === 0) throw new Error(`${where}: wave "${wave.name}" has no runs.`);
+    if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
+    if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
+    if (wave.discover) {
+      if (spec.planWave === undefined) throw new Error(`${where}: wave "${wave.name}" discovers its runs, which only \`planWave\` can report. Give planWave.`);
+      if ((wave.runs ?? []).length > 0) throw new Error(`${where}: wave "${wave.name}" discovers its runs, so it lists none.`);
+    }
+    if (wave.rest) {
+      if (!wave.discover) throw new Error(`${where}: wave "${wave.name}" has rest, which follows the waves planWave discovers; set discover too.`);
+      if (wave !== spec.waves[spec.waves.length - 1]) throw new Error(`${where}: wave "${wave.name}" has rest, which only the last wave can have.`);
+      if ((wave.shares ?? 1) > 1) throw new Error(`${where}: wave "${wave.name}" has rest and shares; the waves after it run in its one job, so it cannot be split.`);
+    }
+    if (wave.discover) {
+      const shares = wave.shares ?? 1;
+      if (!Number.isInteger(shares) || shares < 1) throw new Error(`${where}: wave "${wave.name}" has shares ${wave.shares}; use a whole number from 1.`);
+      continue;
+    }
+    if (!Array.isArray(wave.runs) || wave.runs.length === 0) throw new Error(`${where}: wave "${wave.name}" has no runs.`);
     const targets = new Set<string>();
     for (const run of wave.runs) {
       if (!run.target) throw new Error(`${where}: wave "${wave.name}" has a run with no target.`);
