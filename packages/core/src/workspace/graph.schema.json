@@ -181,6 +181,13 @@
               },
               "member": {
                 "type": "string"
+              },
+              "previously": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Names this output had before, from a rename hint a lexicon read in the member's source (a sql `-- previously:` comment). A link to one of them is told the new name."
               }
             }
           }
