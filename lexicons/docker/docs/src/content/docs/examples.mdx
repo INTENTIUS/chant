@@ -61,9 +61,9 @@ export const redisdata = new Volume({});
 ## Nginx reverse proxy
 
 ```typescript
-import { Service, Config } from "@intentius/chant-lexicon-docker";
+import { Service, DockerConfig } from "@intentius/chant-lexicon-docker";
 
-export const nginxConf = new Config({ file: "./nginx.conf" });
+export const nginxConf = new DockerConfig({ file: "./nginx.conf" });
 
 export const proxy = new Service({
   image: "nginx:1.25-alpine",

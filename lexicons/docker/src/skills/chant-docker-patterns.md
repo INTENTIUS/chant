@@ -5,7 +5,7 @@ Common Docker Compose and Dockerfile patterns using `@intentius/chant-lexicon-do
 ## Database service with volume
 
 ```typescript
-import { Service, Volume } from "@intentius/chant-lexicon-docker";
+import { Service, Volume, env } from "@intentius/chant-lexicon-docker";
 
 export const postgres = new Service({
   image: "postgres:16-alpine",
@@ -207,7 +207,7 @@ export const app = new Service({
 ## Environment interpolation patterns
 
 ```typescript
-import { env } from "@intentius/chant-lexicon-docker";
+import { Service, env } from "@intentius/chant-lexicon-docker";
 
 // Dev vs prod toggle:
 export const api = new Service({

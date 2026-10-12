@@ -35,11 +35,11 @@ export class DockerGenerator {
           lines.push(generateNetwork(entity));
           break;
         case "config":
-          imports.add("Config");
+          imports.add("DockerConfig");
           lines.push(generateConfig(entity));
           break;
         case "secret":
-          imports.add("Secret");
+          imports.add("DockerSecret");
           lines.push(generateSecret(entity));
           break;
         case "dockerfile":
@@ -74,12 +74,12 @@ function generateNetwork(net: NetworkIR): string {
 
 function generateConfig(cfg: ConfigIR): string {
   const hasProps = Object.keys(cfg.props).length > 0;
-  return `export const ${sanitizeName(cfg.name)} = new Config(${hasProps ? JSON.stringify(cfg.props) : "{}"});`;
+  return `export const ${sanitizeName(cfg.name)} = new DockerConfig(${hasProps ? JSON.stringify(cfg.props) : "{}"});`;
 }
 
 function generateSecret(sec: SecretIR): string {
   const hasProps = Object.keys(sec.props).length > 0;
-  return `export const ${sanitizeName(sec.name)} = new Secret(${hasProps ? JSON.stringify(sec.props) : "{}"});`;
+  return `export const ${sanitizeName(sec.name)} = new DockerSecret(${hasProps ? JSON.stringify(sec.props) : "{}"});`;
 }
 
 /** The instructions a step can name; anything else (MAINTAINER) is left as a comment. */
