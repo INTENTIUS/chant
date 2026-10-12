@@ -21,7 +21,13 @@ import { load } from "js-yaml";
 import { describe, expect, it } from "vitest";
 
 type Step = { name?: string; run?: string; env?: Record<string, string> };
-type Job = { env?: Record<string, string>; steps?: Step[]; needs?: string[]; if?: string };
+type Job = {
+  env?: Record<string, string>;
+  steps?: Step[];
+  needs?: string[];
+  if?: string;
+  permissions?: Record<string, string>;
+};
 type Workflow = { on: Record<string, unknown>; jobs: Record<string, Job> };
 
 const root = join(import.meta.dirname, "..");
@@ -102,6 +108,20 @@ describe("release gate parity (#1481)", () => {
     expect(stepsRunning(publish.jobs.audit, /scripts\/audit-trusted-publishers\.sh/)).toHaveLength(1);
     expect(publish.jobs.publish.needs).toEqual(expect.arrayContaining(["test", "audit"]));
     expect(publish.jobs.publish.if).toMatch(/needs\.audit\.result == 'success'/);
+  });
+
+  // #3903: with CHANT_STAGED_PUBLISH=1 the publish step stages every
+  // package under `next`, then moves `latest` with `npm dist-tag add`. Over
+  // OIDC that needs the id-token permission and an npm whose dist-tag does
+  // the exchange (12.2.0 and later). The trusted-publisher records also need
+  // "Allow npm dist-tag", which is set on npmjs.com, not here (#3904), so the
+  // switch is a repository variable, off until those records allow it.
+  it("the publish job can move dist-tags over OIDC, behind a repository variable", () => {
+    expect(publish.jobs.publish.permissions?.["id-token"]).toBe("write");
+    expect(envOf(publish.jobs.publish, publishStep[0], "CHANT_STAGED_PUBLISH")).toBe("${{ vars.CHANT_STAGED_PUBLISH }}");
+    const script = readFileSync(join(root, "scripts", "publish-packages.sh"), "utf8");
+    expect(script).toMatch(/npm@12\.2\.0/);
+    expect(script).toMatch(/Allow npm dist-tag/);
   });
 
   // #3027: the gate waits for the chant run; a gate that ran out of time
