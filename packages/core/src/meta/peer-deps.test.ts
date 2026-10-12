@@ -124,3 +124,42 @@ describe("the provider-aware rule, over fixtures", () => {
     expect(rangeViolations(skewed, { aws: { typescript: ">=5.0.0" } })).toEqual([]);
   });
 });
+
+/**
+ * Same rule over every dependency field of every publishable package (#3905).
+ * docker, fly, k8s, grafana and helm once depended on sibling lexicons at `*`,
+ * which follows `latest` instead of the release they shipped in. Both release
+ * recipes now write `^<provider version>`; this fails if any `@intentius/*`
+ * range in dependencies, peerDependencies or optionalDependencies is `*` or
+ * anything other than the provider's current version.
+ */
+describe("every in-family @intentius/* range pins its provider's current version", () => {
+  type Manifest = {
+    name: string;
+    version: string;
+    private?: boolean;
+    dependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  const dirs = [
+    ...readdirSync(join(repoRoot, "packages")).map((n) => join("packages", n)),
+    ...lexicons.map((n) => join("lexicons", n)),
+  ].filter((d) => existsSync(join(repoRoot, d, "package.json")));
+  const manifests = dirs.map((d) => JSON.parse(readFileSync(join(repoRoot, d, "package.json"), "utf-8")) as Manifest);
+  const publishable = manifests.filter((m) => !m.private);
+  const versions = Object.fromEntries(publishable.map((m) => [m.name, m.version]));
+
+  test.each(publishable.map((m) => m.name))("%s", (name) => {
+    const m = publishable.find((p) => p.name === name)!;
+    const bad: string[] = [];
+    for (const field of ["dependencies", "peerDependencies", "optionalDependencies"] as const) {
+      for (const [dep, range] of Object.entries(m[field] ?? {})) {
+        if (!dep.startsWith("@intentius/")) continue;
+        const want = versions[dep] ? `^${versions[dep]}` : undefined;
+        if (range !== want) bad.push(`${field}.${dep} is "${range}", want ${want ?? "a published workspace package"}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});

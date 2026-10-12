@@ -63,6 +63,16 @@ release_version_at() {
   git show "$1:$2" 2>/dev/null | jq -r .version 2>/dev/null || true
 }
 
+# release_family_versions prints a JSON object mapping each publishable
+# @intentius/* package name to its current .version in the tree (#3905), for
+# pinning in-family dependency ranges.
+release_family_versions() {
+  local f
+  for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
+    jq -c '{(.name): .version}' "$f"
+  done | jq -s 'add'
+}
+
 # release_open <sha> makes a detached worktree at <sha>, cds into it and
 # removes it on exit. Sets RELEASE_SHA, RELEASE_MAIN (origin/main now) and
 # RELEASE_WT.
