@@ -99,7 +99,9 @@ function byLexiconOf(nodes: IRNode[]): Record<string, string[]> {
   return sorted;
 }
 
-/** T0 — collapse every resource to its lexicon; edges become cross-lexicon deps. */
+/** T0 — collapse every resource to its lexicon; edges become cross-lexicon deps.
+ * No groups: a pipeline never spans lexicons, so `byPipeline` would put every
+ * pipeline of a lexicon around that lexicon's one stack node (#3921). */
 function toStacks(ir: GraphIR): GraphIR {
   const lexOf = new Map(ir.nodes.map((n) => [n.id, n.lexicon]));
   const lexicons = [...new Set(ir.nodes.map((n) => n.lexicon))].sort();
@@ -178,10 +180,27 @@ function toComposites(ir: GraphIR): GraphIR {
   const imports = ir.imports?.filter((i) => surviving.has(i.node));
   // Unresolved references (#3910) stay with whichever node now holds them.
   const dangling = ir.dangling?.map((d) => ({ ...d, from: idMap.get(d.from) ?? d.from }));
+  // Pipeline membership (#3921) follows each member to the node that now holds
+  // it: a job inside a collapsed composite is drawn as that composite. A
+  // composite that spans two pipelines sits in both; a pipeline whose members
+  // all fell away is dropped.
+  const groups: GraphIR["groups"] = { byLexicon: byLexiconOf(nodes) };
+  if (ir.groups.byPipeline) {
+    const byPipeline: Record<string, string[]> = {};
+    for (const name of Object.keys(ir.groups.byPipeline).sort()) {
+      const kept = new Set<string>();
+      for (const m of ir.groups.byPipeline[name]) {
+        const id = idMap.get(m) ?? m;
+        if (surviving.has(id)) kept.add(id);
+      }
+      if (kept.size) byPipeline[name] = [...kept].sort();
+    }
+    if (Object.keys(byPipeline).length) groups.byPipeline = byPipeline;
+  }
   return {
     nodes,
     edges: sortEdges([...seen.values()]),
-    groups: { byLexicon: byLexiconOf(nodes) },
+    groups,
     ...(imports && imports.length ? { imports } : {}),
     ...(dangling && dangling.length ? { dangling } : {}),
   };
