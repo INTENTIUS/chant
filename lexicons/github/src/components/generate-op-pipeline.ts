@@ -71,22 +71,37 @@
  */
 
 import { readFileSync } from "node:fs";
-import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
+import {
+  assertEnvironment,
+  assertSetupSteps,
+  CI_IMAGE,
+  ciJobName,
+  environmentDoc,
+  fillCommand,
+  GITHUB_JOB_TOKEN,
+  GITHUB_RUNNER,
+  mergePermissions,
+  nonEmpty,
+  permissionsFor,
+  setupStepDoc,
+} from "@intentius/chant/ci-jobs";
 import { memberPathFilter, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGithubOpOptions,
-  OpEnvironment,
   OpFindingMode,
   OpPipelineJob,
   OpPipelineResult as GenerateGithubOpResult,
-  OpSetupStep,
   OpTrigger,
   PipelineMember,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
-import { actionRef } from "../action-pins";
+import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, runSteps } from "./ci-jobs";
 
 export type { GenerateGithubOpOptions, GenerateGithubOpResult };
+
+// The setup, environment and permission checks are shared with the Op waves
+// generator and the forgejo lexicon (#3765); they stay importable from here.
+export { assertEnvironment, assertSetupSteps, mergePermissions };
 
 /**
  * The structured pipeline document behind one generated file, before YAML
@@ -146,72 +161,6 @@ export interface GithubOpPipelineFile {
   /** Suggested file name (`<op-name>.yml`), relative to the provider's workflow directory. */
   name: string;
   doc: GithubOpPipelineDoc;
-}
-
-/** GitHub Actions job ids must match `[a-zA-Z_][a-zA-Z0-9_-]*`; Op names are already kebab-case in every fixture, but normalize defensively (mirrors `./generate-pipeline.ts`'s `toJobName`). */
-function toJobName(opName: string): string {
-  return opName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-}
-
-const DEFAULT_IMAGE = "node:22";
-
-/**
- * Default branch assumed for a `push` trigger with no `branches` override
- * (#2084). There is no generator constant for a downstream project's actual
- * default branch — this operates on a `ScheduledOpSpec`, not a git checkout
- * — so "main" is the documented default; set `trigger.branches` explicitly
- * for a project whose default branch is something else (e.g. "master").
- */
-const DEFAULT_PUSH_BRANCH = "main";
-
-/** This trigger's `on:` mapping (#2084): cron unchanged, `pull_request`/`push` new. */
-function onFor(trigger: OpTrigger): Record<string, unknown> {
-  switch (trigger.kind) {
-    case "cron":
-      return { schedule: [{ cron: trigger.schedule }], workflow_dispatch: {} };
-    case "pull_request":
-      // No `workflow_dispatch`: a PR trigger needs no manual-dispatch escape
-      // hatch (revisit in review if that's wrong).
-      return { pull_request: trigger.branches ? { branches: trigger.branches } : {} };
-    case "push":
-      return { push: { branches: trigger.branches ?? [DEFAULT_PUSH_BRANCH] } };
-  }
-}
-
-/**
- * Least-privilege `permissions:` for a scheduled Op's finding-mode and
- * trigger. `report` needs no write access; `issue` needs only `issues:
- * write`; `pull-request` (and `merge-request`, generated the same way when a
- * GitLab-authored spec is targeted at github) needs `contents: write` to
- * push the reconcile branch plus `pull-requests: write` to open the PR. A
- * `pull_request` trigger reports its finding as a comment on the triggering
- * PR itself (#2084): any mode but `report` posts something to act on a
- * finding, so on that trigger every such mode also gets `pull-requests:
- * write` for the comment, whether or not its own scope already included it.
- * `comment` is the mode that actually spends that grant (#2231), and it
- * changes nothing in the repository, so its whole scope is `{ contents: read,
- * pull-requests: write }`.
- */
-function permissionsForMode(mode: OpFindingMode): Record<string, "read" | "write"> {
-  switch (mode) {
-    case "issue":
-      return { contents: "read", issues: "write" };
-    case "comment":
-      return { contents: "read", "pull-requests": "write" };
-    case "pull-request":
-    case "merge-request":
-      return { contents: "write", "pull-requests": "write" };
-    case "report":
-      return { contents: "read" };
-  }
-}
-
-function permissionsFor(mode: OpFindingMode, trigger: OpTrigger): Record<string, "read" | "write"> {
-  const base = permissionsForMode(mode);
-  if (trigger.kind === "pull_request" && mode !== "report") {
-    return { ...base, "pull-requests": "write" };
-  }
-  return base;
 }
 
 // ── The gated apply (#2243) ─────────────────────────────────────────────────
@@ -409,14 +358,14 @@ function gateNoticeJob(applyJobName: string, image: string): Record<string, unkn
   return {
     needs: applyJobName,
     if: `needs.${applyJobName}.outputs.gated == 'true'`,
-    "runs-on": "ubuntu-latest",
+    "runs-on": GITHUB_RUNNER,
     container: image,
     permissions: { contents: "read", issues: "write", "pull-requests": "write" },
     steps: [
       {
         name: "Report the pending gate",
         env: {
-          GITHUB_TOKEN: "${{ github.token }}",
+          GITHUB_TOKEN: GITHUB_JOB_TOKEN,
           CHANT_OP: output("op"),
           CHANT_GATE: output("gate"),
           CHANT_APPROVE: output("approve"),
@@ -444,216 +393,6 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
 }
 
 /**
- * Every scope `GITHUB_TOKEN` accepts in a workflow's `permissions:` mapping,
- * kebab-cased as GitHub spells them. An additive scope outside this set is
- * refused by name rather than emitted: GitHub ignores an unknown key, so
- * `id_token` or `idToken` would generate a workflow that looks like it grants
- * OIDC and hands the run no token at all.
- */
-const GITHUB_TOKEN_SCOPES = new Set([
-  "actions",
-  "attestations",
-  "checks",
-  "contents",
-  "deployments",
-  "discussions",
-  "id-token",
-  "issues",
-  "models",
-  "packages",
-  "pages",
-  "pull-requests",
-  "repository-projects",
-  "security-events",
-  "statuses",
-]);
-
-/**
- * Refs that name an action repository's own default branch. A generated
- * workflow is committed once and then re-run unattended, often over a cloud
- * role, so "whatever was pushed to that repo last" is not a version — the
- * code that assumes the role can change between the run somebody reviewed and
- * the next one. A release channel the action's author cuts deliberately (`v6`,
- * `v6.2.4`, `stable`) or a commit sha is a version, and both pass: this repo's
- * own workflows pin `actions/checkout@v6` and `dtolnay/rust-toolchain@stable`
- * and name no default branch anywhere.
- */
-const DEFAULT_BRANCH_REFS = new Set(["main", "master", "head", "default"]);
-
-/** `owner/repo` or `owner/repo/subpath`, then `@ref`. */
-const USES_PATTERN = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)((?:\/[A-Za-z0-9_.-]+)*)@([^\s@]+)$/;
-
-/**
- * Validate a spec's `setup` list (#2242). A `run` entry needs a non-empty
- * line and nothing else. A `uses` entry has to be a pinned
- * `owner/repo[/subpath]@ref`: no bare `owner/repo`, since an unpinned action
- * resolves to its default branch, and no ref in {@link DEFAULT_BRANCH_REFS}
- * for the same reason spelled out loud. Local (`./path`) and container
- * (`docker://`) refs are refused too — they are legal GitHub Actions, but the
- * generator emits a workflow into a repository it has never seen, so it
- * cannot know a local path resolves there.
- */
-export function assertSetupSteps(name: string, setup: OpSetupStep[]): void {
-  setup.forEach((step, index) => {
-    const where = `Scheduled Op "${name}" setup step ${index + 1}`;
-    if ("uses" in step) {
-      const ref = step.uses.trim();
-      const match = USES_PATTERN.exec(ref);
-      if (!match) {
-        throw new Error(
-          `${where} has \`uses: "${step.uses}"\`, which is not a pinned action reference. ` +
-            `Write it as owner/repo@ref (optionally owner/repo/subpath@ref), e.g. ` +
-            `"aws-actions/configure-aws-credentials@v6". A local "./path" or "docker://" ref is not ` +
-            `accepted here: this generator emits a workflow into a repository it cannot inspect, so it ` +
-            `has no way to tell whether such a ref resolves there.`,
-        );
-      }
-      const gitRef = match[4];
-      if (DEFAULT_BRANCH_REFS.has(gitRef.toLowerCase())) {
-        throw new Error(
-          `${where} pins \`uses: "${step.uses}"\` to "${gitRef}", the action repository's own default ` +
-            `branch, which names whatever was pushed there last rather than a version. A generated ` +
-            `workflow is committed once and re-run unattended, often over a cloud role, so pin a release ` +
-            `tag or a commit sha instead (e.g. "${match[1]}/${match[2]}@v1" or "@<40-char sha>").`,
-        );
-      }
-      return;
-    }
-    if (step.run.trim() === "") {
-      throw new Error(`${where} has an empty \`run\` line. Give it a command, or drop the entry.`);
-    }
-  });
-}
-
-/**
- * Validate a spec's `environment` (#2257). GitHub creates an environment it
- * has never seen on first use rather than failing the run, and an environment
- * created that way carries no protection rules at all — so a job can name one
- * and read as gated while being gated by nothing. Neither this generator nor
- * GitHub can tell those apart at build time (the environment and its
- * reviewers are repository configuration, not workflow content), which is why
- * what is refused here is only the shape that could never bind: a name that
- * is blank, and a `url` that is neither absolute nor an expression the forge
- * resolves. The rest is the README's job to say out loud.
- */
-export function assertEnvironment(name: string, environment: OpEnvironment): void {
-  const where = `Scheduled Op "${name}" environment`;
-  if (environment.name.trim() === "") {
-    throw new Error(
-      `${where} has an empty \`name\`. An environment is named repository configuration — the ` +
-        `protection rules and reviewers live on the environment, not in this workflow — so there is ` +
-        `nothing for a blank name to resolve to. Give it the environment's name, or drop the option.`,
-    );
-  }
-  if (environment.url === undefined) return;
-  const url = environment.url.trim();
-  if (url === "") {
-    throw new Error(
-      `${where} "${environment.name}" has an empty \`url\`. Omit the field rather than setting it to "".`,
-    );
-  }
-  if (!/^https?:\/\//.test(url) && !url.includes("${{")) {
-    throw new Error(
-      `${where} "${environment.name}" has \`url: "${environment.url}"\`, which is neither an absolute ` +
-        `http(s) URL nor a \${{ }} expression. GitHub renders this value as the deployment's own link, ` +
-        `so a relative path becomes a dead link on the environment page rather than an error anywhere. ` +
-        `Write the full URL, or an expression the run resolves to one.`,
-    );
-  }
-}
-
-/**
- * Merge a spec's additive `permissions` over the finding-mode's own set
- * (#2242), refusing by name anything that is not strictly additive:
- *
- *  - a blanket `write-all`/`read-all`, in either the key or the value
- *    position, which is the exact thing {@link permissionsForMode} exists to
- *    avoid;
- *  - a scope GitHub does not define ({@link GITHUB_TOKEN_SCOPES}), because
- *    GitHub ignores the key and the run silently gets nothing;
- *  - a scope the mode already grants, at any value — additive means additive,
- *    so this can neither downgrade `contents: write` to read nor restate it.
- *    A mode whose set is wrong is fixed by changing the mode, where the
- *    scope and the behavior that spends it stay together;
- *  - `pull-requests: write` on a trigger with no pull request. Pull-request
- *    access is what the finding-modes own: `pull-request` grants it together
- *    with the `contents: write` needed to push the branch first, and
- *    `comment` grants it on the one trigger that carries a pull request to
- *    comment on. Adding it beside a mode that posts nothing, on a cron or
- *    push run, grants write access no step in the generated job can spend.
- */
-export function mergePermissions(
-  name: string,
-  base: Record<string, "read" | "write">,
-  additive: Record<string, "read" | "write">,
-  trigger: OpTrigger,
-): Record<string, "read" | "write"> {
-  const merged: Record<string, "read" | "write"> = { ...base };
-  for (const [rawScope, value] of Object.entries(additive)) {
-    const scope = rawScope.trim();
-    const where = `Scheduled Op "${name}" adds permission "${scope}: ${value}"`;
-    if (scope === "write-all" || scope === "read-all" || String(value).endsWith("-all")) {
-      throw new Error(
-        `${where}, a blanket grant. \`permissions\` on a scheduled Op is additive over the ` +
-          `least-privilege set its finding-mode needs, one named scope at a time. Name the scopes the ` +
-          `job actually spends (e.g. { "id-token": "write" }).`,
-      );
-    }
-    if (!GITHUB_TOKEN_SCOPES.has(scope)) {
-      throw new Error(
-        `${where}, which is not a GITHUB_TOKEN permission scope. GitHub ignores an unrecognized key, so ` +
-          `this would emit a workflow that reads as granted and hands the run nothing. Known scopes: ` +
-          `${[...GITHUB_TOKEN_SCOPES].sort().join(", ")}.`,
-      );
-    }
-    if (scope in base) {
-      throw new Error(
-        `${where}, but its finding-mode already grants "${scope}: ${base[scope]}". These permissions are ` +
-          `additive only — they never replace, widen or downgrade a scope the mode computed. Change the ` +
-          `Op's findingMode if that set is wrong, and add only scopes no mode grants (e.g. "id-token").`,
-      );
-    }
-    if (scope === "pull-requests" && trigger.kind !== "pull_request") {
-      throw new Error(
-        `${where}, but this Op's trigger is "${trigger.kind}", which carries no pull request. Pull-request ` +
-          `write access belongs to a finding-mode: "pull-request" grants it with the contents: write its ` +
-          `branch push needs, and "comment" grants it on the pull_request trigger. Set findingMode instead ` +
-          `of adding the scope here.`,
-      );
-    }
-    merged[scope] = value;
-  }
-  return merged;
-}
-
-/**
- * Emit a spec's environment as the job's `environment:` mapping. Always the
- * mapping form, never the `environment: name` string shorthand, so adding a
- * `url` later is a new key rather than a reshaped value.
- */
-function environmentDoc(environment: OpEnvironment): Record<string, unknown> {
-  return {
-    name: environment.name,
-    ...(environment.url === undefined ? {} : { url: environment.url }),
-  };
-}
-
-/** Emit one setup entry as a GitHub Actions step. */
-function setupStepDoc(step: OpSetupStep): Record<string, unknown> {
-  if ("uses" in step) {
-    return {
-      uses: step.uses,
-      ...(step.with && Object.keys(step.with).length > 0 ? { with: step.with } : {}),
-      ...(step.env && Object.keys(step.env).length > 0 ? { env: step.env } : {}),
-    };
-  }
-  return {
-    run: step.run,
-    ...(step.env && Object.keys(step.env).length > 0 ? { env: step.env } : {}),
-  };
-}
-
-/**
  * Build one `GithubOpPipelineDoc` per scheduled Op: its trigger, its `setup`
  * steps, least-privilege `permissions:` for its finding-mode plus whatever
  * the spec adds, one job that runs `chant run <name>`. Every
@@ -669,7 +408,7 @@ export function buildGithubOpPipelineDocs(
   ops: ScheduledOpSpec[],
   options: GenerateGithubOpOptions = {},
 ): { files: GithubOpPipelineFile[]; jobs: OpPipelineJob[] } {
-  const image = options.image ?? DEFAULT_IMAGE;
+  const image = options.image ?? CI_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "{name}"];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
@@ -681,15 +420,14 @@ export function buildGithubOpPipelineDocs(
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
-    const jobName = toJobName(spec.name);
+    const jobName = ciJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
 
-    const runParts = runCommand.map((part) => part.replace("{name}", spec.name));
+    const runParts = fillCommand(runCommand, spec.name);
 
     // A live-resolution read (rate limits) always benefits from a token;
     // creating an issue/PR additionally needs `gh` CLI's own token variable.
-    const stepEnv: Record<string, string> = { GITHUB_TOKEN: "${{ github.token }}" };
-    if (findingMode !== "report") stepEnv.GH_TOKEN = "${{ github.token }}";
+    const stepEnv = jobTokenEnv(findingMode !== "report");
 
     const setup = spec.setup ?? [];
     assertSetupSteps(spec.name, setup);
@@ -704,23 +442,21 @@ export function buildGithubOpPipelineDocs(
       ? [...runParts, ...GATED_EXIT_FLAG, "--json"].join(" ")
       : runParts.join(" ");
 
-    const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
-    for (const step of setup) steps.push(setupStepDoc(step));
-    for (const line of beforeScript) steps.push({ run: line });
+    const steps: Array<Record<string, unknown>> = [checkoutStep(), ...setup.map(setupStepDoc), ...runSteps(beforeScript)];
     steps.push(
       gated
         ? gatedRunStep(RUN_STEP_ID, spec.name, invocation, stepEnv)
         : { run: invocation, env: stepEnv },
     );
-    for (const line of extraScript) steps.push({ run: line });
+    steps.push(...runSteps(extraScript));
 
     const doc: GithubOpPipelineDoc = {
       name: spec.name,
-      on: onFor(trigger),
-      ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
+      on: onTrigger(trigger),
+      ...nonEmpty("env", options.variables),
       // One run at a time per Op — a slow audit must not overlap its own next
       // scheduled trigger.
-      concurrency: { group: jobName, "cancel-in-progress": false },
+      concurrency: concurrency(jobName),
       permissions: mergePermissions(
         spec.name,
         permissionsFor(findingMode, trigger),
@@ -729,13 +465,13 @@ export function buildGithubOpPipelineDocs(
       ),
       jobsDoc: {
         [jobName]: {
-          "runs-on": "ubuntu-latest",
+          "runs-on": GITHUB_RUNNER,
           container: image,
           // Per-Op credentials (#2290): job-level `env:`, one level more
           // specific than `options.variables`'s workflow-level `env:` above,
           // and never on the notice job beside it — same reason `environment:`
           // isn't either, it's this Op's own job alone.
-          ...(spec.variables && Object.keys(spec.variables).length > 0 ? { env: spec.variables } : {}),
+          ...nonEmpty("env", spec.variables),
           // On this Op's own job and never on the notice job beside it: the
           // notice exists to say a chant gate is pending, and putting it
           // behind the same reviewer would hold the message back until
@@ -811,20 +547,11 @@ function scopeOpFileToMember(file: GithubOpPipelineFile, member: PipelineMember)
  * transforms the doc first (and drops `permissions`, which it ignores).
  */
 export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
-  const sections: string[] = [];
-  // A dialect's note about what it could not carry (#2257), when there is
-  // one. Absent on github, so an unannotated document is emitted exactly as
-  // it was before the field existed.
-  if (doc.header && doc.header.length > 0) sections.push(doc.header.join("\n"));
-  if (doc.name) sections.push("name: " + emitYAML(doc.name, 0));
-  sections.push(emitYAMLEntry("on", doc.on));
-  if (doc.env && Object.keys(doc.env).length > 0) sections.push(emitYAMLEntry("env", doc.env));
-  sections.push(emitYAMLEntry("concurrency", doc.concurrency));
-  if (Object.keys(doc.permissions).length > 0) sections.push(emitYAMLEntry("permissions", doc.permissions));
   // The gated-apply notice job rides in `jobs:` beside the Op's own job; it
   // is carried separately on the doc so a dialect transforms it on its own.
-  sections.push(emitYAMLEntry("jobs", { ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }));
-  return sections.join("\n\n") + "\n";
+  // A dialect's `header` note (#2257) is absent on github.
+  const { gatedNoticeDoc, ...workflow } = doc;
+  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}) } });
 }
 
 /**

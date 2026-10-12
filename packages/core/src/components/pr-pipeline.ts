@@ -38,6 +38,7 @@
 
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
+import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
 
 /** Where both jobs write their reports, kept as a CI artifact. */
 export const PR_LOOP_REPORT_DIR = ".chant/pr";
@@ -55,7 +56,7 @@ export const PR_APPLY_RECORD = ".chant/pr-resume/pr-apply.json";
  * `PR_LOOP_SETUP` adds OpenTofu on top of it. A caller who sets `image`
  * brings both and gets no setup lines.
  */
-export const PR_LOOP_IMAGE = "node:22";
+export const PR_LOOP_IMAGE = CI_IMAGE;
 
 /** Installs OpenTofu into `PR_LOOP_IMAGE`. */
 export const PR_LOOP_SETUP = [
@@ -113,7 +114,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(member ? ["--member", member] : []),
   ];
   const github = forge !== "gitlab";
-  const token: Record<string, string> = github ? { GITHUB_TOKEN: "${{ github.token }}" } : {};
+  const token: Record<string, string> = github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {};
   return [
     {
       jobName: "plan",

@@ -60,3 +60,12 @@ describe("generateGitlabOpWavesPipeline", () => {
     expect(() => generateGitlabOpWavesPipeline({ ...waveLevel, hooks: { after: { apply: [{ command: ["./bin/smoke"], onFailure: "approve" }] } } }, { specFile: "waves.json" })).toThrow(/nothing left to hold/);
   });
 });
+
+describe("a wave's environment is checked as an Op's is (#3765)", () => {
+  test("a blank name or a relative url is refused, and a $VARIABLE url passes", () => {
+    const one = (environment: { name: string; url?: string }): OpWavesSpec => ({ ...spec, waves: [{ name: "dev", runs: [{ target: "dev" }], environment }] });
+    expect(() => generateGitlabOpWavesPipeline(one({ name: " " }), { specFile: "waves.json" })).toThrow(/environment has an empty `name`/);
+    expect(() => generateGitlabOpWavesPipeline(one({ name: "dev", url: "dev/app" }), { specFile: "waves.json" })).toThrow(/neither an absolute/);
+    expect(generateGitlabOpWavesPipeline(one({ name: "dev", url: "$CI_ENVIRONMENT_URL" }), { specFile: "waves.json" }).files[0]!.yaml).toContain("url: '$CI_ENVIRONMENT_URL'");
+  });
+});

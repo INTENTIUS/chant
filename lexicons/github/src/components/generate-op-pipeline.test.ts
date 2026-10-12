@@ -779,3 +779,12 @@ describe("generateGithubOpPipeline: per-Op variables on the job (#2290)", () => 
     ).toBe(before);
   });
 });
+
+describe("an empty branch list means the default, as on GitLab (#3765)", () => {
+  test("push with branches: [] filters on main, and pull_request with branches: [] runs on every pull request", () => {
+    const push = parseYAML(generateGithubOpPipeline([{ name: "apply", trigger: { kind: "push", branches: [] } }]).files[0]!.yaml);
+    expect(push.on).toEqual({ push: { branches: ["main"] } });
+    const pr = parseYAML(generateGithubOpPipeline([{ name: "plan", trigger: { kind: "pull_request", branches: [] } }]).files[0]!.yaml);
+    expect(pr.on).toEqual({ pull_request: {} });
+  });
+});

@@ -56,11 +56,11 @@
  * touching the component declarations.
  */
 
-import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_APPLY_RECORD, PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
+import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -68,7 +68,7 @@ import type {
   ComponentPipelineResult as GenerateGithubResult,
   PipelineMember,
 } from "@intentius/chant/lexicon";
-import { actionRef } from "../action-pins";
+import { checkoutStep, concurrency, downloadArtifactStep, emitWorkflowYAML, keepRecordStep, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
 
@@ -134,32 +134,14 @@ function gatedWaveGithubDoc(
   const jobs: GeneratedJob[] = [];
   for (const job of waveJobs) {
     jobs.push({ jobName: job.jobName, component: `wave ${job.wave}`, stage: job.jobName, needs: job.needs });
-    const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } }];
+    const steps: Array<Record<string, unknown>> = [checkoutStep(true)];
     if (job.wave > 1) {
-      steps.push({
-        name: `Download the record wave ${job.wave - 1} left`,
-        uses: "actions/download-artifact@v4",
-        with: { name: waveRecordArtifact(job.wave - 1), path: dirnameOf(GATED_WAVE_RECORD) },
-      });
+      steps.push(downloadArtifactStep(`Download the record wave ${job.wave - 1} left`, waveRecordArtifact(job.wave - 1), dirnameOf(GATED_WAVE_RECORD)));
     }
-    for (const line of prLoopSetup(image)) steps.push({ run: line });
-    for (const line of beforeScript) steps.push({ run: line });
-    steps.push({ run: job.command.join(" ") });
-    for (const line of extraScript) steps.push({ run: line });
-    steps.push({
-      name: `Upload the record for wave ${job.wave}`,
-      if: "always()",
-      uses: "actions/upload-artifact@v4",
-      with: {
-        name: waveRecordArtifact(job.wave),
-        path: GATED_WAVE_RECORD,
-        "if-no-files-found": "ignore",
-        "include-hidden-files": true,
-        overwrite: true,
-      },
-    });
+    steps.push(...runSteps(prLoopSetup(image)), ...runSteps(beforeScript), { run: job.command.join(" ") }, ...runSteps(extraScript));
+    steps.push(keepRecordStep(`Upload the record for wave ${job.wave}`, waveRecordArtifact(job.wave), GATED_WAVE_RECORD));
     jobsDoc[job.jobName] = {
-      "runs-on": "ubuntu-latest",
+      "runs-on": GITHUB_RUNNER,
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       container: image,
       steps,
@@ -225,33 +207,33 @@ function prLoopGithubDoc(
     with: { path: recordPath, key: recordKey },
   };
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
-    { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } },
-    ...prLoopSetup(image).map((line) => ({ run: line })),
-    ...beforeScript.map((line) => ({ run: line })),
+    checkoutStep(true),
+    ...runSteps(prLoopSetup(image)),
+    ...runSteps(beforeScript),
     ...(job.jobName === "apply" ? [restoreRecord] : []),
     { name, env: job.env, run: job.command },
-    ...extraScript.map((line) => ({ run: line })),
+    ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord] : []),
     {
       name: `Keep the ${job.jobName} report`,
       if: "always()",
-      uses: "actions/upload-artifact@v4",
+      uses: UPLOAD_ARTIFACT,
       with: { name: `chant-pr-${job.jobName}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true },
     },
   ];
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: "github.event_name == 'pull_request'",
-      "runs-on": "ubuntu-latest",
+      "runs-on": GITHUB_RUNNER,
       container: image,
       permissions: { contents: "read", "pull-requests": "write", statuses: "write" },
       steps: steps(plan, "Plan the members this pull request reaches"),
     },
     apply: {
       if: "github.event_name == 'push'",
-      "runs-on": "ubuntu-latest",
+      "runs-on": GITHUB_RUNNER,
       container: image,
-      concurrency: { group: prApplyGroup(env, member?.name), "cancel-in-progress": false },
+      concurrency: concurrency(prApplyGroup(env, member?.name)),
       permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
       steps: steps(apply, "Apply the plan a reviewer approved"),
     },
@@ -270,19 +252,6 @@ function prLoopGithubDoc(
     ],
   };
 }
-
-/** The directory part of a relative path, `.` when there is none. */
-function dirnameOf(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i <= 0 ? "." : path.slice(0, i);
-}
-
-/** GitHub Actions job ids must match `[a-zA-Z_][a-zA-Z0-9_-]*`; component names are already kebab-case in every fixture, but normalize defensively (mirrors gitlab's `toJobName`). */
-function toJobName(componentName: string): string {
-  return componentName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-}
-
-const DEFAULT_IMAGE = "node:22";
 
 /** The file a producer dumps its resolved outputs to, and a dependent seeds from — one per component, matching gitlab's naming so both generators produce interchangeable artifacts. */
 function outputsFile(name: string): string {
@@ -336,7 +305,7 @@ export function buildGithubPipelineDoc(
   options: GenerateGithubOptions = {},
 ): GithubPipelineDoc {
   const env = options.env ?? "production";
-  const image = options.image ?? (options.prLoop || options.gatedWaves ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
+  const image = options.image ?? CI_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
@@ -390,7 +359,7 @@ export function buildGithubPipelineDoc(
   const jobs: GeneratedJob[] = [];
   const jobNameByComponent = new Map<string, string>();
   for (const wave of waves) {
-    for (const name of wave) jobNameByComponent.set(name, toJobName(name));
+    for (const name of wave) jobNameByComponent.set(name, ciJobName(name));
   }
 
   const jobsDoc: Record<string, unknown> = {};
@@ -407,7 +376,7 @@ export function buildGithubPipelineDoc(
       // Build the run invocation, then append output-threading flags: seed from
       // each dependency's dumped outputs (downloaded as an artifact below), and
       // dump this component's own outputs if a dependent will need them.
-      const runParts = runCommand.map((part) => part.replace("{name}", name));
+      const runParts = fillCommand(runCommand, name);
       for (const dep of component.dependsOn ?? []) runParts.push("--seed-outputs", outputsFile(dep));
       if (dependedUpon.has(name)) runParts.push("--dump-outputs", outputsFile(name));
       if (pinned.has(name)) runParts.push("--digest-file", digestFile(name));
@@ -415,19 +384,9 @@ export function buildGithubPipelineDoc(
       // One step per script line — mirrors gitlab's `script:` array of
       // discrete shell lines, rather than a single multi-line `run:` block, so
       // each line is independently inspectable (and machine-parseable).
-      const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
-
-      for (const dep of component.dependsOn ?? []) {
-        steps.push({
-          name: `Download ${dep} outputs`,
-          uses: "actions/download-artifact@v4",
-          with: { name: artifactName(dep), path: "." },
-        });
-      }
-
-      for (const line of beforeScript) steps.push({ run: line });
-      steps.push({ run: runParts.join(" ") });
-      for (const line of extraScript) steps.push({ run: line });
+      const steps: Array<Record<string, unknown>> = [checkoutStep()];
+      for (const dep of component.dependsOn ?? []) steps.push(downloadArtifactStep(`Download ${dep} outputs`, artifactName(dep), "."));
+      steps.push(...runSteps(beforeScript), { run: runParts.join(" ") }, ...runSteps(extraScript));
 
       // The file holds `<component>=<digest>`; the job output holds the digest.
       if (pinned.has(name)) {
@@ -441,7 +400,7 @@ export function buildGithubPipelineDoc(
       if (dependedUpon.has(name)) {
         steps.push({
           name: `Upload ${name} outputs`,
-          uses: "actions/upload-artifact@v4",
+          uses: UPLOAD_ARTIFACT,
           with: { name: artifactName(name), path: outputsFile(name) },
         });
       }
@@ -450,7 +409,7 @@ export function buildGithubPipelineDoc(
       if (archive) {
         steps.push({
           name: `Upload ${name} build archive`,
-          uses: "actions/upload-artifact@v4",
+          uses: UPLOAD_ARTIFACT,
           with: {
             name: archiveArtifactName(name),
             path: archive.join("\n"),
@@ -461,7 +420,7 @@ export function buildGithubPipelineDoc(
       }
 
       const jobProps: Record<string, unknown> = {
-        "runs-on": "ubuntu-latest",
+        "runs-on": GITHUB_RUNNER,
         ...(needs.length > 0 ? { needs } : {}),
         container: image,
         ...(pinned.has(name) ? { outputs: { digest: "${{ steps.digest.outputs.digest }}" } } : {}),
@@ -472,7 +431,7 @@ export function buildGithubPipelineDoc(
   });
 
   if (promoteTo !== undefined) {
-    const promoteJob = `promote-${toJobName(promoteTo)}`;
+    const promoteJob = `promote-${ciJobName(promoteTo)}`;
     if (promoteJob in jobsDoc) {
       throw new Error(`the promote job "${promoteJob}" has the same name as a component job; rename the component`);
     }
@@ -480,19 +439,13 @@ export function buildGithubPipelineDoc(
     for (const name of [...pinned].sort()) {
       command.push("--digest", `"${name}=\${{ needs.${jobNameByComponent.get(name)!}.outputs.digest }}"`);
     }
-    const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
+    const steps: Array<Record<string, unknown>> = [checkoutStep()];
     for (const [name, paths] of archives) {
-      steps.push({
-        name: `Download ${name} build archive`,
-        uses: "actions/download-artifact@v4",
-        with: { name: archiveArtifactName(name), path: artifactRoot(paths) },
-      });
+      steps.push(downloadArtifactStep(`Download ${name} build archive`, archiveArtifactName(name), artifactRoot(paths)));
     }
-    for (const line of beforeScript) steps.push({ run: line });
-    steps.push({ run: command.join(" ") });
-    for (const line of extraScript) steps.push({ run: line });
+    steps.push(...runSteps(beforeScript), { run: command.join(" ") }, ...runSteps(extraScript));
     jobsDoc[promoteJob] = {
-      "runs-on": "ubuntu-latest",
+      "runs-on": GITHUB_RUNNER,
       needs: [...jobNameByComponent.values()].sort(),
       container: image,
       steps,
@@ -558,15 +511,7 @@ function memberArtifactStep(step: Record<string, unknown>, member: PipelineMembe
  * Shared with the forgejo dialect (#969), which transforms the doc first.
  */
 export function emitPipelineYAML(doc: GithubPipelineDoc): string {
-  const sections: string[] = [];
-  sections.push("name: " + emitYAML(doc.name, 0));
-  sections.push(emitYAMLEntry("on", doc.on));
-  if (doc.env && Object.keys(doc.env).length > 0) {
-    sections.push(emitYAMLEntry("env", doc.env));
-  }
-  if (doc.defaults) sections.push(emitYAMLEntry("defaults", doc.defaults));
-  sections.push(emitYAMLEntry("jobs", doc.jobsDoc));
-  return sections.join("\n\n") + "\n";
+  return emitWorkflowYAML({ name: doc.name, on: doc.on, env: doc.env, defaults: doc.defaults, jobsDoc: doc.jobsDoc });
 }
 
 /**
