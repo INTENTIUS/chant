@@ -46,6 +46,13 @@ The binding key is the **digest** — the same identity [`publish-image`/`load-i
 
 [`chant components promote --from staging --to prod`](/chant/cli/components/#components-promote) uses that identity to deploy what the staging ledger records to prod without building it again. The prod record it writes carries `promotedFrom`, which names the staging release it came from. Whether a prod release was promoted, and from where, is then on the ledger line itself. [`chant components rollback`](/chant/cli/components/#components-rollback) redeploys an earlier release of one environment the same way, and its record carries `restores`, naming the release it brought back. After a deploy that failed partway, [`chant components redeploy`](/chant/cli/components/#components-redeploy-env) deploys the release the ledger still records as current, and its record carries `redeploys`.
 
+
+### Reading a member's ledger
+
+A workspace member keeps its ledger under `_members/<member>/` ([Ledgers](/chant/reference/workspace-declaration/#ledgers)). `listReleaseEnvironments` and `readReleaseLedger` from `@intentius/chant/lifecycle/release-ledger` read the member that `cwd` is in. Pass `member` (`"api"`, or `["platform", "api"]` in a nested workspace) or `ledgerPrefix` (what `resolveMemberLedger` returns) to read another member's from the same checkout ([#3865](https://github.com/INTENTIUS/chant/issues/3865)).
+
+A product that bundles the reader uses `@intentius/chant/lifecycle/release-read`: `parseReleaseLedger(lines)`, `readReleaseRecords(port, env)` and `listReleaseEnvironmentsOn(port)` take a `LedgerReadPort` (`@intentius/chant/lifecycle/ledger-port`) and load no git code. `gitLedgerReadPort({ cwd, member })` from `@intentius/chant/lifecycle/git` is a port over a checkout. The environments a component may deploy to, with their sites, come from `chant workspace graph --composites`.
+
 ## Build ledger: SBOM and referrer discovery
 
 The [build archive manifest](/chant/components/build-archive/) is already content-addressed and already enumerates a build's contents, including an `sbom`-kind entry when a component composed [`generate-sbom`](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time). On top of that, the build ledger discovers an image digest's **referrers** — the SBOM, SLSA provenance, and signature attached to the same digest by tooling like `oras discover <digest>` / `cosign tree`.

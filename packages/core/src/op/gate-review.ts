@@ -70,23 +70,9 @@ export function bothRules(a: GateApprovalRule | null, b: GateApprovalRule | null
 
 // ── pr-review ─────────────────────────────────────────────────────────────
 
-/** The digests each wave planned at one commit, recorded for a review of it to approve. */
-export interface HeadPlans {
-  version: 1;
-  /** The Op waves spec's name. */
-  name: string;
-  /** The commit the waves were planned at: a pull request's head. */
-  head: string;
-  timestamp: string;
-  waves: Array<{ wave: number; name: string; digest: string }>;
-}
+// The record and its reader live apart, so a bundle can import them without git (#3865).
+export { HEAD_PLANS_DIR, headPlansPath, type HeadPlans } from "../lifecycle/wave-plans";
 
-/** Where {@link HeadPlans} for `head` live on `chant/lifecycle`: `_wave-plans/<name>/<head>.json`. */
-export const HEAD_PLANS_DIR = "_wave-plans";
-
-export function headPlansPath(name: string, head: string): { dir: string; file: string } {
-  return { dir: `${HEAD_PLANS_DIR}/${name}`, file: `${head}.json` };
-}
 
 /** The merged pull request's review, as a `pr-review` gate reads it. */
 export interface MergedReview {

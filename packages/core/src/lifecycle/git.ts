@@ -5,8 +5,9 @@
  * no working tree changes.
  */
 import { getRuntime } from "../runtime-adapter";
-import { resolveMemberLedger } from "./member-ledger";
+import { memberLedgerPrefix, resolveMemberLedger } from "./member-ledger";
 import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
+import type { LedgerReadPort } from "./ledger-port";
 
 const STATE_BRANCH = "chant/lifecycle";
 
@@ -18,9 +19,29 @@ const STATE_BRANCH = "chant/lifecycle";
  * build records) goes through here, so none of them names the prefix itself.
  * See ./member-ledger.ts for who counts as a member.
  */
-export async function ledgerDir(dir: string, opts?: { cwd?: string }): Promise<string> {
-  const { prefix } = await resolveMemberLedger(opts?.cwd ?? process.cwd());
-  return `${prefix}${dir}`;
+export async function ledgerDir(dir: string, opts?: LedgerLocation): Promise<string> {
+  return `${await ledgerPrefixOf(opts)}${dir}`;
+}
+
+/**
+ * Where to read, when the caller is not standing in the member it reads
+ * (#3865): a reader such as behold's lists many members from one checkout. Both
+ * fields override what `cwd` resolves to; `ledgerPrefix` wins over `member`.
+ */
+export interface LedgerLocation {
+  cwd?: string;
+  /** A member's name, or its path of names in a nested workspace, outermost first. `"."` and `[]` name the flat layout. */
+  member?: string | readonly string[];
+  /** The prefix `resolveMemberLedger` returns: `""`, or `_members/<member>/` per level. */
+  ledgerPrefix?: string;
+}
+
+async function ledgerPrefixOf(opts?: LedgerLocation): Promise<string> {
+  if (opts?.ledgerPrefix !== undefined) return opts.ledgerPrefix;
+  if (opts?.member !== undefined) {
+    return memberLedgerPrefix((typeof opts.member === "string" ? [opts.member] : [...opts.member]).filter((m) => m !== "."));
+  }
+  return (await resolveMemberLedger(opts?.cwd ?? process.cwd())).prefix;
 }
 
 /**
@@ -348,7 +369,7 @@ export async function writeLedgerFiles(
 export async function readBlobFromPath(
   environment: string,
   filename: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<string | null> {
   const rt = getRuntime();
   const dir = await ledgerDir(environment, opts);
@@ -507,7 +528,7 @@ export async function appendReleaseRecordLine(
  */
 export async function readReleaseLedgerLines(
   environment: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<string[]> {
   const content = await readBlobFromPath(environment, "releases.jsonl", opts);
   if (!content) return [];
@@ -520,7 +541,21 @@ export async function readReleaseLedgerLines(
  * `releases.jsonl` entry. Used by `chant components status` (no env arg) to
  * discover which environments to report on.
  */
-export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<string[]> {
+export async function listLedgerEnvironments(opts?: LedgerLocation): Promise<string[]> {
+  const envs: string[] = [];
+  for (const name of await listLedgerTrees(opts)) {
+    const hasLedger = await readBlobFromPath(name, "releases.jsonl", opts);
+    if (hasLedger) envs.push(name);
+  }
+  return envs.sort();
+}
+
+/**
+ * The directories directly under the ledger's base: the root for the flat
+ * layout, `_members/<member>/` for a member. `[]` when the branch, or the
+ * base, is absent.
+ */
+export async function listLedgerTrees(opts?: LedgerLocation): Promise<string[]> {
   const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
@@ -535,18 +570,12 @@ export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<s
     { cwd: opts?.cwd },
   );
   if (rootResult.exitCode !== 0) return [];
-
-  const envs: string[] = [];
-  const lines = rootResult.stdout.trim().split("\n").filter(Boolean);
-  for (const line of lines) {
+  const trees: string[] = [];
+  for (const line of rootResult.stdout.trim().split("\n").filter(Boolean)) {
     const match = line.match(/^(\d+)\s+(\w+)\s+([0-9a-f]+)\t(.+)$/);
-    if (!match) continue;
-    const [, , type, , name] = match;
-    if (type !== "tree") continue;
-    const hasLedger = await readBlobFromPath(name, "releases.jsonl", opts);
-    if (hasLedger) envs.push(name);
+    if (match && match[2] === "tree") trees.push(match[4]);
   }
-  return envs.sort();
+  return trees;
 }
 
 /**
@@ -557,7 +586,7 @@ export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<s
  * manifest (`_builds/<digest>.json`) without duplicating this `git ls-tree
  * --name-only` call.
  */
-export async function listFilesInDir(dir: string, opts?: { cwd?: string }): Promise<string[]> {
+export async function listFilesInDir(dir: string, opts?: LedgerLocation): Promise<string[]> {
   const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
@@ -1404,4 +1433,18 @@ function baseName(dir: string): string {
 
 function depth(dir: string): number {
   return dir === "" ? 0 : dir.split("/").length;
+}
+
+/**
+ * The branch's read side as a {@link LedgerReadPort} for the member `opts`
+ * names (#3865): what the bundle-safe readers (`./release-read.ts`,
+ * `./wave-plans.ts`) are handed. A product with its own way to read the
+ * branch passes its own port instead and never loads this module.
+ */
+export function gitLedgerReadPort(opts?: LedgerLocation): LedgerReadPort {
+  return {
+    read: (dir, file) => readBlobFromPath(dir, file, opts),
+    list: (dir) => listFilesInDir(dir, opts),
+    trees: () => listLedgerTrees(opts),
+  };
 }

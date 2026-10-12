@@ -2088,17 +2088,10 @@ async function approveByReview(
 }
 
 async function readHeadPlans(name: string, head: string, cwd: string): Promise<HeadPlans | null> {
-  const { readBlobFromPath, requireLifecycleLedger } = await import("../lifecycle/git");
-  const { headPlansPath } = await import("./gate-review");
+  const { gitLedgerReadPort, requireLifecycleLedger } = await import("../lifecycle/git");
+  const { readHeadPlans: read } = await import("../lifecycle/wave-plans");
   await requireLifecycleLedger({ cwd });
-  const { dir, file } = headPlansPath(name, head);
-  const text = await readBlobFromPath(dir, file, { cwd });
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as HeadPlans;
-  } catch {
-    return null;
-  }
+  return read(gitLedgerReadPort({ cwd }), name, head);
 }
 
 export interface RecordHeadPlansOptions {
