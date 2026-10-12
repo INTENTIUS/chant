@@ -26,8 +26,9 @@
  * whose lexicons report outputs gets a gap instead.
  */
 
-import { join } from "node:path";
-import type { Declarable } from "../declarable";
+import { join, posix } from "node:path";
+import type { StaticFieldsRead } from "../config-static";
+import { isDeclarable, type Declarable } from "../declarable";
 import type { LexiconUnreadSource, LexiconWorkspaceOutput } from "../graph-ir";
 import type { BuildRootContext, BuildRootContribution, IntrinsicDef } from "../lexicon";
 import type { Declaration, ResolvedGroup } from "./declaration";
@@ -64,6 +65,40 @@ export interface GatherLexiconOutputsOptions {
 const firstLine = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split("\n")[0];
 
 const memberDir = (dir: string) => (dir === "." ? "" : dir);
+
+/** The `sourceDir` a member's config sets, read without running it. */
+function staticSourceDir(read: StaticFieldsRead): string | undefined {
+  const value = read.status === "read" ? read.fields.sourceDir : undefined;
+  if (typeof value !== "string") return undefined;
+  const dir = posix.normalize(value.replace(/\\/g, "/")).replace(/\/+$/, "");
+  return dir === "." || dir === "" ? undefined : dir;
+}
+
+/**
+ * Only the files under the member's `sourceDir`, when its config sets one, as
+ * a build reads them (#3941). Without one, every source file of the member.
+ */
+function withinSourceDir(files: string[], member: string, sourceDir: string | undefined): string[] {
+  if (!sourceDir) return files;
+  const prefix = `${member ? `${member}/` : ""}${sourceDir}/`;
+  return files.filter((f) => f.startsWith(prefix));
+}
+
+/**
+ * A folded file's exports, less the entities of lexicons the member doesn't
+ * declare (#3941). An Op is a `chant` entity, and several files exporting
+ * `op` would otherwise collide and leave the whole member unread, though no
+ * hook reads Ops. Values that are not entities (a composite) are kept.
+ */
+function ownExports(exports: ReadonlyMap<string, unknown>, lexicons: readonly string[]): Record<string, unknown> {
+  const own = new Set(lexicons);
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of exports) {
+    if (isDeclarable(value) && !own.has(value.lexicon)) continue;
+    out[name] = value;
+  }
+  return out;
+}
 
 /**
  * The lexicon names a member's config declares, read without running it.
@@ -139,7 +174,12 @@ async function readMemberLexiconOutputs(
   options: GatherLexiconOutputsOptions,
 ): Promise<MemberLexiconOutputs | undefined> {
   const dir = memberDirOnDisk(root, m.dir);
-  const files = sourceFiles(tree, memberDir(m.dir), memberExcludes(declaration, groups, m));
+  const { readConfigFieldsStatically } = await import("../config-static");
+  const files = withinSourceDir(
+    sourceFiles(tree, memberDir(m.dir), memberExcludes(declaration, groups, m)),
+    memberDir(m.dir),
+    staticSourceDir(readConfigFieldsStatically(dir, ["sourceDir"])),
+  );
   let names: string[];
   try {
     names = await staticMemberLexicons(dir);
@@ -184,7 +224,7 @@ async function readMemberLexiconOutputs(
     for (const file of files) {
       const v = verdicts.get(abs(file));
       if (v?.verdict === "fold" && v.exports) {
-        folded.push({ file: abs(file), exports: Object.fromEntries(v.exports) });
+        folded.push({ file: abs(file), exports: ownExports(v.exports, names) });
         continue;
       }
       let text = "";
@@ -206,7 +246,6 @@ async function readMemberLexiconOutputs(
   // run: they read files, and start nothing.
   for (const { name, plugin } of reporting) {
     if (typeof plugin.buildRoots !== "function") continue;
-    const { readConfigFieldsStatically } = await import("../config-static");
     const read = readConfigFieldsStatically(dir, [name, "sourceDir"]);
     const config = read.status === "read" ? read.fields : {};
     const sourceDir = typeof config.sourceDir === "string" ? join(dir, config.sourceDir) : undefined;
