@@ -148,7 +148,11 @@ The format changes only additively. A release may add a field, an edge kind or a
 
 `byComposite` groups the nodes one composite instance expanded into, and `byContainer` (live graphs only) carries observed containment, a VPC's subnets and their instances, nested flatly so a renderer can recurse it.
 
-`byPipeline` (CI lexicons) maps each workflow or pipeline to the nodes that run in it: a GitHub workflow and its jobs, or every job of a GitLab `.gitlab-ci.yml`. Mermaid and DOT draw each one as a box inside its lexicon's box. At `--detail 1` each member is replaced by the node that holds it, so a job inside a collapsed composite counts as that composite, and a pipeline left with no members is dropped. `--detail 0` has no `byPipeline`, because a pipeline never spans lexicons and every pipeline would hold the same single stack node. A lens keeps the members it keeps.
+`byPipeline` (CI lexicons) maps each workflow or pipeline to the nodes that run in it: a GitHub workflow and its jobs, or every job of a GitLab `.gitlab-ci.yml`. Mermaid and DOT draw each one as a box inside its lexicon's box. At `--detail 1` a job inside a collapsed composite is listed as that composite. A pipeline left with no members is dropped.
+
+`--detail 0` has no `byPipeline`. A pipeline never spans lexicons, so every pipeline there would hold only its lexicon's stack node.
+
+A lens keeps the members it keeps.
 
 ### Edges from a lexicon that parses foreign source
 
