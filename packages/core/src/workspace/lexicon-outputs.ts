@@ -33,6 +33,7 @@ import type { BuildRootContext, BuildRootContribution, IntrinsicDef } from "../l
 import type { Declaration, ResolvedGroup } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { kindHandles } from "./links";
+import { readKindLinks } from "./kind-link-readers";
 import { memberExcludes, sourceFiles } from "./member-handles";
 import { memberDirOnDisk } from "./lexicon-symbols";
 import type { WorkspaceTree } from "./tree";
@@ -81,7 +82,8 @@ async function staticMemberLexicons(dir: string): Promise<string[]> {
 }
 
 /**
- * The lexicon outputs of every member a declared link targets, keyed by
+ * The lexicon outputs of every member a declared link, or a link a kind's
+ * reader found (#3932), targets, keyed by
  * member name. A member whose lexicons report nothing is left out.
  * `tree` is the working tree under `root`.
  */
@@ -95,6 +97,14 @@ export async function gatherLexiconOutputs(
 ): Promise<Map<string, MemberLexiconOutputs>> {
   const out = new Map<string, MemberLexiconOutputs>();
   const targets = new Set(declaration.members.flatMap((m) => m.links.filter((l) => l.member !== m.name).map((l) => l.member)));
+  // Links a kind's reader finds in a member's files target members too (#3932). One that names no
+  // producer may be any other member's, so every other member is read.
+  for (const [consumer, read] of readKindLinks(declaration, tree, kinds)) {
+    for (const link of read.links) {
+      if (link.member !== null) targets.add(link.member);
+      else for (const m of declaration.members) if (m.name !== consumer) targets.add(m.name);
+    }
+  }
   for (const m of declaration.members) {
     if (!targets.has(m.name)) continue;
     const kind = kinds.get(m.kind);
