@@ -1,7 +1,15 @@
 import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { ForgeApiError, forgejoForge, githubForge, type ForgeFetch, type GithubShapedForge } from "../../pr-forge";
+import {
+  detectForge,
+  FORGE_TOKEN_ORDER,
+  ForgeApiError,
+  forgejoForge,
+  githubForge,
+  type ForgeFetch,
+  type GithubShapedForge,
+} from "../../pr-forge";
 import { ghHostEnv } from "./gh-host";
 import { restPullRequestForge } from "./forge-pull-request";
 
@@ -49,9 +57,11 @@ const execAsync = promisify(exec);
  * of opening a second one.
  *
  * Both modes resolve the GitHub/Forgejo credential the same way, through
- * {@link commentTokenFrom}: `CHANT_FORGEJO_TOKEN`, then `GH_TOKEN`, then
- * `GITHUB_TOKEN` (chant #2320), refusing by name before any call when none
- * is set ({@link noCommentTokenMessage}, {@link noIssueTokenMessage}).
+ * {@link commentTokenFrom}, in pr-forge's `FORGE_TOKEN_ORDER` for the forge the
+ * run is on (chant #2320, #3807): `CHANT_GITHUB_TOKEN`, `GH_TOKEN`,
+ * `GITHUB_TOKEN` on GitHub; `CHANT_FORGEJO_TOKEN`, `FORGEJO_TOKEN`,
+ * `GH_TOKEN`, `GITHUB_TOKEN` on Forgejo. It refuses by name before any call
+ * when none is set ({@link noCommentTokenMessage}, {@link noIssueTokenMessage}).
  *
  * Until #3757 these two modes shelled to `gh api`. That reached Forgejo only
  * after two fixes: a full URL, because `gh` resolves a relative path against
@@ -452,23 +462,37 @@ export interface CommentToken {
 }
 
 /**
+ * Which GitHub-shaped forge a run is on: Forgejo when `detectForge` says so
+ * (`FORGEJO_ACTIONS`/`GITEA_ACTIONS`, or a `GITHUB_API_URL` ending in
+ * `/api/v1`), or when the API base ends in `/api/v1`, which is how a step
+ * posting to some other Forgejo instance names it. GitHub serves `/api/v3`
+ * or `api.github.com`, never `/api/v1`. Anything else is GitHub.
+ */
+export function githubShapedKindFrom(env: Record<string, string | undefined>): "github" | "forgejo" {
+  if (detectForge(env) === "forgejo") return "forgejo";
+  return /\/api\/v1$/.test(githubApiBaseFrom(env)) ? "forgejo" : "github";
+}
+
+/**
  * Resolve the token the `comment` and `issue` modes post with on GitHub and
- * Forgejo, most specific first (chant #2291). The generated workflow sets
- * `GH_TOKEN` and `GITHUB_TOKEN` to `${{ github.token }}` for every
- * non-`report` finding mode — on
- * Forgejo the same way as on GitHub, and the real-instance read confirmed
- * `github.token` is populated there and good for a 200 read and a 201 write,
- * authored as `forgejo-actions`. So the common case needs nothing set beyond
- * what the generator already emits.
+ * Forgejo (chant #2291), in pr-forge's `FORGE_TOKEN_ORDER` for the forge the
+ * run is on (#3807), so this and `forgeTargetFromEnv` cannot drift apart.
+ * GitHub reads `CHANT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`; Forgejo reads
+ * `CHANT_FORGEJO_TOKEN`, `FORGEJO_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`. The
+ * generated workflow sets `GH_TOKEN` and `GITHUB_TOKEN` to
+ * `${{ github.token }}` for every non-`report` finding mode, on Forgejo the
+ * same way as on GitHub, so the common case needs nothing set beyond what the
+ * generator already emits.
  *
- * `CHANT_FORGEJO_TOKEN` is checked first for the case that ambient token
- * cannot cover: a run posting to a Forgejo instance other than the one the
- * job executes on, where `github.token`'s scope stops at its own instance.
- * A run with none of the three is refused by name before any call, in place
- * of the forge's own opaque 401.
+ * The chant-specific variable comes first for the case that ambient token
+ * cannot cover: a run posting to an instance other than the one the job
+ * executes on, where `github.token`'s scope stops at its own instance.
+ * `CHANT_FORGEJO_TOKEN` is no longer read on a GitHub run. A run with none of
+ * the names is refused by name before any call, in place of the forge's own
+ * opaque 401.
  */
 export function commentTokenFrom(env: Record<string, string | undefined>): CommentToken | undefined {
-  for (const source of ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
+  for (const source of FORGE_TOKEN_ORDER[githubShapedKindFrom(env)]) {
     const value = env[source]?.trim();
     if (value) return { value, source };
   }
@@ -543,8 +567,8 @@ export function noCommentTokenMessage(repo: string, number: number): string {
   return (
     `reconcilePr mode "comment" has pull request ${repo}#${number} to post its finding on and no token to ` +
     "post it with. GH_TOKEN or GITHUB_TOKEN, set from github.token, already covers this on a GitHub Actions " +
-    "or Forgejo Actions run — set CHANT_FORGEJO_TOKEN to post against a different instance than the one the " +
-    "job runs on. CHANT_FORGEJO_TOKEN is read first where the two must differ."
+    "or Forgejo Actions run — set CHANT_GITHUB_TOKEN (GitHub) or CHANT_FORGEJO_TOKEN (Forgejo) to post " +
+    "against a different instance than the one the job runs on. It is read first where the two must differ."
   );
 }
 
@@ -553,8 +577,8 @@ export function noIssueTokenMessage(repo: string): string {
   return (
     `reconcilePr mode "issue" has repository ${repo} to open or edit its finding in and no token to do it ` +
     "with. GH_TOKEN or GITHUB_TOKEN, set from github.token, already covers this on a GitHub Actions or " +
-    "Forgejo Actions run — set CHANT_FORGEJO_TOKEN to post against a different instance than the one the " +
-    "job runs on. CHANT_FORGEJO_TOKEN is read first where the two must differ."
+    "Forgejo Actions run — set CHANT_GITHUB_TOKEN (GitHub) or CHANT_FORGEJO_TOKEN (Forgejo) to post " +
+    "against a different instance than the one the job runs on. It is read first where the two must differ."
   );
 }
 
@@ -582,7 +606,7 @@ export function githubShapedForgeFrom(
   signal?: AbortSignal,
 ): GithubShapedForge {
   const apiBase = githubApiBaseFrom(env);
-  const forgejo = env.FORGEJO_ACTIONS === "true" || env.GITEA_ACTIONS === "true" || /\/api\/v1$/.test(apiBase);
+  const forgejo = githubShapedKindFrom(env) === "forgejo";
   // Read at call time, so a test that stubs the global sees its stub.
   const fetchImpl: ForgeFetch = (url, init) => globalThis.fetch(url, { ...init, ...(signal ? { signal } : {}) });
   const opts = { apiBase, repo, token: token.value, fetch: fetchImpl };

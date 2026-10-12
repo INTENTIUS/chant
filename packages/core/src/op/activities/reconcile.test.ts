@@ -21,6 +21,7 @@ import {
   ghCredentialEnv,
   githubShapedForgeFrom,
 } from "./reconcile";
+import { FORGE_TOKEN_ORDER } from "../../pr-forge";
 
 // ── The `gh` stub (chant #2291) ──────────────────────────────────────────────
 //
@@ -338,10 +339,44 @@ describe("commentTokenFrom (#2291)", () => {
     expect(commentTokenFrom({ GITHUB_TOKEN: "ghs_y" })).toEqual({ value: "ghs_y", source: "GITHUB_TOKEN" });
   });
 
-  test("CHANT_FORGEJO_TOKEN wins over both, for the cross-instance case", () => {
+  test("on Forgejo CHANT_FORGEJO_TOKEN wins, then FORGEJO_TOKEN, then GH_TOKEN, then GITHUB_TOKEN", () => {
+    const base = { FORGEJO_ACTIONS: "true" };
+    const all = { CHANT_FORGEJO_TOKEN: "a", FORGEJO_TOKEN: "b", GH_TOKEN: "c", GITHUB_TOKEN: "d" };
+    expect(commentTokenFrom({ ...base, ...all })?.source).toBe("CHANT_FORGEJO_TOKEN");
+    expect(commentTokenFrom({ ...base, FORGEJO_TOKEN: "b", GH_TOKEN: "c", GITHUB_TOKEN: "d" })?.source).toBe("FORGEJO_TOKEN");
+    expect(commentTokenFrom({ ...base, GH_TOKEN: "c", GITHUB_TOKEN: "d" })?.source).toBe("GH_TOKEN");
+  });
+
+  test("a /api/v1 API base is Forgejo even without FORGEJO_ACTIONS", () => {
     expect(
-      commentTokenFrom({ CHANT_FORGEJO_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source,
+      commentTokenFrom({ GITHUB_API_URL: "https://f.example/api/v1", CHANT_FORGEJO_TOKEN: "a", GH_TOKEN: "b" })?.source,
     ).toBe("CHANT_FORGEJO_TOKEN");
+  });
+
+  test("on GitHub CHANT_GITHUB_TOKEN wins, then GH_TOKEN, then GITHUB_TOKEN (#3807)", () => {
+    const base = { GITHUB_ACTIONS: "true" };
+    expect(commentTokenFrom({ ...base, CHANT_GITHUB_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source).toBe("CHANT_GITHUB_TOKEN");
+    expect(commentTokenFrom({ ...base, GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source).toBe("GH_TOKEN");
+  });
+
+  test("on GitHub CHANT_FORGEJO_TOKEN and FORGEJO_TOKEN are not read (#3807)", () => {
+    expect(
+      commentTokenFrom({ GITHUB_ACTIONS: "true", CHANT_FORGEJO_TOKEN: "a", FORGEJO_TOKEN: "b", GH_TOKEN: "c" }),
+    ).toEqual({ value: "c", source: "GH_TOKEN" });
+    expect(commentTokenFrom({ GITHUB_ACTIONS: "true", CHANT_FORGEJO_TOKEN: "a" })).toBeUndefined();
+  });
+
+  test("agrees with FORGE_TOKEN_ORDER for each forge", () => {
+    for (const [kind, env] of [
+      ["github", { GITHUB_ACTIONS: "true" }],
+      ["forgejo", { FORGEJO_ACTIONS: "true" }],
+    ] as const) {
+      for (const name of FORGE_TOKEN_ORDER[kind]) {
+        const rest = FORGE_TOKEN_ORDER[kind].slice(FORGE_TOKEN_ORDER[kind].indexOf(name));
+        const vars = Object.fromEntries(rest.map((n) => [n, `v-${n}`]));
+        expect(commentTokenFrom({ ...env, ...vars })?.source).toBe(name);
+      }
+    }
   });
 
   test("no token at all is undefined rather than an empty value", () => {
@@ -464,6 +499,31 @@ describe("reconcilePr comment mode posts through the forge client (#2291, #3757)
       await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
       expect(forgeCalls.length).toBeGreaterThan(0);
       for (const call of forgeCalls) expect(call.authorization).toBe("token cross-instance-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("on a GitHub run CHANT_FORGEJO_TOKEN is ignored and GH_TOKEN is sent (#3807)", async () => {
+    stubPrEnv("https://api.github.com");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-token-set-on-github");
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(forgeCalls.length).toBeGreaterThan(0);
+      for (const call of forgeCalls) expect(call.authorization).toBe("Bearer forgejo-actions-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("on a GitHub run CHANT_GITHUB_TOKEN outranks GH_TOKEN (#3807)", async () => {
+    stubPrEnv("https://api.github.com");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("CHANT_GITHUB_TOKEN", "other-github-token");
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      for (const call of forgeCalls) expect(call.authorization).toBe("Bearer other-github-token");
     } finally {
       vi.unstubAllEnvs();
     }
