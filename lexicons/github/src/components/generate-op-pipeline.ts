@@ -330,7 +330,8 @@ function chantVersion(): string {
  * `@intentius/chant/pr-forge` clients, so it posts on GitHub, GitHub
  * Enterprise Server and Forgejo alike. `forgeTargetFromEnv` reads the forge,
  * the REST base, the repository, the commit and the token off the job's
- * environment (`CHANT_FORGEJO_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`),
+ * environment (`FORGE_TOKEN_ORDER`: `CHANT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` on
+ * GitHub; `CHANT_FORGEJO_TOKEN` first on Forgejo), the order `reconcilePr` reads too (#3807),
  * and `pullRequestFor` is the commit-to-pull-request lookup each forge spells
  * its own way (`commits/{sha}/pulls` on GitHub, `commits/{sha}/pull` on
  * Forgejo). A commit with no pull request, a direct push, gets a tracking

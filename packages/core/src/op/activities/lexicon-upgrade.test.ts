@@ -317,6 +317,8 @@ describe("lexiconUpgrade issue mode", () => {
 
     vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
     vi.stubEnv("GITHUB_API_URL", "");
+    // A Forgejo run, since CHANT_FORGEJO_TOKEN is only read there (#3807).
+    vi.stubEnv("FORGEJO_ACTIONS", "true");
     // The cross-instance case (#2320): a Forgejo token that must outrank the
     // job's own `github.token`, on the path that used to forward neither.
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
