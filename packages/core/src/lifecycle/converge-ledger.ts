@@ -245,7 +245,7 @@ export async function appendConvergeRecord(
     try {
       const priorSha = await readPathSha(record.env, FILENAME, opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${json}\n`;
       const commit = await writeBlobToPath(record.env, FILENAME, content, "Converge tick record", {
         ...opts,
         expectPriorPathSha: priorSha,

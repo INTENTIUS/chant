@@ -441,3 +441,40 @@ describe("applied approvals on chant/lifecycle (#3784)", () => {
     });
   });
 });
+
+describe("gate ledger newline termination (#3849)", () => {
+  test("every append ends the file in a newline, with no blank or merged lines", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await appendPendingGate({ op: "nl-op", gate: "g1", planDigest: "sha256:" + "a".repeat(64) } as never, { cwd: dir });
+      const one = await readBlobFromPath("_gates", "nl-op.jsonl", { cwd: dir });
+      expect(one!.endsWith("\n")).toBe(true);
+      await appendGateResolution(
+        { op: "nl-op", gate: "g1", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+        { cwd: dir },
+      );
+      const raw = (await readBlobFromPath("_gates", "nl-op.jsonl", { cwd: dir }))!;
+      expect(raw.endsWith("\n")).toBe(true);
+      expect(raw.endsWith("\n\n")).toBe(false);
+      const lines = raw.slice(0, -1).split("\n");
+      expect(lines).toHaveLength(2);
+      for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+      const { malformed } = await readGateLedger("nl-op", { cwd: dir });
+      expect(malformed).toBe(0);
+    });
+  });
+
+  test("a legacy ledger whose last line has no newline still reads and appends cleanly", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath("_gates", "legacy.jsonl", JSON.stringify({ kind: "x" }), "seed", { cwd: dir });
+      await appendGateResolution(
+        { op: "legacy", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+        { cwd: dir },
+      );
+      const raw = (await readBlobFromPath("_gates", "legacy.jsonl", { cwd: dir }))!;
+      expect(raw.endsWith("\n")).toBe(true);
+      expect(raw.split("\n").filter(Boolean)).toHaveLength(2);
+    });
+  });
+});

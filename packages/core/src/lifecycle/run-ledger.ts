@@ -160,7 +160,7 @@ export async function appendRunRecord(
     try {
       const priorSha = await readPathSha(record.env, filename, opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${json}\n`;
       const commit = await writeBlobToPath(record.env, filename, content, `Op run record: ${record.op}`, {
         ...opts,
         expectPriorPathSha: priorSha,
