@@ -32,11 +32,19 @@
  * touching the component declarations.
  */
 
-import { emitYAMLEntry } from "@intentius/chant/yaml";
+import {
+  assertGitlabBranch,
+  CI_IMAGE,
+  ciJobName,
+  fillCommand,
+  GITLAB_FULL_HISTORY,
+  GITLAB_MERGE_REQUEST_SOURCE,
+  gitlabPushRule,
+} from "@intentius/chant/ci-jobs";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_APPLY_RECORD, PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -45,14 +53,9 @@ import type {
   PipelineMember,
 } from "@intentius/chant/lexicon";
 
+import { emitGitlabFile } from "./ci-jobs";
+
 export type { GeneratedJob, GenerateGitlabOptions, GenerateGitlabResult };
-
-/** GitLab CI job names must be safe YAML keys; component names are already kebab-case in every fixture, but normalize defensively. */
-function toJobName(componentName: string): string {
-  return componentName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-}
-
-const DEFAULT_IMAGE = "node:22";
 
 /**
  * Synthesize a `.gitlab-ci.yml` pipeline from a set of components: one stage
@@ -67,7 +70,7 @@ export function generateGitlabPipeline(
   options: GenerateGitlabOptions = {},
 ): GenerateGitlabResult {
   const env = options.env ?? "production";
-  const image = options.image ?? (options.prLoop || options.gatedWaves ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
+  const image = options.image ?? CI_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
@@ -126,7 +129,7 @@ export function generateGitlabPipeline(
   const jobs: GeneratedJob[] = [];
   const jobNameByComponent = new Map<string, string>();
   for (const wave of waves) {
-    for (const name of wave) jobNameByComponent.set(name, toJobName(name));
+    for (const name of wave) jobNameByComponent.set(name, ciJobName(name));
   }
 
   const doc: Record<string, unknown> = {};
@@ -152,7 +155,7 @@ export function generateGitlabPipeline(
       // Build the run invocation, then append output-threading flags: seed from
       // each dependency's dumped outputs, and dump this component's own outputs
       // if a dependent will need them.
-      const runParts = runCommand.map((part) => part.replace("{name}", name));
+      const runParts = fillCommand(runCommand, name);
       for (const dep of component.dependsOn ?? []) runParts.push("--seed-outputs", outputsFile(dep));
       if (dependedUpon.has(name)) runParts.push("--dump-outputs", outputsFile(name));
       if (pinned.has(name)) runParts.push("--digest-file", digestFile(name));
@@ -178,7 +181,7 @@ export function generateGitlabPipeline(
 
   let promoteJob: string | undefined;
   if (promoteTo !== undefined) {
-    promoteJob = `promote-${toJobName(promoteTo)}`;
+    promoteJob = `promote-${ciJobName(promoteTo)}`;
     if (promoteJob in doc) {
       throw new Error(`the promote job "${promoteJob}" has the same name as a component job; rename the component`);
     }
@@ -200,20 +203,17 @@ export function generateGitlabPipeline(
     promoteJob = scopeToMember(doc, jobs, promoteJob, options.member, env);
   }
 
-  const sections: string[] = [];
-  sections.push(emitYAMLEntry("workflow", doc.workflow));
   // The promote stage is YAML only: `stages` in the result stays one entry
   // per graph wave.
   const yamlStages = promoteJob ? [...stages, "promote"] : stages;
-  sections.push(emitYAMLEntry("stages", yamlStages));
-  if (doc.variables) sections.push(emitYAMLEntry("variables", doc.variables));
-  for (const job of jobs) {
-    const props = doc[job.jobName] as Record<string, unknown>;
-    sections.push(emitYAMLEntry(job.jobName, props));
-  }
-  if (promoteJob) sections.push(emitYAMLEntry(promoteJob, doc[promoteJob]));
-
-  return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
+  const yaml = emitGitlabFile([
+    ["workflow", doc.workflow],
+    ["stages", yamlStages],
+    ["variables", doc.variables],
+    ...jobs.map((job) => [job.jobName, doc[job.jobName]] as const),
+    ...(promoteJob ? [[promoteJob, doc[promoteJob]] as const] : []),
+  ]);
+  return { yaml, stages, jobs, env };
 }
 
 /**
@@ -244,20 +244,20 @@ function gatedWaveGitlabPipeline(
     doc[job.jobName] = {
       stage: job.jobName,
       image,
-      variables: { GIT_DEPTH: "0" },
+      variables: { ...GITLAB_FULL_HISTORY },
       script: [...prLoopSetup(image), ...beforeScript, job.command.join(" "), ...extraScript],
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       artifacts: { when: "always", paths: [GATED_WAVE_RECORD] },
     };
   }
   if (options.member) scopeToMember(doc, jobs, undefined, options.member, env);
-  const sections = [
-    emitYAMLEntry("workflow", doc.workflow),
-    emitYAMLEntry("stages", stages),
-    emitYAMLEntry("variables", doc.variables),
-    ...jobs.map((job) => emitYAMLEntry(job.jobName, doc[job.jobName])),
-  ];
-  return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
+  const yaml = emitGitlabFile([
+    ["workflow", doc.workflow],
+    ["stages", stages],
+    ["variables", doc.variables],
+    ...jobs.map((job) => [job.jobName, doc[job.jobName]] as const),
+  ]);
+  return { yaml, stages, jobs, env };
 }
 
 /**
@@ -297,9 +297,9 @@ function prLoopGitlabPipeline(
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
   const planJob = member ? `${member.name}-plan` : "plan";
   const applyJob = member ? `${member.name}-apply` : "apply";
-  const onMergeRequest = '$CI_PIPELINE_SOURCE == "merge_request_event"';
-  const target = loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH";
-  const onMerge = `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == ${target}`;
+  const onMergeRequest = GITLAB_MERGE_REQUEST_SOURCE;
+  if (loop.branch !== undefined) assertGitlabBranch("The merge-request pipeline", loop.branch);
+  const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
   const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), job.command, ...extraScript];
@@ -309,7 +309,7 @@ function prLoopGitlabPipeline(
     // the rules every member shares and no name: two names would collide.
     workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }] },
     stages,
-    variables: { ...options.variables, CHANT_ENV: env, GIT_DEPTH: "0" },
+    variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
       stage: "plan",
       image,
@@ -339,8 +339,8 @@ function prLoopGitlabPipeline(
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     { jobName: applyJob, component: "merge request apply", stage: "apply", needs: [] },
   ];
-  const sections = ["workflow", "stages", "variables", planJob, applyJob].map((key) => emitYAMLEntry(key, doc[key]));
-  return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, applyJob].map((key) => [key, doc[key]] as const));
+  return { yaml, stages, jobs, env };
 }
 
 /**

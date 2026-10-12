@@ -31,25 +31,28 @@
 
 import { notifyVariables, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
-import { actionRef } from "../action-pins";
 import {
   assertEnvironment,
   assertSetupSteps,
-  emitOpPipelineYAML,
-  type GithubOpPipelineDoc,
-} from "./generate-op-pipeline";
+  CI_IMAGE,
+  dirnameOf,
+  environmentDoc,
+  GITHUB_JOB_TOKEN,
+  GITHUB_RUNNER,
+  githubSecretEnv,
+  nonEmpty,
+  pushBranches,
+  setupStepDoc,
+} from "@intentius/chant/ci-jobs";
+import { checkoutStep, concurrency, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
+import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
 /** The default image: it carries git, which the runner needs to read the base commit. */
-export const OP_WAVES_IMAGE = "node:22";
+export const OP_WAVES_IMAGE = CI_IMAGE;
 
 /** The artifact a wide wave's deciding job hands its share jobs. */
 export function opWaveRecordArtifact(spec: Pick<OpWavesSpec, "name">, wave: number): string {
   return `${spec.name}-wave-${wave}-decision`;
-}
-
-function dirOf(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i < 0 ? "." : path.slice(0, i);
 }
 
 /** The workflow document, before emission, and the jobs it holds. */
@@ -68,51 +71,33 @@ export function buildGithubOpWavesDoc(
   const jobsDoc: Record<string, unknown> = {};
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
-    const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } }];
+    const steps: Array<Record<string, unknown>> = [checkoutStep(true)];
     if (job.kind === "share") {
-      steps.push({
-        name: `Download wave ${job.wave}'s decision`,
-        uses: "actions/download-artifact@v4",
-        with: { name: opWaveRecordArtifact(spec, job.wave), path: dirOf(job.record!) },
-      });
+      steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
-    for (const step of wave.setup ?? []) steps.push({ ...step });
-    for (const line of options.beforeScript ?? []) steps.push({ run: line });
+    steps.push(...(wave.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
     steps.push({ name: describeJob(job.kind, job.wave, wave.name, job.share), run: job.command.join(" ") });
-    for (const line of options.extraScript ?? []) steps.push({ run: line });
+    steps.push(...runSteps(options.extraScript ?? []));
     if (job.kind === "decide") {
-      steps.push({
-        name: `Keep wave ${job.wave}'s decision`,
-        if: "always()",
-        uses: "actions/upload-artifact@v4",
-        with: {
-          name: opWaveRecordArtifact(spec, job.wave),
-          path: job.record!,
-          "if-no-files-found": "ignore",
-          "include-hidden-files": true,
-          overwrite: true,
-        },
-      });
+      steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
     jobsDoc[job.jobName] = {
-      "runs-on": "ubuntu-latest",
+      "runs-on": GITHUB_RUNNER,
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       container: image,
-      ...(wave.environment
-        ? { environment: { name: wave.environment.name, ...(wave.environment.url ? { url: wave.environment.url } : {}) } }
-        : {}),
-      ...(wave.variables && Object.keys(wave.variables).length > 0 ? { env: wave.variables } : {}),
+      ...(wave.environment ? { environment: environmentDoc(wave.environment) } : {}),
+      ...nonEmpty("env", wave.variables),
       steps,
     };
   }
 
   // #3761: the notify variables come from the secrets of the same name.
-  const env = { ...Object.fromEntries(notifyVariables(spec.notify).map((n) => [n, `\${{ secrets.${n} }}`])), ...(options.variables ?? {}) };
+  const env = { ...githubSecretEnv(notifyVariables(spec.notify)), ...(options.variables ?? {}) };
   const doc: GithubOpPipelineDoc = {
     name: spec.name,
-    on: { push: { branches: spec.branches?.length ? spec.branches : ["main"] }, workflow_dispatch: {} },
-    ...(Object.keys(env).length > 0 ? { env } : {}),
-    concurrency: { group: spec.name, "cancel-in-progress": false },
+    on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: {} },
+    ...nonEmpty("env", env),
+    concurrency: concurrency(spec.name),
     permissions: { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) },
     jobsDoc,
   };
@@ -126,37 +111,34 @@ export function buildGithubOpWavesDoc(
 
 /** The scheduled resume workflow (#3683). */
 function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
-  const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
-  for (const line of options.beforeScript ?? []) steps.push({ run: line });
+  const steps: Array<Record<string, unknown>> = [checkoutStep(), ...runSteps(options.beforeScript ?? [])];
   steps.push({
     name: `Resume the waves of ${spec.name} whose approval arrived`,
     run: opWavesResumeCommand(spec).join(" "),
-    env: { GITHUB_TOKEN: "${{ github.token }}" },
+    env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   });
   return {
     name: `${spec.name}-resume`,
     on: { schedule: [{ cron: spec.resume!.schedule }], workflow_dispatch: {} },
-    concurrency: { group: `${spec.name}-resume`, "cancel-in-progress": true },
+    concurrency: concurrency(`${spec.name}-resume`, true),
     // contents: read fetches chant/lifecycle; actions: write re-runs a waiting run.
     permissions: { contents: "read", actions: "write" },
-    jobsDoc: { resume: { "runs-on": "ubuntu-latest", container: options.image ?? OP_WAVES_IMAGE, steps } },
+    jobsDoc: { resume: { "runs-on": GITHUB_RUNNER, container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
 }
 
 /** The pull request workflow a `pr-review` wave needs (#3684): record the digests each head plans. */
 function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): GithubOpPipelineDoc {
-  const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } }];
-  for (const step of spec.waves[0]?.setup ?? []) steps.push({ ...step });
-  for (const line of options.beforeScript ?? []) steps.push({ run: line });
+  const steps: Array<Record<string, unknown>> = [checkoutStep(true), ...(spec.waves[0]?.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? [])];
   steps.push({ name: "Plan every wave at the head and record its digests", run: ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ") });
   return {
     name: `${spec.name}-plans`,
-    on: { pull_request: { branches: spec.branches?.length ? spec.branches : ["main"] } },
-    ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
-    concurrency: { group: spec.name + "-plans-${{ github.event.number }}", "cancel-in-progress": true },
+    on: { pull_request: { branches: pushBranches(spec.branches) } },
+    ...nonEmpty("env", options.variables),
+    concurrency: concurrency(spec.name + "-plans-${{ github.event.number }}", true),
     // contents: write pushes the record to chant/lifecycle.
     permissions: { contents: "write" },
-    jobsDoc: { "record-plans": { "runs-on": "ubuntu-latest", container: options.image ?? OP_WAVES_IMAGE, steps } },
+    jobsDoc: { "record-plans": { "runs-on": GITHUB_RUNNER, container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
 }
 

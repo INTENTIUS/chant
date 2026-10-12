@@ -34,12 +34,8 @@ import type {
   ComponentPipelineOptions,
   ComponentPipelineResult,
 } from "@intentius/chant/lexicon";
-import { transformWorkflowObject, type ForgejoDialectOptions } from "../dialect";
-
-/** Apply the Forgejo dialect to one section of the pipeline doc. */
-function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptions): Record<string, unknown> {
-  return transformWorkflowObject(value, dialect).value as Record<string, unknown>;
-}
+import type { ForgejoDialectOptions } from "../dialect";
+import { forgejoize } from "./ci-jobs";
 
 /**
  * Synthesize a `.forgejo/workflows/*.yml` pipeline from a set of components.

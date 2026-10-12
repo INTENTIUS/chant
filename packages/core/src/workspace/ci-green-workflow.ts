@@ -27,7 +27,9 @@
  * commit whose workflow files differ from the default branch's as an update
  * to those workflows, and the Actions token can never hold the `workflows`
  * permission, so it is refused there. `--token-secret <NAME>` checks out
- * with `secrets.<NAME>` instead, and `--app-id-var <VAR> --app-key-secret
+ * with `secrets.<NAME>` instead, falling back to the Actions token where the
+ * secret is unset (#3624), so a fork or a fresh clone still tags the commits
+ * that change no workflow file; and `--app-id-var <VAR> --app-key-secret
  * <NAME>` mints a GitHub App token first and checks out with that. The
  * tick's own `GITHUB_TOKEN`, which reads check runs, stays the Actions token:
  * a fine-grained personal access token can't call the Checks API.
@@ -44,6 +46,7 @@ import { GENERATED_MARKER } from "../discovery/files";
 import { parseYAMLDocument } from "../yaml";
 import type { CiGreen } from "./declaration";
 import { matchesCheckRun } from "./ci-green";
+import { githubSecretOrJobToken } from "../ci-jobs";
 
 /** Where the workflow goes, relative to the repository root. */
 export const CI_GREEN_WORKFLOW_FILE = ".github/workflows/chant-ci-green.yml";
@@ -185,7 +188,7 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
           `          private-key: \${{ secrets.${push.appKeySecret} }}`,
         ]
       : [];
-  const token = !push ? [] : ["secret" in push ? `          token: \${{ secrets.${push.secret} }}` : "          token: ${{ steps.app-token.outputs.token }}"];
+  const token = !push ? [] : ["secret" in push ? `          token: ${githubSecretOrJobToken(push.secret)}` : "          token: ${{ steps.app-token.outputs.token }}"];
   const lines = [
     `name: ${CI_GREEN_WORKFLOW_NAME}`,
     "",

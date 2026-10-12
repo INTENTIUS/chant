@@ -124,15 +124,15 @@ describe("the token the tick pushes its tags with (#3573)", () => {
     expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
   });
 
-  test("--token-secret checks out with the secret, so the push uses it, and nothing else changes", () => {
+  test("--token-secret checks out with the secret, or the Actions token where it is unset (#3624), and nothing else changes", () => {
     const plain = renderCiGreenWorkflow(base);
     const text = renderCiGreenWorkflow({ ...base, push: { secret: "CI_GREEN_TOKEN" } });
     const steps = (parseYAMLDocument(text) as Yaml).jobs.tick.steps;
-    expect(steps[0]).toEqual({ uses: "actions/checkout@v6", with: { ref: "main", "fetch-depth": 0, token: "${{ secrets.CI_GREEN_TOKEN }}" } });
+    expect(steps[0]).toEqual({ uses: "actions/checkout@v6", with: { ref: "main", "fetch-depth": 0, token: "${{ secrets.CI_GREEN_TOKEN || github.token }}" } });
     // Check runs are still read with the Actions token: a fine-grained token can't call the Checks API.
     expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
     expect((parseYAMLDocument(text) as Yaml).permissions).toEqual({ contents: "write", checks: "read" });
-    expect(text.replace("          token: ${{ secrets.CI_GREEN_TOKEN }}\n", "")).toBe(plain);
+    expect(text.replace("          token: ${{ secrets.CI_GREEN_TOKEN || github.token }}\n", "")).toBe(plain);
   });
 
   test("--app-id-var and --app-key-secret mint an App token before the checkout and check out with it", () => {
@@ -228,7 +228,7 @@ describe("chant ci workflow (#3573)", () => {
       const withToken = readFileSync(file, "utf-8");
       expect(withToken.split("\n")[0]).toBe(`# ${GENERATED_MARKER}. Regenerate with: chant ci workflow --token-secret CI_GREEN_TOKEN (in the workspace root)`);
       const steps = (parseYAMLDocument(withToken) as Yaml).jobs.tick.steps;
-      expect(steps[0].with.token).toBe("${{ secrets.CI_GREEN_TOKEN }}");
+      expect(steps[0].with.token).toBe("${{ secrets.CI_GREEN_TOKEN || github.token }}");
       expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
 
       const app = { args: { ciAppIdVar: "CI_GREEN_APP_ID", ciAppKeySecret: "CI_GREEN_APP_KEY" } } as unknown as CommandContext;

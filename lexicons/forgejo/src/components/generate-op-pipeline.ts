@@ -89,47 +89,14 @@
 import {
   buildGithubOpPipelineDocs,
   emitOpPipelineYAML,
-  type GithubOpPipelineDoc,
 } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import type {
   ComponentPipelineOptions,
   OpPipelineResult,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
-import { transformWorkflowObject, type ForgejoDialectOptions } from "../dialect";
-
-/** Apply the Forgejo dialect to one section of a pipeline doc. */
-function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptions): Record<string, unknown> {
-  return transformWorkflowObject(value, dialect).value as Record<string, unknown>;
-}
-
-/**
- * Strip the job-level `environment:` github emitted (#2257). Forgejo Actions
- * has no environments, so the key would read as a deployment gate and hold
- * nothing back. Dropped from the rebuilt doc rather than from the dialect's
- * own `DROPPED_KEYS`, so this touches the Op generator alone and leaves every
- * other document the dialect transforms exactly as it emits today.
- */
-function withoutEnvironment(jobsDoc: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(jobsDoc).map(([jobName, job]) => {
-      if (typeof job !== "object" || job === null || !("environment" in job)) return [jobName, job];
-      const { environment: _dropped, ...rest } = job as Record<string, unknown>;
-      return [jobName, rest];
-    }),
-  );
-}
-
-/** Say in the generated file which environment gate did not survive the crossing. */
-function droppedEnvironmentHeader(environmentName: string): string[] {
-  return [
-    `# chant dropped \`environment: ${environmentName}\` from this workflow: Forgejo Actions has no`,
-    "# environments, so there is no protection rule, required reviewer or wait timer for the key to",
-    "# name. This job is not held back by anything on the forge. What still stops the apply is chant's",
-    "# own gate: the run records a pending fact on the chant/lifecycle branch and ends, and `chant",
-    "# approve <op> <gate>` is what lets the next run through.",
-  ];
-}
+import type { ForgejoDialectOptions } from "../dialect";
+import { droppedEnvironmentHeader, forgejoWorkflowDoc } from "./ci-jobs";
 
 /**
  * Synthesize one `.forgejo/workflows/*.yml` per scheduled Op. Reuses github's
@@ -156,20 +123,10 @@ export function generateForgejoOpPipeline(
     // read its Op's own `environment` off the input by position.
     files: files.map(({ name, doc }, index) => {
       const environment = ops[index].environment;
-      const forgejoDoc: GithubOpPipelineDoc = {
-        ...(environment ? { header: droppedEnvironmentHeader(environment.name) } : {}),
-        // Forgejo Actions reads `name:` as GitHub does (#2601), so the Op's
-        // name carries over and the Actions list shows it instead of the path.
-        ...(doc.name ? { name: doc.name } : {}),
-        on: forgejoize(doc.on, dialectOptions),
-        ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
-        concurrency: forgejoize(doc.concurrency, dialectOptions),
-        permissions: {},
-        jobsDoc: forgejoize(withoutEnvironment(doc.jobsDoc), dialectOptions),
-        // The gate-notice job (#3773), dialect applied like the Op's own job.
-        ...(doc.gatedNoticeDoc ? { gatedNoticeDoc: forgejoize(doc.gatedNoticeDoc, dialectOptions) } : {}),
-      };
-      return { name, yaml: emitOpPipelineYAML(forgejoDoc) };
+      // The Op's name carries over, and the gate-notice job (#3773) takes the
+      // dialect like the Op's own job.
+      const header = environment ? droppedEnvironmentHeader(environment.name) : undefined;
+      return { name, yaml: emitOpPipelineYAML(forgejoWorkflowDoc(doc, dialectOptions, header)) };
     }),
     jobs,
   };

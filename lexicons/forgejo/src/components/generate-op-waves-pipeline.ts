@@ -17,14 +17,11 @@
  */
 
 import { buildGithubOpWavesDoc } from "@intentius/chant-lexicon-github/components/generate-op-waves-pipeline";
-import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
+import { emitOpPipelineYAML } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
-import { transformWorkflowObject, type ForgejoDialectOptions } from "../dialect";
-
-function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptions): Record<string, unknown> {
-  return transformWorkflowObject(value, dialect).value as Record<string, unknown>;
-}
+import type { ForgejoDialectOptions } from "../dialect";
+import { droppedWaveEnvironmentsHeader, FORGE_TOKEN_ENV, forgejoWorkflowDoc } from "./ci-jobs";
 
 /** Render an Op waves spec as one Forgejo Actions workflow, `<name>.yml`. */
 export function generateForgejoOpWavesPipeline(
@@ -33,60 +30,18 @@ export function generateForgejoOpWavesPipeline(
   dialectOptions: ForgejoDialectOptions = {},
 ): OpWavesPipelineResult {
   const { doc, jobs, resumeDoc, plansDoc } = buildGithubOpWavesDoc(spec, options);
-  const jobsDoc = Object.fromEntries(
-    Object.entries(doc.jobsDoc).map(([name, job]) => {
-      const { environment: _dropped, ...rest } = job as Record<string, unknown>;
-      return [name, rest];
-    }),
-  );
   const dropped = spec.waves.filter((w) => w.environment).map((w) => `${w.name} -> ${w.environment!.name}`);
-  const forgejoDoc: GithubOpPipelineDoc = {
-    ...(dropped.length > 0
-      ? {
-          header: [
-            `# chant dropped the environment of each of these waves: ${dropped.join(", ")}.`,
-            "# Forgejo Actions has no environments, so nothing on the forge holds these jobs.",
-            "# Each wave's own chant gate does: it records a pending fact on chant/lifecycle",
-            "# and the wave exits 3 until `chant approve` approves its set digest.",
-          ],
-        }
-      : {}),
-    name: doc.name,
-    on: forgejoize(doc.on, dialectOptions),
-    ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
-    concurrency: forgejoize(doc.concurrency, dialectOptions),
-    permissions: {},
-    jobsDoc: forgejoize(jobsDoc, dialectOptions),
-  };
-  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(forgejoDoc) }];
+  const header = dropped.length > 0 ? droppedWaveEnvironmentsHeader(dropped) : undefined;
+  const files = [{ name: `${spec.name}.yml`, yaml: emitOpPipelineYAML(forgejoWorkflowDoc(doc, dialectOptions, header)) }];
   if (resumeDoc) {
-    const resumeJobs = forgejoize(resumeDoc.jobsDoc, dialectOptions) as Record<string, { steps: Array<Record<string, unknown>> }>;
-    for (const job of Object.values(resumeJobs)) {
-      for (const step of job.steps) if (step.env) step.env = { CHANT_FORGE_TOKEN: "${{ secrets.CHANT_FORGE_TOKEN }}" };
+    // Forgejo has no API to re-run a run, so resume dispatches the workflow
+    // again, with a token that may.
+    const resume = forgejoWorkflowDoc(resumeDoc, dialectOptions);
+    for (const job of Object.values(resume.jobsDoc) as Array<{ steps: Array<Record<string, unknown>> }>) {
+      for (const step of job.steps) if (step.env) step.env = { ...FORGE_TOKEN_ENV };
     }
-    files.push({
-      name: `${spec.name}-resume.yml`,
-      yaml: emitOpPipelineYAML({
-        name: resumeDoc.name!,
-        on: forgejoize(resumeDoc.on, dialectOptions),
-        concurrency: forgejoize(resumeDoc.concurrency, dialectOptions),
-        permissions: {},
-        jobsDoc: resumeJobs,
-      }),
-    });
+    files.push({ name: `${spec.name}-resume.yml`, yaml: emitOpPipelineYAML(resume) });
   }
-  if (plansDoc) {
-    files.push({
-      name: `${spec.name}-plans.yml`,
-      yaml: emitOpPipelineYAML({
-        name: plansDoc.name!,
-        on: forgejoize(plansDoc.on, dialectOptions),
-        ...(plansDoc.env ? { env: forgejoize(plansDoc.env, dialectOptions) } : {}),
-        concurrency: forgejoize(plansDoc.concurrency, dialectOptions),
-        permissions: {},
-        jobsDoc: forgejoize(plansDoc.jobsDoc, dialectOptions),
-      }),
-    });
-  }
+  if (plansDoc) files.push({ name: `${spec.name}-plans.yml`, yaml: emitOpPipelineYAML(forgejoWorkflowDoc(plansDoc, dialectOptions)) });
   return { files, jobs };
 }

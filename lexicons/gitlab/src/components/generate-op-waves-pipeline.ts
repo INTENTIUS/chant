@@ -20,79 +20,82 @@
  * pipelines only, which records the digests the merge request's head plans.
  */
 
-import { emitYAMLEntry } from "@intentius/chant/yaml";
+import {
+  assertGitlabBranch,
+  assertGitlabEnvironment,
+  CI_IMAGE,
+  environmentDoc,
+  GITLAB_FULL_HISTORY,
+  GITLAB_MERGE_REQUEST_SOURCE,
+  GITLAB_SCHEDULE_SOURCE,
+  gitlabPushRule,
+  gitlabSetupScript,
+  nonEmpty,
+  pushBranches,
+} from "@intentius/chant/ci-jobs";
 import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
-
-/** The default image: it carries git, which the runner needs to read the base commit. */
-const OP_WAVES_IMAGE = "node:22";
+import { emitGitlabFile } from "./ci-jobs";
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
   const jobs = opWaveJobs(spec, options.specFile);
-  const image = options.image ?? OP_WAVES_IMAGE;
-  const branches = spec.branches?.length ? spec.branches : ["main"];
-  for (const branch of branches) {
-    if (/["$\\]/.test(branch) || branch.trim() === "") {
-      throw new Error(`Op waves "${spec.name}" filters on branch "${branch}", which cannot go in a GitLab rules: expression.`);
-    }
-  }
-  const rules = branches.map((branch) => ({ if: `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "${branch}"` }));
+  const image = options.image ?? CI_IMAGE;
+  const subject = `Op waves "${spec.name}"`;
+  const rules = pushBranches(spec.branches).map((branch) => {
+    assertGitlabBranch(subject, branch);
+    return { if: gitlabPushRule(JSON.stringify(branch)) };
+  });
+  // The setup and environment each wave's jobs carry, checked as an Op's are.
+  const setupOf = spec.waves.map((wave) => gitlabSetupScript(`${subject} wave "${wave.name}"`, wave.setup));
+  for (const wave of spec.waves) if (wave.environment) assertGitlabEnvironment(`${spec.name}/${wave.name}`, wave.environment);
 
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
   if (spec.resume) stages.push("resume");
-  const sections: string[] = [emitYAMLEntry("stages", stages)];
-  if (options.variables && Object.keys(options.variables).length > 0) sections.push(emitYAMLEntry("variables", options.variables));
+  const entries: Array<readonly [string, unknown]> = [["stages", stages]];
+  const variables = nonEmpty("variables", options.variables).variables;
+  if (variables) entries.push(["variables", variables]);
+  if (byReview) {
+    entries.push([
+      `${spec.name}-record-plans`,
+      {
+        stage: "plans",
+        image,
+        variables: { ...GITLAB_FULL_HISTORY },
+        rules: [{ if: GITLAB_MERGE_REQUEST_SOURCE }],
+        script: [...(options.beforeScript ?? []), ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ")],
+      },
+    ]);
+  }
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
-    const setup = (wave.setup ?? []).map((step, index) => {
-      if ("uses" in step) {
-        throw new Error(
-          `Op waves "${spec.name}" wave "${wave.name}" setup step ${index + 1} is \`uses: "${step.uses}"\`, a GitHub ` +
-            `Actions marketplace action. GitLab CI runs script lines only; express it as a { run } entry.`,
-        );
-      }
-      return step.run;
-    });
-    sections.push(
-      emitYAMLEntry(job.jobName, {
+    const setup = setupOf[job.wave - 1]!;
+    entries.push([
+      job.jobName,
+      {
         stage: stages[job.wave - 1 + (byReview ? 1 : 0)],
         image,
         resource_group: `${spec.name}-${wave.name}`,
-        ...(wave.environment
-          ? { environment: { name: wave.environment.name, ...(wave.environment.url ? { url: wave.environment.url } : {}) } }
-          : {}),
-        variables: { GIT_DEPTH: "0", ...(wave.variables ?? {}) },
+        ...(wave.environment ? { environment: environmentDoc(wave.environment) } : {}),
+        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
         ...(job.kind === "decide" ? { artifacts: { when: "always", paths: [job.record!], expire_in: "30 days" } } : {}),
-      }),
-    );
+      },
+    ]);
   }
   if (spec.resume) {
-    sections.push(
-      emitYAMLEntry(`${spec.name}-resume`, {
+    entries.push([
+      `${spec.name}-resume`,
+      {
         stage: "resume",
         image,
-        rules: [{ if: '$CI_PIPELINE_SOURCE == "schedule"' }],
+        rules: [{ if: GITLAB_SCHEDULE_SOURCE }],
         script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec).join(" ")],
-      }),
-    );
-  }
-  if (byReview) {
-    sections.splice(
-      options.variables && Object.keys(options.variables).length > 0 ? 2 : 1,
-      0,
-      emitYAMLEntry(`${spec.name}-record-plans`, {
-        stage: "plans",
-        image,
-        variables: { GIT_DEPTH: "0" },
-        rules: [{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }],
-        script: [...(options.beforeScript ?? []), ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ")],
-      }),
-    );
+      },
+    ]);
   }
   const header = [
     `# chant Op waves "${spec.name}": one stage per wave, each needing the one before.`,
@@ -103,5 +106,5 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       : []),
   ];
   const name = options.opsFileName ?? `${spec.name}.gitlab-ci.yml`;
-  return { files: [{ name, yaml: header.join("\n") + "\n\n" + sections.join("\n\n") + "\n" }], jobs };
+  return { files: [{ name, yaml: emitGitlabFile(entries, header) }], jobs };
 }

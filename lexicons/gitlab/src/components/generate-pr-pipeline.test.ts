@@ -119,3 +119,9 @@ describe("the GitLab merge-request pipeline", () => {
     expect(apply.cache).toEqual({ key: "chant-apply.network.prod-$CI_COMMIT_SHA", paths: ["infra/network/.chant/pr-resume/pr-apply.json"], when: "always" });
   });
 });
+
+describe("the merge-request pipeline's branch (#3765)", () => {
+  test("a branch that would break the rules: expression is refused, as an Op's is", () => {
+    expect(() => generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { branch: "re$lease" } })).toThrow(/filters on branch "re\$lease"/);
+  });
+});

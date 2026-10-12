@@ -60,7 +60,7 @@ Give the push a token that may update workflows, kept in a repository secret, an
 chant ci workflow --token-secret CI_GREEN_TOKEN
 ```
 
-The checkout then uses `${{ secrets.CI_GREEN_TOKEN }}`, so the push does too. A fine-grained personal access token for the repository needs Contents read and write and Workflows read and write. The tick still reads check runs with the Actions token and the job's `checks: read`, because a fine-grained token can't call the Checks API.
+The checkout then uses `${{ secrets.CI_GREEN_TOKEN || github.token }}`, so the push does too. Where the secret is unset, as in a fork or a fresh repository, the checkout falls back to the Actions token: the tick still runs, and only the tags for commits that change `.github/workflows/` fail to push, which `ci tick` reports. A fine-grained personal access token for the repository needs Contents read and write and Workflows read and write. The tick still reads check runs with the Actions token and the job's `checks: read`, because a fine-grained token can't call the Checks API.
 
 A GitHub App with Contents and Workflows write works too. Put its id in an Actions variable and its private key in a secret, and the workflow mints an installation token with actions/create-github-app-token before the checkout:
 
