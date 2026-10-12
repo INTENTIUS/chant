@@ -287,10 +287,10 @@ publish_one() {
 # and e.g. github before forgejo), hold the loop until the version resolves
 # through `npm view` AND its tarball answers 200. Without that, no dependent
 # becomes visible before what it needs. Polls every WAIT_INTERVAL seconds
-# (default 15) up to WAIT_TIMEOUT seconds (default 600).
+# (default 15) up to WAIT_TIMEOUT seconds (default 1800; tarballs took about ten minutes to serve in October 2026).
 wait_installable() {
   local name="$1" version="$2" base tgz waited=0 seen code
-  local interval="${WAIT_INTERVAL:-15}" limit="${WAIT_TIMEOUT:-600}"
+  local interval="${WAIT_INTERVAL:-15}" limit="${WAIT_TIMEOUT:-1800}"
   base="${name##*/}"
   tgz="$REGISTRY/${name}/-/${base}-${version}.tgz"
   while :; do
