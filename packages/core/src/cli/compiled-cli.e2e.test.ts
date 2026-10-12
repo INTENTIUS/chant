@@ -13,7 +13,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -24,6 +24,7 @@ const version = (JSON.parse(readFileSync(join(coreRoot, "package.json"), "utf-8"
 
 let scratch: string;
 let project: string;
+let cjsProject: string;
 let waves: string;
 let chant: string;
 let tracer: string;
@@ -86,6 +87,22 @@ beforeAll(() => {
       `export const db = new Postgres({ name: "e2e-db", plan: "free", version: "16", region: Render.Region });\n`,
   );
   chant = join(project, "node_modules", ".bin", "chant");
+
+  // The same project with no package.json at all, so nothing above the config
+  // says "type": "module" and tsx compiles chant.config.ts as CommonJS (#3897).
+  cjsProject = join(scratch, "cjs-project");
+  mkdirSync(join(cjsProject, "src"), { recursive: true });
+  symlinkSync(join(project, "node_modules"), join(cjsProject, "node_modules"), "dir");
+  writeFileSync(join(cjsProject, "chant.config.ts"), readFileSync(join(project, "chant.config.ts"), "utf-8"));
+  // The source reaches the lexicon through a module outside src/, so the
+  // fallback scan of src/ imports finds no lexicon: only the config names it.
+  mkdirSync(join(cjsProject, "lib"));
+  writeFileSync(join(cjsProject, "lib", "render.ts"), `export * from "@intentius/chant-lexicon-render";\n`);
+  writeFileSync(
+    join(cjsProject, "src", "infra.ts"),
+    `import { Postgres, Render } from "../lib/render";\n` +
+      `export const db = new Postgres({ name: "e2e-db", plan: "free", version: "16", region: Render.Region });\n`,
+  );
 
   // A waves spec whose plan writes a fixed digest and whose apply does nothing,
   // in a repository with the history `run wave` reads its gate policy from.
@@ -161,5 +178,29 @@ describe("the installed chant CLI (#3878)", () => {
     } finally {
       rmSync(join(project, "src", "made.ts"));
     }
+  });
+
+  describe("a chant.config.ts tsx compiles as CommonJS (#3897)", () => {
+    test("build reads the config's lexicons", () => {
+      const r = run(cjsProject, ["build", "src", "-o", "out/render.json"]);
+      expect(r.status, r.stderr).toBe(0);
+      const built = JSON.parse(readFileSync(join(cjsProject, "out", "render.json"), "utf-8")) as Record<string, { body?: { name?: string } }>;
+      expect(built.db?.body?.name).toBe("e2e-db");
+    });
+
+    test("build --sandbox reads the config's lexicons in the child", () => {
+      const r = run(cjsProject, ["build", "src", "--sandbox", "-o", "out/sandbox.json"]);
+      expect(r.status, r.stderr).toBe(0);
+      const built = JSON.parse(readFileSync(join(cjsProject, "out", "sandbox.json"), "utf-8")) as Record<string, { body?: { name?: string } }>;
+      expect(built.db?.body?.name).toBe("e2e-db");
+    });
+
+    test("graph --format ir finds the lexicon's entities", () => {
+      const r = run(cjsProject, ["graph", "src", "--format", "ir"]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).not.toMatch(/could not load the project's lexicons/);
+      const ir = JSON.parse(r.stdout) as { nodes: Array<Record<string, unknown>> };
+      expect(ir.nodes.length).toBeGreaterThan(0);
+    });
   });
 });

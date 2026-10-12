@@ -34,6 +34,7 @@ import { getProvenance } from "../../provenance";
 import { runLexiconPostSynthChecks } from "./build";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { ensureTypeScriptLoader } from "../../ts-loader";
+import { esModuleNamespace } from "../../module-interop";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
@@ -92,7 +93,7 @@ export async function loadPluginRules(
     let mod: Record<string, unknown>;
     try {
       ensureTypeScriptLoader();
-      mod = await import(resolved);
+      mod = esModuleNamespace(await import(resolved));
     } catch (err) {
       throw new Error(
         `Failed to load plugin "${pluginPath}": ${err instanceof Error ? err.message : String(err)}`,
@@ -595,7 +596,7 @@ async function runOpCheckDiagnostics(
   for (const filePath of opFiles) {
     try {
       ensureTypeScriptLoader();
-      const mod: unknown = await import(filePath);
+      const mod: unknown = esModuleNamespace(await import(filePath));
       const entity = (mod as { default?: unknown }).default;
       if (!entity || typeof entity !== "object") continue;
       const opConfig = (entity as { props?: unknown }).props as { name?: unknown; phases?: unknown } | undefined;

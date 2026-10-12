@@ -24,6 +24,7 @@ import { isAbsolute, join, resolve } from "path";
 import { pathToFileURL } from "url";
 import { isLexiconPlugin, type LexiconPlugin } from "../../lexicon";
 import { ensureTypeScriptLoader } from "../../ts-loader";
+import { esModuleNamespace } from "../../module-interop";
 
 export interface LoadedLexicon {
   /** The plugin, when the package exported one. */
@@ -78,7 +79,7 @@ export async function loadLexiconFromDir(dir: string): Promise<LoadedLexicon> {
   let mod: Record<string, unknown>;
   try {
     ensureTypeScriptLoader();
-    mod = (await import(pathToFileURL(entry).href)) as Record<string, unknown>;
+    mod = esModuleNamespace((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
   } catch (error) {
     return { entry, error: `import failed: ${error instanceof Error ? error.message : String(error)}` };
   }

@@ -26,6 +26,7 @@ import { z } from "zod";
 import { LockError, type Lineage } from "./lineage-lock";
 import { compareVersions, formatVersion, parseVersion, satisfies, validateRange, VersionRangeError, type Version } from "./lineage-version";
 import { ensureTypeScriptLoader } from "../ts-loader";
+import { esModuleNamespace } from "../module-interop";
 
 /** Where a template keeps its migrations, relative to the template's directory. */
 export const MIGRATIONS_DIR = ".chant/migrations";
@@ -283,7 +284,7 @@ export async function runMigration(m: LoadedMigration, opts: RunMigrationOptions
       writeFileSync(abs, data);
     }
     ensureTypeScriptLoader();
-    const mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
+    const mod = esModuleNamespace((await import(pathToFileURL(file).href)) as { default?: unknown });
     if (typeof mod.default !== "function") throw new MigrationError(`${migration.id}: ${body.module} has no default export function`);
     await (mod.default as (ctx: { dir: string }) => unknown)({ dir: opts.dir });
   } else {

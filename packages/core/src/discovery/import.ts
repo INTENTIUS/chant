@@ -1,5 +1,6 @@
 import { DiscoveryError } from "../errors";
 import { ensureTypeScriptLoader } from "../ts-loader";
+import { esModuleNamespace } from "../module-interop";
 
 /**
  * Modules whose evaluation threw, and the error each threw with (#2368).
@@ -59,7 +60,7 @@ export async function importModule(
 
   try {
     ensureTypeScriptLoader();
-    return await import(path);
+    return esModuleNamespace(await import(path));
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown import error";
