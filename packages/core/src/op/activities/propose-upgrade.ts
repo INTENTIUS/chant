@@ -27,6 +27,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { StagedUpgrade } from "../../workspace/lineage-upgrade";
 import { ghHostEnv } from "./gh-host";
+import { restPullRequestForge, upsertPullRequest } from "./forge-pull-request";
+import type { PrForge } from "../../pr-forge";
 
 const execFileAsync = promisify(execFile);
 
@@ -52,6 +54,11 @@ export interface ProposeWorkspaceUpgradeArgs {
   cwd?: string;
   /** Replaces the git and gh child processes. For tests. */
   _run?: CommandRunner;
+  /**
+   * The REST client the pull request is opened through, or null for `gh`.
+   * Default: one on a Forgejo or GitLab job, `gh` elsewhere (#3798). For tests.
+   */
+  _forge?: PrForge | null;
   /** Replaces build and lint in the worktree. For tests. */
   _runChant?: import("../../workspace/lineage-upgrade").ChantRunner;
 }
@@ -198,6 +205,12 @@ export async function proposeWorkspaceUpgrade(args: ProposeWorkspaceUpgradeArgs)
     if (!hasRemote) throw new Error(`proposeWorkspaceUpgrade: no remote "${remote}" to open a pull request on`);
 
     const text = body(staged, lines);
+    // `gh pr` speaks GraphQL, which Forgejo does not serve (#3798).
+    const forge = args._forge !== undefined ? args._forge : await restPullRequestForge(process.env, { cwd: staged.repo, remote });
+    if (forge) {
+      result.prUrl = (await upsertPullRequest(forge, { head: branch, base: base!, title, body: text })).pr.url;
+      return result;
+    }
     const existing = (await run("gh", ["pr", "list", "--head", branch, "--state", "open", "--json", "url", "--jq", ".[0].url // empty"], staged.repo)).trim();
     if (existing) {
       await run("gh", ["pr", "edit", existing, "--title", title, "--body", text], staged.repo);

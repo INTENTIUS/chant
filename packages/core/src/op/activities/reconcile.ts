@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { ForgeApiError, forgejoForge, githubForge, type ForgeFetch, type GithubShapedForge } from "../../pr-forge";
 import { ghHostEnv } from "./gh-host";
+import { restPullRequestForge } from "./forge-pull-request";
 
 const execAsync = promisify(exec);
 
@@ -1363,8 +1364,15 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
   await execAsync(`git add ${shellQuote(output)}`, { signal });
   await execAsync(`git commit -m ${shellQuote(title)}`, { signal });
   await execAsync(`git push -u origin ${shellQuote(branch)}`, { signal });
-  // `gh pr create` names no host, so on GitHub Enterprise Server or Forgejo
-  // it is told the job's own (#3780). See `./gh-host.ts`.
+  // `gh pr` speaks GraphQL, which Forgejo does not serve, and GitLab has no
+  // `gh`: a Forgejo or GitLab job opens the pull request over REST (#3798).
+  const forge = await restPullRequestForge(process.env, { fetch: (url, init) => globalThis.fetch(url, { ...init, ...(signal ? { signal } : {}) }) });
+  if (forge) {
+    const pr = await forge.openPullRequest({ head: branch, title, body: summary });
+    return { mode, branch, summary, entries, prUrl: pr.url ?? "" };
+  }
+  // `gh pr create` names no host, so on GitHub Enterprise Server it is told
+  // the job's own (#3780). See `./gh-host.ts`.
   const { stdout } = await execAsync(
     `gh pr create --title ${shellQuote(title)} --body ${shellQuote(summary)} --head ${shellQuote(branch)}`,
     { signal, env: await ghHostEnv(process.env) },

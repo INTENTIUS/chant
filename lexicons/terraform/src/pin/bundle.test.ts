@@ -46,6 +46,8 @@ describe("the pin bundle", () => {
       "lexicons/terraform/src/pin/source.ts",
       "lexicons/terraform/src/pin/waves.ts",
       "packages/core/src/components/layers.ts",
+      // The host a `gh` call goes to (#3798): node built-ins only.
+      "packages/core/src/op/activities/gh-host.ts",
     ]);
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
     expect(bytes).toBeLessThan(BUDGET_BYTES);

@@ -34,7 +34,7 @@ describe("the pr-forge bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual(["packages/core/src/pr-forge.ts"]);
-    // About 20 KB today.
+    // About 27 KB today.
     expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(32 * 1024);
   });
 });

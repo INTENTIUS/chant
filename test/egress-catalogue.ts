@@ -357,7 +357,7 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     file: "packages/core/src/op/activities/propose-upgrade.ts",
     phase: "upgrade",
     destination: "the forge that hosts the remote, through the GitHub CLI and its own credentials",
-    why: "`gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550).",
+    why: "`gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550). On a Forgejo or GitLab job the same calls go over REST through `pr-forge.ts` instead (#3798).",
   },
 ];
 
@@ -594,7 +594,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     primitives: ["fetch"],
     phase: "apply",
     destination: "the forge that hosts the pull request: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or a GitLab instance's API",
-    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). terragucci and SQL Yodeler import it from `@intentius/chant/pr-forge` for their own notes, statuses and tracking issues (#3759). Only those CI paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). terragucci and SQL Yodeler import it from `@intentius/chant/pr-forge` for their own notes, statuses and tracking issues (#3759). On a Forgejo or GitLab job, `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` find, open, edit and label their pull request through it, since `gh pr` speaks a GraphQL API Forgejo does not serve (#3798). Only those CI paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
   },
   {
     file: "packages/core/src/op/activities/reconcile.ts",
@@ -602,6 +602,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "the forge a reconcile finding is posted to: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
     why: "`reconcilePr`'s `comment` and `issue` finding modes keep one pull request comment, merge request note or issue (#2256, #2292, #3757): GitLab over its REST API here, GitHub and Forgejo through `pr-forge.ts`'s clients. Only an Op step in one of those modes reaches it.",
+  },
+  {
+    file: "packages/core/src/op/activities/forge-pull-request.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge a Forgejo or GitLab job runs on: a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
+    why: "Picks the `pr-forge.ts` client that `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` open their pull request through on Forgejo and GitLab, where `gh pr` cannot (#3798), and passes it the caller's `fetch`. GitHub, and a run outside CI, keep `gh`.",
   },
   {
     file: "packages/core/src/op/gate-resume.ts",

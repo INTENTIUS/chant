@@ -43,6 +43,7 @@ import { join, posix } from "node:path";
 import { promisify } from "node:util";
 import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import type { CommandRunner } from "@intentius/chant/op/activities/propose-upgrade";
+import { ghHostEnv } from "@intentius/chant/op/activities/gh-host";
 import { editPins, type PinCallResult, type PinEditResult, type PinRequest } from "./edit";
 import { checkPinRequest, moduleOf } from "./source";
 import { planPinWaves, restrictWaves, terragruntDependencies, type PinRoot, type PinWave } from "./waves";
@@ -133,7 +134,11 @@ export interface PinRolloutResult extends PinRequest {
   summary: string;
 }
 
-const defaultRun: CommandRunner = async (bin, args, cwd) => (await execFileAsync(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024 })).stdout;
+// `gh pr list/create` and `gh api repos/{owner}/{repo}/...` name no host, so
+// a `gh` call is told the job's forge or `origin`'s host (core's `ghHostEnv`,
+// #3780, #3798): a GitHub Enterprise Server checkout is not sent to github.com.
+const defaultRun: CommandRunner = async (bin, args, cwd) =>
+  (await execFileAsync(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024, ...(bin === "gh" ? { env: await ghHostEnv(process.env, cwd) } : {}) })).stdout;
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules"]);
 

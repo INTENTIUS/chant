@@ -742,3 +742,90 @@ describe("status states and author lists (#3834)", () => {
     expect(calls.at(-1)).toMatchObject({ method: "PATCH", url: "https://api.github.com/repos/acme/infra/issues/4" });
   });
 });
+
+describe("pull requests over REST (#3798)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+  const fjOpts = { ...gh, apiBase: "https://forge.example/api/v1", host: "forge.example" };
+  const gl = { apiBase: "https://gl/api/v4", project: "group/infra", token: "t" };
+
+  test("Forgejo opens a pull request into the default branch read from the repository", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v1/repos/acme/infra": { default_branch: "trunk" },
+      "POST /api/v1/repos/acme/infra/pulls": (c: Call) => ({ number: 9, html_url: "https://forge.example/acme/infra/pulls/9", title: (c.body as { title: string }).title, body: "b", head: { ref: "chant/x" }, base: { ref: "trunk" } }),
+    });
+    const pr = await forgejoForge({ ...fjOpts, fetch }).openPullRequest({ head: "chant/x", title: "t", body: "b" });
+    expect(pr).toEqual({ number: 9, url: "https://forge.example/acme/infra/pulls/9", title: "t", body: "b", head: "chant/x", base: "trunk" });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET https://forge.example/api/v1/repos/acme/infra", "POST https://forge.example/api/v1/repos/acme/infra/pulls"]);
+    expect(calls[1].body).toEqual({ title: "t", body: "b", head: "chant/x", base: "trunk" });
+    expect(calls[1].headers.Authorization).toBe("token t0k");
+  });
+
+  test("a draft is GitHub's draft field, Forgejo's WIP: and GitLab's Draft: prefix", async () => {
+    const g = fakeFetch({ "POST /repos/acme/infra/pulls": { number: 1 } });
+    await githubForge({ ...gh, fetch: g.fetch }).openPullRequest({ head: "h", base: "main", title: "t", body: "b", draft: true });
+    expect(g.calls[0].body).toEqual({ title: "t", body: "b", head: "h", base: "main", draft: true });
+    const f = fakeFetch({ "POST /api/v1/repos/acme/infra/pulls": { number: 1 } });
+    await forgejoForge({ ...fjOpts, fetch: f.fetch }).openPullRequest({ head: "h", base: "main", title: "t", body: "b", draft: true });
+    expect(f.calls[0].body).toEqual({ title: "WIP: t", body: "b", head: "h", base: "main" });
+    const l = fakeFetch({ "POST /api/v4/projects/group%2Finfra/merge_requests": { iid: 4, web_url: "https://gl/mr/4", source_branch: "h", target_branch: "main", title: "Draft: t", description: "b" } });
+    const mr = await gitlabForge({ ...gl, fetch: l.fetch }).openPullRequest({ head: "h", base: "main", title: "t", body: "b", draft: true });
+    expect(l.calls[0].body).toEqual({ source_branch: "h", target_branch: "main", title: "Draft: t", description: "b" });
+    expect(mr).toEqual({ number: 4, url: "https://gl/mr/4", title: "Draft: t", body: "b", head: "h", base: "main" });
+  });
+
+  test("GitLab reads the default branch off the project", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/group%2Finfra": { default_branch: "main" },
+      "POST /api/v4/projects/group%2Finfra/merge_requests": { iid: 2 },
+    });
+    await gitlabForge({ ...gl, fetch }).openPullRequest({ head: "h", title: "t", body: "b" });
+    expect((calls[1].body as { target_branch: string }).target_branch).toBe("main");
+  });
+
+  test("findPullRequest takes the oldest open one from this repository, not a fork's", async () => {
+    const f = fakeFetch({
+      "GET /api/v1/repos/acme/infra/pulls": [
+        { number: 12, title: "fork", body: "", head: { ref: "chant/x", repo: { full_name: "mallory/infra" } } },
+        { number: 11, title: "newer", body: "", head: { ref: "chant/x", repo: { full_name: "acme/infra" } } },
+        { number: 10, title: "mine", body: "b", head: { ref: "chant/x", repo: { full_name: "acme/infra" } }, base: { ref: "main" }, html_url: "https://forge.example/acme/infra/pulls/10" },
+        { number: 3, title: "other", body: "", head: { ref: "other", repo: { full_name: "acme/infra" } } },
+      ],
+    });
+    const forge = forgejoForge({ ...fjOpts, fetch: f.fetch });
+    expect(await forge.findPullRequest("chant/x")).toEqual({ number: 10, title: "mine", body: "b", head: "chant/x", base: "main", url: "https://forge.example/acme/infra/pulls/10" });
+    expect(f.calls[0].url).toBe("https://forge.example/api/v1/repos/acme/infra/pulls?state=open&limit=50&page=1");
+    expect(await forge.findPullRequest("none")).toBeUndefined();
+
+    const g = fakeFetch({ "GET /repos/acme/infra/pulls": [] });
+    expect(await githubForge({ ...gh, fetch: g.fetch }).findPullRequest("chant/x")).toBeUndefined();
+    expect(g.calls[0].url).toBe("https://api.github.com/repos/acme/infra/pulls?state=open&head=acme%3Achant%2Fx&per_page=100&page=1");
+
+    const l = fakeFetch({
+      "GET /api/v4/projects/group%2Finfra/merge_requests": [
+        { iid: 8, source_branch: "chant/x", project_id: 1, source_project_id: 2, title: "fork", description: "" },
+        { iid: 7, source_branch: "chant/x", project_id: 1, source_project_id: 1, title: "mine", description: "d", target_branch: "main" },
+      ],
+    });
+    expect(await gitlabForge({ ...gl, fetch: l.fetch }).findPullRequest("chant/x")).toEqual({ number: 7, title: "mine", body: "d", head: "chant/x", base: "main" });
+    expect(l.calls[0].url).toBe("https://gl/api/v4/projects/group%2Finfra/merge_requests?state=opened&source_branch=chant%2Fx&per_page=100&page=1");
+  });
+
+  test("editPullRequest and addLabels on each forge", async () => {
+    const f = fakeFetch({ "PATCH /api/v1/repos/acme/infra/pulls/10": { number: 10, title: "t2" }, "POST /api/v1/repos/acme/infra/issues/10/labels": [] });
+    const forge = forgejoForge({ ...fjOpts, fetch: f.fetch });
+    expect((await forge.editPullRequest(10, { title: "t2", body: "b2" }))?.title).toBe("t2");
+    await forge.addLabels(10, ["minor"]);
+    await forge.addLabels(10, []);
+    expect(f.calls.map((c) => [c.method, c.body])).toEqual([["PATCH", { title: "t2", body: "b2" }], ["POST", { labels: ["minor"] }]]);
+    const l = fakeFetch({ "PUT /api/v4/projects/group%2Finfra/merge_requests/7": { iid: 7 } });
+    const g = gitlabForge({ ...gl, fetch: l.fetch });
+    await g.editPullRequest(7, { body: "d" });
+    await g.addLabels(7, ["minor", "breaking"]);
+    expect(l.calls.map((c) => c.body)).toEqual([{ description: "d" }, { add_labels: "minor,breaking" }]);
+  });
+
+  test("a repository with no default branch is refused by name", async () => {
+    const { fetch } = fakeFetch({ "GET /api/v1/repos/acme/infra": {} });
+    await expect(forgejoForge({ ...fjOpts, fetch }).openPullRequest({ head: "h", title: "t", body: "b" })).rejects.toThrow(/no default branch.*pass base/);
+  });
+});
