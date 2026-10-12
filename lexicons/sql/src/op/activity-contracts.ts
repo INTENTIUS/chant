@@ -39,12 +39,16 @@ const rebuildArgs = z.strictObject({
 });
 
 const state = z.enum(["rebuild", "swapped", "done"]);
+
+/** A plan step's structured changes and its change-set part (#3767), as `../change-set.ts` makes it. */
+const classified = z.array(z.object({ rule: z.string(), class: z.string(), field: z.string() }).passthrough());
+const part = z.object({ member: z.object({ member: z.string(), planner: z.literal("sql"), planDigest: z.string().nullable() }).passthrough(), entries: z.array(z.unknown()) });
 const tableEntity = { entities: ["table"] };
 
 export const clickhouseRebuildPlanContract = activityContract(
   "clickhouseRebuildPlan",
   rebuildArgs,
-  z.object({ state, table: z.string(), planDigest: z.string().optional(), changes: z.array(z.string()), summary: z.string() }),
+  z.object({ state, table: z.string(), planDigest: z.string().optional(), changes: z.array(z.string()), classified, part, summary: z.string() }),
   tableEntity,
 );
 
@@ -136,7 +140,7 @@ const migrationState = z.enum(["migrate", "switched", "done"]);
 export const postgresMigrationPlanContract = activityContract(
   "postgresMigrationPlan",
   migrationArgs,
-  z.object({ state: migrationState, migration: z.string(), change: z.enum(["rename", "type"]), planDigest: z.string().optional(), changes: z.array(z.string()), summary: z.string() }),
+  z.object({ state: migrationState, migration: z.string(), change: z.enum(["rename", "type"]), planDigest: z.string().optional(), changes: z.array(z.string()), classified, part, summary: z.string() }),
   tableEntity,
 );
 

@@ -39,6 +39,9 @@ import {
 import { DEFAULT_REPLICATION_LAG } from "../../postgres/migrate/replication";
 import type { PostgresMigrationArgs } from "../../postgres/migrate/op";
 import { buildMajor } from "./postgres-apply";
+import { statementChange, type StatementChange } from "../../core/statements";
+import { postgresMigrationPart } from "../../change-set";
+import type { ChangeSetPart } from "@intentius/chant/change-set";
 
 export type { PostgresMigrationArgs } from "../../postgres/migrate/op";
 
@@ -137,6 +140,10 @@ export interface MigrationPlanResult {
   planDigest?: string;
   /** Each classified change, as `<rule> <field>: <before> -> <after>`. */
   changes: string[];
+  /** The same changes, structured. */
+  classified: StatementChange[];
+  /** The plan as a change-set part (#3767), member the migration (`schema.table.column`): what `composeChangeSet` takes, and a gate's Cedar `context.plan`. */
+  part: ChangeSetPart;
   summary: string;
 }
 
@@ -164,7 +171,10 @@ export async function postgresMigrationPlan(args: PostgresMigrationArgs, signal?
           : `${n.key} holds its declaration; nothing to migrate`;
     run.log(`-- ${summary}`);
     for (const c of changes) run.log(`--   ${c}`);
-    return { state: o.state, migration: n.key, change: n.change, ...(o.state === "migrate" ? { planDigest: migrationPlanDigest(o) } : {}), changes, summary };
+    const classified = o.changes.map(statementChange);
+    const result = { state: o.state, migration: n.key, change: n.change, ...(o.state === "migrate" ? { planDigest: migrationPlanDigest(o) } : {}), changes, classified };
+    const part = postgresMigrationPart({ member: n.key, plan: result, ...(args.environment !== undefined ? { environment: args.environment } : {}) });
+    return { ...result, part, summary };
   });
 }
 
