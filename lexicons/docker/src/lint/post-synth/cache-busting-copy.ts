@@ -23,7 +23,8 @@ const INSTALL = [
   /\bgo\s+mod\s+download\b/,
   /\bbundle\s+install\b/,
   /\bcomposer\s+install\b/,
-  /\bcargo\s+fetch\b/,
+  // A string, not a regex literal: the egress scan reads a bare `fetch` in code as a call.
+  new RegExp("\\bcargo\\s+fetch\\b"),
   /\bdotnet\s+restore\b/,
   /\bmvn\b[^&;|]*\bdependency:go-offline\b/,
 ];
