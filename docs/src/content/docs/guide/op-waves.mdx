@@ -397,6 +397,58 @@ With `"resume": { "schedule": "*/10 * * * *" }` in the spec, the rendered pipeli
 | GitLab | `<name>-resume` in the same file, run only in scheduled pipelines. Create a pipeline schedule with the cron, and set `CHANT_FORGE_TOKEN` to a project access token as in the table above |
 | Forgejo | `<name>-resume.yml`, on the cron, with the `CHANT_FORGE_TOKEN` secret |
 
+### A spent approval and a stopped apply
+
+Under [`approvals.spend`](#spend-an-approval), an approval a wave already applied under is spent. `chant run resume` reads `_gates/<op>/applied.jsonl` beside the ledger and resumes nothing for a pending fact whose answering approval is spent: that apply ran, and a resumed job would only wait again. Its report says `spent` and names the apply ([#3858](https://github.com/INTENTIUS/chant/issues/3858)).
+
+An apply under an approval can also stop half way, when its job is killed. A wave that applies one resource at a time can record, before it applies, a line in the same file that names the approval and carries the run applying in `resume` (the locator a pending fact carries, from `resolveGateRunLocator`). When the apply ends, it writes a `finished` line:
+
+```json
+{"version":1,"kind":"changes","op":"tf-apply","gate":"wave-2","planDigest":"...","approvedAt":"...","approvedBy":"alice","timestamp":"2026-10-01T02:00:01Z","resume":{"forge":"github","api":"https://api.github.com","repo":"acme/infra","run":"57","attempt":1}}
+{"version":1,"kind":"finished","op":"tf-apply","gate":"wave-2","planDigest":"...","applied":"2026-10-01T02:00:01Z","result":"applied","timestamp":"2026-10-01T02:09:00Z"}
+```
+
+A gate whose newest applied line carries a run, with no `finished` line for it and no pending fact recorded since, is a stopped apply. `chant run resume` asks the forge about that run and starts it again once it is gone (finished without success, and not already re-run), so the wave applies the rest under the same approval. A run that still goes is left alone. chant's own wave jobs write no run on their `applied` line, so this applies only to a product that writes one and resumes under the approval it applied under.
+
+### Resume in the product's own job
+
+A product whose resume job applies the waves itself, rather than re-running the job that waited, takes chant's decision without the restart. `--dry-run --json` starts nothing and prints one report per gate:
+
+```bash
+chant run resume --op tf-apply --dry-run --json
+```
+
+```json
+{
+  "dryRun": true,
+  "reports": [
+    { "op": "tf-apply", "gate": "wave-1", "source": "pending", "status": "spent", "reason": "spent", "resumable": false,
+      "spent": { "appliedAt": "2026-10-01T02:00:00Z", "approvedAt": "2026-10-01T01:00:00Z" }, "message": "..." },
+    { "op": "tf-apply", "gate": "wave-2", "source": "stopped", "status": "would-resume", "reason": "stopped", "resumable": true,
+      "planDigest": "...", "approvedBy": "alice", "run": { "forge": "github", "run": "57" },
+      "stopped": { "appliedAt": "2026-10-01T02:00:01Z", "approvedAt": "2026-10-01T01:00:00Z", "kind": "changes", "runGone": true }, "message": "..." }
+  ]
+}
+```
+
+`resumable` is the decision: an approval or a passing answer stands and no wave applied under it (`reason` `approved` or `answered`), or an apply stopped and its run is gone (`stopped`). The other reasons are `not-approved` and `spent`. `source` says whether the report is about a standing pending fact or a stopped apply. A dry run reads a waiting job's run not at all, and a stopped apply's run with a token that can read the forge's runs (`actions: read` on GitHub); without one, the report says `no-token` and is not resumable, and the command still exits 0.
+
+A product that bundles chant's decision rather than running the bin calls `planGateResumes` from `@intentius/chant/op/gate-resume-plan`, which bundles without the git, gate or workspace code. It decides from the ledger alone, so a stopped apply comes back `resumable` and the caller checks that its run is gone:
+
+```typescript
+import { parseAppliedGateFile } from "@intentius/chant/lifecycle/gate-applied";
+import { planGateResumes } from "@intentius/chant/op/gate-resume-plan";
+
+const { applied, finished } = parseAppliedGateFile(appliedText);
+for (const c of planGateResumes({ op: "tf-apply", pending, resolutions, applied, finished, now: new Date().toISOString() })) {
+  if (c.resumable) {
+    // c.source is "pending" or "stopped"; c.gate, c.planDigest and c.run say what to apply and where it ran
+  }
+}
+```
+
+A fact whose gate has an `approval` block (a quorum or a policy) needs chant's tally: pass `answering: resolutionAnswering` from `@intentius/chant/op/gate-resume`, as `chant run resume` does. To ask whether a stopped apply's run is gone without starting it, call `resumeGateRun(c.run, { token, dryRun: true })` from `@intentius/chant/gate-resume-run`: it reads the run as a resume would and returns `would-resume` where the run is gone, or `skipped` with the reason.
+
 ## Which approvals count
 
 A wave's `approval` decides which approvals of its digest let it apply. Every mode binds the digest, so an approval of other plans never counts.

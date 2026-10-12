@@ -47,13 +47,21 @@ export { isGateRunLocator, resolveGateRunLocator, type GateRunLocator } from "./
 /** What {@link resumeGateRun} did. */
 export type GateResumeOutcome =
   | { status: "resumed"; forge: ForgeKind; how: string; url?: string }
-  | { status: "skipped"; forge: ForgeKind; reason: string; url?: string };
+  | { status: "skipped"; forge: ForgeKind; reason: string; url?: string }
+  /** Under `dryRun` (#3858): the run is gone and would be started again; nothing was started. */
+  | { status: "would-resume"; forge: ForgeKind; how: string; url?: string };
 
 export interface ResumeGateRunOptions {
   token: string;
   /** The approval's time. A Forgejo run of the workflow created after it means the run was already resumed. */
   since?: string;
   fetch?: ForgeFetch;
+  /**
+   * Read the run as a resume would, and start nothing (#3858): say
+   * `would-resume` where it would start it. The calls are reads, so a token
+   * with read access to the forge's runs is enough.
+   */
+  dryRun?: boolean;
 }
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, "");
@@ -88,6 +96,7 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
   const fetchImpl = opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch);
   const url = loc.url ? { url: loc.url } : {};
   const skip = (reason: string): GateResumeOutcome => ({ status: "skipped", forge: loc.forge, reason, ...url });
+  const wouldResume = (how: string): GateResumeOutcome => ({ status: "would-resume", forge: loc.forge, how: `would ${how}`, ...url });
 
   if (loc.forge === "github") {
     const call = client(loc.api, { Authorization: `Bearer ${opts.token}`, Accept: "application/vnd.github+json" }, fetchImpl);
@@ -100,6 +109,7 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
       return skip(`run ${loc.run} was already re-run (attempt ${attempt}; attempt ${loc.attempt} waited)`);
     }
     if (run.conclusion === "success") return skip(`run ${loc.run} succeeded`);
+    if (opts.dryRun) return wouldResume(`re-run the failed jobs of run ${loc.run}`);
     await call("POST", `${path}/rerun-failed-jobs`, {});
     return { status: "resumed", forge: "github", how: `re-ran the failed jobs of run ${loc.run}`, ...url };
   }
@@ -121,6 +131,7 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
         return skip(`job ${loc.job} (${name}) was already retried as job ${String(newest.id)}`);
       }
     }
+    if (opts.dryRun) return wouldResume(`retry job ${loc.job}`);
     const retried = await call("POST", `${project}/jobs/${loc.job}/retry`);
     const id = isObject(retried) && retried.id !== undefined ? ` as job ${String(retried.id)}` : "";
     return { status: "resumed", forge: "gitlab", how: `retried job ${loc.job}${id}`, ...url };
@@ -144,6 +155,7 @@ export async function resumeGateRun(loc: GateRunLocator, opts: ResumeGateRunOpti
       (since === undefined || (typeof r.created === "string" && new Date(r.created).getTime() >= since)),
   );
   if (isObject(later)) return skip(`run ${String(later.id)} of ${loc.workflow} started after the approval`);
+  if (opts.dryRun) return wouldResume(`dispatch ${loc.workflow} on ${loc.ref}`);
   await call("POST", `${repo}/actions/workflows/${encodeURIComponent(loc.workflow!)}/dispatches`, { ref: loc.ref });
   return { status: "resumed", forge: "forgejo", how: `dispatched ${loc.workflow} on ${loc.ref}`, ...url };
 }

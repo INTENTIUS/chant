@@ -301,7 +301,9 @@ describe("a wave gate that asks a decision point (#3836)", () => {
     expect(await resumeStanding(fact, [], { questions: new Map([[id, yes]]), dryRun: true })).toMatchObject({
       op: "tf-apply",
       gate: "tf-apply-wave-1",
-      status: "skipped",
+      status: "would-resume",
+      resumable: true,
+      reason: "answered",
       approvedBy: "alice",
       message: expect.stringContaining("would resume github run 4242"),
     });

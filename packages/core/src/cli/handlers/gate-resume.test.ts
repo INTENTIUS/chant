@@ -2,7 +2,8 @@ import { describe, expect, test, vi } from "vitest";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
 import type { ForgeFetch } from "../../pr-forge";
 import { parseArgs } from "../main";
-import { resumeStanding, resumeWaitingGates } from "./gate-resume";
+import type { GateResumeCandidate } from "../../op/gate-resume-plan";
+import { resumeCandidate, resumeStanding, resumeWaitingGates } from "./gate-resume";
 
 // The ledgers `resumeWaitingGates` reads, without a `chant/lifecycle` branch.
 const ledgers = vi.hoisted(() => new Map<string, { resolutions: unknown[]; pending: unknown[]; malformed: number }>());
@@ -13,6 +14,8 @@ vi.mock("../../lifecycle/gate-ledger", async (importOriginal) => ({
 vi.mock("../../lifecycle/git", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lifecycle/git")>()),
   listFilesInDir: async () => [...ledgers.keys()].map((op) => `${op}.jsonl`),
+  // No `_gates/<op>/applied.jsonl` (#3858).
+  readBlobFromPath: async () => null,
 }));
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -58,6 +61,87 @@ describe("resumeStanding (#3683)", () => {
     expect(parseArgs(["approve", "migrations", "migrations-wave-2", "--resume"]).resumeRun).toBe(true);
     expect(parseArgs(["approve", "migrations", "g", "--resume", "--sign"])).toMatchObject({ resumeRun: true, sign: true });
     expect(parseArgs(["components", "pr-apply", "--resume", "attempt.json"]).resume).toBe("attempt.json");
+  });
+
+  test("dry run: a waiting job would resume without a forge call", async () => {
+    const fetch: ForgeFetch = async () => {
+      throw new Error("no call expected");
+    };
+    expect(await resumeStanding(standing, [approval], { env: {}, fetch, dryRun: true })).toMatchObject({
+      status: "would-resume",
+      resumable: true,
+      reason: "approved",
+      source: "pending",
+      planDigest: DIGEST,
+      run: { run: "42" },
+    });
+  });
+
+  test("an approval a wave already applied under is spent: no call, in a dry run or not (#3858)", async () => {
+    const fetch: ForgeFetch = async () => {
+      throw new Error("no call expected");
+    };
+    const applied = [{ version: 1 as const, kind: "applied" as const, op: "migrations", gate: "migrations-wave-2", planDigest: DIGEST, approvedAt: approval.timestamp, approvedBy: "alice", timestamp: "2026-10-01T02:00:00Z" }];
+    for (const dryRun of [true, false]) {
+      expect(await resumeStanding(standing, [approval], { env: { GITHUB_TOKEN: "t" }, fetch, dryRun, applied })).toMatchObject({
+        status: "spent",
+        resumable: false,
+        reason: "spent",
+        spent: { appliedAt: "2026-10-01T02:00:00Z" },
+      });
+    }
+  });
+});
+
+describe("a stopped apply (#3858)", () => {
+  const stopped: GateResumeCandidate = {
+    source: "stopped",
+    op: "tf-apply",
+    gate: "wave-2",
+    planDigest: DIGEST,
+    resumable: true,
+    reason: "stopped",
+    message: "the apply stopped",
+    approvedBy: "alice",
+    approvedAt: "2026-10-01T01:00:00Z",
+    run: { forge: "github", api: "https://api.github.com", repo: "acme/infra", run: "57", attempt: 1 },
+    stopped: { appliedAt: "2026-10-01T02:00:00Z", approvedAt: "2026-10-01T01:00:00Z", kind: "changes" },
+  };
+  const forge = (run: Record<string, unknown>) => {
+    const calls: string[] = [];
+    const fetch: ForgeFetch = async (url, init) => {
+      calls.push(`${init.method} ${new URL(url).pathname}`);
+      return { ok: true, status: 200, text: async () => (init.method === "GET" ? JSON.stringify(run) : "") };
+    };
+    return { calls, fetch };
+  };
+
+  test("its run is gone: a dry run says it would resume and starts nothing; a real run re-runs it", async () => {
+    const gone = forge({ status: "completed", conclusion: "cancelled", run_attempt: 1 });
+    expect(await resumeCandidate(stopped, { env: { GITHUB_TOKEN: "t" }, fetch: gone.fetch, dryRun: true })).toMatchObject({
+      status: "would-resume",
+      resumable: true,
+      stopped: { runGone: true },
+    });
+    expect(gone.calls).toEqual(["GET /repos/acme/infra/actions/runs/57"]);
+    expect(await resumeCandidate(stopped, { env: { GITHUB_TOKEN: "t" }, fetch: gone.fetch })).toMatchObject({ status: "resumed", resumable: true });
+    expect(gone.calls.at(-1)).toBe("POST /repos/acme/infra/actions/runs/57/rerun-failed-jobs");
+  });
+
+  test("its run still runs: left alone, not resumable", async () => {
+    const live = forge({ status: "in_progress", run_attempt: 1 });
+    expect(await resumeCandidate(stopped, { env: { GITHUB_TOKEN: "t" }, fetch: live.fetch, dryRun: true })).toMatchObject({
+      status: "skipped",
+      resumable: false,
+      stopped: { runGone: false },
+    });
+    expect(live.calls).toEqual(["GET /repos/acme/infra/actions/runs/57"]);
+  });
+
+  test("no token: a dry run cannot tell whether the run is gone, and says so", async () => {
+    const report = await resumeCandidate(stopped, { env: {}, dryRun: true });
+    expect(report).toMatchObject({ status: "no-token", resumable: false, reason: "stopped" });
+    expect(report.stopped?.runGone).toBeUndefined();
   });
 });
 

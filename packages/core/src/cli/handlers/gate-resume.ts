@@ -10,51 +10,71 @@
  * question has an answer that passes the gate (`pointGateResumable`, #3835),
  * and `chant workspace points answer --resume` resumes the job right after
  * the answer.
+ *
+ * What to resume is decided from the ledger by `planGateResumes`
+ * (`../../op/gate-resume-plan.ts`, #3858): an approval a wave already applied
+ * under is spent and resumes nothing, and an apply under an approval that
+ * stopped (an applied line with a run locator and no finished line) resumes
+ * once the forge says its run is gone.
  */
 
 import {
   GATES_DIR,
-  isPendingGateExpired,
   readGateLedger,
   type GateResolutionRecord,
   type PendingGateRecord,
 } from "../../lifecycle/gate-ledger";
-import { listFilesInDir, pushLifecycleStatus, requireLifecycleLedger } from "../../lifecycle/git";
+import { appliedGatePath, parseAppliedGateFile, type AppliedGateLine, type FinishedGateRecord } from "../../lifecycle/gate-applied";
+import { listFilesInDir, pushLifecycleStatus, readBlobFromPath, requireLifecycleLedger } from "../../lifecycle/git";
 import { parseGateSubject } from "../../op/gate-point";
 import {
-  isGateRunLocator,
   resolutionAnswering,
   resumeGateRun,
   resumeTokenFromEnv,
   type GateResumeOutcome,
 } from "../../op/gate-resume";
-import { pointGateResumable, type PointQuestionState } from "../../point-decision";
+import { planGateResumes, type GateResumeCandidate, type GateResumeReason } from "../../op/gate-resume-plan";
+import type { GateRunLocator } from "../../op/gate-run-locator";
+import type { PointQuestionState } from "../../point-decision";
 import type { ForgeFetch } from "../../pr-forge";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
-/** One waiting gate and what resuming it did. */
+/**
+ * One gate a resume looked at and what it did. With `--json`, `chant run
+ * resume` prints these as `{ reports }`; under `--dry-run` it starts nothing,
+ * so a product that resumes in its own job reads `resumable` and `reason`
+ * (#3858).
+ */
 export interface GateResumeReport {
   op: string;
   gate: string;
   environment?: string;
-  /** `resumed` and `skipped` come from the forge; the rest are decided before any call. */
-  status: GateResumeOutcome["status"] | "not-approved" | "no-job" | "no-token" | "failed";
+  /** A standing pending fact, or an apply under an approval that stopped (#3858). */
+  source: GateResumeCandidate["source"];
+  /**
+   * What happened. `resumed`, `skipped` and `would-resume` (`--dry-run`) come
+   * from the forge; the rest are decided before any call.
+   */
+  status: GateResumeOutcome["status"] | "not-approved" | "spent" | "no-job" | "no-token" | "failed";
+  /** Why, from the ledger: `approved`, `answered`, `not-approved`, `spent` or `stopped`. */
+  reason: GateResumeReason;
+  /**
+   * Whether the gate's job should start again: an approval or a passing
+   * answer stands and is not spent, or an apply stopped and the run that
+   * applied is gone. A product that applies in its own job acts on these.
+   */
+  resumable: boolean;
   message: string;
+  planDigest?: string;
   approvedBy?: string;
+  approvedAt?: string;
   url?: string;
-}
-
-/** The newest pending fact per gate and environment: the facts a run still waits on. */
-function standingFacts(pending: readonly PendingGateRecord[], gate?: string): PendingGateRecord[] {
-  const newest = new Map<string, PendingGateRecord>();
-  for (const p of pending) {
-    if (gate !== undefined && p.gate !== gate) continue;
-    const key = `${p.gate}\u0000${p.environment ?? ""}`;
-    const prior = newest.get(key);
-    if (!prior || new Date(p.timestamp).getTime() >= new Date(prior.timestamp).getTime()) newest.set(key, p);
-  }
-  return [...newest.values()];
+  /** The job a resume starts again. */
+  run?: GateRunLocator;
+  spent?: GateResumeCandidate["spent"];
+  /** `runGone` is what the forge said about the run that applied; absent when it was not asked. */
+  stopped?: GateResumeCandidate["stopped"] & { runGone?: boolean };
 }
 
 export interface ResumeGateOptions {
@@ -68,6 +88,9 @@ export interface ResumeGateOptions {
    * when a fact needs them and none are given.
    */
   questions?: ReadonlyMap<string, PointQuestionState>;
+  /** The lines of `_gates/<op>/applied.jsonl` (#3858). Read from `chant/lifecycle` by {@link resumeOpGates} when not given. */
+  applied?: readonly AppliedGateLine[];
+  finished?: readonly FinishedGateRecord[];
 }
 
 /** Every question the workspace at `cwd` lists, by id, the lifecycle ledger's included. Empty when the workspace can't be read. */
@@ -78,64 +101,117 @@ export async function workspaceQuestions(cwd: string): Promise<Map<string, Point
   return new Map(doc.questions.map((q) => [q.id, { id: q.id, state: q.state, answer: q.answer, answeredBy: q.answeredBy, answeredOn: q.answeredOn }]));
 }
 
-/** Resume the job behind one standing pending fact, when an approval answers it. */
+/** Resume the job behind one standing pending fact, when an approval answers it and is not spent. */
 export async function resumeStanding(
   standing: PendingGateRecord,
   resolutions: readonly GateResolutionRecord[],
   opts: ResumeGateOptions = {},
   pending: readonly PendingGateRecord[] = [standing],
 ): Promise<GateResumeReport> {
-  const base = {
+  const [candidate] = planGateResumes({
     op: standing.op,
-    gate: standing.gate,
-    ...(standing.environment !== undefined ? { environment: standing.environment } : {}),
-    ...(standing.resume?.url ? { url: standing.resume.url } : {}),
+    pending: [standing],
+    resolutions,
+    applied: opts.applied ?? [],
+    now: standing.timestamp,
+    ...(opts.questions ? { questions: opts.questions } : {}),
+    answering: (r, s) => resolutionAnswering(r, s, pending),
+  });
+  return resumeCandidate(candidate!, opts);
+}
+
+/**
+ * Act on one candidate {@link planGateResumes} decided: start its job again
+ * through the forge, or under `dryRun` ask the forge whether it would. A
+ * stopped apply is resumed only once the forge says its run is gone.
+ */
+export async function resumeCandidate(c: GateResumeCandidate, opts: ResumeGateOptions = {}): Promise<GateResumeReport> {
+  const base: GateResumeReport = {
+    op: c.op,
+    gate: c.gate,
+    ...(c.environment !== undefined ? { environment: c.environment } : {}),
+    source: c.source,
+    status: "not-approved",
+    reason: c.reason,
+    resumable: c.resumable,
+    message: c.message,
+    ...(c.planDigest !== undefined ? { planDigest: c.planDigest } : {}),
+    ...(c.approvedBy !== undefined ? { approvedBy: c.approvedBy } : {}),
+    ...(c.approvedAt !== undefined ? { approvedAt: c.approvedAt } : {}),
+    ...(c.run?.url ? { url: c.run.url } : {}),
+    ...(c.run ? { run: c.run } : {}),
+    ...(c.spent ? { spent: c.spent } : {}),
+    ...(c.stopped ? { stopped: { ...c.stopped } } : {}),
   };
-  let approvedBy: { approvedBy: string };
-  let since: string | undefined;
-  if (standing.answer) {
-    // A gate that asks a decision point waits on its question (#3835).
-    const check = pointGateResumable(standing, opts.questions?.get(standing.answer.id));
-    if (!check.resumable) return { ...base, status: "not-approved", message: check.message };
-    approvedBy = { approvedBy: check.answeredBy };
-    since = check.answeredOn ?? undefined;
-  } else {
-    const answer = resolutionAnswering(resolutions, standing, pending);
-    if (!answer) return { ...base, status: "not-approved", message: "no approval answers it yet" };
-    approvedBy = { approvedBy: answer.resolvedBy };
-    since = answer.timestamp;
+  if (c.reason === "spent") return { ...base, status: "spent" };
+  if (!c.resumable) return base;
+  if (!c.run) {
+    return { ...base, status: "no-job", message: "its pending fact names no CI job (it was recorded outside CI); run it again by hand" };
   }
-  if (!isGateRunLocator(standing.resume)) {
-    return { ...base, ...approvedBy, status: "no-job", message: "its pending fact names no CI job (it was recorded outside CI); run it again by hand" };
-  }
-  const loc = standing.resume;
-  if (opts.dryRun) return { ...base, ...approvedBy, status: "skipped", message: `would resume ${loc.forge} run ${loc.run} (--dry-run)` };
-  const token = resumeTokenFromEnv(loc.forge, opts.env ?? process.env);
+  const stopped = c.source === "stopped";
+  const token = resumeTokenFromEnv(c.run.forge, opts.env ?? process.env);
+  // A waiting job needs no forge call to say it would resume; a stopped apply needs one to know its run is gone.
+  if (opts.dryRun && !stopped) return { ...base, status: "would-resume", message: `would resume ${c.run.forge} run ${c.run.run}; ${c.message}` };
   if (!token) {
+    const need = `${c.run.forge === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"}`;
     return {
       ...base,
-      ...approvedBy,
+      ...(stopped ? { resumable: false } : {}),
       status: "no-token",
-      message: `no token to call ${loc.forge} with: set CHANT_FORGE_TOKEN (or ${loc.forge === "gitlab" ? "GITLAB_TOKEN" : "GITHUB_TOKEN"})`,
+      message: stopped
+        ? `${c.message}; whether run ${c.run.run} is gone needs a token to read ${c.run.forge} with: set CHANT_FORGE_TOKEN (or ${need})`
+        : `no token to call ${c.run.forge} with: set CHANT_FORGE_TOKEN (or ${need})`,
     };
   }
   try {
-    const outcome = await resumeGateRun(loc, { token, ...(since ? { since } : {}), ...(opts.fetch ? { fetch: opts.fetch } : {}) });
-    return { ...base, ...approvedBy, status: outcome.status, message: outcome.status === "resumed" ? outcome.how : outcome.reason };
+    const since = stopped ? c.stopped!.appliedAt : c.approvedAt;
+    const outcome = await resumeGateRun(c.run, { token, ...(since ? { since } : {}), ...(opts.fetch ? { fetch: opts.fetch } : {}), ...(opts.dryRun ? { dryRun: true } : {}) });
+    const message = outcome.status === "skipped" ? outcome.reason : outcome.how;
+    if (!stopped) return { ...base, status: outcome.status, message };
+    const gone = outcome.status !== "skipped";
+    return {
+      ...base,
+      status: outcome.status,
+      resumable: gone,
+      message: gone ? `the apply that began at ${c.stopped!.appliedAt} stopped and its run is gone: ${message}` : `the apply that began at ${c.stopped!.appliedAt} is left alone: ${message}`,
+      stopped: { ...c.stopped!, runGone: gone },
+    };
   } catch (err) {
-    return { ...base, ...approvedBy, status: "failed", message: err instanceof Error ? err.message : String(err) };
+    return { ...base, status: "failed", message: err instanceof Error ? err.message : String(err) };
   }
 }
 
-/** Resume every job waiting on `op`'s gates (or one gate) whose approval arrived. */
+/** The `applied` and `finished` lines of `_gates/<op>/applied.jsonl` on `chant/lifecycle`. */
+export async function readAppliedGateFile(op: string): Promise<{ applied: AppliedGateLine[]; finished: FinishedGateRecord[] }> {
+  const { dir, file } = appliedGatePath(op);
+  const text = await readBlobFromPath(dir, file);
+  return text ? parseAppliedGateFile(text) : { applied: [], finished: [] };
+}
+
+/**
+ * Resume every job waiting on `op`'s gates (or one gate) whose approval
+ * arrived and is not spent, and every apply under an approval that stopped
+ * once its run is gone (#3858).
+ */
 export async function resumeOpGates(op: string, gate: string | undefined, opts: ResumeGateOptions = {}): Promise<GateResumeReport[]> {
   const ledger = await readGateLedger(op);
+  const lines = opts.applied ? { applied: opts.applied, finished: opts.finished ?? [] } : await readAppliedGateFile(op);
   const now = opts.now ?? new Date().toISOString();
-  const reports: GateResumeReport[] = [];
-  const standing = standingFacts(ledger.pending, gate).filter((p) => !isPendingGateExpired(p, now));
   // Read the workspace's questions once, and only when a fact waits on one (#3835).
-  const questions = opts.questions ?? (standing.some((p) => p.answer) ? await workspaceQuestions(process.cwd()) : undefined);
-  for (const p of standing) reports.push(await resumeStanding(p, ledger.resolutions, { ...opts, ...(questions ? { questions } : {}) }, ledger.pending));
+  const questions = opts.questions ?? (ledger.pending.some((p) => p.answer) ? await workspaceQuestions(process.cwd()) : undefined);
+  const candidates = planGateResumes({
+    op,
+    pending: ledger.pending,
+    resolutions: ledger.resolutions,
+    applied: lines.applied,
+    finished: lines.finished,
+    now,
+    ...(gate !== undefined ? { gate } : {}),
+    ...(questions ? { questions } : {}),
+    answering: resolutionAnswering,
+  });
+  const reports: GateResumeReport[] = [];
+  for (const c of candidates) reports.push(await resumeCandidate(c, opts));
   return reports;
 }
 
@@ -144,6 +220,7 @@ function printReport(r: GateResumeReport): void {
   const by = r.approvedBy ? `, approved by ${r.approvedBy}` : "";
   const link = r.url ? ` ${r.url}` : "";
   if (r.status === "resumed") console.error(formatSuccess(`${where}${by}: ${r.message}${link}`));
+  else if (r.status === "would-resume") console.error(formatInfo(`${where}${by}: ${r.message}${link}`));
   else if (r.status === "failed" || r.status === "no-token") {
     console.error(formatError({
       message: `${where}${by}: not resumed: ${r.message}`,
@@ -241,7 +318,11 @@ export async function resumeWaitingGates(opts: ResumeWaitingOptions = {}): Promi
  * scheduled job. Reads every gate ledger on `chant/lifecycle` (or `--op`'s),
  * and starts again each CI job that waits at a gate (or at `--gate` alone)
  * an approval now answers, or at a gate whose decision point now has an
- * answer that passes it (#3835).
+ * answer that passes it (#3835), unless a wave already applied under that
+ * approval (#3858). It also starts again the run of an apply under an
+ * approval that stopped, once that run is gone. `--dry-run --json` starts
+ * nothing and says, per gate, whether it would resume and why, for a product
+ * that resumes in its own job.
  */
 export async function runResumeCommand(ctx: CommandContext): Promise<number> {
   try {
@@ -250,16 +331,19 @@ export async function runResumeCommand(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `Cannot read the gate ledgers: ${err instanceof Error ? err.message : String(err)}` }));
     return 1;
   }
+  const dryRun = ctx.args.dryRun === true;
   const reports = await resumeWaitingGates({
     ...(ctx.args.op ? { op: ctx.args.op } : {}),
     ...(ctx.args.gate ? { gate: ctx.args.gate } : {}),
-    dryRun: ctx.args.dryRun === true,
+    dryRun,
   });
-  if (ctx.args.json) console.log(JSON.stringify({ reports }, null, 2));
+  if (ctx.args.json) console.log(JSON.stringify({ dryRun, reports }, null, 2));
   else {
     for (const r of reports.filter((r) => r.status !== "not-approved")) printReport(r);
     const waiting = reports.filter((r) => r.status === "not-approved").length;
-    console.error(formatInfo(`${reports.filter((r) => r.status === "resumed").length} resumed, ${waiting} still waiting for an approval or a passing answer.`));
+    const done = dryRun ? `${reports.filter((r) => r.resumable).length} would resume` : `${reports.filter((r) => r.status === "resumed").length} resumed`;
+    console.error(formatInfo(`${done}, ${waiting} still waiting for an approval or a passing answer.`));
   }
-  return reports.some((r) => r.status === "failed" || r.status === "no-token") ? 1 : 0;
+  // A dry run reads; a missing token only leaves a stopped apply unchecked, which its report says.
+  return reports.some((r) => r.status === "failed" || (!dryRun && r.status === "no-token")) ? 1 : 0;
 }
