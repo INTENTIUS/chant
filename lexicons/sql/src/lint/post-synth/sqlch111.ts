@@ -1,5 +1,4 @@
-import { checkOf, isTable, splitTop } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, splitTop, tablesOf } from "./clickhouse-helpers";
 
 const MAX_VALUES = 100;
 
@@ -23,7 +22,7 @@ function allowedValues(expr: string): { column: string; count: number } | undefi
  * https://clickhouse.com/docs/best-practices/select-data-types.
  */
 export const sqlch111 = checkOf({ id: "SQLCH111", description: "A String column limited to a few values is not LowCardinality" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     for (const c of t.constraints ?? []) {
       if (c.kind !== "CHECK") continue;
       const found = allowedValues(c.expr);

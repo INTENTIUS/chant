@@ -1,5 +1,4 @@
-import { checkOf, isTable } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, tablesOf } from "./clickhouse-helpers";
 
 /**
  * SQLCH120: a MergeTree engine written with the legacy positional arguments.
@@ -10,7 +9,7 @@ import { clickhouseObjects } from "./sql-helpers";
  * syntax is a bare `MergeTree` with ORDER BY, PARTITION BY and SETTINGS.
  */
 export const sqlch120 = checkOf({ id: "SQLCH120", description: "A MergeTree engine uses the deprecated positional arguments" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (t.engine?.name !== "MergeTree" || (t.engine.args ?? []).length === 0) continue;
     report({
       severity: "warning",

@@ -19,6 +19,8 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
 
+A rule of the project's own, such as every table having a `created_at`, is a `lint.policies` check over the same parsed schema; see [Your Own Schema Rules](../project-policies/).
+
 ## Lint rules
 
 | Id | Severity | Flags | What to change |

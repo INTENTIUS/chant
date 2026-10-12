@@ -63,6 +63,10 @@ export default defineConfig({
                               "slug": "data-batches"
                         },
                         {
+                              "label": "Your Own Schema Rules",
+                              "slug": "project-policies"
+                        },
+                        {
                               "label": "ClickHouse",
                               "items": [
                                     {

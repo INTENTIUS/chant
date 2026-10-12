@@ -1,5 +1,4 @@
-import { baseEngineName, checkOf, columnByName, engineArguments, isNullableType, isTable, typeFamily } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { baseEngineName, checkOf, columnByName, engineArguments, isNullableType, tablesOf, typeFamily } from "./clickhouse-helpers";
 
 const VERSION_TYPES = new Set(["UInt8", "UInt16", "UInt32", "UInt64", "UInt128", "UInt256", "Date", "DateTime", "DateTime64"]);
 
@@ -25,7 +24,7 @@ const SPECIAL: Record<string, Array<{ role: string; index: number; accepts: (fam
  * .../collapsingmergetree, .../versionedcollapsingmergetree (sign: Int8).
  */
 export const sqlch103 = checkOf({ id: "SQLCH103", description: "An engine's version, sign or is_deleted column has an unsupported type" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (!t.engine) continue;
     const roles = SPECIAL[baseEngineName(t.engine)];
     if (!roles) continue;

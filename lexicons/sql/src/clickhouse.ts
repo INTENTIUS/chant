@@ -106,3 +106,13 @@ export {
   type Topology,
   type TopologyKind,
 } from "./clickhouse/topology";
+
+// The build's ClickHouse objects as typed values, for a project's own
+// `lint.policies` (#3870); also at `@intentius/chant-lexicon-sql/read`.
+export {
+  readClickHouse,
+  type ClickHouseRead,
+  type ClickHouseTableInfo,
+  type ClickHouseColumnInfo,
+  type ClickHouseViewInfo,
+} from "./read/clickhouse";

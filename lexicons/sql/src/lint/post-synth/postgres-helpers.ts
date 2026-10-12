@@ -8,54 +8,26 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { POSTGRES_MAJORS, VERSION_RANGES } from "../../generated/postgres";
 import type { VersionRange } from "../../postgres/catalog-types";
-import type { ColumnDef, KeyDef } from "../../postgres/entities";
-import { postgresMajorOf, postgresObjects, type OutputObject } from "./sql-helpers";
+import { readPostgres, type PostgresIndexInfo, type PostgresTableInfo, type PostgresViewInfo } from "../../read/postgres";
+import type { PostgresIndexJson, PostgresTableJson, PostgresViewJson } from "../../read/objects";
+import { postgresMajorOf, type OutputObject } from "./sql-helpers";
 
-export interface PgTable extends OutputObject {
-  sqlName: string;
-  like: string[];
-  schema?: string;
-  comment?: string;
-  columns: Array<ColumnDef & { comment?: string }>;
-  primaryKey?: KeyDef;
-  uniques: KeyDef[];
-  checks: Array<{ name?: string; expr: string; notEnforced?: boolean }>;
-  foreignKeys: Array<{ name?: string; columns: string[]; refTable: string; refColumns: string[] }>;
-  exclusions: unknown[];
-  inherits: unknown[];
-  partitionOf?: unknown;
-  ofType?: unknown;
-  persistence?: string;
-  with?: string;
-}
+/**
+ * The objects as the public read API types them (`../../read/postgres.ts`,
+ * `@intentius/chant-lexicon-sql/read`): the checks and a project's own
+ * `lint.policies` read the same values.
+ */
+export type PgTable = PostgresTableInfo;
+export type PgIndex = PostgresIndexInfo;
+export type PgView = PostgresViewInfo;
 
-export interface PgIndex extends OutputObject {
-  sqlName: string;
-  schema?: string;
-  table: string;
-  tableName: string;
-  unique?: boolean;
-  method?: string;
-  elements: Array<{ expr: string; column?: string }>;
-  include?: string;
-  where?: string;
-  with?: string;
-}
+export const isTable = (o: OutputObject): o is OutputObject & PostgresTableJson => o.type === "Postgres::Table";
+export const isIndex = (o: OutputObject): o is OutputObject & PostgresIndexJson => o.type === "Postgres::Index";
+export const isView = (o: OutputObject): o is OutputObject & PostgresViewJson => o.type === "Postgres::View";
+export const isMaterializedView = (o: OutputObject): o is OutputObject & PostgresViewJson => o.type === "Postgres::MaterializedView";
 
-export interface PgView extends OutputObject {
-  sqlName: string;
-  schema?: string;
-  query: string;
-  with?: string;
-}
-
-export const isTable = (o: OutputObject): o is PgTable => o.type === "Postgres::Table";
-export const isIndex = (o: OutputObject): o is PgIndex => o.type === "Postgres::Index";
-export const isView = (o: OutputObject): o is PgView => o.type === "Postgres::View";
-export const isMaterializedView = (o: OutputObject): o is PgView => o.type === "Postgres::MaterializedView";
-
-export const tablesOf = (ctx: PostSynthContext): PgTable[] => postgresObjects(ctx).filter(isTable);
-export const indexesOf = (ctx: PostSynthContext): PgIndex[] => postgresObjects(ctx).filter(isIndex);
+export const tablesOf = (ctx: PostSynthContext): PgTable[] => readPostgres(ctx).tables;
+export const indexesOf = (ctx: PostSynthContext): PgIndex[] => readPostgres(ctx).indexes;
 
 /** The major the build targets (`postgresMajor` in the output), else the newest pinned. */
 export const targetMajor = (ctx: PostSynthContext): number => postgresMajorOf(ctx, PINNED_MAJOR);
@@ -87,14 +59,7 @@ export function storageParams(text: string | undefined): Map<string, string> {
 }
 
 /** The leading bare-column elements of an index, in order; stops at the first expression. */
-export function leadingColumns(index: PgIndex): string[] {
-  const out: string[] = [];
-  for (const e of index.elements) {
-    if (!e.column) break;
-    out.push(e.column);
-  }
-  return out;
-}
+export const leadingColumns = (index: PgIndex): string[] => index.columns;
 
 /** A check over the build's Postgres objects, so each check file holds its rule. */
 export function checkOf(

@@ -12,13 +12,13 @@
  */
 
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
-import { COLUMN_TYPES, FUNCTIONS, INDEX_ACCESS_METHODS, KEYWORDS, OPERATOR_CLASSES } from "../../generated/postgres";
+import { COLUMN_TYPES, FUNCTIONS, INDEX_ACCESS_METHODS, KEYWORDS, OPERATOR_CLASSES, POSTGRES_MAJORS } from "../../generated/postgres";
 import { EXTENSION_OBJECTS } from "../../postgres/overlays/extension-objects";
 import { GRAMMAR_TYPE_SPELLINGS, SERIAL_TYPES, SERIAL_WIDTH_SPELLINGS, TYPE_SPELLINGS } from "../../postgres/overlays/types";
 import { isTrivia, tokenizeText, type Token } from "../../postgres/tokens";
 import type { ColumnTypeSpec } from "../../postgres/catalog-types";
-import { targetMajor, type PgTable } from "./postgres-helpers";
-import { postgresObjects, type OutputObject } from "./sql-helpers";
+import { dialectObjects, recordedPostgresMajor, type PostgresTableJson as PgTable } from "../../read/objects";
+import type { OutputObject } from "./sql-helpers";
 
 // ── Catalog lookups ────────────────────────────────────────────────────
 
@@ -120,7 +120,7 @@ export interface PgProject {
 }
 
 export function projectOf(ctx: PostSynthContext): PgProject {
-  return projectFromObjects(postgresObjects(ctx), targetMajor(ctx));
+  return projectFromObjects(dialectObjects(ctx, "postgres"), recordedPostgresMajor(ctx, POSTGRES_MAJORS[POSTGRES_MAJORS.length - 1]!));
 }
 
 /** The project a set of output objects declares, at `major`: for a reader that holds the build output itself (`chant sql types`). */
@@ -386,7 +386,7 @@ function providesFunction(e: (typeof EXTENSION_OBJECTS)[string], name: string): 
 export function expressionsOf(o: OutputObject): Array<{ where: string; expr: string }> {
   const out: Array<{ where: string; expr: string }> = [];
   if (o.type === "Postgres::Table") {
-    const t = o as PgTable;
+    const t = o as unknown as PgTable;
     for (const c of t.columns) {
       if (c.default) out.push({ where: `column ${c.name}'s DEFAULT`, expr: c.default });
       if (c.generated?.expr) out.push({ where: `generated column ${c.name}`, expr: c.generated.expr });
@@ -483,7 +483,7 @@ export function interpolatedTable(p: PgProject, ref: unknown, sqlName: string | 
   const o = p.byExport.get(ref);
   if (!o || o.type !== "Postgres::Table") return undefined;
   if (sqlName !== undefined && o.sqlName !== sqlName) return undefined;
-  return o as PgTable;
+  return o as unknown as PgTable;
 }
 
 /**

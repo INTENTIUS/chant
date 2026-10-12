@@ -1,5 +1,4 @@
-import { checkOf, isMergeTree, isTable } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, isMergeTree, tablesOf } from "./clickhouse-helpers";
 
 /**
  * SQLCH113: a MergeTree table with neither ORDER BY nor PRIMARY KEY.
@@ -9,7 +8,7 @@ import { clickhouseObjects } from "./sql-helpers";
  * `ORDER BY tuple()` to have none). The server refuses the CREATE.
  */
 export const sqlch113 = checkOf({ id: "SQLCH113", description: "A MergeTree table declares no sort key" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (!isMergeTree(t.engine) || t.orderBy || t.primaryKey) continue;
     report({
       severity: "error",

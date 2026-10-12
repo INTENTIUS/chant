@@ -1,5 +1,4 @@
-import { checkOf, isTable, keyElements } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, keyElements, tablesOf } from "./clickhouse-helpers";
 
 /**
  * SQLCH102: a PRIMARY KEY that is not a prefix of ORDER BY.
@@ -9,7 +8,7 @@ import { clickhouseObjects } from "./sql-helpers";
  * the table at CREATE.
  */
 export const sqlch102 = checkOf({ id: "SQLCH102", description: "A PRIMARY KEY is not a prefix of ORDER BY" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (!t.primaryKey || !t.orderBy) continue;
     const pk = keyElements(t.primaryKey).map((e) => e.replace(/\s+/g, ""));
     const ob = keyElements(t.orderBy).map((e) => e.replace(/\s+/g, ""));

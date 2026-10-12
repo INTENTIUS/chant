@@ -1,0 +1,144 @@
+---
+title: "Your Own Schema Rules"
+description: "Write a project rule such as every table has created_at timestamptz NOT NULL as a lint.policies check over @intentius/chant-lexicon-sql/read, the typed view of the parsed schema the lexicon's own checks read"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/project-policies.mdx instead; changes here are overwritten. */}
+
+
+The lexicon's checks cover what the database cares about. A team usually has rules of its own: every table has a primary key and a `created_at`, no Nullable column in a ClickHouse sort key, a comment on every column in prod. Write those as [`lint.policies`](/chant/guide/organizational-policy/) checks. A policy reads the build through `@intentius/chant-lexicon-sql/read`, which gives the parsed schema as typed values: tables with their columns (SQL type, nullability, default, comment), keys, indexes and engine, and views with their output columns and lineage.
+
+The lexicon's own post-synth checks read the same values, so a policy sees what `SQLPG101` or `SQLCH113` sees. Since the rules run on the parsed model, it makes no difference whether a table was written as a tagged template or in a plain `.sql` file.
+
+## Write the rule
+
+A policy is a module that exports one or more `PostSynthCheck` values. `readPostgres(ctx)` returns the build's Postgres objects. `canonicalPostgresType` spells a type the way each column's `typeName` does, so `timestamptz`, `TIMESTAMPTZ` and `timestamp with time zone` all compare equal:
+
+```typescript
+// policies/columns.ts
+import type { PostSynthCheck, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { canonicalPostgresType, readPostgres } from "@intentius/chant-lexicon-sql/read";
+
+const TIMESTAMPTZ = canonicalPostgresType("timestamptz");
+
+/** Every table has `created_at timestamptz NOT NULL`, however the DDL spells the type. */
+export const createdAt: PostSynthCheck = {
+  id: "ORG-CREATED-AT",
+  description: "every table has created_at timestamptz NOT NULL",
+  check(ctx): PostSynthDiagnostic[] {
+    const out: PostSynthDiagnostic[] = [];
+    for (const t of readPostgres(ctx).tables) {
+      const c = t.column("created_at");
+      if (c && c.typeName === TIMESTAMPTZ && !c.nullable) continue;
+      out.push({
+        checkId: "ORG-CREATED-AT",
+        severity: "error",
+        entity: t.export,
+        message: c
+          ? `${t.qualifiedName}.created_at is ${c.type}${c.nullable ? ", nullable" : ""}; make it timestamptz NOT NULL`
+          : `${t.qualifiedName} has no created_at column; add created_at timestamptz NOT NULL DEFAULT now()`,
+      });
+    }
+    return out;
+  },
+};
+
+/** In prod, every column but the primary key has a comment. */
+export const columnComments: PostSynthCheck = {
+  id: "ORG-COLUMN-COMMENTS",
+  description: "in prod, every column outside the primary key has a COMMENT",
+  check(ctx): PostSynthDiagnostic[] {
+    if (ctx.env !== "prod") return [];
+    return readPostgres(ctx).tables.flatMap((t) =>
+      t.columns
+        .filter((c) => !c.inPrimaryKey && !c.comment)
+        .map((c): PostSynthDiagnostic => ({
+          checkId: "ORG-COLUMN-COMMENTS",
+          severity: "warning",
+          entity: t.export,
+          message: `${t.qualifiedName}.${c.name} has no comment`,
+        })),
+    );
+  },
+};
+```
+
+The ClickHouse form reads `readClickHouse(ctx)`. A column's `family` is the type family as the pinned server's catalog names it (`BIGINT UNSIGNED` is `UInt64`, `DateTime64(3)` is `DateTime64`), and `inSortKey` marks a bare `ORDER BY` element:
+
+```typescript
+// policies/clickhouse.ts
+import type { PostSynthCheck, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { readClickHouse } from "@intentius/chant-lexicon-sql/read";
+
+export const clickhouseCreatedAt: PostSynthCheck = {
+  id: "ORG-CH-CREATED-AT",
+  description: "every MergeTree table has a non-Nullable created_at DateTime and no Nullable sort key column",
+  check(ctx): PostSynthDiagnostic[] {
+    const out: PostSynthDiagnostic[] = [];
+    for (const t of readClickHouse(ctx).tables) {
+      if (!t.mergeTree) continue;
+      const c = t.column("created_at");
+      if (!c || c.nullable || (c.family !== "DateTime" && c.family !== "DateTime64")) {
+        out.push({ checkId: "ORG-CH-CREATED-AT", severity: "error", entity: t.export, message: `${t.qualifiedName} needs created_at DateTime, not Nullable` });
+      }
+      for (const k of t.columns.filter((col) => col.inSortKey && col.nullable)) {
+        out.push({ checkId: "ORG-CH-CREATED-AT", severity: "error", entity: t.export, message: `${t.qualifiedName}.${k.name} is Nullable and in the sort key` });
+      }
+    }
+    return out;
+  },
+};
+```
+
+Both files are in the lexicon's `examples/postgres-policies`, where the repository's typecheck covers them. A misspelled field (`c.typeNmae`) is a `tsc` error in the policy, the same as in any other TypeScript.
+
+## Register it
+
+List the file in `lint.policies`:
+
+```typescript
+// chant.config.ts
+import type { ChantConfig } from "@intentius/chant";
+import "@intentius/chant-lexicon-sql";
+
+export default {
+  lexicons: ["sql"],
+  sql: { dialect: "postgres" },
+  lint: { policies: ["policies/columns.ts"] },
+} satisfies ChantConfig;
+```
+
+`chant build` and `chant lint` both run it over the same build the lexicon's checks read. An `error` finding fails both:
+
+```
+$ chant lint src
+src/app.ts
+  1:1  error  [sessions] app.sessions has no created_at column; add created_at timestamptz NOT NULL DEFAULT now()  ORG-CREATED-AT
+```
+
+`lint.rules` turns a policy's id off or changes its severity, the same as for a lexicon rule (`rules: { "ORG-CREATED-AT": "warning" }`). `ctx.env` is `--env` or `ownership.env`, so `ORG-COLUMN-COMMENTS` above is quiet until the build is for `prod`.
+
+## What the read API gives
+
+| Reader | Returns |
+|---|---|
+| `readPostgres(ctx)` | `{ dialect: "postgres", major, tables, views, indexes, objects, table(ref) }` |
+| `readClickHouse(ctx)` | `{ dialect: "clickhouse", tables, views, objects, table(ref) }` |
+| `readSql(ctx)` | whichever of the two the build declares, or `undefined` |
+| `canonicalPostgresType(text)` | a Postgres type's canonical name, for comparing with `typeName` |
+
+Each value keeps every field the serializer writes for the object (see [Serialization](../serialization/)) and adds the derived fields below. `table(ref)` finds a table by export name, qualified name, or name. The readers also take a serialized output document (`{ dialect, objects }`), for a tool that keeps a recorded build instead of a post-synth context.
+
+| Value | Derived fields |
+|---|---|
+| `PostgresTableInfo` | `qualifiedName`, `columns`, `indexes` (the `CREATE INDEX` statements on it), `column(name)`; `primaryKey`, `uniques`, `foreignKeys`, `checks` as declared |
+| `PostgresColumnInfo` | `nullable` (false for `NOT NULL`, a primary key column, an identity or a `serial`), `typeName`, `array`, `inPrimaryKey`; `type`, `default`, `comment` as declared |
+| `PostgresIndexInfo` | `columns` (the bare-column elements up to the first expression); `table`, `unique`, `method`, `where` as declared |
+| `PostgresViewInfo` | `qualifiedName`, `materialized`, `outputs`; `query`, `lineage` as declared |
+| `ClickHouseTableInfo` | `qualifiedName`, `columns`, `engineFamily` (no `Replicated` prefix), `mergeTree`, `sortKey`, `primaryKeyElements`, `column(name)`; `engine`, `indexes`, `ttl`, `settings` as declared |
+| `ClickHouseColumnInfo` | `nullable` (`Nullable(...)`, inside `LowCardinality` too, or `NULL`), `lowCardinality`, `baseType`, `family`, `inSortKey`; `type`, `default`, `codec`, `comment` as declared |
+| `ClickHouseViewInfo` | `qualifiedName`, `materialized`, `columns`, `outputs`; `to`, `select`, `lineage` as declared |
+
+`readPostgres` and its types are also exported from `@intentius/chant-lexicon-sql/postgres`, and `readClickHouse` and its types from `/clickhouse`.

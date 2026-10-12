@@ -1,5 +1,4 @@
-import { checkOf, isTable, typeFamily } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, tablesOf, typeFamily } from "./clickhouse-helpers";
 
 const FINE_FUNCTIONS =
   /\b(toStartOfSecond|toStartOfMinute|toStartOfFiveMinutes?|toStartOfTenMinutes|toStartOfFifteenMinutes|toStartOfHour|toRelativeSecondNum|toRelativeMinuteNum|toRelativeHourNum|toUnixTimestamp|toYYYYMMDDhhmmss|toStartOfInterval)\s*\(/;
@@ -15,7 +14,7 @@ const FINE_FUNCTIONS =
  * the sub-day truncation functions.
  */
 export const sqlch112 = checkOf({ id: "SQLCH112", description: "A PARTITION BY expression is finer than a day" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     const expr = t.partitionBy?.trim();
     if (!expr) continue;
     const col = t.columns.find((c) => c.name === expr.replace(/^\(|\)$/g, "").trim());
