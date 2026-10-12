@@ -27,9 +27,8 @@
  * per-wave CI job hands to the next.
  */
 
-import { dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { readWaveRecords, type WaveRecord } from "../gated-waves";
+import { existsSync, readFileSync } from "node:fs";
+import { readWaveRecords, writeWaveRecordFile, type WaveRecord } from "../wave-engine";
 import type { ChangeSetDocument } from "../change-set";
 import type { PrMember } from "../pr-loop";
 
@@ -126,8 +125,5 @@ export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
  * write leaves the previous record whole rather than half a JSON document.
  */
 export function writeFanOutAttempt(path: string, attempt: FanOutAttempt): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, JSON.stringify(attempt, null, 2) + "\n");
-  renameSync(temporary, path);
+  writeWaveRecordFile(path, attempt);
 }

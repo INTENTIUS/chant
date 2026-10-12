@@ -69,6 +69,7 @@
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
 import { gatePointProblems, type GatePoint } from "./gate-point";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
+import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 
 /**
  * The variables a wave job reads its notify secrets from, for the lexicons
@@ -361,11 +362,11 @@ export interface OpWavesDigest {
 export const OP_WAVES_DIGEST_OVER = ["all", "changing"] as const;
 
 /** The default gate name pattern. */
-export const OP_WAVE_DEFAULT_GATE_NAME = "{gate}-wave-{k}";
+export const OP_WAVE_DEFAULT_GATE_NAME = WAVE_GATE_NAME_PATTERN;
 
 /** The gate wave `k` waits on (#3821): the spec's `gateName` pattern, by default `<gate>-wave-<k>`. */
 export function opWaveGateName(spec: Pick<OpWavesSpec, "name" | "gate" | "gateName">, k: number): string {
-  return (spec.gateName ?? OP_WAVE_DEFAULT_GATE_NAME).replaceAll("{gate}", spec.gate ?? spec.name).replaceAll("{k}", String(k));
+  return waveGateNameFrom(spec.gateName, spec.gate ?? spec.name, k);
 }
 
 /** Where a wave reads who may override a policy denial (#3821). */
@@ -638,12 +639,7 @@ export function opWaveApplyHooksRunBy(spec: Pick<OpWavesSpec, "hooks" | "waves">
  * by target, cut into contiguous slices whose sizes differ by at most one.
  */
 export function opWaveShare<T extends { target: string }>(runs: readonly T[], share: number, shares: number): T[] {
-  const sorted = [...runs].sort((a, b) => (a.target < b.target ? -1 : a.target > b.target ? 1 : 0));
-  const base = Math.floor(sorted.length / shares);
-  const extra = sorted.length % shares;
-  const start = (share - 1) * base + Math.min(share - 1, extra);
-  const size = base + (share <= extra ? 1 : 0);
-  return sorted.slice(start, start + size);
+  return waveShare(runs, share, shares, (run) => run.target);
 }
 
 /**

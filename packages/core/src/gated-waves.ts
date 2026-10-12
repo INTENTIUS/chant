@@ -2,12 +2,17 @@
  * Gated waves (#3049): one change rolled out across many roots, a wave at a
  * time, each wave behind its own gate bound to that wave's set digest.
  *
- * `chant components fan-out --wave-gate` is the runner. This module holds the
- * parts that need no runner: how a set of roots is cut into waves, what a
- * wave's digest is, what its gate is called, and what the attempt record says
- * about each wave. They are kept apart from the runner because terragucci
- * calls them from its CI stages as one bundled file with no TypeScript
- * toolchain (#3421). Everything here imports `./change-set` and nothing else,
+ * Two runners use it (#3766): `chant components fan-out --wave-gate` and the
+ * Op waves spec's `chant run wave` (`./op/op-waves-run.ts`). This module
+ * holds the parts that need no runner: how a set of roots is cut into waves,
+ * what a wave's digest is and which members it covers, what its gate is
+ * called, and what the attempt record says about each wave. A gate name
+ * pattern and the share split of a wide wave are in `./wave-layout.ts`;
+ * `./wave-engine.ts` puts them together with the gate decision call and the
+ * record file writer, which need the gate ledger and the filesystem.
+ *
+ * They are kept apart from the runners because terragucci calls them from
+ * its CI stages as one bundled file with no TypeScript toolchain (#3421). Everything here imports `./change-set` and nothing else,
  * and `gated-waves-bundle.test.ts` holds that.
  *
  * ## The set digest
@@ -142,6 +147,23 @@ export function waveSetDigest(members: readonly WaveMember[]): string {
  */
 export function waveGateName(gate: string, wave: number): string {
   return `${gate}-wave-${wave}`;
+}
+
+/** Which members a wave's set digest covers (#3821). */
+export type WaveDigestOver = "all" | "changing";
+
+/**
+ * The members a wave's set digest is taken over (#3821, #3766). `all` (the
+ * default): every member. `changing`: the members whose plan is not
+ * `empty`, or every member when all of them are empty. `extras`, members
+ * that are no run (such as a wave's cost), are always in it.
+ */
+export function waveDigestMembers<M extends WaveMember & { empty?: boolean }>(
+  members: readonly M[],
+  options: { over?: WaveDigestOver; extras?: readonly WaveMember[] } = {},
+): WaveMember[] {
+  const changing = options.over === "changing" ? members.filter((m) => m.empty !== true) : [];
+  return [...(changing.length > 0 ? changing : members), ...(options.extras ?? [])];
 }
 
 /** Where a wave got to. */
