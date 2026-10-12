@@ -36,8 +36,8 @@ describe("DockerGenerator", () => {
       { kind: "config", name: "app-config", props: { file: "./config/app.conf" } },
     ];
     const { source } = new DockerGenerator().generate(entities);
-    expect(source).toContain("import { Config }");
-    expect(source).toContain("new Config(");
+    expect(source).toContain("import { DockerConfig }");
+    expect(source).toContain("new DockerConfig(");
     expect(source).toContain("app.conf");
   });
 
@@ -46,8 +46,8 @@ describe("DockerGenerator", () => {
       { kind: "secret", name: "db-password", props: { file: "./secrets/db.txt" } },
     ];
     const { source } = new DockerGenerator().generate(entities);
-    expect(source).toContain("import { Secret }");
-    expect(source).toContain("new Secret(");
+    expect(source).toContain("import { DockerSecret }");
+    expect(source).toContain("new DockerSecret(");
   });
 
   test("single-stage Dockerfile generates flat props (existing behaviour)", () => {

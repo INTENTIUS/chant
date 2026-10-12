@@ -112,10 +112,10 @@ export const app = new Dockerfile({
 The export is named `app`, so it builds `Dockerfile.app`. Rename the export to choose the file name, and point the Compose service at it by reference, which builds as the file name:
 
 ```typescript
-import { webImage } from "../web/main";
+import { app } from "../web/main";
 
 export const web = new Service({
-  build: { context: ".", dockerfile: webImage },  // dockerfile: Dockerfile.webImage
+  build: { context: ".", dockerfile: app },  // dockerfile: Dockerfile.app
 });
 ```
 

@@ -22,12 +22,12 @@ Warns when a `Service.image` prop is a literal string ending in `:latest` or has
 
 ```typescript
 // ✗ triggers DKRS001
-export const api = new Service({ image: "myapp" });
-export const api = new Service({ image: "myapp:latest" });
+export const untagged = new Service({ image: "myapp" });
+export const latest = new Service({ image: "myapp:latest" });
 
 // ✓ ok
-export const api = new Service({ image: "myapp:1.0" });
-export const api = new Service({ image: env("APP_IMAGE") });
+export const pinned = new Service({ image: "myapp:1.0" });
+export const fromEnv = new Service({ image: env("APP_IMAGE") });
 ```
 
 ### DKRS002 — Per-kind fields in a different order than written

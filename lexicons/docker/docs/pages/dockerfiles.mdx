@@ -49,6 +49,8 @@ CMD ["node","src/index.js"]
 
 A value is written as given after the instruction keyword. `run`, `cmd`, `entrypoint` and `shell` also take a list of strings, which is written in JSON exec form, as `cmd` is above.
 
+The props are typed (`DockerfileProps`), so a misspelled step key such as `{ rnu: "npm ci" }`, or a value of the wrong type, is a compile error where you write it, and your editor completes the keys.
+
 ## Layer caching
 
 Docker reuses a layer until an input to it changes. Copying the whole build context before installing dependencies means any source change reruns the install. Copy the dependency manifests first, install, then copy the source and build:

@@ -90,6 +90,7 @@ Step keys: `arg`, `env`, `workdir`, `user`, `run`, `copy`, `add`, `expose`, `vol
 Rules:
 - Use `steps`. The older per-kind fields (`run: [...]`, `copy: [...]`, `user`) are written in a fixed order (ARG, ENV, WORKDIR, USER, RUN, COPY, ADD, EXPOSE, VOLUME, LABEL, ENTRYPOINT, CMD, HEALTHCHECK), not the order written, so every RUN lands before every COPY. Lint rule DKRS002 flags this, and `chant lint --fix` rewrites them as steps.
 - A stage can't have both `steps` and per-kind fields, and a step can't name two instructions. Both are build errors.
+- Props are type-checked: `Dockerfile` takes `DockerfileProps` and the Compose constructors take `ServiceProps`, `VolumeProps`, `NetworkProps`, `DockerConfigProps` and `DockerSecretProps`. A misspelled key or a wrong value type is a TypeScript error, so run `tsc` (or read the editor's errors) before `chant build`.
 - To share stages or steps between Dockerfiles in different modules, export a `const` stage (`DockerfileStage`) or step list (`DockerfileStep[]`) and import it. List the stage in `stages`, or spread the steps: `steps: [...nodeRuntime, { cmd: ["node", "dist/server.js"] }]`. This is chant's equivalent of an INCLUDE. Spreading a function call's result is a lint error (EVL004); put parameterized Dockerfiles in a `Composite`.
 
 ## Variable interpolation with env():
