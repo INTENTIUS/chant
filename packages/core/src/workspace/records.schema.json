@@ -327,6 +327,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/workAnswer" }
         },
+        "ledger": {
+          "type": ["string", "null"],
+          "description": "Added in contract 1 by #3833, on every record of an answer kind (one with an answers block) read in the working tree; absent under --at. Where the record is held on the lifecycle ledger, chant/lifecycle:<path on the branch>, as chant workspace points names it for a question, or null when it is the working tree's file. An answer held on the ledger (a question a steward asked, or one asked with --store ledger) reads as if it sat in the kind's directory and wins over a file of the same name; it has no worktree or lastWrite and is never listed by --uncommitted. The command fetches chant/lifecycle first, best effort."
+        },
         "lease": {
           "description": "Added in contract 1 by #2732, on every record of a work kind with an id, read in the working tree (absent under --at). The item's active work lease (chant workspace work claim), or null when nobody holds one live. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched, of the ledger owning the work kind file; records never fetches.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLease" }]
