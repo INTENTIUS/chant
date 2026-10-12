@@ -739,7 +739,21 @@ describe("a product's wave gate moved onto the waves (#3821)", () => {
     const result = await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: () => ({ sha: "b".repeat(40), text: JSON.stringify({ ...tg, neverOverMcp: true }) }), gates });
     expect(result.exitCode).toBe(3);
     expect(gates.appended[0]).toMatchObject({ commit: "c".repeat(40), members, description: "wave 1 of 3: vpc, dns, nat", neverOverMcp: true, gate: "wave-1", op: "tf-apply" });
+    // #3861: the approval mode the wave asked under, and a plans file may not set it.
+    expect(gates.appended[0]).toMatchObject({ approvalMode: "ledger" });
     h.done();
+
+    const mode = harness(plans, { pending: { approvalMode: "sealed" } });
+    await expect(runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: mode.cwd, exec: mode.exec, show: mode.show, gates: memoryGateLedgerPort() })).rejects.toThrow(/sets approvalMode, which chant writes itself/);
+    mode.done();
+
+    // A sealed spec at base records "sealed".
+    const sealedSpec: OpWavesSpec = { ...tg, waves: [{ ...tg.waves[0]!, approval: "sealed" }] };
+    const sh = harness(plans, {}, sealedSpec);
+    const sealedGates = memoryGateLedgerPort();
+    await runOpWave({ spec: sealedSpec, specFile: "waves.json", wave: 1, cwd: sh.cwd, exec: sh.exec, show: () => ({ sha: "b".repeat(40), text: JSON.stringify(sealedSpec) }), gates: sealedGates });
+    expect(sealedGates.appended[0]).toMatchObject({ approvalMode: "sealed" });
+    sh.done();
 
     const bad = harness(plans, { pending: { gate: "other" } });
     await expect(runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd: bad.cwd, exec: bad.exec, show: bad.show, gates: memoryGateLedgerPort() })).rejects.toThrow(/sets gate, which chant writes itself/);
