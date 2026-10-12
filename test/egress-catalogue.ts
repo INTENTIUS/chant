@@ -611,7 +611,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "Picks the `pr-forge.ts` client that `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` open their pull request through on Forgejo and GitLab, where `gh pr` cannot (#3798), and passes it the caller's `fetch`. GitHub, and a run outside CI, keep `gh`.",
   },
   {
-    file: "packages/core/src/op/gate-resume.ts",
+    file: "packages/core/src/gate-resume-run.ts",
     primitives: ["fetch"],
     phase: "apply",
     destination: "the forge that runs the job waiting at a gate: `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab, as the pending fact recorded it",
@@ -621,7 +621,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     file: "packages/core/src/cli/handlers/gate-resume.ts",
     primitives: ["fetch"],
     phase: "apply",
-    destination: "the same forge as `packages/core/src/op/gate-resume.ts`, through it",
+    destination: "the same forge as `packages/core/src/gate-resume-run.ts`, through it",
     why: "The handlers of `chant approve --resume` and `chant run resume` (#3683) pass an injected `fetch` through to `resumeGateRun`; they open no connection of their own.",
   },
   {
