@@ -26,42 +26,23 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, posix } from "node:path";
 import { kindsExportTarget, pinnedPackageDir, type KindLoadProblem, type PinLike } from "./kinds";
-import { normalisePrincipal } from "./records";
 import schema from "./workspace-principals.schema.json";
 import type { TrustPolicy } from "./trust/policy";
 import { joinPath, type WorkspaceTree } from "./tree";
+import { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, grantedClasses, type PrincipalClass } from "./identity-gate-rule";
 
 export const PRINCIPALS_SCHEMA_ID = schema.$id;
 
 /** The subpath a package publishes its principal classes at. */
 export const PRINCIPALS_SUBPATH = "./workspace-principals";
 
-/** The core classes, in the order a principal's roles are tried; `human` holds no role and is the rest. */
-export const CORE_PRINCIPAL_CLASSES = ["human", "agent", "runner", "service"] as const;
-export type CorePrincipalClass = (typeof CORE_PRINCIPAL_CLASSES)[number];
+export { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, type CorePrincipalClass, type PrincipalClass } from "./identity-gate-rule";
 
 /** A class name: a core class, or a domain class a pinned package supplies. */
 export type PrincipalClassName = string;
 
 /** The grammar of a class name, as `workspace-principals.schema.json` and the declaration's writeScope keys say it. */
 export const CLASS_NAME = /^(?!x-)[a-z][a-z0-9-]{0,39}$/;
-
-export interface PrincipalClass {
-  name: string;
-  /** One line saying who is in the class. */
-  description: string;
-  /** The role whose grant at base puts a principal in the class, or null for `human`, the rest. */
-  role: string | null;
-  /** `core`, or the pin (package name or path) that supplies the class. */
-  source: string;
-}
-
-export const CORE_CLASSES: readonly PrincipalClass[] = [
-  { name: "human", description: "a principal holding none of the roles of another class", role: null, source: "core" },
-  { name: "agent", description: "a principal holding the agent role, or a write naming an agent session", role: "agent", source: "core" },
-  { name: "runner", description: "a principal holding the runner role, such as a CI job's signing identity", role: "runner", source: "core" },
-  { name: "service", description: "a principal holding the service role", role: "service", source: "core" },
-];
 
 const CORE_ROLES = new Set(CORE_CLASSES.map((c) => c.role).filter((r): r is string => r !== null));
 
@@ -100,16 +81,10 @@ export function roleGrants(policy: TrustPolicy): Record<string, string[]> {
 /**
  * Every class `principal`'s role grants at base put it in, in registry order
  * (core first). Empty for a principal in no class but `human`, and for null.
- * Names compare as {@link normalisePrincipal} folds them.
+ * Names compare as `normalisePrincipal` (`./records.ts`) folds them.
  */
 export function classesOf(classes: ClassRegistry, policy: TrustPolicy, principal: string | null): string[] {
-  if (principal === null) return [];
-  const name = normalisePrincipal(principal);
-  const grants = roleGrants(policy);
-  return classes
-    .all()
-    .filter((c) => c.role !== null && (grants[c.role] ?? []).some((p) => normalisePrincipal(p) === name))
-    .map((c) => c.name);
+  return grantedClasses(classes.all(), roleGrants(policy), principal);
 }
 
 /** The class write scope judges `principal` as: the first class its grants put it in, or `human`. */

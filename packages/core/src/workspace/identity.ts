@@ -26,11 +26,12 @@
  */
 
 import type { Declaration, SignedGate } from "./declaration";
-import { classesOf, coreClassRegistry, principalClass, type ClassRegistry } from "./principal-classes";
+import { admitApprover } from "./identity-gate-rule";
+import { classesOf, coreClassRegistry, roleGrants, type ClassRegistry } from "./principal-classes";
 import type { ReasonCode } from "./reason-codes";
 import { normalisePrincipal } from "./records";
 import type { TrustPolicy } from "./trust/policy";
-import { checkGateSeal, type SealedGateApproval } from "./trust/seal";
+import type { SealedGateApproval } from "./trust/gate-seal";
 import { scopeSource } from "./write-scope";
 
 /** The forges a forge identity can name. */
@@ -152,27 +153,16 @@ export interface GateRuleSource extends IdentitySource {
  * approval counts only when its seal verifies for its approver against the
  * signers at base and, when the rule names a class, the approver's role
  * grants at base put it in that class. A class no pinned package supplies
- * lets nothing through.
+ * lets nothing through. The judge is {@link admitApprover}, which
+ * `@intentius/chant/gate-decision` also judges with (#3862). The policy is
+ * the one at base, never a returned work's copy.
  */
 export function gateAdmissionFrom(source: GateRuleSource, gate: string): GateAdmission | null {
   const requirement = source.declaration?.identity?.gates[gate];
   if (!requirement) return null;
   const { policy, classes } = source;
-  return {
-    requirement,
-    refuses(a) {
-      const want = requirement.class;
-      if (want !== null && classes.get(want) === undefined) {
-        return `identity.gates.${gate} names the class ${want}, which no pinned package supplies, so no approval can show it is in that class (known classes: ${classes.names().join(", ")})`;
-      }
-      if (!policy.active) return `gate ${gate} needs a signed approval, and there is no signers file (${policy.signersPath}) at base to check one against`;
-      const seal = checkGateSeal(policy, a);
-      if (seal.attested !== true) return a.seal === undefined || a.seal === null ? `the approval by ${a.resolvedBy} is not signed; gate ${gate} needs chant approve --sign` : seal.message;
-      if (want === null) return null;
-      const inClass = want === "human" ? principalClass(policy, a.resolvedBy, classes) === "human" : classesOf(classes, policy, a.resolvedBy).includes(want);
-      return inClass ? null : `${a.resolvedBy} is not in the class ${want} that gate ${gate} needs: no role grant at base puts them there`;
-    },
-  };
+  const rule = { gate, class: requirement.class, signers: policy, roles: roleGrants(policy), classes: classes.all() };
+  return { requirement, refuses: (a) => admitApprover(rule, a) };
 }
 
 /**

@@ -625,7 +625,11 @@ A tool that runs its own waves can decide a gate by these rules without running 
 | `gateSignersAt(repo, base)` | the signers file at base, at the path `.chant/trust.json` names there. An invalid trust.json turns attestation off, as it does in chant |
 | `gateSealRefusal(signers, approval)` | why a seal does not count for its approver, or null when it does |
 | `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates` |
+| `identityGateAdmissionAt(repo, base, gate, { classes })` | the `identity.gates` rule for one gate at base, or null when the declaration names none. Its `refuses(approval)` is what chant's own `gateAdmission` answers: the seal against the signers at base, then the class against the role grants in `.chant/trust.json` at base. Pass it to `decideGateApproval` as `refuses` |
+| `admitApprover(rule, approval)` | the same judgement over a rule you build yourself: the gate, its class, the signers, the role grants and the known classes |
 | `reviewApproval(merged, headDigest, digest)` | whether the merged pull request's review approves the digest, under `pr-review` |
+
+`identityGateAdmissionAt` knows the four core classes (`human`, `agent`, `runner`, `service`) and the domain classes passed as `classes`, each a `{ name, role }` read from a pinned package's `./workspace-principals` file. It loads no package itself. A gate whose class is in neither refuses every approval, and when the declaration at base pins any package, the reason says the pins were not read. `gateAdmission` and `identityGateAdmissionAt` both judge with `admitApprover`, and `gate-decision-identity.test.ts` checks that they give the same answer and the same reason on the same commits.
 
 Reading the ledger and the forge's review is the caller's job, and so is recording a pending fact, the review's approval or the applied line. The seal is checked with node:crypto, so the job needs no `ssh-keygen`, and it verifies every key type a signers file accepts. Bundled with esbuild for node, the module comes to about 27 KB. `gate-decision-bundle.test.ts` lists every module in that bundle and fails when TypeScript, zod or chant's git ledger code joins it.
 

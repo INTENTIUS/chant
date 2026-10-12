@@ -16,6 +16,12 @@
  *   approving review, when its head planned this digest
  *   ({@link reviewApproval}).
  *
+ * A gate the declaration at base names under `identity.gates` counts only a
+ * sealed approval from its class: {@link identityGateAdmissionAt} reads that
+ * rule from a bare clone at base and judges by `admitApprover`, the function
+ * chant's `gateAdmission` judges by (#3862); pass its `refuses` to
+ * {@link decideGateApproval}.
+ *
  * With `spend` (#3784), an approval a wave already applied under is spent and
  * counts for nothing, as terragucci's wave gate has it: the caller hands in
  * the lines of `_gates/<op>/applied.jsonl` ({@link parseAppliedGateLines}).
@@ -36,7 +42,7 @@ import {
 } from "./lifecycle/gate-ledger-select";
 import { samePlanDigest } from "./lifecycle/plan-digest";
 import { isApprovalSpent, type AppliedGateRecord } from "./lifecycle/gate-applied";
-import { gateSealRefusal, type GateSigners } from "./workspace/trust/gate-seal";
+import { gateSealRefusal, type GateSigners, type SealedGateApproval } from "./workspace/trust/gate-seal";
 import {
   DEFAULT_SIGNERS_PATH,
   TRUST_CONFIG_PATH,
@@ -44,6 +50,7 @@ import {
   trustConfigProblems,
 } from "./workspace/trust/trust-files";
 import { parseJsonText } from "./workspace/jsonc";
+import { CORE_CLASSES, admitApprover, type ClassGrant, type GateAdmissionRule } from "./workspace/identity-gate-rule";
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
 import type { MergedReview } from "./op/gate-review";
 import type { GateApprovalSource } from "./op/op-waves";
@@ -75,6 +82,14 @@ export {
   type SignerSet,
 } from "./workspace/trust/trust-files";
 export type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
+export {
+  CORE_CLASSES,
+  admitApprover,
+  grantedClasses,
+  type ClassGrant,
+  type GateAdmissionRule,
+  type PrincipalClass,
+} from "./workspace/identity-gate-rule";
 export {
   appliedGateApplies,
   appliedGatePath,
@@ -117,17 +132,12 @@ export function baseCommit(repo: string): string {
   return parent;
 }
 
-/**
- * The signers at `base`: the file `.chant/trust.json` names there, else
- * `.chant/allowed_signers`, read as chant's trust policy reads it. A
- * trust.json that is not valid (`trustConfigProblems`) turns attestation
- * off, as it does in chant, so a sealed gate passes nothing. `base` is a
- * commit the repository holds, such as {@link baseCommit}'s answer.
- */
-export function gateSignersAt(repo: string, base: string): GateSigners {
-  const off = (problems: string[]): GateSigners => ({ base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], problems });
+/** The signers and role grants at `base`, as chant's trust policy reads them. */
+function trustAt(repo: string, base: string): { signers: GateSigners; roles: Record<string, string[]> } {
+  const off = (problems: string[]) => ({ signers: { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], problems }, roles: {} });
   const configText = showAt(repo, base, TRUST_CONFIG_PATH);
   let signersPath = DEFAULT_SIGNERS_PATH;
+  let roles: Record<string, string[]> = {};
   if (configText !== undefined) {
     let raw: unknown;
     try {
@@ -138,9 +148,21 @@ export function gateSignersAt(repo: string, base: string): GateSigners {
     const problems = trustConfigProblems(raw);
     if (problems.length > 0) return off([`${TRUST_CONFIG_PATH} is invalid: ${problems.join("; ")}`]);
     signersPath = (raw as { signers?: string }).signers ?? DEFAULT_SIGNERS_PATH;
+    roles = (raw as { roles?: Record<string, string[]> }).roles ?? {};
   }
   const text = showAt(repo, base, signersPath);
-  return { base, signersPath, active: text !== undefined, signers: text === undefined ? [] : parseAllowedSigners(text).signers, problems: [] };
+  return { signers: { base, signersPath, active: text !== undefined, signers: text === undefined ? [] : parseAllowedSigners(text).signers, problems: [] }, roles };
+}
+
+/**
+ * The signers at `base`: the file `.chant/trust.json` names there, else
+ * `.chant/allowed_signers`, read as chant's trust policy reads it. A
+ * trust.json that is not valid (`trustConfigProblems`) turns attestation
+ * off, as it does in chant, so a sealed gate passes nothing. `base` is a
+ * commit the repository holds, such as {@link baseCommit}'s answer.
+ */
+export function gateSignersAt(repo: string, base: string): GateSigners {
+  return trustAt(repo, base).signers;
 }
 
 /** A gate the declaration at base names under `identity.gates`, and the principal class its signer must be in, if any. */
@@ -149,23 +171,79 @@ export interface IdentityGate {
   class: string | null;
 }
 
-/**
- * The gates `chant.workspace.json` (or `.jsonc`) at `base` names under
- * `identity.gates`: each counts only a sealed approval, from its class when
- * it names one. chant checks the class against the role grants at base; this
- * reads the names. Empty when there is no declaration at base. Throws when
- * the declaration there cannot be parsed, since the gate cannot be decided.
- */
-export function identityGatesAt(repo: string, base: string): IdentityGate[] {
+/** The declaration at `base`, parsed, or null when there is none. Throws when it cannot be parsed. */
+function declarationAt(repo: string, base: string): { file: string; value: unknown } | null {
   for (const file of ["chant.workspace.json", "chant.workspace.jsonc"]) {
     const text = showAt(repo, base, file);
     if (text === undefined) continue;
     const parsed = parseJsonText(text, { jsonc: file.endsWith(".jsonc") });
     if (!parsed.ok) throw new Error(`${file} at base is not valid JSON (${parsed.message}), so the gate cannot be decided`);
-    const gates = (parsed.value as { identity?: { gates?: Record<string, { class?: unknown } | null> } } | null)?.identity?.gates ?? {};
-    return Object.entries(gates).map(([gate, entry]) => ({ gate, class: typeof entry?.class === "string" ? entry.class : null }));
+    return { file, value: parsed.value };
   }
-  return [];
+  return null;
+}
+
+function identityGatesOf(declaration: unknown): IdentityGate[] {
+  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown } | null> } } | null)?.identity?.gates ?? {};
+  return Object.entries(gates).map(([gate, entry]) => ({ gate, class: typeof entry?.class === "string" ? entry.class : null }));
+}
+
+/**
+ * The gates `chant.workspace.json` (or `.jsonc`) at `base` names under
+ * `identity.gates`: each counts only a sealed approval, from its class when
+ * it names one. {@link identityGateAdmissionAt} judges an approval by one.
+ * Empty when there is no declaration at base. Throws when the declaration
+ * there cannot be parsed, since the gate cannot be decided.
+ */
+export function identityGatesAt(repo: string, base: string): IdentityGate[] {
+  const declaration = declarationAt(repo, base);
+  return declaration === null ? [] : identityGatesOf(declaration.value);
+}
+
+/** An `identity.gates` gate at base, and the judge for its approvals. */
+export interface IdentityGateAdmission {
+  requirement: IdentityGate;
+  /** Why `approval` does not count toward the gate, or null when it does. Pass it to {@link decideGateApproval} as `refuses`. */
+  refuses(approval: SealedGateApproval): string | null;
+}
+
+/**
+ * The `identity.gates` rule for `gate` at `base`, or null when the
+ * declaration there names none: what chant's `gateAdmission(cwd, gate, base)`
+ * answers, read from a bare clone. An approval counts when its seal verifies
+ * for its approver against the signers at base and, when the gate names a
+ * class, the role grants in `.chant/trust.json` at base put the approver in
+ * it. Both judge with the same function ({@link admitApprover}).
+ *
+ * The classes are the four core ones, then `classes`, the domain classes the
+ * caller read from the pinned packages (`./workspace-principals`), in pin
+ * order. This reader loads no package. A gate whose class is in neither
+ * refuses every approval, and when the declaration at base pins anything the
+ * reason says the pins were not read, since one of them may supply it.
+ * Throws when the declaration at base cannot be parsed.
+ */
+export function identityGateAdmissionAt(
+  repo: string,
+  base: string,
+  gate: string,
+  opts: { classes?: readonly ClassGrant[] } = {},
+): IdentityGateAdmission | null {
+  const declaration = declarationAt(repo, base);
+  const requirement = declaration === null ? undefined : identityGatesOf(declaration.value).find((g) => g.gate === gate);
+  if (!requirement) return null;
+  const { signers, roles } = trustAt(repo, base);
+  const pins = (declaration!.value as { pins?: unknown }).pins;
+  const rule: GateAdmissionRule = {
+    gate,
+    class: requirement.class,
+    signers,
+    roles,
+    classes: [...CORE_CLASSES, ...(opts.classes ?? [])],
+    ...(Array.isArray(pins) && pins.length > 0
+      ? { unknownClass: `is not a core class, and this reader does not load the classes the pinned packages in ${declaration!.file} at base supply` }
+      : {}),
+  };
+  return { requirement, refuses: (a) => admitApprover(rule, a) };
 }
 
 // ── pr-review ────────────────────────────────────────────────────────────
