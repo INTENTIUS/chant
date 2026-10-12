@@ -41,7 +41,7 @@ import { accessCanonical, grantsCanonical, isAccessStatement } from "../access";
 
 export { previouslyIn } from "../../core/normalize";
 
-export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary" | "function" | "user" | "role" | "rowPolicy" | "grants";
+export type ObjectKind = "database" | "table" | "view" | "materializedView" | "dictionary" | "function" | "user" | "role" | "rowPolicy" | "quota" | "settingsProfile" | "grants";
 
 export interface CanonicalColumn {
   name: string;
@@ -84,6 +84,8 @@ export interface CanonicalObject {
   select?: string;
   to?: string;
   refresh?: string;
+  /** A table over a table function (#3911): the call after `AS`. */
+  asFunction?: string;
   /** A dictionary's `SOURCE`, `LAYOUT`, `LIFETIME` and `RANGE`, each what is inside the parentheses. */
   dataSource?: string;
   layout?: string;
@@ -94,8 +96,9 @@ export interface CanonicalObject {
   /** A row policy's table. */
   table?: string;
   /**
-   * A user's, role's or row policy's fields (`../access.ts`), each absent at
-   * the server's default; a grantee's grants, by atom.
+   * A user's, role's, row policy's, quota's or settings profile's fields
+   * (`../access.ts`), each absent at the server's default; a grantee's
+   * grants, by atom.
    */
   access?: Record<string, string>;
   /** `-- previously: <name>` before the statement: the object's previous name. */
@@ -374,6 +377,7 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
   }
 
   if (node.statement === "table") {
+    if (node.asFunction) obj.asFunction = canonicalExpression(spanText(tokens, node.asFunction) ?? "", database);
     node.columns.forEach((c, i) => obj.columns.push(column(tokens, c, i, database)));
     for (const ix of node.indexes) {
       obj.indexes[ix.name] = [expr(ix.expr), "TYPE", expr(ix.type), ix.granularity ? `GRANULARITY ${expr(ix.granularity)}` : ""]
@@ -556,6 +560,8 @@ export function objectKey(o: { kind?: ObjectKind; type?: string; database?: stri
   if (kind === "function") return `function ${o.name}`;
   if (kind === "user") return `user ${o.name}`;
   if (kind === "role") return `role ${o.name}`;
+  if (kind === "quota") return `quota ${o.name}`;
+  if (kind === "settingsProfile") return `settings profile ${o.name}`;
   if (kind === "grants") return `grants ${o.name}`;
   if (kind === "rowPolicy") return `row policy ${o.name} ON ${o.database}.${o.table}`;
   return o.database !== undefined ? `${o.database}.${o.name}` : o.name;
@@ -566,6 +572,8 @@ const KIND_OF_TYPE: Record<string, ObjectKind> = {
   "ClickHouse::User": "user",
   "ClickHouse::Role": "role",
   "ClickHouse::RowPolicy": "rowPolicy",
+  "ClickHouse::Quota": "quota",
+  "ClickHouse::SettingsProfile": "settingsProfile",
   "ClickHouse::Grant": "grants",
 };
 
@@ -582,7 +590,7 @@ export function grantsObject(ddl: string, grantee: string, defaultDatabase = "de
  */
 export function scopeOf(o: { kind?: ObjectKind; type?: string; database?: string; name: string; table?: string }): string {
   const kind = o.kind ?? KIND_OF_TYPE[o.type ?? ""];
-  if (kind === "function" || kind === "user" || kind === "role" || kind === "grants") return objectKey(o);
+  if (kind === "function" || kind === "user" || kind === "role" || kind === "quota" || kind === "settingsProfile" || kind === "grants") return objectKey(o);
   return o.database ?? o.name;
 }
 

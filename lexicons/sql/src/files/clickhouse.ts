@@ -2,7 +2,8 @@
  * A file of ClickHouse DDL as the objects it declares: one per `CREATE
  * DATABASE`, `TABLE`, `VIEW`, `MATERIALIZED VIEW`, `DICTIONARY` or `FUNCTION`, as `chant import
  * <file>.sql` reads them, and one per `CREATE USER`, `CREATE ROLE`, `CREATE
- * ROW POLICY` and `GRANT` (#3711), each read by its tag, so what the tag
+ * ROW POLICY`, `CREATE QUOTA`, `CREATE SETTINGS PROFILE` (#3911) and `GRANT`
+ * (#3711), each read by its tag, so what the tag
  * refuses (`IDENTIFIED BY`, a `REVOKE`) is refused with the tag's message.
  * Any other statement, and any statement the parser refuses, is a problem
  * naming it.
@@ -15,7 +16,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { isTrivia, tokenizeText } from "../clickhouse/tokens";
 import { parseCreate } from "../clickhouse/parser";
-import { CLICKHOUSE_ENTITY_TYPES, database, dictionary, func, grant, policy, role, table, user, view } from "../clickhouse/entities";
+import { CLICKHOUSE_ENTITY_TYPES, database, dictionary, func, grant, policy, quota, role, settingsProfile, table, user, view } from "../clickhouse/entities";
 import { isAccessStatement, parseAccess, type AccessNode } from "../clickhouse/access";
 import type { Token } from "../clickhouse/tokens";
 import { CLICKHOUSE_TAG_OF } from "../clickhouse/import/generator";
@@ -24,7 +25,13 @@ import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, un
 import { templateSafe, templateStrings } from "./postgres";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
-const TAGS: Record<string, Tag> = { database, table, view, dictionary, func, user, role, policy, grant };
+const TAGS: Record<string, Tag> = { database, table, view, dictionary, func, user, role, policy, quota, settingsProfile, grant };
+
+/** The tag an access statement's words name: `CREATE USER`, `CREATE SETTINGS PROFILE`, `GRANT`. */
+function accessTag(words: string[]): Tag {
+  if (words[0] !== "CREATE") return grant;
+  return words[1] === "USER" ? user : words[1] === "ROLE" ? role : words[1] === "QUOTA" ? quota : words[1] === "SETTINGS" || words[1] === "PROFILE" ? settingsProfile : policy;
+}
 
 /** Tokens with `[db.]name`'s bare name qualified with `schema`. A `*` (all tables) is left alone. */
 function qualifyBare(tokens: Token[], span: { from: number; to: number } | undefined, schema: string): string | undefined {
@@ -44,8 +51,7 @@ function readAccess(sql: string, options: ReadOptions): ImportedObject | string 
     node = parseAccess(tokens);
   } catch (e) {
     // What the tag refuses (a password) is refused in the tag's words.
-    const words = sql.replace(/--[^\n]*\n/g, " ").trim().split(/\s+/, 2).map((w) => w.toUpperCase());
-    const tag = words[0] === "CREATE" ? (words[1] === "USER" ? user : words[1] === "ROLE" ? role : policy) : grant;
+    const tag = accessTag(sql.replace(/--[^\n]*\n/g, " ").trim().split(/\s+/, 2).map((w) => w.toUpperCase()));
     try {
       tag(templateStrings([templateSafe(sql)]));
     } catch (refused) {
@@ -61,7 +67,7 @@ function readAccess(sql: string, options: ReadOptions): ImportedObject | string 
       node = parseAccess(tokens);
     }
   }
-  const tag = node.statement === "user" ? user : node.statement === "role" ? role : node.statement === "rowPolicy" ? policy : grant;
+  const tag = { user, role, rowPolicy: policy, quota, settingsProfile, grant }[node.statement];
   let props: { name: string; database?: string; table?: string };
   try {
     props = (tag(templateStrings([templateSafe(sql)])) as unknown as { props: typeof props }).props;
@@ -70,6 +76,8 @@ function readAccess(sql: string, options: ReadOptions): ImportedObject | string 
   }
   if (node.statement === "user") return { type: CLICKHOUSE_ENTITY_TYPES.user, name: props.name, ddl: sql };
   if (node.statement === "role") return { type: CLICKHOUSE_ENTITY_TYPES.role, name: props.name, ddl: sql };
+  if (node.statement === "quota") return { type: CLICKHOUSE_ENTITY_TYPES.quota, name: props.name, ddl: sql };
+  if (node.statement === "settingsProfile") return { type: CLICKHOUSE_ENTITY_TYPES.settingsProfile, name: props.name, ddl: sql };
   if (node.statement === "rowPolicy") return { type: CLICKHOUSE_ENTITY_TYPES.rowPolicy, ...(props.database ? { database: props.database } : {}), name: props.name, ddl: sql };
   // A grant has no name of its own: what it grants, on what, to whom.
   return { type: CLICKHOUSE_ENTITY_TYPES.grant, name: `grant ${tokensText(tokens.slice(tokens.findIndex((t) => !isTrivia(t)) + 1)).replace(/\s+/g, " ").trim().toLowerCase()}`, ddl: sql };

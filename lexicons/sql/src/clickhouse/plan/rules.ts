@@ -35,7 +35,7 @@ const DOCS = "https://clickhouse.com/docs/sql-reference/statements";
 const rule = (id: string, cls: ChangeClass, title: string, restriction: string, cite: string): ClassifierRule => classifierRule(id, cls, title, restriction, cite);
 
 export const CLASSIFIER_RULES = {
-  SQLCH200: rule("SQLCH200", "create", "Create an object", "A new database, table, view, dictionary, function, user, role or row policy is created, or a grantee gets its first grants; nothing existing changes.", `${DOCS}/create`),
+  SQLCH200: rule("SQLCH200", "create", "Create an object", "A new database, table, view, dictionary, function, user, role, row policy, quota or settings profile is created, or a grantee gets its first grants; nothing existing changes.", `${DOCS}/create`),
   SQLCH201: rule(
     "SQLCH201",
     "metadata",
@@ -149,6 +149,13 @@ export const CLASSIFIER_RULES = {
     "Change a setting fixed at creation",
     "A table setting the server marks read-only (such as index_granularity) is fixed when the table is created and needs a new table to change.",
     `${DOCS}/alter/setting`,
+  ),
+  SQLCH219: rule(
+    "SQLCH219",
+    "metadata",
+    "Replace a table over a table function",
+    "A table declared AS a table function (numbers, remote, s3, url) stores no data of its own and has no ALTER for its function; CREATE OR REPLACE TABLE replaces its call and columns, and queries read through the new one.",
+    `${DOCS}/create/table#from-a-table-function`,
   ),
   SQLCH220: rule(
     "SQLCH220",
@@ -277,6 +284,20 @@ export const CLASSIFIER_RULES = {
     "Revoke a privilege or a role",
     "REVOKE takes a privilege or a role away, including one granted by hand to a grantee the build declares grants for; queries that relied on it fail from then on.",
     `${DOCS}/revoke`,
+  ),
+  SQLCH275: rule(
+    "SQLCH275",
+    "metadata",
+    "Change a quota",
+    "ALTER QUOTA sets the quota's key, one interval's limits (NO LIMITS takes the interval away) or whom it applies to, on the quota that is there, so what names it still does.",
+    `${DOCS}/alter/quota`,
+  ),
+  SQLCH276: rule(
+    "SQLCH276",
+    "metadata",
+    "Change a settings profile",
+    "ALTER SETTINGS PROFILE replaces the profile's settings, constraints and inherited profiles, or whom it applies to; the users, roles and profiles that name it keep it. Sessions already open keep the old settings.",
+    `${DOCS}/alter/settings-profile`,
   ),
   SQLCH290: rule(
     "SQLCH290",

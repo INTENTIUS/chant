@@ -58,7 +58,8 @@ describe("the ClickHouse parser keeps a clause it does not know", () => {
     // Unbalanced parentheses, a word that is not a key word, an unknown statement kind.
     expect(() => ch("CREATE TABLE a.t (x UInt64) ENGINE = Log FUTURE_THING (a")).toThrow(/unbalanced parentheses|expected/);
     expect(() => ch("CREATE TABLE a.t (x UInt64) ENGINE = Log 'stray'")).toThrow(/unexpected token/);
-    expect(() => ch("CREATE NAMED COLLECTION c AS a = 1")).toThrow(/expected DATABASE, TABLE/);
+    expect(() => ch("CREATE NAMED COLLECTION c AS a = 1")).toThrow(/NAMED COLLECTION is not declared/);
+    expect(() => ch("CREATE SOMETHING c")).toThrow(/expected DATABASE, TABLE/);
   });
 });
 

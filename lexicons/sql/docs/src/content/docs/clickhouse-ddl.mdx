@@ -1,6 +1,6 @@
 ---
 title: "Declaring ClickHouse Tables and Views"
-description: "ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates: the tags, materialized views, dictionaries, functions, and what each kind of interpolation means"
+description: "ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates: the tags, tables over table functions, materialized views, dictionaries, functions, the kinds that are not declared, and what each kind of interpolation means"
 diataxis: how-to
 ---
 
@@ -45,11 +45,28 @@ export const byKind = view`
 | `dictionary` | `CREATE DICTIONARY` | `ClickHouse::Dictionary` |
 | `func` | `CREATE FUNCTION` | `ClickHouse::Function` |
 
-Users, roles, row policies and grants have tags of their own: see [Access Control](../clickhouse-access/).
+Users, roles, row policies, quotas, settings profiles and grants have tags of their own: see [Access Control](../clickhouse-access/).
 
 Each template holds exactly one statement of its tag's kind. `OR REPLACE`, `IF NOT EXISTS` and `ON CLUSTER` are read, and so are a `COMMENT` on the object and on each column.
 
-A table's definition is read clause by clause: columns with type, `DEFAULT`, `MATERIALIZED`, `ALIAS` or `EPHEMERAL` expression, codec, TTL and comment; the engine and its arguments; `ORDER BY`, `PRIMARY KEY`, `PARTITION BY` and `SAMPLE BY`; the table TTL; `SETTINGS`; skip indexes, projections and constraints. Expressions are kept as written. `CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` cannot be declared this way, because the table's columns would come from somewhere else.
+A table's definition is read clause by clause: columns with type, `DEFAULT`, `MATERIALIZED`, `ALIAS` or `EPHEMERAL` expression, codec, TTL and comment; the engine and its arguments; `ORDER BY`, `PRIMARY KEY`, `PARTITION BY` and `SAMPLE BY`; the table TTL; `SETTINGS`; skip indexes, projections and constraints. Expressions are kept as written. A skip index and a projection are parts of their table: declare them in its column list, and a plan adds or drops each with `ALTER TABLE` (SQLCH204, SQLCH214). `CREATE INDEX` on its own is refused for that reason.
+
+## Tables over table functions
+
+A table can be declared over a table function (`numbers`, `remote`, `s3`, `url` and the rest), with or without its columns:
+
+```ts
+export const nums = table`CREATE TABLE ${analytics}.nums AS numbers(10)`;
+
+export const remoteEvents = table`
+  CREATE TABLE ${analytics}.remote_events (user_id UUID, kind String)
+  AS remote('replica-2:9000', 'analytics', 'events')
+  COMMENT 'events on the second replica'`;
+```
+
+Such a table has no engine and stores nothing: the function is its storage, so the tag refuses an `ENGINE`, `ORDER BY` or `SETTINGS` beside it. The server infers the columns when the declaration lists none and prints them back, so a declaration without a column list is not compared on its columns; one that lists them is. A changed call or column list is SQLCH219, sent as `CREATE OR REPLACE TABLE`; a changed comment is SQLCH203. A table with data of its own becoming one would lose that data, so that change is a rebuild (SQLCH223). An import reads the server's form, `CREATE TABLE t (cols) AS f(...)`, and writes it as declared.
+
+The other `CREATE TABLE ... AS` forms copy something once and keep no link to it, so the server prints the copy as if it were written out, and each is refused with why: `AS other_table` (copies another table's columns and engine), `AS SELECT` and a table declared with no column list (`ENGINE = ... AS SELECT`, which creates the table and fills it once), `CLONE AS` (copies the data too) and `EMPTY AS SELECT`. Declare the columns, and fill the table with `INSERT ... SELECT` or a materialized view.
 
 ## Materialized views
 
@@ -80,7 +97,7 @@ export const dailyActiveMv = view`
 The other forms parse too:
 
 - Without `TO`, the view keeps its rows in an inner table, declared inline with `ENGINE = ... ORDER BY ...`. Its engine and keys are fixed like any table's, so changing them is a rebuild (SQLCH243). `POPULATE` and `EMPTY` are read.
-- A refreshable materialized view, `CREATE MATERIALIZED VIEW ... REFRESH EVERY 1 HOUR [APPEND] TO ...`, keeps its `REFRESH` clause; changing the schedule is metadata only (SQLCH244).
+- A refreshable materialized view, `CREATE MATERIALIZED VIEW ... REFRESH EVERY 1 HOUR [APPEND] TO ...`, keeps its `REFRESH` clause; changing the schedule is metadata only (SQLCH244). The server prints its column list right after the schedule (`REFRESH EVERY 1 HOUR (a UInt64) ENGINE = ...`) and adds a `DEFINER`; the schedule is read up to the column list, and the `DEFINER` the server adds is not drift.
 - `DEFINER` and `SQL SECURITY` are read. SQLCH116 flags `SQL SECURITY DEFINER` with no `DEFINER`.
 
 A plain view stores nothing, and changing its query is metadata only (SQLCH240). Changing a materialized view's query is metadata only too (SQLCH241); changing its `TO` target is a rebuild (SQLCH242).
@@ -124,6 +141,22 @@ export const linear = func`CREATE FUNCTION linear AS (x, k, b) -> k*x + b`;
 A function belongs to no database, so its name is never qualified. A plan reads the functions the build declares and no others: a function made by hand is never listed or dropped. The server prints the expression its own way (`((k * x) + b)`), and a plan asks the server's formatter whether the two are the same expression. A changed expression is SQLCH260, sent as `CREATE OR REPLACE FUNCTION`.
 
 A function has no comment, so it cannot carry chant's ownership marker. Chant replaces a declared function when its declaration changes, and never drops one; drop a function the build no longer declares by hand. A function is not in any database, so a `Replicated` database's log does not carry it. In the `replicated` topology a function goes `ON CLUSTER` the topology's cluster, when one is named. With none, apply to each replica.
+
+## Kinds that are not declared
+
+The pinned server (26.8) has `CREATE` statements chant does not declare. A template, a `.sql` file or an import holding one fails with the kind's name and the reason, never as a parse error:
+
+| Statement | Why |
+|---|---|
+| `CREATE LIVE VIEW` | the pinned server no longer has live views; a refreshable materialized view replaces them |
+| `CREATE WINDOW VIEW` | experimental, and refused by the pinned server under its default query analyzer |
+| `CREATE TEMPORARY TABLE` | lives for one session, never in the catalog a plan reads |
+| `CREATE NAMED COLLECTION` | holds credentials, which are the environment's and never in a build; the server hides the values, so a plan could not compare them either |
+| `CREATE MASKING POLICY` | ClickHouse Cloud only |
+| `CREATE WORKLOAD`, `CREATE RESOURCE` | server-level scheduling, configured with the server |
+| `CREATE HANDLER` | server-level HTTP configuration |
+| `CREATE [UNIQUE \| HYPOTHETICAL] INDEX` | a skip index belongs to its table's column list; a hypothetical index is a session's what-if |
+| `CREATE TABLE ... AS <table>`, `AS SELECT`, `CLONE AS`, `EMPTY AS` | a one-off copy the server keeps no link to (see above) |
 
 ## Interpolations
 

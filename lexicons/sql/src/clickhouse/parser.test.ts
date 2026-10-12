@@ -84,8 +84,42 @@ describe("parsing CREATE TABLE", () => {
     expect(t.engine!.name).toBe("MergeTree");
   });
 
-  test("CREATE TABLE ... AS is refused, since it declares no columns", () => {
-    expect(() => parse("CREATE TABLE t AS other")).toThrow(/column list/);
+  test("CREATE TABLE ... AS a table, AS SELECT, CLONE AS and a table with no columns are refused, each saying why (#3911)", () => {
+    expect(() => parse("CREATE TABLE t AS other")).toThrow(/AS <table> is not declared: the server copies the other table's columns/);
+    expect(() => parse("CREATE TABLE t AS db.other ENGINE = Log")).toThrow(/AS <table> is not declared/);
+    expect(() => parse("CREATE TABLE t ENGINE = Log AS SELECT 1 AS a")).toThrow(/expected the column list \(a table declared without one/);
+    expect(() => parse("CREATE TABLE t AS SELECT 1 AS a")).toThrow(/AS SELECT is not declared/);
+    expect(() => parse("CREATE TABLE t (a UInt8) ENGINE = Memory AS SELECT 1 AS a")).toThrow(/AS SELECT is not declared/);
+    expect(() => parse("CREATE TABLE t CLONE AS other")).toThrow(/CLONE AS is not declared/);
+    expect(() => parse("CREATE TABLE t EMPTY AS SELECT 1")).toThrow(/EMPTY AS SELECT is not declared/);
+  });
+
+  test("a table over a table function, with or without its columns (#3911)", () => {
+    const bareSql = "CREATE TABLE t AS numbers(10)";
+    const bare = parse(bareSql) as TableNode;
+    expect(bare.columns).toEqual([]);
+    expect(bare.engine).toBeUndefined();
+    expect(text(bareSql, bare.asFunction)).toBe("numbers(10)");
+    // As SHOW CREATE prints it: the inferred columns, then the call, then the comment.
+    const shownSql = "CREATE TABLE default.tf\n(\n    `a` UInt64,\n    `b` String\n) AS remote('localhost', 'default.t')\nCOMMENT 'x'";
+    const shown = parse(shownSql) as TableNode;
+    expect(shown.columns.map((c) => c.name)).toEqual(["a", "b"]);
+    expect(text(shownSql, shown.asFunction)).toBe("remote('localhost', 'default.t')");
+    expect(shown.comment).toBeDefined();
+    expect(() => parse("CREATE TABLE t AS numbers(10) ENGINE = Log")).toThrow(/no engine or storage clauses/);
+  });
+
+  test("the CREATE kinds chant does not declare are refused by name, with why (#3911)", () => {
+    expect(() => parse("CREATE LIVE VIEW lv AS SELECT 1")).toThrow(/CREATE LIVE VIEW is not declared: the pinned server no longer has live views/);
+    expect(() => parse("CREATE WINDOW VIEW wv AS SELECT 1")).toThrow(/CREATE WINDOW VIEW is not declared: a window view is experimental/);
+    expect(() => parse("CREATE NAMED COLLECTION c AS user = 'u', password = 'p'")).toThrow(/CREATE NAMED COLLECTION is not declared: a named collection holds credentials/);
+    expect(() => parse("CREATE MASKING POLICY m ON t UPDATE a = 'x' TO r")).toThrow(/only in ClickHouse Cloud/);
+    expect(() => parse("CREATE WORKLOAD all")).toThrow(/CREATE WORKLOAD is not declared: a workload is server-level/);
+    expect(() => parse("CREATE RESOURCE r (WRITE DISK d)")).toThrow(/CREATE RESOURCE is not declared/);
+    expect(() => parse("CREATE TEMPORARY TABLE t (a UInt8)")).toThrow(/CREATE TEMPORARY TABLE is not declared/);
+    expect(() => parse("CREATE INDEX ix ON t (b) TYPE minmax")).toThrow(/CREATE INDEX is not declared: a skip index belongs to its table/);
+    expect(() => parse("CREATE QUOTA q")).toThrow(/CREATE QUOTA is access control: declare it with the quota tag/);
+    expect(() => parse("CREATE SETTINGS PROFILE p")).toThrow(/settingsProfile tag/);
   });
 });
 
@@ -101,6 +135,15 @@ describe("parsing views and databases", () => {
     expect(v.columns.map((c) => c.name)).toEqual(["a", "b"]);
     expect(text(sql, v.security)).toBe("DEFINER = alice SQL SECURITY DEFINER");
     expect(text(sql, v.select)).toBe("SELECT a, b FROM src");
+  });
+
+  test("a refreshable materialized view as SHOW CREATE prints it: the column list right after the schedule (#3911)", () => {
+    const sql =
+      "CREATE MATERIALIZED VIEW default.rmv\nREFRESH EVERY 1 HOUR OFFSET 5 MINUTES\n(\n    `a` UInt64\n)\nENGINE = MergeTree\nORDER BY a\nSETTINGS index_granularity = 8192\nDEFINER = default SQL SECURITY DEFINER\nAS SELECT a\nFROM default.t";
+    const v = parse(sql) as ViewNode;
+    expect(text(sql, v.refresh)).toBe("EVERY 1 HOUR OFFSET 5 MINUTES");
+    expect(v.columns.map((c) => c.name)).toEqual(["a"]);
+    expect(text(sql, v.orderBy)).toBe("a");
   });
 
   test("a view the server printed back, with its UUID", () => {

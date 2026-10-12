@@ -31,6 +31,8 @@ const REQUIRED_ENTITIES = [
   "Role",
   "RowPolicy",
   "Grant",
+  "Quota",
+  "SettingsProfile",
   "PostgresSchema",
   "PostgresTable",
   "PostgresIndex",

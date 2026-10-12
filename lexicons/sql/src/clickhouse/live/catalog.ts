@@ -10,6 +10,8 @@ import type { ClickHouseTarget } from "./bind";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
 import { isChantWorkingObject, stripMarkerFromStatement } from "../ownership";
 import { foreignTool } from "../../core/foreign-tables";
+import { parseCreate, unquote } from "../parser";
+import { tokenizeText } from "../tokens";
 
 /** The server's own databases, never part of a declared schema. */
 export const SYSTEM_DATABASES = new Set(["system", "information_schema", "INFORMATION_SCHEMA"]);
@@ -69,8 +71,10 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   const databases = await q<{ name: string; engine: string; uuid: string; comment: string }>(
     `SELECT name, engine, toString(uuid) AS uuid, comment FROM system.databases WHERE name ${scope} ORDER BY name`,
   );
-  const tables = await q<{ database: string; name: string; engine: string; uuid: string; comment: string; dictionary: number }>(
-    `SELECT database, name, engine, toString(uuid) AS uuid, comment, startsWith(create_table_query, 'CREATE DICTIONARY') AS dictionary FROM system.tables ` +
+  // `system.tables` shows no comment for a table over a table function, whatever it was created with: its statement has it (#3911).
+  const tables = await q<{ database: string; name: string; engine: string; uuid: string; comment: string; dictionary: number; proxy: string }>(
+    `SELECT database, name, engine, toString(uuid) AS uuid, comment, startsWith(create_table_query, 'CREATE DICTIONARY') AS dictionary, ` +
+      `if(comment = '' AND position(create_table_query, ' COMMENT ') > 0, create_table_query, '') AS proxy FROM system.tables ` +
       `WHERE database ${scope} AND NOT is_temporary AND name NOT LIKE '.inner%' ` +
       `ORDER BY database, name`,
   );
@@ -94,6 +98,7 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
     });
   }
   for (const t of tables) {
+    if (t.proxy) t.comment = commentOf(t.proxy) ?? t.comment;
     if (working.has(t.database) || isChantWorkingObject(t.comment)) continue;
     const type = Number(t.dictionary) === 1 ? CLICKHOUSE_ENTITY_TYPES.dictionary : entityTypeOfEngine(t.engine);
     const foreign = type === CLICKHOUSE_ENTITY_TYPES.table ? foreignTool(t.name) : undefined;
@@ -119,6 +124,23 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
 }
 
 
+/** A `CREATE` statement's own `COMMENT`, its value unquoted; undefined when it has none or does not parse. */
+function commentOf(statement: string): string | undefined {
+  try {
+    const tokens = tokenizeText(statement, 0);
+    const node = parseCreate(tokens);
+    if (!node.comment) return undefined;
+    const literal = tokens
+      .slice(node.comment.from, node.comment.to)
+      .map((t) => t.text)
+      .join("")
+      .trim();
+    return /^'.*'$/s.test(literal) ? literal.slice(1, -1).replace(/\\(.)/g, "$1").replace(/''/g, "'") : unquote(literal);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The access objects a build declares, by kind and name: what `readLiveAccess` reads. */
 export interface DeclaredAccess {
   kind: string;
@@ -128,9 +150,10 @@ export interface DeclaredAccess {
 }
 
 /**
- * The users, roles, row policies and grantees' grants the build declares,
- * as the server holds them (#3682): `SHOW CREATE USER`, `SHOW CREATE ROLE`,
- * `SHOW CREATE ROW POLICY`, and for a grantee every line of
+ * The users, roles, row policies, quotas, settings profiles and grantees'
+ * grants the build declares, as the server holds them (#3682, #3911):
+ * `SHOW CREATE USER`, `SHOW CREATE ROLE`, `SHOW CREATE ROW POLICY`,
+ * `SHOW CREATE QUOTA`, `SHOW CREATE SETTINGS PROFILE`, and for a grantee every line of
  * `SHOW GRANTS FOR`, one per line. Nothing else is read, so a project that
  * declares none needs no access to `system.users` and the like, and an
  * object made by hand is never seen. One that does not exist is left out.
@@ -154,6 +177,17 @@ export async function readLiveAccess(target: ClickHouseTarget, declared: readonl
   }
   for (const name of roles.filter((r) => existingRoles.has(r))) {
     out.push({ type: CLICKHOUSE_ENTITY_TYPES.role, name, engine: "", statement: await first(`SHOW CREATE ROLE ${ident(name)}`) });
+  }
+  for (const [kind, type, table, show] of [
+    ["quota", CLICKHOUSE_ENTITY_TYPES.quota, "system.quotas", "QUOTA"],
+    ["settingsProfile", CLICKHOUSE_ENTITY_TYPES.settingsProfile, "system.settings_profiles", "SETTINGS PROFILE"],
+  ] as const) {
+    const wanted = names(kind);
+    if (wanted.length === 0) continue;
+    const existing = new Set((await q<{ name: string }>(`SELECT name FROM ${table} WHERE name IN (${list(wanted)})`)).map((r) => r.name));
+    for (const name of wanted.filter((n) => existing.has(n))) {
+      out.push({ type, name, engine: "", statement: await first(`SHOW CREATE ${show} ${ident(name)}`) });
+    }
   }
   const policies = declared.filter((d) => d.kind === "rowPolicy");
   if (policies.length > 0) {
@@ -180,13 +214,20 @@ export async function readLiveAccess(target: ClickHouseTarget, declared: readonl
 }
 
 /** The canonical kinds a profile's `access` switch decides (#3716). */
-export const ACCESS_KINDS: ReadonlySet<string> = new Set(["user", "role", "rowPolicy", "grants"]);
+export const ACCESS_KINDS: ReadonlySet<string> = new Set(["user", "role", "rowPolicy", "quota", "settingsProfile", "grants"]);
 
 /** The entity types a profile's `access` switch decides (#3716). */
-export const ACCESS_ENTITY_TYPES: ReadonlySet<string> = new Set([CLICKHOUSE_ENTITY_TYPES.user, CLICKHOUSE_ENTITY_TYPES.role, CLICKHOUSE_ENTITY_TYPES.rowPolicy, CLICKHOUSE_ENTITY_TYPES.grant]);
+export const ACCESS_ENTITY_TYPES: ReadonlySet<string> = new Set([
+  CLICKHOUSE_ENTITY_TYPES.user,
+  CLICKHOUSE_ENTITY_TYPES.role,
+  CLICKHOUSE_ENTITY_TYPES.rowPolicy,
+  CLICKHOUSE_ENTITY_TYPES.quota,
+  CLICKHOUSE_ENTITY_TYPES.settingsProfile,
+  CLICKHOUSE_ENTITY_TYPES.grant,
+]);
 
 /** Why an access declaration is not read, planned or applied where the profile does not manage access. */
-export const ACCESS_UNMANAGED_DETAIL = "access is not managed in this environment: set sql.profiles.<env>.access to plan and apply users, roles, row policies and grants";
+export const ACCESS_UNMANAGED_DETAIL = "access is not managed in this environment: set sql.profiles.<env>.access to plan and apply users, roles, row policies, quotas, settings profiles and grants";
 
 /** The hint a plan gives for the access declarations it left out. */
 export function accessUnmanagedHint(n: number, environment: string): string {
@@ -200,9 +241,15 @@ export function declaredAccess(objects: ReadonlyArray<{ kind: string; name: stri
     .map((o) => ({ kind: o.kind, name: o.name, ...(o.database !== undefined ? { database: o.database } : {}), ...(o.table !== undefined ? { table: o.table } : {}) }));
 }
 
-/** The users, roles and row policies among declared entities, for `readLiveAccess`. */
+/** The users, roles, row policies, quotas and settings profiles among declared entities, for `readLiveAccess`. */
 export function accessOf(entities: ReadonlyMap<string, { entityType: string; props: Record<string, unknown> }>, defaultDatabase: string): DeclaredAccess[] {
-  const kinds: Record<string, string> = { [CLICKHOUSE_ENTITY_TYPES.user]: "user", [CLICKHOUSE_ENTITY_TYPES.role]: "role", [CLICKHOUSE_ENTITY_TYPES.rowPolicy]: "rowPolicy" };
+  const kinds: Record<string, string> = {
+    [CLICKHOUSE_ENTITY_TYPES.user]: "user",
+    [CLICKHOUSE_ENTITY_TYPES.role]: "role",
+    [CLICKHOUSE_ENTITY_TYPES.rowPolicy]: "rowPolicy",
+    [CLICKHOUSE_ENTITY_TYPES.quota]: "quota",
+    [CLICKHOUSE_ENTITY_TYPES.settingsProfile]: "settingsProfile",
+  };
   const out: DeclaredAccess[] = [];
   for (const e of entities.values()) {
     const kind = kinds[e.entityType];

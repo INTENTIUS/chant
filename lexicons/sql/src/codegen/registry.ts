@@ -23,6 +23,8 @@ const KINDS: Record<string, string> = {
   Role: CLICKHOUSE_ENTITY_TYPES.role,
   RowPolicy: CLICKHOUSE_ENTITY_TYPES.rowPolicy,
   Grant: CLICKHOUSE_ENTITY_TYPES.grant,
+  Quota: CLICKHOUSE_ENTITY_TYPES.quota,
+  SettingsProfile: CLICKHOUSE_ENTITY_TYPES.settingsProfile,
   PostgresSchema: POSTGRES_ENTITY_TYPES.schema,
   PostgresTable: POSTGRES_ENTITY_TYPES.table,
   PostgresIndex: POSTGRES_ENTITY_TYPES.index,

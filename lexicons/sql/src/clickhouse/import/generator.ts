@@ -29,7 +29,7 @@ export interface TemplateBody {
   refs: string[];
 }
 
-export const CLICKHOUSE_TAG_OF: Readonly<Record<string, "database" | "table" | "view" | "dictionary" | "func" | "user" | "role" | "policy" | "grant">> = {
+export const CLICKHOUSE_TAG_OF: Readonly<Record<string, "database" | "table" | "view" | "dictionary" | "func" | "user" | "role" | "policy" | "quota" | "settingsProfile" | "grant">> = {
   [CLICKHOUSE_ENTITY_TYPES.database]: "database",
   [CLICKHOUSE_ENTITY_TYPES.table]: "table",
   [CLICKHOUSE_ENTITY_TYPES.view]: "view",
@@ -40,6 +40,8 @@ export const CLICKHOUSE_TAG_OF: Readonly<Record<string, "database" | "table" | "
   [CLICKHOUSE_ENTITY_TYPES.user]: "user",
   [CLICKHOUSE_ENTITY_TYPES.role]: "role",
   [CLICKHOUSE_ENTITY_TYPES.rowPolicy]: "policy",
+  [CLICKHOUSE_ENTITY_TYPES.quota]: "quota",
+  [CLICKHOUSE_ENTITY_TYPES.settingsProfile]: "settingsProfile",
   [CLICKHOUSE_ENTITY_TYPES.grant]: "grant",
 };
 
@@ -129,13 +131,24 @@ export const bodyText = (body: TemplateBody): string => body.parts.map((p, i) =>
  * name) interpolated, and the items in the order a file declares them: each
  * after what it references.
  */
+/** The kinds a `FROM`, `JOIN` or `TO` never names. */
+const NOT_RELATIONS = new Set<string>([
+  CLICKHOUSE_ENTITY_TYPES.function,
+  CLICKHOUSE_ENTITY_TYPES.user,
+  CLICKHOUSE_ENTITY_TYPES.role,
+  CLICKHOUSE_ENTITY_TYPES.rowPolicy,
+  CLICKHOUSE_ENTITY_TYPES.quota,
+  CLICKHOUSE_ENTITY_TYPES.settingsProfile,
+  CLICKHOUSE_ENTITY_TYPES.grant,
+]);
+
 export function clickhouseTemplates(items: readonly Item[], targets: readonly Item[] = items): { order: Item[]; bodies: Map<string, TemplateBody> } {
   const byQualified = new Map<string, Item>();
   const dbExport = new Map<string, string>();
   for (const it of targets) {
     if (it.type === CLICKHOUSE_ENTITY_TYPES.database) dbExport.set(it.name, it.exportName);
-    // A function is called, never named after FROM, JOIN or TO; a row policy and a grant are never named at all.
-    else if (it.type !== CLICKHOUSE_ENTITY_TYPES.function && it.type !== CLICKHOUSE_ENTITY_TYPES.rowPolicy && it.type !== CLICKHOUSE_ENTITY_TYPES.grant) byQualified.set(it.database ? `${it.database}.${it.name}` : it.name, it);
+    // A function is called, never named after FROM, JOIN or TO; access objects are never named so at all.
+    else if (!NOT_RELATIONS.has(it.type)) byQualified.set(it.database ? `${it.database}.${it.name}` : it.name, it);
   }
   const bodies = new Map(items.map((it) => [it.exportName, templateBody(it, byQualified, dbExport)]));
   // Declarations reference each other in one file, so each comes after what it references.

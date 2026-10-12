@@ -90,8 +90,8 @@ describe("ClickHouse live import", () => {
       ],
       {
         undeclarable: [
-          { kind: "quota", name: "q1" },
-          { kind: "settings profile", name: "sp1" },
+          { kind: "named collection", name: "nc1" },
+          { kind: "workload", name: "all" },
           { kind: "window view", database: "analytics", name: "wv" },
         ],
       },
@@ -101,7 +101,7 @@ describe("ClickHouse live import", () => {
   const run = (extra: Record<string, unknown> = {}) => exportClickHouse({ environment: "x", config: {}, env: { CLICKHOUSE_URL: server.url }, ...extra });
 
   test("fails naming them", async () => {
-    await expect(run()).rejects.toThrow(/  - quota q1\n  - settings profile sp1\n  - window view analytics\.wv\n/);
+    await expect(run()).rejects.toThrow(/  - named collection nc1\n  - window view analytics\.wv\n  - workload all\n/);
   });
 
   test("with skipUndeclarable, warns, and the window view is not imported as a table", async () => {
@@ -132,7 +132,8 @@ CREATE COLLATION app.ci (provider = icu, locale = 'und');`;
     ]);
   });
 
-  test("ClickHouse: a quota in a file is refused too", () => {
-    expect(() => new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE QUOTA q1")).toThrow(/quota: chant cannot declare it/);
+  test("ClickHouse: a named collection in a file is refused too; a quota is declared (#3911)", () => {
+    expect(() => new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE NAMED COLLECTION c AS url = 'x'")).toThrow(/named collection: chant cannot declare it/);
+    expect(new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE QUOTA q1").resources.map((r) => r.type)).toEqual(["ClickHouse::Database", "ClickHouse::Quota"]);
   });
 });

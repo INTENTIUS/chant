@@ -179,6 +179,17 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
     return;
   }
 
+  if (before.kind === "quota" || before.kind === "settingsProfile") {
+    const rule = before.kind === "quota" ? "SQLCH275" : "SQLCH276";
+    const b = before.access ?? {};
+    const a = after.access ?? {};
+    // In the order the server prints them: the key, each interval by length, the settings, whom it applies to.
+    const rank = (f: string) => (f === "keyed" ? 0 : f.startsWith("interval.") ? 1 + Number(f.slice("interval.".length)) / 1e9 : f === "settings" ? 2 : 3);
+    const fields = [...new Set([...Object.keys(b), ...Object.keys(a)])].sort((x, y) => rank(x) - rank(y));
+    for (const field of fields) if (b[field] !== a[field]) out.push(change(key, field, rule, b[field], a[field]));
+    return;
+  }
+
   if (before.kind === "grants") {
     const b = before.access ?? {};
     const a = after.access ?? {};
@@ -209,6 +220,11 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
     for (const f of ["engine", "orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl"] as const) {
       if (before[f] !== after[f]) out.push(change(key, f, "SQLCH243", before[f], after[f]));
     }
+    return;
+  }
+
+  if (before.asFunction !== undefined || after.asFunction !== undefined) {
+    diffTableFunction(key, before, after, out);
     return;
   }
 
@@ -244,6 +260,30 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
   diffMap(key, "constraints", before.constraints, after.constraints, "SQLCH215", out);
 }
 
+/**
+ * A table over a table function (#3911), on either side. It stores nothing,
+ * so every change but its comment replaces it (SQLCH219); a table with data
+ * of its own becoming one would lose that data, which is a rebuild
+ * (SQLCH223). A declaration with no column list takes the columns the server
+ * infers, so they are compared only when it lists them.
+ */
+function diffTableFunction(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[]): void {
+  if (before.asFunction === undefined) {
+    out.push(change(key, "asFunction", "SQLCH223", before.engine, `AS ${after.asFunction}`));
+    return;
+  }
+  if (before.asFunction !== after.asFunction) out.push(change(key, "asFunction", "SQLCH219", before.asFunction, after.asFunction));
+  if (after.asFunction !== undefined && after.columns.length === 0) return;
+  const column = (c: CanonicalColumn) => [c.type, c.nullable ? "NULL" : "", c.defaultKind ?? "", c.defaultExpr ?? "", c.codec ? `CODEC(${c.codec})` : "", c.comment ? `COMMENT ${c.comment}` : ""].filter(Boolean).join(" ");
+  const b = new Map(before.columns.map((c) => [c.name, column(c)]));
+  const a = new Map(after.columns.map((c) => [c.name, column(c)]));
+  for (const name of new Set([...b.keys(), ...a.keys()])) {
+    if (b.get(name) !== a.get(name)) out.push(change(key, `columns.${name}`, "SQLCH219", b.get(name), a.get(name)));
+  }
+  const order = (o: CanonicalObject) => o.columns.map((c) => c.name).join(", ");
+  if (order(before) !== order(after) && a.size === b.size && [...a.keys()].every((n) => b.has(n))) out.push(change(key, "columns.order", "SQLCH219", order(before), order(after)));
+}
+
 /** A dictionary: every change but its comment replaces it (SQLCH245). */
 function diffDictionary(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[]): void {
   const attribute = (c: CanonicalColumn) =>
@@ -272,7 +312,7 @@ export function diffSchemas(before: readonly SchemaObject[], after: readonly Sch
   const matches = matchByIdentity(before, after, {
     qualified,
     // A function, a user, a role, a row policy and a grantee's grants are not renamed: one under a new name is a create.
-    previously: (o) => (o.kind === "function" || o.kind === "user" || o.kind === "role" || o.kind === "rowPolicy" || o.kind === "grants" ? undefined : o.previously),
+    previously: (o) => (o.kind === "function" || o.kind === "user" || o.kind === "role" || o.kind === "rowPolicy" || o.kind === "quota" || o.kind === "settingsProfile" || o.kind === "grants" ? undefined : o.previously),
     previousNames: (o, prev) => [prev, `${o.database}.${prev}`],
   });
   for (const m of matches) {

@@ -33,6 +33,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isTrivia as chTrivia, tokenizeText as chTokens } from "../lexicons/sql/src/clickhouse/tokens";
 import { parseCreate } from "../lexicons/sql/src/clickhouse/parser";
+import { isAccessStatement, parseAccess } from "../lexicons/sql/src/clickhouse/access";
 import { isTrivia as pgTrivia, tokenizeText as pgTokens } from "../lexicons/sql/src/postgres/tokens";
 import { parseStatements } from "../lexicons/sql/src/postgres/parser";
 import { splitTokens, tokensText } from "../lexicons/sql/src/files/common";
@@ -67,10 +68,17 @@ const SPECS: Record<Dialect, DialectSpec> = {
       const out = execFileSync("curl", ["-fsSL", ...(token ? ["-H", `Authorization: Bearer ${token}`] : []), "https://api.github.com/repos/ClickHouse/ClickHouse/releases/latest"], { encoding: "utf-8" });
       return (JSON.parse(out) as { tag_name: string }).tag_name;
     },
-    declares: /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|DATABASE|DICTIONARY|FUNCTION|(?:MATERIALIZED\s+)?VIEW)\b/i,
+    // Quotas and settings profiles (#3911) are read by the access parser, which keeps no unknown clauses.
+    declares: /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|DATABASE|DICTIONARY|FUNCTION|(?:MATERIALIZED\s+)?VIEW|QUOTA|(?:SETTINGS\s+)?PROFILE)\b/i,
     tokens: (sql) => chTokens(sql, 0),
     isTrivia: chTrivia,
-    parse: (tokens) => parseCreate(tokens).unknown ?? [],
+    parse: (tokens) => {
+      if (isAccessStatement(tokens.map((t) => t.text).join(""))) {
+        parseAccess(tokens);
+        return [];
+      }
+      return parseCreate(tokens).unknown ?? [];
+    },
   },
   postgres: {
     label: "Postgres",

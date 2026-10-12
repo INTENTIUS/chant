@@ -80,7 +80,7 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 17 declared, 27 refused, 2 out 
 
 ## ClickHouse
 
-Pinned release: 26.8.15.10. 10 declared, 9 refused, 1 out of scope.
+Pinned release: 26.8.15.10. 12 declared, 7 refused, 1 out of scope.
 
 | Command | Kind | Status | Declared by, or why not |
 |---|---|---|---|
@@ -88,22 +88,22 @@ Pinned release: 26.8.15.10. 10 declared, 9 refused, 1 out of scope.
 | `CREATE DICTIONARY` | dictionary | declared | `ClickHouse::Dictionary` |
 | `CREATE FUNCTION` | SQL function | declared | `ClickHouse::Function` |
 | `CREATE FUNCTION` (LANGUAGE WASM, or with a driver) | non-SQL function | refused | only a SQL function (CREATE FUNCTION f AS (x) -\> ...) is declared |
-| `CREATE HANDLER` | HTTP handler | refused | no declaration holds an HTTP handler yet |
+| `CREATE HANDLER` | HTTP handler | refused | an HTTP handler is server-level configuration, not a schema object |
 | `CREATE INDEX` | index | declared | `ClickHouse::Table`: an index is part of its table: SHOW CREATE TABLE prints it, and the table's declaration holds it |
-| `CREATE MASKING POLICY` | masking policy | refused | no declaration holds a masking policy yet |
-| `CREATE NAMED COLLECTION` | named collection | refused | no declaration holds a named collection yet; one usually carries credentials |
-| `CREATE QUOTA` | quota | refused | no declaration holds a quota yet |
-| `CREATE RESOURCE` | workload resource | refused | no declaration holds a workload scheduling resource yet |
+| `CREATE MASKING POLICY` | masking policy | refused | masking policies are available only in ClickHouse Cloud, not on the pinned server |
+| `CREATE NAMED COLLECTION` | named collection | refused | a named collection holds credentials (a password, a secret key), which are the environment's and never in a build; the server hides its values, so a plan could not compare them either |
+| `CREATE QUOTA` | quota | declared | `ClickHouse::Quota`: import reads only the access objects a build declares |
+| `CREATE RESOURCE` | workload resource | refused | a resource is server-level scheduling (a disk's reads or writes), configured with the server, not a schema object |
 | `CREATE ROLE` | role | declared | `ClickHouse::Role`: import reads only the access objects a build declares |
 | `CREATE ROW POLICY` | row policy | declared | `ClickHouse::RowPolicy`: import reads only the access objects a build declares |
-| `CREATE SETTINGS PROFILE` | settings profile | refused | no declaration holds a settings profile yet |
+| `CREATE SETTINGS PROFILE` | settings profile | declared | `ClickHouse::SettingsProfile`: import reads only the access objects a build declares |
 | `CREATE TABLE` | table | declared | `ClickHouse::Table` |
 | `CREATE TABLE` (TEMPORARY) | temporary table | out of scope | a temporary table lives in one session |
 | `CREATE USER` | user | declared | `ClickHouse::User`: import reads only the access objects a build declares |
 | `CREATE VIEW` | view | declared | `ClickHouse::View` |
 | `CREATE VIEW` (MATERIALIZED) | materialized view | declared | `ClickHouse::MaterializedView` |
-| `CREATE WINDOW VIEW` | window view | refused | no declaration holds a window view, an experimental feature |
-| `CREATE WORKLOAD` | workload | refused | no declaration holds a workload yet |
+| `CREATE WINDOW VIEW` | window view | refused | a window view is experimental, and the pinned server refuses it under its default query analyzer |
+| `CREATE WORKLOAD` | workload | refused | a workload is server-level scheduling, configured with the server, not a schema object |
 
 ## Declaring a refused kind
 

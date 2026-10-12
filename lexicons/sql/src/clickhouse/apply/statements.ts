@@ -24,7 +24,7 @@ import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "../pl
 import { stampedComment } from "../ownership";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
 import { renderFor, type Topology } from "../topology";
-import { accessClauseText, alterAccessField, grantStatement, revokeStatement, SECRETLESS, type GrantAtom } from "../access";
+import { accessClauseText, alterAccessField, alterQuotaOrProfileField, grantStatement, revokeStatement, SECRETLESS, type GrantAtom } from "../access";
 
 /** A backquoted identifier. */
 export const ident = (name: string): string => `\`${name.replace(/`/g, "``")}\``;
@@ -143,7 +143,7 @@ export function createStatement(
   } else {
     sql = `${statementBody(tokens)} COMMENT ${literal}`;
   }
-  if (opts.orReplace && (node.statement === "view" || node.statement === "dictionary") && !node.orReplace) {
+  if (opts.orReplace && (node.statement === "view" || node.statement === "dictionary" || node.statement === "table") && !node.orReplace) {
     sql = sql.replace(/^(\s*(?:--[^\n]*\n\s*)*)CREATE\s+/i, "$1CREATE OR REPLACE ");
   }
   return sql;
@@ -407,7 +407,9 @@ export function alterSteps(obj: DeclaredObject, changes: readonly Change[], opts
   if (obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary && changes.some((c) => c.rule === "SQLCH245")) {
     steps.push(stepFor(createStatement(obj, opts.marker, { orReplace: true }), "SQLCH245"));
   }
-  if (obj.type === CLICKHOUSE_ENTITY_TYPES.table) steps.push(...tableSteps(obj, changes, opts.live));
+  // A table over a table function stores nothing: it is replaced whole (#3911), its comment and marker with it.
+  if (obj.type === CLICKHOUSE_ENTITY_TYPES.table && changes.some((c) => c.rule === "SQLCH219")) steps.push(stepFor(createStatement(obj, opts.marker, { orReplace: true }), "SQLCH219"));
+  else if (obj.type === CLICKHOUSE_ENTITY_TYPES.table) steps.push(...tableSteps(obj, changes, opts.live));
   else if (obj.type === CLICKHOUSE_ENTITY_TYPES.view || obj.type === CLICKHOUSE_ENTITY_TYPES.materializedView) steps.push(...viewSteps(obj, changes, opts.marker));
   return steps;
 }
@@ -416,6 +418,7 @@ export function alterSteps(obj: DeclaredObject, changes: readonly Change[], opts
 export function stepsSetComment(obj: DeclaredObject, changes: readonly Change[]): boolean {
   return (
     (obj.type === CLICKHOUSE_ENTITY_TYPES.view && changes.some((c) => c.rule === "SQLCH240")) ||
+    (obj.type === CLICKHOUSE_ENTITY_TYPES.table && changes.some((c) => c.rule === "SQLCH219")) ||
     (obj.type === CLICKHOUSE_ENTITY_TYPES.dictionary && changes.some((c) => c.rule === "SQLCH245"))
   );
 }
@@ -509,17 +512,19 @@ export function planStatements(input: StatementPlanInput): StatementPlan {
   };
 }
 
-const NEVER_DROPPED: ReadonlySet<string> = new Set(["function", "user", "role", "rowPolicy", "grants"]);
+const NEVER_DROPPED: ReadonlySet<string> = new Set(["function", "user", "role", "rowPolicy", "quota", "settingsProfile", "grants"]);
 
 /** The entity types of access control (`../access.ts`): no comment, no marker, never dropped. */
 export const ACCESS_TYPES: ReadonlySet<string> = new Set([
   CLICKHOUSE_ENTITY_TYPES.user,
   CLICKHOUSE_ENTITY_TYPES.role,
   CLICKHOUSE_ENTITY_TYPES.rowPolicy,
+  CLICKHOUSE_ENTITY_TYPES.quota,
+  CLICKHOUSE_ENTITY_TYPES.settingsProfile,
   CLICKHOUSE_ENTITY_TYPES.grant,
 ]);
 
-/** What a user, role, row policy or grantee's grants take (`../access.ts`). */
+/** What a user, role, row policy, quota, settings profile or grantee's grants take (`../access.ts`). */
 function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalObject | undefined, deferred: DeferredDefaultRoles, environmentCreatesUsers: boolean): ObjectStatements {
   const kind = obj.canonical.kind;
   const name = obj.canonical.name;
@@ -566,6 +571,13 @@ function accessStatements(obj: DeclaredObject, mine: Change[], live: CanonicalOb
       ? body
       : body.replace(/^(\s*(?:--[^\n]*\n\s*)*CREATE\s+(?:ROW\s+)?POLICY)\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, "$1 OR REPLACE ");
     return { verdict: "alter", obj, changes: mine, steps: mine.some((c) => c.rule === "SQLCH272") ? [stepFor(replace, "SQLCH272")] : [] };
+  }
+  if (kind === "quota" || kind === "settingsProfile") {
+    // ALTER, never OR REPLACE: a replaced profile is a new one, and what inherited the old one loses it.
+    const clauses = accessClauseText(obj.ddl);
+    const rule = kind === "quota" ? "SQLCH275" : "SQLCH276";
+    const steps = mine.filter((c) => c.rule === rule).map((c) => stepFor(alterQuotaOrProfileField(kind, name, c.field, obj.canonical.access ?? {}, clauses), rule));
+    return { verdict: "alter", obj, changes: mine, steps };
   }
   const clauses = accessClauseText(obj.ddl);
   const rule = kind === "user" ? "SQLCH271" : "SQLCH270";

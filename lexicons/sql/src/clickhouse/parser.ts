@@ -95,6 +95,12 @@ export interface TableNode extends StorageNode {
   indexes: IndexNode[];
   projections: ProjectionNode[];
   constraints: ConstraintNode[];
+  /**
+   * A table over a table function (#3911): `AS numbers(10)`, `AS remote(...)`,
+   * the call after `AS`. Such a table has no engine and no data of its own;
+   * its column list is optional, and the server prints the one it inferred.
+   */
+  asFunction?: Span;
   comment?: Span;
 }
 
@@ -200,6 +206,42 @@ const EXPRESSION_WORDS = new Set(
   ).split(" "),
 );
 
+/** The units an interval is counted in, singular and plural: what ends a refresh schedule before a column list. */
+const INTERVAL_UNIT_WORDS = new Set(
+  ["NANOSECOND", "MICROSECOND", "MILLISECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR"].flatMap((u) => [u, `${u}S`]),
+);
+
+/**
+ * The `CREATE` kinds the pinned server has (26.8: `system.*` and its parser's
+ * own list) that chant does not declare, each with why (#3911). A statement
+ * of one is refused with that reason, by name, never as a parse error.
+ */
+export const REFUSED_CREATE_KINDS: ReadonlyArray<{ words: readonly string[]; kind: string; reason: string }> = [
+  { words: ["LIVE", "VIEW"], kind: "LIVE VIEW", reason: "the pinned server no longer has live views (removed in 25.x); a refreshable materialized view (REFRESH EVERY ...) is the replacement" },
+  {
+    words: ["WINDOW", "VIEW"],
+    kind: "WINDOW VIEW",
+    reason: "a window view is experimental and the pinned server refuses it under the default query analyzer (allow_experimental_analyzer), so it cannot be applied as declared",
+  },
+  { words: ["TEMPORARY"], kind: "TEMPORARY TABLE", reason: "a temporary table lives for one session and is never in the catalog a plan reads" },
+  {
+    words: ["NAMED", "COLLECTION"],
+    kind: "NAMED COLLECTION",
+    reason: "a named collection holds credentials (a password, a secret key), which are the environment's and never in a build; the server hides its values, so a plan could not compare them either. Create it from the server's configuration or by hand",
+  },
+  { words: ["MASKING", "POLICY"], kind: "MASKING POLICY", reason: "masking policies are available only in ClickHouse Cloud, not on the pinned server" },
+  { words: ["WORKLOAD"], kind: "WORKLOAD", reason: "a workload is server-level scheduling, configured with the server, not a schema object" },
+  { words: ["RESOURCE"], kind: "RESOURCE", reason: "a resource is a server-level scheduling resource (a disk's read or write), configured with the server, not a schema object" },
+  { words: ["HANDLER"], kind: "HANDLER", reason: "an HTTP handler is server-level configuration, not a schema object" },
+  {
+    words: ["INDEX"],
+    kind: "INDEX",
+    reason: "a skip index belongs to its table: declare it in the table's column list (INDEX name expr TYPE type GRANULARITY n), and a plan adds or drops it with ALTER TABLE",
+  },
+  { words: ["UNIQUE", "INDEX"], kind: "UNIQUE INDEX", reason: "the pinned server has no unique index on its table engines; declare a skip index in the table's column list" },
+  { words: ["HYPOTHETICAL", "INDEX"], kind: "HYPOTHETICAL INDEX", reason: "a hypothetical index is a session's what-if for the query planner, never stored" },
+];
+
 const STORAGE_KEYWORDS = ["ENGINE", "ORDER", "PRIMARY", "PARTITION", "SAMPLE", "TTL", "SETTINGS", "COMMENT"];
 
 /** A column's own clause words: an unknown one stops at the next of these (#3872). */
@@ -208,6 +250,8 @@ const COLUMN_WORDS = ["DEFAULT", "MATERIALIZED", "ALIAS", "EPHEMERAL", "NULL", "
 class Parser extends SqlCursor {
   /** Where the clause-aware expression being read started (#3872); undefined outside one. */
   private clauseFrom: number | undefined;
+  /** Reading a refreshable materialized view's schedule, which a column list ends. */
+  private refreshing = false;
 
   /**
    * `ORDER`, `PARTITION`, `SAMPLE` and `GROUP` stop only before `BY`, `PRIMARY`
@@ -215,6 +259,8 @@ class Parser extends SqlCursor {
    * not know stops it too.
    */
   protected override stopsAt(stop: readonly string[]): boolean {
+    // `REFRESH EVERY 1 HOUR (a UInt64) ENGINE ...`, as `SHOW CREATE` prints it: the column list follows the schedule.
+    if (this.refreshing && this.isPunct("(") && INTERVAL_UNIT_WORDS.has(this.peek(-1)?.text.toUpperCase() ?? "")) return true;
     if (!super.stopsAt(stop)) return this.startsUnknownClause();
     const word = this.peek()!.text.toUpperCase();
     const two = ["ORDER", "PARTITION", "SAMPLE", "GROUP"].includes(word) ? kw(this.peek(1), "BY") : true;
@@ -478,6 +524,22 @@ class Parser extends SqlCursor {
     if (this.accept("FUNCTION")) return this.function(orReplace);
     const materialized = this.accept("MATERIALIZED");
     if (this.accept("VIEW")) return this.view(orReplace, materialized);
+    if (!materialized) {
+      const refused = REFUSED_CREATE_KINDS.find((k) => k.words.every((w, i) => kw(this.peek(i), w)));
+      if (refused) this.fail(`CREATE ${refused.kind} is not declared: ${refused.reason}`);
+      // Access control is read by its own tags (`./access.ts`).
+      const access: Array<[string[], string, string]> = [
+        [["USER"], "USER", "user"],
+        [["ROLE"], "ROLE", "role"],
+        [["ROW", "POLICY"], "ROW POLICY", "policy"],
+        [["POLICY"], "ROW POLICY", "policy"],
+        [["QUOTA"], "QUOTA", "quota"],
+        [["SETTINGS", "PROFILE"], "SETTINGS PROFILE", "settingsProfile"],
+        [["PROFILE"], "SETTINGS PROFILE", "settingsProfile"],
+      ];
+      const hit = access.find(([words]) => words.every((w, i) => kw(this.peek(i), w)));
+      if (hit) this.fail(`CREATE ${hit[1]} is access control: declare it with the ${hit[2]} tag`);
+    }
     return this.fail(materialized ? "expected VIEW" : "expected DATABASE, TABLE, VIEW, MATERIALIZED VIEW, DICTIONARY or FUNCTION");
   }
 
@@ -540,12 +602,51 @@ class Parser extends SqlCursor {
       projections: [],
       constraints: [],
     };
-    if (!this.isPunct("(")) this.fail("expected the column list (CREATE TABLE ... AS is not declared here)");
-    this.tableElements(node, true);
+    if (this.isPunct("(")) this.tableElements(node, true);
+    else if (!kw(this.peek(), "AS")) this.refuseCopy();
+    const asWord = this.peek();
+    if (this.accept("AS")) {
+      // `AS numbers(10)`: a table over a table function. `AS other` and `AS SELECT` copy, and are refused.
+      if (kw(this.peek(), "SELECT", "WITH") || this.isPunct("(")) this.refuseCopy("select", asWord);
+      const from = this.idx();
+      this.qualifiedName();
+      if (!this.isPunct("(")) this.refuseCopy("table", asWord);
+      this.parenthesized();
+      node.asFunction = this.span(from, this.tokens.slice(from, this.idx(-1) + 1).flatMap((t) => (t.kind === "ref" ? [t.part] : [])));
+      if (this.accept("COMMENT")) node.comment = this.clauseExpr();
+      if (kw(this.peek(), ...STORAGE_KEYWORDS)) this.fail("a table over a table function has no engine or storage clauses: the function is its storage");
+      this.finish("table definition", ["COMMENT"]);
+      return node;
+    }
     this.storage(node, []);
     if (this.accept("COMMENT")) node.comment = this.clauseExpr();
+    if (kw(this.peek(), "AS") && (kw(this.peek(1), "SELECT", "WITH") || this.peek(1)?.text === "(")) this.refuseCopy("select");
     this.finish("table definition", STORAGE_KEYWORDS);
     return node;
+  }
+
+  /**
+   * The `CREATE TABLE` forms that copy another table or a query, refused
+   * with why (#3911). Each is a one-off the server keeps no trace of: it
+   * prints the copied columns and engine, or the query's result's, as if
+   * they were written out.
+   */
+  private refuseCopy(what?: "select" | "table", at: Token | undefined = this.peek()): never {
+    if (what === "select") {
+      return this.fail(
+        "CREATE TABLE ... AS SELECT is not declared: it creates the table and fills it once, and the server keeps the columns, not the query. Declare the table's columns and fill it with INSERT ... SELECT, or declare a materialized view",
+        at,
+      );
+    }
+    if (what === "table") {
+      return this.fail(
+        "CREATE TABLE ... AS <table> is not declared: the server copies the other table's columns and engine and keeps no link to it. Declare them (a composite can share them), or write AS <table function>(...) for a table over a table function",
+        at,
+      );
+    }
+    if (kw(this.peek(), "CLONE")) return this.fail("CREATE TABLE ... CLONE AS is not declared: it copies another table's columns, engine and data once. Declare the columns and engine");
+    if (kw(this.peek(), "EMPTY")) return this.fail("CREATE TABLE ... EMPTY AS SELECT is not declared: the server keeps the query's columns, not the query. Declare the columns");
+    return this.fail("expected the column list (a table declared without one, CREATE TABLE ... ENGINE = ... AS SELECT, is not declared: declare the columns)");
   }
 
   private dictionaryAttribute(): DictionaryAttributeNode {
@@ -644,7 +745,14 @@ class Parser extends SqlCursor {
       empty: false,
       select: { from: 0, to: 0, refs: [] },
     };
-    if (this.accept("REFRESH")) node.refresh = this.expr(["TO", "ENGINE", "AS", "EMPTY", "APPEND", "DEPENDS", "SETTINGS"]);
+    if (this.accept("REFRESH")) {
+      this.refreshing = true;
+      try {
+        node.refresh = this.expr(["TO", "ENGINE", "AS", "EMPTY", "APPEND", "DEPENDS", "SETTINGS"]);
+      } finally {
+        this.refreshing = false;
+      }
+    }
     if (this.accept("APPEND")) node.append = true;
     if (this.accept("TO")) node.to = this.qualifiedName();
     if (this.isPunct("(")) {

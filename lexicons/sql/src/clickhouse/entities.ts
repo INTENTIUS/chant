@@ -65,6 +65,8 @@ export const CLICKHOUSE_ENTITY_TYPES = {
   role: "ClickHouse::Role",
   rowPolicy: "ClickHouse::RowPolicy",
   grant: "ClickHouse::Grant",
+  quota: "ClickHouse::Quota",
+  settingsProfile: "ClickHouse::SettingsProfile",
 } as const;
 
 export type ClickHouseEntityType = (typeof CLICKHOUSE_ENTITY_TYPES)[keyof typeof CLICKHOUSE_ENTITY_TYPES];
@@ -128,6 +130,12 @@ export interface TableProps extends CommonProps, StorageProps {
   indexes: Array<{ name: string; expr: string; type: string; granularity?: string }>;
   projections: Array<{ name: string; definition: string }>;
   constraints: Array<{ name: string; kind: "CHECK" | "ASSUME"; expr: string }>;
+  /**
+   * For a table over a table function (#3911), the call after `AS`:
+   * `numbers(10)`, `remote('host', db, t)`. Such a table has no engine and
+   * stores nothing; its columns may be left to the server to infer.
+   */
+  asFunction?: string;
   orReplace?: boolean;
   ifNotExists?: boolean;
 }
@@ -313,6 +321,45 @@ export interface GrantProps {
   withAdminOption?: boolean;
   ddl: string;
   source: { strings: string[] };
+}
+
+/** A quota (#3911): limits on what a user's queries use, per interval. */
+export interface QuotaProps {
+  name: string;
+  onCluster?: string;
+  /** `KEYED BY ...` after the keywords: `user_name`, `client_key, user_name`. Absent when not keyed. */
+  keyed?: string;
+  /** Every `FOR [RANDOMIZED] INTERVAL ...` clause, as written. */
+  intervals?: string;
+  /** `TO ...` after the keyword: the users and roles it applies to. */
+  to?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+/** A settings profile (#3911): settings and their constraints, for the users and roles it is given to. */
+export interface SettingsProfileProps {
+  name: string;
+  onCluster?: string;
+  /** `SETTINGS ...` after the keyword, as written. */
+  settings?: string;
+  /** `TO ...` after the keyword. */
+  to?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface ClickHouseQuota extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Quota";
+  readonly props: QuotaProps;
+}
+export interface ClickHouseSettingsProfile extends ClickHouseObject {
+  readonly entityType: "ClickHouse::SettingsProfile";
+  readonly props: SettingsProfileProps;
 }
 
 export interface ClickHouseUser extends ClickHouseObject {
@@ -585,6 +632,7 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
       ),
       projections: node.projections.map((p) => ({ name: p.name, definition: req(text(ctx, p.body, "projections")) })),
       constraints: node.constraints.map((c) => ({ name: c.name, kind: c.kind, expr: req(text(ctx, c.expr, "constraints")) })),
+      asFunction: text(ctx, node.asFunction, "asFunction"),
       ...storageProps(ctx, node),
       ddl,
       source,
@@ -729,12 +777,14 @@ export function func(strings: TemplateStringsArray, ...values: unknown[]): Click
   return build("func", strings, values) as ClickHouseFunction;
 }
 
-type AccessTag = "user" | "role" | "policy" | "grant";
-const ACCESS_STATEMENT: Record<AccessTag, AccessNode["statement"]> = { user: "user", role: "role", policy: "rowPolicy", grant: "grant" };
+type AccessTag = "user" | "role" | "policy" | "quota" | "settingsProfile" | "grant";
+const ACCESS_STATEMENT: Record<AccessTag, AccessNode["statement"]> = { user: "user", role: "role", policy: "rowPolicy", quota: "quota", settingsProfile: "settingsProfile", grant: "grant" };
 const ACCESS_HOLDS: Record<AccessNode["statement"], [string, AccessTag]> = {
   user: ["CREATE USER", "user"],
   role: ["CREATE ROLE", "role"],
   rowPolicy: ["CREATE ROW POLICY", "policy"],
+  quota: ["CREATE QUOTA", "quota"],
+  settingsProfile: ["CREATE SETTINGS PROFILE", "settingsProfile"],
   grant: ["GRANT", "grant"],
 };
 
@@ -786,6 +836,14 @@ function buildAccess(tag: AccessTag, strings: TemplateStringsArray | readonly st
     const props: RoleProps = strip({ ...common, settings: rendered(c.settings), ddl, source });
     return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.role, quoteIdentifier(name), props, undefined, dependsOn));
   }
+  if (node.statement === "quota") {
+    const props: QuotaProps = strip({ ...common, keyed: rendered(c.keyed), intervals: rendered(c.for), to: rendered(c.to), ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.quota, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "settingsProfile") {
+    const props: SettingsProfileProps = strip({ ...common, settings: rendered(c.settings), to: rendered(c.to), ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.settingsProfile, quoteIdentifier(name), props, undefined, dependsOn));
+  }
   if (node.statement === "rowPolicy") {
     const { database, name: tableName } = qualified(ctx, node.table!);
     const props: RowPolicyProps = strip({
@@ -835,6 +893,24 @@ export function role(strings: TemplateStringsArray, ...values: unknown[]): Click
 /** `` policy`CREATE ROW POLICY ...` ``: one row policy on one table (#3682). */
 export function policy(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseRowPolicy {
   return buildAccess("policy", strings, values) as ClickHouseRowPolicy;
+}
+
+/**
+ * `` quota`CREATE QUOTA ...` ``: one quota (#3911), its key, its intervals'
+ * limits and whom it applies to. A plan changes it with `ALTER QUOTA`, one
+ * clause or interval at a time, and never drops it.
+ */
+export function quota(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseQuota {
+  return buildAccess("quota", strings, values) as ClickHouseQuota;
+}
+
+/**
+ * `` settingsProfile`CREATE SETTINGS PROFILE ...` ``: one settings profile
+ * (#3911), its settings, their constraints and the profiles it inherits.
+ * Interpolate it where a user, a role or another profile names it.
+ */
+export function settingsProfile(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseSettingsProfile {
+  return buildAccess("settingsProfile", strings, values) as ClickHouseSettingsProfile;
 }
 
 /**
