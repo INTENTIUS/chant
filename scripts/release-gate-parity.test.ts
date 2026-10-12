@@ -110,13 +110,15 @@ describe("release gate parity (#1481)", () => {
     expect(publish.jobs.publish.if).toMatch(/needs\.audit\.result == 'success'/);
   });
 
-  // #3903: the publish step stages every package under `next`, then moves
-  // `latest` with `npm dist-tag add`. Over OIDC that needs the id-token
-  // permission and an npm whose dist-tag does the exchange (12.2.0 and
-  // later). The trusted-publisher records also need "Allow npm dist-tag",
-  // which is set on npmjs.com, not here (#3904).
-  it("the publish job can move dist-tags over OIDC", () => {
+  // #3903: with CHANT_STAGED_PUBLISH=1 the publish step stages every
+  // package under `next`, then moves `latest` with `npm dist-tag add`. Over
+  // OIDC that needs the id-token permission and an npm whose dist-tag does
+  // the exchange (12.2.0 and later). The trusted-publisher records also need
+  // "Allow npm dist-tag", which is set on npmjs.com, not here (#3904), so the
+  // switch is a repository variable, off until those records allow it.
+  it("the publish job can move dist-tags over OIDC, behind a repository variable", () => {
     expect(publish.jobs.publish.permissions?.["id-token"]).toBe("write");
+    expect(envOf(publish.jobs.publish, publishStep[0], "CHANT_STAGED_PUBLISH")).toBe("${{ vars.CHANT_STAGED_PUBLISH }}");
     const script = readFileSync(join(root, "scripts", "publish-packages.sh"), "utf8");
     expect(script).toMatch(/npm@12\.2\.0/);
     expect(script).toMatch(/Allow npm dist-tag/);

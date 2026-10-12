@@ -137,17 +137,18 @@ jobs:
       # package whose publish step was wrong, and every release since
       # chant-v0.33.0 went red. The skip-if-unchanged check makes re-running
       # idempotent, so a partial release is recovered by re-running or
-      # dispatching this workflow. It packs every package first (#3857),
-      # publishes every tarball under the `next` dist-tag, waits until each
-      # one installs, then moves `latest`, core and k8s-client first (#3903).
-      # A failure before the tag move leaves `latest` where it was; a re-run
-      # skips what is on npm and only moves the tags.
+      # dispatching this workflow. It packs every package first, then
+      # publishes the tarballs in dependency layers, waiting on registry
+      # metadata between layers (#3842, #3857).
       #
-      # The tag move uses the same OIDC token as the publish (id-token: write
-      # above) through npm 12.2.0's `dist-tag`, and needs "Allow npm
-      # dist-tag" on each package's trusted-publisher record on npmjs.com
-      # (#3904). Without it the script names the setting and falls back to
-      # NPM_TOKEN.
+      # With the repository variable CHANT_STAGED_PUBLISH set to 1 it stages
+      # instead (#3903): every tarball under the `next` dist-tag, a wait until
+      # each one installs, then `latest` moved core and k8s-client first. A
+      # failure before the tag move leaves `latest` where it was, and a re-run
+      # only moves the tags. The tag move uses the same OIDC token as the
+      # publish (id-token: write above) through npm 12.2.0's `dist-tag`, and
+      # needs "Allow npm dist-tag" on each package's trusted-publisher record
+      # on npmjs.com (#3904). Set the variable once all of them allow it.
       - name: Publish workspace packages
         id: publish
         env:
@@ -165,6 +166,9 @@ jobs:
           # upstream drift is expected and reported by the scheduled
           # lexicon-upgrade job, not a reason to fail the build.
           CHANT_RELEASE_GATE: "1"
+          # #3903: "1" stages the release under `next` and then moves
+          # `latest`. Unset publishes straight to `latest`, layer by layer.
+          CHANT_STAGED_PUBLISH: ${{ vars.CHANT_STAGED_PUBLISH }}
         run: bash scripts/publish-packages.sh
 
   # #1481 — a failed release must not leave its tag behind. `just release`

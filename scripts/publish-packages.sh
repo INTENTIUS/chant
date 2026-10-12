@@ -29,14 +29,28 @@
 # layers. Packing every package up front, layer by layer, took the builds out
 # of the publish.
 #
-# Stage under `next`, then move `latest` (#3903). Publishing layer by layer
+# Two ways to publish, chosen by CHANT_STAGED_PUBLISH.
+#
+# Unset (the default): publish the tarballs to `latest` layer by layer, a
+# layer's packages in parallel. Before the next layer starts, wait until the
+# registry metadata lists every version it depends on (`wait_visible`), never
+# requesting a tarball URL. At the end, probe each published tarball once and
+# report the status without failing the job. This is the #3857 flow.
+#
+# CHANT_STAGED_PUBLISH=1: stage under `next`, then move `latest` (#3903). It
+# is opt-in because moving a dist-tag over OIDC needs "Allow npm dist-tag" on
+# every package's trusted-publisher record, a manual setting on npmjs.com
+# (#3904). publish.yml passes the repository variable of the same name, so it
+# is switched on there once the records allow it.
+#
+# Publishing layer by layer
 # still left each release partly visible for 10 to 30 minutes: a range
 # consumer installing in that window got a mix of new and old packages, and
 # tarballs whose metadata was listed still answered 404. The #3856 research
 # reproduced this against a local registry with npm, pnpm, bun and yarn. All
 # four prefer the `latest`-tagged version whenever it satisfies the range, so
 # a version published under another tag is invisible to `^x` consumers until
-# its `latest` moves. The run now goes:
+# its `latest` moves. The staged run goes:
 #
 #   1. Pack. `npm pack` runs each prepack (generate, bundle, validate, build)
 #      and leaves a tarball. Layer by layer, since a prepack compiles against
@@ -72,14 +86,15 @@
 # is the point here, since pack already ran prepack.
 #
 # Knobs:
+#   CHANT_STAGED_PUBLISH=1  stage under `next`, then move `latest` (see above)
 #   DRY_RUN=plan   print the plan and exit, building nothing
 #   DRY_RUN=1      pack everything (real prepacks), print the plan, publish nothing
 #   PACK_JOBS      parallel prepacks per layer (default 4)
-#   PUBLISH_JOBS   parallel publishes and tag moves (default 24)
-#   WAIT_TIMEOUT   seconds to wait for a staged version, or a moved tag, to
-#                  show (default 1800)
+#   PUBLISH_JOBS   staged: parallel publishes and tag moves (default 24)
+#   WAIT_TIMEOUT   seconds to wait for a version's metadata, a staged version,
+#                  or a moved tag, to show (default 1800)
 #   WAIT_INTERVAL  seconds between polls (default 10)
-#   DIST_TAG_NPM   the npm command that moves tags (default: `npm` when it is
+#   DIST_TAG_NPM   staged: the npm command that moves tags (default: `npm` when it is
 #                  12.2.0 or later, otherwise `npx --yes npm@12.2.0`)
 set -uo pipefail
 
@@ -87,6 +102,11 @@ REGISTRY="https://registry.npmjs.org"
 DRY_RUN="${DRY_RUN:-}"
 PACK_JOBS="${PACK_JOBS:-4}"
 PUBLISH_JOBS="${PUBLISH_JOBS:-24}"
+STAGED=""
+[ "${CHANT_STAGED_PUBLISH:-}" = "1" ] && STAGED=1
+# The publish's tag arguments: none by default, so npm sets `latest`.
+TAG_ARGS=()
+[ -n "$STAGED" ] && TAG_ARGS=(--tag next)
 PACK_JOBS="${PACK_JOBS:-4}"
 
 # Every workspace directory that npm would actually publish, as tab-separated
@@ -331,7 +351,7 @@ npm_errors() {
   printf '%s' "$1" | grep '^npm error' || true
 }
 
-# Publish one packed tarball under `next`. Runs from the package's directory
+# Publish one packed tarball, under `next` when staged. Runs from the package's directory
 # so npm reads the same config it would for a directory publish. Tries OIDC
 # trusted publishing first (no .npmrc exists, so npm detects the absent auth
 # plus the id-token environment and exchanges for a short-lived publish
@@ -339,18 +359,18 @@ npm_errors() {
 # unauthenticated — a version conflict must not silently retry with a
 # different credential.
 #
-# A conflict means the version is on npm already, which a re-run can meet
+# Staged only: a conflict means the version is on npm already, which a re-run can meet
 # when the registry's read side lagged behind the check at the start. That is
-# what a re-run is for, so it counts as staged, and says so.
+# what a re-run is for, so it counts as already published, and says so.
 publish_one() {
   local dir="$1" name="$2" tgz="$3" out rc npmrc
 
-  out=$(cd "$dir" && npm publish "$tgz" --access public --provenance --tag next 2>&1)
+  out=$(cd "$dir" && npm publish "$tgz" --access public --provenance ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} 2>&1)
   rc=$?
   printf '%s\n' "$out"
   [ $rc -eq 0 ] && return 0
 
-  if npm_errors "$out" | grep -qiE 'cannot publish over|EPUBLISHCONFLICT'; then
+  if [ -n "$STAGED" ] && npm_errors "$out" | grep -qiE 'cannot publish over|EPUBLISHCONFLICT'; then
     echo "ALREADY-ON-NPM: $name is already on npm at this version; nothing to publish"
     return 0
   fi
@@ -374,7 +394,7 @@ publish_one() {
   npmrc=$(mktemp)
   chmod 600 "$npmrc"
   printf '%s/:_authToken=%s\n' "${REGISTRY#https:}" "$NPM_TOKEN" > "$npmrc"
-  out=$(cd "$dir" && NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tgz" --access public --provenance --tag next 2>&1)
+  out=$(cd "$dir" && NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tgz" --access public --provenance ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} 2>&1)
   rc=$?
   printf '%s\n' "$out"
 
@@ -386,7 +406,7 @@ publish_one() {
   # output retries pointlessly on unrelated failures.
   if [ $rc -ne 0 ] && npm_errors "$out" | grep -qiE 'provenance|attestation'; then
     echo "::warning::$name: provenance rejected on the token path — publishing without an attestation"
-    out=$(cd "$dir" && NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tgz" --access public --tag next 2>&1)
+    out=$(cd "$dir" && NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tgz" --access public ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} 2>&1)
     rc=$?
     printf '%s\n' "$out"
   fi
@@ -462,6 +482,50 @@ move_latest() {
     echo "::error::$refused, then re-run this job. The NPM_TOKEN fallback failed too."
   fi
   return $rc
+}
+
+# Wait until the registry metadata lists a version this run just published.
+#
+# #3842: npm is eventually consistent across packages. After chant-v0.124.6 a
+# lexicon version was visible before the core version it requires, and a fresh
+# `npm install` failed with ETARGET on @intentius/chant@^0.124.6 for a few
+# minutes. ETARGET means the packument did not list the version, so that is
+# what this waits on, through both of the ways a client reads it: `npm view`
+# (the full packument) and the abbreviated packument `npm install` fetches.
+# `--prefer-online` matters: the skip check below already read this packument,
+# and npm's local cache would otherwise serve that copy for its max-age (300s).
+#
+# It never requests the tarball URL. A request made before the CDN has the
+# file 404s, and that 404 appears to stay cached for about 5 minutes (#3857).
+#
+# Polls every WAIT_INTERVAL seconds (default 10) up to WAIT_TIMEOUT seconds
+# (default 1800).
+wait_visible() {
+  local name="$1" version="$2" waited=0 seen listed
+  local interval="${WAIT_INTERVAL:-10}" limit="${WAIT_TIMEOUT:-1800}"
+  local packument="$REGISTRY/${name//\//%2f}"
+  while :; do
+    seen=$(npm view --prefer-online "$name@$version" version 2>/dev/null || true)
+    listed=$(curl -sfL -H 'Accept: application/vnd.npm.install-v1+json' "$packument" 2>/dev/null \
+      | node -e '
+          let s = "";
+          process.stdin.on("data", (c) => (s += c)).on("end", () => {
+            try { process.stdout.write(JSON.parse(s).versions?.[process.argv[1]] ? "yes" : "no"); }
+            catch { process.stdout.write("unreadable"); }
+          });
+        ' "$version" 2>/dev/null || true)
+    if [ "$seen" = "$version" ] && [ "$listed" = "yes" ]; then
+      echo "  $name@$version is in the registry metadata (after ${waited}s)"
+      return 0
+    fi
+    if [ "$waited" -ge "$limit" ]; then
+      echo "::error::$name@$version not in the registry metadata after ${limit}s (npm view: ${seen:-nothing}, install packument: ${listed:-no answer}); not publishing packages that depend on it"
+      return 1
+    fi
+    echo "  waiting for $name@$version (npm view: ${seen:-nothing}, install packument: ${listed:-no answer})"
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
 }
 
 # One reading of the abbreviated packument, the document `npm install` reads:
@@ -621,13 +685,23 @@ show_log() {
   echo "::endgroup::"
 }
 
-# A workspace dependency that failed to pack, if the package has one.
+# A failed or blocked workspace dependency, if the package has one.
 failed_dep() {
   local dep
   for dep in ${DEPS[$1]//,/ }; do
     case "${STATE[$dep]:-}" in
-      pack-failed|blocked) printf '%s' "${NAME[$dep]}"; return 0 ;;
+      pack-failed|publish-failed|wait-failed|blocked) printf '%s' "${NAME[$dep]}"; return 0 ;;
     esac
+  done
+  return 1
+}
+
+# Whether a package still to be published in this run depends on $1.
+needed_now() {
+  local d
+  for d in "${ORDER[@]}"; do
+    [ "${STATE[$d]:-}" = "packed" ] || continue
+    case ",${DEPS[$d]}," in *",$1,"*) return 0 ;; esac
   done
   return 1
 }
@@ -646,10 +720,17 @@ tag_to_move() {
 # What is on npm already: whether the version is listed (under any tag), and
 # where `latest` points. A version staged under `next` by an earlier run that
 # failed is listed with `latest` elsewhere, and only its tag is left to move.
+#
+# Without staging, only `latest` counts, as before: an unpublished package
+# returns nothing, which reads as "not at $version yet" and publishes.
 for dir in "${ORDER[@]}"; do
   s=$(slug "$dir")
-  bg "listed-$s" 8 npm view --prefer-online "${NAME[$dir]}@${VERSION[$dir]}" version
-  bg "latest-$s" 8 npm view --prefer-online "${NAME[$dir]}" dist-tags.latest
+  if [ -n "$STAGED" ]; then
+    bg "listed-$s" 8 npm view --prefer-online "${NAME[$dir]}@${VERSION[$dir]}" version
+    bg "latest-$s" 8 npm view --prefer-online "${NAME[$dir]}" dist-tags.latest
+  else
+    bg "latest-$s" 8 npm view --prefer-online "${NAME[$dir]}" version
+  fi
 done
 wait
 for dir in "${ORDER[@]}"; do
@@ -662,9 +743,31 @@ for dir in "${ORDER[@]}"; do
   # A failed lookup (no such package yet) prints npm's error, not a version.
   LATEST[$dir]=""
   [ "$(bg_rc "latest-$s")" = "0" ] && LATEST[$dir]=$(tr -d '[:space:]' < "$WORK/latest-$s.log" 2>/dev/null)
+  [ -z "$STAGED" ] && [ "${LATEST[$dir]}" = "${VERSION[$dir]}" ] && LISTED[$dir]=1
 done
 
+print_plan_layered() {
+  local l d action
+  echo "publish plan (layer: package version, action):"
+  for l in $(seq 0 "$MAXLAYER"); do
+    echo "  layer $l"
+    while read -r d; do
+      [ -n "$d" ] || continue
+      if [ "${LATEST[$d]}" = "${VERSION[$d]}" ]; then
+        if [ -n "${NEEDED[$d]}" ]; then action="already published; prepack only, a dependent builds against it"
+        else action="already published; skip"; fi
+      else
+        action="publish (live: ${LATEST[$d]:-none})"
+        [ -n "${NEEDED[$d]}" ] && action="$action, then wait on its metadata if a dependent publishes"
+      fi
+      [ -n "${STATE[$d]:-}" ] && action="$action [${STATE[$d]}${TGZ[$d]:+ ${TGZ[$d]}}]"
+      printf '    %s %s: %s\n' "${NAME[$d]}" "${VERSION[$d]}" "$action"
+    done < <(layer_dirs "$l")
+  done
+}
+
 print_plan() {
+  [ -n "$STAGED" ] || { print_plan_layered; return; }
   local l w d action names
   echo "publish plan (layer: package version, action):"
   for l in $(seq 0 "$MAXLAYER"); do
@@ -777,6 +880,122 @@ echo "packed in ${pack_secs}s"
 if [ -n "$DRY_RUN" ]; then
   print_plan
   echo "DRY_RUN=$DRY_RUN: tarballs are in $WORK/tgz; nothing was published"
+  exit 0
+fi
+
+if [ -z "$STAGED" ]; then
+  # 2. Publish, layer by layer. Each layer publishes in parallel, then waits for
+  # the metadata of whatever a later package in this run depends on (#3842).
+  publish_started=$SECONDS
+  for l in $(seq 0 "$MAXLAYER"); do
+    mapfile -t dirs < <(layer_dirs "$l")
+    for dir in "${dirs[@]}"; do
+      [ "${STATE[$dir]}" = "packed" ] || continue
+      if dep=$(failed_dep "$dir"); then
+        STATE[$dir]=blocked
+        NOTE[$dir]="not published: $dep failed"
+        echo "::error::${NAME[$dir]}@${VERSION[$dir]} not published: its dependency $dep failed"
+        continue
+      fi
+      STATE[$dir]=publishing
+      bg "pub-$(slug "$dir")" 16 publish_one "$dir" "${NAME[$dir]}" "${TGZ[$dir]}"
+    done
+    wait
+    for dir in "${dirs[@]}"; do
+      [ "${STATE[$dir]}" = "publishing" ] || continue
+      s=$(slug "$dir")
+      show_log "publish ${NAME[$dir]}@${VERSION[$dir]}" "pub-$s"
+      if [ "$(bg_rc "pub-$s")" = "0" ]; then
+        STATE[$dir]=published
+      else
+        STATE[$dir]=publish-failed
+        NOTE[$dir]="publish failed"
+        echo "::error::${NAME[$dir]}@${VERSION[$dir]}: npm publish failed"
+      fi
+    done
+
+    waiting=()
+    for dir in "${dirs[@]}"; do
+      if [ "${STATE[$dir]}" = "published" ] && needed_now "$dir"; then
+        waiting+=("$dir")
+        bg "wait-$(slug "$dir")" 16 wait_visible "${NAME[$dir]}" "${VERSION[$dir]}"
+      fi
+    done
+    wait
+    for dir in ${waiting[@]+"${waiting[@]}"}; do
+      s=$(slug "$dir")
+      show_log "metadata ${NAME[$dir]}@${VERSION[$dir]}" "wait-$s"
+      if [ "$(bg_rc "wait-$s")" != "0" ]; then
+        # On npm, so it stays in the published list for `untag`, but nothing
+        # that needs it publishes, and the run fails.
+        STATE[$dir]=wait-failed
+        NOTE[$dir]="published, but not in the registry metadata after ${WAIT_TIMEOUT:-1800}s"
+      else
+        NOTE[$dir]="metadata visible: $(tail -1 "$WORK/wait-$s.log" | sed -n 's/.*(after \(.*\))$/\1/p')"
+      fi
+    done
+  done
+  publish_secs=$((SECONDS - publish_started))
+
+  # 3. One tarball probe per published package, now that every version is in
+  # the metadata. Reported, never fatal: a CDN that is slow to serve a file the
+  # registry has accepted is not a failed release.
+  for dir in "${ORDER[@]}"; do
+    case "${STATE[$dir]}" in published|wait-failed) ;; *) continue ;; esac
+    name=${NAME[$dir]}
+    PROBE[$dir]=$(curl -s -o /dev/null -w '%{http_code}' \
+      "$REGISTRY/${name}/-/${name##*/}-${VERSION[$dir]}.tgz" 2>/dev/null || echo none)
+    if [ "${PROBE[$dir]}" != "200" ]; then
+      echo "::warning::$name@${VERSION[$dir]}: tarball answered HTTP ${PROBE[$dir]} (not failing; the CDN may still be catching up)"
+    fi
+  done
+
+  published=()
+  skipped=()
+  failed=()
+  for dir in "${ORDER[@]}"; do
+    entry="${NAME[$dir]}@${VERSION[$dir]}"
+    case "${STATE[$dir]}" in
+      published) published+=("$entry") ;;
+      wait-failed) published+=("$entry"); failed+=("$entry") ;;
+      on-npm) skipped+=("$entry") ;;
+      *) failed+=("$entry") ;;
+    esac
+  done
+
+  summary() {
+    echo "### npm publish"
+    echo
+    echo "pack ${pack_secs}s, publish and metadata waits ${publish_secs}s"
+    echo
+    printf '| package | version | result | notes | tarball |\n|---|---|---|---|---|\n'
+    local dir result
+    for dir in "${ORDER[@]}"; do
+      case "${STATE[$dir]}" in
+        published) result="published" ;;
+        on-npm) result="already published" ;;
+        *) result="**FAILED**" ;;
+      esac
+      # shellcheck disable=SC2016 # the backticks are Markdown, not a command
+      printf '| `%s` | %s | %s | %s | %s |\n' "${NAME[$dir]}" "${VERSION[$dir]}" "$result" \
+        "${NOTE[$dir]}" "${PROBE[$dir]:+HTTP ${PROBE[$dir]}}"
+    done
+  }
+
+  summary
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && summary >> "$GITHUB_STEP_SUMMARY"
+
+  echo
+  echo "published: ${#published[@]}  already published: ${#skipped[@]}  failed: ${#failed[@]}"
+
+  # What this run put on npm, for publish.yml's `untag` job (#3191): a release
+  # with any package on npm keeps its tag.
+  [ -n "${GITHUB_OUTPUT:-}" ] && echo "published=${published[*]:-}" >> "$GITHUB_OUTPUT"
+
+  if [ ${#failed[@]} -gt 0 ]; then
+    echo "::error::${#failed[@]} package(s) failed to publish: ${failed[*]}"
+    exit 1
+  fi
   exit 0
 fi
 

@@ -16,15 +16,16 @@
  * derivation is actually topological, so the next lexicon that depends on an
  * alphabetically earlier one fails here rather than mid-release.
  *
- * Since #3903 every package publishes under `next` in one batch, and the
- * order that reaches consumers is the order `latest` moves in, which
- * `tag_layers` derives from peer and optional edges. That order is checked
- * at the end of this file.
+ * With CHANT_STAGED_PUBLISH=1 (#3903) every package publishes under `next`
+ * in one batch instead, and the order that reaches consumers is the order
+ * `latest` moves in, which `tag_layers` derives from peer and optional edges.
+ * Both modes are checked at the end of this file.
  */
 
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -202,15 +203,61 @@ describe("latest tag order", () => {
     expect(waves.get("lexicons/github")).toBeLessThan(waves.get("lexicons/gitlab")!);
   });
 
-  it("publishes every tarball under next, and moves latest only with dist-tag", () => {
-    // A publish without `--tag next` sets `latest` on the spot, and the
-    // package is visible before its peers again.
-    const script = readFileSync(join(REPO, "scripts/publish-packages.sh"), "utf8");
-    const publishes = script
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("#") && /\bnpm publish "\$tgz"/.test(line));
+});
+
+/**
+ * Staging is opt-in until every trusted-publisher record allows dist-tag
+ * moves (#3904). Off, the script must publish exactly as it did before
+ * #3903: straight to `latest`, layer by layer, with no tag moves.
+ */
+describe("publish modes (#3903)", () => {
+  const script = readFileSync(join(REPO, "scripts/publish-packages.sh"), "utf8");
+  const publishes = script
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("#") && /\bnpm publish "\$tgz"/.test(line));
+
+  it("passes --tag next to npm publish only when CHANT_STAGED_PUBLISH is 1", () => {
     expect(publishes.length).toBeGreaterThan(0);
-    for (const line of publishes) expect(line).toMatch(/--tag next\b/);
+    for (const line of publishes) {
+      expect(line).not.toMatch(/--tag next/);
+      expect(line).toContain('${TAG_ARGS[@]+"${TAG_ARGS[@]}"}');
+    }
+    expect(script).toMatch(/^TAG_ARGS=\(\)$/m);
+    expect(script).toMatch(/^\[ -n "\$STAGED" \] && TAG_ARGS=\(--tag next\)$/m);
+    expect(script).toMatch(/^\[ "\$\{CHANT_STAGED_PUBLISH:-\}" = "1" \] && STAGED=1$/m);
+  });
+
+  it("moves latest with dist-tag only in the staged flow", () => {
+    const legacy = script.match(/^if \[ -z "\$STAGED" \]; then$.*?^fi$/ms);
+    expect(legacy, "the default publish block").not.toBeNull();
+    expect(legacy![0]).toMatch(/wait_visible/);
+    expect(legacy![0]).not.toMatch(/dist-tag|move_latest/);
+    expect(legacy![0]).toMatch(/^  exit 0$/m);
     expect(script).toMatch(/dist-tag add "\$name@\$version" latest/);
+  });
+
+  // A stub npm whose every answer is an old version, so every package plans
+  // to publish. DRY_RUN=plan reads the registry and the graph, builds nothing.
+  function plan(env: Record<string, string>): string {
+    const bin = mkdtempSync(join(tmpdir(), "publish-plan-"));
+    writeFileSync(join(bin, "npm"), "#!/bin/sh\necho 0.0.1\n");
+    chmodSync(join(bin, "npm"), 0o755);
+    return execFileSync("bash", ["scripts/publish-packages.sh"], {
+      cwd: REPO,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DRY_RUN: "plan", RUNNER_TEMP: bin, ...env },
+    });
+  }
+
+  it("plans a layered publish to latest by default", () => {
+    const out = plan({ CHANT_STAGED_PUBLISH: "" });
+    expect(out).toMatch(/@intentius\/chant \S+: publish \(live: 0\.0\.1\)/);
+    expect(out).not.toMatch(/under next|wave \d/);
+  });
+
+  it("plans a staged publish and the tag waves with CHANT_STAGED_PUBLISH=1", () => {
+    const out = plan({ CHANT_STAGED_PUBLISH: "1" });
+    expect(out).toMatch(/@intentius\/chant \S+: publish under next \(latest: 0\.0\.1\)/);
+    expect(out).toMatch(/^  wave 0: @intentius\/chant @intentius\/chant-k8s-client$/m);
   });
 });
