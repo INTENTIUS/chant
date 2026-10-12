@@ -308,6 +308,28 @@ describe("the graph's links section", () => {
   test("the linked member pairs, for the pipeline checks' environment rule", async () => {
     expect(declaredMemberLinks(decl)).toEqual([{ consumer: "web", producer: "shared" }]);
   });
+
+  test("a link to an output's previous name says what it was renamed to (#3931)", () => {
+    const d = parseDeclaration(
+      declaration([
+        { name: "db", dir: "db", kind: "chant" },
+        { name: "web", dir: "web", kind: "chant", links: [{ member: "db", output: "public.orders.customer_id" }] },
+      ]),
+      "chant.workspace.json",
+    );
+    const [row] = graphLinks(d, {
+      composed: ["db", "web"],
+      exports: [
+        { member: "db", name: "public.orders", node: "db/orders" },
+        { member: "db", name: "public.orders.buyer_id", node: "db/orders", previously: ["public.orders.customer_id"] },
+      ],
+      imports: [],
+    });
+    expect(row).toMatchObject({ status: "missing" });
+    expect(row!.reason).toBe(
+      "db has no output public.orders.customer_id; it was renamed to public.orders.buyer_id, so link to that instead; its outputs: public.orders, public.orders.buyer_id",
+    );
+  });
 });
 
 describe("the declaration's link fields", () => {

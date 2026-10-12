@@ -59,6 +59,7 @@ import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
+import { gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
 
 /**
  * What the checks beyond the declaration read, gathered from the checkout
@@ -80,6 +81,8 @@ export interface WorkspaceFacts {
   live?: LiveLinkFacts;
   /** The decision record each box's intent names, read from the working tree (#2850). */
   boxIntents?: readonly ResolvedBoxIntent[];
+  /** The outputs linked members' lexicons report about their declarations, read by folding their source (#3931). */
+  lexiconOutputs?: ReadonlyMap<string, MemberLexiconOutputs>;
 }
 
 /** What every declaration check reads. */
@@ -521,7 +524,11 @@ export async function runDeclarationChecks(
   const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree, acceptance: !options.tree });
   // A box's intent is read from the working tree's records, so not under --at (#2850).
   const boxIntents = declaredKinds && !options.tree ? await resolveBoxIntents(declaration, root, declaredKinds) : undefined;
+  // A linked member's lexicons name its tables and columns as outputs (#3931); reading them folds its source, never runs it.
+  const lexiconOutputs =
+    options.gather === false ? undefined : await gatherLexiconOutputs(root, declaration, options.tree ? workingTree(root) : tree, groups, registry, { atRevision: options.tree !== undefined });
   const facts: WorkspaceFacts = {
+    ...(lexiconOutputs && lexiconOutputs.size > 0 ? { lexiconOutputs } : {}),
     ...gathered,
     ...(options.records ? { records: options.records } : {}),
     ...(declaredKinds ? { declaredKinds } : {}),

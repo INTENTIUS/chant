@@ -30,7 +30,7 @@ const tables = new WeakMap<WorkspaceCheckContext, LinkTableRow[]>();
 export function linkTable(ctx: WorkspaceCheckContext): LinkTableRow[] {
   let rows = tables.get(ctx);
   if (!rows) {
-    rows = resolveLinks(ctx.declaration, sourceMemberHandles(ctx.declaration, ctx.tree, ctx.groups, ctx.kinds));
+    rows = resolveLinks(ctx.declaration, sourceMemberHandles(ctx.declaration, ctx.tree, ctx.groups, ctx.kinds, ctx.facts?.lexiconOutputs));
     tables.set(ctx, rows);
   }
   return rows;

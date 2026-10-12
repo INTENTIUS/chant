@@ -54,6 +54,8 @@ export interface JoinHandle {
   name: string;
   /** The node that holds it, when the reader knows one (a graph IR id). */
   node?: string;
+  /** Names it had before, from a rename hint in the producer's source (#3931). */
+  previously?: readonly string[];
 }
 
 /** What a member offers links, and what it reads. */
@@ -231,11 +233,13 @@ export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<stri
         row.status = "unresolved";
         row.reason = `${link.output} was not found in ${link.member}, whose outputs could not all be read in source${producer.why ? ` (${producer.why})` : ""}`;
       } else {
-        const near = nearNames(link.output, producer.outputs);
+        const renamed = [...new Set(producer.outputs.filter((o) => o.previously?.includes(link.output)).map((o) => o.name))].sort(cmp);
+        const near = renamed.length ? [] : nearNames(link.output, producer.outputs);
         const known = producer.outputs.map((o) => o.name);
         row.status = "missing";
         row.reason =
           `${link.member} has no output ${link.output}` +
+          (renamed.length ? `; it was renamed to ${renamed.join(" or ")}, so link to that instead` : "") +
           (near.length ? `; did you mean ${near.join(" or ")}? Links match exactly` : "") +
           (known.length ? `; its outputs: ${[...new Set(known)].sort(cmp).join(", ")}` : "; it exposes no outputs");
       }
@@ -369,7 +373,7 @@ export interface ComposedHandles {
   composed: readonly string[];
   /** The collectors those members report (#2558); a telemetry link resolves against them. */
   collectors?: readonly MemberCollector[];
-  exports: readonly { member: string; name: string; node?: string }[];
+  exports: readonly { member: string; name: string; node?: string; previously?: readonly string[] }[];
   imports: readonly { member: string; name: string; node: string }[];
 }
 
@@ -384,7 +388,9 @@ export function irMemberHandles(graph: ComposedHandles): Map<string, MemberHandl
   for (const member of graph.composed) {
     out.set(member, {
       member,
-      outputs: graph.exports.filter((e) => e.member === member).map((e) => ({ name: e.name, ...(e.node ? { node: e.node } : {}) })),
+      outputs: graph.exports
+        .filter((e) => e.member === member)
+        .map((e) => ({ name: e.name, ...(e.node ? { node: e.node } : {}), ...(e.previously?.length ? { previously: e.previously } : {}) })),
       inputs: graph.imports.filter((i) => i.member === member).map((i) => ({ name: i.name, node: i.node })),
       complete: true,
       why: null,
