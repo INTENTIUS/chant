@@ -14,13 +14,13 @@ Also applied to Forgejo workflows, which are GitHub-dialect.
 
 ### GHA006
 
-**Duplicate workflow name** — report-only · guidance
+**Duplicate workflow name** (report-only · guidance)
 
 Give each workflow a unique `name:`.
 
 ### GHA009
 
-**Empty matrix dimension** — merge-worthy · guidance
+**Empty matrix dimension** (merge-worthy · guidance)
 
 Remove the empty matrix axis or give it values; an empty axis produces zero jobs.
 
@@ -30,7 +30,7 @@ Remove the empty matrix axis or give it values; an empty axis produces zero jobs
 
 ### GHA011
 
-**needs references a non-existent job** — merge-worthy · guidance
+**needs references a non-existent job** (merge-worthy · guidance)
 
 Fix the `needs:` target to name a real job.
 
@@ -40,7 +40,7 @@ Fix the `needs:` target to name a real job.
 
 ### GHA013
 
-**Missing job permissions on a sensitive trigger** — merge-worthy · guidance
+**Missing job permissions on a sensitive trigger** (merge-worthy · guidance)
 
 Add an explicit least-privilege `permissions:` block to jobs under `pull_request_target`/`workflow_dispatch`.
 
@@ -51,7 +51,7 @@ Add an explicit least-privilege `permissions:` block to jobs under `pull_request
 
 ### GHA017
 
-**No explicit permissions block** — merge-worthy · deterministic
+**No explicit permissions block** (merge-worthy · deterministic)
 
 Add a top-level `permissions: \{ contents: read }` and widen only where a job needs it.
 
@@ -62,7 +62,7 @@ Add a top-level `permissions: \{ contents: read }` and widen only where a job ne
 
 ### GHA018
 
-**pull_request_target checks out untrusted code** — merge-worthy · guidance
+**pull_request_target checks out untrusted code** (merge-worthy · guidance)
 
 Don't check out / run PR head code under `pull_request_target`; split into a privileged + unprivileged workflow.
 
@@ -73,7 +73,7 @@ Don't check out / run PR head code under `pull_request_target`; split into a pri
 
 ### GHA019
 
-**Circular needs chain** — merge-worthy · guidance
+**Circular needs chain** (merge-worthy · guidance)
 
 Break the cycle in the job dependency graph.
 
@@ -83,7 +83,7 @@ Break the cycle in the job dependency graph.
 
 ### GHA021
 
-**actions/checkout not pinned to a SHA** — merge-worthy · deterministic
+**actions/checkout not pinned to a SHA** (merge-worthy · deterministic)
 
 Pin `actions/checkout` to a full 40-char commit SHA.
 
@@ -94,13 +94,13 @@ Pin `actions/checkout` to a full 40-char commit SHA.
 
 ### GHA022
 
-**Job without timeout-minutes** — report-only · guidance
+**Job without timeout-minutes** (report-only · guidance)
 
 Add `timeout-minutes:` to bound runaway jobs.
 
 ### GHA023
 
-**Deprecated ::set-output** — report-only · guidance
+**Deprecated ::set-output** (report-only · guidance)
 
 Replace `::set-output` with `$GITHUB_OUTPUT`.
 
@@ -110,7 +110,7 @@ Replace `::set-output` with `$GITHUB_OUTPUT`.
 
 ### GHA024
 
-**Missing concurrency block** — report-only · guidance
+**Missing concurrency block** (report-only · guidance)
 
 Add a `concurrency:` group to deploy workflows.
 
@@ -120,7 +120,7 @@ Add a `concurrency:` group to deploy workflows.
 
 ### GHA025
 
-**Unrestricted pull_request_target** — merge-worthy · guidance
+**Unrestricted pull_request_target** (merge-worthy · guidance)
 
 Gate `pull_request_target` jobs and avoid running untrusted code with elevated scope.
 
@@ -131,7 +131,7 @@ Gate `pull_request_target` jobs and avoid running untrusted code with elevated s
 
 ### GHA026
 
-**Secret used without environment protection** — report-only · guidance
+**Secret used without environment protection** (report-only · guidance)
 
 Move secret-consuming jobs behind a protected `environment:`.
 
@@ -141,13 +141,13 @@ Move secret-consuming jobs behind a protected `environment:`.
 
 ### GHA027
 
-**Cleanup step without if: always()** — report-only · guidance
+**Cleanup step without if: always()** (report-only · guidance)
 
 Add `if: always()` to cleanup steps.
 
 ### GHA028
 
-**Workflow with no triggers** — merge-worthy · guidance
+**Workflow with no triggers** (merge-worthy · guidance)
 
 Add an `on:` trigger; the workflow never runs without one.
 
@@ -157,7 +157,7 @@ Add an `on:` trigger; the workflow never runs without one.
 
 ### GHA029
 
-**Action not pinned to a commit SHA** — merge-worthy · deterministic
+**Action not pinned to a commit SHA** (merge-worthy · deterministic)
 
 Pin the action to a full commit SHA instead of a tag/branch.
 
@@ -168,7 +168,7 @@ Pin the action to a full commit SHA instead of a tag/branch.
 
 ### GHA030
 
-**Container image not pinned to a digest** — merge-worthy · deterministic
+**Container image not pinned to a digest** (merge-worthy · deterministic)
 
 Pin the image to an immutable `@sha256:` digest.
 
@@ -179,7 +179,7 @@ Pin the image to an immutable `@sha256:` digest.
 
 ### GHA031
 
-**Possible action impersonation** — merge-worthy · guidance
+**Possible action impersonation** (merge-worthy · guidance)
 
 Verify the action owner/slug; it resembles a well-known action.
 
@@ -190,7 +190,7 @@ Verify the action owner/slug; it resembles a well-known action.
 
 ### GHA032
 
-**Archived/abandoned or vulnerable action** — merge-worthy · guidance
+**Archived/abandoned or vulnerable action** (merge-worthy · guidance)
 
 Replace the archived action or one with a disclosed security issue.
 
@@ -200,7 +200,7 @@ Replace the archived action or one with a disclosed security issue.
 
 ### GHA033
 
-**Blanket write-all permissions** — merge-worthy · deterministic
+**Blanket write-all permissions** (merge-worthy · deterministic)
 
 Replace `write-all` with the specific scopes the jobs need (default `contents: read`).
 
@@ -211,7 +211,7 @@ Replace `write-all` with the specific scopes the jobs need (default `contents: r
 
 ### GHA034
 
-**Write permissions granted workflow-wide** — merge-worthy · guidance
+**Write permissions granted workflow-wide** (merge-worthy · guidance)
 
 Move write scopes to the single job that needs them; keep the workflow least-privilege.
 
@@ -222,7 +222,7 @@ Move write scopes to the single job that needs them; keep the workflow least-pri
 
 ### GHA035
 
-**Elevated token on an untrusted-code trigger** — merge-worthy · guidance
+**Elevated token on an untrusted-code trigger** (merge-worthy · guidance)
 
 Drop the elevated `permissions:` on triggers that can run untrusted code.
 
@@ -232,7 +232,7 @@ Drop the elevated `permissions:` on triggers that can run untrusted code.
 
 ### GHA036
 
-**Untrusted input interpolated into run:** — merge-worthy · guidance
+**Untrusted input interpolated into run:** (merge-worthy · guidance)
 
 Pass untrusted `$\{\{ }}` values via an `env:` var and reference `"$VAR"`, never inline in the script.
 
@@ -243,7 +243,7 @@ Pass untrusted `$\{\{ }}` values via an `env:` var and reference `"$VAR"`, never
 
 ### GHA037
 
-**Untrusted input written to GITHUB_ENV/GITHUB_PATH** — merge-worthy · guidance
+**Untrusted input written to GITHUB_ENV/GITHUB_PATH** (merge-worthy · guidance)
 
 Don't write untrusted input to `$GITHUB_ENV`/`$GITHUB_PATH`; sanitize or avoid.
 
@@ -254,7 +254,7 @@ Don't write untrusted input to `$GITHUB_ENV`/`$GITHUB_PATH`; sanitize or avoid.
 
 ### GHA038
 
-**workflow_run checks out untrusted code in a privileged context** — merge-worthy · guidance
+**workflow_run checks out untrusted code in a privileged context** (merge-worthy · guidance)
 
 Avoid checking out untrusted code under `workflow_run`; treat it as privileged.
 
@@ -265,7 +265,7 @@ Avoid checking out untrusted code under `workflow_run`; treat it as privileged.
 
 ### GHA039
 
-**Auth gate on a spoofable author field** — merge-worthy · guidance
+**Auth gate on a spoofable author field** (merge-worthy · guidance)
 
 Gate on a non-spoofable identity, not a commit-author field.
 
@@ -276,7 +276,7 @@ Gate on a non-spoofable identity, not a commit-author field.
 
 ### GHA040
 
-**Self-hosted runner on an untrusted-code trigger** — merge-worthy · guidance
+**Self-hosted runner on an untrusted-code trigger** (merge-worthy · guidance)
 
 Don't run untrusted-code triggers on self-hosted runners.
 
@@ -287,7 +287,7 @@ Don't run untrusted-code triggers on self-hosted runners.
 
 ### GHA041
 
-**Blanket secrets: inherit** — merge-worthy · guidance
+**Blanket secrets: inherit** (merge-worthy · guidance)
 
 Pass only the specific secrets the reusable workflow needs.
 
@@ -298,7 +298,7 @@ Pass only the specific secrets the reusable workflow needs.
 
 ### GHA042
 
-**Entire secrets context passed** — merge-worthy · guidance
+**Entire secrets context passed** (merge-worthy · guidance)
 
 Pass named secrets instead of the whole `secrets` context.
 
@@ -309,7 +309,7 @@ Pass named secrets instead of the whole `secrets` context.
 
 ### GHA043
 
-**Secret consumed without an environment gate** — merge-worthy · guidance
+**Secret consumed without an environment gate** (merge-worthy · guidance)
 
 Put secret-consuming jobs behind a protected environment.
 
@@ -320,7 +320,7 @@ Put secret-consuming jobs behind a protected environment.
 
 ### GHA044
 
-**Hardcoded registry/container credential** — merge-worthy · guidance
+**Hardcoded registry/container credential** (merge-worthy · guidance)
 
 Remove the hardcoded credential, move it to a secret, and rotate it (responsible disclosure first).
 
@@ -331,7 +331,7 @@ Remove the hardcoded credential, move it to a secret, and rotate it (responsible
 
 ### GHA045
 
-**Secret interpolated into run:** — merge-worthy · guidance
+**Secret interpolated into run:** (merge-worthy · guidance)
 
 Reference secrets via `env:`, not inline in the shell command.
 
@@ -341,7 +341,7 @@ Reference secrets via `env:`, not inline in the shell command.
 
 ### GHA046
 
-**Constant/unsound guard condition** — merge-worthy · guidance
+**Constant/unsound guard condition** (merge-worthy · guidance)
 
 Fix the always-true/false `if:` — it may neutralize a security gate.
 
@@ -351,7 +351,7 @@ Fix the always-true/false `if:` — it may neutralize a security gate.
 
 ### GHA047
 
-**Ineffective contains() guard (reversed args)** — merge-worthy · guidance
+**Ineffective contains() guard (reversed args)** (merge-worthy · guidance)
 
 Swap the `contains()` arguments so the guard actually filters.
 
@@ -361,7 +361,7 @@ Swap the `contains()` arguments so the guard actually filters.
 
 ### GHA048
 
-**Obfuscated guard condition** — merge-worthy · guidance
+**Obfuscated guard condition** (merge-worthy · guidance)
 
 Simplify the indirect `if:` so its effect is reviewable.
 
@@ -371,7 +371,7 @@ Simplify the indirect `if:` so its effect is reviewable.
 
 ### GHA049
 
-**Persisted checkout credentials reachable by an artifact** — merge-worthy · guidance
+**Persisted checkout credentials reachable by an artifact** (merge-worthy · guidance)
 
 Use `persist-credentials: false` or exclude `.git` from uploaded artifacts.
 
@@ -382,7 +382,7 @@ Use `persist-credentials: false` or exclude `.git` from uploaded artifacts.
 
 ### GHA050
 
-**Cache populated in a privileged context** — merge-worthy · guidance
+**Cache populated in a privileged context** (merge-worthy · guidance)
 
 Don't populate caches from untrusted code paths (poisoning risk).
 
@@ -393,7 +393,7 @@ Don't populate caches from untrusted code paths (poisoning risk).
 
 ### GHA051
 
-**Long-lived token instead of OIDC** — report-only · guidance
+**Long-lived token instead of OIDC** (report-only · guidance)
 
 Migrate publish/release to OIDC short-lived credentials.
 
@@ -403,7 +403,7 @@ Migrate publish/release to OIDC short-lived credentials.
 
 ### GHA052
 
-**Software piped to a shell without verification** — merge-worthy · guidance
+**Software piped to a shell without verification** (merge-worthy · guidance)
 
 Verify a checksum/signature before executing fetched scripts.
 
@@ -414,7 +414,7 @@ Verify a checksum/signature before executing fetched scripts.
 
 ### GHA053
 
-**Re-enables unsafe set-env/add-path** — merge-worthy · guidance
+**Re-enables unsafe set-env/add-path** (merge-worthy · guidance)
 
 Remove `ACTIONS_ALLOW_UNSECURE_COMMANDS`; use `$GITHUB_ENV`/`$GITHUB_PATH`.
 
@@ -425,7 +425,7 @@ Remove `ACTIONS_ALLOW_UNSECURE_COMMANDS`; use `$GITHUB_ENV`/`$GITHUB_PATH`.
 
 ### GHA054
 
-**Feature with a known security footgun** — merge-worthy · guidance
+**Feature with a known security footgun** (merge-worthy · guidance)
 
 Replace the flagged feature with the safe alternative.
 
@@ -435,7 +435,7 @@ Replace the flagged feature with the safe alternative.
 
 ### GHA055
 
-**Runtime install of a tool already on the runner** — report-only · guidance
+**Runtime install of a tool already on the runner** (report-only · guidance)
 
 Drop the redundant install to save time.
 
@@ -445,7 +445,7 @@ Drop the redundant install to save time.
 
 ### GHA056
 
-**Workflow without a name** — report-only · guidance
+**Workflow without a name** (report-only · guidance)
 
 Add a `name:` to the workflow.
 
@@ -455,7 +455,7 @@ Add a `name:` to the workflow.
 
 ### GHA057
 
-**Dependency update can execute untrusted code** — merge-worthy · guidance
+**Dependency update can execute untrusted code** (merge-worthy · guidance)
 
 Disable the option that lets dependency updates run external code.
 
@@ -466,7 +466,7 @@ Disable the option that lets dependency updates run external code.
 
 ### GHA058
 
-**Dependency update has no cooldown window** — report-only · guidance
+**Dependency update has no cooldown window** (report-only · guidance)
 
 Add a cooldown so new releases aren't merged instantly.
 
@@ -476,7 +476,7 @@ Add a cooldown so new releases aren't merged instantly.
 
 ### GHA059
 
-**Stale or missing pin annotation** — merge-worthy · guidance
+**Stale or missing pin annotation** (merge-worthy · guidance)
 
 Add or correct the trailing version comment on the SHA-pinned reference so it matches the digest.
 
@@ -487,7 +487,7 @@ Add or correct the trailing version comment on the SHA-pinned reference so it ma
 
 ### GHA060
 
-**Over-scoped generated token** — merge-worthy · guidance
+**Over-scoped generated token** (merge-worthy · guidance)
 
 Narrow the GitHub App token's permission-* inputs to the scopes its consuming steps actually use, or remove the unused ones.
 
@@ -498,7 +498,7 @@ Narrow the GitHub App token's permission-* inputs to the scopes its consuming st
 
 ### GHA061
 
-**Action reference outside the configured usage policy** — merge-worthy · guidance
+**Action reference outside the configured usage policy** (merge-worthy · guidance)
 
 Replace the reference with one from the approved allowlist, or get it added if it should be trusted.
 
@@ -508,7 +508,7 @@ Replace the reference with one from the approved allowlist, or get it added if i
 
 ### GHA062
 
-**Pinned reference matches a known-vulnerability advisory** — merge-worthy · guidance
+**Pinned reference matches a known-vulnerability advisory** (merge-worthy · guidance)
 
 Bump the reference to a patched ref/commit named by the advisory.
 
@@ -519,37 +519,37 @@ Bump the reference to a patched ref/commit named by the advisory.
 
 ### GHA063
 
-**Dependency setup action without caching enabled** — report-only · guidance
+**Dependency setup action without caching enabled** (report-only · guidance)
 
 Enable the setup action's `cache:` option or add an actions/cache step.
 
 ### GHA064
 
-**Expensive runner without justification** — report-only · guidance
+**Expensive runner without justification** (report-only · guidance)
 
 Confirm the job needs that OS, or move it to a Linux runner.
 
 ### GHA065
 
-**Unbounded matrix fan-out** — report-only · guidance
+**Unbounded matrix fan-out** (report-only · guidance)
 
 Trim the matrix with include/exclude, or cap it with max-parallel.
 
 ### GHA066
 
-**Unbounded artifact retention** — report-only · guidance
+**Unbounded artifact retention** (report-only · guidance)
 
 Set a retention-days sized to how long the artifact is actually needed.
 
 ### GHA067
 
-**Unconditional heavy step with no path filter** — report-only · guidance
+**Unconditional heavy step with no path filter** (report-only · guidance)
 
 Scope the trigger's paths, or add an if: guard to the step.
 
 ### GHA068
 
-**Pull-request workflow missing a concurrency group** — report-only · guidance
+**Pull-request workflow missing a concurrency group** (report-only · guidance)
 
 Add a concurrency group with cancel-in-progress: true.
 
@@ -559,7 +559,7 @@ Add a concurrency group with cancel-in-progress: true.
 
 ### GHA069
 
-**Job permissions block drops the workflow's id-token: write** — merge-worthy · guidance
+**Job permissions block drops the workflow's id-token: write** (merge-worthy · guidance)
 
 Add `id-token: write` to the job's `permissions:` block; keep the job block rather than removing it.
 
@@ -567,7 +567,7 @@ Add `id-token: write` to the job's `permissions:` block; keep the job block rath
 
 ### WGL010
 
-**Job references an undefined stage** — merge-worthy · guidance
+**Job references an undefined stage** (merge-worthy · guidance)
 
 Add the stage to `stages:` or fix the job's `stage:`.
 
@@ -577,13 +577,13 @@ Add the stage to `stages:` or fix the job's `stage:`.
 
 ### WGL011
 
-**Job rules always evaluate to never** — merge-worthy · guidance
+**Job rules always evaluate to never** (merge-worthy · guidance)
 
 Fix the `rules:` so the job can run; it is currently unreachable.
 
 ### WGL012
 
-**Deprecated property** — report-only · guidance
+**Deprecated property** (report-only · guidance)
 
 Replace the deprecated GitLab CI property.
 
@@ -593,7 +593,7 @@ Replace the deprecated GitLab CI property.
 
 ### WGL013
 
-**Invalid needs target** — merge-worthy · guidance
+**Invalid needs target** (merge-worthy · guidance)
 
 Fix the dangling/self `needs:` reference.
 
@@ -603,7 +603,7 @@ Fix the dangling/self `needs:` reference.
 
 ### WGL014
 
-**Invalid extends target** — merge-worthy · guidance
+**Invalid extends target** (merge-worthy · guidance)
 
 Point `extends:` at a template that exists in the pipeline.
 
@@ -613,13 +613,13 @@ Point `extends:` at a template that exists in the pipeline.
 
 ### WGL015
 
-**Circular needs chain** — merge-worthy · guidance
+**Circular needs chain** (merge-worthy · guidance)
 
 Break the cycle in the job dependency graph.
 
 ### WGL016
 
-**Hardcoded secret in variables** — merge-worthy · guidance
+**Hardcoded secret in variables** (merge-worthy · guidance)
 
 Move the secret out of `variables:` into a masked/protected CI variable and rotate it.
 
@@ -630,43 +630,43 @@ Move the secret out of `variables:` into a masked/protected CI variable and rota
 
 ### WGL017
 
-**Insecure (non-HTTPS) registry** — merge-worthy · guidance
+**Insecure (non-HTTPS) registry** (merge-worthy · guidance)
 
 Use an HTTPS registry endpoint.
 
 ### WGL018
 
-**Missing job timeout** — report-only · guidance
+**Missing job timeout** (report-only · guidance)
 
 Add a `timeout:` to bound long-running jobs.
 
 ### WGL019
 
-**Missing retry on deploy job** — report-only · guidance
+**Missing retry on deploy job** (report-only · guidance)
 
 Add a `retry:` strategy to deploy jobs.
 
 ### WGL020
 
-**Duplicate job names** — merge-worthy · guidance
+**Duplicate job names** (merge-worthy · guidance)
 
 Rename so each job resolves to a unique name.
 
 ### WGL021
 
-**Unused global variable** — report-only · guidance
+**Unused global variable** (report-only · guidance)
 
 Remove the unused global `variables:` entry.
 
 ### WGL022
 
-**Missing artifacts expiry** — report-only · guidance
+**Missing artifacts expiry** (report-only · guidance)
 
 Add `expire_in:` to artifacts to avoid disk bloat.
 
 ### WGL023
 
-**Overly broad rules (when: always)** — report-only · guidance
+**Overly broad rules (when: always)** (report-only · guidance)
 
 Add real conditions to the job's `rules:`.
 
@@ -676,7 +676,7 @@ Add real conditions to the job's `rules:`.
 
 ### WGL024
 
-**Manual job without allow_failure** — report-only · guidance
+**Manual job without allow_failure** (report-only · guidance)
 
 Add `allow_failure: true` so a manual job doesn't block the pipeline.
 
@@ -686,7 +686,7 @@ Add `allow_failure: true` so a manual job doesn't block the pipeline.
 
 ### WGL025
 
-**Cache without a key** — report-only · guidance
+**Cache without a key** (report-only · guidance)
 
 Add a `cache.key` to avoid cross-job cache collisions.
 
@@ -696,7 +696,7 @@ Add a `cache.key` to avoid cross-job cache collisions.
 
 ### WGL026
 
-**Privileged DinD service without TLS** — merge-worthy · guidance
+**Privileged DinD service without TLS** (merge-worthy · guidance)
 
 Set `DOCKER_TLS_CERTDIR` for privileged Docker-in-Docker services.
 
@@ -706,19 +706,19 @@ Set `DOCKER_TLS_CERTDIR` for privileged Docker-in-Docker services.
 
 ### WGL027
 
-**Empty script** — merge-worthy · guidance
+**Empty script** (merge-worthy · guidance)
 
 Give the job a non-empty `script:`; it currently does nothing.
 
 ### WGL028
 
-**Redundant needs** — report-only · guidance
+**Redundant needs** (report-only · guidance)
 
 Drop `needs:` already implied by stage ordering.
 
 ### WGL029
 
-**include/component resolved by a moving ref** — merge-worthy · guidance
+**include/component resolved by a moving ref** (merge-worthy · guidance)
 
 Pin `include:project`/component to a tag or commit SHA, not a branch.
 
@@ -729,7 +729,7 @@ Pin `include:project`/component to a tag or commit SHA, not a branch.
 
 ### WGL030
 
-**Insecure or mutable include:remote** — merge-worthy · guidance
+**Insecure or mutable include:remote** (merge-worthy · guidance)
 
 Use HTTPS and pin the remote include to an immutable ref.
 
@@ -740,7 +740,7 @@ Use HTTPS and pin the remote include to an immutable ref.
 
 ### WGL031
 
-**Container image not pinned to a digest** — merge-worthy · deterministic
+**Container image not pinned to a digest** (merge-worthy · deterministic)
 
 Pin the image to an immutable `@sha256:` digest.
 
@@ -751,7 +751,7 @@ Pin the image to an immutable `@sha256:` digest.
 
 ### WGL032
 
-**Possible include/component impersonation** — merge-worthy · guidance
+**Possible include/component impersonation** (merge-worthy · guidance)
 
 Verify the include source; it resembles a well-known project.
 
@@ -761,7 +761,7 @@ Verify the include source; it resembles a well-known project.
 
 ### WGL033
 
-**OIDC id_token without a scoped audience** — merge-worthy · guidance
+**OIDC id_token without a scoped audience** (merge-worthy · guidance)
 
 Set a specific `aud:` on the OIDC id_token.
 
@@ -772,7 +772,7 @@ Set a specific `aud:` on the OIDC id_token.
 
 ### WGL034
 
-**OIDC id_token mintable from a merge-request pipeline** — merge-worthy · guidance
+**OIDC id_token mintable from a merge-request pipeline** (merge-worthy · guidance)
 
 Restrict OIDC token minting to protected pipelines.
 
@@ -782,7 +782,7 @@ Restrict OIDC token minting to protected pipelines.
 
 ### WGL035
 
-**Untrusted CI variable interpolated into a script** — merge-worthy · guidance
+**Untrusted CI variable interpolated into a script** (merge-worthy · guidance)
 
 Pass untrusted variables via the environment and quote them; don't inline.
 
@@ -793,7 +793,7 @@ Pass untrusted variables via the environment and quote them; don't inline.
 
 ### WGL036
 
-**Privileged service reachable from merge-request pipelines** — merge-worthy · guidance
+**Privileged service reachable from merge-request pipelines** (merge-worthy · guidance)
 
 Block privileged/DinD services on merge-request pipelines.
 
@@ -803,7 +803,7 @@ Block privileged/DinD services on merge-request pipelines.
 
 ### WGL037
 
-**Security gate on an untrusted ref regex** — merge-worthy · guidance
+**Security gate on an untrusted ref regex** (merge-worthy · guidance)
 
 Don't gate security decisions on a regex over an untrusted ref variable.
 
@@ -813,7 +813,7 @@ Don't gate security decisions on a regex over an untrusted ref variable.
 
 ### WGL038
 
-**Secret reachable from a merge-request pipeline** — merge-worthy · guidance
+**Secret reachable from a merge-request pipeline** (merge-worthy · guidance)
 
 Scope secret-like variables to protected branches/pipelines.
 
@@ -824,7 +824,7 @@ Scope secret-like variables to protected branches/pipelines.
 
 ### WGL039
 
-**Secret printed to job logs** — merge-worthy · guidance
+**Secret printed to job logs** (merge-worthy · guidance)
 
 Stop echoing the secret-like variable; mask it.
 
@@ -835,7 +835,7 @@ Stop echoing the secret-like variable; mask it.
 
 ### WGL040
 
-**Hardcoded credential in a registry login** — merge-worthy · guidance
+**Hardcoded credential in a registry login** (merge-worthy · guidance)
 
 Move the credential to a masked CI variable and rotate it.
 
@@ -845,19 +845,19 @@ Move the credential to a masked CI variable and rotate it.
 
 ### WGL041
 
-**Tautological rules:if condition** — merge-worthy · guidance
+**Tautological rules:if condition** (merge-worthy · guidance)
 
 Fix the always-true `rules:if`; it may neutralize a gate.
 
 ### WGL042
 
-**Unreachable rules after an unconditional match** — report-only · guidance
+**Unreachable rules after an unconditional match** (report-only · guidance)
 
 Remove the dead `rules:` entries after the catch-all.
 
 ### WGL043
 
-**Match-anything regex gate in rules:if** — merge-worthy · guidance
+**Match-anything regex gate in rules:if** (merge-worthy · guidance)
 
 Tighten the regex; a match-anything gate is no gate.
 
@@ -867,7 +867,7 @@ Tighten the regex; a match-anything gate is no gate.
 
 ### WGL044
 
-**Public artifacts expose build output** — merge-worthy · guidance
+**Public artifacts expose build output** (merge-worthy · guidance)
 
 Mark sensitive artifacts non-public (`public: false`).
 
@@ -877,7 +877,7 @@ Mark sensitive artifacts non-public (`public: false`).
 
 ### WGL045
 
-**Artifact path may capture a credential file** — merge-worthy · guidance
+**Artifact path may capture a credential file** (merge-worthy · guidance)
 
 Narrow the artifact path so it can't capture credential files.
 
@@ -887,7 +887,7 @@ Narrow the artifact path so it can't capture credential files.
 
 ### WGL046
 
-**Cache populated in a merge-request pipeline** — merge-worthy · guidance
+**Cache populated in a merge-request pipeline** (merge-worthy · guidance)
 
 Don't populate caches from merge-request pipelines (poisoning risk).
 
@@ -898,7 +898,7 @@ Don't populate caches from merge-request pipelines (poisoning risk).
 
 ### WGL047
 
-**Software piped to a shell without verification** — merge-worthy · guidance
+**Software piped to a shell without verification** (merge-worthy · guidance)
 
 Verify a checksum/signature before executing fetched scripts.
 
@@ -909,7 +909,7 @@ Verify a checksum/signature before executing fetched scripts.
 
 ### WGL048
 
-**Pipeline without workflow:name** — report-only · guidance
+**Pipeline without workflow:name** (report-only · guidance)
 
 Add a `workflow:name` for clearer pipeline naming.
 
@@ -919,13 +919,13 @@ Add a `workflow:name` for clearer pipeline naming.
 
 ### WGL049
 
-**Dependency install without a cache** — report-only · guidance
+**Dependency install without a cache** (report-only · guidance)
 
 Add a `cache:` covering the dependency directory.
 
 ### WGL050
 
-**Merge-request job missing interruptible** — report-only · guidance
+**Merge-request job missing interruptible** (report-only · guidance)
 
 Add `interruptible: true` so a superseded pipeline can be cancelled.
 
@@ -933,13 +933,13 @@ Add `interruptible: true` so a superseded pipeline can be cancelled.
 
 ### WFJ010
 
-**Unresolved action reference on Forgejo** — merge-worthy · guidance
+**Unresolved action reference on Forgejo** (merge-worthy · guidance)
 
 Use an action reference Forgejo can resolve (full URL or a mirrored action).
 
 ### WFJ011
 
-**GitHub-hosted runner label with no Forgejo equivalent** — merge-worthy · guidance
+**GitHub-hosted runner label with no Forgejo equivalent** (merge-worthy · guidance)
 
 Use a runner label your Forgejo instance provides.
 
@@ -949,25 +949,25 @@ Run against Kubernetes manifests.
 
 ### ARGO002
 
-**Argo Application references an undeclared AppProject** — merge-worthy · guidance
+**Argo Application references an undeclared AppProject** (merge-worthy · guidance)
 
 Declare the named AppProject or reference an existing project.
 
 ### ARGO003
 
-**Argo Application targets an unregistered cluster** — merge-worthy · guidance
+**Argo Application targets an unregistered cluster** (merge-worthy · guidance)
 
 Point spec.destination at a registered cluster or the in-cluster target.
 
 ### ARGO005
 
-**Argo source.path may not resolve** — report-only · guidance
+**Argo source.path may not resolve** (report-only · guidance)
 
 Ensure the source path exists under the build root.
 
 ### FLUX002
 
-**Flux Kustomization references an undeclared source** — merge-worthy · guidance
+**Flux Kustomization references an undeclared source** (merge-worthy · guidance)
 
 Declare the GitRepository/OCIRepository/Bucket, or point sourceRef at the bootstrap flux-system repo.
 
@@ -977,7 +977,7 @@ Declare the GitRepository/OCIRepository/Bucket, or point sourceRef at the bootst
 
 ### FLUX003
 
-**Flux Kustomization dependsOn names an undeclared Kustomization** — report-only · guidance
+**Flux Kustomization dependsOn names an undeclared Kustomization** (report-only · guidance)
 
 Fix the dependsOn name, or ignore if the dependency is declared in another repo.
 
@@ -987,7 +987,7 @@ Fix the dependsOn name, or ignore if the dependency is declared in another repo.
 
 ### WK8005
 
-**Hardcoded secret in env var** — merge-worthy · guidance
+**Hardcoded secret in env var** (merge-worthy · guidance)
 
 Use a secretKeyRef instead of a literal value, and rotate the secret.
 
@@ -998,7 +998,7 @@ Use a secretKeyRef instead of a literal value, and rotate the secret.
 
 ### WK8006
 
-**Image uses :latest or no tag** — merge-worthy · guidance
+**Image uses :latest or no tag** (merge-worthy · guidance)
 
 Pin the image to an explicit version tag (ideally a digest).
 
@@ -1009,7 +1009,7 @@ Pin the image to an explicit version tag (ideally a digest).
 
 ### WK8041
 
-**Hardcoded API key in env var** — merge-worthy · guidance
+**Hardcoded API key in env var** (merge-worthy · guidance)
 
 Move the key to a Secret and rotate it.
 
@@ -1020,7 +1020,7 @@ Move the key to a Secret and rotate it.
 
 ### WK8042
 
-**Private key stored in a ConfigMap** — merge-worthy · guidance
+**Private key stored in a ConfigMap** (merge-worthy · guidance)
 
 Store private keys in a Secret, not a ConfigMap.
 
@@ -1031,7 +1031,7 @@ Store private keys in a Secret, not a ConfigMap.
 
 ### WK8101
 
-**Deployment selector does not match template labels** — merge-worthy · guidance
+**Deployment selector does not match template labels** (merge-worthy · guidance)
 
 Align spec.selector with the pod template labels.
 
@@ -1041,25 +1041,25 @@ Align spec.selector with the pod template labels.
 
 ### WK8102
 
-**Resource missing metadata labels** — report-only · guidance
+**Resource missing metadata labels** (report-only · guidance)
 
 Add metadata labels for filtering and tooling.
 
 ### WK8103
 
-**Container missing name** — merge-worthy · guidance
+**Container missing name** (merge-worthy · guidance)
 
 Add the required container `name`.
 
 ### WK8104
 
-**Container ports not named** — report-only · guidance
+**Container ports not named** (report-only · guidance)
 
 Name ports for clearer Service/NetworkPolicy config.
 
 ### WK8105
 
-**imagePullPolicy not explicit** — report-only · guidance
+**imagePullPolicy not explicit** (report-only · guidance)
 
 Set imagePullPolicy explicitly to avoid surprising defaults.
 
@@ -1069,7 +1069,7 @@ Set imagePullPolicy explicitly to avoid surprising defaults.
 
 ### WK8201
 
-**Container missing resource limits** — report-only · guidance
+**Container missing resource limits** (report-only · guidance)
 
 Set CPU and memory limits.
 
@@ -1079,7 +1079,7 @@ Set CPU and memory limits.
 
 ### WK8202
 
-**Privileged container** — merge-worthy · guidance
+**Privileged container** (merge-worthy · guidance)
 
 Remove privileged: true; grant only the specific capabilities needed.
 
@@ -1090,7 +1090,7 @@ Remove privileged: true; grant only the specific capabilities needed.
 
 ### WK8203
 
-**Root filesystem is writable** — merge-worthy · guidance
+**Root filesystem is writable** (merge-worthy · guidance)
 
 Set readOnlyRootFilesystem: true.
 
@@ -1101,7 +1101,7 @@ Set readOnlyRootFilesystem: true.
 
 ### WK8204
 
-**Container may run as root** — merge-worthy · guidance
+**Container may run as root** (merge-worthy · guidance)
 
 Set runAsNonRoot: true (and a non-zero runAsUser).
 
@@ -1112,7 +1112,7 @@ Set runAsNonRoot: true (and a non-zero runAsUser).
 
 ### WK8205
 
-**Capabilities not dropped** — merge-worthy · guidance
+**Capabilities not dropped** (merge-worthy · guidance)
 
 drop: [ALL] and add back only what is required.
 
@@ -1123,7 +1123,7 @@ drop: [ALL] and add back only what is required.
 
 ### WK8207
 
-**Pod uses host network** — merge-worthy · guidance
+**Pod uses host network** (merge-worthy · guidance)
 
 Remove hostNetwork; it bypasses network isolation.
 
@@ -1134,7 +1134,7 @@ Remove hostNetwork; it bypasses network isolation.
 
 ### WK8208
 
-**Pod shares host PID namespace** — merge-worthy · guidance
+**Pod shares host PID namespace** (merge-worthy · guidance)
 
 Remove hostPID.
 
@@ -1145,7 +1145,7 @@ Remove hostPID.
 
 ### WK8209
 
-**Pod shares host IPC namespace** — merge-worthy · guidance
+**Pod shares host IPC namespace** (merge-worthy · guidance)
 
 Remove hostIPC.
 
@@ -1156,7 +1156,7 @@ Remove hostIPC.
 
 ### WK8301
 
-**Container missing probes** — report-only · guidance
+**Container missing probes** (report-only · guidance)
 
 Add liveness and readiness probes.
 
@@ -1166,7 +1166,7 @@ Add liveness and readiness probes.
 
 ### WK8302
 
-**Deployment has a single replica** — report-only · guidance
+**Deployment has a single replica** (report-only · guidance)
 
 Use replicas >= 2 for availability.
 
@@ -1176,7 +1176,7 @@ Use replicas >= 2 for availability.
 
 ### WK8303
 
-**No PodDisruptionBudget for an HA Deployment** — report-only · guidance
+**No PodDisruptionBudget for an HA Deployment** (report-only · guidance)
 
 Add a PDB to protect availability during disruptions.
 
@@ -1186,7 +1186,7 @@ Add a PDB to protect availability during disruptions.
 
 ### WK8304
 
-**SSL redirect without a certificate** — report-only · guidance
+**SSL redirect without a certificate** (report-only · guidance)
 
 Provide a certificate and HTTPS listen-ports for the ssl-redirect annotation.
 
@@ -1196,7 +1196,7 @@ Provide a certificate and HTTPS listen-ports for the ssl-redirect annotation.
 
 ### WK8305
 
-**Ingress backend port does not match the Service** — merge-worthy · guidance
+**Ingress backend port does not match the Service** (merge-worthy · guidance)
 
 Point the Ingress backend at a declared Service port.
 
@@ -1206,37 +1206,37 @@ Point the Ingress backend at a declared Service port.
 
 ### WK8306
 
-**Container command starts with a flag** — merge-worthy · guidance
+**Container command starts with a flag** (merge-worthy · guidance)
 
 The first command element should be a binary, not a flag.
 
 ### WK8401
 
-**shmSize exceeds the container memory limit** — merge-worthy · guidance
+**shmSize exceeds the container memory limit** (merge-worthy · guidance)
 
 Lower shmSize or raise the memory limit so the pod can schedule.
 
 ### WK8402
 
-**RayCluster missing spec.rayVersion** — report-only · guidance
+**RayCluster missing spec.rayVersion** (report-only · guidance)
 
 Set spec.rayVersion so KubeRay picks the right autoscaler image.
 
 ### WK8403
 
-**rayVersion does not match the head image tag** — report-only · guidance
+**rayVersion does not match the head image tag** (report-only · guidance)
 
 Align spec.rayVersion with the Ray version in the head container image.
 
 ### WK8404
 
-**GPU request without a matching toleration** — merge-worthy · guidance
+**GPU request without a matching toleration** (merge-worthy · guidance)
 
 Add a toleration for the nvidia.com/gpu taint (or a wildcard Exists toleration) so the pod can schedule onto a GPU node pool.
 
 ### WK8405
 
-**Serving workload has no PodDisruptionBudget** — report-only · guidance
+**Serving workload has no PodDisruptionBudget** (report-only · guidance)
 
 Add a PDB selecting the InferenceService/serving Deployment so a node drain can't take down every replica at once.
 
@@ -1246,7 +1246,7 @@ Add a PDB selecting the InferenceService/serving Deployment so a node drain can'
 
 ### WK8406
 
-**GPU container missing resource limits** — merge-worthy · guidance
+**GPU container missing resource limits** (merge-worthy · guidance)
 
 Set CPU and memory limits on GPU-requesting containers to avoid starving the (scarce, expensive) GPU node.
 
@@ -1256,13 +1256,13 @@ Set CPU and memory limits on GPU-requesting containers to avoid starving the (sc
 
 ### WK8407
 
-**Unpinned model version** — merge-worthy · guidance
+**Unpinned model version** (merge-worthy · guidance)
 
 Pin the InferenceService model storageUri to an explicit version segment (e.g. via the Model composite's required version) instead of a floating tag.
 
 ### WK8501
 
-**Custom resource spec has a field its CRD does not declare** — merge-worthy · guidance
+**Custom resource spec has a field its CRD does not declare** (merge-worthy · guidance)
 
 Fix the field name; the API server prunes unknown fields and the controller never sees them.
 
@@ -1272,7 +1272,7 @@ Fix the field name; the API server prunes unknown fields and the controller neve
 
 ### WK8502
 
-**Custom resource spec field has the wrong type or enum value** — merge-worthy · guidance
+**Custom resource spec field has the wrong type or enum value** (merge-worthy · guidance)
 
 Match the CRD schema: use the declared scalar type and one of the enum values.
 
@@ -1282,7 +1282,7 @@ Match the CRD schema: use the declared scalar type and one of the enum values.
 
 ### WK8503
 
-**Workload consumes a Secret nothing in the output produces** — merge-worthy · guidance
+**Workload consumes a Secret nothing in the output produces** (merge-worthy · guidance)
 
 Produce the Secret in the same build (Secret, ExternalSecret, InfisicalSecret, cert-manager Certificate), or declare its provenance with declareSecret() if it exists out of band.
 
@@ -1292,7 +1292,7 @@ Produce the Secret in the same build (Secret, ExternalSecret, InfisicalSecret, c
 
 ### WK8504
 
-**committed-encrypted secret declaration does not resolve** — merge-worthy · guidance
+**committed-encrypted secret declaration does not resolve** (merge-worthy · guidance)
 
 Point `file` at the committed ciphertext, make its metadata.name match the declaration, and re-run `sops -e -i` so every data/stringData value is ENC[...].
 
@@ -1302,7 +1302,7 @@ Point `file` at the committed ciphertext, make its metadata.name match the decla
 
 ### WK8505
 
-**committed-encrypted secret with no Flux decryption wiring** — report-only · guidance
+**committed-encrypted secret with no Flux decryption wiring** (report-only · guidance)
 
 Add decryption: "sops" to the FluxAppFor reconciling the path that carries the ciphertext sidecar, or ignore if that Kustomization is declared in a different build. This check sees one build root at a time, so it goes silent once the secret and the Kustomization live in different build roots (chant #1939).
 
@@ -1312,67 +1312,67 @@ Add decryption: "sops" to the FluxAppFor reconciling the path that carries the c
 
 ### WK8601
 
-**OpenTelemetry Collector runs tail_sampling on every node** — merge-worthy · guidance
+**OpenTelemetry Collector runs tail_sampling on every node** (merge-worthy · guidance)
 
 Move tail_sampling from the DaemonSet agent to a gateway Deployment, and send traces to it through a loadbalancing exporter routed by traceID.
 
 ### WK8602
 
-**Multi-replica tail sampling gateway reached without trace-aware load balancing** — merge-worthy · guidance
+**Multi-replica tail sampling gateway reached without trace-aware load balancing** (merge-worthy · guidance)
 
 Send traces to the gateway through a loadbalancing exporter with routing_key traceID (k8s resolver, or dns on a headless Service), or run the gateway with one replica. It goes silent when the senders are in another build root (chant #1939).
 
 ### WK8603
 
-**k8s_cluster receiver runs in every collector copy** — merge-worthy · guidance
+**k8s_cluster receiver runs in every collector copy** (merge-worthy · guidance)
 
 Run the k8s_cluster receiver in a single-replica Deployment, or set its k8s_leader_elector to a k8s_leader_elector extension enabled in service.extensions.
 
 ### WK8604
 
-**Collector config in a ConfigMap fails the otel config checks** — merge-worthy · guidance
+**Collector config in a ConfigMap fails the otel config checks** (merge-worthy · guidance)
 
 Fix the collector config the ConfigMap carries: each finding keeps its OTEL1xx id and names the ConfigMap and key. Change the declared components and pipelines, not the rendered YAML.
 
 ### WK8605
 
-**Collector config reads the node but its workload lacks the node name or host mounts** — merge-worthy · guidance
+**Collector config reads the node but its workload lacks the node name or host mounts** (merge-worthy · guidance)
 
 Set the node name variable from spec.nodeName with the downward API and mount the host paths hostmetrics and filelog read, read-only; OtelCollector adds them from the config.
 
 ### WK8606
 
-**PrometheusRule groups fail the prometheus rule-file checks** — merge-worthy · guidance
+**PrometheusRule groups fail the prometheus rule-file checks** (merge-worthy · guidance)
 
 Fix the rule group the PrometheusRule carries: each finding keeps its PROM1xx or PROM2xx id and names the PrometheusRule. Change the declared RuleGroup, not the rendered YAML.
 
 ### WK8701
 
-**PrometheusRule selected by no Prometheus or ThanosRuler** — merge-worthy · guidance
+**PrometheusRule selected by no Prometheus or ThanosRuler** (merge-worthy · guidance)
 
 Match the rule's labels and namespace with ruleSelector and ruleNamespaceSelector; null selects nothing, \{} selects all.
 
 ### WK8702
 
-**Monitor selected by no Prometheus or PrometheusAgent** — merge-worthy · guidance
+**Monitor selected by no Prometheus or PrometheusAgent** (merge-worthy · guidance)
 
 Match the ServiceMonitor, PodMonitor, Probe or ScrapeConfig with the selector and namespace selector for its kind; null selects nothing, \{} selects all.
 
 ### WK8703
 
-**AlertmanagerConfig selected by no Alertmanager** — merge-worthy · guidance
+**AlertmanagerConfig selected by no Alertmanager** (merge-worthy · guidance)
 
 Match the config's labels and namespace with alertmanagerConfigSelector and alertmanagerConfigNamespaceSelector; null selects nothing, \{} selects all.
 
 ### WK8704
 
-**Monitor selects no Service or pod, or names a port that is not there** — merge-worthy · guidance
+**Monitor selects no Service or pod, or names a port that is not there** (merge-worthy · guidance)
 
 Make the monitor's selector match the labels on the Service or pod template, and name a port the Service or container declares.
 
 ### WK8705
 
-**Prometheus selects no monitor at all** — merge-worthy · guidance
+**Prometheus selects no monitor at all** (merge-worthy · guidance)
 
 Set serviceMonitorSelector, podMonitorSelector, probeSelector and scrapeConfigSelector for the monitor kinds it should scrape; \{} selects all in the selected namespaces.
 
@@ -1382,7 +1382,7 @@ Run against Dockerfiles and Compose files.
 
 ### DKRD001
 
-**Service uses :latest or untagged image** — merge-worthy · guidance
+**Service uses :latest or untagged image** (merge-worthy · guidance)
 
 Pin the image to an explicit version tag (ideally a digest).
 
@@ -1393,13 +1393,13 @@ Pin the image to an explicit version tag (ideally a digest).
 
 ### DKRD002
 
-**Named volume declared but unused** — report-only · guidance
+**Named volume declared but unused** (report-only · guidance)
 
 Remove the unused volume or mount it in a service.
 
 ### DKRD003
 
-**Service exposes SSH (port 22)** — merge-worthy · guidance
+**Service exposes SSH (port 22)** (merge-worthy · guidance)
 
 Don't expose SSH from a container; use exec/ephemeral access instead.
 
@@ -1410,7 +1410,7 @@ Don't expose SSH from a container; use exec/ephemeral access instead.
 
 ### DKRD010
 
-**apt-get install without --no-install-recommends** — report-only · guidance
+**apt-get install without --no-install-recommends** (report-only · guidance)
 
 Add --no-install-recommends to keep images small.
 
@@ -1420,7 +1420,7 @@ Add --no-install-recommends to keep images small.
 
 ### DKRD011
 
-**ADD used where COPY would do** — report-only · guidance
+**ADD used where COPY would do** (report-only · guidance)
 
 Prefer COPY unless fetching a URL or extracting an archive.
 
@@ -1430,7 +1430,7 @@ Prefer COPY unless fetching a URL or extracting an archive.
 
 ### DKRD012
 
-**Container runs as root: the final stage has no USER, or ends on USER root** — merge-worthy · guidance
+**Container runs as root: the final stage has no USER, or ends on USER root** (merge-worthy · guidance)
 
 Add a non-root USER instruction to the final stage, after the root setup steps.
 
@@ -1441,19 +1441,19 @@ Add a non-root USER instruction to the final stage, after the root setup steps.
 
 ### DKRD013
 
-**Whole build context copied before a dependency install** — report-only · guidance
+**Whole build context copied before a dependency install** (report-only · guidance)
 
 Copy the dependency manifests, run the install, then copy the rest of the source.
 
 ### DKRD014
 
-**Root-only RUN after a non-root USER** — report-only · guidance
+**Root-only RUN after a non-root USER** (report-only · guidance)
 
 Run package installs and user/ownership changes before switching USER.
 
 ### DKRD015
 
-**More than one CMD or ENTRYPOINT in a stage** — report-only · guidance
+**More than one CMD or ENTRYPOINT in a stage** (report-only · guidance)
 
 Keep one CMD and one ENTRYPOINT per stage; only the last takes effect.
 
@@ -1463,7 +1463,7 @@ Keep one CMD and one ENTRYPOINT per stage; only the last takes effect.
 
 ### DKRD016
 
-**COPY --from names no earlier stage** — report-only · guidance
+**COPY --from names no earlier stage** (report-only · guidance)
 
 Name a stage defined earlier in the Dockerfile, or a tagged image.
 
@@ -1473,13 +1473,13 @@ Name a stage defined earlier in the Dockerfile, or a tagged image.
 
 ### DKRD017
 
-**ARG before FROM is never used** — report-only · guidance
+**ARG before FROM is never used** (report-only · guidance)
 
 Use the ARG in a FROM line, declare it again in the stage that needs it, or remove it.
 
 ### DKRD018
 
-**Relative WORKDIR** — report-only · guidance
+**Relative WORKDIR** (report-only · guidance)
 
 Use an absolute WORKDIR path.
 
@@ -1489,13 +1489,13 @@ Use an absolute WORKDIR path.
 
 ### DKRD019
 
-**ADD of a remote URL without --checksum** — report-only · guidance
+**ADD of a remote URL without --checksum** (report-only · guidance)
 
 Add --checksum=sha256:\<digest> to ADD of an http(s) URL.
 
 ### DKRD020
 
-**apt-get update in its own RUN** — report-only · guidance
+**apt-get update in its own RUN** (report-only · guidance)
 
 Run apt-get update and apt-get install in the same RUN.
 
@@ -1509,7 +1509,7 @@ Run against CloudFormation templates (JSON or YAML).
 
 ### COR020
 
-**Circular resource dependency** — merge-worthy · guidance
+**Circular resource dependency** (merge-worthy · guidance)
 
 Break the dependency cycle between resources.
 
@@ -1519,7 +1519,7 @@ Break the dependency cycle between resources.
 
 ### EXT001
 
-**Extension constraint violation** — merge-worthy · guidance
+**Extension constraint violation** (merge-worthy · guidance)
 
 Fix the cross-property constraint flagged by the cfn-lint extension schema.
 
@@ -1529,7 +1529,7 @@ Fix the cross-property constraint flagged by the cfn-lint extension schema.
 
 ### WAW010
 
-**Redundant DependsOn** — report-only · guidance
+**Redundant DependsOn** (report-only · guidance)
 
 Remove DependsOn already implied by a Ref/GetAtt.
 
@@ -1539,7 +1539,7 @@ Remove DependsOn already implied by a Ref/GetAtt.
 
 ### WAW011
 
-**Deprecated Lambda runtime** — report-only · guidance
+**Deprecated Lambda runtime** (report-only · guidance)
 
 Upgrade to a supported Lambda runtime.
 
@@ -1549,31 +1549,31 @@ Upgrade to a supported Lambda runtime.
 
 ### WAW013
 
-**Child stack exports nothing** — merge-worthy · guidance
+**Child stack exports nothing** (merge-worthy · guidance)
 
 Add stackOutput() exports the parent can reference.
 
 ### WAW014
 
-**Nested stack outputs never referenced** — report-only · guidance
+**Nested stack outputs never referenced** (report-only · guidance)
 
 Reference the outputs or split into a separate build.
 
 ### WAW015
 
-**Circular dependency between nested stacks** — merge-worthy · guidance
+**Circular dependency between nested stacks** (merge-worthy · guidance)
 
 Break the cycle between nested stacks.
 
 ### WAW016
 
-**Deprecated property** — report-only · guidance
+**Deprecated property** (report-only · guidance)
 
 Replace the deprecated CloudFormation property.
 
 ### WAW017
 
-**Missing tags on a taggable resource** — report-only · guidance
+**Missing tags on a taggable resource** (report-only · guidance)
 
 Add tags for cost allocation and compliance.
 
@@ -1583,7 +1583,7 @@ Add tags for cost allocation and compliance.
 
 ### WAW018
 
-**S3 bucket missing public access block** — merge-worthy · guidance
+**S3 bucket missing public access block** (merge-worthy · guidance)
 
 Add a PublicAccessBlockConfiguration blocking all public access.
 
@@ -1594,7 +1594,7 @@ Add a PublicAccessBlockConfiguration blocking all public access.
 
 ### WAW019
 
-**Security group allows unrestricted ingress on a sensitive port** — merge-worthy · guidance
+**Security group allows unrestricted ingress on a sensitive port** (merge-worthy · guidance)
 
 Restrict the CIDR on SSH/RDP/database ports to known sources.
 
@@ -1605,7 +1605,7 @@ Restrict the CIDR on SSH/RDP/database ports to known sources.
 
 ### WAW020
 
-**IAM policy uses a wildcard Action** — merge-worthy · guidance
+**IAM policy uses a wildcard Action** (merge-worthy · guidance)
 
 Scope the policy to specific actions (least privilege).
 
@@ -1616,7 +1616,7 @@ Scope the policy to specific actions (least privilege).
 
 ### WAW021
 
-**RDS storage not encrypted** — merge-worthy · guidance
+**RDS storage not encrypted** (merge-worthy · guidance)
 
 Enable StorageEncrypted for encryption at rest.
 
@@ -1627,7 +1627,7 @@ Enable StorageEncrypted for encryption at rest.
 
 ### WAW022
 
-**Lambda has no VpcConfig** — report-only · guidance
+**Lambda has no VpcConfig** (report-only · guidance)
 
 Consider a VpcConfig for network isolation if the function needs VPC resources.
 
@@ -1637,7 +1637,7 @@ Consider a VpcConfig for network isolation if the function needs VPC resources.
 
 ### WAW023
 
-**CloudFront has no WAF web ACL** — report-only · guidance
+**CloudFront has no WAF web ACL** (report-only · guidance)
 
 Consider attaching a WAF web ACL.
 
@@ -1647,7 +1647,7 @@ Consider attaching a WAF web ACL.
 
 ### WAW024
 
-**ALB access logging disabled** — report-only · guidance
+**ALB access logging disabled** (report-only · guidance)
 
 Enable access logging for audit trails.
 
@@ -1657,7 +1657,7 @@ Enable access logging for audit trails.
 
 ### WAW025
 
-**SNS topic not encrypted** — merge-worthy · guidance
+**SNS topic not encrypted** (merge-worthy · guidance)
 
 Set KmsMasterKeyId for encryption at rest.
 
@@ -1668,7 +1668,7 @@ Set KmsMasterKeyId for encryption at rest.
 
 ### WAW026
 
-**SQS queue not encrypted** — merge-worthy · guidance
+**SQS queue not encrypted** (merge-worthy · guidance)
 
 Enable SqsManagedSseEnabled or set KmsMasterKeyId.
 
@@ -1679,7 +1679,7 @@ Enable SqsManagedSseEnabled or set KmsMasterKeyId.
 
 ### WAW027
 
-**DynamoDB point-in-time recovery disabled** — report-only · guidance
+**DynamoDB point-in-time recovery disabled** (report-only · guidance)
 
 Enable PITR for recovery.
 
@@ -1689,7 +1689,7 @@ Enable PITR for recovery.
 
 ### WAW028
 
-**EBS volume not encrypted** — merge-worthy · guidance
+**EBS volume not encrypted** (merge-worthy · guidance)
 
 Enable encryption at rest.
 
@@ -1700,7 +1700,7 @@ Enable encryption at rest.
 
 ### WAW029
 
-**Invalid DependsOn target** — merge-worthy · guidance
+**Invalid DependsOn target** (merge-worthy · guidance)
 
 Fix the dangling/self DependsOn reference.
 
@@ -1710,19 +1710,19 @@ Fix the dangling/self DependsOn reference.
 
 ### WAW030
 
-**Missing DependsOn for a known ordering pattern** — report-only · guidance
+**Missing DependsOn for a known ordering pattern** (report-only · guidance)
 
 Add the DependsOn the pattern requires.
 
 ### WAW031
 
-**EKS Addon missing ServiceAccountRoleArn** — report-only · guidance
+**EKS Addon missing ServiceAccountRoleArn** (report-only · guidance)
 
 Set ServiceAccountRoleArn (IRSA) for addons that need it.
 
 ### WAW032
 
-**EFS transit encryption disabled on Fargate** — merge-worthy · guidance
+**EFS transit encryption disabled on Fargate** (merge-worthy · guidance)
 
 Enable transit encryption for the EFS volume.
 
@@ -1733,37 +1733,37 @@ Enable transit encryption for the EFS volume.
 
 ### WAW033
 
-**Solr heap exceeds Fargate task memory** — merge-worthy · guidance
+**Solr heap exceeds Fargate task memory** (merge-worthy · guidance)
 
 Lower SOLR_HEAP or raise task memory.
 
 ### WAW034
 
-**Fargate Solr task under-provisioned** — report-only · guidance
+**Fargate Solr task under-provisioned** (report-only · guidance)
 
 Allocate >= 2048MB for the Solr task.
 
 ### WAW035
 
-**Solr container missing nofile ulimit** — report-only · guidance
+**Solr container missing nofile ulimit** (report-only · guidance)
 
 Set a nofile ulimit >= 65535.
 
 ### WAW036
 
-**Non-ASCII characters in resource properties** — merge-worthy · guidance
+**Non-ASCII characters in resource properties** (merge-worthy · guidance)
 
 Remove non-ASCII characters rejected at changeset time.
 
 ### WAW037
 
-**Null values in resource properties** — merge-worthy · guidance
+**Null values in resource properties** (merge-worthy · guidance)
 
 Fix the invalid AttrRef producing null property values.
 
 ### WAW038
 
-**RDS instance is publicly accessible** — merge-worthy · guidance
+**RDS instance is publicly accessible** (merge-worthy · guidance)
 
 Set PubliclyAccessible: false and reach the database through the VPC.
 
@@ -1774,7 +1774,7 @@ Set PubliclyAccessible: false and reach the database through the VPC.
 
 ### WAW039
 
-**RDS automated backups disabled** — merge-worthy · guidance
+**RDS automated backups disabled** (merge-worthy · guidance)
 
 Set a positive BackupRetentionPeriod.
 
@@ -1784,7 +1784,7 @@ Set a positive BackupRetentionPeriod.
 
 ### WAW040
 
-**RDS deletion protection disabled (full tier)** — merge-worthy · guidance
+**RDS deletion protection disabled (full tier)** (merge-worthy · guidance)
 
 Set DeletionProtection: true on the full/production tier.
 
@@ -1794,7 +1794,7 @@ Set DeletionProtection: true on the full/production tier.
 
 ### WAW041
 
-**RDS Proxy does not require TLS** — merge-worthy · guidance
+**RDS Proxy does not require TLS** (merge-worthy · guidance)
 
 Set RequireTLS: true on the DB proxy.
 
@@ -1804,7 +1804,7 @@ Set RequireTLS: true on the DB proxy.
 
 ### WAW042
 
-**S3 bucket missing a TLS-only bucket policy** — merge-worthy · guidance
+**S3 bucket missing a TLS-only bucket policy** (merge-worthy · guidance)
 
 Add a Deny statement keyed on aws:SecureTransport = false.
 
@@ -1815,7 +1815,7 @@ Add a Deny statement keyed on aws:SecureTransport = false.
 
 ### WAW043
 
-**KMS key rotation disabled** — merge-worthy · guidance
+**KMS key rotation disabled** (merge-worthy · guidance)
 
 Set EnableKeyRotation: true on the customer-managed key.
 
@@ -1826,7 +1826,7 @@ Set EnableKeyRotation: true on the customer-managed key.
 
 ### WAW044
 
-**ALB HTTP listener does not redirect to HTTPS (full tier)** — merge-worthy · guidance
+**ALB HTTP listener does not redirect to HTTPS (full tier)** (merge-worthy · guidance)
 
 Add a redirect DefaultAction (Protocol: HTTPS) to the HTTP listener on the full/production tier.
 
@@ -1837,7 +1837,7 @@ Add a redirect DefaultAction (Protocol: HTTPS) to the HTTP listener on the full/
 
 ### WAW045
 
-**ALB listener uses a weak or missing TLS policy** — merge-worthy · guidance
+**ALB listener uses a weak or missing TLS policy** (merge-worthy · guidance)
 
 Set SslPolicy to a TLS 1.2+ predefined policy.
 
@@ -1848,7 +1848,7 @@ Set SslPolicy to a TLS 1.2+ predefined policy.
 
 ### WAW046
 
-**ECS container passes a secret via plaintext Environment** — merge-worthy · guidance
+**ECS container passes a secret via plaintext Environment** (merge-worthy · guidance)
 
 Move the value to Secrets (Secrets Manager/SSM Parameter Store).
 
@@ -1858,7 +1858,7 @@ Move the value to Secrets (Secrets Manager/SSM Parameter Store).
 
 ### WAW047
 
-**ECS container runs privileged** — merge-worthy · guidance
+**ECS container runs privileged** (merge-worthy · guidance)
 
 Remove Privileged: true from the container definition.
 
@@ -1868,13 +1868,13 @@ Remove Privileged: true from the container definition.
 
 ### WAW048
 
-**ECS container missing log configuration** — report-only · guidance
+**ECS container missing log configuration** (report-only · guidance)
 
 Add a LogConfiguration (e.g. awslogs) to the container.
 
 ### WAW049
 
-**Security group allows unrestricted ingress on a non-ALB port** — merge-worthy · guidance
+**Security group allows unrestricted ingress on a non-ALB port** (merge-worthy · guidance)
 
 Restrict the CIDR; only ALB:80/443 is exempt from this rule.
 
@@ -1885,7 +1885,7 @@ Restrict the CIDR; only ALB:80/443 is exempt from this rule.
 
 ### WAW050
 
-**Cognito advanced security disabled** — merge-worthy · guidance
+**Cognito advanced security disabled** (merge-worthy · guidance)
 
 Set UserPoolAddOns.AdvancedSecurityMode to AUDIT or ENFORCED.
 
@@ -1895,7 +1895,7 @@ Set UserPoolAddOns.AdvancedSecurityMode to AUDIT or ENFORCED.
 
 ### WAW051
 
-**Cognito UserPoolClient allows the implicit OAuth grant** — merge-worthy · guidance
+**Cognito UserPoolClient allows the implicit OAuth grant** (merge-worthy · guidance)
 
 Drop "implicit" from AllowedOAuthFlows; use the code grant.
 
@@ -1905,7 +1905,7 @@ Drop "implicit" from AllowedOAuthFlows; use the code grant.
 
 ### WAW052
 
-**Cognito MFA not required (full tier)** — merge-worthy · guidance
+**Cognito MFA not required (full tier)** (merge-worthy · guidance)
 
 Set MfaConfiguration: ON on the full/production tier.
 
@@ -1916,7 +1916,7 @@ Set MfaConfiguration: ON on the full/production tier.
 
 ### WAW053
 
-**ECR repository does not scan images on push** — merge-worthy · guidance
+**ECR repository does not scan images on push** (merge-worthy · guidance)
 
 Set ImageScanningConfiguration.ScanOnPush: true.
 
@@ -1927,7 +1927,7 @@ Set ImageScanningConfiguration.ScanOnPush: true.
 
 ### WAW054
 
-**ECR repository allows mutable image tags** — merge-worthy · guidance
+**ECR repository allows mutable image tags** (merge-worthy · guidance)
 
 Set ImageTagMutability: IMMUTABLE.
 
@@ -1938,7 +1938,7 @@ Set ImageTagMutability: IMMUTABLE.
 
 ### WAW055
 
-**CloudWatch Logs log group has no retention period** — report-only · guidance
+**CloudWatch Logs log group has no retention period** (report-only · guidance)
 
 Set an explicit RetentionInDays.
 
@@ -1948,7 +1948,7 @@ Set an explicit RetentionInDays.
 
 ### WAW056
 
-**SCP guardrail has no Deny statement** — merge-worthy · guidance
+**SCP guardrail has no Deny statement** (merge-worthy · guidance)
 
 Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards nothing.
 
@@ -1958,7 +1958,7 @@ Add a Deny statement — SCPs only filter permissions, so a Deny-less SCP guards
 
 ### WAW057
 
-**SCP guardrail attached to no targets** — merge-worthy · guidance
+**SCP guardrail attached to no targets** (merge-worthy · guidance)
 
 Attach the SCP to the organization root or an OU via TargetIds.
 
@@ -1968,7 +1968,7 @@ Attach the SCP to the organization root or an OU via TargetIds.
 
 ### WAW058
 
-**Organization audit trail dropped or scoped down** — merge-worthy · guidance
+**Organization audit trail dropped or scoped down** (merge-worthy · guidance)
 
 Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: true.
 
@@ -1979,7 +1979,7 @@ Keep an organization CloudTrail with IsLogging: true and IsMultiRegionTrail: tru
 
 ### WAW059
 
-**Wildcard Resource where the declared graph enumerates the touched set** — report-only · guidance
+**Wildcard Resource where the declared graph enumerates the touched set** (report-only · guidance)
 
 Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources the role's consumers touch.
 
@@ -1989,13 +1989,13 @@ Tighten Resource from "*" to the Fn::GetAtt Arn list of the declared resources t
 
 ### WAW060
 
-**IAM policy attached to no principal** — report-only · guidance
+**IAM policy attached to no principal** (report-only · guidance)
 
 Attach the policy via Roles/Users/Groups or reference it from a principal's ManagedPolicyArns — unattached it grants nothing.
 
 ### WAW061
 
-**Subnet CidrBlock not contained in its VPC's CidrBlock** — merge-worthy · guidance
+**Subnet CidrBlock not contained in its VPC's CidrBlock** (merge-worthy · guidance)
 
 Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.
 
@@ -2005,7 +2005,7 @@ Fix the subnet's CidrBlock so it falls within the VPC's CidrBlock range.
 
 ### WAW062
 
-**Duplicate export name or explicit resource name within a template** — merge-worthy · guidance
+**Duplicate export name or explicit resource name within a template** (merge-worthy · guidance)
 
 Give each duplicated Export/name a distinct literal value.
 
@@ -2015,43 +2015,43 @@ Give each duplicated Export/name a distinct literal value.
 
 ### WAW063
 
-**IAM policy denies an action another attached policy on the same role allows** — merge-worthy · guidance
+**IAM policy denies an action another attached policy on the same role allows** (merge-worthy · guidance)
 
 Remove or narrow the Deny, or move the Allow off this role — the explicit Deny always wins.
 
 ### WAW064
 
-**Transit Gateway route table declares a Blackhole route** — report-only · guidance
+**Transit Gateway route table declares a Blackhole route** (report-only · guidance)
 
 Confirm the traffic drop is intentional; remove the route if it isn't.
 
 ### WAW065
 
-**Transit Gateway route table wiring is incomplete** — report-only · guidance
+**Transit Gateway route table wiring is incomplete** (report-only · guidance)
 
 Add the missing TransitGatewayRouteTablePropagation, or wire the orphaned attachment into a route table.
 
 ### WAW066
 
-**Private subnet's route table has no working default route** — merge-worthy · guidance
+**Private subnet's route table has no working default route** (merge-worthy · guidance)
 
 Add a 0.0.0.0/0 route to a NAT gateway/Transit Gateway that exists in the template.
 
 ### WAW067
 
-**Single-AZ NAT gateway serves multi-AZ private subnets** — report-only · guidance
+**Single-AZ NAT gateway serves multi-AZ private subnets** (report-only · guidance)
 
 Add one NAT gateway per Availability Zone and point each AZ's subnets at its own.
 
 ### WAW068
 
-**VPN Gateway or Transit Gateway has only one attached VPN Connection** — report-only · guidance
+**VPN Gateway or Transit Gateway has only one attached VPN Connection** (report-only · guidance)
 
 Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.
 
 ### WAW069
 
-**Template references a condition it never declares** — merge-worthy · guidance
+**Template references a condition it never declares** (merge-worthy · guidance)
 
 Declare the condition in the Conditions section (new Condition(...)), or fix the referenced name.
 
@@ -2065,7 +2065,7 @@ Run against ARM deployment templates (JSON).
 
 ### AZR010
 
-**Redundant dependsOn** — report-only · guidance
+**Redundant dependsOn** (report-only · guidance)
 
 Remove dependsOn already implied by reference()/resourceId().
 
@@ -2075,7 +2075,7 @@ Remove dependsOn already implied by reference()/resourceId().
 
 ### AZR011
 
-**Missing or invalid apiVersion** — merge-worthy · guidance
+**Missing or invalid apiVersion** (merge-worthy · guidance)
 
 Set a valid YYYY-MM-DD apiVersion on every resource.
 
@@ -2085,7 +2085,7 @@ Set a valid YYYY-MM-DD apiVersion on every resource.
 
 ### AZR012
 
-**Deprecated API version** — report-only · guidance
+**Deprecated API version** (report-only · guidance)
 
 Move to a current apiVersion.
 
@@ -2095,13 +2095,13 @@ Move to a current apiVersion.
 
 ### AZR013
 
-**Resource missing location** — merge-worthy · guidance
+**Resource missing location** (merge-worthy · guidance)
 
 Add the required location property.
 
 ### AZR014
 
-**Storage account allows public blob access** — merge-worthy · guidance
+**Storage account allows public blob access** (merge-worthy · guidance)
 
 Set allowBlobPublicAccess to false.
 
@@ -2112,7 +2112,7 @@ Set allowBlobPublicAccess to false.
 
 ### AZR015
 
-**Storage account missing encryption** — merge-worthy · guidance
+**Storage account missing encryption** (merge-worthy · guidance)
 
 Enable encryption services for data at rest.
 
@@ -2122,7 +2122,7 @@ Enable encryption services for data at rest.
 
 ### AZR016
 
-**Key Vault soft-delete not enabled** — report-only · guidance
+**Key Vault soft-delete not enabled** (report-only · guidance)
 
 Enable soft-delete.
 
@@ -2132,7 +2132,7 @@ Enable soft-delete.
 
 ### AZR017
 
-**Key Vault purge protection not enabled** — report-only · guidance
+**Key Vault purge protection not enabled** (report-only · guidance)
 
 Enable purge protection.
 
@@ -2142,7 +2142,7 @@ Enable purge protection.
 
 ### AZR018
 
-**SQL Server missing auditing** — report-only · guidance
+**SQL Server missing auditing** (report-only · guidance)
 
 Enable auditing for compliance and threat detection.
 
@@ -2152,7 +2152,7 @@ Enable auditing for compliance and threat detection.
 
 ### AZR019
 
-**SQL database missing TDE** — merge-worthy · guidance
+**SQL database missing TDE** (merge-worthy · guidance)
 
 Enable Transparent Data Encryption.
 
@@ -2163,7 +2163,7 @@ Enable Transparent Data Encryption.
 
 ### AZR020
 
-**App Service missing managed identity** — report-only · guidance
+**App Service missing managed identity** (report-only · guidance)
 
 Enable a system- or user-assigned identity.
 
@@ -2173,7 +2173,7 @@ Enable a system- or user-assigned identity.
 
 ### AZR021
 
-**App Service not HTTPS-only** — merge-worthy · guidance
+**App Service not HTTPS-only** (merge-worthy · guidance)
 
 Set httpsOnly to true.
 
@@ -2184,7 +2184,7 @@ Set httpsOnly to true.
 
 ### AZR022
 
-**App Service min TLS below 1.2** — merge-worthy · guidance
+**App Service min TLS below 1.2** (merge-worthy · guidance)
 
 Set minTlsVersion to 1.2+.
 
@@ -2195,7 +2195,7 @@ Set minTlsVersion to 1.2+.
 
 ### AZR023
 
-**VM not using a managed disk** — report-only · guidance
+**VM not using a managed disk** (report-only · guidance)
 
 Use a managed disk.
 
@@ -2205,13 +2205,13 @@ Use a managed disk.
 
 ### AZR024
 
-**VM missing boot diagnostics** — report-only · guidance
+**VM missing boot diagnostics** (report-only · guidance)
 
 Enable boot diagnostics.
 
 ### AZR025
 
-**AKS cluster missing RBAC** — report-only · guidance
+**AKS cluster missing RBAC** (report-only · guidance)
 
 Enable Kubernetes RBAC.
 
@@ -2221,7 +2221,7 @@ Enable Kubernetes RBAC.
 
 ### AZR026
 
-**AKS cluster missing network policy** — report-only · guidance
+**AKS cluster missing network policy** (report-only · guidance)
 
 Configure a networkPolicy.
 
@@ -2231,7 +2231,7 @@ Configure a networkPolicy.
 
 ### AZR027
 
-**Container Registry admin user enabled** — merge-worthy · guidance
+**Container Registry admin user enabled** (merge-worthy · guidance)
 
 Disable the admin user; use Azure AD / service principals.
 
@@ -2242,13 +2242,13 @@ Disable the admin user; use Azure AD / service principals.
 
 ### AZR028
 
-**Network interface missing NSG** — report-only · guidance
+**Network interface missing NSG** (report-only · guidance)
 
 Associate an NSG to control traffic.
 
 ### AZR029
 
-**Managed disk missing encryption** — merge-worthy · guidance
+**Managed disk missing encryption** (merge-worthy · guidance)
 
 Enable encryption for data at rest.
 
@@ -2259,13 +2259,13 @@ Enable encryption for data at rest.
 
 ### AZR030
 
-**Resource at unsupported template scope** — merge-worthy · guidance
+**Resource at unsupported template scope** (merge-worthy · guidance)
 
 Move the resource to a project deployed at a scope its schema supports.
 
 ### AZR031
 
-**Policy assignment not enforced (DoNotEnforce)** — merge-worthy · guidance
+**Policy assignment not enforced (DoNotEnforce)** (merge-worthy · guidance)
 
 Set enforcementMode to Default so the assigned guardrail applies.
 
@@ -2275,7 +2275,7 @@ Set enforcementMode to Default so the assigned guardrail applies.
 
 ### AZR032
 
-**Custom policy definition assigned nowhere** — merge-worthy · guidance
+**Custom policy definition assigned nowhere** (merge-worthy · guidance)
 
 Pair the policy definition with a policy assignment — unassigned it enforces nothing.
 
@@ -2285,7 +2285,7 @@ Pair the policy definition with a policy assignment — unassigned it enforces n
 
 ### AZR033
 
-**Subscriptions may leave the tenant** — merge-worthy · guidance
+**Subscriptions may leave the tenant** (merge-worthy · guidance)
 
 Set blockSubscriptionsLeavingTenant: true on the Microsoft.Subscription/policies resource.
 
@@ -2299,7 +2299,7 @@ Run against Config Connector (cnrm.cloud.google.com) manifests.
 
 ### WGC101
 
-**Storage/SQL without encryption configuration** — merge-worthy · guidance
+**Storage/SQL without encryption configuration** (merge-worthy · guidance)
 
 Configure encryption (e.g. a CMEK key) for data at rest.
 
@@ -2310,7 +2310,7 @@ Configure encryption (e.g. a CMEK key) for data at rest.
 
 ### WGC102
 
-**Public IAM member (allUsers/allAuthenticatedUsers)** — merge-worthy · guidance
+**Public IAM member (allUsers/allAuthenticatedUsers)** (merge-worthy · guidance)
 
 Remove allUsers/allAuthenticatedUsers bindings.
 
@@ -2321,13 +2321,13 @@ Remove allUsers/allAuthenticatedUsers bindings.
 
 ### WGC103
 
-**Missing project-id annotation** — report-only · guidance
+**Missing project-id annotation** (report-only · guidance)
 
 Add the cnrm.cloud.google.com/project-id annotation.
 
 ### WGC104
 
-**Bucket without uniform bucket-level access** — merge-worthy · guidance
+**Bucket without uniform bucket-level access** (merge-worthy · guidance)
 
 Enable uniformBucketLevelAccess.
 
@@ -2338,7 +2338,7 @@ Enable uniformBucketLevelAccess.
 
 ### WGC105
 
-**Cloud SQL open to 0.0.0.0/0** — merge-worthy · guidance
+**Cloud SQL open to 0.0.0.0/0** (merge-worthy · guidance)
 
 Restrict authorizedNetworks to known sources.
 
@@ -2349,13 +2349,13 @@ Restrict authorizedNetworks to known sources.
 
 ### WGC106
 
-**Missing deletion-policy annotation** — report-only · guidance
+**Missing deletion-policy annotation** (report-only · guidance)
 
 Add the cnrm.cloud.google.com/deletion-policy annotation.
 
 ### WGC107
 
-**Bucket versioning disabled** — report-only · guidance
+**Bucket versioning disabled** (report-only · guidance)
 
 Enable object versioning.
 
@@ -2365,7 +2365,7 @@ Enable object versioning.
 
 ### WGC108
 
-**Cloud SQL backups disabled** — report-only · guidance
+**Cloud SQL backups disabled** (report-only · guidance)
 
 Enable backup configuration.
 
@@ -2375,7 +2375,7 @@ Enable backup configuration.
 
 ### WGC109
 
-**Firewall open to 0.0.0.0/0** — merge-worthy · guidance
+**Firewall open to 0.0.0.0/0** (merge-worthy · guidance)
 
 Restrict sourceRanges to known sources.
 
@@ -2386,7 +2386,7 @@ Restrict sourceRanges to known sources.
 
 ### WGC110
 
-**KMS key without rotation** — merge-worthy · guidance
+**KMS key without rotation** (merge-worthy · guidance)
 
 Set a rotationPeriod on the CryptoKey.
 
@@ -2397,31 +2397,31 @@ Set a rotationPeriod on the CryptoKey.
 
 ### WGC111
 
-**Reference to an undefined resource** — merge-worthy · guidance
+**Reference to an undefined resource** (merge-worthy · guidance)
 
 Point the reference at a resource in the output.
 
 ### WGC112
 
-**Missing or invalid apiVersion** — merge-worthy · guidance
+**Missing or invalid apiVersion** (merge-worthy · guidance)
 
 Set a valid cnrm.cloud.google.com apiVersion.
 
 ### WGC113
 
-**Alpha API version** — report-only · guidance
+**Alpha API version** (report-only · guidance)
 
 Move to a beta/GA API version.
 
 ### WGC201
 
-**Missing managed-by label** — report-only · guidance
+**Missing managed-by label** (report-only · guidance)
 
 Add the app.kubernetes.io/managed-by label.
 
 ### WGC202
 
-**Cluster without Workload Identity** — merge-worthy · guidance
+**Cluster without Workload Identity** (merge-worthy · guidance)
 
 Enable Workload Identity on the ContainerCluster.
 
@@ -2432,7 +2432,7 @@ Enable Workload Identity on the ContainerCluster.
 
 ### WGC203
 
-**Node pool uses broad cloud-platform scope** — merge-worthy · guidance
+**Node pool uses broad cloud-platform scope** (merge-worthy · guidance)
 
 Use narrowly-scoped OAuth scopes instead of cloud-platform.
 
@@ -2443,7 +2443,7 @@ Use narrowly-scoped OAuth scopes instead of cloud-platform.
 
 ### WGC204
 
-**Compute instance without Shielded VM** — report-only · guidance
+**Compute instance without Shielded VM** (report-only · guidance)
 
 Enable Shielded VM configuration.
 
@@ -2453,7 +2453,7 @@ Enable Shielded VM configuration.
 
 ### WGC301
 
-**No IAMAuditConfig found** — report-only · guidance
+**No IAMAuditConfig found** (report-only · guidance)
 
 Configure audit logging via IAMAuditConfig.
 
@@ -2463,13 +2463,13 @@ Configure audit logging via IAMAuditConfig.
 
 ### WGC302
 
-**No Service (enabled APIs) found** — report-only · guidance
+**No Service (enabled APIs) found** (report-only · guidance)
 
 Declare the GCP APIs you depend on.
 
 ### WGC303
 
-**No VPC Service Controls perimeter** — report-only · guidance
+**No VPC Service Controls perimeter** (report-only · guidance)
 
 Consider an AccessContextManager ServicePerimeter.
 
@@ -2479,25 +2479,25 @@ Consider an AccessContextManager ServicePerimeter.
 
 ### WGC401
 
-**Unknown field in resource spec** — merge-worthy · guidance
+**Unknown field in resource spec** (merge-worthy · guidance)
 
 Remove the unknown spec field.
 
 ### WGC402
 
-**Missing required spec field** — merge-worthy · guidance
+**Missing required spec field** (merge-worthy · guidance)
 
 Add the required spec field.
 
 ### WGC403
 
-**Spec field has wrong type/structure** — merge-worthy · guidance
+**Spec field has wrong type/structure** (merge-worthy · guidance)
 
 Fix the field's type/structure.
 
 ### WGC501
 
-**Org Policy guardrail not enforced** — merge-worthy · guidance
+**Org Policy guardrail not enforced** (merge-worthy · guidance)
 
 Enable enforce on the rule (or remove the policy deliberately) — a disabled org policy constrains nothing.
 
@@ -2507,7 +2507,7 @@ Enable enforce on the rule (or remove the policy deliberately) — a disabled or
 
 ### WGC502
 
-**Org Policy guardrail defines no rules** — merge-worthy · guidance
+**Org Policy guardrail defines no rules** (merge-worthy · guidance)
 
 Add rules to the OrgPolicyPolicy — without them the constraint binds nothing.
 
@@ -2517,7 +2517,7 @@ Add rules to the OrgPolicyPolicy — without them the constraint binds nothing.
 
 ### WGC503
 
-**Audit logging dropped or scoped down** — merge-worthy · guidance
+**Audit logging dropped or scoped down** (merge-worthy · guidance)
 
 Keep auditLogConfigs populated and remove exemptedMembers from the IAMAuditConfig.
 
@@ -2532,7 +2532,7 @@ Run against Helm charts (Chart.yaml + templates).
 
 ### WHM005
 
-**Sub-chart wrapper with no templates** — report-only · guidance
+**Sub-chart wrapper with no templates** (report-only · guidance)
 
 Deploy the upstream chart directly instead of an empty wrapper.
 
@@ -2542,7 +2542,7 @@ Deploy the upstream chart directly instead of an empty wrapper.
 
 ### WHM101
 
-**Chart.yaml missing required fields** — merge-worthy · guidance
+**Chart.yaml missing required fields** (merge-worthy · guidance)
 
 Set apiVersion (v2), name, and version in Chart.yaml.
 
@@ -2552,13 +2552,13 @@ Set apiVersion (v2), name, and version in Chart.yaml.
 
 ### WHM102
 
-**Missing values.schema.json** — report-only · guidance
+**Missing values.schema.json** (report-only · guidance)
 
 Add a values.schema.json to validate values.
 
 ### WHM103
 
-**Invalid Go template syntax** — merge-worthy · guidance
+**Invalid Go template syntax** (merge-worthy · guidance)
 
 Fix the unbalanced template braces.
 
@@ -2568,49 +2568,49 @@ Fix the unbalanced template braces.
 
 ### WHM104
 
-**Missing NOTES.txt** — report-only · guidance
+**Missing NOTES.txt** (report-only · guidance)
 
 Add templates/NOTES.txt for application charts.
 
 ### WHM105
 
-**Missing _helpers.tpl** — report-only · guidance
+**Missing _helpers.tpl** (report-only · guidance)
 
 Add templates/_helpers.tpl.
 
 ### WHM201
 
-**Missing standard Helm labels** — report-only · guidance
+**Missing standard Helm labels** (report-only · guidance)
 
 Add the recommended app.kubernetes.io labels.
 
 ### WHM202
 
-**Hook weights undefined** — report-only · guidance
+**Hook weights undefined** (report-only · guidance)
 
 Define hook weights when multiple hooks exist.
 
 ### WHM203
 
-**Undocumented values** — report-only · guidance
+**Undocumented values** (report-only · guidance)
 
 Document values via schema or comments.
 
 ### WHM204
 
-**Dependencies pinned, not ranged** — report-only · guidance
+**Dependencies pinned, not ranged** (report-only · guidance)
 
 Use semver ranges for chart dependencies.
 
 ### WHM301
 
-**No Helm test** — report-only · guidance
+**No Helm test** (report-only · guidance)
 
 Add at least one Helm test for application charts.
 
 ### WHM302
 
-**Container resources not set** — report-only · guidance
+**Container resources not set** (report-only · guidance)
 
 Set limits/requests via values or defaults.
 
@@ -2620,7 +2620,7 @@ Set limits/requests via values or defaults.
 
 ### WHM401
 
-**Container image uses :latest or no tag** — merge-worthy · guidance
+**Container image uses :latest or no tag** (merge-worthy · guidance)
 
 Pin the image to an explicit version tag.
 
@@ -2631,7 +2631,7 @@ Pin the image to an explicit version tag.
 
 ### WHM402
 
-**Container may run as root** — merge-worthy · guidance
+**Container may run as root** (merge-worthy · guidance)
 
 Set runAsNonRoot in the security context.
 
@@ -2642,7 +2642,7 @@ Set runAsNonRoot in the security context.
 
 ### WHM403
 
-**Root filesystem writable** — merge-worthy · guidance
+**Root filesystem writable** (merge-worthy · guidance)
 
 Set readOnlyRootFilesystem.
 
@@ -2653,7 +2653,7 @@ Set readOnlyRootFilesystem.
 
 ### WHM404
 
-**Privileged container** — merge-worthy · guidance
+**Privileged container** (merge-worthy · guidance)
 
 Remove privileged mode.
 
@@ -2664,7 +2664,7 @@ Remove privileged mode.
 
 ### WHM405
 
-**Resource specs missing cpu/memory** — report-only · guidance
+**Resource specs missing cpu/memory** (report-only · guidance)
 
 Set cpu and memory in limits/requests.
 
@@ -2674,13 +2674,13 @@ Set cpu and memory in limits/requests.
 
 ### WHM406
 
-**CRDs in crds/ are never upgraded** — report-only · guidance
+**CRDs in crds/ are never upgraded** (report-only · guidance)
 
 Manage CRD upgrades outside Helm or via a separate chart.
 
 ### WHM407
 
-**Inline Secret data** — merge-worthy · guidance
+**Inline Secret data** (merge-worthy · guidance)
 
 Use ExternalSecret/SealedSecret instead of inline Secret data.
 
@@ -2691,13 +2691,13 @@ Use ExternalSecret/SealedSecret instead of inline Secret data.
 
 ### WHM501
 
-**Unused values key** — report-only · guidance
+**Unused values key** (report-only · guidance)
 
 Remove values defined but never referenced.
 
 ### WHM502
 
-**Deprecated/invalid Kubernetes API version** — merge-worthy · guidance
+**Deprecated/invalid Kubernetes API version** (merge-worthy · guidance)
 
 Update to a supported apiVersion.
 
@@ -2707,7 +2707,7 @@ Update to a supported apiVersion.
 
 ### WHM503
 
-**Pinned render carries Secret data** — merge-worthy · guidance
+**Pinned render carries Secret data** (merge-worthy · guidance)
 
 Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecret.
 
@@ -2718,7 +2718,7 @@ Declare the value with runtimeSlot() or replace the Secret with HelmExternalSecr
 
 ### WHM504
 
-**Dead value assignment** — merge-worthy · guidance
+**Dead value assignment** (merge-worthy · guidance)
 
 Remove supplied values that never survive coalescing (shadowed, disabled subchart, or unknown subchart).
 
@@ -2728,7 +2728,7 @@ Run against fountain manifests (`apiVersion: fountain.dev/v1`) — standalone `f
 
 ### FTN001
 
-**Literal credential in a fountain declaration** — merge-worthy · guidance
+**Literal credential in a fountain declaration** (merge-worthy · guidance)
 
 Use a $\{VAR} substitution reference or an environment secret; never a literal in source.
 
@@ -2738,7 +2738,7 @@ Use a $\{VAR} substitution reference or an environment secret; never a literal i
 
 ### FTN010
 
-**Environment does not set networking_type explicitly** — merge-worthy · guidance
+**Environment does not set networking_type explicitly** (merge-worthy · guidance)
 
 Set networking_type — an open sandbox by silence is not a reviewed decision.
 
@@ -2748,7 +2748,7 @@ Set networking_type — an open sandbox by silence is not a reviewed decision.
 
 ### FTN011
 
-**Environment uses networking_type: unrestricted** — merge-worthy · guidance
+**Environment uses networking_type: unrestricted** (merge-worthy · guidance)
 
 Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
 
@@ -2758,7 +2758,7 @@ Prefer limited with an allowed_hosts allowlist; an empty list denies all egress.
 
 ### FTN012
 
-**Cloud-credential-shaped key or value in Environment env_vars** — merge-worthy · guidance
+**Cloud-credential-shaped key or value in Environment env_vars** (merge-worthy · guidance)
 
 env_vars is plaintext config — move credentials to a secret, or serve the capability outside the sandbox.
 
@@ -2768,19 +2768,19 @@ env_vars is plaintext config — move credentials to a secret, or serve the capa
 
 ### FTN013
 
-**Agent $\{VAR} reference does not resolve against its environment** — report-only · guidance
+**Agent $\{VAR} reference does not resolve against its environment** (report-only · guidance)
 
 Declare the key on the environment, or confirm a vault supplies it at conversation create.
 
 ### FTN014
 
-**Vault key shadows a declared Environment key** — report-only · guidance
+**Vault key shadows a declared Environment key** (report-only · guidance)
 
 Vault values win on key collision silently — rename the key or confirm the override is intended.
 
 ### FTN015
 
-**Secret-shaped MCP env key is a literal, not a $\{VAR} reference** — merge-worthy · guidance
+**Secret-shaped MCP env key is a literal, not a $\{VAR} reference** (merge-worthy · guidance)
 
 Reference the value with $\{VAR} so it resolves at spawn instead of living in source.
 
@@ -2791,31 +2791,31 @@ Reference the value with $\{VAR} so it resolves at spawn instead of living in so
 
 ### FTN016
 
-**Agent runtime or model is not a valid value** — merge-worthy · guidance
+**Agent runtime or model is not a valid value** (merge-worthy · guidance)
 
 Use a known runtime and a canonical provider/model_id.
 
 ### FTN017
 
-**Two declarations of one kind resolve to the same fountain name** — merge-worthy · guidance
+**Two declarations of one kind resolve to the same fountain name** (merge-worthy · guidance)
 
 fountain reconciles by name, so rename one. Otherwise the second silently overwrites the first.
 
 ### FTN020
 
-**Schedule cron is not five- or six-field UTC cron syntax** — merge-worthy · guidance
+**Schedule cron is not five- or six-field UTC cron syntax** (merge-worthy · guidance)
 
 Fix the expression. fountain stores an unparseable cron and then never fires it. The @daily-style shorthands are refused too (#2195): chant validates and matches one cron notion, the five- or six-field one, so write the fields out.
 
 ### FTN021
 
-**A typed reference names something the build does not declare** — merge-worthy · guidance
+**A typed reference names something the build does not declare** (merge-worthy · guidance)
 
 Declare the Agent or Teammate being referenced, or fix the name. Auditing standalone YAML, check the reference is not simply in another file, since the audit reads one file at a time.
 
 ### FTN022
 
-**Webhook url is http, or targets a loopback or private address** — merge-worthy · guidance
+**Webhook url is http, or targets a loopback or private address** (merge-worthy · guidance)
 
 Deliver over https to a public host; a private target makes the delivery worker an SSRF probe.
 
@@ -2825,13 +2825,13 @@ Deliver over https to a public host; a private target makes the delivery worker 
 
 ### FTN023
 
-**Agent runtime "acp" is missing runtime_command, or another runtime carries one** — merge-worthy · guidance
+**Agent runtime "acp" is missing runtime_command, or another runtime carries one** (merge-worthy · guidance)
 
 Pair the acp runtime with the command it speaks the protocol over, and drop the field elsewhere.
 
 ### FTN024
 
-**Environment setup_timeout_seconds is outside 1 to 900, or not a whole number** — merge-worthy · guidance
+**Environment setup_timeout_seconds is outside 1 to 900, or not a whole number** (merge-worthy · guidance)
 
 Use an integer from 1 to 900, or omit the field for fountain's default of 120. Changing the value invalidates the environment's checkpoints.
 
@@ -2841,13 +2841,13 @@ Run against Terraform root modules (a directory of `.tf` files) parsed into the 
 
 ### TF001
 
-**Root module declares no remote backend** — merge-worthy · guidance
+**Root module declares no remote backend** (merge-worthy · guidance)
 
 Add a `backend "\<type>"` block (s3, gcs, azurerm, http) or a `cloud \{}` block to the root module's terraform block, then `terraform init -migrate-state`.
 
 ### TF002
 
-**Provider implied by the root has no required_providers entry** — merge-worthy · guidance
+**Provider implied by the root has no required_providers entry** (merge-worthy · guidance)
 
 Add the provider to the terraform block's `required_providers`, with both `source` and `version` set, so a future provider release can't silently change behavior.
 
@@ -2857,7 +2857,7 @@ Add the provider to the terraform block's `required_providers`, with both `sourc
 
 ### TF003
 
-**Root module's terraform block has no required_version** — merge-worthy · guidance
+**Root module's terraform block has no required_version** (merge-worthy · guidance)
 
 Set `required_version = ">= \<lowest supported version>"` in the terraform block.
 
@@ -2867,7 +2867,7 @@ Set `required_version = ">= \<lowest supported version>"` in the terraform block
 
 ### TF004
 
-**Registry-sourced module block has no version** — merge-worthy · guidance
+**Registry-sourced module block has no version** (merge-worthy · guidance)
 
 Add a `version` constraint to the module block (e.g. `~> 5.0`).
 
@@ -2877,7 +2877,7 @@ Add a `version` constraint to the module block (e.g. `~> 5.0`).
 
 ### TF005
 
-**Git/hg module source is unpinned, or pinned to a mutable ref** — merge-worthy · guidance
+**Git/hg module source is unpinned, or pinned to a mutable ref** (merge-worthy · guidance)
 
 Pin the module's `?ref=` to a tag or a full commit SHA.
 
@@ -2887,7 +2887,7 @@ Pin the module's `?ref=` to a tag or a full commit SHA.
 
 ### TF006
 
-**Default value on a sensitive variable** — merge-worthy · guidance
+**Default value on a sensitive variable** (merge-worthy · guidance)
 
 Delete the `default` and require the caller to supply the value at apply time, through a tfvars file kept out of version control, a `TF_VAR_` entry in the environment, or a workspace input.
 
@@ -2897,7 +2897,7 @@ Delete the `default` and require the caller to supply the value at apply time, t
 
 ### TF007
 
-**Plaintext secret in a variable default or a locals value** — merge-worthy · guidance
+**Plaintext secret in a variable default or a locals value** (merge-worthy · guidance)
 
 Remove the literal, mark the variable `sensitive = true`, and read the value from a secret manager data source or an input at apply time, then rotate the credential, which is already in version control history.
 
@@ -2907,7 +2907,7 @@ Remove the literal, mark the variable `sensitive = true`, and read the value fro
 
 ### TF008
 
-**Provider block configures a hardcoded credential** — merge-worthy · guidance
+**Provider block configures a hardcoded credential** (merge-worthy · guidance)
 
 Delete the credential from the provider block and let the provider read it from the environment, a shared credentials file, or an OIDC role assumption. Rotate the credential.
 
@@ -2917,7 +2917,7 @@ Delete the credential from the provider block and let the provider read it from 
 
 ### TF009
 
-**Credential-named variable is not marked sensitive** — merge-worthy · guidance
+**Credential-named variable is not marked sensitive** (merge-worthy · guidance)
 
 Add `sensitive = true` to the variable so its value is not printed in plan and apply output. The value is still stored in plaintext in state, so keep the state remote and encrypted.
 
@@ -2928,7 +2928,7 @@ Add `sensitive = true` to the variable so its value is not printed in plan and a
 
 ### TF010
 
-**Variable declares no type constraint** — report-only · guidance
+**Variable declares no type constraint** (report-only · guidance)
 
 Add a `type` to the variable (`string`, `number`, `bool`, `list(string)`, `object(\{...})`).
 
@@ -2938,7 +2938,7 @@ Add a `type` to the variable (`string`, `number`, `bool`, `list(string)`, `objec
 
 ### TF011
 
-**Undocumented variable** — report-only · guidance
+**Undocumented variable** (report-only · guidance)
 
 Add a `description` saying what the value is for and what a valid one looks like.
 
@@ -2948,7 +2948,7 @@ Add a `description` saying what the value is for and what a valid one looks like
 
 ### TF012
 
-**Undocumented output** — report-only · guidance
+**Undocumented output** (report-only · guidance)
 
 Write a `description` for the output, covering what the value is and what a caller can rely on it for.
 
@@ -2958,7 +2958,7 @@ Write a `description` for the output, covering what the value is and what a call
 
 ### TF013
 
-**lifecycle ignore_changes is set to all** — merge-worthy · guidance
+**lifecycle ignore_changes is set to all** (merge-worthy · guidance)
 
 Replace `ignore_changes = all` with the list of attributes that genuinely change outside Terraform, so every other attribute is still reconciled.
 
@@ -2968,7 +2968,7 @@ Replace `ignore_changes = all` with the list of attributes that genuinely change
 
 ### TF014
 
-**Child module configures a provider block** — merge-worthy · guidance
+**Child module configures a provider block** (merge-worthy · guidance)
 
 Move the provider configuration to the root module and pass it into the module with `providers = \{ ... }`, leaving at most an `alias`-only block in the module.
 
@@ -2978,7 +2978,7 @@ Move the provider configuration to the root module and pass it into the module w
 
 ### TF015
 
-**Child module declares a backend or cloud block** — merge-worthy · guidance
+**Child module declares a backend or cloud block** (merge-worthy · guidance)
 
 Delete the `backend`/`cloud` block from the child module. State belongs to the root module that calls it, one state for the whole tree.
 
@@ -2988,7 +2988,7 @@ Delete the `backend`/`cloud` block from the child module. State belongs to the r
 
 ### TF016
 
-**Attribute value is a quoted interpolation of a single expression** — report-only · deterministic
+**Attribute value is a quoted interpolation of a single expression** (report-only · deterministic)
 
 Drop the quotes and the `$\{}`: write `x = var.y`, not `x = "$\{var.y}"`.
 
@@ -2998,7 +2998,7 @@ Drop the quotes and the `$\{}`: write `x = var.y`, not `x = "$\{var.y}"`.
 
 ### TF017
 
-**Module block uses depends_on** — report-only · guidance
+**Module block uses depends_on** (report-only · guidance)
 
 Remove `depends_on` from the module call and pass an attribute of the dependency into a module input, so Terraform derives the narrower edge itself.
 
@@ -3008,7 +3008,7 @@ Remove `depends_on` from the module call and pass an attribute of the dependency
 
 ### TF018
 
-**Output value is a whole resource or data source** — report-only · guidance
+**Output value is a whole resource or data source** (report-only · guidance)
 
 Return the attribute the caller needs (`.id`, `.arn`, `.endpoint`) instead of the whole block.
 
@@ -3018,7 +3018,7 @@ Return the attribute the caller needs (`.id`, `.arn`, `.endpoint`) instead of th
 
 ### TF019
 
-**Meta-argument explicitly set to its default of false** — report-only · deterministic
+**Meta-argument explicitly set to its default of false** (report-only · deterministic)
 
 Deleting the line is the whole fix. `sensitive`, `ephemeral`, `prevent_destroy` and `create_before_destroy` are false unless set.
 
@@ -3028,7 +3028,7 @@ Deleting the line is the whole fix. `sensitive`, `ephemeral`, `prevent_destroy` 
 
 ### TF020
 
-**Declaration is never referenced in its module scope** — report-only · guidance
+**Declaration is never referenced in its module scope** (report-only · guidance)
 
 Delete the variable, local, data source or aliased provider, or reference it where it was meant to be used.
 
@@ -3038,7 +3038,7 @@ Delete the variable, local, data source or aliased provider, or reference it whe
 
 ### TF021
 
-**count builds instance identities from count.index where for_each is safer** — report-only · guidance
+**count builds instance identities from count.index where for_each is safer** (report-only · guidance)
 
 Switch to `for_each` over a map or set so each instance is addressed by a stable key, then `terraform state mv` the existing indexed instances onto their new keys.
 
@@ -3048,7 +3048,7 @@ Switch to `for_each` over a map or set so each instance is addressed by a stable
 
 ### TF022
 
-**Credential-named resource attribute holds a plaintext literal** — merge-worthy · guidance
+**Credential-named resource attribute holds a plaintext literal** (merge-worthy · guidance)
 
 Replace the constant with a lookup, either an input the caller supplies or a data source pointed at whatever vault owns the credential, and rotate what was committed.
 
@@ -3058,7 +3058,7 @@ Replace the constant with a lookup, either an input the caller supplies or a dat
 
 ### TF023
 
-**Terraform state committed to the repository** — merge-worthy · guidance
+**Terraform state committed to the repository** (merge-worthy · guidance)
 
 Delete the state file (or `.terraform/`) from version control, add it to .gitignore, move the state to a remote backend, and rotate every credential the file held.
 
@@ -3069,7 +3069,7 @@ Delete the state file (or `.terraform/`) from version control, add it to .gitign
 
 ### TF024
 
-**Live root declares a backend or cloud block, which choudoufu refuses** — merge-worthy · guidance
+**Live root declares a backend or cloud block, which choudoufu refuses** (merge-worthy · guidance)
 
 Remove the `backend`/`cloud` block from the live root's terraform block; a live root's prior state is a projection rebuilt from the live system every run, so there is no state to store.
 
@@ -3079,19 +3079,19 @@ Remove the `backend`/`cloud` block from the live root's terraform block; a live 
 
 ### TF025
 
-**Live root references a non-default terraform.workspace, which choudoufu refuses** — merge-worthy · guidance
+**Live root references a non-default terraform.workspace, which choudoufu refuses** (merge-worthy · guidance)
 
 Remove `workspace` from the root's terraform.roots config, and remove any `terraform.workspace` reference from its HCL; choudoufu refuses any workspace but "default" on a live root.
 
 ### TF026
 
-**Live root declares delete: "never" but its policy leaves undeclared_tagged at "delete"** — merge-worthy · guidance
+**Live root declares delete: "never" but its policy leaves undeclared_tagged at "delete"** (merge-worthy · guidance)
 
 Add undeclared_tagged = "keep" (or "untag" or "report") to the live root's policy block, or change terraform.roots.\<name>.delete to "owned-only" or "gated" if an owned orphan should be deleted after all.
 
 ### TF027
 
-**Live root's policy block sets undeclared_untagged = "delete"** — merge-worthy · guidance
+**Live root's policy block sets undeclared_untagged = "delete"** (merge-worthy · guidance)
 
 Remove undeclared_untagged = "delete" from the live root's policy block. chant never proposes deleting a resource it does not own; narrow the estate's own ownership answer (undeclared_tagged) instead of the account's.
 
@@ -3101,19 +3101,19 @@ Remove undeclared_untagged = "delete" from the live root's policy block. chant n
 
 ### TF028
 
-**Live root is watched by a TerraformWatchOp built without live: true** — merge-worthy · guidance
+**Live root is watched by a TerraformWatchOp built without live: true** (merge-worthy · guidance)
 
 Set live: true on the TerraformWatchOp that names this root, so the Plan phase runs choudoufuLivePlan and reports the unowned and adoptable counts as well as drift. Drop the root's estate instead if it is not a live root.
 
 ### TF029
 
-**Live root names its estate both in chant.config and in its own HCL** — merge-worthy · guidance
+**Live root names its estate both in chant.config and in its own HCL** (merge-worthy · guidance)
 
 Pick one. A root whose directory is shared across environments declares no estate in HCL and names it per root with terraform.roots.\<name>.estate; a root with its own live block already has an estate and needs nothing in chant.config. The declaration wins today, so the config value is written down and never used.
 
 ### TF030
 
-**Security group rule allows unrestricted ingress on a sensitive port** — merge-worthy · guidance
+**Security group rule allows unrestricted ingress on a sensitive port** (merge-worthy · guidance)
 
 Restrict the CIDR on SSH, RDP, MySQL and PostgreSQL ports to the sources that need them, or reach the host through a bastion, a VPN or SSM Session Manager.
 
@@ -3124,7 +3124,7 @@ Restrict the CIDR on SSH, RDP, MySQL and PostgreSQL ports to the sources that ne
 
 ### TF031
 
-**IAM policy allows a wildcard Action or Resource** — merge-worthy · guidance
+**IAM policy allows a wildcard Action or Resource** (merge-worthy · guidance)
 
 Name the actions the workload calls and the ARNs it touches. For the few actions that accept only Resource "*" (`ecr:GetAuthorizationToken`, `sts:GetCallerIdentity`), keep that statement on its own and suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from an expression; it is not a finding.
 
@@ -3135,7 +3135,7 @@ Name the actions the workload calls and the ARNs it touches. For the few actions
 
 ### TF032
 
-**ECS container definition passes a credential as a plaintext environment value** — merge-worthy · guidance
+**ECS container definition passes a credential as a plaintext environment value** (merge-worthy · guidance)
 
 Move the value from the container's `environment` to its `secrets`, with a `valueFrom` naming a Secrets Manager secret or SSM parameter, and rotate the committed value.
 
@@ -3146,7 +3146,7 @@ Move the value from the container's `environment` to its `secrets`, with a `valu
 
 ### TF033
 
-**RDS DB instance or cluster storage is not encrypted** — merge-worthy · guidance
+**RDS DB instance or cluster storage is not encrypted** (merge-worthy · guidance)
 
 Set `storage_encrypted = true` (and `kms_key_id` for a customer managed key). An existing database cannot be encrypted in place: restore an encrypted copy of a snapshot. An Aurora cluster, or a database created from a snapshot or replica, is reported as not determined, not as a finding.
 
@@ -3157,7 +3157,7 @@ Set `storage_encrypted = true` (and `kms_key_id` for a customer managed key). An
 
 ### TF034
 
-**SNS topic has no server-side encryption** — merge-worthy · guidance
+**SNS topic has no server-side encryption** (merge-worthy · guidance)
 
 Set `kms_master_key_id` to a customer managed KMS key, or to `"alias/aws/sns"` for the AWS managed one. No AWS default encrypts a topic that names no key.
 
@@ -3168,7 +3168,7 @@ Set `kms_master_key_id` to a customer managed KMS key, or to `"alias/aws/sns"` f
 
 ### TF035
 
-**SQS queue turns server-side encryption off** — merge-worthy · guidance
+**SQS queue turns server-side encryption off** (merge-worthy · guidance)
 
 Remove `sqs_managed_sse_enabled = false` (new queues are encrypted with SSE-SQS by default), set it to `true`, or set `kms_master_key_id`. A queue that sets neither attribute is encrypted and is not reported.
 
@@ -3179,7 +3179,7 @@ Remove `sqs_managed_sse_enabled = false` (new queues are encrypted with SSE-SQS 
 
 ### TF036
 
-**EBS volume does not ask for encryption** — merge-worthy · guidance
+**EBS volume does not ask for encryption** (merge-worthy · guidance)
 
 Set `encrypted = true` (and `kms_key_id` for a customer managed key). A volume that leaves `encrypted` unset depends on the Region's EBS encryption by default and is reported as not determined, not as a finding.
 
@@ -3190,7 +3190,7 @@ Set `encrypted = true` (and `kms_key_id` for a customer managed key). A volume t
 
 ### TF037
 
-**ECR repository allows mutable image tags** — merge-worthy · guidance
+**ECR repository allows mutable image tags** (merge-worthy · guidance)
 
 Set `image_tag_mutability = "IMMUTABLE"`, or `"IMMUTABLE_WITH_EXCLUSION"` with an `image_tag_mutability_exclusion_filter` naming the few moving tags (`latest`) that must stay mutable. The provider default is `MUTABLE`.
 
@@ -3201,49 +3201,49 @@ Set `image_tag_mutability = "IMMUTABLE"`, or `"IMMUTABLE_WITH_EXCLUSION"` with a
 
 ### TF038
 
-**OCI module source has no tag or digest, or a mutable tag** — merge-worthy · guidance
+**OCI module source has no tag or digest, or a mutable tag** (merge-worthy · guidance)
 
 Pin the `oci://` source with `?digest=sha256:...` (a digest cannot move) or an exact version tag (`?tag=1.4.0`). A source with no tag pulls `latest`.
 
 ### TF039
 
-**Registry module version is a range, not an exact version** — report-only · guidance
+**Registry module version is a range, not an exact version** (report-only · guidance)
 
 Set an exact `version` (`version = "1.4.0"`) for projects that pin modules. Off by default.
 
 ### TF040
 
-**Root has no committed .terraform.lock.hcl** — report-only · guidance
+**Root has no committed .terraform.lock.hcl** (report-only · guidance)
 
 Run `terraform init` in the root and commit the `.terraform.lock.hcl` it writes. Off by default; checked only where the root's directory is known.
 
 ### TF041
 
-**Terragrunt dependency lets mock_outputs stand in for apply** — merge-worthy · guidance
+**Terragrunt dependency lets mock_outputs stand in for apply** (merge-worthy · guidance)
 
 Set `mock_outputs_allowed_terraform_commands = ["validate", "plan"]` on every `dependency` that sets `mock_outputs`. Terragrunt reads a missing or empty list as every command, apply included.
 
 ### TF042
 
-**Terragrunt dependency sets skip_outputs together with mock_outputs** — merge-worthy · guidance
+**Terragrunt dependency sets skip_outputs together with mock_outputs** (merge-worthy · guidance)
 
 Drop `skip_outputs`, or pass the values as `inputs`. With `skip_outputs = true` the upstream outputs are never read, so every run uses the mocks.
 
 ### TF043
 
-**Terragrunt terraform.source names no version (git ref, tfr version or oci tag)** — merge-worthy · guidance
+**Terragrunt terraform.source names no version (git ref, tfr version or oci tag)** (merge-worthy · guidance)
 
 Pin the source: `?ref=` for git, `?version=` for `tfr://`, `?digest=` or `?tag=` for `oci://`.
 
 ### TF044
 
-**Terragrunt config keeps state in a local backend** — merge-worthy · guidance
+**Terragrunt config keeps state in a local backend** (merge-worthy · guidance)
 
 Use a shared backend (S3, GCS) in `remote_state`. State written by `backend = "local"` stays on the runner and is lost with it.
 
 ### TF045
 
-**No Terragrunt config sets terragrunt_version_constraint** — report-only · guidance
+**No Terragrunt config sets terragrunt_version_constraint** (report-only · guidance)
 
 Set `terragrunt_version_constraint = ">= 1.1.0"` in the root config. Off by default; judged only across the configs scanned.
 
@@ -3253,7 +3253,7 @@ Lexicon-independent — scans the raw text of every scanned file for likely cred
 
 ### SEC001
 
-**AWS access key ID found** — merge-worthy · guidance
+**AWS access key ID found** (merge-worthy · guidance)
 
 Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
 
@@ -3264,7 +3264,7 @@ Remove the key from source, rotate it in IAM, and load it from a secret store or
 
 ### SEC002
 
-**AWS secret access key found** — merge-worthy · guidance
+**AWS secret access key found** (merge-worthy · guidance)
 
 Remove the key from source, rotate it in IAM, and load it from a secret store or environment variable instead.
 
@@ -3275,7 +3275,7 @@ Remove the key from source, rotate it in IAM, and load it from a secret store or
 
 ### SEC003
 
-**GitHub token found** — merge-worthy · guidance
+**GitHub token found** (merge-worthy · guidance)
 
 Remove the token from source and revoke it at github.com/settings/tokens; use a GitHub Actions secret instead.
 
@@ -3286,7 +3286,7 @@ Remove the token from source and revoke it at github.com/settings/tokens; use a 
 
 ### SEC004
 
-**Slack token found** — merge-worthy · guidance
+**Slack token found** (merge-worthy · guidance)
 
 Remove the token from source and revoke it in the Slack app's OAuth settings.
 
@@ -3297,7 +3297,7 @@ Remove the token from source and revoke it in the Slack app's OAuth settings.
 
 ### SEC005
 
-**Google API key found** — merge-worthy · guidance
+**Google API key found** (merge-worthy · guidance)
 
 Remove the key from source and regenerate it in the Google Cloud Console credentials page.
 
@@ -3308,7 +3308,7 @@ Remove the key from source and regenerate it in the Google Cloud Console credent
 
 ### SEC006
 
-**Stripe live secret key found** — merge-worthy · guidance
+**Stripe live secret key found** (merge-worthy · guidance)
 
 Remove the key from source and roll it in the Stripe dashboard immediately — this is a live-mode key.
 
@@ -3319,7 +3319,7 @@ Remove the key from source and roll it in the Stripe dashboard immediately — t
 
 ### SEC007
 
-**Private key block found** — merge-worthy · guidance
+**Private key block found** (merge-worthy · guidance)
 
 Remove the private key from source, rotate the keypair, and load the key from a secret store instead.
 
@@ -3330,7 +3330,7 @@ Remove the private key from source, rotate the keypair, and load the key from a 
 
 ### SEC008
 
-**Bearer/authorization token found** — merge-worthy · guidance
+**Bearer/authorization token found** (merge-worthy · guidance)
 
 Remove the token from source; if it's long-lived, revoke and reissue it via the issuing service.
 
@@ -3341,7 +3341,7 @@ Remove the token from source; if it's long-lived, revoke and reissue it via the 
 
 ### SEC009
 
-**Credentials embedded in a connection string** — merge-worthy · guidance
+**Credentials embedded in a connection string** (merge-worthy · guidance)
 
 Move the username/password out of the URI into a secret store, and rotate the credential.
 
@@ -3352,7 +3352,7 @@ Move the username/password out of the URI into a secret store, and rotate the cr
 
 ### SEC010
 
-**High-entropy string — possible secret** — merge-worthy · guidance
+**High-entropy string — possible secret** (merge-worthy · guidance)
 
 Confirm whether this is a live credential; if so, remove it from source and rotate it. If it's a false positive, suppress with a `chant-audit-ignore` comment or an allowlist entry.
 
@@ -3367,7 +3367,7 @@ Lexicon-independent, audit-only (#446) — scans `wrangler.toml`, Cloudflare Wor
 
 ### WRG001
 
-**Production environment exposed on *.workers.dev** — merge-worthy · guidance
+**Production environment exposed on *.workers.dev** (merge-worthy · guidance)
 
 Remove workers_dev (or set it to false) for this environment and rely on its custom domain/route instead of the shared public subdomain.
 
@@ -3377,7 +3377,7 @@ Remove workers_dev (or set it to false) for this environment and rely on its cus
 
 ### WRG002
 
-**Credential-shaped key stored in [vars]** — merge-worthy · guidance
+**Credential-shaped key stored in [vars]** (merge-worthy · guidance)
 
 Move the value out of [vars] and into `wrangler secret put \<name>` so it isn't committed to source or visible in `wrangler dev`/the dashboard.
 
@@ -3387,13 +3387,13 @@ Move the value out of [vars] and into `wrangler secret put \<name>` so it isn't 
 
 ### WRG003
 
-**Observability explicitly disabled** — report-only · guidance
+**Observability explicitly disabled** (report-only · guidance)
 
 Set observability.enabled = true (or remove the override) so Workers Logs are recorded for this deployment.
 
 ### WRG004
 
-**Unscoped wildcard route** — merge-worthy · guidance
+**Unscoped wildcard route** (merge-worthy · guidance)
 
 Scope the route pattern to the intended zone (e.g. "example.com/*") instead of a bare "*" or "*/*" that matches every zone on the account.
 
@@ -3403,7 +3403,7 @@ Scope the route pattern to the intended zone (e.g. "example.com/*") instead of a
 
 ### WRG005
 
-**Non-production environment shares a data store with production** — merge-worthy · guidance
+**Non-production environment shares a data store with production** (merge-worthy · guidance)
 
 Give the non-production environment its own KV namespace/R2 bucket/D1 database id instead of reusing production's.
 
@@ -3413,7 +3413,7 @@ Give the non-production environment its own KV namespace/R2 bucket/D1 database i
 
 ### WRG006
 
-**Static assets served from the project root** — merge-worthy · guidance
+**Static assets served from the project root** (merge-worthy · guidance)
 
 Point [site].bucket / [assets].directory at a dedicated public output folder, not the project root, so non-public files (config, source maps, .git) aren't served.
 
@@ -3427,7 +3427,7 @@ Lexicon-independent, audit-only (#1979) — parses nginx's native directive/bloc
 
 ### NGX001
 
-**Deprecated TLS protocol enabled** — merge-worthy · guidance
+**Deprecated TLS protocol enabled** (merge-worthy · guidance)
 
 Remove SSLv2/SSLv3/TLSv1/TLSv1.1 from ssl_protocols and serve TLSv1.2 and TLSv1.3 only.
 
@@ -3438,7 +3438,7 @@ Remove SSLv2/SSLv3/TLSv1/TLSv1.1 from ssl_protocols and serve TLSv1.2 and TLSv1.
 
 ### NGX002
 
-**Weak cipher suite enabled** — merge-worthy · guidance
+**Weak cipher suite enabled** (merge-worthy · guidance)
 
 Remove the RC4/DES/MD5/NULL/EXPORT-class entries from ssl_ciphers and use a modern cipher list (e.g. Mozilla's intermediate configuration).
 
@@ -3449,7 +3449,7 @@ Remove the RC4/DES/MD5/NULL/EXPORT-class entries from ssl_ciphers and use a mode
 
 ### NGX003
 
-**Directory listing enabled** — merge-worthy · guidance
+**Directory listing enabled** (merge-worthy · guidance)
 
 Remove `autoindex on` (or scope it to a directory that is genuinely meant to be enumerated) so file listings aren't served to anyone who asks.
 
@@ -3459,7 +3459,7 @@ Remove `autoindex on` (or scope it to a directory that is genuinely meant to be 
 
 ### NGX004
 
-**alias path traversal** — merge-worthy · guidance
+**alias path traversal** (merge-worthy · guidance)
 
 End the location prefix with "/" so it matches the trailing slash of the alias target — without it, a request for "\<prefix>../" escapes the aliased directory.
 
@@ -3470,7 +3470,7 @@ End the location prefix with "/" so it matches the trailing slash of the alias t
 
 ### NGX005
 
-**Status endpoint with no access restriction** — merge-worthy · guidance
+**Status endpoint with no access restriction** (merge-worthy · guidance)
 
 Restrict the stub_status location with allow/deny (or auth_basic/auth_request) so connection metrics aren't public reconnaissance.
 
@@ -3481,7 +3481,7 @@ Restrict the stub_status location with allow/deny (or auth_basic/auth_request) s
 
 ### NGX006
 
-**Server version disclosure** — report-only · guidance
+**Server version disclosure** (report-only · guidance)
 
 Add `server_tokens off;` in the http block so nginx stops advertising its exact version in the Server header and error pages.
 
@@ -3491,7 +3491,7 @@ Add `server_tokens off;` in the http block so nginx stops advertising its exact 
 
 ### NGX007
 
-**Access logging disabled at server scope** — report-only · guidance
+**Access logging disabled at server scope** (report-only · guidance)
 
 Re-enable access_log at http/server scope (silencing a single noisy location is fine) so requests are recorded for incident investigation.
 
@@ -3501,7 +3501,7 @@ Run by `chant audit --agents` against the agent configuration on a machine — i
 
 ### AGT001
 
-**MCP server runs an unpinned package** — merge-worthy · guidance
+**MCP server runs an unpinned package** (merge-worthy · guidance)
 
 Pin the package spec to an exact version (`server@1.2.3`), so a new upstream release can't execute on this machine unreviewed.
 
@@ -3511,7 +3511,7 @@ Pin the package spec to an exact version (`server@1.2.3`), so a new upstream rel
 
 ### AGT002
 
-**Literal credential in agent config** — merge-worthy · guidance
+**Literal credential in agent config** (merge-worthy · guidance)
 
 Replace the value with an environment reference (`$\{TOKEN}`) and keep the secret in a secret store — agent config files sync, back up, and get shared.
 
@@ -3522,7 +3522,7 @@ Replace the value with an environment reference (`$\{TOKEN}`) and keep the secre
 
 ### AGT003
 
-**MCP server reached over cleartext HTTP** — merge-worthy · guidance
+**MCP server reached over cleartext HTTP** (merge-worthy · guidance)
 
 Use an https:// endpoint. Tool arguments and results — including data the agent read locally — otherwise cross the network in the clear.
 
@@ -3532,7 +3532,7 @@ Use an https:// endpoint. Tool arguments and results — including data the agen
 
 ### AGT004
 
-**Remote skill or plugin is unpinned** — merge-worthy · guidance
+**Remote skill or plugin is unpinned** (merge-worthy · guidance)
 
 Pin the source to a tag or commit sha, so the instructions the agent follows can't change upstream without a local edit.
 
@@ -3542,25 +3542,25 @@ Pin the source to a tag or commit sha, so the instructions the agent follows can
 
 ### AGT005
 
-**Tool permission granted without constraint** — merge-worthy · guidance
+**Tool permission granted without constraint** (merge-worthy · guidance)
 
 Scope the grant to the specific commands you run (`Bash(git status:*)`), and re-enable the confirmation prompt for dangerous operations.
 
 ### AGT006
 
-**User-scope config applies to every project** — report-only · guidance
+**User-scope config applies to every project** (report-only · guidance)
 
 Move project-specific instructions, MCP servers, and skills to that project's own config so they don't follow you into unrelated repos.
 
 ### AGT007
 
-**MCP server declared in multiple files** — report-only · guidance
+**MCP server declared in multiple files** (report-only · guidance)
 
 Delete the shadowed declarations. The harness silently picks one, so the file you read may not be the one that decides what runs.
 
 ### AGT008
 
-**Instruction file exceeds the attention budget** — report-only · guidance
+**Instruction file exceeds the attention budget** (report-only · guidance)
 
 Move situational guidance into skills that load on demand, so the always-on instructions stay short enough to be followed reliably.
 

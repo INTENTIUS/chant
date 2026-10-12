@@ -4,7 +4,7 @@ description: One typed document for what a run's planners will change, with a su
 diataxis: reference
 ---
 
-A run that plans several members gets one change set ([#3181](https://github.com/INTENTIUS/chant/issues/3181)). Each planner's output becomes the same typed document: chant's `lifecycle plan`, `terraform`, `tofu` and `choudoufu` plans, a warden's reconcile plan, and SQL plans: a product's versioned migrations and the sql lexicon's migration Ops. A reader asks one question of all of them, and the run's gate approves the document as a whole.
+A run that plans several members gets one change set ([#3181](https://github.com/INTENTIUS/chant/issues/3181)). Each planner's output becomes the same typed document. That covers chant's `lifecycle plan` and the `terraform`, `tofu` and `choudoufu` plans, along with a warden's reconcile plan. It also covers SQL plans, which are a product's versioned migrations and the sql lexicon's migration Ops. A reader asks one question of all of them, and the run's gate approves the document as a whole.
 
 The document is part of the [workspace read contract](/chant/reference/workspace-read-contract/), version 1. Its schema ships in `@intentius/chant` at `src/workspace/change-set.schema.json`, exported as `@intentius/chant/workspace/change-set.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json`. Within the version, fields are only added.
 
@@ -121,7 +121,7 @@ A versioned plan is the migrations a product would apply to one environment, in 
 
 A step is a `MigrationStep` as `chant sql diff --statements --json` writes it (`statement`, `op` or `manual`, each with `object`, `type` and `name`). It may come wrapped as `{ step, done }`, as SQL Yodeler's plan view holds it. A step may also carry `done: true`, when an earlier partial run applied it, which leaves it out. It may name an `action` the product knows better than the classes, and a statement may carry the `changes` it makes.
 
-The adapter writes one entry per object the pending steps touch, at the object's server name (`database.name` or `schema.name`), however many steps and migrations touch it. The action and disruption come from the steps' change classes, priced as the dialects' classifiers price them:
+The adapter writes one entry per object the pending steps touch, however many steps and migrations touch it. The entry sits at the object's server name (`database.name` or `schema.name`). The action and disruption come from the steps' change classes, priced as the dialects' classifiers price them:
 
 | Classes | Action | Disruption |
 |---|---|---|
@@ -130,7 +130,7 @@ The adapter writes one entry per object the pending steps touch, at the object's
 | `rebuild`, `expand`, or a step an Op makes | `replace` | `replace` |
 | anything else | `update` | the worst of `metadata` (`in-place`) and `validate`, `concurrently` or `rewrite` (`rolling`); `unknown` for a class neither dialect has |
 
-A destructive step, such as a column drop, makes the disruption `destroy` and leaves the action as it is. A named `action` wins over the classes.
+A destructive step such as a column drop makes the disruption `destroy` and leaves the action as it is. A named `action` wins over the classes.
 
 Each change a step names becomes an attribute at its field (`orderBy`, `columns.region`), with `before`, `after`, and `forcesReplacement` for a `rebuild` or `expand` change. Three more attributes say how the change is made: `sql`, the statements in order; `op`, the migration Ops that make it; and `manual`, why a step has neither.
 

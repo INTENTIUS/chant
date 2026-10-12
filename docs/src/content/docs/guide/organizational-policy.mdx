@@ -188,9 +188,10 @@ in `prod` — the same environment-aware branch `ORG-PROD-TLS` uses above.
 ## Cookbook: column rules over a SQL schema
 
 The sql lexicon exports a typed read API over the parsed schema,
-`@intentius/chant-lexicon-sql/read`, so a policy can check columns, keys and
-engines rather than SQL text: "every table has `created_at timestamptz NOT
-NULL`", "no Nullable column in a ClickHouse sort key". See the sql lexicon's
+`@intentius/chant-lexicon-sql/read`. A policy can use it to check columns, keys
+and engines rather than SQL text. Two such rules are "every table has
+`created_at timestamptz NOT NULL`" and "no Nullable column in a ClickHouse sort
+key". See the sql lexicon's
 [Your Own Schema Rules](/chant/lexicons/sql/project-policies/) for both
 dialects.
 
