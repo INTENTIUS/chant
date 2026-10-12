@@ -45,7 +45,7 @@ import { isNeverOverMcpGateOp } from "../op/gate-name";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
-import type { GateRunLocator } from "../op/gate-resume";
+import type { GateRunLocator } from "../op/gate-run-locator";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 // The facts a pending record is written with live apart, so a bundle can import them without git (#3816).

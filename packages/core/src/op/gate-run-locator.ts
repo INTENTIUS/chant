@@ -1,7 +1,7 @@
 /**
  * Where a CI job that waits at a gate runs, and what its forge needs to start
  * it again (#3683). Read from the job's environment when a pending fact is
- * recorded; `./gate-resume.ts` uses it to resume the job. It imports nothing
+ * recorded; `../gate-resume-run.ts` uses it to resume the job. It imports nothing
  * at run time, so `@intentius/chant/point-decision` records it on the pending
  * fact of a gate that asks a decision point too (#3835).
  */

@@ -44,6 +44,7 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/notify-verify.ts",
       "packages/core/src/notify.ts",
+      "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/op-waves.ts",
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/gate-seal.ts",

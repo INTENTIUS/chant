@@ -53,7 +53,7 @@ import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
-import { resolveGateRunLocator } from "./gate-resume";
+import { resolveGateRunLocator } from "./gate-run-locator";
 
 /**
  * What appending a pending fact learned about reaching the remote.

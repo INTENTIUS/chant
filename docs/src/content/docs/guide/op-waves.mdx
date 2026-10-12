@@ -348,6 +348,19 @@ The token is read from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN` or `GH_TOKEN` on
 
 Resuming approves nothing. The resumed job decides the gate again from the ledger. A run that is still going, that succeeded, or that was resumed already (a later GitHub attempt, a newer GitLab job of the same name, a Forgejo run of the workflow created after the approval) is left alone.
 
+When the approval was recorded by something else, `chant run resume --op <name> --gate <gate>` resumes that gate's job alone. Without `--gate` it resumes every job of the op whose approval has arrived.
+
+A product that resumes the job itself, from one bundled file, imports the forge calls from `@intentius/chant/gate-resume-run`, which bundles without the workspace code ([#3854](https://github.com/INTENTIUS/chant/issues/3854)). `@intentius/chant/op/gate-resume` exports the same functions, plus the check of whether an approval answers a pending fact.
+
+```typescript
+import { resumeGateRun, resumeTokenFromEnv } from "@intentius/chant/gate-resume-run";
+
+const loc = pending.resume!; // the gate's newest pending fact names its job
+const token = resumeTokenFromEnv(loc.forge);
+const outcome = await resumeGateRun(loc, { token, since: approvedAt });
+// { status: "resumed", how } or { status: "skipped", reason }; a refused call throws
+```
+
 ### A gate that asks a decision point
 
 A gate that [asks a decision point](/chant/guide/ops/#a-gate-that-asks-a-decision-point) waits on a question, not an approval, and writes its resolution only when the run asks the point again. Its pending fact cites the question and, when the gate names one, its `pass` list. `chant run resume` reads the workspace's questions (those held on `chant/lifecycle` included) and resumes such a job once its question is answered with an answer the gate passes on, a noul point's yes by default. An open question, or an answer the gate does not pass on, resumes nothing ([#3835](https://github.com/INTENTIUS/chant/issues/3835)).

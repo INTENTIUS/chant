@@ -952,9 +952,10 @@ Ops:
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares
-  run resume [--op <name>]  Start again each CI job that waits at a gate an
-                        approval now answers, through the forge's API
-                        (#3683); approves nothing. --dry-run lists them
+  run resume [--op <name>] [--gate <name>]  Start again each CI job that
+                        waits at a gate an approval now answers, through the
+                        forge's API (#3683); approves nothing. --gate resumes
+                        that gate's job alone (#3854). --dry-run lists them
   run --generate <provider>  Write one CI pipeline file per scheduled Op for
                         github, gitlab or forgejo (#2533), from every Op that
                         declares a schedule or from --spec <file.json>.
