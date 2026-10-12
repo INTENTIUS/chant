@@ -100,12 +100,15 @@ export const pgString = (value: string): string => `'${value.replace(/'/g, "''")
 export const pgQualified = (schema: string | undefined, name: string): string => (schema ? `${quoteIdent(schema)}.${quoteIdent(name)}` : quoteIdent(name));
 
 /**
- * An object's name in a statement. A schema and an extension have no schema;
- * a routine is named with its parameter types (`app.f(integer,text)`), a
- * trigger with its table (`touch ON app.users`).
+ * An object's name in a statement. A schema, an extension and an event
+ * trigger have no schema; a routine or an aggregate is named with its
+ * parameter types (`app.f(integer,text)`), a trigger with its table
+ * (`touch ON app.users`), a cast by its types (`(app.money AS numeric)`).
  */
 export const objectIdent = (o: { kind: CanonicalKind; schema?: string; name: string; signature?: string }): string =>
-  o.kind === "schema" || o.kind === "extension" || o.kind === "role"
+  o.kind === "cast"
+    ? o.name
+    : o.kind === "schema" || o.kind === "extension" || o.kind === "role" || o.kind === "eventTrigger"
     ? quoteIdent(o.name)
     : o.kind === "trigger" || o.kind === "policy"
       ? `${quoteIdent(o.name)}${o.signature ?? ""}`
@@ -120,10 +123,16 @@ export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
   materializedView: "MATERIALIZED VIEW",
   sequence: "SEQUENCE",
   enum: "TYPE",
+  composite: "TYPE",
+  range: "TYPE",
   domain: "DOMAIN",
   extension: "EXTENSION",
   function: "FUNCTION",
   procedure: "PROCEDURE",
+  aggregate: "AGGREGATE",
+  collation: "COLLATION",
+  cast: "CAST",
+  eventTrigger: "EVENT TRIGGER",
   trigger: "TRIGGER",
   policy: "POLICY",
   role: "ROLE",
@@ -254,7 +263,12 @@ export function createSteps(
     // A table's row-level security is access, which only a profile that manages access applies.
     if (i > 0 && opts.access === false && firstNode(s)?.statement === "rowSecurity") return;
     let sql = s.text;
-    const replaceable = obj.canonical.kind === "view" || obj.canonical.kind === "function" || obj.canonical.kind === "procedure" || (obj.canonical.kind === "trigger" && obj.canonical.fields.constraint !== true);
+    const replaceable =
+      obj.canonical.kind === "view" ||
+      obj.canonical.kind === "function" ||
+      obj.canonical.kind === "procedure" ||
+      obj.canonical.kind === "aggregate" ||
+      (obj.canonical.kind === "trigger" && obj.canonical.fields.constraint !== true);
     if (i === 0 && opts.orReplace && replaceable && !/^\s*CREATE\s+OR\s+REPLACE\b/i.test(sql)) sql = sql.replace(/\bCREATE\s+/i, "CREATE OR REPLACE ");
     const concurrently = i === 0 && obj.canonical.kind === "index" && obj.props.concurrently === true;
     out.push({ ...step(sql, cls, opts.rule, !concurrently), ...(concurrently ? { buildsIndex: objectIdent(obj.canonical) } : {}) });
@@ -528,7 +542,7 @@ export const isRefused = (c: PgChange): boolean => c.class === "expand";
 export const isDestructive = (c: PgChange): boolean => c.rule === "SQLPG204";
 
 /** Changes that replace the object: drop it and create it again from its declaration. */
-export const isRecreate = (c: PgChange): boolean => c.rule === "SQLPG252" || c.rule === "SQLPG243" || c.rule === "SQLPG281";
+export const isRecreate = (c: PgChange): boolean => c.rule === "SQLPG252" || c.rule === "SQLPG243" || c.rule === "SQLPG281" || c.rule === "SQLPG300";
 
 /**
  * SET NOT NULL on a table that exists, without reading the table under
@@ -692,6 +706,7 @@ export function alterSteps(
         break;
       case "SQLPG250":
       case "SQLPG280":
+      case "SQLPG302":
         steps.push(...createSteps(obj, opts.marker, { orReplace: true, cls: c.class, rule: c.rule }).slice(0, 1));
         break;
       case "SQLPG291": {
@@ -872,11 +887,19 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   index: 3,
   table: 4,
   sequence: 5,
+  // An event trigger and a cast before the function they call; an aggregate before its functions.
+  eventTrigger: 5.5,
+  cast: 5.5,
+  aggregate: 5.5,
   // A routine after what calls it (a view, a trigger, a default), before the types its parameters use.
   function: 6,
   procedure: 6,
   domain: 7,
+  composite: 7.5,
+  range: 7.5,
   enum: 8,
+  // A collation after the types and columns that use it.
+  collation: 8.5,
   extension: 9,
   schema: 10,
   // A role is the cluster's: never dropped by a prune (`../live/catalog.ts` reads only the declared ones).

@@ -1,7 +1,7 @@
 ---
 title: "Declaring Postgres Objects"
 label: "Declaring Objects"
-description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains, extensions, functions, procedures, triggers, policies, roles and grants as tagged templates: the fourteen tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, policies, roles and grants as tagged templates: the eighteen tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
 group: "Postgres"
 order: 11
@@ -42,17 +42,21 @@ export const ticketsTitle = index`
 | `index` | `CREATE [UNIQUE] INDEX [CONCURRENTLY] name ON ...` | `Postgres::Index` |
 | `view` | `CREATE VIEW` or `CREATE MATERIALIZED VIEW` | `Postgres::View`, `Postgres::MaterializedView` |
 | `sequence` | `CREATE SEQUENCE` | `Postgres::Sequence` |
-| `type` | `CREATE TYPE name AS ENUM (...)` | `Postgres::Enum` |
+| `type` | `CREATE TYPE name AS ENUM (...)`, `AS (...)` or `AS RANGE (...)` | `Postgres::Enum`, `Postgres::CompositeType`, `Postgres::RangeType` |
 | `domain` | `CREATE DOMAIN` | `Postgres::Domain` |
 | `extension` | `CREATE EXTENSION` | `Postgres::Extension` |
 | `func` | `CREATE [OR REPLACE] FUNCTION` | `Postgres::Function` |
 | `procedure` | `CREATE [OR REPLACE] PROCEDURE` | `Postgres::Procedure` |
+| `aggregate` | `CREATE [OR REPLACE] AGGREGATE` | `Postgres::Aggregate` |
 | `trigger` | `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER` | `Postgres::Trigger` |
+| `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
+| `collation` | `CREATE COLLATION` | `Postgres::Collation` |
+| `cast` | `CREATE CAST` | `Postgres::Cast` |
 | `policy` | `CREATE POLICY` | `Postgres::Policy` |
 | `role` | `CREATE ROLE`, without a password or memberships | `Postgres::Role` |
 | `grant` | `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` | `Postgres::Grant`, `Postgres::DefaultPrivileges` |
 
-A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. A clause chant's parser does not know yet, after a table's column list, on a column, after an index's elements or before a view's `AS`, is kept and sent as written with a build warning, and a plan classes a change to it as one to review (SQLPG299); [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls. The `type` tag declares enum types only; a composite or range type is refused at `(` or `RANGE`.
+A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. A clause chant's parser does not know yet, after a table's column list, on a column, after an index's elements or before a view's `AS`, is kept and sent as written with a build warning, and a plan classes a change to it as one to review (SQLPG299); [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls. The `type` tag declares enum, composite and range types; a base type (`CREATE TYPE name (INPUT = ...)`), whose functions are C code, and a shell type are refused. [Object Coverage](../object-coverage/) lists every `CREATE` command and whether a tag declares it.
 
 A table's template may also turn row-level security on after its `CREATE TABLE` (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`). Policies, roles, grants and row-level security are planned and applied only where the profile manages access; see [Access](../postgres-access/).
 
@@ -154,6 +158,54 @@ export const ticketsTouch = trigger`
 `function` is a JavaScript key word, so the tag is `func`. The body is a string constant (`AS $$ ... $$` or `AS '...'`), kept as written: Postgres stores it verbatim and prints it back unchanged, so it is compared exactly. An interpolation inside the body renders as text, an object as its schema-qualified name and a column reference as the column's name, and is recorded as a reference, so the build creates the routine after the table its body reads. A SQL-standard body (`RETURN expr`, `BEGIN ATOMIC ... END`) is refused, since the server keeps it parsed and prints it back rewritten; so is `SET ... FROM CURRENT`, which takes the value of whichever session runs the `CREATE`.
 
 A routine's identity on the server is its name and its input parameter types, so overloads are separate objects, and `COMMENT ON FUNCTION ${app}.touch() IS '...'` names it the same way. A trigger belongs to its table and its name is unqualified. A trigger's arguments are stored as strings, and its `WHEN` condition is compared as the server prints it, its casts included.
+
+## Composite and range types
+
+```ts
+import { type } from "@intentius/chant-lexicon-sql/postgres";
+
+export const money = type`
+  CREATE TYPE ${app}.money_amount AS (amount numeric(12,2), currency char(3) COLLATE "C");
+  COMMENT ON TYPE ${app}.money_amount IS 'An amount and its currency'`;
+
+export const priceRange = type`CREATE TYPE ${app}.price_range AS RANGE (SUBTYPE = numeric, SUBTYPE_DIFF = numeric_sub)`;
+```
+
+A composite type's attributes are compared by name, type and collation, in order. A range type records its options; one left out is the one Postgres chooses (the subtype's default btree operator class and collation), and its multirange type is named as Postgres names it (`price_multirange` here) unless `MULTIRANGE_TYPE_NAME` says otherwise. A column may use either type, or the multirange, by reference or by name. Neither type has an `ALTER` for its definition: a changed one is dropped and created when nothing on the server uses it (SQLPG300), and refused while a column, a function or a cast does (SQLPG301).
+
+## Aggregates
+
+```ts
+import { aggregate, func } from "@intentius/chant-lexicon-sql/postgres";
+
+export const add2 = func`CREATE FUNCTION ${app}.add2(a integer, b integer) RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT a + b $$`;
+
+export const total = aggregate`
+  CREATE AGGREGATE ${app}.total(integer) (SFUNC = ${add2}, STYPE = integer, INITCOND = '0', PARALLEL = SAFE);
+  COMMENT ON AGGREGATE ${app}.total(integer) IS 'A sum'`;
+```
+
+An aggregate is identified, as a function is, by its name and argument types: `(integer)`, `(*)` for none, `(text ORDER BY integer)` for an ordered-set aggregate. Its options are compared by name, each function by its qualified name (a built-in one bare), each type canonical, and an option at the value Postgres would choose (`SSPACE = 0`, `PARALLEL = UNSAFE`, `FINALFUNC_MODIFY = READ_ONLY` for a plain aggregate) as if it were not written. A change keeps the aggregate with `CREATE OR REPLACE AGGREGATE` (SQLPG302), unless it changes the state type or the final function, which can change its result: then it is dropped and created, or refused while a view uses it. The old form, `CREATE AGGREGATE name (BASETYPE = ...)`, is refused.
+
+## Collations, casts and event triggers
+
+```ts
+import { cast, collation, eventTrigger } from "@intentius/chant-lexicon-sql/postgres";
+
+export const ci = collation`CREATE COLLATION ${app}.ci (provider = icu, locale = 'und-u-ks-level2', deterministic = false)`;
+
+export const moneyText = cast`CREATE CAST (${money} AS text) WITH FUNCTION ${moneyToText}(${money}) AS ASSIGNMENT`;
+
+export const ddlAudit = eventTrigger`
+  CREATE EVENT TRIGGER ddl_audit ON ddl_command_end WHEN TAG IN ('CREATE TABLE', 'ALTER TABLE')
+  EXECUTE FUNCTION ${auditDdl}()`;
+```
+
+A collation records its provider (`libc` unless written), its locales and whether it is deterministic; `VERSION` is the provider library's and is not compared. `CREATE COLLATION ... FROM` is refused: write the settings, which are what the server keeps. Write an ICU locale as the BCP 47 tag the server stores (`und-u-ks-level2`).
+
+A cast lives in no schema and is named by its two types, `(app.money_amount AS text)`, which is also how `COMMENT ON CAST` names it; its function is compared by name. Creating a cast takes owning its source or target type. An event trigger belongs to the database, its name unqualified; its tags are compared as a set. Creating one takes a superuser, and it fires for DDL anywhere in the database, so keep its function cheap. Whether it is enabled (`ALTER EVENT TRIGGER ... DISABLE`) is not declared or compared.
+
+None of the three has an `ALTER` for its definition: a change is a drop and a create in one transaction (SQLPG300), refused while a column uses the collation (SQLPG301).
 
 ## Comments
 

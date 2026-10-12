@@ -214,6 +214,42 @@ function diffUnparsed(key: string, before: PgDiffObject, after: PgDiffObject, ou
   }
 }
 
+/** The kinds (#3911) whose definition has no ALTER: a change is a drop and a create, or (an aggregate's) CREATE OR REPLACE. */
+const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger"]);
+
+/** What each of {@link REPLACED_KINDS} compares besides its name and comment. */
+const DEFINITION: Readonly<Record<string, readonly string[]>> = {
+  composite: ["attributeDefs"],
+  range: ["subtype", "subtypeOpclass", "collation", "canonical", "subtypeDiff", "multirange"],
+  aggregate: ["definition"],
+  collation: ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"],
+  cast: ["castMethod", "function", "context"],
+  eventTrigger: ["event", "tags", "function"],
+};
+
+/**
+ * A type's, aggregate's, collation's, cast's or event trigger's change: its
+ * comment in place; its definition by CREATE OR REPLACE AGGREGATE where that
+ * keeps the aggregate's result, else dropped and created (SQLPG300), or
+ * refused while something depends on it (SQLPG301).
+ */
+function diffReplaced(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[]): void {
+  if (!same(before.fields.comment, after.fields.comment)) out.push(change(key, "comment", "SQLPG216", show(before.fields.comment), show(after.fields.comment)));
+  const changed = DEFINITION[after.kind]!.filter((k) => !same(before.fields[k], after.fields[k]));
+  if (before.schema !== after.schema || before.name !== after.name || before.signature !== after.signature) changed.unshift("name");
+  if (changed.length === 0) return;
+  const was = changed.map((k) => `${k} ${k === "name" ? qualified(before) : (show(before.fields[k]) ?? "-")}`).join("; ");
+  const now = changed.map((k) => `${k} ${k === "name" ? qualified(after) : (show(after.fields[k]) ?? "-")}`).join("; ");
+  const bo = (before.fields.definition ?? {}) as Record<string, unknown>;
+  const ao = (after.fields.definition ?? {}) as Record<string, unknown>;
+  const replaceable = after.kind === "aggregate" && !changed.includes("name") && same(bo.stype, ao.stype) && same(bo.finalfunc, ao.finalfunc) && same(bo.hypothetical, ao.hypothetical);
+  const what = changed.join(", ");
+  if (replaceable) out.push(change(key, what, "SQLPG302", was, now, { note: "CREATE OR REPLACE AGGREGATE" }));
+  else if (before.dependents && before.dependents.length > 0) {
+    out.push(change(key, what, "SQLPG301", was, now, { note: `${before.dependents.join(", ")} depend${before.dependents.length === 1 ? "s" : ""} on it` }));
+  } else out.push(change(key, what, "SQLPG300", was, now));
+}
+
 function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[], major: number): void {
   diffUnparsed(key, before, after, out, hints);
   if (before.kind !== after.kind) {
@@ -225,6 +261,15 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
     const [b, a] = f(name);
     if (!same(b, a)) out.push(change(key, name, rule, show(b), show(a), extra));
   };
+  if (REPLACED_KINDS.has(after.kind)) {
+    // A cast is named by its types, and an aggregate's argument types are its identity: either changed, between two builds, is another object.
+    if (after.kind === "cast" && before.name !== after.name) {
+      out.push(change(key, "name", before.dependents?.length ? "SQLPG301" : "SQLPG300", before.name, after.name));
+      return;
+    }
+    diffReplaced(key, before, after, out);
+    return;
+  }
   if (before.schema !== after.schema || before.name !== after.name) {
     out.push(change(key, "name", after.kind === "index" ? "SQLPG229" : "SQLPG228", qualified(before), qualified(after)));
   }

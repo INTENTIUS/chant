@@ -138,6 +138,20 @@ export function postgresDeclarations(content: string, fileName = "file.ts"): Pos
           sqlName = text(node.name.span);
           kind = "enum type";
           break;
+        case "composite":
+        case "range":
+          sqlName = text(node.name.span);
+          kind = `${node.statement} type`;
+          break;
+        case "aggregate":
+        case "collation":
+          sqlName = text(node.name.span);
+          kind = node.statement;
+          break;
+        case "eventTrigger":
+          sqlName = text(node.name.span);
+          kind = "event trigger";
+          break;
         case "index":
           sqlName = node.name ? text(node.name.span) : undefined;
           break;

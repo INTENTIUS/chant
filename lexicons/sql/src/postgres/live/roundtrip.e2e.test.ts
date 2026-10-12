@@ -2,9 +2,9 @@
  * The live round trip (#3279): a schema on one Postgres database is imported
  * as chant declarations, built, and applied to a second, empty database;
  * both catalogs then print the same statements for every object, exporting
- * the second gives back the same declarations, every declared object is
- * present, and the deep read of the applied database reports no drift from
- * the declarations.
+ * the second gives back the same declarations, a plan of the build against
+ * either database has no change, every declared object is present, and the
+ * deep read of the applied database reports no drift from the declarations.
  *
  * Needs Docker; skips cleanly without it. One throwaway `postgres` container
  * at the pin (18.6, by tag and digest), removed afterwards even on failure.
@@ -22,6 +22,7 @@ import { PostgresGenerator } from "../import/generator";
 import { readLiveSchema } from "./catalog";
 import { describeResources } from "./describe-resources";
 import { observeResourcesDeep } from "../plan/deep";
+import { planPgAgainstServer } from "../plan/commands";
 import { sqlPlugin } from "../../plugin";
 import { POSTGRES_DDL_FILE, sqlSerializer } from "../../serializer";
 
@@ -89,6 +90,11 @@ describe.skipIf(!enabled)("import, build, apply, and the catalog is unchanged", 
 
     // The catalog is unchanged.
     expect(await catalog("target")).toEqual(await catalog("source"));
+
+    // A plan of the build against either database: no change (#3911).
+    const buildFile = join(projectDir, "schema.json");
+    writeFileSync(buildFile, out.primary);
+    for (const db of ["target", "source"]) expect((await planPgAgainstServer("rt", buildFile, profile(db))).changes, db).toEqual([]);
 
     // Exporting the applied database gives back the same declarations.
     const again = await exportResources({ environment: "rt", ...profile("target") });

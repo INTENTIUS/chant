@@ -1,10 +1,12 @@
 /**
  * Import against a real Postgres server never leaves an object out without a
- * word (#3911): a database holding a composite type, an aggregate, a
- * collation, a cast and an event trigger beside a table fails the import,
- * which names all five; with `skipUndeclarable` the table is imported and
- * the five are warnings. What an extension brings (hstore's casts and
- * operators) is the extension's, and is not refused.
+ * word (#3911): a database holding a rewrite rule, an encoding conversion, an
+ * access method and a shell type beside a table fails the import, which
+ * names all four; with `skipUndeclarable` the rest is imported and the four
+ * are warnings. A composite type, an aggregate, a collation, a cast and an
+ * event trigger are declared kinds, so they are imported, not refused. What
+ * an extension brings (hstore's casts and operators) is the extension's, and
+ * is not refused.
  *
  * Needs Docker; skips cleanly without it. One throwaway `postgres` container
  * at the pin, removed afterwards even on failure.
@@ -30,6 +32,10 @@ CREATE FUNCTION app.pair_text(app.pair) RETURNS text LANGUAGE sql AS $$ SELECT (
 CREATE CAST (app.pair AS text) WITH FUNCTION app.pair_text(app.pair);
 CREATE FUNCTION app.on_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN END $$;
 CREATE EVENT TRIGGER audit_ddl ON ddl_command_end EXECUTE FUNCTION app.on_ddl();
+CREATE RULE users_notify AS ON INSERT TO app.users DO ALSO NOTIFY users;
+CREATE CONVERSION app.latin1_utf8 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+CREATE ACCESS METHOD heap2 TYPE TABLE HANDLER heap_tableam_handler;
+CREATE TYPE app.later;
 `;
 
 beforeAll(async () => {
@@ -52,13 +58,7 @@ const profile = () => ({
   env: { PG_UD_PASSWORD: server!.endpoint("source").password },
 });
 
-const NAMED = [
-  "aggregate app.total(integer)",
-  "cast (app.pair AS text)",
-  "collation app.ci",
-  "event trigger audit_ddl",
-  "composite type app.pair",
-];
+const NAMED = ["rule app.users_notify ON users", "conversion app.latin1_utf8", "access method heap2", "base type app.later"];
 
 describe.skipIf(!enabled)("importing a database with objects chant cannot declare", () => {
   test("fails, naming every one of them", async () => {
@@ -74,7 +74,9 @@ describe.skipIf(!enabled)("importing a database with objects chant cannot declar
 
   test("with skipUndeclarable, imports the rest and lists them as warnings", async () => {
     const ir = await exportResources({ environment: "src", skipUndeclarable: true, ...profile() });
-    expect(ir.resources.map((r) => r.properties.name)).toEqual(expect.arrayContaining(["users", "hstore", "add2", "pair_text", "on_ddl"]));
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(
+      expect.arrayContaining(["users", "hstore", "add2", "pair_text", "on_ddl", "pair", "total", "ci", "(app.pair AS text)", "audit_ddl"]),
+    );
     const left = (ir.warnings ?? []).filter((w) => w.includes("is left out (--skip-undeclarable)"));
     expect(left.map((w) => w.split(" is left out")[0]).sort()).toEqual([...NAMED].sort());
   }, 120_000);

@@ -1,8 +1,10 @@
 /**
  * A hand-written, lossless parser for the Postgres statements the dialect
  * declares (chant #3278, #3279): `CREATE SCHEMA`, `TABLE`, `INDEX`, `VIEW`,
- * `MATERIALIZED VIEW`, `SEQUENCE`, `TYPE ... AS ENUM`, `DOMAIN`, `EXTENSION`,
- * `FUNCTION`, `PROCEDURE` and `TRIGGER` (#3680), `POLICY` and `ROLE`, `GRANT`,
+ * `MATERIALIZED VIEW`, `SEQUENCE`, `TYPE ... AS ENUM`, `TYPE ... AS (...)` and
+ * `TYPE ... AS RANGE`, `DOMAIN`, `EXTENSION`, `FUNCTION`, `PROCEDURE` and
+ * `TRIGGER` (#3680), `AGGREGATE`, `COLLATION`, `CAST` and `EVENT TRIGGER`
+ * (#3911), `POLICY` and `ROLE`, `GRANT`,
  * `REVOKE` and `ALTER DEFAULT PRIVILEGES` on schemas, tables, columns,
  * sequences and routines, `ALTER TABLE ... ROW LEVEL SECURITY` (#3681), and
  * `COMMENT ON` for those objects.
@@ -31,7 +33,8 @@
  * (sql-createtable, sql-createindex, sql-createview,
  * sql-creatematerializedview, sql-createsequence, sql-createtype,
  * sql-createdomain, sql-createextension, sql-createschema, sql-createfunction,
- * sql-createprocedure, sql-createtrigger, sql-comment) and
+ * sql-createprocedure, sql-createtrigger, sql-createaggregate,
+ * sql-createcollation, sql-createcast, sql-createeventtrigger, sql-comment) and
  * `src/backend/parser/gram.y` at `REL_18_6` where a page is silent.
  */
 
@@ -203,6 +206,71 @@ export interface EnumNode {
   labels: Span[];
 }
 
+/** One `name [= value]` of a definition list (`CREATE AGGREGATE`, `COLLATION`, `TYPE ... AS RANGE`): the name folded, the value as written. */
+export interface DefElem {
+  name: string;
+  nameSpan: Span;
+  value?: Span;
+}
+
+/** `CREATE TYPE name AS (attribute type [COLLATE collation], ...)`. */
+export interface CompositeNode {
+  statement: "composite";
+  name: NameNode;
+  attributes: Array<{ name: string; nameSpan: Span; type: Span; collate?: Span }>;
+}
+
+/** `CREATE TYPE name AS RANGE (SUBTYPE = type [, ...])`. */
+export interface RangeNode {
+  statement: "range";
+  name: NameNode;
+  options: DefElem[];
+}
+
+/** `CREATE [OR REPLACE] AGGREGATE name (args [ORDER BY args]) (SFUNC = ..., STYPE = ...)`. */
+export interface AggregateNode {
+  statement: "aggregate";
+  orReplace: boolean;
+  name: NameNode;
+  /** The arguments; empty for `(*)`. For an ordered-set aggregate, the direct ones. */
+  args: RoutineArgNode[];
+  /** `(*)`: an aggregate with no arguments. */
+  star: boolean;
+  /** An ordered-set aggregate's aggregated arguments, after `ORDER BY`. */
+  orderBy?: RoutineArgNode[];
+  options: DefElem[];
+}
+
+/** `CREATE COLLATION [IF NOT EXISTS] name (option = value, ...)`. */
+export interface CollationNode {
+  statement: "collation";
+  ifNotExists: boolean;
+  name: NameNode;
+  options: DefElem[];
+}
+
+/** `CREATE CAST (source AS target) WITH FUNCTION f[(args)] | WITHOUT FUNCTION | WITH INOUT [AS ASSIGNMENT | AS IMPLICIT]`. */
+export interface CastNode {
+  statement: "cast";
+  source: Span;
+  target: Span;
+  method: "function" | "binary" | "inout";
+  function?: NameNode;
+  /** The function's parameter types as written, parentheses excluded. */
+  functionArgs?: Span;
+  context: "explicit" | "assignment" | "implicit";
+}
+
+/** `CREATE EVENT TRIGGER name ON event [WHEN TAG IN ('...') [AND ...]] EXECUTE FUNCTION f()`. */
+export interface EventTriggerNode {
+  statement: "eventTrigger";
+  name: NameNode;
+  event: { name: string; span: Span };
+  /** `WHEN variable IN (values)`: the variable folded, each value a string. */
+  filters: Array<{ variable: string; values: Span[] }>;
+  function: NameNode;
+}
+
 export interface DomainNode {
   statement: "domain";
   name: NameNode;
@@ -329,8 +397,10 @@ export interface CommentNode {
   target: NameNode;
   /** For `COMMENT ON CONSTRAINT c ON [DOMAIN] t` and `COMMENT ON TRIGGER t ON table`: the table or domain. */
   on?: NameNode;
-  /** For `COMMENT ON FUNCTION f(...)`: the parameter list, parentheses excluded. */
+  /** For `COMMENT ON FUNCTION f(...)` and `AGGREGATE a(...)`: the parameter list, parentheses excluded. */
   args?: Span;
+  /** For `COMMENT ON CAST (source AS target)`: the two types. */
+  cast?: { source: Span; target: Span };
   /** The comment, a string, or undefined for `IS NULL`. */
   text?: Span;
 }
@@ -342,6 +412,12 @@ export type StatementNode =
   | SequenceNode
   | SchemaNode
   | EnumNode
+  | CompositeNode
+  | RangeNode
+  | AggregateNode
+  | CollationNode
+  | CastNode
+  | EventTriggerNode
   | DomainNode
   | ExtensionNode
   | RoutineNode
@@ -395,6 +471,37 @@ const LIKE_OPTIONS = ["COMMENTS", "COMPRESSION", "CONSTRAINTS", "DEFAULTS", "GEN
  * matching, `BETWEEN`, `IS NULL`-style tests or `AT TIME ZONE`.
  */
 const NOT_IN_B_EXPR = ["IN", "AND", "OR", "LIKE", "ILIKE", "SIMILAR", "BETWEEN", "ISNULL", "NOTNULL", "AT", "COLLATE", "OVERLAPS"];
+
+/** `CREATE TYPE ... AS RANGE`'s options (sql-createtype). */
+export const RANGE_OPTIONS = ["subtype", "subtype_opclass", "collation", "canonical", "subtype_diff", "multirange_type_name"];
+
+/** `CREATE AGGREGATE`'s options (sql-createaggregate), the old form's `basetype` aside. */
+export const AGGREGATE_OPTIONS = [
+  "sfunc",
+  "stype",
+  "sspace",
+  "finalfunc",
+  "finalfunc_extra",
+  "finalfunc_modify",
+  "combinefunc",
+  "serialfunc",
+  "deserialfunc",
+  "initcond",
+  "msfunc",
+  "minvfunc",
+  "mstype",
+  "msspace",
+  "mfinalfunc",
+  "mfinalfunc_extra",
+  "mfinalfunc_modify",
+  "minitcond",
+  "sortop",
+  "parallel",
+  "hypothetical",
+];
+
+/** `CREATE COLLATION`'s options (sql-createcollation). */
+export const COLLATION_OPTIONS = ["locale", "lc_collate", "lc_ctype", "provider", "deterministic", "rules", "version"];
 
 /** What may follow `IS` inside a `b_expr`. */
 const B_EXPR_IS = [["DISTINCT", "FROM"], ["NOT", "DISTINCT", "FROM"], ["DOCUMENT"], ["NOT", "DOCUMENT"]];
@@ -894,13 +1001,17 @@ class PgParser extends SqlCursor {
     if (!orReplace && kw(this.peek(), "USER", "GROUP")) this.fail("expected ROLE (declare a role with CREATE ROLE; LOGIN is an option of it)");
     if (this.accept("FUNCTION")) return this.routine("function", orReplace);
     if (this.accept("PROCEDURE")) return this.routine("procedure", orReplace);
+    if (this.accept("AGGREGATE")) return this.aggregate(orReplace);
     if (this.accept("TRIGGER")) return this.trigger(orReplace, false);
     if (this.acceptSeq("CONSTRAINT", "TRIGGER")) return this.trigger(orReplace, true);
     if (!orReplace) {
       if (this.accept("SCHEMA")) return this.schema();
       if (this.accept("EXTENSION")) return this.extension();
       if (this.accept("DOMAIN")) return this.domain();
-      if (this.accept("TYPE")) return this.enumType();
+      if (this.accept("TYPE")) return this.typeDef();
+      if (this.accept("COLLATION")) return this.collation();
+      if (this.accept("CAST")) return this.cast();
+      if (this.acceptSeq("EVENT", "TRIGGER")) return this.eventTrigger();
       if (kw(this.peek(), "UNIQUE", "INDEX")) return this.index();
     }
     const persistence = this.persistence();
@@ -910,7 +1021,7 @@ class PgParser extends SqlCursor {
     const recursive = this.accept("RECURSIVE");
     if (!orReplace && !recursive && persistence === undefined && this.acceptSeq("MATERIALIZED", "VIEW")) return this.view(true, false, false, false);
     if (this.accept("VIEW")) return this.view(false, orReplace, persistence === "temporary", recursive);
-    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, TRIGGER, POLICY or ROLE");
+    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, POLICY or ROLE");
   }
 
   private schema(): SchemaNode {
@@ -963,16 +1074,169 @@ class PgParser extends SqlCursor {
     }
   }
 
-  private enumType(): EnumNode {
+  /** `CREATE TYPE name AS ENUM (...)`, `AS (...)` (a composite type) or `AS RANGE (...)`. */
+  private typeDef(): EnumNode | CompositeNode | RangeNode {
     const name = this.qualifiedName("a type name");
-    this.expect("AS");
-    if (!this.accept("ENUM")) this.fail("expected ENUM (the type tag declares enum types; a domain has its own tag)");
+    if (!this.accept("AS")) {
+      if (this.isPunct("(")) this.fail("expected AS (a base type, CREATE TYPE name (INPUT = ...), is written in C and is not declared here; declare ENUM, RANGE or composite types, or a domain with its own tag)");
+      this.fail("expected AS (a shell type, CREATE TYPE name with nothing after it, is not declared on its own)");
+    }
+    if (this.accept("RANGE")) {
+      const options = this.definition("a range option");
+      this.checkDefinition(options, RANGE_OPTIONS, ["subtype"], "a range type");
+      return { statement: "range", name, options };
+    }
+    if (this.isPunct("(")) return this.composite(name);
+    if (!this.accept("ENUM")) this.fail("expected ENUM, RANGE or '(' (a domain has its own tag)");
     const labels = this.parenList();
     for (const l of labels) {
       const sig = this.tokens.slice(l.from, l.to).filter((t) => t.kind !== "ws" && t.kind !== "comment");
       if (sig.length !== 1 || (sig[0]!.kind !== "string" && sig[0]!.kind !== "ref")) this.fail("expected a string label", sig[0]);
     }
     return { statement: "enum", name, labels };
+  }
+
+  /** A composite type's attribute list, after `AS`. */
+  private composite(name: NameNode): CompositeNode {
+    const node: CompositeNode = { statement: "composite", name, attributes: [] };
+    this.expectPunct("(");
+    if (this.acceptPunct(")")) return node;
+    for (;;) {
+      const { text, span } = this.nameTok("an attribute name");
+      const attr: CompositeNode["attributes"][number] = { name: text, nameSpan: span, type: this.typeName() };
+      if (this.accept("COLLATE")) attr.collate = this.qualifiedName("a collation").span;
+      node.attributes.push(attr);
+      if (this.acceptPunct(",")) continue;
+      if (!this.isPunct(")")) this.fail("expected COLLATE, ',' or ')' (an attribute of a composite type has a name, a type and a collation, and no constraints)");
+      this.expectPunct(")");
+      return node;
+    }
+  }
+
+  /**
+   * `( name [= value] [, ...] )`: a definition list, as `CREATE AGGREGATE`,
+   * `CREATE COLLATION` and `CREATE TYPE ... AS RANGE` take it. A value is an
+   * expression span: a type, a function or operator name, a string, a number.
+   */
+  private definition(what: string): DefElem[] {
+    this.expectPunct("(");
+    const out: DefElem[] = [];
+    if (this.acceptPunct(")")) return out;
+    for (;;) {
+      const from = this.idx();
+      const t = this.next();
+      if (t.kind !== "ident" && t.kind !== "qident") this.fail(`expected ${what}`, t);
+      const elem: DefElem = { name: identValue(t), nameSpan: this.span(from, []) };
+      if (this.isOp("=")) {
+        this.p++;
+        elem.value = this.expr();
+      }
+      out.push(elem);
+      if (this.acceptPunct(",")) continue;
+      this.expectPunct(")");
+      return out;
+    }
+  }
+
+  /** A definition list's names against the ones the statement takes: an unknown or repeated one fails at its name, a missing required one at the end. */
+  private checkDefinition(elems: readonly DefElem[], known: readonly string[], required: readonly string[], what: string): void {
+    const seen = new Set<string>();
+    for (const e of elems) {
+      const at = this.tokens[e.nameSpan.from];
+      if (!known.includes(e.name)) this.fail(`expected an option of ${what} (${known.join(", ")})`, at);
+      if (seen.has(e.name)) this.fail(`${e.name} is given twice`, at);
+      seen.add(e.name);
+    }
+    for (const r of required) if (!seen.has(r)) this.fail(`expected ${r.toUpperCase()} (${what} needs it)`, this.lastSeen());
+  }
+
+  private aggregate(orReplace: boolean): AggregateNode {
+    const name = this.qualifiedName("an aggregate name");
+    const node: AggregateNode = { statement: "aggregate", orReplace, name, args: [], star: false, options: [] };
+    this.expectPunct("(");
+    const t = this.peek();
+    if ((t?.kind === "ident" || t?.kind === "qident") && this.isOp("=", 1)) {
+      this.fail("expected the argument types (the old form, CREATE AGGREGATE name (BASETYPE = ..., SFUNC = ...), is not declared; write name(argtype) (SFUNC = ..., STYPE = ...))");
+    }
+    const args = (into: RoutineArgNode[]) => {
+      for (;;) {
+        const at = this.peek();
+        const arg = this.routineArg();
+        if (arg.mode === "OUT" || arg.mode === "INOUT") this.fail("expected IN or VARIADIC (an aggregate's arguments are inputs)", at);
+        if (arg.default) this.fail("expected ',' or ')' (an aggregate's argument takes no default)", this.lastSeen());
+        into.push(arg);
+        if (!this.acceptPunct(",")) return;
+      }
+    };
+    if (this.isOp("*")) {
+      this.p++;
+      node.star = true;
+    } else if (!this.is("ORDER", "BY")) args(node.args);
+    if (!node.star && this.acceptSeq("ORDER", "BY")) {
+      node.orderBy = [];
+      args(node.orderBy);
+    }
+    this.expectPunct(")");
+    node.options = this.definition("an aggregate option");
+    this.checkDefinition(node.options, AGGREGATE_OPTIONS, ["sfunc", "stype"], "an aggregate");
+    return node;
+  }
+
+  private collation(): CollationNode {
+    const ifNotExists = this.ifNotExists();
+    const name = this.qualifiedName("a collation name");
+    if (this.accept("FROM")) {
+      this.fail("expected '(' (CREATE COLLATION ... FROM copies another collation's settings, which the server keeps as the copy's own; write them: (provider = ..., locale = ...))", this.lastSeen());
+    }
+    const options = this.definition("a collation option");
+    this.checkDefinition(options, COLLATION_OPTIONS, [], "a collation");
+    return { statement: "collation", ifNotExists, name, options };
+  }
+
+  private cast(): CastNode {
+    this.expectPunct("(");
+    const source = this.typeName();
+    this.expect("AS");
+    const target = this.typeName();
+    this.expectPunct(")");
+    const node: CastNode = { statement: "cast", source, target, method: "function", context: "explicit" };
+    if (this.acceptSeq("WITH", "FUNCTION")) {
+      node.function = this.qualifiedName("a cast function");
+      if (this.isPunct("(")) node.functionArgs = this.parenthesized();
+    } else if (this.acceptSeq("WITHOUT", "FUNCTION")) node.method = "binary";
+    else if (this.acceptSeq("WITH", "INOUT")) node.method = "inout";
+    else this.fail("expected WITH FUNCTION, WITHOUT FUNCTION or WITH INOUT");
+    if (this.acceptSeq("AS", "ASSIGNMENT")) node.context = "assignment";
+    else if (this.acceptSeq("AS", "IMPLICIT")) node.context = "implicit";
+    return node;
+  }
+
+  private eventTrigger(): EventTriggerNode {
+    const { text, span } = this.nameTok("an event trigger name");
+    if (this.isPunct(".")) this.fail("expected ON (an event trigger's name is not schema-qualified; it is the database's)");
+    this.expect("ON");
+    const event = this.nameTok("an event");
+    const node: EventTriggerNode = { statement: "eventTrigger", name: { pieces: [text], span }, event: { name: event.text, span: event.span }, filters: [], function: { pieces: [], span: { from: 0, to: 0, refs: [] } } };
+    if (this.accept("WHEN")) {
+      do {
+        const variable = this.nameTok("a filter variable");
+        if (variable.text !== "tag") this.fail("expected TAG (the only filter variable an event trigger has)", this.tokens[variable.span.from]);
+        this.expect("IN");
+        const values = this.parenList();
+        for (const v of values) {
+          const sig = this.tokens.slice(v.from, v.to).filter((t) => t.kind !== "ws" && t.kind !== "comment");
+          if (sig.length !== 1 || (sig[0]!.kind !== "string" && sig[0]!.kind !== "ref")) this.fail("expected a command tag as a string ('CREATE TABLE')", sig[0]);
+        }
+        node.filters.push({ variable: variable.text, values });
+      } while (this.accept("AND"));
+    }
+    this.expect("EXECUTE");
+    this.expect("FUNCTION", "PROCEDURE");
+    node.function = this.qualifiedName("an event trigger function");
+    this.expectPunct("(");
+    if (!this.isPunct(")")) this.fail("expected ')' (an event trigger's function takes no arguments)");
+    this.expectPunct(")");
+    return node;
   }
 
   private table(persistence: TableNode["persistence"]): TableNode {
@@ -1570,24 +1834,50 @@ class PgParser extends SqlCursor {
     } else if (this.accept("ROLE")) {
       objectType = "ROLE";
       target = this.qualifiedName("a role name");
+    } else if (this.acceptSeq("EVENT", "TRIGGER")) {
+      objectType = "EVENT TRIGGER";
+      target = this.qualifiedName("an event trigger name");
+    } else if (this.accept("CAST")) {
+      objectType = "CAST";
+      const from = this.idx();
+      this.expectPunct("(");
+      const source = this.typeName();
+      this.expect("AS");
+      const castTarget = this.typeName();
+      this.expectPunct(")");
+      target = { pieces: [], span: this.span(from, [...source.refs, ...castTarget.refs]) };
+      this.expect("IS");
+      const node: CommentNode = { statement: "comment", objectType, target, cast: { source, target: castTarget } };
+      if (!this.accept("NULL")) node.text = this.commentText();
+      return node;
+    } else if (this.accept("AGGREGATE", "COLLATION")) {
+      objectType = this.lastSeen()!.text.toUpperCase();
+      target = this.qualifiedName(`an ${objectType.toLowerCase()} name`);
+      if (objectType === "AGGREGATE") {
+        if (!this.isPunct("(")) this.fail("expected '(' and the aggregate's argument types");
+        args = this.parenthesized();
+      }
     } else {
       if (this.acceptSeq("MATERIALIZED", "VIEW")) objectType = "MATERIALIZED VIEW";
       else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION", "FUNCTION", "PROCEDURE")) {
         objectType = this.tokens[this.idx(-1)]!.text.toUpperCase();
-      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, TRIGGER, POLICY, ROLE or CONSTRAINT");
+      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, TRIGGER, EVENT TRIGGER, POLICY, ROLE or CONSTRAINT");
       target = this.qualifiedName("an object name");
       if ((objectType === "FUNCTION" || objectType === "PROCEDURE") && this.isPunct("(")) args = this.parenthesized();
     }
     this.expect("IS");
     const node: CommentNode = { statement: "comment", objectType, target, on, ...(args ? { args } : {}) };
-    if (!this.accept("NULL")) {
-      const t = this.peek();
-      if (t?.kind !== "string" && t?.kind !== "ref") this.fail("expected a string or NULL");
-      const from = this.idx();
-      this.p++;
-      node.text = this.span(from, t.kind === "ref" ? [t.part] : []);
-    }
+    if (!this.accept("NULL")) node.text = this.commentText();
     return node;
+  }
+
+  /** A comment's text: a string, or an interpolation. */
+  private commentText(): Span {
+    const t = this.peek();
+    if (t?.kind !== "string" && t?.kind !== "ref") this.fail("expected a string or NULL");
+    const from = this.idx();
+    this.p++;
+    return this.span(from, t.kind === "ref" ? [t.part] : []);
   }
 
   /** Statements separated by `;`, to the end. */

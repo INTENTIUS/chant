@@ -1,7 +1,7 @@
 import { checkOf } from "./postgres-helpers";
 import { postgresObjects } from "./sql-helpers";
 
-const PLACED = new Set(["Postgres::Table", "Postgres::View", "Postgres::MaterializedView", "Postgres::Sequence", "Postgres::Enum", "Postgres::Domain"]);
+const PLACED = new Set(["Postgres::Table", "Postgres::View", "Postgres::MaterializedView", "Postgres::Sequence", "Postgres::Enum", "Postgres::CompositeType", "Postgres::RangeType", "Postgres::Domain"]);
 
 /**
  * SQLPG113: an object in the public schema while the project declares schemas.

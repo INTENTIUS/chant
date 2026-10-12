@@ -18,8 +18,11 @@
  * - objects an extension owns (`pg_depend.deptype = 'e'`): the extension
  *   declares them, so the extension is what is imported;
  * - `plpgsql`, installed in every database;
- * - a trigger the server makes for itself (a foreign key's)
- *   or clones onto a partition from its parent's;
+ * - a trigger the server makes for itself (a foreign key's) or clones onto a
+ *   partition from its parent's, and a function or cast that is part of
+ *   another object (a range type's constructors and its multirange cast);
+ * - a table's row type, a multirange type (its range type creates it), and a
+ *   cast the server defines (`./catalog-kinds.ts`);
  * - a routine with a SQL-standard body (`RETURN`, `BEGIN ATOMIC`): read, but
  *   marked `unsupported`, since the server prints it rewritten and a
  *   declaration cannot hold it;
@@ -32,9 +35,9 @@
  *   progress (`../migrate/names.ts`, `../migrate/carry.ts`), so a table reads
  *   as it was before the migration until its switch, and as declared after it.
  *
- * Objects of the kinds no declaration holds (aggregates, casts, collations,
- * composite and range types, event triggers, ...) are not read here: import
- * finds them with `./undeclarable.ts` and refuses them by name (#3911).
+ * Objects of the kinds no declaration holds (operators, publications, rules,
+ * ...) are not read here: import finds them with `./undeclarable.ts` and
+ * refuses them by name (#3911).
  *
  * Objects another tool owns, an ORM's or a migration runner's revision table
  * ({@link FOREIGN_TABLES}), are read and marked with the tool, so import
@@ -50,6 +53,7 @@ import { MIGRATION_TRAILER_KEY } from "../migrate/names";
 import { isProviderOwned, providerData } from "../providers";
 import { FOREIGN_TABLES } from "../../core/foreign-tables";
 import type { PostgresProvider } from "../providers/types";
+import { readCollations, readRoutineKinds, readTypeKinds } from "./catalog-kinds";
 
 /** The server's own schemas, never part of a declared schema. */
 export const SYSTEM_SCHEMAS = ["pg_catalog", "information_schema", "pg_toast"];
@@ -73,9 +77,9 @@ export interface LivePgObject {
   statement: string;
   /** The tool whose bookkeeping this is, when it is another tool's (an ORM's revision table). */
   foreign?: string;
-  /** A routine's input parameter types, `(integer,text)`; a trigger's table, ` ON app.users` (`../plan/normalize.ts`). */
+  /** A routine's or aggregate's input parameter types, `(integer,text)`; a trigger's table, ` ON app.users` (`../plan/normalize.ts`). */
   signature?: string;
-  /** What depends on a routine (a view, a trigger, a column default), as the server describes each. */
+  /** What depends on a routine, type, aggregate, collation or cast (a view, a trigger, a column), as the server describes each. */
   dependents?: string[];
   /** Why no declaration can hold this object; it is read so import can say it left it out. */
   unsupported?: string;
@@ -127,6 +131,10 @@ export function scopeSql(column: string, scope: SchemaScope): { sql: string; par
 /** `NOT <object is owned by an extension>`, for an object of catalog `catalog` with oid column `oid`. */
 export const notExtensionOwned = (catalog: string, oid: string): string =>
   `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'e')`;
+
+/** `NOT <object is part of another>` (`pg_depend.deptype = 'i'`): a range type's constructor functions, its multirange cast. */
+const notInternal = (catalog: string, oid: string): string =>
+  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'i')`;
 
 /** A collation name as a clause, `pg_catalog` names unqualified. */
 const COLLATION_NAME = (oid: string) =>
@@ -192,10 +200,11 @@ const seqParams = (r: Row): SequenceParams => ({
 // ── Reading ────────────────────────────────────────────────────────────
 
 /**
- * Every object in scope, in a stable order: schemas, extensions, enums,
- * domains, sequences, tables, views and materialized views, indexes,
- * functions and procedures, triggers, and where access is read, policies and
- * the declared roles; each kind by schema then name, in byte order.
+ * Every object in scope, in a stable order: schemas, extensions, collations,
+ * enums, composite and range types, domains, sequences, tables, views and
+ * materialized views, indexes, functions and procedures, aggregates, casts,
+ * event triggers, triggers, and where access is read, policies and the
+ * declared roles; each kind by schema then name, in byte order.
  */
 export async function readLiveSchema(client: PostgresClient, scope: SchemaScope = {}): Promise<LivePgObject[]> {
   const out: LivePgObject[] = [];
@@ -253,6 +262,9 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
     }
   }
 
+  // Collations, before the types and columns that use them (#3911).
+  out.push(...(await readCollations(client, scope)));
+
   // Enums.
   {
     const s = scopeSql("n.nspname", scope);
@@ -276,6 +288,9 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
       });
     }
   }
+
+  // Composite and range types (#3911).
+  out.push(...(await readTypeKinds(client, scope)));
 
   // Domains.
   {
@@ -586,7 +601,7 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
                     WHERE d.refclassid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.refobjid = p.oid AND d.deptype = 'n'
                     ORDER BY 1) AS dependents
        FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-       WHERE p.prokind IN ('f', 'p', 'w') AND ${s.sql} AND ${notExtensionOwned("pg_proc", "p.oid")}
+       WHERE p.prokind IN ('f', 'p', 'w') AND ${s.sql} AND ${notExtensionOwned("pg_proc", "p.oid")} AND ${notInternal("pg_proc", "p.oid")}
        ORDER BY n.nspname ${C}, p.proname ${C}, pg_catalog.oidvectortypes(p.proargtypes) ${C}`,
       s.params,
     );
@@ -610,6 +625,9 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
       });
     }
   }
+
+  // Aggregates, casts and event triggers, after the functions they call (#3911).
+  out.push(...(await readRoutineKinds(client, scope)));
 
   // Triggers: the ones written by hand, not a foreign key's or a partition's clone of its parent's.
   {

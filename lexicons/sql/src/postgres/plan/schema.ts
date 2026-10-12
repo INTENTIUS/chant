@@ -28,7 +28,7 @@ export interface PgDiffObject extends CanonicalPgObject {
   foreign?: string;
   /** The export name, against a server. */
   exportName?: string;
-  /** What depends on a routine on the server (a view, a trigger, a default), which a DROP FUNCTION would refuse. */
+  /** What depends on a routine, type, aggregate, collation or cast on the server (a view, a trigger, a column), which a DROP would refuse. */
   dependents?: string[];
 }
 
@@ -99,15 +99,17 @@ export function pgSchemaFromBuildFile(path: string, defaultSchema = "public"): P
 /**
  * The namespace an object's name is unique in: relations (tables, views,
  * sequences, indexes) share one per schema, types and domains another,
- * functions and procedures a third (told apart by their parameter types),
+ * functions, procedures and aggregates a third (told apart by their
+ * parameter types), collations a fourth; a cast is named by its two types,
  * a trigger's or a policy's name is unique on its table, and a role's in the
  * cluster.
  */
 export function pgNamespace(kind: string): string {
   if (kind === "schema" || kind === "extension" || kind === "trigger" || kind === "policy" || kind === "role") return kind;
+  if (kind === "collation" || kind === "cast" || kind === "eventTrigger") return kind;
   if (kind === "grant" || kind === "defaultPrivileges") return "grant";
-  if (kind === "enum" || kind === "domain") return "type";
-  if (kind === "function" || kind === "procedure") return "routine";
+  if (kind === "enum" || kind === "domain" || kind === "composite" || kind === "range") return "type";
+  if (kind === "function" || kind === "procedure" || kind === "aggregate") return "routine";
   return "relation";
 }
 

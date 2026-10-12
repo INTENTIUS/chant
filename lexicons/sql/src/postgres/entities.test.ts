@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { isDeclarable } from "@intentius/chant/declarable";
 import { getInterpolationFields } from "@intentius/chant/provenance";
-import { domain, extension, index, isColumnRef, literal, schema, sequence, SqlTemplateError, table, type, view } from "./entities";
+import { domain, extension, index, isColumnRef, literal, schema, sequence, SqlTemplateError, table, type, view, type EnumProps } from "./entities";
 
 const app = schema`CREATE SCHEMA app`;
 const orderStatus = type`CREATE TYPE ${app}.order_status AS ENUM ('placed', 'paid')`;
@@ -121,7 +121,7 @@ describe("indexes, views and the rest", () => {
     const e = extension`CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA ${app} VERSION '1.6'`;
     expect(e.props).toMatchObject({ name: "citext", schema: "app", version: "1.6", ifNotExists: true });
     expect(e.dependsOn).toEqual([app]);
-    expect(orderStatus.props.labels).toEqual(["placed", "paid"]);
+    expect((orderStatus.props as EnumProps).labels).toEqual(["placed", "paid"]);
   });
 });
 

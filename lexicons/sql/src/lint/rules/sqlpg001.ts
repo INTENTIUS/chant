@@ -1,27 +1,12 @@
 import type { LintContext, LintDiagnostic, LintRule } from "@intentius/chant/lint/rule";
 import { parseStatements, SqlSyntaxError } from "../../postgres/parser";
-import { followOnStray, STATEMENT_NAMES, type PostgresTag } from "../../postgres/entities";
+import { followOnStray, STATEMENT_NAMES, STATEMENTS_OF, type PostgresTag } from "../../postgres/entities";
 import { findPostgresTemplates, postgresTokensOf, templatePosition, tokenPosition } from "./postgres-templates";
 
-/** The statement each tag holds. */
-const STATEMENT: Record<PostgresTag, string> = {
-  schema: "schema",
-  table: "table",
-  index: "index",
-  view: "view",
-  sequence: "sequence",
-  type: "enum",
-  domain: "domain",
-  extension: "extension",
-  func: "function",
-  procedure: "procedure",
-  trigger: "trigger",
-  policy: "policy",
-  role: "role",
-  grant: "grant",
-};
-
-const TAG_OF: Record<string, PostgresTag> = Object.fromEntries(Object.entries(STATEMENT).map(([tag, statement]) => [statement, tag as PostgresTag]));
+/** The tag that declares each statement. */
+const TAG_OF: Record<string, PostgresTag> = Object.fromEntries(
+  Object.entries(STATEMENTS_OF).flatMap(([tag, statements]) => statements.map((statement) => [statement, tag as PostgresTag])),
+);
 
 /**
  * SQLPG001: the DDL in a Postgres template does not parse, or does not hold
@@ -60,7 +45,7 @@ export const sqlpg001: LintRule = {
       if (!tokens) continue;
       try {
         const [node, ...rest] = parseStatements(tokens);
-        if (node!.statement !== STATEMENT[found.tag]) {
+        if (!STATEMENTS_OF[found.tag].includes(node!.statement)) {
           const use = TAG_OF[node!.statement];
           report(
             use

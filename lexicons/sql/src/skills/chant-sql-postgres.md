@@ -1,6 +1,6 @@
 ---
 skill: chant-sql-postgres
-description: Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types, extensions, functions, procedures, triggers, policies, roles and grants as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules
+description: Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum, composite, range and domain types, collations, casts, aggregates, event triggers, extensions, functions, procedures, triggers, policies, roles and grants as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules
 user-invocable: true
 ---
 # Declaring a Postgres schema with chant
@@ -34,12 +34,16 @@ The export name (`users`) is the object's identity in chant. The name in the SQL
 | `index` | `CREATE INDEX` | `Postgres::Index` |
 | `view` | `CREATE VIEW`, `CREATE MATERIALIZED VIEW` | `Postgres::View`, `Postgres::MaterializedView` |
 | `sequence` | `CREATE SEQUENCE` | `Postgres::Sequence` |
-| `type` | `CREATE TYPE ... AS ENUM` | `Postgres::Enum` |
+| `type` | `CREATE TYPE ... AS ENUM`, `AS (...)`, `AS RANGE` | `Postgres::Enum`, `Postgres::CompositeType`, `Postgres::RangeType` |
 | `domain` | `CREATE DOMAIN` | `Postgres::Domain` |
 | `extension` | `CREATE EXTENSION` | `Postgres::Extension` |
 | `func` | `CREATE FUNCTION` | `Postgres::Function` |
 | `procedure` | `CREATE PROCEDURE` | `Postgres::Procedure` |
+| `aggregate` | `CREATE AGGREGATE` | `Postgres::Aggregate` |
 | `trigger` | `CREATE TRIGGER` | `Postgres::Trigger` |
+| `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
+| `collation` | `CREATE COLLATION` | `Postgres::Collation` |
+| `cast` | `CREATE CAST` | `Postgres::Cast` |
 | `policy` | `CREATE POLICY` | `Postgres::Policy` |
 | `role` | `CREATE ROLE` (no password, no memberships) | `Postgres::Role` |
 | `grant` | `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` | `Postgres::Grant`, `Postgres::DefaultPrivileges` |
@@ -185,4 +189,4 @@ chant build src --lexicon sql -o dist/schema.json
 
 ## Not covered
 
-`ALTER` (other than a table's row-level security), role memberships, rules, aggregates, event triggers and the composite and range forms of `CREATE TYPE` are not declared with the tags. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.
+`ALTER` (other than a table's row-level security), role memberships, rules, operators, extended statistics, foreign data objects, publications and subscriptions, text search objects and base types are not declared with the tags. An aggregate is identified by its argument types; a cast is named `(source AS target)` and an event trigger lives in no schema. A definition change to a composite or range type, collation, cast or event trigger is a drop and a create, refused while something depends on it. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.
