@@ -29,8 +29,13 @@
  */
 
 import { sortedJsonReplacer } from "../utils";
-import { flagLegacyDigest, warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./legacy-digest";
-import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments } from "./git";
+import { warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./legacy-digest";
+import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments, type LedgerLocation } from "./git";
+import { parseReleaseLedger, validateReleaseRecord } from "./release-read";
+
+// The pure readers live apart, so a bundle can import them without git (#3865).
+export { validateReleaseRecord, parseReleaseLedger, releaseLedgerLines, readReleaseRecords, listReleaseEnvironmentsOn } from "./release-read";
+export type { LedgerReadPort } from "./ledger-port";
 
 /**
  * The id space a `ReleaseRecord.runId` lives in, and how to reach the run
@@ -172,33 +177,12 @@ export interface ReleaseRecord {
   redeploys?: ReleaseRef;
 }
 
-/** Required, non-empty-string fields every `ReleaseRecord` must carry. */
-const REQUIRED_STRING_FIELDS: Array<keyof ReleaseRecord> = [
-  "component",
-  "env",
-  "digest",
-  "gitSha",
-  "runId",
-  "timestamp",
-  "actor",
-];
-
 /** Thrown by `appendReleaseRecord` when the record is missing a required field — a release record can never be recorded partially, since it is never editable afterward. */
 export class InvalidReleaseRecordError extends Error {
   constructor(public readonly missing: string[]) {
     super(`release record is missing required field(s): ${missing.join(", ")}`);
     this.name = "InvalidReleaseRecordError";
   }
-}
-
-/** Validate that a release record carries every required field as a non-empty string. */
-export function validateReleaseRecord(record: Partial<ReleaseRecord>): string[] {
-  const missing: string[] = [];
-  for (const field of REQUIRED_STRING_FIELDS) {
-    const value = record[field];
-    if (typeof value !== "string" || value.length === 0) missing.push(field);
-  }
-  return missing;
 }
 
 /** Input a caller supplies to record one deploy — `version` is filled in, everything else is required (see `ReleaseRecord`). */
@@ -284,24 +268,9 @@ export async function appendReleaseRecord(
  */
 export async function readReleaseLedger(
   environment: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<{ records: ReleaseRecord[]; malformed: number }> {
-  const lines = await readReleaseLedgerLines(environment, opts);
-  const records: ReleaseRecord[] = [];
-  let malformed = 0;
-  for (const line of lines) {
-    try {
-      const parsed = JSON.parse(line) as ReleaseRecord;
-      if (validateReleaseRecord(parsed).length > 0) {
-        malformed++;
-        continue;
-      }
-      // chant #2514 — a digest from before real SHA-256 is flagged, never re-keyed.
-      records.push(flagLegacyDigest(parsed, [parsed.digest, parsed.manifestDigest, parsed.inputDigest]));
-    } catch {
-      malformed++;
-    }
-  }
+  const { records, malformed } = parseReleaseLedger(await readReleaseLedgerLines(environment, opts));
   // chant #2514 — say once that this ledger holds values in the old form.
   warnOnLegacyDigests(
     records.flatMap((r) => [r.digest, r.manifestDigest, r.inputDigest]),
@@ -311,8 +280,12 @@ export async function readReleaseLedger(
   return { records, malformed };
 }
 
-/** List every environment that has release records on the orphan branch. */
-export async function listReleaseEnvironments(opts?: { cwd?: string }): Promise<string[]> {
+/**
+ * List every environment that has release records on the orphan branch. With
+ * `member` or `ledgerPrefix` (#3865) it lists that workspace member's, from
+ * wherever `cwd` is; without either, the member `cwd` resolves to.
+ */
+export async function listReleaseEnvironments(opts?: LedgerLocation): Promise<string[]> {
   return gitListLedgerEnvironments(opts);
 }
 

@@ -477,6 +477,8 @@ After the merge, a wave with no `chant approve` of its digest reads the review o
 | Forgejo | the same, not stale or dismissed | the review is official, which Forgejo marks for a reviewer with write access | the job's token |
 | GitLab | an approval of the merge request, counted only when the project removes approvals on a new push (Settings > Merge requests > Remove all approvals when commits are added), since a GitLab approval names no commit | Developer or higher | `CHANT_FORGE_TOKEN` with `read_api` |
 
+A tool that shows or checks these records reads them with `@intentius/chant/lifecycle/wave-plans` ([#3865](https://github.com/INTENTIUS/chant/issues/3865)). `parseHeadPlans(text)` returns the record or null. `readHeadPlans(port, name, head)` reads one head, and `readHeadPlanDigests(port, name)` returns every recorded head with its digests by wave number. `listWavePlanSpecs(port)` names the specs that have records. The `port` is a `LedgerReadPort` from `@intentius/chant/lifecycle/ledger-port`, three methods (`read`, `list`, `trees`) over the branch. The module touches no git and bundles on its own. `gitLedgerReadPort({ cwd, member })` from `@intentius/chant/lifecycle/git` is a port over a checkout, and `member` (or `ledgerPrefix`, the prefix `resolveMemberLedger` returns) reads a workspace member's records under `_members/<member>/_wave-plans/`.
+
 ### `sealed`
 
 Add `.chant/allowed_signers` in a reviewed change, one `<principal> <key>` line per approver, then approve with `--sign`:
