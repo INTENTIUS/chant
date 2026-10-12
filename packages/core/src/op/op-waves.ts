@@ -58,6 +58,15 @@
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 
+/**
+ * The variables a wave job reads its notify secrets from, for the lexicons
+ * that generate wave pipelines. Re-exported here because a lexicon's source
+ * in this repository cannot import `@intentius/chant/notify`: under any
+ * loader that entry resolves its `import` condition to the compiled
+ * `dist/notify.js` (#3803), which only a packed release carries.
+ */
+export { notifyVariables } from "../notify";
+
 /** When a wave waits for an approval. */
 export type OpWaveGatePolicy =
   /** Whenever the wave changes something. */

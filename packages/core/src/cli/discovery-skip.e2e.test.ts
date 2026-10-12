@@ -161,8 +161,11 @@ describe("CLI end-to-end — discovery skips a side-effecting script (#2519)", (
     // No lexicon, so lint runs its source rules only. With a lexicon that ships
     // post-synth checks, `chant lint` also builds the target (#3750) and imports
     // the script, which ends the process before any diagnostic prints; the next
-    // test covers that.
+    // test covers that. An empty `lexicons` list falls back to detecting them
+    // from source imports, so the k8s declaration goes too, or k8s is found
+    // and loaded anyway.
     await writeConfig("", "");
+    await rm(join(testDir, "src", "infra.ts"));
     await writeRunner();
 
     const lint = runCli(["lint", testDir, "--format", "json"]);

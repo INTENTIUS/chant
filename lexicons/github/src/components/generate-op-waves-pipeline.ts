@@ -29,8 +29,7 @@
  * Slack, Teams or a signed webhook. `options.variables` wins over the mapping.
  */
 
-import { notifyVariables } from "@intentius/chant/notify";
-import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { notifyVariables, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { actionRef } from "../action-pins";
 import {

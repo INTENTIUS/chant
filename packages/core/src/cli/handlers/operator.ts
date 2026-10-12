@@ -276,17 +276,6 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
   const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
   const holder = currentHolderId();
 
-  // Refuse a second local operator up front rather than letting it loop on
-  // `steward-busy` rounds: one steward is one writer.
-  const first = await acquireStewardLease(steward.name, holder, { ttlMs: leaseTtlMs });
-  if (!first.acquired) {
-    console.error(formatError({
-      message: `steward "${steward.name}" is already running (lease held by ${first.heldBy?.holder ?? "another process"} until ${first.heldBy?.expiresAt ?? "?"})`,
-      hint: "One steward is one writer. Stop the other operator, or wait for its lease to expire.",
-    }));
-    return 1;
-  }
-
   const controller = new AbortController();
   // `process.on`, not `.once` (#2872): a supervisor that signals both a
   // process group and a child sends a second SIGTERM close behind the
@@ -297,6 +286,14 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
   // only once it's over, so a second, third or later signal is a no-op
   // (`stopping` guards against re-aborting or re-logging) rather than a
   // fast exit that skips the release.
+  //
+  // Registered before the steward's lease is taken, not after: the lease is
+  // visible to other readers as soon as its ref is written, and the acquire
+  // goes on to push it. A SIGTERM in that stretch found no listener and ended
+  // the process by signal with the lease still held (the
+  // operator-steward-signal e2e test failed this way). Caught here, it aborts
+  // the controller, the loop below starts no round, and the `finally`
+  // releases the lease.
   let stopping = false;
   const onSigint = () => {
     if (stopping) return;
@@ -306,6 +303,23 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
   };
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigint);
+
+  // Refuse a second local operator up front rather than letting it loop on
+  // `steward-busy` rounds: one steward is one writer.
+  const first = await acquireStewardLease(steward.name, holder, { ttlMs: leaseTtlMs }).catch((err: unknown) => {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
+    throw err;
+  });
+  if (!first.acquired) {
+    console.error(formatError({
+      message: `steward "${steward.name}" is already running (lease held by ${first.heldBy?.holder ?? "another process"} until ${first.heldBy?.expiresAt ?? "?"})`,
+      hint: "One steward is one writer. Stop the other operator, or wait for its lease to expire.",
+    }));
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
+    return 1;
+  }
 
   const printRound = (events: OperatorTickEvent[]) => {
     for (const event of events) console.error(formatInfo(formatRoundLine(event)));
