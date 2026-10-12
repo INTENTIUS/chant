@@ -5,8 +5,8 @@
  * toolchain, and checked sealed approvals with its own copy of chant's seal
  * rule because `@intentius/chant/op/gate` pulls in zod and the git ledger
  * code. `@intentius/chant/gate-decision` holds the decision for a plan digest
- * under `ledger`, `pr-review` and `sealed`, and the seal check over
- * node:crypto. This bundles it the way terragucci would and reads esbuild's
+ * under `ledger`, `pr-review` and `sealed`, the seal check over
+ * node:crypto, and the `identity.gates` rule with its class check (#3862). This bundles it the way terragucci would and reads esbuild's
  * own list of what went in.
  */
 
@@ -46,6 +46,7 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/notify.ts",
       "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/op-waves.ts",
+      "packages/core/src/workspace/identity-gate-rule.ts",
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/gate-seal.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
