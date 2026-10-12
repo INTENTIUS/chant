@@ -788,8 +788,8 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: JSON.stringify(opts.atBase ?? tg) });
     return { cwd, calls, envs, exec, show, done: () => rmSync(cwd, { recursive: true, force: true }) };
   }
-  const run = (h: ReturnType<typeof harness>, gates = memoryGateLedgerPort(), spec: OpWavesSpec = tg) =>
-    runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00.000Z", log: () => {} });
+  const run = (h: ReturnType<typeof harness>, gates = memoryGateLedgerPort(), spec: OpWavesSpec = tg, log: (m: string) => void = () => {}) =>
+    runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00.000Z", log });
 
   test("the spec checks after.gate hooks and override", () => {
     expect(() => assertOpWavesSpec(tg)).not.toThrow();
@@ -860,6 +860,21 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     const other = harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2") } }, { extra: { overriders: ["github:dave"] } });
     expect((await run(other, memoryGateLedgerPort({ resolutions: [{ version: 1, op: "policy-override", gate: "vpc", resolvedBy: "github:carol", timestamp: "2026-10-10T00:00:00Z", planDigest: od, note: "ok" }] }))).exitCode).toBe(7);
     other.done();
+  });
+
+  test("a plans file's overridersSource names the list in the refusal and the decision record (#3848)", async () => {
+    const mk = (extra: Record<string, unknown>) => harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2") } }, { extra });
+    const logs: string[] = [];
+    const h = mk({ overriders: ["github:dave"], overridersSource: "policy.override in terragucci.yml" });
+    const gates = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "policy-override", gate: "vpc", resolvedBy: "github:carol", timestamp: "2026-10-10T00:00:00Z", planDigest: (await import("../override-gate")).overrideDigest("vpc", digest("1"), ["no-public-s3"]), note: "ok" }] });
+    const result = await run(h, gates, tg, (m) => logs.push(m));
+    expect(result.decision!.refused).toMatchObject({ reason: "policy", overridersSource: "policy.override in terragucci.yml" });
+    expect(logs.join("\n")).toContain("github:carol is not listed in policy.override in terragucci.yml at base");
+    h.done();
+    const d = mk({ overriders: ["github:dave"] });
+    const r2 = await run(d, memoryGateLedgerPort());
+    expect(r2.decision!.refused).not.toHaveProperty("overridersSource");
+    d.done();
   });
 
   test("a hook holds the wave on another gate: it waits on that gate's digest, then runs again once approved", async () => {

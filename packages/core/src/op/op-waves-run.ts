@@ -209,7 +209,7 @@ export interface OpWaveDecision {
   /** While waiting: the newest approval of this gate for another digest, which the plans moved away from. */
   mismatch?: GateDigestMismatch;
   /** Why a `refused` wave applies nothing (#3821): the runs the policy denied, and whether an override stands for an earlier plan or other rules. */
-  refused?: { reason: "policy" | "override-moved"; runs: string[] };
+  refused?: { reason: "policy" | "override-moved"; runs: string[]; /** Where the plans file said its overriders come from (#3848), when it did. */ overridersSource?: string };
   /**
    * A hook held the wave on another gate (#3821), such as a state migration
    * behind its own: that gate, its digest, and how it came out. While it
@@ -690,6 +690,10 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
     return m;
   });
   const overriders = Array.isArray(parsed) ? undefined : (parsed as { overriders?: unknown }).overriders;
+  const overridersSource = Array.isArray(parsed) ? undefined : (parsed as { overridersSource?: unknown }).overridersSource;
+  if (overridersSource !== undefined && (typeof overridersSource !== "string" || overridersSource.trim() === "")) {
+    throw new Error(`the plans file of wave ${k} (${plans}): \`overridersSource\` must be a label for where the overriders come from, such as "policy.override in terragucci.yml"`);
+  }
   if (overriders !== undefined && (!Array.isArray(overriders) || !overriders.every((o) => typeof o === "string"))) {
     throw new Error(`the plans file of wave ${k} (${plans}): \`overriders\` must be a list of principals`);
   }
@@ -697,6 +701,7 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
     members,
     ...(pending ? { pending } : {}),
     ...(overriders ? { overriders: overriders as string[] } : {}),
+    ...(overriders && overridersSource ? { overridersSource: overridersSource as string } : {}),
     ...(extras ? { extras } : {}),
     ...(count !== undefined ? { waves: count as number } : {}),
   };
@@ -708,6 +713,8 @@ interface PlannedRuns {
   pending?: Record<string, unknown>;
   /** The plans file's overriders (#3821). */
   overriders?: string[];
+  /** A label for where those overriders come from, used in refusals (#3848). */
+  overridersSource?: string;
   /** Digest members that are not runs, such as the wave's cost (#3821). */
   extras?: WaveMember[];
   /** How many waves the product found (#3821), for a `rest` wave. */
@@ -1241,7 +1248,7 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
   const before = await runHooks(ctx, "before-plan", rules.hooks["before-plan"], wave.runs);
   if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`);
   if (before.waitingOn) return decided(ctx, decision, recordPath, before.waitingOn);
-  const { members, pending, overriders, extras, waves: found } = planRuns(ctx, wave.runs, wave.discover === true);
+  const { members, pending, overriders, overridersSource, extras, waves: found } = planRuns(ctx, wave.runs, wave.discover === true);
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
     ctx.wave = wave;
@@ -1267,7 +1274,7 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     for (const m of members) if (m.denied && byRun.get(m.member)) m.override = byRun.get(m.member);
     if (prior.overridesSpentAt) decision.overridesSpentAt = prior.overridesSpentAt;
   }
-  if (members.some((m) => m.denied && !m.override)) await settleDenials(ctx, decision, overriders);
+  if (members.some((m) => m.denied && !m.override)) await settleDenials(ctx, decision, overriders, overridersSource);
   if (kept && prior.status === "approved" && decision.status !== "refused") {
     // #3821: planned again after the apply asked to, to the same digest: the approval this job found still holds, and is not spent twice.
     for (const key of ["via", "approvedBy", "approvedAt", "review", "spentAt"] as const) if (prior[key] !== undefined) (decision as unknown as Record<string, unknown>)[key] = prior[key];
@@ -1381,7 +1388,7 @@ function relativeTo(cwd: string, path: string): string {
  * decision is `refused`, and each such run gets a pending fact on the
  * override ledger unless one stands.
  */
-async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed: string[] | undefined): Promise<void> {
+async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed: string[] | undefined, source?: string): Promise<void> {
   const { spec, k, wave, cwd, log, options } = ctx;
   const og = await import("../override-gate");
   const port = options.gates ?? gitGateLedgerPort({ cwd });
@@ -1403,7 +1410,7 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
       planDigest: m.planDigest,
       rules: m.denied.rules,
       overriders,
-      overridersPath: listed ? "the overriders the plans file names" : path,
+      overridersPath: listed ? (source ?? "the overriders the plans file names") : path,
       mode: sealed ? "sealed" : "ledger",
       ...(signers ? { signers } : {}),
       now,
@@ -1439,7 +1446,7 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
   }
   if (still.length > 0) {
     decision.status = "refused";
-    decision.refused = { reason: moved ? "override-moved" : "policy", runs: still.sort() };
+    decision.refused = { reason: moved ? "override-moved" : "policy", runs: still.sort(), ...(listed && source ? { overridersSource: source } : {}) };
   }
 }
 
