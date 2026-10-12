@@ -28,6 +28,7 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ensureTypeScriptLoader } from "./ts-loader";
+import { esModuleNamespace } from "./module-interop";
 
 /**
  * One `lexicons` entry: a package-backed name, or a name plus the module that
@@ -181,7 +182,7 @@ export async function importLexiconModule(name: string): Promise<Record<string, 
   if (path === undefined) return undefined;
   try {
     ensureTypeScriptLoader();
-    return (await import(path)) as Record<string, unknown>;
+    return esModuleNamespace((await import(path)) as Record<string, unknown>);
   } catch (err) {
     throw new Error(
       `lexicon "${name}" is declared with module ${path}, which could not be loaded: ` +
@@ -262,12 +263,12 @@ export function resolveFromProject(spec: string, fromDir: string = process.cwd()
 export async function importLexiconPackage(spec: string, fromDir: string = process.cwd()): Promise<Record<string, unknown>> {
   try {
     ensureTypeScriptLoader();
-    return (await import(spec)) as Record<string, unknown>;
+    return esModuleNamespace((await import(spec)) as Record<string, unknown>);
   } catch (err) {
     const pkg = packageNameOf(spec);
     if (pkg === undefined || !isPackageNotFound(err, pkg)) throw err;
     const resolved = resolveFromProject(spec, fromDir);
     if (resolved === undefined) throw err;
-    return (await import(pathToFileURL(resolved).href)) as Record<string, unknown>;
+    return esModuleNamespace((await import(pathToFileURL(resolved).href)) as Record<string, unknown>);
   }
 }

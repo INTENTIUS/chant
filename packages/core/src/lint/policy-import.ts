@@ -24,6 +24,7 @@
  */
 
 import { ensureTypeScriptLoader } from "../ts-loader";
+import { esModuleNamespace } from "../module-interop";
 
 /** Whether this process must run project policy modules inside the sandbox boundary instead of here. */
 let armed = false;
@@ -69,5 +70,5 @@ export async function importPolicyModule(policyPath: string): Promise<PolicyModu
     );
   }
   ensureTypeScriptLoader();
-  return (await import(policyPath)) as PolicyModuleNamespace;
+  return esModuleNamespace((await import(policyPath)) as PolicyModuleNamespace);
 }

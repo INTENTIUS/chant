@@ -122,5 +122,5 @@ const BUILTINS = new Set(builtinModules);
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const { bytes } = await buildWaveRuntime();
-  console.log(`dist/wave-runtime.mjs: ${(bytes / 1024).toFixed(0)} KB`);
+  console.error(`dist/wave-runtime.mjs: ${(bytes / 1024).toFixed(0)} KB`);
 }

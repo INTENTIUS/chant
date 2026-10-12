@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import { importConfigModule, requireConfigModule, type ConfigModuleNamespace } from "./config-import";
+import { esModuleNamespace } from "./module-interop";
 
 /**
  * chant #1113 — decides WHERE a project's `chant.config.ts` is evaluated.
@@ -84,7 +85,10 @@ export function resetSandboxConfigEvaluationForTests(): void {
  * evaluated, never how its result is read.
  */
 export function selectConfigExport(namespace: ConfigModuleNamespace): unknown {
-  return namespace.default ?? namespace.config ?? namespace;
+  // A config tsx compiled as CommonJS arrives as `{ default: module.exports }`
+  // under a native import (#3897); read the module's own namespace instead.
+  const ns = esModuleNamespace(namespace);
+  return ns.default ?? ns.config ?? ns;
 }
 
 /**

@@ -59,6 +59,8 @@ const POST_SYNTH_MODULE = join(dirname(DISCOVERY_DIR), "lint", "post-synth.ts");
 // file, so the driver's `setBuildParams` call below mutates the one object
 // every bundled import observes.
 const PARAMS_MODULE = join(dirname(DISCOVERY_DIR), "params.ts");
+// #3897: a project file tsx compiled as CommonJS reads as its own namespace.
+const INTEROP_MODULE = join(dirname(DISCOVERY_DIR), "module-interop.ts");
 
 export interface GenerateDriverOptions {
   /** Absolute paths to the run-fallback files this build decided NOT to fold — see `discover()`'s fold/taint loop in `../index.ts`. */
@@ -130,6 +132,7 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { getProvenance } from ${lit(PROVENANCE_MODULE)};`,
     `import { setBuildParams } from ${lit(PARAMS_MODULE)};`,
+    `import { esModuleNamespace } from ${lit(INTEROP_MODULE)};`,
     `import { writeSync } from "node:fs";`,
     ``,
     `const BUILD_ROOT = ${lit(buildRoot)};`,
@@ -181,7 +184,7 @@ export function generateDriverSource(options: GenerateDriverOptions): string {
     lines.push(
       `  importing = ${lit(file)};`,
       `  try {`,
-      `    const mod = await import(${lit(file)});`,
+      `    const mod = esModuleNamespace(await import(${lit(file)}));`,
       `    modules.push({ file: ${lit(file)}, exports: mod });`,
       `  } catch (err) {`,
       `    errors.push(classifyChildError(${lit(file)}, err).toJSON());`,
@@ -261,6 +264,7 @@ export function generateConfigDriverSource(configPath: string): string {
   return [
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { scanConfigWireSafety } from ${lit(CONFIG_WIRE_MODULE)};`,
+    `import { esModuleNamespace } from ${lit(INTEROP_MODULE)};`,
     `import { writeSync } from "node:fs";`,
     ``,
     ...sendFunctionSource(),
@@ -268,7 +272,7 @@ export function generateConfigDriverSource(configPath: string): string {
     `async function main() {`,
     `  let namespace;`,
     `  try {`,
-    `    namespace = await import(${lit(configPath)});`,
+    `    namespace = esModuleNamespace(await import(${lit(configPath)}));`,
     `  } catch (err) {`,
     `    await send({ kind: "chant-config", ok: false, error: classifyChildError(${lit(configPath)}, err).toJSON() });`,
     `    return;`,
@@ -337,6 +341,7 @@ export function generatePolicyDriverSource(policyPaths: readonly string[]): stri
     `import { classifyChildError } from ${lit(CHILD_ERRORS_MODULE)};`,
     `import { decodePolicyBuildResult, scanPolicyDiagnostics, PolicyWireError } from ${lit(POLICY_WIRE_MODULE)};`,
     `import { runPostSynthChecks, isPostSynthCheck } from ${lit(POST_SYNTH_MODULE)};`,
+    `import { esModuleNamespace } from ${lit(INTEROP_MODULE)};`,
     `import { writeSync } from "node:fs";`,
     ``,
     ...sendFunctionSource(),
@@ -382,7 +387,7 @@ export function generatePolicyDriverSource(policyPaths: readonly string[]): stri
   for (const policyPath of policyPaths) {
     lines.push(
       `  try {`,
-      `    const mod = await import(${lit(policyPath)});`,
+      `    const mod = esModuleNamespace(await import(${lit(policyPath)}));`,
       `    for (const value of Object.values(mod)) {`,
       `      if (isPostSynthCheck(value)) checks.push(guard(value, ${lit(policyPath)}));`,
       `    }`,
