@@ -191,6 +191,8 @@ export interface GateAuditEntry {
   runId?: string;
   expiresAt?: string;
   description?: string;
+  /** Pending facts an op wave wrote for a policy denial or a hold (#3839): the wave they belong to. */
+  wave?: { number: number; name: string; op?: string };
   /** Overrides: the rules the denial named (from the denial line when there is one). */
   rules?: string[];
   /** A revoked entry: what was revoked. */
@@ -239,9 +241,13 @@ type Row = Record<string, unknown>;
 
 const KNOWN = new Set([
   "version", "kind", "op", "gate", "resolvedBy", "relayedBy", "timestamp", "note", "url", "planDigest", "environment",
-  "approver", "seal", "review", "runId", "expiresAt", "description", "rules", "pr", "head", "reviewers",
+  "approver", "seal", "review", "runId", "expiresAt", "description", "wave", "rules", "pr", "head", "reviewers",
 ]);
 
+const waveOf = (v: unknown): { number: number; name: string; op?: string } | undefined => {
+  const w = v as { number?: unknown; name?: unknown; op?: unknown } | null;
+  return w && typeof w === "object" && typeof w.number === "number" && typeof w.name === "string" ? { number: w.number, name: w.name, ...(typeof w.op === "string" ? { op: w.op } : {}) } : undefined;
+};
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
 const time = (iso: string): number => Date.parse(iso) || 0;
@@ -353,7 +359,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
           ...base,
           kind: override ? "override-requested" : "approval-requested",
           at: String(r.timestamp),
-          ...drop({ runId: str(r.runId), expiresAt: str(r.expiresAt), description: str(r.description), url: str(r.url), rules: strings(r.rules) }),
+          ...drop({ runId: str(r.runId), expiresAt: str(r.expiresAt), description: str(r.description), url: str(r.url), rules: strings(r.rules), wave: waveOf(r.wave) }),
           detail: extra,
         }));
         continue;

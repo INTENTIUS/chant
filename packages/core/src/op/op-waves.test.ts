@@ -836,6 +836,8 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     expect(result).toMatchObject({ exitCode: 7, decision: { status: "refused", refused: { reason: "policy", runs: ["vpc"] } } });
     expect(gates.appended).toHaveLength(1);
     expect(gates.appended[0]).toMatchObject({ op: "policy-override", gate: "vpc", plan: digest("1"), rules: ["no-public-s3"], members: [{ member: "vpc", planDigest: digest("1") }] });
+    // #3839: the denial names its wave as a field.
+    expect(gates.appended[0]).toMatchObject({ wave: { number: 1, name: expect.any(String), op: tg.name } });
     expect(h.envs.find((e) => e.CHANT_HOOK === "after-gate")).toMatchObject({ CHANT_GATE_STATUS: "refused" });
     expect(h.calls.some((c) => c.startsWith("tg apply"))).toBe(false);
     const { opWaveNotifyFields } = await import("./op-waves-notify");
@@ -883,7 +885,7 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     const hook = (argv: string[], env: Record<string, string>, dir: string) => {
       if (argv[0] !== "migrate") return 0;
       if (env.CHANT_HOLD_APPROVED) return 0;
-      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m"), pending: { members: [] } }));
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m"), description: "move the queues", pending: { members: [] } }));
       return 3;
     };
     const h = harness({ vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") } }, { hook, atBase: spec });
@@ -892,6 +894,8 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     expect(waiting).toMatchObject({ exitCode: 3, decision: { status: "waiting", heldOn: { op: "tf-migrate", gate: "split-queues", digest: digest("m"), status: "waiting" } } });
     expect(waiting.decision!.approve).toBe(`chant approve tf-migrate split-queues --plan ${digest("m")}`);
     expect(gates.appended[0]).toMatchObject({ op: "tf-migrate", gate: "split-queues", planDigest: digest("m"), members: [] });
+    // #3839: the hold names its wave as a field, even when the hook wrote the description.
+    expect(gates.appended[0]).toMatchObject({ description: "move the queues", wave: { number: 1, name: expect.any(String), op: tg.name } });
     expect(h.calls.some((c) => c.startsWith("tg plan"))).toBe(false);
     expect(h.envs.find((e) => e.CHANT_HOOK === "after-gate")).toMatchObject({ CHANT_GATE_STATUS: "waiting", CHANT_GATE_OP: "tf-migrate", CHANT_GATE: "split-queues" });
     h.done();
