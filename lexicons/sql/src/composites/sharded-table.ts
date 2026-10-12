@@ -14,6 +14,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { table, type ClickHouseTable } from "../clickhouse/entities";
+import type { ClickHouseMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface ShardedTableProps {
   /** The Distributed table's name, unqualified. The local table is `<name>_local`. */
@@ -30,13 +32,16 @@ export interface ShardedTableProps {
   partitionBy?: string;
 }
 
-export type ShardedTableMembers = {
-  local: ClickHouseTable;
-  distributed: ClickHouseTable;
+/** `Local` and `Distributed` are the two tables' names, when the call's props give them (chant#3787). */
+export type ShardedTableMembers<Local extends string = string, Distributed extends string = string> = {
+  local: ClickHouseTable<Local>;
+  distributed: ClickHouseTable<Distributed>;
 };
 
+type ShardedTableCall = <const N extends string>(props: ShardedTableProps & { name: N }) => Instance<ShardedTableMembers<ClickHouseMemberName<N, "_local">, ClickHouseMemberName<N>>>;
+
 /** A ReplicatedMergeTree table on every node of a cluster and the Distributed table over it. */
-export const ShardedTable = Composite<ShardedTableProps, ShardedTableMembers>((props) => {
+export const ShardedTable = Composite<ShardedTableProps, ShardedTableMembers, TypedComposite<ShardedTableProps, ShardedTableMembers, ShardedTableCall>>((props) => {
   const local = table`
     CREATE TABLE ${`${props.name}_local`} ON CLUSTER ${props.cluster} (${props.columns})
     ENGINE = ReplicatedMergeTree

@@ -14,6 +14,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { index, literal, table, view, type PostgresIndex, type PostgresSchema, type PostgresTable, type PostgresView } from "../postgres/entities";
+import type { PostgresMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface SoftDeleteTableProps {
   /** The table's name, unqualified. The view is `<name>_live`. */
@@ -34,14 +36,19 @@ export interface SoftDeleteTableProps {
   deletedAt?: string;
 }
 
-export type SoftDeleteTableMembers = {
-  table: PostgresTable;
-  live: PostgresView;
+/** `Table` and `Live` are the table's and the view's qualified names, when the call's props give them (chant#3787). */
+export type SoftDeleteTableMembers<Table extends string = string, Live extends string = string> = {
+  table: PostgresTable<Table>;
+  live: PostgresView<Live>;
   liveIndex: PostgresIndex;
 };
 
+type SoftDeleteTableCall = <const N extends string, const S extends PostgresSchema | string = "public">(
+  props: SoftDeleteTableProps & { name: N; schema?: S },
+) => Instance<SoftDeleteTableMembers<PostgresMemberName<S, N>, PostgresMemberName<S, N, "_live">>>;
+
 /** A table with created and updated timestamps and a soft-delete column, a view of its live rows and an index over them. */
-export const SoftDeleteTable = Composite<SoftDeleteTableProps, SoftDeleteTableMembers>((props) => {
+export const SoftDeleteTable = Composite<SoftDeleteTableProps, SoftDeleteTableMembers, TypedComposite<SoftDeleteTableProps, SoftDeleteTableMembers, SoftDeleteTableCall>>((props) => {
   const schema = props.schema ?? "public";
   const deleted = props.deletedAt ?? "deleted_at";
   const rows = table`

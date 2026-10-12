@@ -121,7 +121,29 @@ Some things stay outside tsc, and the build and lint checks cover them instead:
 - A key with no interpolated column has no slot. `REFERENCES ${customers}` with no column list, and a table named in text, are checked by SQLPG124 at build and lint.
 - A ClickHouse table's own `ORDER BY (kind, country)` names its columns in text, since a table cannot interpolate itself. SQLCH002 reports a Nullable sort key there.
 - A view's column is typed when it passes one column through (`${t.columns.c}` or `o.${t.columns.c}`, with or without an alias). A computed column (`count()`) is `Column<"unknown", ...>`.
-- A composite's members get their entry in `SqlSchema`, so `RowOf<"name">` covers them, but the composite's return value keeps unchecked columns.
+
+## Composites
+
+A composite's tables and views get their entries in `SqlSchema` like any other, and the members the call returns are typed from them. The composite works out each member's qualified name from its props, the way the build does, so nothing extra is written at the call:
+
+```ts
+import { schema, SoftDeleteTable, type RowOf } from "@intentius/chant-lexicon-sql/postgres";
+
+export const app = schema<"app">`CREATE SCHEMA app`;
+
+export const users = SoftDeleteTable({
+  name: "users",
+  schema: app,
+  columns: "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, email text NOT NULL",
+});
+
+users.table.columns.emial; // error TS2551: ... Did you mean 'email'?
+type User = RowOf<typeof users.table>; // the entry for app.users
+```
+
+In Postgres the name is `<schema>.<name>` plus the member's suffix (`users.live` is `app.users_live`), folded as Postgres folds it. The schema is the `schema` prop: a string, or a schema whose tag was given its name as the type argument (`schema<"app">`). With no `schema` prop it is `public`. SQLPG005 checks that a schema's type argument is the name its template declares. In ClickHouse the name is the `name` prop as written (`events` or `analytics.events`) plus the suffix.
+
+A member keeps unchecked columns when its name cannot be read from the call: a `name` that is not a string literal, a schema entity declared without the type argument, or a name the generated file does not list.
 
 ## Adopt it one declaration at a time
 

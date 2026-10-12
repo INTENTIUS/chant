@@ -10,6 +10,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { index, table, type PostgresIndex, type PostgresSchema, type PostgresTable } from "../postgres/entities";
+import type { PostgresMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface JoinTableProps {
   /** The table's name, unqualified. The reverse index is `<name>_reverse_idx`. */
@@ -36,13 +38,18 @@ export interface JoinTableProps {
   onDelete?: string;
 }
 
-export type JoinTableMembers = {
-  table: PostgresTable;
+/** `Table` is the join table's qualified name, when the call's props give it (chant#3787). */
+export type JoinTableMembers<Table extends string = string> = {
+  table: PostgresTable<Table>;
   reverseIndex: PostgresIndex;
 };
 
+type JoinTableCall = <const N extends string, const S extends PostgresSchema | string = "public">(
+  props: JoinTableProps & { name: N; schema?: S },
+) => Instance<JoinTableMembers<PostgresMemberName<S, N>>>;
+
 /** The table of a many-to-many relation: two foreign keys, a composite primary key and the reverse index. */
-export const JoinTable = Composite<JoinTableProps, JoinTableMembers>((props) => {
+export const JoinTable = Composite<JoinTableProps, JoinTableMembers, TypedComposite<JoinTableProps, JoinTableMembers, JoinTableCall>>((props) => {
   const schema = props.schema ?? "public";
   const links = table`
     CREATE TABLE ${schema}.${props.name} (

@@ -1,7 +1,7 @@
 import type { LintContext, LintDiagnostic, LintRule } from "@intentius/chant/lint/rule";
 import { parseStatements, SqlSyntaxError } from "../../postgres/parser";
 import { findPostgresTemplates, postgresTokensOf } from "./postgres-templates";
-import { declaredText, generatedNamesFor, nameAgrees, normalizedName, SQL_TYPES_FILE, typeArgumentName } from "./typed-names";
+import { declaredText, generatedNamesFor, nameAgrees, normalizedName, splitQualified, SQL_TYPES_FILE, typeArgumentName } from "./typed-names";
 
 const MODULE = "@intentius/chant-lexicon-sql/postgres";
 
@@ -19,6 +19,11 @@ const MODULE = "@intentius/chant-lexicon-sql/postgres";
  * generated file, only the first check runs. A name missing from the file is
  * a warning, since a table added since the last `chant sql types` is stale
  * and `chant sql types --check` is what fails on it.
+ *
+ * chant#3787: `schema<"app">\`CREATE SCHEMA app\`` is read too, since a
+ * composite placed in the schema builds its members' qualified names from
+ * that argument. A schema is not in the generated file, so only the name
+ * comparison runs, and the argument is the schema's own name, one piece.
  */
 export const sqlpg005: LintRule = {
   id: "SQLPG005",
@@ -31,7 +36,7 @@ export const sqlpg005: LintRule = {
     const out: LintDiagnostic[] = [];
     let listed: Set<string> | undefined | null = null;
     for (const found of findPostgresTemplates(source)) {
-      if (found.tag !== "table" && found.tag !== "view") continue;
+      if (found.tag !== "table" && found.tag !== "view" && found.tag !== "schema") continue;
       const arg = typeArgumentName(found.node);
       if (!arg) continue;
       const at = (() => {
@@ -42,12 +47,14 @@ export const sqlpg005: LintRule = {
       try {
         const node = parseStatements(postgresTokensOf(found))[0];
         if (node && (node.statement === "table" || node.statement === "view")) declared = node.name.pieces;
+        else if (node && node.statement === "schema" && found.tag === "schema") declared = node.name?.pieces;
       } catch (err) {
         if (err instanceof SqlSyntaxError) continue; // SQLPG001 reports it
         throw err;
       }
       if (!declared) continue; // SQLPG001: the tag holds another statement
-      if (!nameAgrees(declared, arg.name)) {
+      const agrees = found.tag === "schema" ? splitQualified(arg.name).length === 1 && nameAgrees(declared, arg.name) : nameAgrees(declared, arg.name);
+      if (!agrees) {
         out.push({
           ruleId: "SQLPG005",
           severity: "error",
@@ -57,6 +64,7 @@ export const sqlpg005: LintRule = {
         });
         continue;
       }
+      if (found.tag === "schema") continue;
       if (listed === null) listed = generatedNamesFor(context.filePath, MODULE);
       if (listed && !listed.has(normalizedName(arg.name))) {
         out.push({

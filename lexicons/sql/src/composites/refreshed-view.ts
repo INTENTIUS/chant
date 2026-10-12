@@ -11,6 +11,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { index, view, type PostgresIndex, type PostgresRelation, type PostgresSchema, type PostgresView } from "../postgres/entities";
+import type { PostgresMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface RefreshedViewProps {
   /** The view's name, unqualified. The index is `<name>_key`. */
@@ -27,13 +29,18 @@ export interface RefreshedViewProps {
   uniqueOn?: string;
 }
 
-export type RefreshedViewMembers = {
-  view: PostgresView;
+/** `View` is the materialized view's qualified name, when the call's props give it (chant#3787). */
+export type RefreshedViewMembers<View extends string = string> = {
+  view: PostgresView<View>;
   uniqueIndex: PostgresIndex;
 };
 
+type RefreshedViewCall = <const N extends string, const S extends PostgresSchema | string = "public">(
+  props: RefreshedViewProps & { name: N; schema?: S },
+) => Instance<RefreshedViewMembers<PostgresMemberName<S, N>>>;
+
 /** A materialized view over a source, with the unique index that allows REFRESH ... CONCURRENTLY. */
-export const RefreshedView = Composite<RefreshedViewProps, RefreshedViewMembers>((props) => {
+export const RefreshedView = Composite<RefreshedViewProps, RefreshedViewMembers, TypedComposite<RefreshedViewProps, RefreshedViewMembers, RefreshedViewCall>>((props) => {
   const schema = props.schema ?? "public";
   const summary = view`
     CREATE MATERIALIZED VIEW ${schema}.${props.name} AS

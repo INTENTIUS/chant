@@ -11,6 +11,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { index, table, type PostgresIndex, type PostgresSchema, type PostgresTable } from "../postgres/entities";
+import type { PostgresMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface TenantTableProps {
   /** The table's name, unqualified. The index is `<name>_tenant_idx`. */
@@ -29,13 +31,18 @@ export interface TenantTableProps {
   tenantType?: string;
 }
 
-export type TenantTableMembers = {
-  table: PostgresTable;
+/** `Table` is the table's qualified name, when the call's props give it (chant#3787). */
+export type TenantTableMembers<Table extends string = string> = {
+  table: PostgresTable<Table>;
   index: PostgresIndex;
 };
 
+type TenantTableCall = <const N extends string, const S extends PostgresSchema | string = "public">(
+  props: TenantTableProps & { name: N; schema?: S },
+) => Instance<TenantTableMembers<PostgresMemberName<S, N>>>;
+
 /** A multi-tenant table with the tenant key first in its primary key and its index. */
-export const TenantTable = Composite<TenantTableProps, TenantTableMembers>((props) => {
+export const TenantTable = Composite<TenantTableProps, TenantTableMembers, TypedComposite<TenantTableProps, TenantTableMembers, TenantTableCall>>((props) => {
   const schema = props.schema ?? "public";
   const tenant = props.tenant ?? "tenant_id";
   const rows = table`

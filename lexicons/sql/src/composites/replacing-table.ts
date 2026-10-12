@@ -14,6 +14,8 @@
 
 import { Composite } from "@intentius/chant/composite";
 import { table, type ClickHouseTable } from "../clickhouse/entities";
+import type { ClickHouseMemberName } from "../core/typed";
+import type { Instance, TypedComposite } from "./typed";
 
 export interface ReplacingTableProps {
   /** The table's name, `name` or `database.name`. */
@@ -30,12 +32,15 @@ export interface ReplacingTableProps {
   partitionBy?: string;
 }
 
-export type ReplacingTableMembers = {
-  table: ClickHouseTable;
+/** `Table` is the table's name, when the call's props give it (chant#3787). */
+export type ReplacingTableMembers<Table extends string = string> = {
+  table: ClickHouseTable<Table>;
 };
 
+type ReplacingTableCall = <const N extends string>(props: ReplacingTableProps & { name: N }) => Instance<ReplacingTableMembers<ClickHouseMemberName<N>>>;
+
 /** A ReplacingMergeTree table that keeps the highest version of each row, with its version column. */
-export const ReplacingTable = Composite<ReplacingTableProps, ReplacingTableMembers>((props) => {
+export const ReplacingTable = Composite<ReplacingTableProps, ReplacingTableMembers, TypedComposite<ReplacingTableProps, ReplacingTableMembers, ReplacingTableCall>>((props) => {
   const version = props.version ?? "version";
   const replacing = table`
     CREATE TABLE ${props.name} (

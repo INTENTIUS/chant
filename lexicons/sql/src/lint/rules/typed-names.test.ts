@@ -113,6 +113,18 @@ describe("SQLPG005: a typed Postgres tag's type argument", () => {
     const code = `${PGX}export const o = table<"shop.orders">\`CREATE TABLE shop.orders (id bigint)\`;`;
     expect(sqlpg005.check(ctx(code, file))).toEqual([]);
   });
+
+  // chant#3787 — a composite builds its members' names from the schema's type argument.
+  test("a schema's type argument must be its name, and is not looked for in the generated file", () => {
+    const SCX = `import { schema } from "${PG}";\n`;
+    const file = project(PG, ["shop.orders"]);
+    expect(sqlpg005.check(ctx(`${SCX}export const s = schema<"shop">\`CREATE SCHEMA Shop\`;`, file))).toEqual([]);
+    const [d, ...rest] = sqlpg005.check(ctx(`${SCX}export const s = schema<"shp">\`CREATE SCHEMA shop\`;`, file));
+    expect(rest).toEqual([]);
+    expect(d).toMatchObject({ ruleId: "SQLPG005", severity: "error", line: 2 });
+    expect(sqlpg005.check(ctx(`${SCX}export const s = schema<"x.shop">\`CREATE SCHEMA shop\`;`))).toHaveLength(1);
+    expect(sqlpg005.check(ctx(`${SCX}export const s = schema\`CREATE SCHEMA shop\`;`))).toEqual([]);
+  });
 });
 
 describe("SQLCH004: a typed ClickHouse tag's type argument", () => {
