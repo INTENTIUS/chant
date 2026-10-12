@@ -37,6 +37,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `gate` | The base gate name. Default: `name` |
 | `gateName` | The pattern of wave k's gate name: `{gate}` and `{k}` are filled in. Default `{gate}-wave-{k}` ([Keep a product's gate names](#keep-a-products-gate-names)) |
 | `digest` | `{ "over": "changing" }` makes the set digest cover only the runs whose plan is not empty. Default `{ "over": "all" }` |
+| `override` | `{ "overriders": "<file>" }`: who may override a run the product's policy denied, read at the base commit. Default `.chant/overriders` ([Policy denials](#policy-denials)) |
 | `neverOverMcp` | The waves' pending facts carry `neverOverMcp`, so their gates are never approved over MCP or ACP. Read at the base commit too |
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
@@ -179,12 +180,42 @@ The spec's `hooks` run first, then the wave's own `hooks`. The environment carri
 |---|---|---|
 | `before.plan` | before the wave is planned | the wave exits 1; nothing is planned |
 | `after.plan` | after the plan, before the gate decides | the wave exits 1; nothing is applied |
+| `after.gate` | once the gate decided, whatever it decided ([After the gate](#after-the-gate)) | the wave exits 1 if it would have applied; a waiting or refused wave keeps its exit code |
 | `before.apply` | once the gate lets the wave through, before the apply | the wave exits 1; nothing is applied |
 | `after.apply` | once every run applied | the wave exits 1; the runs stay applied |
 
 A hook with `onFailure: "approve"` that fails holds the wave instead. The wave then waits for an approval of its set digest whatever its `gate` says, `never` and empty plans included. Any hooks after it still run. The pending fact names the hooks that held it, and so does the decision (`heldBy`). Once that digest is approved, the wave applies on its next run. A hold before the apply, or in a share job, waits only when nobody has approved the digest yet. `approve` cannot be used after the apply, because the runs have already applied by then, so the spec refuses it.
 
 A wide wave's share jobs run the hooks their deciding job read at base, around their own slice.
+
+### After the gate
+
+An `after.gate` hook runs once the gate has decided, on every outcome: approved, let through by the policy, waiting, or refused by a [policy denial](#policy-denials). It is the place for a product's own report of a wave that does not apply, since a waiting or refused wave never calls the apply. If a hold before the apply later makes the wave wait, the hooks run again with that decision. `onFailure: "approve"` is refused here, because the gate has already decided.
+
+Its environment carries the decision:
+
+| Variable | Holds |
+|---|---|
+| `CHANT_GATE_STATUS` | `approved`, `not-required`, `waiting` or `refused` |
+| `CHANT_GATE_OP`, `CHANT_GATE`, `CHANT_GATE_DIGEST` | The gate and digest decided: the wave's own, or [another gate a hook held it on](#hold-on-another-gate) |
+| `CHANT_GATE_APPROVE` | The approve command, while waiting |
+| `CHANT_GATE_WAITING_SINCE` | When the wait began: the standing pending fact's time |
+| `CHANT_GATE_RECORDED` | `true` when this run recorded the pending fact, `false` when it found one standing |
+| `CHANT_DECISION` | The decision record. While waiting it holds the pending fact (`pendingFact`) and the newest approval of another digest (`mismatch`). When refused it holds `refused`, and each member keeps its `denied` |
+
+A product that keeps a report next to each pending fact writes it when `CHANT_GATE_RECORDED` is `true`.
+
+### Hold on another gate
+
+A hook can hold the wave on a gate other than the wave's own, with a digest of its own. For example, a state migration in the change runs before wave 1 plans, and it runs behind its own gate. The hook needs `onFailure: "approve"`. It writes the file named by `CHANT_HOLD` and exits non-zero:
+
+```json
+{ "op": "tf-migrate", "gate": "split-queues", "digest": "sha256:...", "description": "move the queues to their own root", "pending": { "members": [] } }
+```
+
+`op` defaults to the spec's name. chant settles that gate under the wave's approval mode, read at base. `sealed` counts only sealed approvals, and `pr-review` counts the ledger alone. With no approval of the digest, chant records a pending fact for it, with the `pending` fields, and the wave waits (exit 3). The decision's `heldOn` and `approve` then name that gate. Once someone approves it, chant runs the hook again with `CHANT_HOLD_APPROVED` (JSON: `op`, `gate`, `digest`, `approvedBy`, `approvedAt`). That run has to pass, and then the wave goes on. Approvals of the other gate are not spent: a product that must run its step once records that it ran.
+
+The wave job settles these holds in `before.plan`, `after.plan` and `before.apply`. Under `hooks.apply.runBy: "apply"`, the apply cannot settle a gate under its own lock, so a hold on another gate there stops the apply. `chant run resume --op <name>` resumes only waves waiting on the spec's own op. For another op, approve with `--resume`.
 
 ### Hooks under the apply's lock
 
@@ -348,6 +379,22 @@ A wide wave's deciding job writes the line once, before its share jobs apply. Th
 
 The rule is read at the base commit with the policy. A change that turns `spend` off still has its own apply judged with it on. A change that turns it on records the approval its own apply runs under, and the rule decides from the next change on. The file sits in a directory under `_gates/`, so `chant approve` and the gate ledger readers never see its lines. `@intentius/chant/lifecycle/gate-audit` reads them as applies: `appliedGateApplies(parseAppliedGateLines(text))` from `@intentius/chant/gate-decision` gives the `applies` that `deriveGateAudit` ties to the approval each ran under.
 
+## Policy denials
+
+A product that checks plans against a policy (OPA, conftest, its own rules) can say a run's plan is denied:
+
+```json
+{ "runs": [{ "target": "network/vpc", "planDigest": "jcs1-sha256:...", "denied": { "rules": ["no-public-s3"], "reason": "the bucket is public" } }], "overriders": ["github:carol"] }
+```
+
+A per-run plan file takes `denied` too. A wave with a denied run applies nothing and waits for no approval: an approval of the wave's digest does not let a denied plan through. Each denied run passes only under an override on `_gates/policy-override.jsonl`, decided as `@intentius/chant/override-gate` decides it ([Ops](/chant/guide/ops/)). The override has to name this run, its plan digest and its rules, be written by a listed overrider with a reason, and under `sealed` carry a seal that verifies. The overriders are the plans file's `overriders`, for a product that reads its own list at base. Otherwise they come from `override.overriders` in the spec, else `.chant/overriders`, read at the base commit.
+
+| The runs denied | The wave |
+|---|---|
+| every one has an override that counts | decides its gate as usual. Before it applies, it spends each override with a line in `_gates/policy-override/applied.jsonl` |
+| one has none | exits 7 and applies nothing. Unless a denial already stands for the run, it records one on the override ledger (the run's plan, its rules and `members`) and prints `chant approve policy-override <run> --rule <id> --reason "<why>"` |
+| one has an override of an earlier plan or other rules | exits 7, and `refused.reason` is `override-moved` |
+
 ## Keep a product's gate names
 
 A product that ran its own wave gates before moving onto `chant run wave` has pending facts and approvals on `chant/lifecycle` under its own gate names, and maybe a plan note that shows a digest over the runs that change something. Three spec fields keep those valid across the move:
@@ -390,7 +437,7 @@ This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. T
 
 ## Exit codes
 
-With `notify` in the spec, a job that exits 1, 3 or 4 also posts an event saying so ([Notify](/chant/guide/notify/)). A delivery that fails never changes the exit code.
+With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event saying so ([Notify](/chant/guide/notify/)). A delivery that fails never changes the exit code.
 
 | Code | Meaning |
 |---|---|
@@ -398,6 +445,7 @@ With `notify` in the spec, a job that exits 1, 3 or 4 also posts an event saying
 | 1 | A plan, an apply or a hook failed |
 | 3 | The wave is waiting for an approval of its set digest, because its policy or a hook holds it; nothing in it was applied |
 | 4 | A share job refused a run whose plan moved since the decision |
+| 7 | The product's policy denied a run and no override counts for it; nothing in the wave was applied |
 
 ## Deciding a gate in your own tool
 
