@@ -137,11 +137,24 @@ export function projectFromObjects(objects: OutputObject[], major: number): PgPr
   };
 }
 
-const TYPE_OBJECTS = new Set(["Postgres::Enum", "Postgres::Domain", "Postgres::Table", "Postgres::View", "Postgres::MaterializedView"]);
+const TYPE_OBJECTS = new Set(["Postgres::Enum", "Postgres::CompositeType", "Postgres::RangeType", "Postgres::Domain", "Postgres::Table", "Postgres::View", "Postgres::MaterializedView"]);
 const ROUTINES = new Set(["Postgres::Function", "Postgres::Procedure"]);
 
+/** A range type's multirange type's name: as written (its last piece), else as Postgres derives it. */
+function multirangeOf(o: OutputObject): string | undefined {
+  if (o.type !== "Postgres::RangeType") return undefined;
+  const written = o.multirangeTypeName as string | undefined;
+  if (written) {
+    const last = written.split(".").pop()!.trim();
+    return /^"/.test(last) ? last.slice(1, -1).replace(/""/g, '"') : last.toLowerCase();
+  }
+  const name = String(o.name);
+  const at = name.indexOf("range");
+  return at >= 0 ? `${name.slice(0, at)}multi${name.slice(at)}` : `${name}_multirange`;
+}
+
 function declared(p: PgProject, kinds: ReadonlySet<string>, schema: string | undefined, name: string): OutputObject | undefined {
-  return p.objects.find((o) => kinds.has(o.type) && o.name === name && (schema === undefined || o.schema === schema));
+  return p.objects.find((o) => kinds.has(o.type) && (o.name === name || multirangeOf(o) === name) && (schema === undefined || o.schema === schema));
 }
 
 /** The extension that provides `name` in `section`, if the overlay knows one; declared ones first. */

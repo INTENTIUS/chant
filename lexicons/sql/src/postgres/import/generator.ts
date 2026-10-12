@@ -1,7 +1,8 @@
 /**
  * The import IR as TypeScript: one `schema.ts` holding every imported object
- * as a `schema`, `table`, `index`, `view`, `sequence`, `type`, `domain` or
- * `extension` declaration, in dependency order, with the references between
+ * as a `schema`, `table`, `index`, `view`, `sequence`, `type`, `domain`,
+ * `extension`, `func`, `aggregate`, `collation`, `cast`, `eventTrigger` (and
+ * the rest of the tags) declaration, in dependency order, with the references between
  * them interpolated, so the build orders them as the server did:
  *
  * - a qualified name of another imported object becomes `${export}`
@@ -52,7 +53,13 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.materializedView]: "view",
   [POSTGRES_ENTITY_TYPES.sequence]: "sequence",
   [POSTGRES_ENTITY_TYPES.enum]: "type",
+  [POSTGRES_ENTITY_TYPES.composite]: "type",
+  [POSTGRES_ENTITY_TYPES.range]: "type",
   [POSTGRES_ENTITY_TYPES.domain]: "domain",
+  [POSTGRES_ENTITY_TYPES.aggregate]: "aggregate",
+  [POSTGRES_ENTITY_TYPES.collation]: "collation",
+  [POSTGRES_ENTITY_TYPES.cast]: "cast",
+  [POSTGRES_ENTITY_TYPES.eventTrigger]: "eventTrigger",
   [POSTGRES_ENTITY_TYPES.extension]: "extension",
   [POSTGRES_ENTITY_TYPES.function]: "func",
   [POSTGRES_ENTITY_TYPES.procedure]: "procedure",
@@ -62,6 +69,19 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.grant]: "grant",
   [POSTGRES_ENTITY_TYPES.defaultPrivileges]: "grant",
 };
+
+/** The kinds no other object's DDL names. */
+const UNREFERENCED: ReadonlySet<string> = new Set([
+  POSTGRES_ENTITY_TYPES.index,
+  POSTGRES_ENTITY_TYPES.trigger,
+  POSTGRES_ENTITY_TYPES.policy,
+  POSTGRES_ENTITY_TYPES.grant,
+  POSTGRES_ENTITY_TYPES.defaultPrivileges,
+  POSTGRES_ENTITY_TYPES.role,
+  POSTGRES_ENTITY_TYPES.extension,
+  POSTGRES_ENTITY_TYPES.cast,
+  POSTGRES_ENTITY_TYPES.eventTrigger,
+]);
 
 /** The tag each entity type is declared with (`table`, `func`, ...). */
 export const POSTGRES_TAG_OF: Readonly<Record<string, string>> = TAG;
@@ -104,6 +124,13 @@ function bareSpots(tokens: Token[]): Set<number> {
   for (const node of nodes) {
     if (node.statement === "table") for (const c of node.columns) if (c.type) first(c.type.from, c.type.to);
     if (node.statement === "domain") first(node.type.from, node.type.to);
+    if (node.statement === "composite") for (const a of node.attributes) first(a.type.from, a.type.to);
+    if (node.statement === "cast") {
+      first(node.source.from, node.source.to);
+      first(node.target.from, node.target.to);
+      name(node.function);
+    }
+    if (node.statement === "eventTrigger") name(node.function);
     if (node.statement === "index" || node.statement === "policy") name(node.table);
     if (node.statement === "trigger") {
       name(node.table);
@@ -202,8 +229,8 @@ export function postgresTemplates(items: readonly Item[], targets: readonly Item
   const schemaExport = new Map<string, string>();
   for (const it of targets) {
     if (it.type === POSTGRES_ENTITY_TYPES.schema) schemaExport.set(it.name, it.exportName);
-    // An index or a trigger is never referenced by name in another object's DDL.
-    else if (it.type !== POSTGRES_ENTITY_TYPES.index && it.type !== POSTGRES_ENTITY_TYPES.trigger && it.type !== POSTGRES_ENTITY_TYPES.policy && it.type !== POSTGRES_ENTITY_TYPES.grant && it.type !== POSTGRES_ENTITY_TYPES.defaultPrivileges && it.type !== POSTGRES_ENTITY_TYPES.role && it.type !== POSTGRES_ENTITY_TYPES.extension) {
+    // An index, a trigger, a cast or an event trigger is never referenced by name in another object's DDL.
+    else if (!UNREFERENCED.has(it.type)) {
       byQualified.set(it.schema ? `${it.schema}.${it.name}` : it.name, it);
     }
   }

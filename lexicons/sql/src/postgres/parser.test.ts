@@ -164,7 +164,8 @@ describe("the other statements", () => {
     expect(s.options.map((o) => o.option)).toEqual(["AS", "INCREMENT", "NO MINVALUE", "MAXVALUE", "START", "CACHE", "NO CYCLE", "OWNED BY"]);
     expect(parse("CREATE DOMAIN d AS text CONSTRAINT c CHECK (VALUE <> '') NOT VALID")[0]!.statement).toBe("domain");
     expect(parse("CREATE TYPE mood AS ENUM ('sad', 'ok')")[0]!.statement).toBe("enum");
-    expect(at("CREATE TYPE mood AS (a int)")).toBe("(");
+    expect(parse("CREATE TYPE pair AS (a int)")[0]!.statement).toBe("composite");
+    expect(at("CREATE TYPE t (INPUT = t_in)")).toBe("(");
     expect(parse("CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION owner")[0]!.statement).toBe("schema");
     expect(parse("CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public VERSION '1.6' CASCADE")[0]!.statement).toBe("extension");
   });

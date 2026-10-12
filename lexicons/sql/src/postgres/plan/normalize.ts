@@ -46,13 +46,20 @@
 import { isTrivia, tokenizeText, type Token } from "../tokens";
 import { identValue } from "../parser";
 import { quoteIdent } from "../keywords";
-import { COLUMN_TYPES } from "../../generated/postgres";
+import { COLUMN_TYPES, FUNCTIONS } from "../../generated/postgres";
 import { stripMarker } from "../../core/ownership";
 import { sequenceDefaults } from "../live/catalog";
 import type {
+  AggregateArgDef,
+  AggregateProps,
+  CastProps,
   CheckDef,
+  CollationProps,
   ColumnDef,
+  CompositeTypeProps,
   DomainProps,
+  EventTriggerProps,
+  RangeTypeProps,
   EnumProps,
   ExclusionDef,
   ExtensionProps,
@@ -333,8 +340,14 @@ export type CanonicalKind =
   | "materializedView"
   | "sequence"
   | "enum"
+  | "composite"
+  | "range"
   | "domain"
   | "extension"
+  | "aggregate"
+  | "collation"
+  | "cast"
+  | "eventTrigger"
   | "function"
   | "procedure"
   | "trigger"
@@ -373,7 +386,13 @@ const kindOf: Record<string, CanonicalKind> = {
   "Postgres::MaterializedView": "materializedView",
   "Postgres::Sequence": "sequence",
   "Postgres::Enum": "enum",
+  "Postgres::CompositeType": "composite",
+  "Postgres::RangeType": "range",
   "Postgres::Domain": "domain",
+  "Postgres::Aggregate": "aggregate",
+  "Postgres::Collation": "collation",
+  "Postgres::Cast": "cast",
+  "Postgres::EventTrigger": "eventTrigger",
   "Postgres::Extension": "extension",
   "Postgres::Function": "function",
   "Postgres::Procedure": "procedure",
@@ -595,6 +614,96 @@ function triggerFields(p: TriggerProps, defaultSchema: string, fields: Record<st
     : undefined;
 }
 
+// ── Types, aggregates, collations, casts, event triggers (#3911) ──────
+
+/** The kinds that live in no schema. */
+const UNPLACED: ReadonlySet<CanonicalKind> = new Set(["schema", "extension", "role", "cast", "eventTrigger"]);
+
+/**
+ * A function named where an object calls it (an aggregate's SFUNC, a cast's
+ * or an event trigger's function), as the catalog's `regproc` prints it with
+ * an empty search_path: a `pg_catalog` function bare, any other qualified. A
+ * bare name that is no built-in function's is in the default schema.
+ */
+export function canonicalFunctionName(text: string, defaultSchema: string): string {
+  const pieces = canonicalName(text).split(/\.(?=(?:[^"]*"[^"]*")*[^"]*$)/);
+  if (pieces.length >= 2) return pieces[0] === "pg_catalog" ? pieces.slice(1).join(".") : pieces.join(".");
+  const bare = identValue(pieces[0]!);
+  return FUNCTIONS[bare] !== undefined ? pieces[0]! : `${quoteIdent(defaultSchema)}.${pieces[0]}`;
+}
+
+/** A collation named in a type or an attribute: canonical, a `pg_catalog` one bare (`"C"`), as the catalog prints it. */
+export const canonicalCollation = (text: string): string => canonicalName(text).replace(/^pg_catalog\./, "");
+
+/** A definition list's value as compared: a string constant's value, a word folded, other text canonical. */
+function defValue(v: string): string {
+  const t = v.trim();
+  if (/^([Ee]?'|\$)/.test(t)) return stringValue(t) ?? t;
+  if (/^"/.test(t)) return identValue(t);
+  if (/^[A-Za-z_][A-Za-z0-9_$]*$/.test(t)) return t.toLowerCase();
+  return canonicalExpr(t) ?? t;
+}
+
+/** A Postgres boolean option's value (`true`, `on`, `1`, `yes`), as written or given with no value. */
+const isTrue = (v: string | undefined): boolean => v !== undefined && /^(true|on|1|yes|t|y)$/i.test(defValue(v));
+
+/** The name Postgres gives a range type's multirange type when none is written: `range` in its name becomes `multirange`, else `_multirange` is added. */
+export function defaultMultirangeName(range: string): string {
+  const at = range.indexOf("range");
+  return at >= 0 ? `${range.slice(0, at)}multi${range.slice(at)}` : `${range}_multirange`;
+}
+
+/** An aggregate's identity among its overloads: `(integer)`, `(*)`, `(text ORDER BY integer)`. */
+export function aggregateSignature(p: Pick<AggregateProps, "args" | "orderBy">, defaultSchema: string): string {
+  const types = (l: readonly AggregateArgDef[]) => l.map((a) => canonicalArgType(a.type, defaultSchema)).join(",");
+  if (p.orderBy) return `(${p.args.length > 0 ? `${types(p.args)} ` : ""}ORDER BY ${types(p.orderBy)})`;
+  return p.args.length === 0 ? "(*)" : `(${types(p.args)})`;
+}
+
+const AGGREGATE_FUNCTIONS = new Set(["sfunc", "finalfunc", "combinefunc", "serialfunc", "deserialfunc", "msfunc", "minvfunc", "mfinalfunc"]);
+const AGGREGATE_TYPES = new Set(["stype", "mstype"]);
+const AGGREGATE_FLAGS = new Set(["finalfunc_extra", "mfinalfunc_extra", "hypothetical"]);
+
+/** An aggregate's definition as compared: each option canonical, the ones at their defaults left out. */
+function aggregateOptions(p: AggregateProps, defaultSchema: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // A FINALFUNC_MODIFY not written is READ_ONLY for a plain aggregate, READ_WRITE for an ordered-set one.
+  const modifyDefault = p.orderBy ? "read_write" : "read_only";
+  for (const [k, v] of Object.entries(p.options)) {
+    if (AGGREGATE_FUNCTIONS.has(k)) out[k] = canonicalFunctionName(v, defaultSchema);
+    else if (AGGREGATE_TYPES.has(k)) out[k] = canonicalType(v, defaultSchema)!;
+    else if (AGGREGATE_FLAGS.has(k)) {
+      if (isTrue(v)) out[k] = "true";
+    } else if (k === "sspace" || k === "msspace") {
+      if (Number(defValue(v)) !== 0) out[k] = String(Number(defValue(v)));
+    } else if (k === "finalfunc_modify" || k === "mfinalfunc_modify") {
+      if (defValue(v) !== modifyDefault) out[k] = defValue(v);
+    } else if (k === "sortop") {
+      out[k] = v.trim().replace(/^OPERATOR\s*\(\s*(.*?)\s*\)$/is, "$1").replace(/^pg_catalog\s*\.\s*/i, "");
+    } else if (k === "parallel") {
+      if (defValue(v) !== "unsafe") out[k] = defValue(v);
+    } else out[k] = defValue(v);
+  }
+  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
+}
+
+/** A collation's definition as compared: its provider (`libc` unless written) and locales, `deterministic` only when false. VERSION is the provider's, and is not compared. */
+function collationFields(p: CollationProps, fields: Record<string, unknown>): void {
+  const o = Object.fromEntries(Object.entries(p.options).map(([k, v]) => [k, defValue(v)]));
+  const provider = o.provider ?? "libc";
+  fields.provider = provider;
+  if (provider === "libc") {
+    fields.lcCollate = o.lc_collate ?? o.locale;
+    fields.lcCtype = o.lc_ctype ?? o.locale;
+  } else fields.locale = o.locale ?? o.lc_collate;
+  fields.nondeterministic = p.options.deterministic !== undefined && !isTrue(p.options.deterministic);
+  fields.rules = o.rules;
+}
+
+/** A cast's name, `(source AS target)`, its types canonical. */
+export const castName = (p: Pick<CastProps, "sourceType" | "targetType">, defaultSchema: string): string =>
+  `(${canonicalType(p.sourceType, defaultSchema)} AS ${canonicalType(p.targetType, defaultSchema)})`;
+
 /**
  * A definition in canonical form. `props` is an entity's props, declared or
  * parsed from what the server printed; `defaultSchema` qualifies a bare name.
@@ -602,7 +711,7 @@ function triggerFields(p: TriggerProps, defaultSchema: string, fields: Record<st
 export function canonicalPgObject(entityType: string, props: Record<string, unknown>, defaultSchema = "public"): CanonicalPgObject {
   const kind = kindOf[entityType];
   if (!kind) throw new Error(`not a Postgres entity type: ${entityType}`);
-  const schemaOf = (p: { schema?: string }) => (kind === "schema" || kind === "extension" || kind === "role" || ACCESS_KINDS.has(kind) ? undefined : (p.schema ?? defaultSchema));
+  const schemaOf = (p: { schema?: string }) => (UNPLACED.has(kind) || ACCESS_KINDS.has(kind) ? undefined : (p.schema ?? defaultSchema));
   const base: Pick<CanonicalPgObject, "kind" | "schema" | "name" | "signature"> = { kind, schema: schemaOf(props as { schema?: string }), name: String(props.name) };
   const fields: Record<string, unknown> = { comment: comment(props.comment as string | undefined) };
   const columns: CanonicalColumn[] = [];
@@ -623,6 +732,48 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
     case "enum":
       fields.labels = (props as unknown as EnumProps).labels;
       break;
+    case "composite": {
+      const p = props as unknown as CompositeTypeProps;
+      fields.attributeDefs = p.attributes.map((a) => `${quoteIdent(a.name)} ${canonicalType(a.type, defaultSchema)}${a.collate ? ` collate ${canonicalCollation(a.collate)}` : ""}`);
+      break;
+    }
+    case "range": {
+      const p = props as unknown as RangeTypeProps;
+      fields.subtype = canonicalType(p.subtype, defaultSchema);
+      fields.subtypeOpclass = p.subtypeOpclass ? canonicalName(p.subtypeOpclass).replace(/^pg_catalog\./, "") : undefined;
+      fields.collation = p.collation ? canonicalCollation(p.collation) : undefined;
+      fields.canonical = p.canonical ? canonicalFunctionName(p.canonical, defaultSchema) : undefined;
+      fields.subtypeDiff = p.subtypeDiff ? canonicalFunctionName(p.subtypeDiff, defaultSchema) : undefined;
+      // The multirange type is always named: as written, else as Postgres derives it, in the range's schema.
+      fields.multirange = p.multirangeTypeName
+        ? canonicalName(p.multirangeTypeName, base.schema)
+        : canonicalName(quoteIdent(defaultMultirangeName(base.name)), base.schema);
+      break;
+    }
+    case "aggregate": {
+      const p = props as unknown as AggregateProps;
+      base.signature = aggregateSignature(p, defaultSchema);
+      fields.definition = aggregateOptions(p, defaultSchema);
+      break;
+    }
+    case "collation":
+      collationFields(props as unknown as CollationProps, fields);
+      break;
+    case "cast": {
+      const p = props as unknown as CastProps;
+      base.name = castName(p, defaultSchema);
+      fields.castMethod = p.method;
+      fields.function = p.functionName ? canonicalFunctionName(p.functionName, defaultSchema) : undefined;
+      fields.context = p.context === "explicit" ? undefined : p.context;
+      break;
+    }
+    case "eventTrigger": {
+      const p = props as unknown as EventTriggerProps;
+      fields.event = p.event.toLowerCase();
+      fields.tags = p.tags && p.tags.length > 0 ? [...new Set(p.tags.map((t) => t.toUpperCase().replace(/\s+/g, " ").trim()))].sort() : undefined;
+      fields.function = canonicalFunctionName(p.functionName, defaultSchema);
+      break;
+    }
     case "function":
     case "procedure": {
       const p = props as unknown as RoutineProps;

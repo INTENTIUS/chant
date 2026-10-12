@@ -27,18 +27,18 @@ What a managed provider, an extension or the server's configuration files define
 
 ## Postgres
 
-Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 17 declared, 27 refused, 2 out of scope.
+Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out of scope.
 
 | Command | Kind | Status | Declared by, or why not |
 |---|---|---|---|
 | `CREATE ACCESS METHOD` | access method | refused | no tag declares an access method; an extension usually installs one, and the extension is declared instead |
-| `CREATE AGGREGATE` | aggregate | refused | no tag declares an aggregate yet |
-| `CREATE CAST` | cast | refused | no tag declares a cast yet |
-| `CREATE COLLATION` | collation | refused | no tag declares a collation yet |
+| `CREATE AGGREGATE` | aggregate | declared | `Postgres::Aggregate` |
+| `CREATE CAST` | cast | declared | `Postgres::Cast`: the database's, named by its two types; read where a type or its function is in scope |
+| `CREATE COLLATION` | collation | declared | `Postgres::Collation` |
 | `CREATE CONVERSION` | conversion | refused | no tag declares an encoding conversion |
 | `CREATE DATABASE` | database | out of scope | a project's schema lives in one database, which the environment provides (sql.profiles.\<env\>) |
 | `CREATE DOMAIN` | domain | declared | `Postgres::Domain` |
-| `CREATE EVENT TRIGGER` | event trigger | refused | no tag declares an event trigger yet |
+| `CREATE EVENT TRIGGER` | event trigger | declared | `Postgres::EventTrigger`: the database's, not a schema's; creating one takes a superuser |
 | `CREATE EXTENSION` | extension | declared | `Postgres::Extension` |
 | `CREATE FOREIGN DATA WRAPPER` | foreign data wrapper | refused | no tag declares a foreign data wrapper yet; one an extension installs comes with the extension |
 | `CREATE FOREIGN TABLE` | foreign table | refused | no tag declares a foreign table yet |
@@ -71,8 +71,8 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 17 declared, 27 refused, 2 out 
 | `CREATE TRANSFORM` | transform | refused | no tag declares a transform; an extension installs one |
 | `CREATE TRIGGER` | trigger | declared | `Postgres::Trigger` |
 | `CREATE TYPE` (AS ENUM) | enum type | declared | `Postgres::Enum` |
-| `CREATE TYPE` (AS (...)) | composite type | refused | no tag declares a composite type yet |
-| `CREATE TYPE` (AS RANGE) | range type | refused | no tag declares a range type yet |
+| `CREATE TYPE` (AS (...)) | composite type | declared | `Postgres::CompositeType` |
+| `CREATE TYPE` (AS RANGE) | range type | declared | `Postgres::RangeType`: its multirange type comes with it (MULTIRANGE_TYPE_NAME) |
 | `CREATE TYPE` (INPUT, OUTPUT, or a shell type) | base type | refused | no tag declares a base type; its input and output functions are C code an extension installs |
 | `CREATE USER` | user | declared | `Postgres::Role`: an alias of CREATE ROLE ... LOGIN |
 | `CREATE USER MAPPING` | user mapping | refused | no tag declares a user mapping yet |

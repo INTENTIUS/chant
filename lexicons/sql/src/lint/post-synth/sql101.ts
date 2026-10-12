@@ -14,6 +14,7 @@ const NOT_UNIQUE = new Set([
   "Postgres::DefaultPrivileges",
   "Postgres::Function",
   "Postgres::Procedure",
+  "Postgres::Aggregate",
   "Postgres::Trigger",
   "Postgres::Policy",
 ]);

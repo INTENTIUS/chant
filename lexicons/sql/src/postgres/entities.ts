@@ -1,8 +1,9 @@
 /**
  * The Postgres entities: `schema`, `table`, `index`, `view`, `sequence`,
- * `type`, `domain`, `extension`, `func`, `procedure`, `trigger`, `policy`,
- * `role` and `grant` tagged templates that parse their DDL at fold time into
- * one Declarable each (chant #3278, #3279, #3680, #3681).
+ * `type` (enum, composite and range), `domain`, `extension`, `func`,
+ * `procedure`, `aggregate`, `trigger`, `eventTrigger`, `collation`, `cast`,
+ * `policy`, `role` and `grant` tagged templates that parse their DDL at fold
+ * time into one Declarable each (chant #3278, #3279, #3680, #3681, #3911).
  *
  * ```ts
  * import { schema, table, index } from "@intentius/chant-lexicon-sql/postgres";
@@ -56,7 +57,7 @@
 import type { AttrRef } from "@intentius/chant/attrref";
 import { setInterpolationFields } from "@intentius/chant/provenance";
 import { isTrivia, POSTGRES_LEXICAL, SqlSyntaxError, untokenize, type Token } from "./tokens";
-import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode } from "./parser";
+import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type DefElem, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode } from "./parser";
 import { keywordCategory, quoteIdent } from "./keywords";
 import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, unparsedClauses, type TemplateCtx, type TemplateDialect, type UnparsedClause } from "../core/interpolation";
 import { SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
@@ -258,6 +259,86 @@ export interface SequenceProps extends CommonProps {
 
 export interface EnumProps extends CommonProps {
   labels: string[];
+}
+
+/** A composite type's attribute, as written. */
+export interface CompositeAttributeDef {
+  name: string;
+  type: string;
+  collate?: string;
+}
+
+export interface CompositeTypeProps extends CommonProps {
+  attributes: CompositeAttributeDef[];
+}
+
+export interface RangeTypeProps extends CommonProps {
+  /** `SUBTYPE`: the element type. */
+  subtype: string;
+  subtypeOpclass?: string;
+  collation?: string;
+  /** `CANONICAL`: the function that canonicalizes a value (a C function). */
+  canonical?: string;
+  subtypeDiff?: string;
+  /** `MULTIRANGE_TYPE_NAME`: the multirange type's name, when it is not the one Postgres derives. */
+  multirangeTypeName?: string;
+}
+
+/** One argument of an aggregate, as written. */
+export interface AggregateArgDef {
+  /** `in` when not written. */
+  mode: "in" | "variadic";
+  name?: string;
+  type: string;
+}
+
+export interface AggregateProps extends CommonProps {
+  orReplace?: boolean;
+  /** The arguments; empty for `(*)`. An ordered-set aggregate's direct arguments. */
+  args: AggregateArgDef[];
+  /** An ordered-set aggregate's aggregated arguments (`ORDER BY ...`). */
+  orderBy?: AggregateArgDef[];
+  /**
+   * The definition: each option by its name, folded (`sfunc`, `stype`,
+   * `initcond`), to its value as written; an option given without a value
+   * (`HYPOTHETICAL`, `FINALFUNC_EXTRA`) to `true`.
+   */
+  options: Record<string, string>;
+}
+
+export interface CollationProps extends CommonProps {
+  ifNotExists?: boolean;
+  /** Each option by its name, folded (`provider`, `locale`, `deterministic`), to its value as written. */
+  options: Record<string, string>;
+}
+
+export interface CastProps extends Omit<CommonProps, "schema"> {
+  /** `(source AS target)`: a cast is named by its two types and lives in no schema. */
+  name: string;
+  /** The source type as written. */
+  sourceType: string;
+  /** The target type as written. */
+  targetType: string;
+  /** `WITH FUNCTION` (`function`), `WITHOUT FUNCTION` (`binary`) or `WITH INOUT` (`inout`). */
+  method: "function" | "binary" | "inout";
+  /** The cast function: the entity when interpolated, else its name. */
+  function?: PostgresObject | string;
+  /** The cast function's SQL name. */
+  functionName?: string;
+  /** The cast function's parameter types, when written. */
+  functionArgs?: string;
+  /** `explicit` (the default), `AS ASSIGNMENT` or `AS IMPLICIT`. */
+  context: "explicit" | "assignment" | "implicit";
+}
+
+export interface EventTriggerProps extends Omit<CommonProps, "schema"> {
+  /** `ddl_command_start`, `ddl_command_end`, `sql_drop`, `table_rewrite` or `login`. */
+  event: string;
+  /** `WHEN TAG IN (...)`: the command tags it fires for; every one when absent. */
+  tags?: string[];
+  /** The function it executes: the entity when interpolated, else its name. */
+  function: PostgresObject | string;
+  functionName: string;
 }
 
 export interface DomainProps extends CommonProps {
@@ -488,9 +569,42 @@ export interface PostgresEnum extends PostgresObject {
   readonly props: EnumProps;
 }
 
+export interface PostgresCompositeType extends PostgresObject {
+  readonly entityType: "Postgres::CompositeType";
+  readonly props: CompositeTypeProps;
+}
+
+export interface PostgresRangeType extends PostgresObject {
+  readonly entityType: "Postgres::RangeType";
+  readonly props: RangeTypeProps;
+}
+
+/** What the `type` tag declares: an enum, a composite or a range type. */
+export type PostgresType = PostgresEnum | PostgresCompositeType | PostgresRangeType;
+
 export interface PostgresDomain extends PostgresObject {
   readonly entityType: "Postgres::Domain";
   readonly props: DomainProps;
+}
+
+export interface PostgresAggregate extends PostgresObject {
+  readonly entityType: "Postgres::Aggregate";
+  readonly props: AggregateProps;
+}
+
+export interface PostgresCollation extends PostgresObject {
+  readonly entityType: "Postgres::Collation";
+  readonly props: CollationProps;
+}
+
+export interface PostgresCast extends PostgresObject {
+  readonly entityType: "Postgres::Cast";
+  readonly props: CastProps;
+}
+
+export interface PostgresEventTrigger extends PostgresObject {
+  readonly entityType: "Postgres::EventTrigger";
+  readonly props: EventTriggerProps;
 }
 
 export interface PostgresExtension extends PostgresObject {
@@ -637,23 +751,46 @@ export const POSTGRES_TEMPLATES: TemplateDialect = {
 
 type Ctx = TemplateCtx;
 
-export type PostgresTag = "schema" | "table" | "index" | "view" | "sequence" | "type" | "domain" | "extension" | "func" | "procedure" | "trigger" | "policy" | "role" | "grant";
+export type PostgresTag =
+  | "schema"
+  | "table"
+  | "index"
+  | "view"
+  | "sequence"
+  | "type"
+  | "domain"
+  | "extension"
+  | "func"
+  | "procedure"
+  | "aggregate"
+  | "trigger"
+  | "eventTrigger"
+  | "collation"
+  | "cast"
+  | "policy"
+  | "role"
+  | "grant";
 
-const STATEMENT_OF: Record<PostgresTag, StatementNode["statement"]> = {
-  schema: "schema",
-  table: "table",
-  index: "index",
-  view: "view",
-  sequence: "sequence",
-  type: "enum",
-  domain: "domain",
-  extension: "extension",
-  func: "function",
-  procedure: "procedure",
-  trigger: "trigger",
-  policy: "policy",
-  role: "role",
-  grant: "grant",
+/** The statements each tag holds. */
+export const STATEMENTS_OF: Record<PostgresTag, readonly StatementNode["statement"][]> = {
+  schema: ["schema"],
+  table: ["table"],
+  index: ["index"],
+  view: ["view"],
+  sequence: ["sequence"],
+  type: ["enum", "composite", "range"],
+  domain: ["domain"],
+  extension: ["extension"],
+  func: ["function"],
+  procedure: ["procedure"],
+  aggregate: ["aggregate"],
+  trigger: ["trigger"],
+  eventTrigger: ["eventTrigger"],
+  collation: ["collation"],
+  cast: ["cast"],
+  policy: ["policy"],
+  role: ["role"],
+  grant: ["grant"],
 };
 
 const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
@@ -663,11 +800,17 @@ const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
   view: "view",
   sequence: "sequence",
   enum: "type",
+  composite: "type",
+  range: "type",
   domain: "domain",
   extension: "extension",
   function: "func",
   procedure: "procedure",
+  aggregate: "aggregate",
   trigger: "trigger",
+  eventTrigger: "eventTrigger",
+  collation: "collation",
+  cast: "cast",
   policy: "policy",
   role: "role",
   grant: "grant",
@@ -683,11 +826,17 @@ export const STATEMENT_NAMES: Record<StatementNode["statement"], string> = {
   view: "CREATE VIEW",
   sequence: "CREATE SEQUENCE",
   enum: "CREATE TYPE",
+  composite: "CREATE TYPE",
+  range: "CREATE TYPE",
   domain: "CREATE DOMAIN",
   extension: "CREATE EXTENSION",
   function: "CREATE FUNCTION",
   procedure: "CREATE PROCEDURE",
+  aggregate: "CREATE AGGREGATE",
   trigger: "CREATE TRIGGER",
+  eventTrigger: "CREATE EVENT TRIGGER",
+  collation: "CREATE COLLATION",
+  cast: "CREATE CAST",
   policy: "CREATE POLICY",
   role: "CREATE ROLE",
   grant: "GRANT",
@@ -713,6 +862,13 @@ export function stringValue(s: string | undefined): string | undefined {
   m = /^\$([A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$(.*)\$\1\$$/s.exec(s);
   if (m) return m[2];
   return s;
+}
+
+/** A definition list's values, by option name: each value as written, interpolations rendered; an option with no value is `true`. */
+function definitionValues(ctx: Ctx, elems: readonly DefElem[], path: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const e of elems) out[e.name] = e.value ? req(text(ctx, e.value, path)) : "true";
+  return out;
 }
 
 /** A qualified name's schema and name. An interpolated schema names the schema; an interpolated object gives both. */
@@ -926,7 +1082,12 @@ function applyComments(
       if (value !== undefined) constraint!.comment = value;
     } else {
       if (!objectTypes.includes(c.objectType)) refuse(c, `does not comment on the ${tag} this template declares`);
-      if (c.objectType === "TRIGGER" || c.objectType === "POLICY") {
+      if (c.objectType === "CAST") {
+        // `COMMENT ON CAST (source AS target)`: the two types, as the CREATE CAST writes them.
+        const loose = (x: string) => x.toLowerCase().replace(/\s+/g, " ").replace(/\s*([(),.])\s*/g, "$1");
+        const named = `(${req(text(ctx, c.cast!.source))} AS ${req(text(ctx, c.cast!.target))})`;
+        if (loose(named) !== loose(self.name)) refuse(c, `names another cast than ${self.name}`);
+      } else if (c.objectType === "TRIGGER" || c.objectType === "POLICY") {
         // `COMMENT ON TRIGGER name ON table`: the name is the trigger's, the table its own.
         if (qualified(ctx, c.target).name !== self.name || !c.on || !isSelf({ ...qualified(ctx, c.on), name: self.name })) refuse(c, `names another ${c.objectType.toLowerCase()} than ${self.name}`);
       } else if (!isSelf(qualified(ctx, c.target))) refuse(c, `names another object than ${sqlNameOf(self)}`);
@@ -1152,7 +1313,7 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
     throw templateSyntaxError(tag, parts, err);
   }
   const [node, ...rest] = nodes as [StatementNode, ...StatementNode[]];
-  if (node.statement !== STATEMENT_OF[tag]) {
+  if (!STATEMENTS_OF[tag].includes(node.statement)) {
     const holds = STATEMENT_NAMES[node.statement];
     const use = TAG_OF[node.statement];
     throw new SqlTemplateError(
@@ -1194,9 +1355,9 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   const dependsOn = [...new Set([...values, ...(joined?.refs ?? [])].filter((v) => isPostgresObject(v) || isColumnRef(v)))];
   const slots: TypedSlot[] = [];
   const unparsed = unparsedClauses(ctx, nodes.flatMap((n) => ("unknown" in n && n.unknown ? n.unknown : [])));
-  const make = <T extends PostgresObject>(type: PostgresEntityType, q: { schema?: string; name: string }, props: object, columnNames?: readonly string[]): T => {
+  const make = <T extends PostgresObject>(type: PostgresEntityType, q: { schema?: string; name: string }, props: object, columnNames?: readonly string[], sqlName = sqlNameOf(q)): T => {
     if (unparsed) (props as { unparsed?: UnparsedClause[] }).unparsed = unparsed;
-    const entity = makeSqlEntity(PostgresObject.prototype as PostgresObject, type, sqlNameOf(q), props, columnNames, dependsOn) as T;
+    const entity = makeSqlEntity(PostgresObject.prototype as PostgresObject, type, sqlName, props, columnNames, dependsOn) as T;
     const fed = ctx.fed.map((paths) => [...paths].sort());
     if (!joined) setInterpolationFields(entity, fed);
     else {
@@ -1238,6 +1399,99 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       const comment = applyComments(tag, ctx, comments, q, ["TYPE"]);
       const props: EnumProps = stripUnset({ ...q, labels: node.labels.map((l) => req(stringValue(text(ctx, l, "labels")))), comment, ddl, source });
       return make(POSTGRES_ENTITY_TYPES.enum, q, props);
+    }
+    case "composite": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["TYPE"]);
+      const attributes = node.attributes.map((a) => {
+        feed(ctx, a.nameSpan, "attributes");
+        return stripUnset({ name: columnName(ctx, { name: a.name, span: a.nameSpan }), type: req(text(ctx, a.type, "attributes")), collate: text(ctx, a.collate, "attributes") }) as CompositeAttributeDef;
+      });
+      const props: CompositeTypeProps = strip({ ...q, attributes, comment, ddl, source }, ["attributes"]);
+      return make(POSTGRES_ENTITY_TYPES.composite, q, props);
+    }
+    case "range": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["TYPE"]);
+      const opt = definitionValues(ctx, node.options, "options");
+      const props: RangeTypeProps = stripUnset({
+        ...q,
+        subtype: req(opt.subtype),
+        subtypeOpclass: opt.subtype_opclass,
+        collation: opt.collation,
+        canonical: opt.canonical,
+        subtypeDiff: opt.subtype_diff,
+        multirangeTypeName: opt.multirange_type_name,
+        comment,
+        ddl,
+        source,
+      });
+      return make(POSTGRES_ENTITY_TYPES.range, q, props);
+    }
+    case "aggregate": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["AGGREGATE"]);
+      const arg = (a: (typeof node.args)[number]): AggregateArgDef => stripUnset({ mode: (a.mode?.toLowerCase() ?? "in") as AggregateArgDef["mode"], name: a.name, type: req(text(ctx, a.type, "args")) });
+      const props: AggregateProps = strip(
+        {
+          ...q,
+          orReplace: node.orReplace || undefined,
+          args: node.args.map(arg),
+          orderBy: node.orderBy?.map(arg),
+          options: definitionValues(ctx, node.options, "options"),
+          comment,
+          ddl,
+          source,
+        },
+        ["args"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.aggregate, q, props);
+    }
+    case "collation": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["COLLATION"]);
+      const props: CollationProps = stripUnset({ ...q, ifNotExists: node.ifNotExists || undefined, options: definitionValues(ctx, node.options, "options"), comment, ddl, source });
+      return make(POSTGRES_ENTITY_TYPES.collation, q, props);
+    }
+    case "cast": {
+      const sourceType = req(text(ctx, node.source, "sourceType"));
+      const targetType = req(text(ctx, node.target, "targetType"));
+      const name = `(${sourceType} AS ${targetType})`;
+      const comment = applyComments(tag, ctx, comments, { name }, ["CAST"]);
+      const props: CastProps = stripUnset({
+        name,
+        sourceType,
+        targetType,
+        method: node.method,
+        function: node.function ? target(ctx, node.function) : undefined,
+        functionName: node.function ? targetName(ctx, node.function) : undefined,
+        functionArgs: node.functionArgs ? text(ctx, node.functionArgs, "functionArgs") : undefined,
+        context: node.context,
+        comment,
+        ddl,
+        source,
+      });
+      return make(POSTGRES_ENTITY_TYPES.cast, { name }, props, undefined, name);
+    }
+    case "eventTrigger": {
+      const name = node.name.pieces[0] || identValue(req(text(ctx, node.name.span)));
+      feed(ctx, node.name.span, "name");
+      const comment = applyComments(tag, ctx, comments, { name }, ["EVENT TRIGGER"]);
+      const tags = node.filters.flatMap((f) => f.values.map((v) => req(stringValue(text(ctx, v, "tags")))));
+      const props: EventTriggerProps = strip(
+        {
+          name,
+          event: node.event.name || identValue(req(text(ctx, node.event.span, "event"))),
+          tags: tags.length > 0 ? tags : undefined,
+          function: target(ctx, node.function),
+          functionName: targetName(ctx, node.function),
+          comment,
+          ddl,
+          source,
+        },
+        [],
+      );
+      return make(POSTGRES_ENTITY_TYPES.eventTrigger, { name }, props);
     }
     case "domain": {
       const q = qualified(ctx, node.name);
@@ -1644,9 +1898,13 @@ export function sequence(strings: TemplateStringsArray, ...values: unknown[]): P
   return build("sequence", strings, values) as PostgresSequence;
 }
 
-/** `` type`CREATE TYPE name AS ENUM (...)` ``: one enum type. */
-export function type(strings: TemplateStringsArray, ...values: unknown[]): PostgresEnum {
-  return build("type", strings, values) as PostgresEnum;
+/**
+ * `` type`CREATE TYPE name AS ENUM (...)` ``: one enum type; `AS (attribute
+ * type, ...)` a composite type, `AS RANGE (SUBTYPE = ...)` a range type (and
+ * its multirange type, which Postgres creates with it).
+ */
+export function type(strings: TemplateStringsArray, ...values: unknown[]): PostgresType {
+  return build("type", strings, values) as PostgresType;
 }
 
 /** `` domain`CREATE DOMAIN ...` ``: one domain. */
@@ -1671,6 +1929,36 @@ export function func(strings: TemplateStringsArray, ...values: unknown[]): Postg
 /** `` procedure`CREATE [OR REPLACE] PROCEDURE name(args) LANGUAGE ... AS $$ ... $$` ``: one procedure. */
 export function procedure(strings: TemplateStringsArray, ...values: unknown[]): PostgresProcedure {
   return build("procedure", strings, values) as PostgresProcedure;
+}
+
+/**
+ * `` aggregate`CREATE [OR REPLACE] AGGREGATE name(argtype, ...) (SFUNC = ..., STYPE = ...)` ``:
+ * one aggregate, identified, as a function is, by its argument types.
+ */
+export function aggregate(strings: TemplateStringsArray, ...values: unknown[]): PostgresAggregate {
+  return build("aggregate", strings, values) as PostgresAggregate;
+}
+
+/** `` collation`CREATE COLLATION name (provider = icu, locale = '...')` ``: one collation. */
+export function collation(strings: TemplateStringsArray, ...values: unknown[]): PostgresCollation {
+  return build("collation", strings, values) as PostgresCollation;
+}
+
+/**
+ * `` cast`CREATE CAST (source AS target) WITH FUNCTION ${fn}(source) [AS ASSIGNMENT | AS IMPLICIT]` ``:
+ * one cast, named by its two types. Creating one takes owning the source or
+ * the target type.
+ */
+export function cast(strings: TemplateStringsArray, ...values: unknown[]): PostgresCast {
+  return build("cast", strings, values) as PostgresCast;
+}
+
+/**
+ * `` eventTrigger`CREATE EVENT TRIGGER name ON ddl_command_end WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION ${fn}()` ``:
+ * one event trigger, the database's (no schema). Creating one takes a superuser.
+ */
+export function eventTrigger(strings: TemplateStringsArray, ...values: unknown[]): PostgresEventTrigger {
+  return build("eventTrigger", strings, values) as PostgresEventTrigger;
 }
 
 /** `` trigger`CREATE [OR REPLACE] [CONSTRAINT] TRIGGER name ... ON ${table} ... EXECUTE FUNCTION ${fn}()` ``: one trigger on its table. */

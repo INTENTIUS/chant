@@ -16,12 +16,12 @@
  * With `schema`, the names the DDL leaves unqualified are qualified with it,
  * as an ORM's connection would: an object's own name, an index's, trigger's
  * or policy's table, a foreign key's table, a comment's target, and a column
- * type naming an enum or domain the file creates.
+ * type naming an enum, composite, range or domain type the file creates.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
 import { isTrivia, tokenizeText, type Token } from "../postgres/tokens";
-import { identValue, parseStatements, type NameNode, type StatementNode } from "../postgres/parser";
+import { identValue, parseStatements, type NameNode, type Span, type StatementNode } from "../postgres/parser";
 import * as tags from "../postgres/entities";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../postgres/entity-types";
 import { POSTGRES_TAG_OF } from "../postgres/import/generator";
@@ -117,7 +117,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
   // The types the file creates, so a column of one is qualified with the rest.
   const fileTypes = new Set<string>();
   for (const { tokens, node } of parsed) {
-    if (node.statement === "enum" || node.statement === "domain") {
+    if (node.statement === "enum" || node.statement === "domain" || node.statement === "composite" || node.statement === "range") {
       const pieces = nameOf(tokens, node.name);
       if (pieces.length === 1) fileTypes.add(pieces[0]!);
     }
@@ -138,7 +138,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     };
     switch (node.statement) {
       case "comment":
-        if (node.objectType !== "SCHEMA" && node.objectType !== "EXTENSION" && node.objectType !== "ROLE" && node.objectType !== "TRIGGER" && node.objectType !== "POLICY" && node.objectType !== "CONSTRAINT" && node.objectType !== "COLUMN") mark(node.target);
+        if (!["SCHEMA", "EXTENSION", "ROLE", "TRIGGER", "POLICY", "CONSTRAINT", "COLUMN", "CAST", "EVENT TRIGGER"].includes(node.objectType)) mark(node.target);
         if (node.objectType === "COLUMN" && nameOf(tokens, node.target).length === 2 && options.schema) {
           const first = tokens.slice(node.target.span.from, node.target.span.to).find((t) => !isTrivia(t));
           if (first) inserts.add(tokens.indexOf(first));
@@ -177,7 +177,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
       problems.push(`an index with no name (its declaration needs one): ${firstLine(tokensText(tokens))}`);
       continue;
     }
-    const ownName = !["schema", "extension", "index", "trigger", "policy", "role", "grant"].includes(node.statement);
+    const ownName = !["schema", "extension", "index", "trigger", "policy", "role", "grant", "cast", "eventTrigger"].includes(node.statement);
     if (ownName && "name" in node) mark(node.name);
     const object: PgFileObject = { node, statements: [rewrite(tokens, inserts, options.schema)], constraints: [], line, unparsed: fileUnparsed("unknown" in node ? node.unknown : undefined, tokens, tokensText(tokens), line) };
     objects.push(object);
@@ -277,6 +277,10 @@ function ownerKey(node: StatementNode, tokens: Token[], nameOf: NameOf, qualify:
     case "trigger":
     case "policy":
       return `${node.statement} ${nameOf(tokens, node.name).at(-1) ?? ""} ON ${qkey(qualify(nameOf(tokens, node.table)))}`;
+    case "eventTrigger":
+      return `eventTrigger ${nameOf(tokens, node.name).at(-1) ?? ""}`;
+    case "cast":
+      return `cast ${castKey(tokens, node.source, node.target)}`;
     case "grant":
     case "comment":
     case "rowSecurity":
@@ -305,12 +309,22 @@ function followOnOwner(node: StatementNode, tokens: Token[], nameOf: NameOf, qua
     case "TRIGGER":
     case "POLICY":
       return node.on ? `${node.objectType.toLowerCase()} ${target.at(-1) ?? ""} ON ${qkey(qualify(nameOf(tokens, node.on)))}` : undefined;
+    case "EVENT TRIGGER":
+      return `eventTrigger ${target.at(-1) ?? ""}`;
+    case "CAST":
+      return node.cast ? `cast ${castKey(tokens, node.cast.source, node.cast.target)}` : undefined;
     case "CONSTRAINT":
     case "DOMAIN CONSTRAINT":
       return node.on ? `rel ${qkey(qualify(nameOf(tokens, node.on)))}` : undefined;
     default:
       return `rel ${qkey(qualify(target))}`;
   }
+}
+
+/** A cast's two types as one key, spacing and case aside. */
+function castKey(tokens: readonly Token[], source: Span, target: Span): string {
+  const text = (sp: Span) => tokens.slice(sp.from, sp.to).filter((t) => !isTrivia(t)).map((t) => (t.kind === "ident" ? t.text.toLowerCase() : t.text)).join(" ");
+  return `(${text(source)} AS ${text(target)})`;
 }
 
 /** The statement's tokens with `schema.` inserted before each marked one. */

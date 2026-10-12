@@ -151,7 +151,7 @@ export const refName = (o: { kind: CanonicalKind; schema?: string; name: string;
     ? `${o.name}${o.signature ?? ""}`
     : o.kind === "schema" || o.kind === "extension" || o.kind === "role" || o.schema === undefined
       ? o.name
-      : `${o.schema}.${o.name}${o.kind === "function" || o.kind === "procedure" ? (o.signature ?? "") : ""}`;
+      : `${o.schema}.${o.name}${o.kind === "function" || o.kind === "procedure" || o.kind === "aggregate" ? (o.signature ?? "") : ""}`;
 
 /**
  * The objects a Postgres `chant build` output declares, in creation order,
@@ -564,7 +564,13 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
       "Postgres::MaterializedView": "materializedView",
       "Postgres::Sequence": "sequence",
       "Postgres::Enum": "enum",
+      "Postgres::CompositeType": "composite",
+      "Postgres::RangeType": "range",
       "Postgres::Domain": "domain",
+      "Postgres::Aggregate": "aggregate",
+      "Postgres::Collation": "collation",
+      "Postgres::Cast": "cast",
+      "Postgres::EventTrigger": "eventTrigger",
       "Postgres::Extension": "extension",
       "Postgres::Function": "function",
       "Postgres::Procedure": "procedure",
@@ -577,7 +583,7 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
   )[o.type];
   return {
     kind,
-    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" && kind !== "role" ? { schema: o.schema } : {}),
+    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" && kind !== "role" && kind !== "cast" && kind !== "eventTrigger" ? { schema: o.schema } : {}),
     name: o.name,
     ...(o.signature !== undefined ? { signature: o.signature } : {}),
   };

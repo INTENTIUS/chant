@@ -357,6 +357,27 @@ export const PG_CLASSIFIER_RULES = {
     "chant's parser does not know this clause, so it cannot tell which lock the change takes or whether an in-place statement makes it; the plan refuses it rather than guess. Review it: make it by hand with the ALTER the server documents for the clause, or as expand and contract.",
     `${DOCS}/sql-altertable.html`,
   ),
+  SQLPG300: rule(
+    "SQLPG300",
+    "metadata",
+    "Drop and create a type, aggregate, collation, cast or event trigger",
+    "A composite or range type's definition, a collation's, a cast's and an event trigger's have no ALTER, and an aggregate's argument types, state type and final function cannot be replaced: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, a function or a cast would make the DROP fail); the locks are on its catalog rows only.",
+    `${DOCS}/sql-createtype.html`,
+  ),
+  SQLPG301: rule(
+    "SQLPG301",
+    "expand",
+    "Change a type, aggregate, collation or cast that other objects depend on",
+    "No ALTER makes the change, and DROP refuses while a column, a view, a function or another object depends on the object. Create the new definition under another name, move what depends on it, then drop the old.",
+    `${DOCS}/sql-droptype.html`,
+  ),
+  SQLPG302: rule(
+    "SQLPG302",
+    "metadata",
+    "Replace an aggregate's definition",
+    "CREATE OR REPLACE AGGREGATE (14 and later) replaces the aggregate's functions and options in the catalog; no table is locked. Its argument types, its result and its kind (plain, ordered-set, hypothetical-set) have to stay the same, so a change of the state type or the final function is dropped and created instead (SQLPG300).",
+    `${DOCS}/sql-createaggregate.html`,
+  ),
   SQLPG270: rule("SQLPG270", "drop", "Drop an object", "The object and, for a table, a materialized view or a sequence, its data are gone.", `${DOCS}/sql-droptable.html`),
 } as const satisfies Record<string, PgClassifierRule>;
 

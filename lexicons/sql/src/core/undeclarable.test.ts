@@ -29,10 +29,10 @@ const CATALOG: FakeCatalog = {
   schemas: [{ name: "app" }],
   tables: [{ schema: "app", name: "users", columns: [{ name: "id", type: "bigint", notnull: true }] }],
   undeclarable: [
-    { kind: "aggregate", schema: "app", name: "total(integer)" },
-    { kind: "cast", name: "(app.pair AS text)" },
-    { kind: "composite type", schema: "app", name: "pair" },
-    { kind: "event trigger", name: "audit_ddl" },
+    { kind: "access method", name: "heap2" },
+    { kind: "conversion", schema: "app", name: "latin1_utf8" },
+    { kind: "rule", schema: "app", name: "users_notify ON users" },
+    { kind: "base type", schema: "app", name: "later" },
   ],
 };
 
@@ -45,10 +45,10 @@ describe("Postgres live import", () => {
     );
     expect(err).toBeInstanceOf(UndeclarableObjectsError);
     const message = (err as Error).message;
-    for (const line of ["  - aggregate app.total(integer)", "  - cast (app.pair AS text)", "  - composite type app.pair", "  - event trigger audit_ddl"]) {
+    for (const line of ["  - access method heap2", "  - conversion app.latin1_utf8", "  - rule app.users_notify ON users", "  - base type app.later"]) {
       expect(message).toContain(line);
     }
-    expect(message).toContain("  - aggregate: no tag declares an aggregate yet");
+    expect(message).toContain("  - conversion: no tag declares an encoding conversion");
     expect(message).toContain("--skip-undeclarable");
   });
 
@@ -58,7 +58,7 @@ describe("Postgres live import", () => {
     expect(ir.resources.map((r) => r.properties.name)).toContain("users");
     const left = (ir.warnings ?? []).filter((w) => w.includes("is left out (--skip-undeclarable)"));
     expect(left).toHaveLength(4);
-    expect(left[0]).toBe("aggregate app.total(integer) is left out (--skip-undeclarable): no tag declares an aggregate yet");
+    expect(left[0]).toBe("access method heap2 is left out (--skip-undeclarable): no tag declares an access method; an extension usually installs one, and the extension is declared instead");
   });
 
   test("a selector or owned import does not look", async () => {
@@ -68,11 +68,11 @@ describe("Postgres live import", () => {
   });
 
   test("a managed provider's own objects are its, with a warning, not a refusal", async () => {
-    pg.catalog = { ...CATALOG, undeclarable: [{ kind: "aggregate", schema: "auth", name: "x(integer)" }] };
+    pg.catalog = { ...CATALOG, undeclarable: [{ kind: "conversion", schema: "auth", name: "x" }] };
     pg.provider = "supabase";
     try {
       const ir = await exportPostgres({ environment: "prod" });
-      expect(ir.warnings).toContain("aggregate auth.x(integer) is kept by Supabase; left out");
+      expect(ir.warnings).toContain("conversion auth.x is kept by Supabase; left out");
     } finally {
       pg.provider = undefined;
     }
@@ -115,20 +115,22 @@ describe("file import", () => {
   const DDL = `CREATE SCHEMA app;
 CREATE TABLE app.t (id int PRIMARY KEY);
 CREATE AGGREGATE app.total(int) (sfunc = int4pl, stype = int);
+CREATE CONVERSION app.latin1_utf8 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 CREATE TYPE app.pair AS (a int, b text);
+CREATE TYPE app.later;
 CREATE COLLATION app.ci (provider = icu, locale = 'und');`;
 
   test("a CREATE of a kind chant cannot declare is an error naming it", () => {
-    expect(() => new SqlFileParser("postgres").parse(DDL)).toThrow(/aggregate: chant cannot declare it \(no tag declares an aggregate yet\): CREATE AGGREGATE app\.total/);
+    expect(() => new SqlFileParser("postgres").parse(DDL)).toThrow(/conversion: chant cannot declare it \(no tag declares an encoding conversion\): CREATE CONVERSION app\.latin1_utf8/);
   });
 
   test("skipUndeclarable imports the rest and lists them as warnings", () => {
     const ir = new SqlFileParser("postgres", { skipUndeclarable: true }).parse(DDL);
-    expect(ir.resources.map((r) => r.properties.name)).toEqual(["app", "t"]);
+    // An aggregate, a composite type and a collation are declared kinds (#3911): imported, not refused.
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["app", "t", "total", "pair", "ci"]);
     expect(ir.warnings).toEqual([
-      "left out (skipUndeclarable): aggregate: chant cannot declare it (no tag declares an aggregate yet): CREATE AGGREGATE app.total(int) (sfunc = int4pl, stype = int)",
-      "left out (skipUndeclarable): composite type: chant cannot declare it (no tag declares a composite type yet): CREATE TYPE app.pair AS (a int, b text)",
-      "left out (skipUndeclarable): collation: chant cannot declare it (no tag declares a collation yet): CREATE COLLATION app.ci (provider = icu, locale = 'und')",
+      "left out (skipUndeclarable): conversion: chant cannot declare it (no tag declares an encoding conversion): CREATE CONVERSION app.latin1_utf8 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8",
+      "left out (skipUndeclarable): base type: chant cannot declare it (no tag declares a base type; its input and output functions are C code an extension installs): CREATE TYPE app.later",
     ]);
   });
 

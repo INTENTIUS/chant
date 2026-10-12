@@ -22,6 +22,22 @@
       "kind": "resource",
       "resourceType": "ClickHouse::MaterializedView"
     },
+    "PostgresAggregate": {
+      "kind": "resource",
+      "resourceType": "Postgres::Aggregate"
+    },
+    "PostgresCast": {
+      "kind": "resource",
+      "resourceType": "Postgres::Cast"
+    },
+    "PostgresCollation": {
+      "kind": "resource",
+      "resourceType": "Postgres::Collation"
+    },
+    "PostgresCompositeType": {
+      "kind": "resource",
+      "resourceType": "Postgres::CompositeType"
+    },
     "PostgresDefaultPrivileges": {
       "kind": "resource",
       "resourceType": "Postgres::DefaultPrivileges"
@@ -33,6 +49,10 @@
     "PostgresEnum": {
       "kind": "resource",
       "resourceType": "Postgres::Enum"
+    },
+    "PostgresEventTrigger": {
+      "kind": "resource",
+      "resourceType": "Postgres::EventTrigger"
     },
     "PostgresExtension": {
       "kind": "resource",
@@ -61,6 +81,10 @@
     "PostgresProcedure": {
       "kind": "resource",
       "resourceType": "Postgres::Procedure"
+    },
+    "PostgresRangeType": {
+      "kind": "resource",
+      "resourceType": "Postgres::RangeType"
     },
     "PostgresRole": {
       "kind": "resource",

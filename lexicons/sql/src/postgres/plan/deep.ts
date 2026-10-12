@@ -36,7 +36,13 @@ const TAG: Record<string, (s: TemplateStringsArray) => { props: object }> = {
   [POSTGRES_ENTITY_TYPES.materializedView]: tags.view,
   [POSTGRES_ENTITY_TYPES.sequence]: tags.sequence,
   [POSTGRES_ENTITY_TYPES.enum]: tags.type,
+  [POSTGRES_ENTITY_TYPES.composite]: tags.type,
+  [POSTGRES_ENTITY_TYPES.range]: tags.type,
   [POSTGRES_ENTITY_TYPES.domain]: tags.domain,
+  [POSTGRES_ENTITY_TYPES.aggregate]: tags.aggregate,
+  [POSTGRES_ENTITY_TYPES.collation]: tags.collation,
+  [POSTGRES_ENTITY_TYPES.cast]: tags.cast,
+  [POSTGRES_ENTITY_TYPES.eventTrigger]: tags.eventTrigger,
   [POSTGRES_ENTITY_TYPES.extension]: tags.extension,
   [POSTGRES_ENTITY_TYPES.function]: tags.func,
   [POSTGRES_ENTITY_TYPES.procedure]: tags.procedure,
@@ -119,6 +125,18 @@ const PROP_OF_FIELD: Record<string, string[]> = {
   connectionLimit: ["connectionLimit"],
   rowSecurity: ["rowSecurity"],
   forceRowSecurity: ["forceRowSecurity"],
+  attributeDefs: ["attributes"],
+  subtype: ["subtype"],
+  subtypeOpclass: ["subtypeOpclass"],
+  collation: ["collation"],
+  canonical: ["canonical"],
+  subtypeDiff: ["subtypeDiff"],
+  multirange: ["multirangeTypeName"],
+  definition: ["options"],
+  castMethod: ["method", "functionArgs"],
+  context: ["context"],
+  event: ["event"],
+  tags: ["tags"],
 };
 
 /** Props keys that hold constraints, by constraint kind. */
@@ -139,6 +157,10 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
   };
   if (d.name === l.name) adopt("name");
   if (d.schema === l.schema) adopt("schema");
+  // An aggregate's argument types and a cast's two types are its identity: the same, they are the declaration's.
+  if (d.kind === "aggregate" && d.signature === l.signature) for (const key of ["args", "orderBy"]) adopt(key);
+  if (d.kind === "cast" && d.name === l.name) for (const key of ["sourceType", "targetType"]) adopt(key);
+
   const fieldKeys = new Set([...Object.keys(d.fields), ...Object.keys(l.fields)]);
   for (const f of fieldKeys) {
     if (f === "schema" && d.kind !== "extension") continue;
@@ -169,6 +191,17 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
       ...read.filter((c) => c.at !== undefined).sort((a, b) => a.at! - b.at!),
       ...read.filter((c) => c.at === undefined),
     ].map((c) => c.value);
+  }
+  // An aggregate's or a collation's `options` is the declaration's only when every field read from it is the same (a role's `options` shares the key).
+  const optionFields = d.kind === "aggregate" ? ["definition"] : d.kind === "collation" ? ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"] : undefined;
+  if (optionFields) {
+    if (optionFields.every((f) => JSON.stringify(d.fields[f]) === JSON.stringify(l.fields[f]))) adopt("options");
+    else out.options = live.options;
+  }
+  // A cast's `method` shares its key with an index's.
+  if (d.kind === "cast" && JSON.stringify(d.fields.castMethod) !== JSON.stringify(l.fields.castMethod)) {
+    out.method = live.method;
+    out.functionArgs = live.functionArgs;
   }
   if (d.kind === "table" || d.kind === "domain") {
     // A constraint the declaration says the same as the server is the declaration's (its name included or left out).
