@@ -60,6 +60,7 @@ import {
 import { getInterpolationFields, getProvenance, setPathProvenance, setProvenance } from "../provenance";
 import { foldProvenanceOfEntities, type FoldProvenance } from "../fold-provenance";
 import { collectEntities } from "./collect";
+import { hostCompositeName, markHostCompositeInstance } from "./host-composite";
 import { intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
@@ -3056,53 +3057,6 @@ async function interpretCompositeFactory(
   }
 }
 
-/**
- * chant#3598 — a host composite instance's own marker. Non-enumerable and
- * symbol-keyed, like provenance, so nothing that serializes or compares the
- * exports sees it. It carries the composite's name, which the members object
- * otherwise has no record of once it is returned.
- */
-const HOST_COMPOSITE_INSTANCE = Symbol.for("chant.fold.hostCompositeInstance");
-
-/**
- * Mark `members` as the instance a host's composite produced, and return it
- * unchanged.
- *
- * chant#3608 — every declarable member, and every member of a nested host
- * instance, is also stamped with the composite, the way `expandComposite`
- * stamps a chant instance's members. A destructured member is never expanded,
- * so this is the only record it has that a composite wrote it, and without
- * it a path the fold did not attribute reads as authored and so `direct`.
- * `setProvenance` keeps the first writer, and a nested instance was marked
- * when its own call returned, so a member keeps its innermost composite.
- */
-function markHostCompositeInstance(members: Record<string, unknown>, compositeName: string): Record<string, unknown> {
-  if (Object.isExtensible(members) && !Object.prototype.hasOwnProperty.call(members, HOST_COMPOSITE_INSTANCE)) {
-    Object.defineProperty(members, HOST_COMPOSITE_INSTANCE, {
-      value: compositeName,
-      enumerable: false,
-      configurable: true,
-    });
-  }
-  stampHostCompositeMembers(members, compositeName);
-  return members;
-}
-
-/** Stamp `composite` on each declarable member of a host instance, descending into nested host instances. */
-function stampHostCompositeMembers(members: Record<string, unknown>, compositeName: string): void {
-  for (const member of Object.values(members)) {
-    if (isDeclarable(member)) setProvenance(member, { composite: compositeName });
-    else if (hostCompositeName(member) !== undefined) stampHostCompositeMembers(member as Record<string, unknown>, compositeName);
-  }
-}
-
-/** The composite name a host composite instance was marked with, or `undefined` for any other value. */
-function hostCompositeName(value: unknown): string | undefined {
-  if (!isIndexableObject(value)) return undefined;
-  const name = (value as Record<symbol, unknown>)[HOST_COMPOSITE_INSTANCE];
-  return typeof name === "string" ? name : undefined;
-}
-
 /** Evaluate an admissible factory body's statements in order, binding each `const`, and return the `return` expression's value. */
 async function interpretFactoryBody(
   fn: ts.ArrowFunction | ts.FunctionExpression,
@@ -5081,7 +5035,7 @@ export async function foldProject(
       const attempt = attempts.get(file);
       return {
         file,
-        exports: attempt?.ok === true ? expandHostCompositeExports(Object.fromEntries(attempt.exportedValues)) : {},
+        exports: attempt?.ok === true ? Object.fromEntries(attempt.exportedValues) : {},
       };
     }),
   );
@@ -5151,71 +5105,6 @@ function foldProvenanceByFile(
     if (target) target[name] = record;
   }
   return out;
-}
-
-/**
- * chant#3598 — a file's exports with every host composite instance replaced by
- * its members, for {@link foldProvenanceByFile} only.
- *
- * A host's registration form (chant#2442) returns the members object the
- * factory built, not a chant `CompositeInstance`, because wrapping it would run
- * chant's member validation against the host's own entities. `collectEntities`
- * expands only chant's instances, so an instance exported whole
- * (`export const store = Store({...})`) contributed no entity and therefore no
- * record, while a destructured member, a plain declarable export, did.
- *
- * The members are named and stamped the way `expandComposite` names and stamps
- * a chant instance: `${exportName}${Member}`, with a whole-entity `composite`
- * origin under the paths the fold already attributed. That origin is written
- * before `collectEntities` adds its `authored` one, and the first writer wins,
- * so a path the fold did not attribute is `unknown` rather than `direct`.
- *
- * Only a top-level export is expanded. A host instance nested in another
- * composite's body or placed in an array does not fold today, so its file is
- * `run` and has no record to give.
- *
- * The exports a caller receives in the verdict are the originals.
- */
-function expandHostCompositeExports(exports: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(exports)) {
-    if (hostCompositeName(value) === undefined) {
-      out[name] = value;
-      continue;
-    }
-    expandHostCompositeInstance(name, value as Record<string, unknown>, name, out);
-  }
-  return out;
-}
-
-/**
- * chant#3608 — one host instance's members into `out`, a nested host instance
- * expanded in place under its member's name (`siteMainBucket`), as
- * `expandComposite` expands a nested chant instance. Every member belongs to
- * the top-level `instance`; its composite is the innermost one, which
- * {@link markHostCompositeInstance} already stamped, so the whole-entity
- * origin names that composite too.
- */
-function expandHostCompositeInstance(
-  prefix: string,
-  members: Record<string, unknown>,
-  instance: string,
-  out: Record<string, unknown>,
-): void {
-  const compositeName = hostCompositeName(members) as string;
-  for (const [memberName, member] of Object.entries(members)) {
-    if (memberName.length === 0) continue;
-    const fullName = `${prefix}${memberName[0].toUpperCase()}${memberName.slice(1)}`;
-    if (hostCompositeName(member) !== undefined) {
-      expandHostCompositeInstance(fullName, member as Record<string, unknown>, instance, out);
-      continue;
-    }
-    if (!isDeclarable(member)) continue;
-    setProvenance(member, { composite: compositeName, compositeInstance: instance });
-    const composite = getProvenance(member)?.composite ?? compositeName;
-    setPathProvenance(member, "", { kind: "composite", composite, instance });
-    out[fullName] = member;
-  }
 }
 
 /** The deepest directory every one of `files` sits under. */

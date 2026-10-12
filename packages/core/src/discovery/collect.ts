@@ -4,6 +4,7 @@ import { isCompositeInstance, expandComposite, compositeOfMember } from "../comp
 import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
 import { setProvenance, type EntityProvenance } from "../provenance";
+import { expandHostComposite, hostCompositeName } from "./host-composite";
 
 /**
  * The entity key for an export. `export default` is per-module — the `Op` pattern
@@ -119,6 +120,18 @@ function enumerateEntries(
             provenance: { sourceFile: file, compositeInstance: name },
           });
         }
+      } else if (hostCompositeName(value) !== undefined) {
+        // chant#3612 — a host composite instance the fold resolved, expanded
+        // here rather than by one caller, so `build()` and `foldProject`
+        // report the same entities for it. See ./host-composite.ts.
+        for (const [expandedName, entity] of expandHostComposite(name, value as Record<string, unknown>)) {
+          entries.push({
+            bareKey: expandedName,
+            value: entity,
+            file,
+            provenance: { sourceFile: file, compositeInstance: name },
+          });
+        }
       } else if (isLexiconOutput(value)) {
         // LexiconOutput is not a Declarable but build() expects to find them in
         // the entities map so it can collect and pass them to serializers.
@@ -133,7 +146,8 @@ function enumerateEntries(
 /**
  * Collects all declarable entities from imported modules.
  * CompositeInstance exports are expanded into individual entities
- * with `{exportName}_{memberName}` naming.
+ * with `{exportName}_{memberName}` naming, and so are host composite
+ * instances the fold resolved (chant#3612, ./host-composite.ts).
  * LexiconOutput exports are also collected so that build() can
  * extract them and pass them to the serializer.
  *
