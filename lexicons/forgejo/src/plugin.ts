@@ -24,6 +24,7 @@ import { forgejoLintRules } from "./lint/rules/delegate-to-github";
 import { forgejoCompletions } from "./lsp/completions";
 import { forgejoHover } from "./lsp/hover";
 import { forgejoConfigSchema } from "./config";
+import { githubGraphEdges } from "@intentius/chant-lexicon-github";
 
 const reuseNote =
   "forgejo reuses the github lexicon's entities — run `chant generate` in the github lexicon instead.";
@@ -33,6 +34,9 @@ export const forgejoPlugin: LexiconPlugin = {
   configSchema: forgejoConfigSchema,
   auditCatalog: () => forgejoAuditCatalog,
   serializer: forgejoSerializer,
+  // Forgejo workflows are github entities, so github resolves their `needs`,
+  // `uses:` and `workflow_run` edges (#3910); `.forgejo/workflows/` paths too.
+  graphEdges: (entities) => githubGraphEdges(entities),
 
   // Generate mode (#969): component graph → Forgejo Actions workflow. Reuses
   // github's pipeline structure and applies the Forgejo dialect (runner labels,

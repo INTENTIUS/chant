@@ -14,6 +14,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { githubSerializer } from "./serializer";
+import { githubGraphEdges } from "./graph-edges";
 import { useTypedActionsRule } from "./lint/rules/use-typed-actions";
 import { useConditionBuildersRule } from "./lint/rules/use-condition-builders";
 import { noHardcodedSecretsRule } from "./lint/rules/no-hardcoded-secrets";
@@ -46,6 +47,8 @@ export const githubPlugin: LexiconPlugin = {
   // Ordered waves of Op runs, each behind one gate (#3679).
   generateOpWavesPipeline: (spec, options) => generateGithubOpWavesPipeline(spec, options),
   serializer: githubSerializer,
+  // `needs`, reusable-workflow `uses:` and `workflow_run` as graph edges (#3910).
+  graphEdges: (entities) => githubGraphEdges(entities),
 
   lintRules(): LintRule[] {
     return [

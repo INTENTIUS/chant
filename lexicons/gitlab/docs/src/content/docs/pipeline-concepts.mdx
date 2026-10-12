@@ -296,3 +296,19 @@ export const deployInfra = new Job({
   }),
 });
 ```
+
+## Dependencies in `chant graph`
+
+`chant graph --format ir|mermaid|dot` draws the pipeline as one `.gitlab-ci.yml` box holding its jobs, and draws the dependencies the jobs write as strings as edges:
+
+| Edge `kind` | From | To | From the source |
+|-------------|------|----|-----------------|
+| `needs` | job | job | `needs: ["build"]`, `needs: [new Need({ job: "build" })]`, or the `Job` itself; jobs are named by their kebab-cased export name |
+| `needs` (via `stage`) | job | job | a job with no `needs:` waits for every job in the nearest earlier stage, and further back past any job there that starts early with `needs:` |
+| `extends` | job | job | `extends: "base-job"` |
+| `triggers` | job | pipeline | `trigger:`, a child pipeline file or another project |
+| `includes` | pipeline | file | the `Pipeline` entity's `include:` |
+
+Stage order follows the `stages:` list the build writes: the `Pipeline` entity's list, then the stages jobs name in first use, or GitLab's `build`, `test`, `deploy` when nothing names one. A job with no `stage` is in `test`.
+
+`trigger:`, `include:` and a cross-project or parent-pipeline `needs: { project, job, ref }` name a pipeline or file this project does not generate, so they are listed under `dangling` in the IR with `crossPipeline: true`, drawn as dashed edges to a `(not declared)` stub. So is a job name nothing declares, such as a hidden template from an included file. See [`chant graph`](/chant/cli/graph/#ci-edges).

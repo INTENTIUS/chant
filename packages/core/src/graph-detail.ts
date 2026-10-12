@@ -159,10 +159,13 @@ function toComposites(ir: GraphIR): GraphIR {
     if (from === to) continue; // edge internal to a composite
     // A property label only makes sense when neither endpoint was collapsed.
     const collapsed = from !== e.from || to !== e.to;
+    // The kind survives the collapse (#3910): a job's `needs` into a
+    // collapsed composite is still a `needs`, not a typed reference.
+    const cross = e.crossPipeline ? { crossPipeline: true } : {};
     const edge: IREdge = collapsed
-      ? { from, to, kind: "ref" }
-      : { from, to, kind: "ref", viaAttr: e.viaAttr };
-    const key = `${from}\0${to}\0${edge.viaAttr ?? ""}`;
+      ? { from, to, kind: e.kind, ...cross }
+      : { from, to, kind: e.kind, viaAttr: e.viaAttr, ...cross };
+    const key = `${from}\0${to}\0${edge.viaAttr ?? ""}\0${collapsed ? e.kind : ""}`;
     if (!seen.has(key)) seen.set(key, edge);
   }
 
@@ -173,11 +176,14 @@ function toComposites(ir: GraphIR): GraphIR {
   // not just the base + ATTRIBUTES. Filter to handles whose node survived.
   const surviving = new Set(nodes.map((n) => n.id));
   const imports = ir.imports?.filter((i) => surviving.has(i.node));
+  // Unresolved references (#3910) stay with whichever node now holds them.
+  const dangling = ir.dangling?.map((d) => ({ ...d, from: idMap.get(d.from) ?? d.from }));
   return {
     nodes,
     edges: sortEdges([...seen.values()]),
     groups: { byLexicon: byLexiconOf(nodes) },
     ...(imports && imports.length ? { imports } : {}),
+    ...(dangling && dangling.length ? { dangling } : {}),
   };
 }
 

@@ -55,6 +55,10 @@ On build, the dialect:
 Everything else is emitted by the github serializer, which already produces
 the exact YAML shape Forgejo executes.
 
+## Dependencies in `chant graph`
+
+A forgejo project graphs the way a github one does: `chant graph --format ir|mermaid|dot` draws each workflow as a box of its jobs, with job `needs`, reusable-workflow calls (`uses: ./.forgejo/workflows/<file>` as well as `./.github/workflows/`), `workflow_run` triggers and local composite actions as edges. The github lexicon resolves them; see [workflow concepts](/chant/lexicons/github/workflow-concepts/#dependencies-in-chant-graph). The graph reads the source before the dialect applies, so a rewritten action ref does not change it.
+
 ## Lint rules and editor support
 
 Forgejo has no lint rules or LSP completions/hover of its own — a forgejo

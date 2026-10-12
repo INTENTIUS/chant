@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
+import { applyLexiconGraphEdges, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconGraphEdges, type LiveObservation } from "../../graph-ir";
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
@@ -726,6 +726,26 @@ function withGraphMeta(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<stri
   return Object.keys(added).length === 0 ? ir : { ...ir, meta: { ...(ir.meta ?? {}), ...added } };
 }
 
+/**
+ * Add the edges the lexicons' `graphEdges` hooks resolve (#3910): CI
+ * dependencies written as strings (`needs`, `uses:`, `trigger:`, `include:`,
+ * `extends`), which the AttrRef walk in `buildGraphIr` cannot see. A hook that
+ * throws costs its own edges and a warning, not the graph.
+ */
+function withLexiconEdges(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
+  const reports: LexiconGraphEdges[] = [];
+  for (const p of plugins) {
+    if (!p.graphEdges) continue;
+    try {
+      const report = p.graphEdges(entities);
+      if (report) reports.push(report);
+    } catch (err) {
+      console.error(formatWarning({ message: `the ${p.name} lexicon's graphEdges failed (${err instanceof Error ? err.message : String(err)}); its edges are left out` }));
+    }
+  }
+  return reports.length === 0 ? ir : applyLexiconGraphEdges(ir, reports);
+}
+
 /** Returned instead of a graph when the prediction cannot be attempted honestly. */
 const REFUSED = Symbol("behaviour-refused");
 
@@ -867,6 +887,7 @@ async function runGraphView(
     const plugins = ctx.plugins.length > 0
       ? ctx.plugins
       : await loadPlugins(await projectLexiconsOrNone(projectPath));
+    ir = withLexiconEdges(ir, plugins as LexiconPlugin[], result.entities);
     const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
       // No environment on the declared path: the file is not deployed anywhere
       // yet, and naming one would claim it was.

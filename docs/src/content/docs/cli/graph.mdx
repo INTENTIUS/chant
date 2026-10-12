@@ -128,7 +128,7 @@ chant graph ./infra --format layout    # node positions (dagre by default — no
 | Format | Output | Needs |
 |--------|--------|-------|
 | `mermaid` | A Mermaid `flowchart` with one subgraph per lexicon. The **zero-install default** — renders in GitHub, docs, and browsers. | nothing |
-| `ir` | The graph IR as JSON: `version`, `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property), and `groups`. The stable contract downstream diagram tools consume. | nothing |
+| `ir` | The graph IR as JSON: `version`, `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property and a `kind`), `groups`, and `dangling` when a CI reference names nothing declared. The stable contract downstream diagram tools consume. | nothing |
 | `dot` | Graphviz DOT text, with lexicon clusters and labelled edges. Render directly with `dot -Tsvg`, or feed to a layout engine. | nothing to produce; `dot` to render |
 | `layout` | Node positions for a custom painter that does its own drawing: `{ width, height, nodes: [{id, x, y, w, h}] }` (y-up, origin bottom-left). | nothing (dagre); `dot` only with `--layout-engine graphviz` |
 
@@ -148,9 +148,38 @@ The format changes only additively. A release may add a field, an edge kind or a
 
 `byComposite` groups the nodes one composite instance expanded into, and `byContainer` (live graphs only) carries observed containment, a VPC's subnets and their instances, nested flatly so a renderer can recurse it.
 
+`byPipeline` (CI lexicons) maps each workflow or pipeline to the nodes that run in it: a GitHub workflow and its jobs, or every job of a GitLab `.gitlab-ci.yml`. Mermaid and DOT draw each one as a box inside its lexicon's box.
+
 ### Edges from a lexicon that parses foreign source
 
 Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. An edge is an edge whichever way it was found, and a consumer does not have to know.
+
+### CI edges
+
+A CI lexicon writes its dependencies as strings: `needs: ["build"]`, `uses: ./.github/workflows/ci.yml`, `include: ci/templates.yml`. The github, forgejo and gitlab lexicons resolve those strings against the project's declared entities, the way their serializers place jobs in workflows, and report each one as an edge with a `kind` saying what it means:
+
+| `kind` | From | To | Written as |
+|--------|------|----|------------|
+| `needs` | job | job it waits for | GitHub and GitLab `needs:` (a name, `{ job }`, or the Job itself). A GitLab job with no `needs:` waits for the stage before its own, reported with `viaAttr: "stage"` |
+| `calls` | job | reusable workflow | `uses: ./.github/workflows/<file>` (or `.forgejo/workflows/`), matched to the declared workflow written to that file. A step using a local composite action by path is a `calls` too |
+| `triggers` | job or workflow | pipeline | GitLab `trigger:` (the job starts the child or multi-project pipeline). GitHub `on.workflow_run.workflows` (the workflow named finishing starts this one), matched by workflow `name` |
+| `includes` | pipeline | file | GitLab `include:` |
+| `extends` | job | job it inherits from | GitLab `extends:` |
+
+Every edge points from the entity that wrote the reference. Edges that leave their pipeline (a reusable-workflow call, `workflow_run`, a GitLab trigger, include or cross-project `needs`) carry `crossPipeline: true`, and Mermaid and DOT draw them dashed. Other edges render labelled with their kind, plus the attribute when it adds something (`needs (stage)`).
+
+A string that names nothing declared in the project is never dropped and never matched to a near name. It goes on `dangling`, as written:
+
+```json
+"dangling": [
+  { "from": "deploy", "kind": "needs", "path": "needs.project", "value": "group/lib@main:package", "crossPipeline": true },
+  { "from": "build", "kind": "calls", "path": "steps.uses", "value": "./.github/actions/setup" }
+]
+```
+
+Another repository's workflow, a GitLab child pipeline or included file (chant generates one `.gitlab-ci.yml` per project), a hidden `extends` template from an included file, a composite action (chant does not declare them) and a typo'd job name all land here. Mermaid and DOT draw each as a dashed edge to a stub labelled `(not declared)`.
+
+A lexicon reports these through the plugin's `graphEdges(entities)` hook; see the [lexicon authoring overview](/chant/lexicon-authoring/overview/).
 
 ### `--format layout`: size-aware positions
 

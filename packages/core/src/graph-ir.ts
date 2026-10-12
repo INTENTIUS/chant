@@ -79,16 +79,90 @@ export interface IRNode {
   runtimeOwner?: string;
 }
 
-/** A directed dependency: `from` references an attribute of `to`. */
+/**
+ * What an edge means (#3910). `ref` is a typed cross-resource reference (an
+ * `AttrRef`, a `Ref` intrinsic, a whole node held in props, or an
+ * {@link EntityReference}). The rest are the dependency strings a CI lexicon
+ * writes, reported through a plugin's `graphEdges` hook:
+ *
+ *  - `needs`    — job waits for job (GitHub/GitLab `needs:`, GitLab stage order)
+ *  - `calls`    — job runs a reusable workflow or a local composite action (`uses:`)
+ *  - `triggers` — a pipeline starts another one: GitLab `trigger:` (from starts to),
+ *                 GitHub `on.workflow_run` (to finishing starts from)
+ *  - `includes` — a pipeline pulls in another file's config (GitLab `include:`)
+ *  - `extends`  — a job inherits another job's keys (GitLab `extends:`)
+ *
+ * Every edge points from the entity that holds the reference to the entity it
+ * names. The set grows additively ({@link GRAPH_IR_VERSION}): a reader ignores
+ * a kind it does not know.
+ */
+export type IREdgeKind = "ref" | "needs" | "calls" | "triggers" | "includes" | "extends";
+
+/** A directed dependency: `from` references `to` (an attribute of it, for `ref`). */
 export interface IREdge {
   from: string;
   to: string;
-  /** "ref" for an AttrRef-derived edge. */
-  kind: "ref";
+  /** "ref" for an AttrRef-derived edge; a CI kind otherwise (see {@link IREdgeKind}). */
+  kind: IREdgeKind;
   /** The consumer-side property the reference flows through, when derivable. */
   viaAttr?: string;
   /** The producer-side attribute referenced (e.g. "id"). Added at detail T3. */
   toAttr?: string;
+  /**
+   * True when the edge leaves the pipeline `from` belongs to (#3910): a
+   * reusable-workflow call, a `workflow_run` trigger, a GitLab child or
+   * multi-project trigger, an include, a cross-project `needs`. A renderer
+   * that draws each pipeline as a group ({@link IRGroups.byPipeline}) reads
+   * this to route the edge between groups. Absent on every in-pipeline edge.
+   */
+  crossPipeline?: boolean;
+}
+
+/**
+ * A reference whose target is not a node of this graph (#3910): a job
+ * `needs` a job no workflow declares, a `uses:` names another repository's
+ * workflow, a GitLab `include:` names a file chant did not generate. Kept on
+ * the IR rather than dropped or matched to a near name, so a reader can tell
+ * "no dependency" from "a dependency on something outside this project".
+ * Field names follow the live resolver's `DanglingRef` (./graph-refs.ts).
+ */
+export interface IRDanglingRef {
+  /** The node holding the reference. */
+  from: string;
+  /** The edge kind the reference would have been. */
+  kind: IREdgeKind;
+  /** Where on `from` it was written, e.g. `needs`, `uses`, `trigger.include`. */
+  path: string;
+  /** The reference exactly as written. */
+  value: string;
+  /** Same meaning as {@link IREdge.crossPipeline}. */
+  crossPipeline?: boolean;
+}
+
+/**
+ * One reference a lexicon reports through its `graphEdges` hook (#3910),
+ * resolved by the lexicon from strings core cannot read: job names, workflow
+ * file paths, pipeline names. `from` and `to` are entity keys. A reference
+ * the lexicon could not resolve sets `dangling` and carries the string as
+ * written in `to`; core turns it into an {@link IRDanglingRef}.
+ */
+export interface LexiconGraphReference {
+  from: string;
+  to: string;
+  kind: IREdgeKind;
+  viaAttr?: string;
+  crossPipeline?: boolean;
+  dangling?: boolean;
+}
+
+/** What a lexicon's `graphEdges` hook returns (#3910). */
+export interface LexiconGraphEdges {
+  references: LexiconGraphReference[];
+  /**
+   * Pipeline membership, `pipeline name -> entity keys`: a workflow and its
+   * jobs, a GitLab pipeline and its jobs. Lands on {@link IRGroups.byPipeline}.
+   */
+  pipelines?: Record<string, string[]>;
 }
 
 /**
@@ -210,6 +284,11 @@ export interface IRGroups {
    * wave-laned renderer reads this the way `byStack` drives boundary boxes.
    * Present only for the component-DAG projection; absent for entity IR. */
   byWave?: Record<string, string[]>;
+  /** CI pipeline membership (#3910): a workflow or pipeline name -> the node
+   * ids it runs (the workflow node and its jobs). Reported by a CI lexicon's
+   * `graphEdges` hook; absent when no lexicon reports one. Edges marked
+   * `crossPipeline` run between these groups. */
+  byPipeline?: Record<string, string[]>;
 }
 
 /** A cross-stack export this stack publishes (a `stackOutput`/`output`): its
@@ -335,6 +414,11 @@ export interface GraphIR {
   imports?: IRImport[];
   /** The CI/pipeline projection alongside the component graph (#989) — see {@link IRPipeline}. */
   pipeline?: IRPipeline;
+  /**
+   * References that name nothing in this graph (#3910) — see
+   * {@link IRDanglingRef}. Absent when there are none.
+   */
+  dangling?: IRDanglingRef[];
   /**
    * Attributes chant computed rather than read back from the provider, keyed by the kind
    * they were folded onto. An enrichment pass records what it derived here so callers can
@@ -683,6 +767,75 @@ export function buildGraphIr(
   if (exports.length) ir.exports = exports;
   if (imports.length) ir.imports = imports;
   return ir;
+}
+
+/**
+ * Add what the lexicons' `graphEdges` hooks reported (#3910) to a built IR.
+ *
+ * A resolved reference between two nodes becomes an edge. When it lands on
+ * the same `from`/`to`/`viaAttr` as an edge the AttrRef walk already found
+ * (a GitLab `needs:` holding the Job object itself, say), the lexicon's edge
+ * replaces it, since the lexicon knows the reference is a `needs` and the walk
+ * only knows it is a reference. A reference marked `dangling`, or whose
+ * target is not a node, goes on `ir.dangling` as written. One whose `from` is
+ * not a node is dropped: there is nothing to hang it on.
+ *
+ * Pure. Returns `ir` itself when no report added anything, so a project with
+ * no CI lexicon prints exactly what it did before.
+ */
+export function applyLexiconGraphEdges(ir: GraphIR, reports: readonly LexiconGraphEdges[]): GraphIR {
+  const nodeIds = new Set(ir.nodes.map((n) => n.id));
+  const edgeMap = new Map<string, IREdge>(ir.edges.map((e) => [edgeKey(e), e]));
+  const danglingMap = new Map<string, IRDanglingRef>((ir.dangling ?? []).map((d) => [danglingKey(d), d]));
+  const byPipeline: Record<string, string[]> = { ...(ir.groups.byPipeline ?? {}) };
+  let changed = false;
+
+  for (const report of reports) {
+    for (const ref of report.references) {
+      if (!nodeIds.has(ref.from)) continue;
+      if (ref.dangling || !nodeIds.has(ref.to)) {
+        const d: IRDanglingRef = {
+          from: ref.from,
+          kind: ref.kind,
+          path: ref.viaAttr ?? ref.kind,
+          value: ref.to,
+          ...(ref.crossPipeline ? { crossPipeline: true } : {}),
+        };
+        danglingMap.set(danglingKey(d), d);
+        changed = true;
+        continue;
+      }
+      if (ref.to === ref.from) continue;
+      const e: IREdge = {
+        from: ref.from,
+        to: ref.to,
+        kind: ref.kind,
+        ...(ref.viaAttr ? { viaAttr: ref.viaAttr } : {}),
+        ...(ref.crossPipeline ? { crossPipeline: true } : {}),
+      };
+      edgeMap.set(edgeKey(e), e);
+      changed = true;
+    }
+    for (const [name, members] of Object.entries(report.pipelines ?? {})) {
+      const present = members.filter((m) => nodeIds.has(m));
+      if (present.length === 0) continue;
+      byPipeline[name] = [...new Set([...(byPipeline[name] ?? []), ...present])].sort();
+      changed = true;
+    }
+  }
+  if (!changed) return ir;
+
+  const edges = [...edgeMap.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
+  const dangling = [...danglingMap.values()].sort((a, b) => danglingKey(a).localeCompare(danglingKey(b)));
+  const groups: IRGroups = { ...ir.groups };
+  if (Object.keys(byPipeline).length) groups.byPipeline = sortKeys(byPipeline);
+  const out: GraphIR = { ...ir, edges, groups };
+  if (dangling.length) out.dangling = dangling;
+  return out;
+}
+
+function danglingKey(d: IRDanglingRef): string {
+  return `${d.from}\0${d.path}\0${d.value}`;
 }
 
 function sortKeys(rec: Record<string, string[]>): Record<string, string[]> {
