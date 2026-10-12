@@ -6,7 +6,7 @@
  * rule because `@intentius/chant/op/gate` pulls in zod and the git ledger
  * code. `@intentius/chant/gate-decision` holds the decision for a plan digest
  * under `ledger`, `pr-review` and `sealed`, the seal check over
- * node:crypto, and the `identity.gates` rule with its class check (#3862). This bundles it the way terragucci would and reads esbuild's
+ * node:crypto, and the `identity.gates` rule with its class check (#3862), reading the classes pinned packages supply as data, without ajv (#3888). This bundles it the way terragucci would and reads esbuild's
  * own list of what went in.
  */
 
@@ -15,7 +15,7 @@ import { build } from "esbuild";
 import { describe, expect, test } from "vitest";
 import { REPO } from "./workspace/__fixtures__/contract-repo";
 
-const FORBIDDEN = [/node_modules\//, /\/src\/fold\//, /\/src\/lint\//, /\/src\/codegen\//, /\/src\/lifecycle\/git\.ts$/, /\/src\/lifecycle\/gate-ledger\.ts$/];
+const FORBIDDEN = [/node_modules\//, /\/src\/workspace\/(kinds|principal-classes|pin-integrity)\.ts$/, /\/src\/fold\//, /\/src\/lint\//, /\/src\/codegen\//, /\/src\/lifecycle\/git\.ts$/, /\/src\/lifecycle\/gate-ledger\.ts$/];
 
 describe("the gate-decision bundle", () => {
   test("holds the decision, the seal check and the plan digest, and no package or git code", async () => {
@@ -46,13 +46,14 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/notify.ts",
       "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/op-waves.ts",
+      "packages/core/src/workspace/class-data.ts",
       "packages/core/src/workspace/identity-gate-rule.ts",
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/gate-seal.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
-    // About 27 KB today.
+    // About 43 KB unminified today, 7 KB of it the pinned classes read as data (#3888).
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
-    expect(bytes).toBeLessThan(40 * 1024);
+    expect(bytes).toBeLessThan(48 * 1024);
   });
 });

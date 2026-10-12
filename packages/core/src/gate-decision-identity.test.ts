@@ -139,16 +139,69 @@ describe.skipIf(!hasSshKeygen)("identity.gates read at base, as chant reads it",
     expect(judgeBoth(invalid.r, invalid.base, invalid.approvals).ship![1]).toMatch(/no signers file/);
   });
 
-  test("a domain class the caller read from a pin, and a pin this reader does not load", () => {
-    const { r, base, approvals } = setup(
-      (k) => ({ ".chant/allowed_signers": `alice ${k.alice.pub}\n`, ".chant/trust.json": JSON.stringify({ schema: 1, roles: { operator: ["alice"] } }) }),
-      { pins: [{ package: "@acme/ops-classes", version: "1.0.0" }] },
+  /** A plugin publishing `classes` at ./workspace-principals, as files under `dir`. */
+  const plugin = (dir: string, classes: unknown[], version = "1.0.0"): Record<string, string> => ({
+    [`${dir}/package.json`]: JSON.stringify({ name: "@acme/ops-classes", version, exports: { "./workspace-principals": "./principals.json" } }),
+    [`${dir}/principals.json`]: JSON.stringify({ schema: 1, classes }),
+  });
+  const OPERATOR = { name: "operator", description: "people who apply infrastructure", role: "operator" };
+  const operatorPolicy = (k: Record<string, Key>) => ({
+    ".chant/allowed_signers": `alice ${k.alice.pub}\nbob ${k.bob.pub}\n`,
+    ".chant/trust.json": JSON.stringify({ schema: 1, roles: { operator: ["alice"], runner: ["bob"] } }),
+  });
+  const install = (r: TestRepo, files: Record<string, string>) => {
+    for (const [path, text] of Object.entries(files)) r.write(path, text);
+  };
+
+  test("a class only a pinned package supplies, read from the installed package as chant reads it (#3888)", () => {
+    const { r, base, approvals } = setup(operatorPolicy, { pins: [{ package: "@acme/ops-classes", version: "1.0.0" }] });
+    install(r, plugin("node_modules/@acme/ops-classes", [OPERATOR]));
+    const ours = judgeBoth(r, base, approvals);
+    // alice holds the operator role at base, so she is an operator and no longer human.
+    expect(ours.ops![1]).toBeNull();
+    expect(ours.ops![2]).toBe("BOB  is not in the class operator that gate ops needs: no role grant at base puts them there");
+    expect(ours.deploy![1]).toMatch(/^alice is not in the class human that gate deploy needs/);
+
+    // A bare clone holds no node_modules; the caller names where the packages are installed.
+    const bare = `${r.dir}.git`;
+    r.git(["clone", "-q", "--bare", r.dir, bare]);
+    const fromBare = identityGateAdmissionAt(bare, base, "ops", { packages: r.dir })!;
+    expect(approvals("ops").map((a) => fromBare.refuses(a))).toEqual(ours.ops);
+  });
+
+  test("a path pin's class is read at base, so the change being applied can't remap it", () => {
+    const { r, base, approvals } = setup((k) => ({ ...operatorPolicy(k), ...plugin("plugins/ops", [OPERATOR]) }), { pins: [{ path: "plugins/ops" }] });
+    // After base the plugin moves the operator class to bob's role; base still says operator.
+    install(r, plugin("plugins/ops", [{ ...OPERATOR, role: "runner-ops" }]));
+    r.commit("remaps operator");
+    const ours = judgeBoth(r, base, approvals);
+    expect(ours.ops![1]).toBeNull();
+  });
+
+  test("a pin it cannot read refuses a gate whose class the pin could change, and says why", () => {
+    const { r, base, approvals } = setup(operatorPolicy, { pins: [{ package: "@acme/ops-classes", version: "1.0.0" }] });
+    const missing = identityGateAdmissionAt(r.dir, base, "ops")!;
+    expect(missing.refuses(approvals("ops")[1])).toBe(
+      `identity.gates.ops names the class operator, and the pins in chant.workspace.json at base could not all be read, so no approval can show it is in that class: @acme/ops-classes is not installed under ${r.dir}`,
     );
-    const unread = identityGateAdmissionAt(r.dir, base, "ops")!;
-    expect(unread.refuses(approvals("ops")[1])).toMatch(/is not a core class, and this reader does not load the classes the pinned packages in chant\.workspace\.json at base supply/);
+    // human is everyone in no other class, so an unread pin leaves it unknown too; runner and no class are not affected.
+    expect(identityGateAdmissionAt(r.dir, base, "deploy")!.refuses(approvals("deploy")[1])).toMatch(/names the class human, and the pins .* could not all be read/);
+    expect(identityGateAdmissionAt(r.dir, base, "release")!.refuses(approvals("release")[2])).toBeNull();
+    expect(identityGateAdmissionAt(r.dir, base, "ship")!.refuses(approvals("ship")[1])).toBeNull();
+
+    install(r, plugin("node_modules/@acme/ops-classes", [OPERATOR], "2.0.0"));
+    expect(identityGateAdmissionAt(r.dir, base, "ops")!.refuses(approvals("ops")[1])).toMatch(/: @acme\/ops-classes is pinned at 1\.0\.0, and 2\.0\.0 is installed under /);
+
+    // A class the caller read stands for the pins, as before.
     const read = identityGateAdmissionAt(r.dir, base, "ops", { classes: [{ name: "operator", role: "operator" }] })!;
     expect(read.refuses(approvals("ops")[1])).toBeNull();
     expect(read.refuses(approvals("ops")[0])).toMatch(/not signed/);
+  });
+
+  test("an installed package that supplies no such class refuses as chant does", () => {
+    const { r, base, approvals } = setup(operatorPolicy, { pins: [{ package: "@acme/ops-classes", version: "1.0.0" }] });
+    install(r, plugin("node_modules/@acme/ops-classes", [{ ...OPERATOR, name: "deployer" }]));
+    expect(judgeBoth(r, base, approvals).ops![1]).toMatch(/names the class operator, which no pinned package supplies, .*known classes: human, agent, runner, service, deployer/);
   });
 
   test("passed to decideGateApproval as refuses, it counts what chant's wave gate counts", async () => {

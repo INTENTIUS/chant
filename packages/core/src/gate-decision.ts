@@ -18,8 +18,9 @@
  *
  * A gate the declaration at base names under `identity.gates` counts only a
  * sealed approval from its class: {@link identityGateAdmissionAt} reads that
- * rule from a bare clone at base and judges by `admitApprover`, the function
- * chant's `gateAdmission` judges by (#3862); pass its `refuses` to
+ * rule from a bare clone at base, with the principal classes the pinned
+ * packages supply read as data (#3888), and judges by `admitApprover`, the
+ * function chant's `gateAdmission` judges by (#3862); pass its `refuses` to
  * {@link decideGateApproval}.
  *
  * With `spend` (#3784), an approval a wave already applied under is spent and
@@ -27,14 +28,17 @@
  * the lines of `_gates/<op>/applied.jsonl` ({@link parseAppliedGateLines}).
  *
  * The module reads the ledger lines and the review it is handed; reading
- * them is the caller's. It imports no TypeScript, esbuild, zod, lint, fold or
- * codegen module, and none of chant's git ledger code, which
+ * them is the caller's. It imports no TypeScript, esbuild, zod, ajv, lint,
+ * fold or codegen module, no package's code, and none of chant's git ledger
+ * code, which
  * `gate-decision-bundle.test.ts` holds it to. Its rules are chant's own:
  * `./lifecycle/gate-ledger-select.ts` is what `evaluateGate` decides by, and
  * `gate-decision.test.ts` decides the same ledgers both ways.
  */
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join, posix } from "node:path";
 import {
   isPendingGateExpired,
   latestPendingGate,
@@ -50,7 +54,8 @@ import {
   trustConfigProblems,
 } from "./workspace/trust/trust-files";
 import { parseJsonText } from "./workspace/jsonc";
-import { CORE_CLASSES, admitApprover, type ClassGrant, type GateAdmissionRule } from "./workspace/identity-gate-rule";
+import { CORE_CLASSES, admitApprover, type ClassGrant, type GateAdmissionRule, type PrincipalClass } from "./workspace/identity-gate-rule";
+import { diskFiles, findInstalledPackage, mergePinClasses, parseClassDataByHand, readClassFiles, type PinClassRead } from "./workspace/class-data";
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
 import type { MergedReview } from "./op/gate-review";
 import type { GateApprovalSource } from "./op/op-waves";
@@ -207,6 +212,56 @@ export interface IdentityGateAdmission {
   refuses(approval: SealedGateApproval): string | null;
 }
 
+/** The domain classes the pins of the declaration at base supply, as chant's `loadClassRegistry` reads them, and the pins that could not be read. */
+interface PinnedClasses {
+  classes: PrincipalClass[];
+  /** Pins whose classes are not known, one line each: a package pin that is not installed, or not at its pinned version. */
+  unread: string[];
+}
+
+/**
+ * Read the classes each pin supplies, as chant's `gateAdmission(cwd, gate,
+ * base)` reads them: a path pin's `./workspace-principals` file from `base`
+ * itself, so a change can't remap a class by editing its own copy of the
+ * plugin; a package pin's from the package installed under `packages` (its
+ * `node_modules` or a parent's), which must be at the pinned version. Reads
+ * data only and imports no package.
+ */
+function pinnedClassesAt(repo: string, base: string, pins: unknown, packages: string): PinnedClasses {
+  const reads: PinClassRead[] = [];
+  const unread: string[] = [];
+  (Array.isArray(pins) ? pins : []).forEach((raw: unknown, i) => {
+    const pin = (raw !== null && typeof raw === "object" ? raw : {}) as { package?: unknown; version?: unknown; path?: unknown };
+    if (typeof pin.path === "string" && pin.path) {
+      const dir = posix.normalize(pin.path);
+      const files = (path: string) => showAt(repo, base, dir === "." ? path : posix.join(dir, path));
+      reads.push({ pin: i, source: pin.path, read: readClassFiles(files, pin.path, parseClassDataByHand) });
+      return;
+    }
+    if (typeof pin.package !== "string" || !pin.package) return;
+    const dir = findInstalledPackage(pin.package, packages);
+    if (!dir) {
+      unread.push(`${pin.package} is not installed under ${packages}`);
+      return;
+    }
+    let installed: unknown;
+    try {
+      installed = (JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as { version?: unknown }).version;
+    } catch {
+      installed = undefined;
+    }
+    if (typeof pin.version === "string" && pin.version && installed !== pin.version) {
+      unread.push(`${pin.package} is pinned at ${pin.version}, and ${String(installed ?? "an unknown version")} is installed under ${packages}`);
+      return;
+    }
+    reads.push({ pin: i, source: pin.package, read: readClassFiles(diskFiles(dir), pin.package, parseClassDataByHand) });
+  });
+  return { classes: mergePinClasses(reads).classes, unread };
+}
+
+/** The core classes whose members no domain class can change: every one but `human`, which is the principals in no other class. */
+const PIN_FREE = new Set(CORE_CLASSES.filter((c) => c.role !== null).map((c) => c.name));
+
 /**
  * The `identity.gates` rule for `gate` at `base`, or null when the
  * declaration there names none: what chant's `gateAdmission(cwd, gate, base)`
@@ -215,34 +270,39 @@ export interface IdentityGateAdmission {
  * class, the role grants in `.chant/trust.json` at base put the approver in
  * it. Both judge with the same function ({@link admitApprover}).
  *
- * The classes are the four core ones, then `classes`, the domain classes the
- * caller read from the pinned packages (`./workspace-principals`), in pin
- * order. This reader loads no package. A gate whose class is in neither
- * refuses every approval, and when the declaration at base pins anything the
- * reason says the pins were not read, since one of them may supply it.
+ * The classes are the four core ones, then the domain classes the
+ * declaration's pins supply, in pin order (#3888), read as chant reads them:
+ * a path pin's `./workspace-principals` file at `base`, and a package pin's
+ * from the package installed under `packages` (default `repo`) at the
+ * pinned version. A bare clone has no `node_modules`, so a caller that reads
+ * one passes the directory its packages are installed under. Only data is
+ * read; no package is imported. `classes`, when given, stands for every
+ * domain class instead and no pin is read.
+ *
+ * When a pin can't be read (its package is not installed, or not at the
+ * pinned version), a gate whose class it could change (a domain class, or
+ * `human`) refuses every approval and says which pins were not read; a gate
+ * naming `agent`, `runner` or `service`, or no class, is judged as usual.
  * Throws when the declaration at base cannot be parsed.
  */
 export function identityGateAdmissionAt(
   repo: string,
   base: string,
   gate: string,
-  opts: { classes?: readonly ClassGrant[] } = {},
+  opts: { classes?: readonly ClassGrant[]; packages?: string } = {},
 ): IdentityGateAdmission | null {
   const declaration = declarationAt(repo, base);
   const requirement = declaration === null ? undefined : identityGatesOf(declaration.value).find((g) => g.gate === gate);
   if (!requirement) return null;
   const { signers, roles } = trustAt(repo, base);
   const pins = (declaration!.value as { pins?: unknown }).pins;
-  const rule: GateAdmissionRule = {
-    gate,
-    class: requirement.class,
-    signers,
-    roles,
-    classes: [...CORE_CLASSES, ...(opts.classes ?? [])],
-    ...(Array.isArray(pins) && pins.length > 0
-      ? { unknownClass: `is not a core class, and this reader does not load the classes the pinned packages in ${declaration!.file} at base supply` }
-      : {}),
-  };
+  const pinned = opts.classes ? { classes: opts.classes, unread: [] } : pinnedClassesAt(repo, base, pins, opts.packages ?? repo);
+  const want = requirement.class;
+  if (want !== null && !PIN_FREE.has(want) && pinned.unread.length > 0) {
+    const reason = `identity.gates.${gate} names the class ${want}, and the pins in ${declaration!.file} at base could not all be read, so no approval can show it is in that class: ${pinned.unread.join("; ")}`;
+    return { requirement, refuses: () => reason };
+  }
+  const rule: GateAdmissionRule = { gate, class: want, signers, roles, classes: [...CORE_CLASSES, ...pinned.classes] };
   return { requirement, refuses: (a) => admitApprover(rule, a) };
 }
 
