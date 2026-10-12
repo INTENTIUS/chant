@@ -1,6 +1,16 @@
 ---
 title: "Docker"
 description: "Typed constructors for Docker Compose and Dockerfile configuration"
+prompt: |
+  Read https://intentius.io/chant/lexicons/docker/ and https://intentius.io/chant/lexicons/docker/dockerfiles/ first.
+  Bring this project's Docker files into chant TypeScript under src/.
+  Import each existing file: `chant import --lexicon docker docker-compose.yml -o src/compose.ts`, and `chant import --lexicon docker Dockerfile -o src/dockerfile.ts` for each Dockerfile.
+  Write every Dockerfile stage as an ordered `steps` list, one instruction per step, with FROM as the stage's `from` and ARGs before the first FROM in `globalArgs`:
+    steps: [{ workdir: "/app" }, { copy: "package*.json ./" }, { run: "npm ci" }, { copy: ". ." }, { user: "node" }, { cmd: ["node", "dist/index.js"] }]
+  Where two Dockerfiles repeat a stage or a run of steps, export it once (a `DockerfileStage` or a `DockerfileStep[]`) from its own module and import it in both.
+  Run `chant build src --lexicon docker -o docker-compose.yml` and `chant lint src`. Run `chant lint src --fix` for DKRS002 (per-kind fields to `steps`), fix every other finding by hand, and repeat until lint is clean.
+  Report the generated docker-compose.yml and each Dockerfile.<name>, and any finding you left and why.
+  Never push an image, run `docker compose up` against anything but the local Docker daemon, or change files outside this project.
 ---
 
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-docker` — DO NOT EDIT.
@@ -66,7 +76,7 @@ chant build src --lexicon docker -o docker-compose.yml
 | Pseudo-parameters | 0 |
 | Lint rules | 7 |
 
-**Lexicon version:** 0.49.0  
+**Lexicon version:** 0.124.21  
 **Namespace:** `Docker`
 
 - [Intrinsic Functions](./intrinsics) — 1 built-in functions
