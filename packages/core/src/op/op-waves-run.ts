@@ -130,7 +130,7 @@ export interface OpWavePlansFile {
 /** Pending-fact keys chant writes itself, which a plans file's `pending` may not set (#3821). */
 export const OP_WAVE_PENDING_RESERVED = [
   "version", "kind", "op", "gate", "timestamp", "expiresAt", "planDigest", "runId", "url", "resume",
-  "environment", "origin", "neverOverMcp", "approval", "approvalMode", "answer",
+  "environment", "origin", "neverOverMcp", "approval", "approvalMode", "answer", "wave", "heldBy",
 ] as const;
 
 /** What chant writes to `{runs}` for a wave-level command or a hook (#3762). */
@@ -835,6 +835,7 @@ interface HooksOutcome {
 interface OtherGateHold {
   label: string;
   name: string;
+  moment: OpWaveHookMoment;
   target?: string;
   argv: string[];
   env: Record<string, string>;
@@ -914,7 +915,7 @@ function runHookList(
         out.outcomes.push({ ...base, outcome: "held" });
         const request = readHoldRequest(join(cwd, holdPath), log, label);
         if (request) {
-          out.otherGates.push({ label, name, ...(call.target ? { target: call.target } : {}), argv: call.argv, env: call.env, request });
+          out.otherGates.push({ label, name, moment, ...(call.target ? { target: call.target } : {}), argv: call.argv, env: call.env, request });
           log(`${label} exited ${code} and holds wave ${k} (${waveName}) on gate ${request.op ?? specName} / ${request.gate}, digest ${request.digest}`);
           continue;
         }
@@ -1068,7 +1069,7 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
     description: hold.request.description ?? `wave ${k} (${wave.name}) of ${spec.name} is held on it by ${hold.label}`,
     now,
     // #3839: the wave a hold belongs to, as a field, whatever the hook's own description says.
-    fields: { ...hold.request.pending, approvalMode: rules.approval, wave: { number: k, name: wave.name, op: spec.name } },
+    fields: { ...hold.request.pending, approvalMode: rules.approval, wave: { number: k, name: wave.name, op: spec.name }, heldBy: { hook: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}) } },
     ...(neverOverMcp ? { neverOverMcp: true } : {}),
   });
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };

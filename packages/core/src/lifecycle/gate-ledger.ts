@@ -228,6 +228,21 @@ export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">
  * ledger by a line a minute. Once `expiresAt` passes, the fact is stale and
  * the next run records a fresh one.
  */
+export interface PendingGateWave {
+  number: number;
+  name: string;
+  /** The Op waves spec's name. */
+  op?: string;
+}
+
+/** The hook that holds a wave on a gate (#3886): which hook asked, at which moment, and for which run. */
+export interface PendingGateHeldBy {
+  hook: string;
+  moment: string;
+  /** The run, for a `perRun` hook. */
+  target?: string;
+}
+
 export interface PendingGateRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
   version: 1;
@@ -296,6 +311,17 @@ export interface PendingGateRecord {
    * than inferring it from config. Not the quorum block in `approval`.
    */
   approvalMode?: GateApprovalSource;
+  /**
+   * The Op wave this gate belongs to (#3839): a hold on another gate or a
+   * policy denial. Absent on a gate that is not a wave's.
+   */
+  wave?: PendingGateWave;
+  /**
+   * The hook that holds the wave on this gate (#3886), on a hold only: its
+   * name, the moment it ran at and its run. A reader names the holder from it
+   * rather than from `description`, which the hook writes.
+   */
+  heldBy?: PendingGateHeldBy;
   /**
    * The open question this gate waits on, on a gate that asks a decision
    * point (#3170). It is answered with `chant workspace points answer <id>`,
@@ -449,7 +475,13 @@ export function parseGateLedger(
           malformed++;
           continue;
         }
-        pending.push(parsed as PendingGateRecord);
+        // #3887: a `wave` or `heldBy` of the wrong shape is dropped, so a reader can trust the type.
+        const rec = parsed as PendingGateRecord;
+        const w = (parsed as { wave?: unknown }).wave as Partial<PendingGateWave> | null | undefined;
+        if (w !== undefined && !(w && typeof w === "object" && typeof w.number === "number" && typeof w.name === "string")) delete rec.wave;
+        const h = (parsed as { heldBy?: unknown }).heldBy as Partial<PendingGateHeldBy> | null | undefined;
+        if (h !== undefined && !(h && typeof h === "object" && typeof h.hook === "string" && typeof h.moment === "string")) delete rec.heldBy;
+        pending.push(rec);
         continue;
       }
       if (typeof parsed.resolvedBy !== "string") {

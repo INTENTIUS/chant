@@ -910,6 +910,8 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     expect(gates.appended[0]).toMatchObject({ op: "tf-migrate", gate: "split-queues", planDigest: digest("m"), members: [] });
     // #3839: the hold names its wave as a field, even when the hook wrote the description.
     expect(gates.appended[0]).toMatchObject({ description: "move the queues", wave: { number: 1, name: expect.any(String), op: tg.name } });
+    // #3886: and the hook that holds it, as a field.
+    expect(gates.appended[0]).toMatchObject({ heldBy: { hook: "migrate", moment: expect.any(String) } });
     expect(h.calls.some((c) => c.startsWith("tg plan"))).toBe(false);
     expect(h.envs.find((e) => e.CHANT_HOOK === "after-gate")).toMatchObject({ CHANT_GATE_STATUS: "waiting", CHANT_GATE_OP: "tf-migrate", CHANT_GATE: "split-queues" });
     h.done();
