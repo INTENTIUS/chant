@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { deriveGateAudit, gateLedgerLines, gateLedgerLinesFromLog, readGateAuditLedgers, isOverrideGate } from "./gate-audit";
+import { readGateAuditDecisions, deriveGateAudit, gateLedgerLines, gateLedgerLinesFromLog, readGateAuditLedgers, isOverrideGate } from "./gate-audit";
 import { memoryGateLedgerPort } from "../op/gate";
 
 const D1 = "jcs1-sha256:" + "a".repeat(64);
@@ -178,5 +178,50 @@ describe("lifecycle/gate-audit", () => {
     const fromPort = deriveGateAudit({ ledgers: await readGateAuditLedgers(port, ["tf-apply"]) });
     expect(fromPort.entries.map((e) => e.kind)).toEqual(["approval-requested", "approved"]);
     expect(fromPort.entries.map((e) => e.at)).toEqual(fromText.entries.map((e) => e.at));
+  });
+
+  describe("op-wave decision records (#3810)", () => {
+    const outcomes = [
+      { moment: "before-plan", name: "lint", exit: 0, outcome: "passed" },
+      { moment: "after-plan", name: "cost", target: "prod", exit: 2, outcome: "held" },
+      { moment: "before-apply", name: "backup", exit: 1, outcome: "failed" },
+      { moment: "after-apply", name: "skip", exit: 0, outcome: "skipped", reason: "nothing applied" },
+    ];
+    const record = { wave: 1, name: "prod", op: "tf-apply", gate: "wave-1", digest: D1, heldBy: ["cost"], outcomes };
+
+    test("each outcome becomes a hook entry linked to the approval and the apply", () => {
+      const { entries, gaps } = deriveGateAudit({
+        ledgers: [ledger("tf-apply", pending(), resolution())],
+        applies: [{ ref: "reports/1", at: "2026-10-01T12:00:00.000Z", gate: "wave-1", digest: D1 }],
+        decisions: [{ ref: "wave-1.json", at: "2026-10-01T12:05:00.000Z", record }],
+      });
+      expect(gaps).toEqual([]);
+      const hooks = entries.filter((e) => e.kind === "hook");
+      expect(hooks.map((h) => h.hook?.outcome)).toEqual(["passed", "held", "failed", "skipped"]);
+      expect(hooks[1]!.hook).toMatchObject({ moment: "after-plan", name: "cost", target: "prod", exit: 2 });
+      expect(hooks[3]!.hook?.reason).toBe("nothing applied");
+      const approved = entries.find((e) => e.kind === "approved")!;
+      const applied = entries.find((e) => e.kind === "applied")!;
+      for (const h of hooks) expect(h).toMatchObject({ under: approved.id, applied: applied.id, gate: "wave-1", digest: D1, wave: { number: 1, name: "prod" } });
+      expect(new Set(hooks.map((h) => h.id)).size).toBe(4);
+    });
+
+    test("text input, no approval on file, and a malformed record", () => {
+      const { entries, gaps } = deriveGateAudit({
+        ledgers: [],
+        decisions: [{ ref: "a.json", at: "2026-10-01T12:00:00.000Z", text: JSON.stringify(record) }, { ref: "b.json", at: "2026-10-01T12:00:00.000Z", text: "nope" }],
+      });
+      expect(entries.filter((e) => e.kind === "hook")).toHaveLength(4);
+      expect(entries[0]).not.toHaveProperty("under");
+      expect(gaps.map((g) => g.kind)).toEqual(["malformed-line"]);
+    });
+
+    test("readGateAuditDecisions reads the json files under a directory", async () => {
+      const files: Record<string, string> = { "w1.json": JSON.stringify(record), "notes.txt": "x" };
+      const port = { list: async () => Object.keys(files), read: async (_d: string, f: string) => files[f] ?? null };
+      const got = await readGateAuditDecisions(port, "_wave-decisions/tf", "2026-10-01T12:00:00.000Z");
+      expect(got.map((d) => d.ref)).toEqual(["_wave-decisions/tf/w1.json"]);
+      expect(deriveGateAudit({ ledgers: [], decisions: got }).entries).toHaveLength(4);
+    });
   });
 });
