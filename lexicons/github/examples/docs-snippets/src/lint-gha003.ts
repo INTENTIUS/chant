@@ -6,6 +6,7 @@ export const badDeploy = new Job({
   steps: [
     new Step({
       name: "Deploy",
+      // chant-disable-next-line GHA003
       run: "curl -H 'Authorization: token ghp_abc123def456' https://api.github.com/repos",
     }),
   ],
