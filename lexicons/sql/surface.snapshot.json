@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-10T06:34:59.490Z",
+  "generatedAt": "2026-10-12T20:34:31.908Z",
   "entries": {
     "Database": {
       "kind": "resource",
@@ -110,6 +110,10 @@
       "kind": "resource",
       "resourceType": "Postgres::View"
     },
+    "Quota": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::Quota"
+    },
     "Role": {
       "kind": "resource",
       "resourceType": "ClickHouse::Role"
@@ -117,6 +121,10 @@
     "RowPolicy": {
       "kind": "resource",
       "resourceType": "ClickHouse::RowPolicy"
+    },
+    "SettingsProfile": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::SettingsProfile"
     },
     "Table": {
       "kind": "resource",

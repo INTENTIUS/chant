@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k3s",
-  "version": "0.124.20",
+  "version": "0.124.21",
   "type": "module",
   "files": [
     "src/",
@@ -50,7 +50,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.20"
+    "@intentius/chant": "^0.124.21"
   },
   "description": "k3s lexicon for chant — the k3s distro's host configuration as declarable data",
   "license": "Apache-2.0",

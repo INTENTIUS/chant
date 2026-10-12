@@ -3,12 +3,14 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import rehypeBaseUrl from '../packages/core/src/codegen/rehype-base-url.mjs';
+import remarkAgentPrompt from './src/remark-agent-prompt.mjs';
 
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://intentius.io',
 	base: '/chant',
 	markdown: {
+		remarkPlugins: [remarkAgentPrompt],
 		rehypePlugins: [[rehypeBaseUrl, { base: '/chant' }]],
 	},
 	redirects: {
@@ -23,6 +25,8 @@ export default defineConfig({
 		starlight({
 			title: 'chant',
 			customCss: ['./src/styles/custom.css'],
+			// The title gets the page's agent prompt, when it has a `prompt:`.
+			components: { PageTitle: './src/components/PageTitle.astro' },
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/intentius/chant' }],
 			head: [
 				{
