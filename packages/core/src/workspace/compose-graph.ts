@@ -11,8 +11,12 @@
  *   `runtimeOwner` and export and import nodes are rewritten the same way.
  * - `groups.byMember` maps each member to its node ids. `byLexicon` and
  *   `byComposite` keep their keys (a lexicon or composite type is the same
- *   thing in every member) and merge the ids. `byStack`, `byContainer` and
- *   `byWave` name things inside one member, so their keys are prefixed too.
+ *   thing in every member) and merge the ids. `byStack`, `byContainer`,
+ *   `byWave` and `byPipeline` name things inside one member, so their keys
+ *   are prefixed too.
+ * - Edges keep their `kind` and `crossPipeline` (#3910). A member's dangling
+ *   references (`ir.dangling`) land on the top-level `dangling` list with
+ *   `from` prefixed and a `member` field, like edges (#3922).
  * - `links` holds the member links (#2524 D6, #2539): the declared links and
  *   the joins inferred from members' `imports` and `exports` with the core
  *   `joinKey()`, labelled `exact` or `folded` (`./links.ts`). A declared link
@@ -35,7 +39,7 @@ import type { KindRegistry } from "./kinds";
 import { graphLinks, type LinkTableRow } from "./links";
 import type { RecordLinkRow } from "./record-assets";
 import type { ReasonCode } from "./reason-codes";
-import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
+import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRDanglingRef, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
 
 /** The version of the composed document `chant workspace graph` writes. */
 export const WORKSPACE_GRAPH_VERSION = 1;
@@ -164,6 +168,8 @@ export const COLLECTOR_META_KEY = "collector";
 /** `nested` names the nested workspace's member a node was read through (#2551); absent for the outer workspace's own nodes. */
 export type ComposedNode = IRNode & { member: string; nested?: string };
 export type ComposedEdge = IREdge & { member: string };
+/** A member's dangling reference (#3910, #3922): `from` is prefixed like a node id. `nested` as on {@link ComposedNode}. */
+export type ComposedDangling = IRDanglingRef & { member: string; nested?: string };
 
 export interface WorkspaceGraph {
   version: number;
@@ -175,6 +181,12 @@ export interface WorkspaceGraph {
   exports: (IRExport & { member: string })[];
   imports: (IRImport & { member: string })[];
   derivedAttrs?: Record<string, string[]>;
+  /**
+   * The members' dangling CI references (#3910, #3922): each `ir.dangling`
+   * entry with `from` prefixed by its member and a `member` field, sorted by
+   * `from`, `path` and `value`. Absent when no member has one.
+   */
+  dangling?: ComposedDangling[];
   /**
    * Member links (#2524 D6, #2539), declared and inferred, then the links of
    * the records read with `--kind` (#2549). Empty when no declaration is given.
@@ -288,6 +300,13 @@ function prefixRefs(value: unknown, member: string): unknown {
   return out;
 }
 
+/** The groups whose keys name something inside one member, so are prefixed with it. */
+export const SCOPED_GROUPS = ["byStack", "byContainer", "byWave", "byPipeline"] as const;
+type ScopedGroup = (typeof SCOPED_GROUPS)[number];
+
+/** The order the composed `dangling` list is sorted in. */
+export const danglingKey = (d: IRDanglingRef): string => `${d.from}\u0000${d.path}\u0000${d.value}`;
+
 function mergeInto(target: Record<string, string[]>, key: string, ids: string[]): void {
   (target[key] ??= []).push(...ids);
 }
@@ -315,7 +334,8 @@ export function composeWorkspaceGraph(
   const imports: WorkspaceGraph["imports"] = [];
   const byMember: Record<string, string[]> = {};
   const shared: Record<"byLexicon" | "byComposite", Record<string, string[]>> = { byLexicon: {}, byComposite: {} };
-  const scoped: Record<"byStack" | "byContainer" | "byWave", Record<string, string[]>> = { byStack: {}, byContainer: {}, byWave: {} };
+  const scoped: Record<ScopedGroup, Record<string, string[]>> = { byStack: {}, byContainer: {}, byWave: {}, byPipeline: {} };
+  const dangling: ComposedDangling[] = [];
   const derivedAttrs: Record<string, Set<string>> = {};
   const collectors: MemberCollector[] = [];
 
@@ -335,9 +355,10 @@ export function composeWorkspaceGraph(
     for (const key of ["byLexicon", "byComposite"] as const) {
       for (const [k, v] of Object.entries(ir.groups[key] ?? {})) mergeInto(shared[key], k, v.map((id) => prefix(m, id)));
     }
-    for (const key of ["byStack", "byContainer", "byWave"] as const) {
+    for (const key of SCOPED_GROUPS) {
       for (const [k, v] of Object.entries(ir.groups[key] ?? {})) mergeInto(scoped[key], prefix(m, k), v.map((id) => prefix(m, id)));
     }
+    for (const d of ir.dangling ?? []) dangling.push({ ...d, from: prefix(m, d.from), member: m });
     for (const e of ir.exports ?? []) exports.push({ ...e, ...(e.node ? { node: prefix(m, e.node) } : {}), member: m });
     for (const i of ir.imports ?? []) imports.push({ ...i, node: prefix(m, i.node), member: m });
     for (const [kind, attrs] of Object.entries(ir.derivedAttrs ?? {})) for (const a of attrs) (derivedAttrs[kind] ??= new Set()).add(a);
@@ -358,7 +379,7 @@ export function composeWorkspaceGraph(
 
   const groups: WorkspaceGraph["groups"] = { byMember };
   for (const key of ["byLexicon", "byComposite"] as const) if (Object.keys(shared[key]).length) groups[key] = sorted(shared[key]);
-  for (const key of ["byStack", "byContainer", "byWave"] as const) if (Object.keys(scoped[key]).length) groups[key] = sorted(scoped[key]);
+  for (const key of SCOPED_GROUPS) if (Object.keys(scoped[key]).length) groups[key] = sorted(scoped[key]);
 
   const doc: WorkspaceGraph = {
     version: WORKSPACE_GRAPH_VERSION,
@@ -375,6 +396,7 @@ export function composeWorkspaceGraph(
     collectors,
     records: [],
   };
+  if (dangling.length) doc.dangling = dangling.sort((a, b) => danglingKey(a).localeCompare(danglingKey(b)));
   if (Object.keys(derivedAttrs).length) {
     doc.derivedAttrs = Object.fromEntries(Object.keys(derivedAttrs).sort().map((k) => [k, [...derivedAttrs[k]].sort()]));
   }

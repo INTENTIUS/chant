@@ -15,7 +15,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, declaration, declaration as declaration_, FAKE_FILE_GRAPH_CHANT, FAKE_GRAPH_CHANT, git, REPO, repo, scratchDir, validSchema } from "./__fixtures__/contract-repo";
-import type { GraphIR } from "../graph-ir";
+import type { GraphIR, IREdgeKind } from "../graph-ir";
 import { composeWorkspaceGraph, MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import { parseDeclaration, WORKSPACE_ERROR_CODES } from "./declaration";
 import type { LinkTableRow } from "./links";
@@ -103,6 +103,31 @@ describe("the links section (#2539)", () => {
     const doc = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.81.0", at: null, ...graph };
     expectValid(doc);
     expect((doc.links as LinkTableRow[]).map((r) => `${r.consumer} ${r.origin} ${r.status}`)).toEqual(["app declared resolved", "app declared missing", "jobs inferred:joinKey ambiguous"]);
+  });
+});
+
+describe("CI edges, pipelines and dangling references (#3922)", () => {
+  test("the edge kinds match IREdgeKind, and a composed CI member validates", () => {
+    const kinds: IREdgeKind[] = ["ref", "needs", "calls", "triggers", "includes", "extends"];
+    expect(schema.$defs.edge.properties.kind.enum).toEqual(kinds);
+    const ir: GraphIR = {
+      version: 1,
+      nodes: [
+        { id: "ci", kind: "Workflow", lexicon: "github", attrs: {} },
+        { id: "build", kind: "Job", lexicon: "github", attrs: {} },
+        { id: "deploy", kind: "Job", lexicon: "github", attrs: {} },
+      ],
+      edges: [
+        { from: "deploy", to: "build", kind: "needs", viaAttr: "needs" },
+        { from: "build", to: "ci", kind: "calls", viaAttr: "uses", crossPipeline: true },
+      ],
+      groups: { byPipeline: { ci: ["build", "ci", "deploy"] } },
+      dangling: [{ from: "deploy", kind: "needs", path: "needs", value: "lint" }, { from: "build", kind: "calls", path: "uses", value: "o/r/.github/workflows/x.yml@v1", crossPipeline: true }],
+    };
+    const m = { name: "svc", dir: "svc", kind: "chant", status: "composed" as const, reason: null, chant: "0.124.20", irVersion: 1, live: false };
+    const graph = composeWorkspaceGraph({ name: "acme", root: "." }, [{ member: m, ir }]);
+    expect(graph.dangling).toHaveLength(2);
+    expectValid({ $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.124.20", at: null, ...graph });
   });
 });
 

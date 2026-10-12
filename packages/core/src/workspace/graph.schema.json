@@ -93,6 +93,13 @@
             "$ref": "#/$defs/edge"
           }
         },
+        "dangling": {
+          "description": "Added in contract 1 by #3922. The members' references whose target is no node of their graph (#3910): a job `needs` a job no workflow declares, a `uses:` names another repository's workflow, a GitLab `include:` names a file chant did not generate. Each member's `ir.dangling` entry with `from` prefixed by its member and a `member` field, sorted by `from`, `path` and `value`. Absent when no member has one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dangling"
+          }
+        },
         "groups": {
           "type": "object",
           "required": [
@@ -158,6 +165,16 @@
                 }
               },
               "description": "Keys prefixed with the member."
+            },
+            "byPipeline": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Added in contract 1 by #3922. CI pipeline membership (#3910): a workflow or pipeline the member's CI lexicon reports, with the node ids it runs. Keys prefixed with the member, like byStack. Edges with `crossPipeline` run between these groups."
             }
           }
         },
@@ -516,7 +533,15 @@
           "type": "string"
         },
         "kind": {
-          "type": "string"
+          "enum": [
+            "ref",
+            "needs",
+            "calls",
+            "triggers",
+            "includes",
+            "extends"
+          ],
+          "description": "`ref` for an edge from a typed reference. The CI kinds (#3910): `needs` (a job waits on another), `calls` (a reusable workflow or action is used), `triggers` (a pipeline starts another), `includes` (a file is pulled in), `extends` (a GitLab job inherits another). The list grows within contract 1; a reader ignores a kind it does not know."
         },
         "viaAttr": {
           "type": "string"
@@ -524,8 +549,50 @@
         "toAttr": {
           "type": "string"
         },
+        "crossPipeline": {
+          "type": "boolean",
+          "description": "Added in contract 1 by #3922. True when the edge leaves the pipeline `from` belongs to (#3910): a reusable-workflow call, a `workflow_run` trigger, a GitLab child or multi-project trigger, an include. Absent on every in-pipeline edge."
+        },
         "member": {
           "type": "string"
+        }
+      }
+    },
+    "dangling": {
+      "type": "object",
+      "required": [
+        "from",
+        "kind",
+        "path",
+        "value",
+        "member"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "The node holding the reference, prefixed with its member."
+        },
+        "kind": {
+          "$ref": "#/$defs/edge/properties/kind"
+        },
+        "path": {
+          "type": "string",
+          "description": "Where on `from` it was written, such as `needs`, `uses` or `trigger.include`."
+        },
+        "value": {
+          "type": "string",
+          "description": "The reference exactly as written."
+        },
+        "crossPipeline": {
+          "type": "boolean",
+          "description": "As on an edge."
+        },
+        "member": {
+          "type": "string"
+        },
+        "nested": {
+          "type": "string",
+          "description": "For a member of kind `workspace`: the nested workspace's member the reference was read through, as on a node."
         }
       }
     },
