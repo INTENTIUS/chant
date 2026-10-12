@@ -96,7 +96,7 @@ const region = config["production"];
 
 ## EVL004: Spread From Non-Const Source
 
-The spread operator requires the source to be traceable to a `const` declaration.
+The spread operator requires the source to be traceable to a `const` declaration. A binding imported from another module counts, so an exported `const` can be shared and spread across modules.
 
 ```typescript
 // ❌ Triggers EVL004
