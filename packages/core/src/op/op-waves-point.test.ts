@@ -254,6 +254,7 @@ describe("a wave gate that asks a decision point (#3836)", () => {
       members,
       description: "wave 1 of 1: vpc, nat",
       neverOverMcp: true,
+      approvalMode: "ledger",
       answer: { point: "prod-apply" },
     });
     expect(waiting.decision?.pendingFact).toMatchObject({ commit: "c".repeat(40), neverOverMcp: true });

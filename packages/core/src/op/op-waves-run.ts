@@ -130,7 +130,7 @@ export interface OpWavePlansFile {
 /** Pending-fact keys chant writes itself, which a plans file's `pending` may not set (#3821). */
 export const OP_WAVE_PENDING_RESERVED = [
   "version", "kind", "op", "gate", "timestamp", "expiresAt", "planDigest", "runId", "url", "resume",
-  "environment", "origin", "neverOverMcp", "approval", "answer",
+  "environment", "origin", "neverOverMcp", "approval", "approvalMode", "answer",
 ] as const;
 
 /** What chant writes to `{runs}` for a wave-level command or a hook (#3762). */
@@ -1068,7 +1068,7 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
     description: hold.request.description ?? `wave ${k} (${wave.name}) of ${spec.name} is held on it by ${hold.label}`,
     now,
     // #3839: the wave a hold belongs to, as a field, whatever the hook's own description says.
-    fields: { ...hold.request.pending, wave: { number: k, name: wave.name, op: spec.name } },
+    fields: { ...hold.request.pending, approvalMode: rules.approval, wave: { number: k, name: wave.name, op: spec.name } },
     ...(neverOverMcp ? { neverOverMcp: true } : {}),
   });
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };
@@ -1633,7 +1633,8 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
     now,
     ...(spent ? { spent } : {}),
-    ...(decision.pending ? { fields: decision.pending } : {}),
+    // #3861: the approval mode the wave asked under, for readers deciding which approvals count.
+    fields: { ...decision.pending, approvalMode: approval },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {
@@ -1697,7 +1698,7 @@ async function settlePointGate(options: RunOpWaveOptions, ctx: WaveContext, deci
     planDigest: digest,
     ...(options.now ? { now: options.now } : {}),
     // #3863: the plans file's pending fields and the spec's neverOverMcp, as settleGate passes them.
-    ...(decision.pending ? { fields: decision.pending } : {}),
+    fields: { ...decision.pending, approvalMode: decision.approval },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {

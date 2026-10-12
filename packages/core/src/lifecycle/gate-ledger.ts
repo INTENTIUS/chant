@@ -45,6 +45,7 @@ import { isNeverOverMcpGateOp } from "../op/gate-name";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
+import type { GateApprovalSource } from "../op/op-waves";
 import type { GateRunLocator } from "../op/gate-run-locator";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
@@ -288,6 +289,13 @@ export interface PendingGateRecord {
    * the run produced, and `chant operator status` to show quorum progress.
    */
   approval?: ResolvedGateApproval;
+  /**
+   * The approval mode an Op wave asked under (#3861): `ledger`, `pr-review` or
+   * `sealed`, as read at base. It says which approvals count for the gate, so a
+   * reader (behold, gate-audit) decides under the mode the wave used rather
+   * than inferring it from config. Not the quorum block in `approval`.
+   */
+  approvalMode?: GateApprovalSource;
   /**
    * The open question this gate waits on, on a gate that asks a decision
    * point (#3170). It is answered with `chant workspace points answer <id>`,
