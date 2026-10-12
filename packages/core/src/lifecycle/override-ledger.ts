@@ -55,7 +55,7 @@ export async function recordOverridesApplied(records: readonly AppliedOverrideRe
     try {
       const priorSha = await readPathSha(APPLIED_DIR, APPLIED_FILE, opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${lines}` : lines;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${lines}\n`;
       return await writeBlobToPath(APPLIED_DIR, APPLIED_FILE, content, `Applied under override: ${records.map((r) => r.gate).join(", ")}`, {
         ...opts,
         expectPriorPathSha: priorSha,

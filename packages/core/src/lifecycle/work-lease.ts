@@ -408,7 +408,7 @@ async function appendLeaseHistory(record: LeaseHistoryRecord, opts: { cwd: strin
     try {
       const priorSha = await readPathSha(LEASES_DIR, file, opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${json}\n`;
       commit = await writeBlobToPath(LEASES_DIR, file, content, `Work lease ${record.event}: ${record.item} (${record.holder})`, {
         ...opts,
         expectPriorPathSha: priorSha,

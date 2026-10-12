@@ -485,7 +485,7 @@ export async function appendReleaseRecordLine(
     try {
       const priorSha = await readPathSha(environment, filename, opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${recordJson}` : recordJson;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${recordJson}\n`;
       return await writeBlobToPath(environment, filename, content, "Release record", {
         ...opts,
         expectPriorPathSha: priorSha,

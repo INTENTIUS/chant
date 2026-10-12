@@ -367,7 +367,7 @@ async function appendGateLine(
     try {
       const priorSha = await readPathSha(DIR, filename(record.op), opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${json}\n`;
       return await writeBlobToPath(DIR, filename(record.op), content, message, {
         ...opts,
         expectPriorPathSha: priorSha,
