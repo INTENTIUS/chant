@@ -84,7 +84,7 @@ export function ruleBlock(m: RuleMeta): string {
   // heading instead, so an old link/alias reference still lands on the id.
   const tags = m.deprecated ? `${m.tier} · ${m.fixKind} · ~~deprecated~~` : `${m.tier} · ${m.fixKind}`;
   return (
-    `### ${m.id}\n\n**${mdxEscape(m.title)}** — ${tags}\n\n${mdxEscape(m.remediation)}` +
+    `### ${m.id}\n\n**${mdxEscape(m.title)}** (${tags})\n\n${mdxEscape(m.remediation)}` +
     `${backingTable(m)}` +
     `${m.aliases?.length ? aliasesLine(m.aliases) : ""}` +
     `${m.deprecated ? deprecatedNote(m.deprecated) : ""}`

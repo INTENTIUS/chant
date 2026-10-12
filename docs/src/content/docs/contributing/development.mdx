@@ -45,7 +45,7 @@ npx vitest run lexicons/aws       # AWS lexicon only
 npx vitest run lexicons/k8s       # K8s lexicon only
 ```
 
-The suite is two vitest projects. `unit` is every test file except `*.e2e.test.ts`, and each of its tests has a 5 second budget: a test that runs longer fails with a message naming the budget. `e2e` is every `*.e2e.test.ts`, the tests that spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects, all on the machine running the suite. They are not the cloud deployments on the [E2E Testing](/chant/contributing/e2e-testing/) page. Pull request CI runs only the unit tests, in four shards, beside the typechecks and lint. The e2e tests run in `release-suites.yml` on `main`, every three hours and when someone starts it, and a release only tags a commit they passed.
+The suite is two vitest projects. `unit` is every test file except `*.e2e.test.ts`, and each of its tests has a 5 second budget: a test that runs longer fails with a message naming the budget. `e2e` is every `*.e2e.test.ts`, the tests that spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects, all on the machine running the suite. They are not the cloud deployments on the [E2E Testing](/chant/contributing/e2e-testing/) page. Pull request CI runs only the unit tests. They run in four shards beside the typechecks and lint. The e2e tests run in `release-suites.yml` on `main` every three hours and when someone starts it, and a release only tags a commit they passed.
 
 ```bash
 npx vitest run --project unit     # unit tests only
