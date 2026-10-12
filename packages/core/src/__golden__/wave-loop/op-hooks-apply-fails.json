@@ -1,0 +1,673 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 1,
+        "applied": [
+          "t2"
+        ],
+        "failed": [
+          "t1"
+        ],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "before-plan",
+            "name": "lint",
+            "exit": 0,
+            "outcome": "passed"
+          },
+          {
+            "moment": "after-plan",
+            "name": "check",
+            "target": "t1",
+            "exit": 0,
+            "outcome": "passed"
+          },
+          {
+            "moment": "after-plan",
+            "name": "check",
+            "target": "t2",
+            "exit": 0,
+            "outcome": "passed"
+          },
+          {
+            "moment": "before-apply",
+            "name": "backup",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "members": [
+            {
+              "member": "t1",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+              "op": "migrate"
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "before-plan": [
+              {
+                "name": "lint",
+                "command": [
+                  "hook",
+                  "lint",
+                  "{runs}"
+                ]
+              }
+            ],
+            "after-plan": [
+              {
+                "name": "check",
+                "command": [
+                  "hook",
+                  "check",
+                  "{target}",
+                  "{plan}"
+                ],
+                "perRun": true,
+                "onFailure": "approve"
+              }
+            ],
+            "before-apply": [
+              {
+                "name": "backup",
+                "command": [
+                  "hook",
+                  "backup",
+                  "{runs}"
+                ]
+              }
+            ],
+            "after-apply": [
+              {
+                "name": "smoke",
+                "command": [
+                  "hook",
+                  "smoke",
+                  "{wave}"
+                ]
+              }
+            ]
+          },
+          "outcomes": [
+            {
+              "moment": "before-plan",
+              "name": "lint",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "after-plan",
+              "name": "check",
+              "target": "t1",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "after-plan",
+              "name": "check",
+              "target": "t2",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 8,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "hook",
+        "lint",
+        ".chant/op-waves/migrations/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "migrations",
+        "CHANT_WAVE": "prod",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "before-plan",
+        "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "prod",
+          "number": 1,
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate"
+            },
+            {
+              "target": "t2",
+              "op": "migrate"
+            }
+          ]
+        },
+        ".chant/op-waves/migrations/wave-1/runs.json": {
+          "wave": "prod",
+          "number": 1,
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate"
+            },
+            {
+              "target": "t2",
+              "op": "migrate"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t1",
+        ".chant/op-waves/migrations/wave-1/t1.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t2",
+        ".chant/op-waves/migrations/wave-1/t2.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "hook",
+        "check",
+        "t1",
+        ".chant/op-waves/migrations/wave-1/t1.plan.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "migrations",
+        "CHANT_WAVE": "prod",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-plan",
+        "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
+        "CHANT_TARGET": "t1",
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "prod",
+          "number": 1,
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            },
+            {
+              "target": "t2",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "check",
+        "t2",
+        ".chant/op-waves/migrations/wave-1/t2.plan.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "migrations",
+        "CHANT_WAVE": "prod",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-plan",
+        "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json",
+        "CHANT_TARGET": "t2",
+        "CHANT_PLAN": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "prod",
+          "number": 1,
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            },
+            {
+              "target": "t2",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "backup",
+        ".chant/op-waves/migrations/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "migrations",
+        "CHANT_WAVE": "prod",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "before-apply",
+        "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "prod",
+          "number": 1,
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            },
+            {
+              "target": "t2",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            }
+          ]
+        },
+        ".chant/op-waves/migrations/wave-1/runs.json": {
+          "wave": "prod",
+          "number": 1,
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            },
+            {
+              "target": "t2",
+              "op": "migrate",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "t1",
+        ".chant/op-waves/migrations/wave-1/t1.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/migrations/wave-1/t1.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/migrations/wave-1/t1.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "migrations",
+          "op": "migrate",
+          "wave": "prod",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate",
+              "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": [
+            {
+              "moment": "before-plan",
+              "name": "lint",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "after-plan",
+              "name": "check",
+              "target": "t1",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "after-plan",
+              "name": "check",
+              "target": "t2",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "before-apply",
+              "name": "backup",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "t2",
+        ".chant/op-waves/migrations/wave-1/t2.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/migrations/wave-1/t2.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/migrations/wave-1/t2.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "migrations",
+          "op": "migrate",
+          "wave": "prod",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "t2",
+              "op": "migrate",
+              "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": [
+            {
+              "moment": "before-plan",
+              "name": "lint",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "after-plan",
+              "name": "check",
+              "target": "t1",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "after-plan",
+              "name": "check",
+              "target": "t2",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "before-apply",
+              "name": "backup",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 1 (prod): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f: not-required",
+    "t1: apply failed"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-1/runs.json": {
+      "wave": "prod",
+      "number": 1,
+      "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+      "runs": [
+        {
+          "target": "t1",
+          "op": "migrate",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+        },
+        {
+          "target": "t2",
+          "op": "migrate",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+        }
+      ]
+    },
+    ".chant/op-waves/migrations/wave-1/t1.hooks.json": {
+      "version": 1,
+      "opWaves": "migrations",
+      "op": "migrate",
+      "wave": "prod",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "t1",
+          "op": "migrate",
+          "plan": ".chant/op-waves/migrations/wave-1/t1.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": [
+        {
+          "moment": "before-plan",
+          "name": "lint",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "after-plan",
+          "name": "check",
+          "target": "t1",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "after-plan",
+          "name": "check",
+          "target": "t2",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "before-apply",
+          "name": "backup",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    },
+    ".chant/op-waves/migrations/wave-1/t1.plan.json": {
+      "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+    },
+    ".chant/op-waves/migrations/wave-1/t2.hooks.json": {
+      "version": 1,
+      "opWaves": "migrations",
+      "op": "migrate",
+      "wave": "prod",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "t2",
+          "op": "migrate",
+          "plan": ".chant/op-waves/migrations/wave-1/t2.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/migrations/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": [
+        {
+          "moment": "before-plan",
+          "name": "lint",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "after-plan",
+          "name": "check",
+          "target": "t1",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "after-plan",
+          "name": "check",
+          "target": "t2",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "before-apply",
+          "name": "backup",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    },
+    ".chant/op-waves/migrations/wave-1/t2.plan.json": {
+      "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+    },
+    ".chant/op-waves/migrations/wave-1.json": {
+      "wave": 1,
+      "name": "prod",
+      "op": "migrations",
+      "gate": "migrations-wave-1",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+      "members": [
+        {
+          "member": "t1",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "op": "migrate"
+        },
+        {
+          "member": "t2",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "op": "migrate"
+        }
+      ],
+      "status": "not-required",
+      "hooks": {
+        "before-plan": [
+          {
+            "name": "lint",
+            "command": [
+              "hook",
+              "lint",
+              "{runs}"
+            ]
+          }
+        ],
+        "after-plan": [
+          {
+            "name": "check",
+            "command": [
+              "hook",
+              "check",
+              "{target}",
+              "{plan}"
+            ],
+            "perRun": true,
+            "onFailure": "approve"
+          }
+        ],
+        "before-apply": [
+          {
+            "name": "backup",
+            "command": [
+              "hook",
+              "backup",
+              "{runs}"
+            ]
+          }
+        ],
+        "after-apply": [
+          {
+            "name": "smoke",
+            "command": [
+              "hook",
+              "smoke",
+              "{wave}"
+            ]
+          }
+        ]
+      },
+      "outcomes": [
+        {
+          "moment": "before-plan",
+          "name": "lint",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "after-plan",
+          "name": "check",
+          "target": "t1",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "after-plan",
+          "name": "check",
+          "target": "t2",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    }
+  }
+}

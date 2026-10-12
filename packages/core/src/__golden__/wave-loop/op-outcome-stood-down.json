@@ -1,0 +1,196 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 6,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 1,
+          "name": "layer",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28",
+          "members": [
+            {
+              "member": "a/vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "not-required",
+          "digestOver": "changing",
+          "discovered": {
+            "waves": 1
+          }
+        },
+        "outcome": {
+          "outcome": "stood-down",
+          "reason": "a newer push is on main"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 3
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "layer",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "layer",
+          "number": 1,
+          "discover": true,
+          "runs": []
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "layer",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-1/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "layer",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "a/vpc",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": []
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "layer",
+          "number": 1,
+          "digest": "jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28",
+          "runs": [
+            {
+              "target": "a/vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 1 (layer): the plan found 1 run of 1 waves: a/vpc",
+    "wave 1 (layer): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28: not-required",
+    "wave 1 (layer): the apply applied nothing: stood-down (a newer push is on main)"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    ".chant/op-waves/tf-apply/wave-1/hooks-outcome.json": {
+      "outcome": "stood-down",
+      "reason": "a newer push is on main"
+    },
+    ".chant/op-waves/tf-apply/wave-1/hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "tf-apply",
+      "wave": "layer",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "a/vpc",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "a/vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "waves": 1
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "layer",
+      "number": 1,
+      "digest": "jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28",
+      "runs": [
+        {
+          "target": "a/vpc",
+          "op": "tf-apply",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "layer",
+      "op": "tf-apply",
+      "gate": "wave-1",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28",
+      "members": [
+        {
+          "member": "a/vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "tf-apply"
+        }
+      ],
+      "status": "not-required",
+      "digestOver": "changing",
+      "discovered": {
+        "waves": 1
+      }
+    }
+  }
+}
