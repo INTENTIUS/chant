@@ -7,19 +7,19 @@
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sessionSeal } from "../record-sessions";
-import { commitAll, git, REPO, scratchDir } from "./contract-repo";
+import { commitAll, git, REPO, repoFixture, scratchDir } from "./contract-repo";
 
 export const SESSIONS_KIND = "design/sessions/session.kind.mjs";
 export const DECISIONS_KIND = "decisions/decision.kind.mjs";
 
 /** A git repository holding a copy of the reference workspace's decisions and design member. */
-export function sessionsRepo(): string {
+export const sessionsRepo = repoFixture(() => {
   const root = scratchDir("chant-sessions-");
   for (const d of ["decisions", "design"]) cpSync(join(REPO, "reference-workspace", d), join(root, d), { recursive: true });
   git(root, "init", "-q");
   commitAll(root, "reference");
   return root;
-}
+}, "chant-sessions-");
 
 /** A session file's text, sealed when it is closed. */
 export function sessionText(s: { id: string; state: "open" | "closed"; verdicts?: { record: string; principal: string; verdict: string }[]; agenda?: string[] }): string {

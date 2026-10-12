@@ -4,7 +4,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
@@ -54,6 +54,22 @@ export function repo(files: Record<string, string | { text: string; mode: number
     git(root, "commit", "-q", "-m", "one");
   }
   return root;
+}
+
+/**
+ * Build a fixture repository once per test file and hand each caller a copy of
+ * it. A repo costs a dozen git processes (init, add, commit, config), and a
+ * file copy none, so a file whose tests each start from the same repo builds
+ * it once (#3880). The template is rebuilt if {@link cleanScratch} removed it.
+ */
+export function repoFixture(build: () => string, prefix = "chant-contract-copy-"): () => string {
+  let template: string | undefined;
+  return () => {
+    if (template === undefined || !existsSync(template)) template = build();
+    const root = scratchDir(prefix);
+    cpSync(template, root, { recursive: true });
+    return root;
+  };
 }
 
 export function commitAll(root: string, message = "next"): string {
