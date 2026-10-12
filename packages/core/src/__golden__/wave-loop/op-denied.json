@@ -1,0 +1,399 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 7,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "denied": {
+                "rules": [
+                  "no-public-s3"
+                ]
+              }
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply"
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "refused",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "refused": {
+            "reason": "policy",
+            "runs": [
+              "vpc"
+            ]
+          },
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "op": "policy-override",
+            "gate": "vpc",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "sha256:0d0e9069d1317d35567f7bf5d62cce772cc58f895d827d2bb3bc9cfaaade6507",
+            "plan": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "rules": [
+              "no-public-s3"
+            ],
+            "description": "wave 1 (net) of tf-apply: vpc: plan sha256:1111111111111111111111111111111111111111111111111111111111111111 denied by no-public-s3",
+            "members": [
+              {
+                "member": "vpc",
+                "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+              }
+            ],
+            "wave": {
+              "number": 1,
+              "name": "net",
+              "op": "tf-apply"
+            }
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "refused",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-1",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "denied": {
+                "rules": [
+                  "no-public-s3"
+                ]
+              }
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply"
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "refused",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "refused": {
+            "reason": "policy",
+            "runs": [
+              "vpc"
+            ]
+          }
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "vpc: nobody listed may override it with: chant approve policy-override vpc --rule no-public-s3 --reason \"<why>\"",
+    "Nothing in wave 1 (net) or after it ran: the policy denied vpc, and no override counts for it."
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    ".chant/op-waves/tf-apply/wave-1/nat.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "denied": {
+            "rules": [
+              "no-public-s3"
+            ]
+          }
+        },
+        {
+          "target": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "target": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "empty": true
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "net",
+      "number": 1,
+      "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "empty": true
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/vpc.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "denied": {
+        "rules": [
+          "no-public-s3"
+        ]
+      }
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "net",
+      "op": "tf-apply",
+      "gate": "wave-1",
+      "policy": "always",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+      "members": [
+        {
+          "member": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "tf-apply",
+          "denied": {
+            "rules": [
+              "no-public-s3"
+            ]
+          }
+        },
+        {
+          "member": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "tf-apply"
+        },
+        {
+          "member": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "tf-apply",
+          "empty": true
+        }
+      ],
+      "status": "refused",
+      "hooks": {
+        "after-gate": [
+          {
+            "name": "report",
+            "command": [
+              "hook",
+              "report",
+              "{runs}"
+            ]
+          }
+        ]
+      },
+      "digestOver": "changing",
+      "refused": {
+        "reason": "policy",
+        "runs": [
+          "vpc"
+        ]
+      },
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,508 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "vpc",
+          "dns",
+          "nat"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "denied": {
+                "rules": [
+                  "no-public-s3"
+                ]
+              },
+              "override": {
+                "by": "github:carol",
+                "at": "2026-10-10T00:00:00Z",
+                "digest": "sha256:0d0e9069d1317d35567f7bf5d62cce772cc58f895d827d2bb3bc9cfaaade6507",
+                "reason": "the bucket is the docs site"
+              }
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply"
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ],
+          "overridesSpentAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": [
+          {
+            "version": 1,
+            "kind": "applied",
+            "op": "policy-override",
+            "gate": "vpc",
+            "planDigest": "sha256:0d0e9069d1317d35567f7bf5d62cce772cc58f895d827d2bb3bc9cfaaade6507",
+            "approvedAt": "2026-10-10T00:00:00Z",
+            "approvedBy": "github:carol",
+            "timestamp": "2026-10-11T00:00:00.000Z"
+          }
+        ]
+      },
+      "calls": 3,
+      "logs": 3
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "not-required",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-1",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "denied": {
+                "rules": [
+                  "no-public-s3"
+                ]
+              },
+              "override": {
+                "by": "github:carol",
+                "at": "2026-10-10T00:00:00Z",
+                "digest": "sha256:0d0e9069d1317d35567f7bf5d62cce772cc58f895d827d2bb3bc9cfaaade6507",
+                "reason": "the bucket is the docs site"
+              }
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply"
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing"
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-1/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "net",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "vpc: the policy denial (no-public-s3) is overridden by github:carol at 2026-10-10T00:00:00Z: the bucket is the docs site",
+    "wave 1 (net): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692: not-required",
+    "wave 1 (net) applies vpc under their overrides, which are now spent"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    ".chant/op-waves/tf-apply/wave-1/hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "tf-apply",
+      "wave": "net",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json"
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json"
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/nat.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "denied": {
+            "rules": [
+              "no-public-s3"
+            ]
+          }
+        },
+        {
+          "target": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "target": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "empty": true
+        }
+      ],
+      "overriders": [
+        "github:carol"
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "net",
+      "number": 1,
+      "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "empty": true
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/vpc.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "denied": {
+        "rules": [
+          "no-public-s3"
+        ]
+      }
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "net",
+      "op": "tf-apply",
+      "gate": "wave-1",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:c9fbef43193e7e84d13a2cbde3a7f292071ab953affab1ce3b87ab3862dc6692",
+      "members": [
+        {
+          "member": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "tf-apply",
+          "denied": {
+            "rules": [
+              "no-public-s3"
+            ]
+          },
+          "override": {
+            "by": "github:carol",
+            "at": "2026-10-10T00:00:00Z",
+            "digest": "sha256:0d0e9069d1317d35567f7bf5d62cce772cc58f895d827d2bb3bc9cfaaade6507",
+            "reason": "the bucket is the docs site"
+          }
+        },
+        {
+          "member": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "tf-apply"
+        },
+        {
+          "member": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "tf-apply",
+          "empty": true
+        }
+      ],
+      "status": "not-required",
+      "hooks": {
+        "after-gate": [
+          {
+            "name": "report",
+            "command": [
+              "hook",
+              "report",
+              "{runs}"
+            ]
+          }
+        ]
+      },
+      "digestOver": "changing",
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ],
+      "overridesSpentAt": "2026-10-11T00:00:00.000Z"
+    }
+  }
+}

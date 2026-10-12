@@ -1,0 +1,311 @@
+[
+  {
+    "label": "a and b plan one root",
+    "plan": {
+      "order": [
+        "net",
+        "a",
+        "b",
+        "app"
+      ],
+      "waves": [
+        [
+          "net"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "app"
+        ]
+      ],
+      "skipped": [],
+      "seeds": [],
+      "indeterminate": [],
+      "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+    },
+    "result": {
+      "plan": {
+        "order": [
+          "net",
+          "a",
+          "b",
+          "app"
+        ],
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ],
+        "skipped": [],
+        "seeds": [],
+        "indeterminate": [],
+        "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+      },
+      "status": "fail",
+      "results": [
+        {
+          "component": "net",
+          "ok": true,
+          "status": "ok",
+          "records": [
+            {
+              "component": "net",
+              "phase": "Apply",
+              "kind": "fake-root",
+              "status": "ok",
+              "durationMs": 0,
+              "output": {
+                "outputs": {
+                  "id": "net-id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "component": "a",
+          "ok": false,
+          "status": "fail",
+          "records": [
+            {
+              "component": "a",
+              "phase": "Plan",
+              "kind": "plan",
+              "status": "fail",
+              "durationMs": 0,
+              "error": "the change set names member shared twice"
+            }
+          ]
+        },
+        {
+          "component": "b",
+          "ok": false,
+          "status": "fail",
+          "records": [
+            {
+              "component": "b",
+              "phase": "Plan",
+              "kind": "plan",
+              "status": "fail",
+              "durationMs": 0,
+              "error": "the change set names member shared twice"
+            }
+          ]
+        }
+      ],
+      "completed": [
+        "net"
+      ],
+      "failed": [
+        "a",
+        "b"
+      ],
+      "blocked": [
+        {
+          "component": "app",
+          "reason": "blocked",
+          "blockedBy": "a"
+        }
+      ],
+      "componentOutputs": {
+        "net": {
+          "id": "net-id"
+        }
+      },
+      "waves": [
+        {
+          "wave": 1,
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "components": [
+            "net"
+          ],
+          "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+          "members": [
+            {
+              "member": "net",
+              "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+            }
+          ],
+          "status": "applied",
+          "approvedBy": "ana"
+        },
+        {
+          "wave": 2,
+          "op": "fan-out",
+          "gate": "release-wave-2",
+          "components": [
+            "a",
+            "b"
+          ],
+          "digest": "",
+          "members": [
+            {
+              "member": "shared",
+              "planDigest": "sha256:7b22726f6f74223a2261227d0000000000000000000000000000000000000000"
+            },
+            {
+              "member": "shared",
+              "planDigest": "sha256:7b22726f6f74223a2262227d0000000000000000000000000000000000000000"
+            }
+          ],
+          "status": "failed",
+          "failed": [
+            {
+              "component": "a",
+              "error": "the change set names member shared twice"
+            },
+            {
+              "component": "b",
+              "error": "the change set names member shared twice"
+            }
+          ]
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "run-start",
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ]
+      },
+      {
+        "type": "wave-start",
+        "wave": 1,
+        "components": [
+          "net"
+        ]
+      },
+      {
+        "type": "component-start",
+        "wave": 1,
+        "component": "net"
+      },
+      {
+        "type": "phase-start",
+        "component": "net",
+        "phase": "Apply"
+      },
+      {
+        "type": "step",
+        "component": "net",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "running"
+      },
+      {
+        "type": "step",
+        "component": "net",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "ok"
+      },
+      {
+        "type": "phase-done",
+        "component": "net",
+        "phase": "Apply",
+        "status": "ok"
+      },
+      {
+        "type": "component-done",
+        "wave": 1,
+        "component": "net",
+        "status": "ok"
+      },
+      {
+        "type": "wave-done",
+        "wave": 1,
+        "status": "ok"
+      },
+      {
+        "type": "run-done",
+        "status": "failed"
+      }
+    ],
+    "settled": [
+      {
+        "wave": 1,
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "components": [
+          "net"
+        ],
+        "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+        "members": [
+          {
+            "member": "net",
+            "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+          }
+        ],
+        "status": "applied",
+        "approvedBy": "ana"
+      },
+      {
+        "wave": 2,
+        "op": "fan-out",
+        "gate": "release-wave-2",
+        "components": [
+          "a",
+          "b"
+        ],
+        "digest": "",
+        "members": [
+          {
+            "member": "shared",
+            "planDigest": "sha256:7b22726f6f74223a2261227d0000000000000000000000000000000000000000"
+          },
+          {
+            "member": "shared",
+            "planDigest": "sha256:7b22726f6f74223a2262227d0000000000000000000000000000000000000000"
+          }
+        ],
+        "status": "failed",
+        "failed": [
+          {
+            "component": "a",
+            "error": "the change set names member shared twice"
+          },
+          {
+            "component": "b",
+            "error": "the change set names member shared twice"
+          }
+        ]
+      }
+    ],
+    "components": [
+      {
+        "component": "net",
+        "outputs": {
+          "id": "net-id"
+        }
+      }
+    ],
+    "applied": [
+      "net"
+    ],
+    "ledger": {
+      "appended": [],
+      "resolved": [],
+      "applied": []
+    }
+  }
+]

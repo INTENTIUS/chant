@@ -1,0 +1,511 @@
+[
+  {
+    "label": "all approved",
+    "plan": {
+      "order": [
+        "net",
+        "a",
+        "b",
+        "app"
+      ],
+      "waves": [
+        [
+          "net"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "app"
+        ]
+      ],
+      "skipped": [],
+      "seeds": [],
+      "indeterminate": [],
+      "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+    },
+    "result": {
+      "plan": {
+        "order": [
+          "net",
+          "a",
+          "b",
+          "app"
+        ],
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ],
+        "skipped": [],
+        "seeds": [],
+        "indeterminate": [],
+        "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+      },
+      "status": "ok",
+      "results": [
+        {
+          "component": "net",
+          "ok": true,
+          "status": "ok",
+          "records": [
+            {
+              "component": "net",
+              "phase": "Apply",
+              "kind": "fake-root",
+              "status": "ok",
+              "durationMs": 0,
+              "output": {
+                "outputs": {
+                  "id": "net-id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "component": "a",
+          "ok": true,
+          "status": "ok",
+          "records": [
+            {
+              "component": "a",
+              "phase": "Apply",
+              "kind": "fake-root",
+              "status": "ok",
+              "durationMs": 0,
+              "output": {
+                "outputs": {
+                  "id": "a-id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "component": "b",
+          "ok": true,
+          "status": "ok",
+          "records": [
+            {
+              "component": "b",
+              "phase": "Apply",
+              "kind": "fake-root",
+              "status": "ok",
+              "durationMs": 0,
+              "output": {
+                "outputs": {
+                  "id": "b-id"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "component": "app",
+          "ok": true,
+          "status": "ok",
+          "records": [
+            {
+              "component": "app",
+              "phase": "Apply",
+              "kind": "fake-root",
+              "status": "ok",
+              "durationMs": 0,
+              "output": {
+                "outputs": {
+                  "id": "app-id"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "completed": [
+        "a",
+        "app",
+        "b",
+        "net"
+      ],
+      "failed": [],
+      "blocked": [],
+      "componentOutputs": {
+        "net": {
+          "id": "net-id"
+        },
+        "a": {
+          "id": "a-id"
+        },
+        "b": {
+          "id": "b-id"
+        },
+        "app": {
+          "id": "app-id"
+        }
+      },
+      "waves": [
+        {
+          "wave": 1,
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "components": [
+            "net"
+          ],
+          "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+          "members": [
+            {
+              "member": "net",
+              "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+            }
+          ],
+          "status": "applied",
+          "approvedBy": "ana"
+        },
+        {
+          "wave": 2,
+          "op": "fan-out",
+          "gate": "release-wave-2",
+          "components": [
+            "a",
+            "b"
+          ],
+          "digest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd",
+          "members": [
+            {
+              "member": "a",
+              "planDigest": "sha256:7b22726f6f74223a2261227d0000000000000000000000000000000000000000"
+            },
+            {
+              "member": "b",
+              "planDigest": "sha256:7b22726f6f74223a2262227d0000000000000000000000000000000000000000"
+            }
+          ],
+          "status": "applied",
+          "approvedBy": "ana"
+        },
+        {
+          "wave": 3,
+          "op": "fan-out",
+          "gate": "release-wave-3",
+          "components": [
+            "app"
+          ],
+          "digest": "jcs1-sha256:7a62831fe9eb73d86761a06ac2723600b2ce02ce3c2d503ab0fe8d4a0ca6f34d",
+          "members": [
+            {
+              "member": "app",
+              "planDigest": "sha256:7b22726f6f74223a22617070222c2276617273223a7b22757073747265616d22"
+            }
+          ],
+          "status": "applied",
+          "approvedBy": "ana"
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "run-start",
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ]
+      },
+      {
+        "type": "wave-start",
+        "wave": 1,
+        "components": [
+          "net"
+        ]
+      },
+      {
+        "type": "component-start",
+        "wave": 1,
+        "component": "net"
+      },
+      {
+        "type": "phase-start",
+        "component": "net",
+        "phase": "Apply"
+      },
+      {
+        "type": "step",
+        "component": "net",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "running"
+      },
+      {
+        "type": "step",
+        "component": "net",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "ok"
+      },
+      {
+        "type": "phase-done",
+        "component": "net",
+        "phase": "Apply",
+        "status": "ok"
+      },
+      {
+        "type": "component-done",
+        "wave": 1,
+        "component": "net",
+        "status": "ok"
+      },
+      {
+        "type": "wave-done",
+        "wave": 1,
+        "status": "ok"
+      },
+      {
+        "type": "wave-start",
+        "wave": 2,
+        "components": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "type": "component-start",
+        "wave": 2,
+        "component": "a"
+      },
+      {
+        "type": "phase-start",
+        "component": "a",
+        "phase": "Apply"
+      },
+      {
+        "type": "component-start",
+        "wave": 2,
+        "component": "b"
+      },
+      {
+        "type": "phase-start",
+        "component": "b",
+        "phase": "Apply"
+      },
+      {
+        "type": "step",
+        "component": "a",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "running"
+      },
+      {
+        "type": "step",
+        "component": "b",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "running"
+      },
+      {
+        "type": "step",
+        "component": "a",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "ok"
+      },
+      {
+        "type": "step",
+        "component": "b",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "ok"
+      },
+      {
+        "type": "phase-done",
+        "component": "a",
+        "phase": "Apply",
+        "status": "ok"
+      },
+      {
+        "type": "phase-done",
+        "component": "b",
+        "phase": "Apply",
+        "status": "ok"
+      },
+      {
+        "type": "component-done",
+        "wave": 2,
+        "component": "a",
+        "status": "ok"
+      },
+      {
+        "type": "component-done",
+        "wave": 2,
+        "component": "b",
+        "status": "ok"
+      },
+      {
+        "type": "wave-done",
+        "wave": 2,
+        "status": "ok"
+      },
+      {
+        "type": "wave-start",
+        "wave": 3,
+        "components": [
+          "app"
+        ]
+      },
+      {
+        "type": "component-start",
+        "wave": 3,
+        "component": "app"
+      },
+      {
+        "type": "phase-start",
+        "component": "app",
+        "phase": "Apply"
+      },
+      {
+        "type": "step",
+        "component": "app",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "running"
+      },
+      {
+        "type": "step",
+        "component": "app",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "ok"
+      },
+      {
+        "type": "phase-done",
+        "component": "app",
+        "phase": "Apply",
+        "status": "ok"
+      },
+      {
+        "type": "component-done",
+        "wave": 3,
+        "component": "app",
+        "status": "ok"
+      },
+      {
+        "type": "wave-done",
+        "wave": 3,
+        "status": "ok"
+      },
+      {
+        "type": "run-done",
+        "status": "ok"
+      }
+    ],
+    "settled": [
+      {
+        "wave": 1,
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "components": [
+          "net"
+        ],
+        "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+        "members": [
+          {
+            "member": "net",
+            "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+          }
+        ],
+        "status": "applied",
+        "approvedBy": "ana"
+      },
+      {
+        "wave": 2,
+        "op": "fan-out",
+        "gate": "release-wave-2",
+        "components": [
+          "a",
+          "b"
+        ],
+        "digest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd",
+        "members": [
+          {
+            "member": "a",
+            "planDigest": "sha256:7b22726f6f74223a2261227d0000000000000000000000000000000000000000"
+          },
+          {
+            "member": "b",
+            "planDigest": "sha256:7b22726f6f74223a2262227d0000000000000000000000000000000000000000"
+          }
+        ],
+        "status": "applied",
+        "approvedBy": "ana"
+      },
+      {
+        "wave": 3,
+        "op": "fan-out",
+        "gate": "release-wave-3",
+        "components": [
+          "app"
+        ],
+        "digest": "jcs1-sha256:7a62831fe9eb73d86761a06ac2723600b2ce02ce3c2d503ab0fe8d4a0ca6f34d",
+        "members": [
+          {
+            "member": "app",
+            "planDigest": "sha256:7b22726f6f74223a22617070222c2276617273223a7b22757073747265616d22"
+          }
+        ],
+        "status": "applied",
+        "approvedBy": "ana"
+      }
+    ],
+    "components": [
+      {
+        "component": "net",
+        "outputs": {
+          "id": "net-id"
+        }
+      },
+      {
+        "component": "a",
+        "outputs": {
+          "id": "a-id"
+        }
+      },
+      {
+        "component": "b",
+        "outputs": {
+          "id": "b-id"
+        }
+      },
+      {
+        "component": "app",
+        "outputs": {
+          "id": "app-id"
+        }
+      }
+    ],
+    "applied": [
+      "net",
+      "a",
+      "b",
+      "app"
+    ],
+    "ledger": {
+      "appended": [],
+      "resolved": [],
+      "applied": []
+    }
+  }
+]

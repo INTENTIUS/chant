@@ -1,0 +1,148 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 1,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+          "members": [
+            {
+              "member": "t1",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+              "op": "migrate"
+            }
+          ],
+          "status": "waiting",
+          "heldBy": [
+            "the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)"
+          ],
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "migrations",
+            "gate": "migrations-wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)",
+            "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve migrations migrations-wave-1 --plan jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "migrations",
+            "gate": "migrations-wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)",
+            "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 3
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t1",
+        ".chant/op-waves/migrations/wave-1/t1.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t2",
+        ".chant/op-waves/migrations/wave-1/t2.plan.json"
+      ]
+    }
+  ],
+  "logs": [
+    "wave 1 (prod): its hooks are read at bbbbbbbbbbbb, and this change's differ; the ones at base run",
+    "wave 1 (prod): the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.), so none run and the wave waits for an approval",
+    "Nothing in wave 1 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-1 --plan jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f (with --resume, the approval also starts this job again)"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-1/t1.plan.json": {
+      "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+    },
+    ".chant/op-waves/migrations/wave-1/t2.plan.json": {
+      "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+    },
+    ".chant/op-waves/migrations/wave-1.json": {
+      "wave": 1,
+      "name": "prod",
+      "op": "migrations",
+      "gate": "migrations-wave-1",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f",
+      "members": [
+        {
+          "member": "t1",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "op": "migrate"
+        },
+        {
+          "member": "t2",
+          "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "op": "migrate"
+        }
+      ],
+      "status": "waiting",
+      "heldBy": [
+        "the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)"
+      ],
+      "pendingFact": {
+        "version": 1,
+        "kind": "pending",
+        "approvalMode": "ledger",
+        "op": "migrations",
+        "gate": "migrations-wave-1",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)",
+        "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
+      },
+      "recorded": true,
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "approve": "chant approve migrations migrations-wave-1 --plan jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
+    }
+  }
+}

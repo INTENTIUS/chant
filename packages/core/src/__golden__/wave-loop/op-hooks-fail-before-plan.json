@@ -1,0 +1,97 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 1,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "before-plan",
+            "name": "lint",
+            "exit": 1,
+            "outcome": "failed"
+          }
+        ]
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 1,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "hook",
+        "lint",
+        ".chant/op-waves/migrations/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "migrations",
+        "CHANT_WAVE": "prod",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "before-plan",
+        "CHANT_RUNS": ".chant/op-waves/migrations/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/migrations/wave-1/hold.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "prod",
+          "number": 1,
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate"
+            },
+            {
+              "target": "t2",
+              "op": "migrate"
+            }
+          ]
+        },
+        ".chant/op-waves/migrations/wave-1/runs.json": {
+          "wave": "prod",
+          "number": 1,
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate"
+            },
+            {
+              "target": "t2",
+              "op": "migrate"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "before-plan hook lint exited 1",
+    "a hook before the plan failed, so nothing in wave 1 was planned or applied"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-1/runs.json": {
+      "wave": "prod",
+      "number": 1,
+      "runs": [
+        {
+          "target": "t1",
+          "op": "migrate"
+        },
+        {
+          "target": "t2",
+          "op": "migrate"
+        }
+      ]
+    }
+  }
+}

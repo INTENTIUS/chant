@@ -1,0 +1,1808 @@
+{
+  "jobs": [
+    {
+      "label": "waits",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "destructive": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "waiting",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "description": "net layer",
+            "commit": "c0ffee",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "neverOverMcp": true
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "description": "net layer",
+            "commit": "c0ffee",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "neverOverMcp": true
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 1
+    },
+    {
+      "label": "approved",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "vpc",
+          "dns",
+          "nat"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "destructive": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "approved",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "via": "ledger",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-10T00:00:00Z",
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 3,
+      "logs": 1
+    },
+    {
+      "label": "another digest approved",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "destructive": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "waiting",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "description": "net layer",
+            "commit": "c0ffee",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "neverOverMcp": true
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "mismatch": {
+            "approved": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "planned": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "resolvedBy": "alice",
+            "timestamp": "2026-10-10T00:00:00Z"
+          },
+          "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "description": "net layer",
+            "commit": "c0ffee",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "neverOverMcp": true
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 1
+    },
+    {
+      "label": "decide a wide never wave",
+      "job": {
+        "wave": 2,
+        "decide": true
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 2,
+          "name": "apps",
+          "op": "tf-apply",
+          "gate": "wave-2",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "members": [
+            {
+              "member": "a1",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a2",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a3",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 1
+    },
+    {
+      "label": "share 1",
+      "job": {
+        "wave": 2,
+        "share": 1
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "a1",
+          "a2"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "apps",
+          "op": "tf-apply",
+          "gate": "wave-2",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "members": [
+            {
+              "member": "a1",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a2",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a3",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 0
+    },
+    {
+      "label": "share 2",
+      "job": {
+        "wave": 2,
+        "share": 2
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "a3"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "apps",
+          "op": "tf-apply",
+          "gate": "wave-2",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "members": [
+            {
+              "member": "a1",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a2",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a3",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 0
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "waiting",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-1",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json",
+        "CHANT_GATE_APPROVE": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "CHANT_GATE_WAITING_SINCE": "2026-10-11T00:00:00.000Z",
+        "CHANT_GATE_RECORDED": "true"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "destructive": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "waiting",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "description": "net layer",
+            "commit": "c0ffee",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "neverOverMcp": true
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853"
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "approved",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-1",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "destructive": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "approved",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "via": "ledger",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-10T00:00:00Z"
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-1/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "net",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ]
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "waiting",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-1",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json",
+        "CHANT_GATE_APPROVE": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "CHANT_GATE_WAITING_SINCE": "2026-10-11T00:00:00.000Z",
+        "CHANT_GATE_RECORDED": "true"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "destructive": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "waiting",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          },
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "description": "net layer",
+            "commit": "c0ffee",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "neverOverMcp": true
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "mismatch": {
+            "approved": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "planned": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+            "resolvedBy": "alice",
+            "timestamp": "2026-10-10T00:00:00Z"
+          },
+          "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853"
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "destructive": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "apps",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "apps",
+          "number": 2,
+          "runs": [
+            {
+              "target": "a1",
+              "op": "tf-apply"
+            },
+            {
+              "target": "a2",
+              "op": "tf-apply"
+            },
+            {
+              "target": "a3",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-2/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "apps",
+        "CHANT_WAVE_NUMBER": "2",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-2/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-2/hold.json",
+        "CHANT_GATE_STATUS": "not-required",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-2",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-2.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "apps",
+          "number": 2,
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "runs": [
+            {
+              "target": "a1",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "target": "a2",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "target": "a3",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 2,
+          "name": "apps",
+          "op": "tf-apply",
+          "gate": "wave-2",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "members": [
+            {
+              "member": "a1",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a2",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a3",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "neverOverMcp": true,
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:12.00"
+            }
+          ],
+          "pending": {
+            "description": "net layer",
+            "commit": "c0ffee"
+          }
+        },
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "apps",
+          "number": 2,
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "runs": [
+            {
+              "target": "a1",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "target": "a2",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "target": "a3",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "apps",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "apps",
+          "number": 2,
+          "runs": [
+            {
+              "target": "a1",
+              "op": "tf-apply"
+            },
+            {
+              "target": "a2",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "apps",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-2/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "apps",
+          "number": 2,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "a1",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-2/a1.plan.json"
+            },
+            {
+              "target": "a2",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-2/a2.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
+          "hooks": {},
+          "outcomes": []
+        },
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "apps",
+          "number": 2,
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "runs": [
+            {
+              "target": "a1",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "target": "a2",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "apps",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "apps",
+          "number": 2,
+          "runs": [
+            {
+              "target": "a3",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "apps",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-2/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "apps",
+          "number": 2,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "a3",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-2/a3.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
+          "hooks": {},
+          "outcomes": []
+        },
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "apps",
+          "number": 2,
+          "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+          "runs": [
+            {
+              "target": "a3",
+              "op": "tf-apply",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "Nothing in wave 1 or after it ran. Read the plans, then approve: chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853 (with --resume, the approval also starts this job again)",
+    "wave 1 (net): gate always (read at bbbbbbbbbbbb), digest jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853: approved by alice",
+    "Nothing in wave 1 or after it ran. Read the plans, then approve: chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853 (with --resume, the approval also starts this job again)",
+    "wave 2 (apps): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3: not-required"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1/hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "tf-apply",
+      "wave": "net",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/vpc.plan.json"
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/dns.plan.json"
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/nat.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/nat.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "destructive": true
+        },
+        {
+          "target": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "empty": true
+        },
+        {
+          "target": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ],
+      "pending": {
+        "description": "net layer",
+        "commit": "c0ffee"
+      },
+      "members": [
+        {
+          "member": "cost",
+          "planDigest": "usd:12.00"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "net",
+      "number": 1,
+      "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "destructive": true
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "empty": true
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/vpc.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "destructive": true
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "net",
+      "op": "tf-apply",
+      "gate": "wave-1",
+      "policy": "always",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+      "members": [
+        {
+          "member": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "tf-apply",
+          "destructive": true
+        },
+        {
+          "member": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "tf-apply",
+          "empty": true
+        },
+        {
+          "member": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "tf-apply"
+        }
+      ],
+      "status": "waiting",
+      "hooks": {
+        "after-gate": [
+          {
+            "name": "report",
+            "command": [
+              "hook",
+              "report",
+              "{runs}"
+            ]
+          }
+        ]
+      },
+      "digestOver": "changing",
+      "neverOverMcp": true,
+      "extras": [
+        {
+          "member": "cost",
+          "planDigest": "usd:12.00"
+        }
+      ],
+      "pending": {
+        "description": "net layer",
+        "commit": "c0ffee"
+      },
+      "pendingFact": {
+        "version": 1,
+        "kind": "pending",
+        "description": "net layer",
+        "commit": "c0ffee",
+        "approvalMode": "ledger",
+        "op": "tf-apply",
+        "gate": "wave-1",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "neverOverMcp": true
+      },
+      "recorded": true,
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "mismatch": {
+        "approved": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "planned": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+        "resolvedBy": "alice",
+        "timestamp": "2026-10-10T00:00:00Z"
+      },
+      "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-2/a1.plan.json": {
+      "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    ".chant/op-waves/tf-apply/wave-2/a2.plan.json": {
+      "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    ".chant/op-waves/tf-apply/wave-2/a3.plan.json": {
+      "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    ".chant/op-waves/tf-apply/wave-2/hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "tf-apply",
+      "wave": "apps",
+      "number": 2,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "a3",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-2/a3.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/tf-apply/wave-2/plans.json": {
+      "runs": [
+        {
+          "target": "a3",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "pending": {
+        "description": "net layer",
+        "commit": "c0ffee"
+      },
+      "members": [
+        {
+          "member": "cost",
+          "planDigest": "usd:12.00"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-2/runs.json": {
+      "wave": "apps",
+      "number": 2,
+      "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+      "runs": [
+        {
+          "target": "a3",
+          "op": "tf-apply",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-2.json": {
+      "wave": 2,
+      "name": "apps",
+      "op": "tf-apply",
+      "gate": "wave-2",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3",
+      "members": [
+        {
+          "member": "a1",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "op": "tf-apply"
+        },
+        {
+          "member": "a2",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "op": "tf-apply"
+        },
+        {
+          "member": "a3",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "op": "tf-apply"
+        }
+      ],
+      "status": "not-required",
+      "hooks": {
+        "after-gate": [
+          {
+            "name": "report",
+            "command": [
+              "hook",
+              "report",
+              "{runs}"
+            ]
+          }
+        ]
+      },
+      "digestOver": "changing",
+      "neverOverMcp": true,
+      "extras": [
+        {
+          "member": "cost",
+          "planDigest": "usd:12.00"
+        }
+      ],
+      "pending": {
+        "description": "net layer",
+        "commit": "c0ffee"
+      },
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ]
+    }
+  }
+}

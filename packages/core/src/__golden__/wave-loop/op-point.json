@@ -1,0 +1,495 @@
+{
+  "jobs": [
+    {
+      "label": "open question",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 1,
+          "name": "prod",
+          "op": "tf-apply",
+          "gate": "tf-apply-wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+          "members": [
+            {
+              "member": "db",
+              "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "op": "apply"
+            },
+            {
+              "member": "net",
+              "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+              "op": "apply"
+            }
+          ],
+          "status": "waiting",
+          "point": {
+            "name": "prod-apply",
+            "timeout": "48h",
+            "question": {
+              "id": "prod-apply-a256:ad02ba1",
+              "point": "prod-apply",
+              "state": "escalated",
+              "path": ".chant/answers/prod-apply-a256:ad02ba1.md",
+              "subject": "gate:tf-apply/tf-apply-wave-1",
+              "steward": null
+            }
+          },
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "tf-apply-wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 1 (prod): 2 runs, gate always, decision point prod-apply",
+            "planDigest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+            "answer": {
+              "point": "prod-apply",
+              "id": "prod-apply-a256:ad02ba1",
+              "path": ".chant/answers/prod-apply-a256:ad02ba1.md"
+            }
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant workspace points answer prod-apply-a256:ad02ba1 --answer <answer> --by <your name>"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "tf-apply-wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 1 (prod): 2 runs, gate always, decision point prod-apply",
+            "planDigest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+            "answer": {
+              "point": "prod-apply",
+              "id": "prod-apply-a256:ad02ba1",
+              "path": ".chant/answers/prod-apply-a256:ad02ba1.md"
+            }
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 2
+    },
+    {
+      "label": "answered no",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 8,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 1,
+          "name": "prod",
+          "op": "tf-apply",
+          "gate": "tf-apply-wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+          "members": [
+            {
+              "member": "db",
+              "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "op": "apply"
+            },
+            {
+              "member": "net",
+              "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+              "op": "apply"
+            }
+          ],
+          "status": "refused",
+          "point": {
+            "name": "prod-apply",
+            "timeout": "48h",
+            "answer": {
+              "point": "prod-apply",
+              "id": "prod-apply-a256:ad02ba1",
+              "path": ".chant/answers/prod-apply-a256:ad02ba1.md",
+              "answer": false,
+              "decider": "quorum",
+              "answeredBy": [
+                "bob"
+              ]
+            }
+          },
+          "refused": {
+            "reason": "point",
+            "runs": [
+              "db",
+              "net"
+            ],
+            "message": "decision point prod-apply answered false (prod-apply-a256:ad02ba1, by bob), and gate \"tf-apply-wave-1\" passes only on true. To ask again, take the answer back: chant workspace points retract prod-apply-a256:ad02ba1 --by <name>"
+          }
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 1
+    },
+    {
+      "label": "answered yes",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "db",
+          "net"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 1,
+          "name": "prod",
+          "op": "tf-apply",
+          "gate": "tf-apply-wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+          "members": [
+            {
+              "member": "db",
+              "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "op": "apply"
+            },
+            {
+              "member": "net",
+              "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+              "op": "apply"
+            }
+          ],
+          "status": "approved",
+          "point": {
+            "name": "prod-apply",
+            "timeout": "48h",
+            "answer": {
+              "point": "prod-apply",
+              "id": "prod-apply-a256:ad02ba1",
+              "path": ".chant/answers/prod-apply-a256:ad02ba1.md",
+              "answer": true,
+              "decider": "quorum",
+              "answeredBy": [
+                "alice"
+              ]
+            }
+          },
+          "via": "point",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [
+          {
+            "version": 1,
+            "op": "tf-apply",
+            "gate": "tf-apply-wave-1",
+            "resolvedBy": "alice",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "note": "answered through decision point prod-apply (prod-apply-a256:ad02ba1)",
+            "planDigest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+            "approver": {
+              "kind": "human"
+            },
+            "answer": {
+              "point": "prod-apply",
+              "id": "prod-apply-a256:ad02ba1",
+              "path": ".chant/answers/prod-apply-a256:ad02ba1.md",
+              "answer": true,
+              "decider": "quorum",
+              "answeredBy": [
+                "alice"
+              ]
+            }
+          }
+        ],
+        "applied": []
+      },
+      "calls": 4,
+      "logs": 1
+    },
+    {
+      "label": "point refused at base",
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 1,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": []
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 0,
+      "logs": 1
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "db",
+        "--out",
+        ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "net",
+        "--out",
+        ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "db",
+        "--out",
+        ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "net",
+        "--out",
+        ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "db",
+        "--out",
+        ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "net",
+        "--out",
+        ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "db",
+        "--plan",
+        ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-1/db.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/db.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "apply",
+          "wave": "prod",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "db",
+              "op": "apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": []
+        }
+      }
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "net",
+        "--plan",
+        ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-1/net.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-1/net.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "apply",
+          "wave": "prod",
+          "number": 1,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "net",
+              "op": "apply",
+              "plan": ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+          "hooks": {},
+          "outcomes": []
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 1 (prod) asks decision point prod-apply about jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74: question prod-apply-a256:ad02ba1 is escalated",
+    "Nothing in wave 1 or after it ran. Read the plans, then approve: chant workspace points answer prod-apply-a256:ad02ba1 --answer <answer> --by <your name> (with --resume, the approval also starts this job again)",
+    "Nothing in wave 1 (prod) or after it ran: decision point prod-apply answered false (prod-apply-a256:ad02ba1, by bob), and gate \"tf-apply-wave-1\" passes only on true. To ask again, take the answer back: chant workspace points retract prod-apply-a256:ad02ba1 --by <name>",
+    "wave 1 (prod): gate always (read at bbbbbbbbbbbb), digest jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74: approved by alice",
+    "wave 1 (prod): the decision point at base cannot be asked (waves.json at bbbbbbbbbbbb: `point.name` is a decision point's name: lower case letters, digits and hyphens, starting with a letter), so nothing in it was planned or applied"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/db.hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "apply",
+      "wave": "prod",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "db",
+          "op": "apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/db.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/tf-apply/wave-1/db.plan.json": {
+      "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    ".chant/op-waves/tf-apply/wave-1/net.hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "apply",
+      "wave": "prod",
+      "number": 1,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "net",
+          "op": "apply",
+          "plan": ".chant/op-waves/tf-apply/wave-1/net.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-1/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/tf-apply/wave-1/net.plan.json": {
+      "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "prod",
+      "op": "tf-apply",
+      "gate": "tf-apply-wave-1",
+      "policy": "always",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:ad02ba1b808c57dc27b3aac93f5ad1dff7fa573b768361db06a809901b5a1d74",
+      "members": [
+        {
+          "member": "db",
+          "planDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "op": "apply"
+        },
+        {
+          "member": "net",
+          "planDigest": "sha256:nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          "op": "apply"
+        }
+      ],
+      "status": "approved",
+      "point": {
+        "name": "prod-apply",
+        "timeout": "48h",
+        "answer": {
+          "point": "prod-apply",
+          "id": "prod-apply-a256:ad02ba1",
+          "path": ".chant/answers/prod-apply-a256:ad02ba1.md",
+          "answer": true,
+          "decider": "quorum",
+          "answeredBy": [
+            "alice"
+          ]
+        }
+      },
+      "via": "point",
+      "approvedBy": "alice",
+      "approvedAt": "2026-10-11T00:00:00.000Z"
+    }
+  }
+}
