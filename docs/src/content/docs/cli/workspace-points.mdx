@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
 chant workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--store <tree|ledger>] [--kind <kind file>] [--dry-run]
-chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
+chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--resume] [--dry-run]
 chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
 ```
 
@@ -72,6 +72,8 @@ An ad-hoc point is decided by people alone: its chain is one quorum. `points ans
 `points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, the steward that asked the question, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written. An answer given over MCP or ACP, or by a process a session on one started, counts nobody toward the quorum, and one to a question whose gate is `neverOverMcp` is refused with `answer-never-over-mcp` ([#3817](https://github.com/INTENTIUS/chant/issues/3817)). An answer given during a steward's turn, or by a process the turn started, is refused with `answer-in-steward-turn`: a steward waits on a question and never answers it ([Steward](/chant/lexicons/fountain/steward/)).
 
 People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`, its `reason` as `model_reason`. Either way the record becomes `answered`, with `answered_by` and `answered_on`. `--note <text>` is kept as the record's `note` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). `--relayed-by <principal>` names who carried the answer to chant for the people in `--by`, such as a follower relaying a person's answer through hud, and is kept as `relayed_by` ([#3402](https://github.com/INTENTIUS/chant/issues/3402)). The relay never counts toward the quorum, and under `identity.attribution: "identified"` it must be a checkable principal, as each `--by` must. Once given, the record does not change in place. A second `points answer` is refused with `record-closed`, so people who want to change it retract it first.
+
+`--resume` starts the CI job waiting at the gate the question names (`gate:<op>/<gate>` in its subject) again, once the answer is written and on the remote, and when the answer passes the gate. It does what `chant approve --resume` does for a plain gate, and prints on standard error, so the JSON document is unchanged. An answer in the working tree is not resumed on, because the job reads it only once it is committed and pushed ([#3835](https://github.com/INTENTIUS/chant/issues/3835), [Resume the waiting job](/chant/guide/op-waves/#a-gate-that-asks-a-decision-point)).
 
 ## Retracting an answer
 

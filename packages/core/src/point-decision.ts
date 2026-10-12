@@ -20,6 +20,11 @@
  * TypeScript, zod or git code, which `point-decision-bundle.test.ts` holds
  * it to. `./op/gate-point-run.ts` re-exports it, and chant's own runs decide
  * by it.
+ *
+ * A gate's resolution is written only when its run asks again, so a resume
+ * job asks {@link pointGateResumable} whether a waiting job's question now
+ * has an answer that passes the gate (#3835), with the questions
+ * {@link chantPointQuestions} reads. `chant run resume` makes the same check.
  */
 
 import { execFile } from "node:child_process";
@@ -31,6 +36,7 @@ import { parseDuration } from "./op/duration";
 import type { GateLedgerPort } from "./op/gate";
 import { DEFAULT_GATE_POINT_PASS, defaultGatePointStore, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts, type GatePointStore } from "./op/gate-point";
 import type { WaitingPoint } from "./op/steward-points";
+import { resolveGateRunLocator, type GateRunLocator } from "./op/gate-run-locator";
 
 export {
   DEFAULT_GATE_POINT_PASS,
@@ -40,12 +46,14 @@ export {
   gatePointOf,
   gatePointProblems,
   gateSubject,
+  parseGateSubject,
   type GatePoint,
   type GatePointFacts,
   type GatePointStore,
 } from "./op/gate-point";
 export type { GateAnswerRef, GateResolutionRecord, GateResolutionInput, PendingGateInput, PendingGateRecord } from "./lifecycle/gate-ledger";
 export type { WaitingPoint } from "./op/steward-points";
+export { isGateRunLocator, resolveGateRunLocator, type GateRunLocator } from "./op/gate-run-locator";
 
 /**
  * The gate ledger as {@link evaluatePointGate} uses it: read an op's facts,
@@ -107,6 +115,12 @@ export interface PointGateInput {
   /** The environment the run was started for: the `gate.env` input. Op gate facts on the ledger record none. */
   env?: string;
   now?: string;
+  /**
+   * Where this job runs, for `chant run resume` to start it again once the
+   * question is answered (#3835). Default: read from the CI environment
+   * ({@link resolveGateRunLocator}); false records none.
+   */
+  resume?: GateRunLocator | false;
 }
 
 /** What reaching a gate that asks a point decided. */
@@ -188,6 +202,7 @@ export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePo
     return { satisfied: false, waiting, pending: standing, recorded: false };
   }
   const url = resolveApprovalUrl();
+  const resume = input.resume === false ? undefined : (input.resume ?? resolveGateRunLocator());
   const { record, pushed, pushWarning } = await port.appendPending({
     op: input.op,
     gate: input.gate,
@@ -197,9 +212,75 @@ export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePo
     ...(input.runId ? { runId: input.runId } : {}),
     ...(url ? { url } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
-    answer: ref,
+    ...(resume ? { resume } : {}),
+    answer: { ...ref, ...(input.point.pass ? { pass: input.point.pass } : {}) },
   });
   return { satisfied: false, waiting, pending: record, recorded: true, pushed, ...(pushWarning ? { pushWarning } : {}) };
+}
+
+/**
+ * A question's state as a resume reads it: what `chant workspace points
+ * --json` lists for it. {@link chantPointQuestions} reads them through the
+ * chant bin; chant's own resume reads the workspace.
+ */
+export interface PointQuestionState {
+  id: string;
+  state: "escalated" | "proposed" | "answered";
+  /** The answer, or null while the question is open. */
+  answer: string | boolean | null;
+  answeredBy: string[];
+  /** When it was answered, as the record says, or null. */
+  answeredOn: string | null;
+}
+
+/** Whether a waiting point-asking gate can be resumed, and why not. */
+export type PointResumeCheck =
+  | {
+      resumable: true;
+      /** The answer that passes the gate, as the resumed run will cite it. */
+      answer: GateAnswerRef;
+      /** Who answered: the people, joined, or `quorum` when the record names none. */
+      answeredBy: string;
+      /** When it was answered, or null. A resume reads a run started after it as already resumed. */
+      answeredOn: string | null;
+    }
+  | {
+      resumable: false;
+      /** `open`: nobody has answered; `refused`: the answer does not pass the gate; `unknown`: no question with the id was read; `not-a-point`: the pending fact cites no question. */
+      why: "open" | "refused" | "unknown" | "not-a-point";
+      message: string;
+    };
+
+/**
+ * Whether the job behind `standing`, a pending fact a gate that asks a
+ * decision point recorded, can be started again (#3835): its question is
+ * answered with an answer the gate passes on (the pending fact's
+ * `answer.pass`, default a noul point's yes). A gate only writes its
+ * resolution when its run asks the point again, so nothing on the gate
+ * ledger says an answered question passes; this is the check
+ * `chant run resume` makes, and a product's own resume job makes the same
+ * call with the questions it read (`chantPointQuestions`). It approves
+ * nothing: the resumed run asks again and decides.
+ */
+export function pointGateResumable(standing: Pick<PendingGateRecord, "answer">, question: PointQuestionState | undefined): PointResumeCheck {
+  const ref = standing.answer;
+  if (!ref) return { resumable: false, why: "not-a-point", message: "the pending fact cites no decision point's question" };
+  if (!question || question.id !== ref.id) return { resumable: false, why: "unknown", message: `question ${ref.id} (${ref.point}) can't be read here` };
+  if (question.state !== "answered" || question.answer === null) return { resumable: false, why: "open", message: `question ${ref.id} (${ref.point}) is ${question.state}, not answered yet` };
+  const pass = ref.pass ?? DEFAULT_GATE_POINT_PASS;
+  if (!pass.includes(question.answer)) {
+    return {
+      resumable: false,
+      why: "refused",
+      message: `question ${ref.id} (${ref.point}) was answered ${JSON.stringify(question.answer)}, and the gate passes only on ${pass.map((a) => JSON.stringify(a)).join(" or ")}`,
+    };
+  }
+  return {
+    resumable: true,
+    answer: { point: ref.point, id: ref.id, path: ref.path, answer: question.answer, ...(question.answeredBy.length > 0 ? { answeredBy: question.answeredBy } : {}) },
+    answeredBy: question.answeredBy.length > 0 ? question.answeredBy.join(", ") : "quorum",
+    answeredOn: question.answeredOn,
+  };
 }
 
 /** How {@link chantGatePointAsker} runs chant. */
@@ -277,4 +358,19 @@ export function chantGatePointAsker(opts: ChantGatePointAskerOptions): GatePoint
       };
     },
   };
+}
+
+/**
+ * Every question the workspace lists, by id, read through the chant bin with
+ * `chant workspace points --json` (the questions held on `chant/lifecycle`
+ * included), for {@link pointGateResumable} in a tool that bundles this
+ * module (#3835). Fetch `chant/lifecycle` first, as reading the gate ledger
+ * does, so an answer given from another clone is seen.
+ */
+export async function chantPointQuestions(opts: ChantGatePointAskerOptions): Promise<Map<string, PointQuestionState>> {
+  const listed = await runChantJson(opts, ["workspace", "points", "--json"]);
+  const bad = refusal("chant workspace points", listed);
+  if (bad) throw bad;
+  const questions = (listed.questions as PointQuestionState[] | undefined) ?? [];
+  return new Map(questions.map((q) => [q.id, { id: q.id, state: q.state, answer: q.answer ?? null, answeredBy: q.answeredBy ?? [], answeredOn: q.answeredOn ?? null }]));
 }

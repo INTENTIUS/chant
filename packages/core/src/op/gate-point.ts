@@ -141,3 +141,14 @@ export function gatePointInputs(point: string, declared: readonly string[], fact
 export function gateSubject(op: string, gate: string, env?: string | null): string {
   return `gate:${op}/${gate}${env ? `@${env}` : ""}`;
 }
+
+/** The gate a {@link gateSubject} names, or undefined for a subject that names none (#3835). */
+export function parseGateSubject(subject: string | null | undefined): { op: string; gate: string; env?: string } | undefined {
+  if (!subject || !subject.startsWith("gate:")) return undefined;
+  const rest = subject.slice("gate:".length);
+  const at = rest.lastIndexOf("@");
+  const named = at > 0 ? rest.slice(0, at) : rest;
+  const slash = named.indexOf("/");
+  if (slash <= 0 || slash === named.length - 1) return undefined;
+  return { op: named.slice(0, slash), gate: named.slice(slash + 1), ...(at > 0 ? { env: rest.slice(at + 1) } : {}) };
+}
