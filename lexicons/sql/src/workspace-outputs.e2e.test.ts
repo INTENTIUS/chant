@@ -183,3 +183,40 @@ describe("a sql member's columns are outputs a link can name (#3931)", () => {
     expect(cli.out).toContain("app's link to db output analytics.events.user_id does not resolve");
   });
 });
+
+describe("files that aren't the member's tables don't hide them (#3941)", () => {
+  const op = (name: string) =>
+    [
+      `import { Op, activity, phase } from "@intentius/chant/op";`,
+      ``,
+      `export const op = Op({ name: "${name}", overview: "${name}", phases: [phase("Run", [activity("run", {})])] });`,
+      ``,
+    ].join("\n");
+
+  test("several Ops exporting `op` in one directory leave the table outputs readable", async () => {
+    const root = repo({
+      "chant.workspace.json": workspace("public.orders.customer_id"),
+      "db/chant.config.ts": config("postgres"),
+      "db/src/orders.ts": postgresOrders(`    customer_id bigint NOT NULL,`),
+      "db/ops/backfill.op.ts": op("backfill"),
+      "db/ops/reindex.op.ts": op("reindex"),
+      "app/README.md": "reads the database\n",
+    });
+    const report = await check(root);
+    expect(report.diagnostics).toEqual([]);
+    expect(report.links.filter((r) => r.origin === "declared")).toMatchObject([{ output: "public.orders.customer_id", status: "resolved" }]);
+  });
+
+  test("with sourceDir set, a sql file outside it that doesn't fold is not read, so a dropped column is missing, not unresolved", async () => {
+    const root = repo({
+      "chant.workspace.json": workspace("public.orders.customer_id"),
+      "db/chant.config.ts": `import type { ChantConfig } from "@intentius/chant";\nexport default { lexicons: ["sql"], sourceDir: "src", sql: { dialect: "postgres" } } satisfies ChantConfig;\n`,
+      "db/src/orders.ts": postgresOrders(""),
+      "db/scripts/seed.ts": `import { readFileSync } from "node:fs";\nimport { table } from "@intentius/chant-lexicon-sql/postgres";\nexport const seeded = table([readFileSync("seed.sql", "utf8")] as unknown as TemplateStringsArray);\n`,
+      "app/README.md": "reads the database\n",
+    });
+    const report = await check(root);
+    expect(report.diagnostics).toMatchObject([{ ruleId: "WSP093" }]);
+    expect(report.links.filter((r) => r.origin === "declared")).toMatchObject([{ output: "public.orders.customer_id", status: "missing" }]);
+  });
+});
