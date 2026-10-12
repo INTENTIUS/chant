@@ -53,54 +53,123 @@ export const nginx = new Service({
 
 ## Multi-stage Node.js Dockerfile
 
+Manifests before source so the install layer is cached; the runtime stage takes only what it needs and runs as `node`.
+
 ```typescript
 export const nodeApp = new Dockerfile({
   stages: [
     {
       from: "node:20-alpine",
       as: "deps",
-      workdir: "/app",
-      copy: ["package*.json ./"],
-      run: ["npm ci --only=production"],
+      steps: [
+        { workdir: "/app" },
+        { copy: "package.json package-lock.json ./" },
+        { run: "npm ci --omit=dev" },
+      ],
     },
     {
       from: "node:20-alpine",
       as: "build",
-      workdir: "/app",
-      copy: ["--from=deps /app/node_modules ./node_modules", ". ."],
-      run: ["npm run build"],
+      steps: [
+        { workdir: "/app" },
+        { copy: "package.json package-lock.json ./" },
+        { run: "npm ci" },
+        { copy: ". ." },
+        { run: "npm run build" },
+      ],
     },
     {
       from: "node:20-alpine",
-      workdir: "/app",
-      copy: [
-        "--from=deps /app/node_modules ./node_modules",
-        "--from=build /app/dist ./dist",
+      steps: [
+        { workdir: "/app" },
+        { copy: "--from=deps /app/node_modules ./node_modules" },
+        { copy: "--from=build /app/dist ./dist" },
+        { user: "node" },
+        { expose: 3000 },
+        { cmd: ["node", "dist/index.js"] },
       ],
-      user: "node",
-      expose: ["3000"],
-      cmd: `["node", "dist/index.js"]`,
     },
   ],
 });
 ```
 
-## Python service with virtualenv
+## Python service
 
 ```typescript
 export const pythonApp = new Dockerfile({
   from: "python:3.12-slim",
-  workdir: "/app",
-  env: ["PYTHONUNBUFFERED=1", "PYTHONDONTWRITEBYTECODE=1"],
-  copy: ["requirements.txt ."],
-  run: [
-    "pip install --no-cache-dir --no-deps -r requirements.txt",
+  steps: [
+    { workdir: "/app" },
+    { env: "PYTHONUNBUFFERED=1" },
+    { env: "PYTHONDONTWRITEBYTECODE=1" },
+    { copy: "requirements.txt ." },
+    { run: "pip install --no-cache-dir -r requirements.txt" },
+    { copy: ". ." },
+    { user: "1000:1000" },
+    { cmd: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] },
   ],
-  copy: [". ."],
-  user: "1000:1000",
-  cmd: `["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]`,
 });
 ```
+
+## Root setup, then USER
+
+```typescript
+export const tool = new Dockerfile({
+  from: "debian:12-slim",
+  steps: [
+    { run: "apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*" },
+    { run: "useradd --system --create-home app" },
+    { workdir: "/home/app" },
+    { copy: "--chown=app:app bin/ ./bin/" },
+    { user: "app" },
+    { entrypoint: ["./bin/tool"] },
+  ],
+});
+```
+
+## Sharing stages and steps across modules
+
+Export `const` stages and step lists from one module and import them into each Dockerfile. This is the chant answer to `INCLUDE`.
+
+```typescript
+// src/shared/node.ts
+import type { DockerfileStage, DockerfileStep } from "@intentius/chant-lexicon-docker";
+
+export const nodeBuild: DockerfileStage = {
+  from: "node:20-alpine",
+  as: "build",
+  steps: [
+    { workdir: "/app" },
+    { copy: "package.json package-lock.json ./" },
+    { run: "npm ci" },
+    { copy: ". ." },
+    { run: "npm run build" },
+    { run: "npm prune --omit=dev" },
+  ],
+};
+
+export const nodeRuntime: DockerfileStep[] = [
+  { workdir: "/app" },
+  { copy: "--from=build /app/node_modules ./node_modules" },
+  { copy: "--from=build /app/dist ./dist" },
+  { user: "node" },
+];
+```
+
+```typescript
+// src/web.ts
+import { Dockerfile, type DockerfileStage } from "@intentius/chant-lexicon-docker";
+import { nodeBuild, nodeRuntime } from "./shared/node";
+
+const runtime: DockerfileStage = {
+  from: "node:20-alpine",
+  steps: [...nodeRuntime, { expose: 3000 }, { cmd: ["node", "dist/server.js"] }],
+};
+
+export const web = new Dockerfile({ stages: [nodeBuild, runtime] });
+```
+
+For a shared Dockerfile that takes parameters, write a `Composite((props) => ({ image: new Dockerfile({...}) }))`; spreads are allowed inside it. The `dockerfile-sharing` example in the lexicon has all three patterns.
 
 ## Network isolation
 

@@ -19,7 +19,7 @@ Running `npm run build` generates:
 ```bash
 npm install
 npm run build
-# dist/docker-compose.yml and dist/Dockerfile.api are now ready
+# dist/docker-compose.yml and dist/Dockerfile.apiImage are now ready
 docker compose -f dist/docker-compose.yml up
 ```
 

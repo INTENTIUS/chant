@@ -76,6 +76,8 @@ export const proxy = new Service({
 
 ## Multi-stage build
 
+The build stage copies the manifests and installs before copying the source, so the install layer is reused until the manifests change. The runtime stage copies only the built app and its production dependencies, and runs as `node`.
+
 ```typescript
 import { Dockerfile, Service } from "@intentius/chant-lexicon-docker";
 
@@ -84,20 +86,25 @@ export const app = new Dockerfile({
     {
       from: "node:20-alpine",
       as: "build",
-      workdir: "/app",
-      copy: ["package*.json ./"],
-      run: ["npm ci"],
-      copy: ["src/ ./src/"],
-      run: ["npm run build"],
+      steps: [
+        { workdir: "/app" },
+        { copy: "package.json package-lock.json ./" },
+        { run: "npm ci" },
+        { copy: "src/ ./src/" },
+        { run: "npm run build" },
+        { run: "npm prune --omit=dev" },
+      ],
     },
     {
       from: "node:20-alpine",
-      workdir: "/app",
-      copy: ["--from=build /app/dist ./dist"],
-      run: ["npm ci --only=production"],
-      user: "node",
-      expose: [3000],
-      cmd: `["node", "dist/index.js"]`,
+      steps: [
+        { workdir: "/app" },
+        { copy: "--from=build /app/node_modules ./node_modules" },
+        { copy: "--from=build /app/dist ./dist" },
+        { user: "node" },
+        { expose: 3000 },
+        { cmd: ["node", "dist/index.js"] },
+      ],
     },
   ],
 });
@@ -108,6 +115,27 @@ export const api = new Service({
   restart: "unless-stopped",
 });
 ```
+
+`Dockerfile.app`:
+
+```dockerfile
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY src/ ./src/
+RUN npm run build
+RUN npm prune --omit=dev
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
+EXPOSE 3000
+CMD ["node","dist/index.js"]
+```
+
+To share stages or steps between Dockerfiles, see [Sharing stages and steps between Dockerfiles](/chant/lexicons/docker/dockerfiles/#sharing-stages-and-steps-between-dockerfiles).
 
 ## Team-wide labels
 

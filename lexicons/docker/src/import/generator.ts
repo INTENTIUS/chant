@@ -44,7 +44,7 @@ export class DockerGenerator {
           break;
         case "dockerfile":
           imports.add("Dockerfile");
-          lines.push(generateDockerfile(entity));
+          lines.push(generateDockerfile(entity, warnings));
           break;
       }
     }
@@ -82,43 +82,59 @@ function generateSecret(sec: SecretIR): string {
   return `export const ${sanitizeName(sec.name)} = new Secret(${hasProps ? JSON.stringify(sec.props) : "{}"});`;
 }
 
-function generateDockerfile(df: DockerfileIR): string {
-  if (df.stages.length > 1) {
-    // Multi-stage: emit stages array
-    const props = { stages: df.stages };
-    const propsStr = JSON.stringify(props, null, 2).replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
-    return `export const ${sanitizeName(df.name)} = new Dockerfile(${propsStr});`;
-  }
+/** The instructions a step can name; anything else (MAINTAINER) is left as a comment. */
+const STEP_KEYS = new Set([
+  "arg", "env", "workdir", "user", "run", "copy", "add", "expose", "volume",
+  "label", "entrypoint", "cmd", "healthcheck", "shell", "stopsignal", "onbuild",
+]);
 
-  // Single-stage: flat props (preserved behaviour)
-  const stage = df.stages[0];
-  const props: Record<string, unknown> = {};
-  if (stage) props.from = stage.from;
+/**
+ * A Dockerfile always imports as `steps`, one per instruction in source
+ * order, so building the import gives the same instructions in the same
+ * order (the per-kind fields would reorder them).
+ */
+function generateDockerfile(df: DockerfileIR, warnings: string[]): string {
+  const out: string[] = [`export const ${sanitizeName(df.name)} = new Dockerfile({`];
+  if (df.globalArgs?.length) out.push(`  globalArgs: [${df.globalArgs.map((a) => JSON.stringify(a)).join(", ")}],`);
 
-  // Group instructions by type
-  const grouped: Record<string, string[]> = {};
-  for (const { instruction, value } of stage?.instructions ?? []) {
-    const key = instruction.toLowerCase();
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(value);
-  }
-
-  // Single-value instructions
-  for (const single of ["workdir", "user", "entrypoint", "cmd", "healthcheck"]) {
-    if (grouped[single]?.length === 1) {
-      props[single] = grouped[single][0];
+  const steps = (stage: DockerfileIR["stages"][number], indent: string): void => {
+    out.push(`${indent}steps: [`);
+    for (const { instruction, value } of stage.instructions) {
+      const key = instruction.toLowerCase();
+      if (STEP_KEYS.has(key)) {
+        out.push(`${indent}  { ${key}: ${quote(value)} },`);
+      } else {
+        warnings.push(`Dockerfile ${df.name}: ${instruction} has no step and was left as a comment`);
+        out.push(`${indent}  // ${instruction} ${value.replace(/\n/g, " ")}`);
+      }
     }
-  }
+    out.push(`${indent}],`);
+  };
 
-  // Multi-value instructions
-  for (const multi of ["run", "copy", "add", "env", "arg", "expose", "volume", "label"]) {
-    if (grouped[multi]?.length) {
-      props[multi] = grouped[multi].length === 1 ? grouped[multi] : grouped[multi];
+  if (df.stages.length === 1) {
+    const stage = df.stages[0]!;
+    out.push(`  from: ${JSON.stringify(stage.from)},`);
+    if (stage.as) out.push(`  as: ${JSON.stringify(stage.as)},`);
+    steps(stage, "  ");
+  } else {
+    out.push(`  stages: [`);
+    for (const stage of df.stages) {
+      out.push(`    {`);
+      out.push(`      from: ${JSON.stringify(stage.from)},`);
+      if (stage.as) out.push(`      as: ${JSON.stringify(stage.as)},`);
+      steps(stage, "      ");
+      out.push(`    },`);
     }
+    out.push(`  ],`);
   }
+  out.push(`});`);
+  return out.join("\n");
+}
 
-  const propsStr = JSON.stringify(props, null, 2).replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
-  return `export const ${sanitizeName(df.name)} = new Dockerfile(${propsStr});`;
+/** A string literal, single-quoted when that avoids escaping double quotes (exec form: `'["node", "a.js"]'`). */
+function quote(value: string): string {
+  if (value.includes('"') && !/['\\\n]/.test(value)) return `'${value}'`;
+  return JSON.stringify(value);
 }
 
 function sanitizeName(name: string): string {
