@@ -394,11 +394,15 @@ describe("foldProject provenance for host composites (chant#3608)", () => {
     expect(provenance.bucket.composite).toBe("Archive");
     expect(provenance.bucket.fields).toEqual({ name: unknown, versioned: unknown });
 
-    // build() does not expand a host instance exported whole, so the
-    // destructured member is the one it can be held to.
-    const built = await build(join(root, "archive"), [namesSerializer], undefined, { fold: true });
+    // chant#3612 — build() expands the whole instance too, and agrees on every record.
+    const built = await build(join(root, "archive"), [namesSerializer], undefined, {
+      fold: true,
+      lexiconPackages: ["@tsad/shapes-3608"],
+      sandbox: true,
+    });
     expect(built.errors).toEqual([]);
-    expect(built.foldProvenance.bucket).toEqual(provenance.bucket);
+    expect([...built.entities.keys()].sort()).toEqual(["archiveBucket", "bucket"]);
+    expect(built.foldProvenance).toEqual(provenance);
   });
 
   test("a whole instance's nested composite members have records, and the innermost composite wins", async () => {
@@ -458,6 +462,19 @@ describe("foldProject provenance for host composites (chant#3608)", () => {
     expect(provenance.mainBucket.fields).toMatchObject({ name: innerName("main"), tier: innerTier("main") });
     expect(provenance.fixedBucket.fields).toMatchObject({ name: innerName("fixed"), tier: innerTier("fixed") });
     expect(provenance.side.fields.name).toMatchObject({ kind: "composite-parameter", composite: "Outer", parameters: ["name"] });
+
+    // chant#3612 — build() given the same host package reports the same
+    // entities and the same records. Before, it emitted nothing for `site`
+    // and, with the host off the allowlist, ran the file and read `side` as direct.
+    const built = await build(join(root, "site"), [namesSerializer], undefined, {
+      fold: true,
+      lexiconPackages: ["@tsad/shapes-3608"],
+      sandbox: true,
+    });
+    expect(built.errors).toEqual([]);
+    expect(built.foldDecisions.map((d) => d.mode)).toEqual(["fold"]);
+    expect([...built.entities.keys()].sort()).toEqual(Object.keys(provenance).sort());
+    expect(built.foldProvenance).toEqual(provenance);
   });
 });
 

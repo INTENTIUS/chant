@@ -233,6 +233,13 @@ export interface BuildOptions {
   lexicons?: readonly string[];
 
   /**
+   * chant#3612 — host package specifiers to follow a bare import into. Passed
+   * straight through to {@link DiscoveryOptions.lexiconPackages}; ignored
+   * unless {@link fold} is set. Never needed for a chant project.
+   */
+  lexiconPackages?: readonly string[];
+
+  /**
    * chant #1442 — lexicon name → the version of the plugin that served it.
    * Recorded on {@link BuildResult.lexiconVersions} so a build digest can say
    * WHAT interpreted the declarations, not only what was declared. The CLI
@@ -723,6 +730,7 @@ export async function build(
     fold: options?.fold,
     intrinsics: options?.intrinsics,
     lexicons: options?.lexicons,
+    lexiconPackages: options?.lexiconPackages,
     sandbox: options?.sandbox,
     executing: options?.executing,
     buildParams: options?.buildParams,
