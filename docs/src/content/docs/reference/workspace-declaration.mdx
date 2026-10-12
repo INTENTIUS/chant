@@ -129,12 +129,22 @@ The outputs a producer exposes depend on its kind.
 
 | Kind | Exposes |
 |---|---|
-| `chant` | The names its source passes to `output(ref, "Name")`, and each `export const name = stackOutput(ref)`. chant reads the TypeScript without running it. |
+| `chant` | The names its source passes to `output(ref, "Name")`, and each `export const name = stackOutput(ref)`. chant reads the TypeScript without running it. A lexicon can add outputs for its own declarations: a sql member exposes each table and view as `<schema>.<table>` and each column as `<schema>.<table>.<column>` ([below](#lexicon-outputs)). |
 | `workspace` | Nothing. Links name the outer workspace's own members, and a nested workspace's links stay its own. |
 | `other` | What the entry lists in `outputs`. |
 | a kind from a package | What the kind lists in its [`outputs`](/chant/reference/workspace-kinds/#the-kinds-file), plus what the entry lists. |
 
 [`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves every link in source and never reaches the network. A link whose output the producer no longer exposes fails, so renaming an output fails the check for every consumer that links to it. When chant can't read all of a `chant` producer's outputs without running its code, such as an output whose name is computed, a link to a name it didn't find is kept and reported as unresolved.
+
+### Lexicon outputs
+
+A lexicon can report outputs for its own declarations, through the `workspaceOutputs` plugin hook ([#3931](https://github.com/INTENTIUS/chant/issues/3931)). In the sql lexicon a Postgres member exposes `public.orders` for a table and `public.orders.customer_id` for its column, and a ClickHouse member `analytics.events` and `analytics.events.user_id`. The naming rules and a worked example are in [Tables and Columns as Workspace Outputs](/chant/lexicons/sql/workspace-outputs/).
+
+```json
+{ "name": "app", "dir": "app", "kind": "other", "because": "reads the database", "links": [{ "member": "db", "output": "public.orders.customer_id" }] }
+```
+
+`chant workspace check` reads these outputs by folding the member's source under the build's sandbox, so no member code runs. A file of the lexicon's that does not fold leaves the member's outputs incomplete, and a link to a name the check did not find is unresolved rather than missing. When the source records a rename, such as a sql `-- previously: customer_id` comment, a link to the old name is told the new one. `chant workspace graph` lists the outputs in its `exports`, with a renamed output's old names in `previously`.
 
 Joins nobody wrote down are inferred. Each parameter of a `chant` member, written `export const name = new Parameter(...)`, is matched to the other members' outputs by the core function `joinKey()`. That function ignores case and punctuation. An inferred join is labelled `exact` when the names are equal and `folded` when they differ only in case or punctuation, so `clusterArn` joins `ClusterArn` as `folded`. A parameter that matches outputs of two producers is reported as ambiguous and joins neither. A declared link from the same consumer to one of the matched outputs replaces the inferred join, and writing one down is how an inferred join becomes declared.
 
