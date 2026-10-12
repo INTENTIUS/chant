@@ -21,6 +21,7 @@
  * | `revoked`            | a resolution a commit removed from the file (`subject` says which) |
  * | `applied`            | an apply the caller passes in, with the approval it ran under    |
  * | `override-spent`     | an override an apply the caller passes in cites                  |
+ * | `hook`               | a hook outcome in an op-wave decision record the caller passes in |
  *
  * An override gate is, by default, any gate of the op `policy-override`
  * (terragucci writes one gate per root) or named `override-<rule>` (SQL
@@ -79,6 +80,7 @@ import { canonicalJson } from "../effect-receipt";
 import { contentDigest } from "../content-digest";
 import { samePlanDigest } from "./plan-digest";
 import type { GateLedgerPort } from "../op/gate";
+import type { LedgerReadPort } from "./ledger-port";
 
 export const GATE_AUDIT_KINDS = [
   "approval-requested",
@@ -88,6 +90,7 @@ export const GATE_AUDIT_KINDS = [
   "revoked",
   "applied",
   "override-spent",
+  "hook",
 ] as const;
 export type GateAuditKind = (typeof GATE_AUDIT_KINDS)[number];
 
@@ -155,7 +158,7 @@ export interface GateAuditSource {
   commit?: string;
   /** The commit that added the line, or for a revocation removed it, when the line came from history. */
   author?: GateLedgerCommit;
-  change: "added" | "removed" | "apply";
+  change: "added" | "removed" | "apply" | "decision";
 }
 
 export interface GateAuditEntry {
@@ -195,6 +198,10 @@ export interface GateAuditEntry {
   wave?: { number: number; name: string; op?: string };
   /** Overrides: the rules the denial named (from the denial line when there is one). */
   rules?: string[];
+  /** A hook entry: the hook's moment, name, run, how it came out, and why a moment was skipped (#3810). */
+  hook?: { moment: string; name: string; target?: string; outcome: "passed" | "failed" | "held" | "skipped"; exit: number; reason?: string };
+  /** A hook entry: the applied entry of the same wave and digest, if the caller passed that apply in. */
+  applied?: string;
   /** A revoked entry: what was revoked. */
   subject?: "approval" | "override";
   /** An applied entry: the approval entry it ran under, if one is held. An override-spent entry: the override entry. */
@@ -210,6 +217,35 @@ export interface GateAuditGap {
   gate?: string;
   digest?: string;
   detail: string;
+}
+
+/**
+ * An op-wave decision record (`.chant/op-waves/<name>/wave-<k>.json`, written
+ * by `chant run wave`), as far as the audit reads it: the wave's gate and
+ * digest, and the `outcomes` of its hooks (#3804, #3811, #3847). Typed
+ * structurally so this file imports nothing from `../op/`.
+ */
+export interface WaveDecisionRecord {
+  wave: number;
+  name: string;
+  op: string;
+  gate: string;
+  digest?: string;
+  heldBy?: string[];
+  heldOn?: unknown;
+  outcomes?: ReadonlyArray<{ moment: string; name: string; target?: string; exit: number; outcome: string; reason?: string }>;
+}
+
+/**
+ * A decision record the caller passes in. The record carries no time and no
+ * place, so `ref` (a file path, an artifact, a row) and `at` (when it was
+ * written) come from the caller. Give the parsed `record`, or its `text`.
+ */
+export interface GateAuditDecision {
+  ref: string;
+  at: string;
+  record?: unknown;
+  text?: string;
 }
 
 export interface GateAuditOptions {
@@ -228,6 +264,8 @@ export interface GateAuditOptions {
 export interface GateAuditInput extends GateAuditOptions {
   ledgers: readonly GateAuditLedger[];
   applies?: readonly GateAuditApply[];
+  /** Op-wave decision records: each hook outcome in them becomes a `hook` entry linked to the wave's approval and apply (#3810). */
+  decisions?: readonly GateAuditDecision[];
 }
 
 export const POLICY_OVERRIDE_OP = "policy-override";
@@ -301,6 +339,23 @@ interface Seen {
 
 /** Whether two digests, either absent, can be the same plan: absent matches anything, as an old line records none. */
 const compatible = (a: string | undefined, b: string | undefined): boolean => a === undefined || b === undefined || samePlanDigest(a, b);
+
+function decisionOf(d: GateAuditDecision): WaveDecisionRecord | undefined {
+  let v: unknown = d.record;
+  if (v === undefined && d.text !== undefined) {
+    try {
+      v = JSON.parse(d.text);
+    } catch {
+      return undefined;
+    }
+  }
+  const r = v as Row | null;
+  if (!r || typeof r !== "object" || typeof r.wave !== "number" || typeof r.name !== "string" || typeof r.op !== "string" || typeof r.gate !== "string") return undefined;
+  const outcomes = Array.isArray(r.outcomes)
+    ? r.outcomes.filter((o): o is NonNullable<WaveDecisionRecord["outcomes"]>[number] => !!o && typeof o === "object" && typeof (o as Row).moment === "string" && typeof (o as Row).name === "string" && typeof (o as Row).exit === "number" && typeof (o as Row).outcome === "string")
+    : undefined;
+  return { wave: r.wave, name: r.name, op: r.op, gate: r.gate, ...(str(r.digest) ? { digest: str(r.digest) } : {}), ...(strings(r.heldBy) ? { heldBy: strings(r.heldBy) } : {}), ...(r.heldOn !== undefined ? { heldOn: r.heldOn } : {}), ...(outcomes ? { outcomes } : {}) };
+}
 
 /** The entries `input` adds up to, oldest first, and the gaps they show. */
 export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntry[]; gaps: GateAuditGap[] } {
@@ -450,6 +505,35 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
     }
   }
 
+  for (const d of input.decisions ?? []) {
+    const rec = decisionOf(d);
+    if (!rec) {
+      gaps.push({ kind: "malformed-line", detail: `${d.ref} is not an op-wave decision record` });
+      continue;
+    }
+    const approval = rec.digest === undefined ? undefined : entries
+      .filter((e) => e.kind === "approved" && e.gate === rec.gate && e.op === rec.op && e.digest !== undefined && samePlanDigest(e.digest, rec.digest!))
+      .sort((x, y) => time(y.at) - time(x.at))[0];
+    const applied = rec.digest === undefined ? undefined : entries.find((e) => e.kind === "applied" && e.gate === rec.gate && e.digest !== undefined && samePlanDigest(e.digest, rec.digest!));
+    for (const [i, o] of (rec.outcomes ?? []).entries()) {
+      if (o.outcome !== "passed" && o.outcome !== "failed" && o.outcome !== "held" && o.outcome !== "skipped") continue;
+      entries.push(keyed({
+        id: idOf("hook", d.ref, d.at, i, o),
+        kind: "hook",
+        at: d.at,
+        gate: rec.gate,
+        op: rec.op,
+        ...(rec.digest ? { digest: rec.digest } : {}),
+        ...(approval ? { under: approval.id } : {}),
+        ...(applied ? { applied: applied.id } : {}),
+        hook: { moment: o.moment, name: o.name, ...(o.target ? { target: o.target } : {}), outcome: o.outcome, exit: o.exit, ...(o.reason ? { reason: o.reason } : {}) },
+        wave: { number: rec.wave, name: rec.name, op: rec.op },
+        detail: drop({ heldBy: rec.heldBy?.length ? rec.heldBy : undefined, heldOn: o.outcome === "held" ? rec.heldOn : undefined }),
+        source: { path: d.ref, op: rec.op, change: "decision" },
+      }));
+    }
+  }
+
   entries.sort((x, y) => time(x.at) - time(y.at));
   return { entries, gaps };
 }
@@ -507,6 +591,25 @@ export async function readGateAuditLedgers(port: Pick<GateLedgerPort, "read">, o
   for (const op of ops) {
     const { resolutions, pending } = await port.read(op);
     out.push({ op, lines: [...pending, ...resolutions].map((record) => ({ record })) });
+  }
+  return out;
+}
+
+/**
+ * The thin reader for decision records kept on the ledger branch: every
+ * `.json` file directly under `dir` (such as a product's `_wave-decisions/<name>`),
+ * as input for {@link GateAuditInput.decisions}. A decision record holds no
+ * time, so `at` stamps them all: when the product collected them. Where the
+ * records live is the product's business; chant writes them to
+ * `.chant/op-waves/<name>/wave-<k>.json` in the job, and a product that
+ * collects them elsewhere passes them in directly.
+ */
+export async function readGateAuditDecisions(port: Pick<LedgerReadPort, "read" | "list">, dir: string, at: string): Promise<GateAuditDecision[]> {
+  const out: GateAuditDecision[] = [];
+  for (const file of (await port.list(dir)).sort()) {
+    if (!file.endsWith(".json")) continue;
+    const text = await port.read(dir, file);
+    if (text !== null) out.push({ ref: `${dir}/${file}`, at, text });
   }
   return out;
 }
