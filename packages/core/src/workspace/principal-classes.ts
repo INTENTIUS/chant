@@ -22,10 +22,9 @@
  * installed package, which must be at the version the base pins.
  */
 
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, posix } from "node:path";
-import { kindsExportTarget, pinnedPackageDir, type KindLoadProblem, type PinLike } from "./kinds";
+import { checkClassData, diskFiles, mergePinClasses, readClassFiles, type ClassData, type PackageFiles, type PinClassRead } from "./class-data";
+import { pinnedPackageDir, type KindLoadProblem, type PinLike } from "./kinds";
 import schema from "./workspace-principals.schema.json" with { type: "json" };
 import type { TrustPolicy } from "./trust/policy";
 import { joinPath, type WorkspaceTree } from "./tree";
@@ -33,8 +32,7 @@ import { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, grantedClasses, type PrincipalCla
 
 export const PRINCIPALS_SCHEMA_ID = schema.$id;
 
-/** The subpath a package publishes its principal classes at. */
-export const PRINCIPALS_SUBPATH = "./workspace-principals";
+export { PRINCIPALS_SUBPATH } from "./class-data";
 
 export { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, type CorePrincipalClass, type PrincipalClass } from "./identity-gate-rule";
 
@@ -43,8 +41,6 @@ export type PrincipalClassName = string;
 
 /** The grammar of a class name, as `workspace-principals.schema.json` and the declaration's writeScope keys say it. */
 export const CLASS_NAME = /^(?!x-)[a-z][a-z0-9-]{0,39}$/;
-
-const CORE_ROLES = new Set(CORE_CLASSES.map((c) => c.role).filter((r): r is string => r !== null));
 
 export interface ClassRegistry {
   get(name: string): PrincipalClass | undefined;
@@ -111,11 +107,8 @@ function validator(): Validate {
   return compiled;
 }
 
-export interface ClassData {
-  classes: PrincipalClass[];
-  /** Why some of the data can't be used, one line each. Empty when all of it can. */
-  problems: string[];
-}
+export type { ClassData, PackageFiles } from "./class-data";
+export { diskFiles } from "./class-data";
 
 /**
  * Check the text of a principals file against
@@ -135,46 +128,7 @@ export function parseClassData(text: string, source: string): ClassData {
     const problems = (validate.errors ?? []).map((e) => `${source}: ${e.instancePath || "the principals file"} ${e.message ?? "is invalid"}`);
     return { classes: [], problems: [...new Set(problems)] };
   }
-  const problems: string[] = [];
-  const classes: PrincipalClass[] = [];
-  const names = new Set<string>();
-  const roles = new Set<string>();
-  for (const c of (raw as { classes: { name: string; description: string; role: string }[] }).classes) {
-    if ((CORE_PRINCIPAL_CLASSES as readonly string[]).includes(c.name)) {
-      problems.push(`${source}: class ${c.name} is a core class and can't be supplied by a package`);
-      continue;
-    }
-    if (CORE_ROLES.has(c.role)) {
-      problems.push(`${source}: class ${c.name} names the role ${c.role}, which puts a principal in the core ${c.role} class`);
-      continue;
-    }
-    if (names.has(c.name)) {
-      problems.push(`${source}: class ${c.name} is listed twice`);
-      continue;
-    }
-    if (roles.has(c.role)) {
-      problems.push(`${source}: class ${c.name} names the role ${c.role}, which another class in the file names; a role puts a principal in one class`);
-      continue;
-    }
-    names.add(c.name);
-    roles.add(c.role);
-    classes.push({ name: c.name, description: c.description, role: c.role, source });
-  }
-  return { classes, problems };
-}
-
-/** A package's files, by a `/`-separated path inside it, or undefined when one is not there. */
-export type PackageFiles = (path: string) => string | undefined;
-
-/** A package directory on disk. */
-export function diskFiles(dir: string): PackageFiles {
-  return (path) => {
-    try {
-      return readFileSync(join(dir, ...path.split("/")), "utf-8");
-    } catch {
-      return undefined;
-    }
-  };
+  return checkClassData(raw as Parameters<typeof checkClassData>[0], source);
 }
 
 /** A package directory at `dir` in `tree`, such as the workspace at the base revision. */
@@ -192,22 +146,7 @@ export function treeFiles(tree: WorkspaceTree, dir: string): PackageFiles {
 
 /** Read the classes a package publishes at `./workspace-principals`. Reads files only; imports nothing. A package that publishes none supplies none. */
 export function readPackageClasses(files: PackageFiles, source: string): ClassData {
-  const manifest = files("package.json");
-  if (manifest === undefined) return { classes: [], problems: [`${source}: no readable package.json`] };
-  let pkg: Record<string, unknown>;
-  try {
-    pkg = JSON.parse(manifest) as Record<string, unknown>;
-  } catch {
-    return { classes: [], problems: [`${source}: package.json is not JSON`] };
-  }
-  const target = kindsExportTarget(pkg, PRINCIPALS_SUBPATH);
-  if (target === undefined) return { classes: [], problems: [] };
-  if (typeof target !== "string") return { classes: [], problems: [`${source}: ${target.problem}`] };
-  const inside = posix.normalize(target.slice(2));
-  if (inside.startsWith("../") || inside === "..") return { classes: [], problems: [`${source}: exports["${PRINCIPALS_SUBPATH}"] points outside the package`] };
-  const text = files(inside);
-  if (text === undefined) return { classes: [], problems: [`${source}: exports["${PRINCIPALS_SUBPATH}"] names ${target}, which does not exist`] };
-  return parseClassData(text, source);
+  return readClassFiles(files, source, parseClassData);
 }
 
 export interface LoadedClasses {
@@ -227,10 +166,7 @@ export interface LoadedClasses {
  */
 export function loadClassRegistry(pins: readonly PinLike[], workspaceRoot: string, opts: { tree?: WorkspaceTree } = {}): LoadedClasses {
   const problems: KindLoadProblem[] = [];
-  const extra: PrincipalClass[] = [];
-  const byName = new Map<string, string>();
-  const byRole = new Map<string, string>();
-  const clashing = new Set<string>();
+  const reads: PinClassRead[] = [];
   pins.forEach((pin, i) => {
     let files: PackageFiles;
     let source: string;
@@ -247,29 +183,10 @@ export function loadClassRegistry(pins: readonly PinLike[], workspaceRoot: strin
       files = diskFiles(found.dir);
       source = found.source;
     }
-    const read = readPackageClasses(files, source);
-    for (const p of read.problems) problems.push({ pin: i, message: p });
-    for (const c of read.classes) {
-      const named = byName.get(c.name);
-      const roled = byRole.get(c.role!);
-      if (named !== undefined || roled !== undefined) {
-        clashing.add(c.name);
-        if (named !== undefined) {
-          problems.push({ pin: i, message: `class ${c.name} is supplied by both ${named} and ${source}; a class name has one source` });
-        } else {
-          const other = extra.find((e) => e.role === c.role)!;
-          clashing.add(other.name);
-          problems.push({ pin: i, message: `class ${c.name} (${source}) names the role ${c.role}, which class ${other.name} (${roled}) names; a role puts a principal in one class` });
-        }
-        continue;
-      }
-      byName.set(c.name, source);
-      byRole.set(c.role!, source);
-      extra.push(c);
-    }
+    reads.push({ pin: i, source, read: readPackageClasses(files, source) });
   });
-  // A name or role two pins both supply is left out altogether: neither reading is safe.
-  return { registry: createClassRegistry(extra.filter((c) => !clashing.has(c.name))), problems };
+  const merged = mergePinClasses(reads);
+  return { registry: createClassRegistry(merged.classes), problems: [...problems, ...merged.problems].sort((a, b) => a.pin - b.pin) };
 }
 
 /**

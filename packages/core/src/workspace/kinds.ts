@@ -17,13 +17,14 @@
  * fails ({@link resolveKind}).
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import schema from "./workspace-kinds.schema.json" with { type: "json" };
 import type { WorkspaceTree } from "./tree";
 import { joinPath, skippedDir } from "./tree";
 import { checkPinIntegrity } from "./pin-integrity";
+import { dataExportTarget, findInstalledPackage } from "./class-data";
 
 export const KINDS_SCHEMA_ID = schema.$id;
 
@@ -428,22 +429,7 @@ export interface PackageKinds extends KindData {
  * subpath to code, which chant never runs for plugin data.
  */
 export function kindsExportTarget(pkg: Record<string, unknown>, subpath: string = KINDS_SUBPATH): string | undefined | { problem: string } {
-  const exports = pkg.exports;
-  if (!exports || typeof exports !== "object" || Array.isArray(exports)) return undefined;
-  const entry = (exports as Record<string, unknown>)[subpath];
-  if (entry === undefined) return undefined;
-  let target: unknown = entry;
-  if (target && typeof target === "object" && !Array.isArray(target)) {
-    const conditions = target as Record<string, unknown>;
-    target = conditions.default ?? conditions.import ?? conditions.require;
-  }
-  if (typeof target !== "string") {
-    return { problem: `exports["${subpath}"] must name one file, as a string or a "default" condition` };
-  }
-  if (!target.startsWith("./") || !target.endsWith(".json")) {
-    return { problem: `exports["${subpath}"] is ${target}; it must name a .json file inside the package, since chant reads plugin data as data and never runs a package's code` };
-  }
-  return target;
+  return dataExportTarget(pkg, subpath);
 }
 
 /** Read the kinds a package directory publishes. Reads files only; imports nothing. */
@@ -515,23 +501,8 @@ export function substituteGraphConfig(config: Record<string, unknown>, at: Graph
   return walk(config) as Record<string, unknown>;
 }
 
-/**
- * The directory of an installed package `name`, found the way Node finds a
- * bare import: `node_modules/<name>` in `fromDir` and each directory above it.
- * It looks for the directory, not for an entry point, so it works for a
- * package whose `exports` don't expose `package.json`.
- */
-export function findInstalledPackage(name: string, fromDir: string): string | undefined {
-  for (let dir = resolve(fromDir); ; dir = dirname(dir)) {
-    const candidate = join(dir, "node_modules", ...name.split("/"));
-    try {
-      if (statSync(candidate).isDirectory() && existsSync(join(candidate, "package.json"))) return candidate;
-    } catch {
-      // Not here; keep walking.
-    }
-    if (dirname(dir) === dir) return undefined;
-  }
-}
+/** Where an installed package is, as Node finds a bare import (`./class-data.ts`, so the gate-decision bundle shares it). */
+export { findInstalledPackage };
 
 export interface PinLike {
   package: string | null;
