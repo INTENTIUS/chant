@@ -1696,6 +1696,9 @@ async function settlePointGate(options: RunOpWaveOptions, ctx: WaveContext, deci
     ...(point.timeout ? { timeout: point.timeout } : {}),
     planDigest: digest,
     ...(options.now ? { now: options.now } : {}),
+    // #3863: the plans file's pending fields and the spec's neverOverMcp, as settleGate passes them.
+    ...(decision.pending ? { fields: decision.pending } : {}),
+    ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {
     decision.status = "approved";

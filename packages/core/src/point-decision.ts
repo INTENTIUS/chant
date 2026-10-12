@@ -31,7 +31,7 @@ import { execFile } from "node:child_process";
 import { isPendingGateExpired, latestPendingGate } from "./lifecycle/gate-ledger-select";
 import { DEFAULT_GATE_EXPIRY, resolveApprovalUrl } from "./lifecycle/gate-pending";
 import { samePlanDigest } from "./lifecycle/plan-digest";
-import type { GateAnswerRef, GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
+import type { GateAnswerRef, GateResolutionRecord, PendingGateInput, PendingGateRecord } from "./lifecycle/gate-ledger";
 import { parseDuration } from "./op/duration";
 import type { GateLedgerPort } from "./op/gate";
 import { DEFAULT_GATE_POINT_PASS, defaultGatePointStore, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts, type GatePointStore } from "./op/gate-point";
@@ -121,6 +121,17 @@ export interface PointGateInput {
    * ({@link resolveGateRunLocator}); false records none.
    */
   resume?: GateRunLocator | false;
+  /**
+   * Fields a caller adds to the pending fact it records (#3863), such as an
+   * Op waves product's commit and members, as `evaluateGate` takes them.
+   * Every field this function writes itself wins over one of the same name.
+   */
+  fields?: Record<string, unknown>;
+  /**
+   * The pending fact it records carries `neverOverMcp` (#3863): an answer to
+   * the question over MCP or ACP is refused (`answer-never-over-mcp`, #3817).
+   */
+  neverOverMcp?: boolean;
 }
 
 /** What reaching a gate that asks a point decided. */
@@ -198,12 +209,17 @@ export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePo
   const waiting: WaitingPoint = { id: q.id, point: q.point, state: q.state === "proposed" ? "proposed" : "escalated", path: q.path, subject: q.subject, steward: q.steward };
   const ledger = await port.read(input.op);
   const standing = latestPendingGate(ledger.pending.filter((p) => p.environment === undefined), input.gate);
-  if (standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) && standing.answer?.id === q.id) {
+  // #3863: a standing fact that does not carry the gate's neverOverMcp does not stand, so the answer path reads the rule.
+  if (
+    standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) && standing.answer?.id === q.id &&
+    (!input.neverOverMcp || standing.neverOverMcp === true)
+  ) {
     return { satisfied: false, waiting, pending: standing, recorded: false };
   }
   const url = resolveApprovalUrl();
   const resume = input.resume === false ? undefined : (input.resume ?? resolveGateRunLocator());
   const { record, pushed, pushWarning } = await port.appendPending({
+    ...(input.fields as Partial<PendingGateInput> | undefined),
     op: input.op,
     gate: input.gate,
     timestamp: now,
@@ -214,6 +230,7 @@ export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePo
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
     ...(resume ? { resume } : {}),
     answer: { ...ref, ...(input.point.pass ? { pass: input.point.pass } : {}) },
+    ...(input.neverOverMcp ? { neverOverMcp: true as const } : {}),
   });
   return { satisfied: false, waiting, pending: record, recorded: true, pushed, ...(pushWarning ? { pushWarning } : {}) };
 }
