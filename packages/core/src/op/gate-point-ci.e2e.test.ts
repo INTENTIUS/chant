@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { cleanScratch, git, workspace } from "../workspace/__fixtures__/decide-workspace";
 import { runWorkspacePoints } from "../workspace/points-cli";
+import { runWorkspaceRecords } from "../workspace/records-cli";
 import type { CommandContext } from "../cli/registry";
 import { ApplyOp } from "./composites/apply-op";
 import { memoryGateLedgerPort } from "./gate";
@@ -71,7 +72,7 @@ function clone(name: string): string {
 }
 
 /** `chant workspace points <argv>` through the command's handler, in `cwd`. Returns the document it prints. */
-async function points(cwd: string, args: Record<string, unknown>): Promise<Record<string, unknown> & { error?: { code: string } }> {
+async function points(cwd: string, args: Record<string, unknown>, handler = runWorkspacePoints): Promise<Record<string, unknown> & { error?: { code: string } }> {
   const printed: string[] = [];
   const log = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
     printed.push(String(line));
@@ -79,7 +80,7 @@ async function points(cwd: string, args: Record<string, unknown>): Promise<Recor
   const was = process.cwd();
   process.chdir(cwd);
   try {
-    await runWorkspacePoints({ args, plugins: [], serializers: [] } as unknown as CommandContext);
+    await handler({ args, plugins: [], serializers: [] } as unknown as CommandContext);
   } finally {
     process.chdir(was);
     log.mockRestore();
@@ -167,5 +168,41 @@ describe("a gate's question outlives the CI job that asked it (#3815)", () => {
     const local = await points(tree, { extraPositional: "ask", extraPositional2: "ship-it", inputs: JSON.stringify({ "release.version": "9.9.9" }) });
     expect(local).toMatchObject({ written: true, question: { ledger: null } });
     expect(answersIn(tree)).toHaveLength(1);
+  });
+});
+
+describe("chant workspace records lists the answers held on chant/lifecycle (#3833)", () => {
+  type Rec = { id: string; path: string; state: string; data: { answer?: unknown }; ledger?: string | null; worktree?: string };
+  const answerRecords = (set: Record<string, unknown>): Rec[] => {
+    const kinds = set.kinds as { kind: { name: string }; records: Rec[] }[];
+    return kinds.find((k) => k.kind.name === "answer")!.records;
+  };
+
+  test("an answer asked and answered on the ledger is listed with the id, state and answer points shows", async () => {
+    vi.stubEnv("CI", "");
+    const op = config("records-apply", { name: "prod-apply", store: "ledger" });
+    const first = await run(op, clone("records-job"));
+    expect(first.status).toBe("waiting");
+    const id = first.point!.id;
+    expect(await points(clone("records-person"), { extraPositional: "answer", extraPositional2: id, answer: "yes", bys: ["alice"] })).toMatchObject({ written: true });
+
+    // A clone that never held chant/lifecycle: records fetches it, as points answer does.
+    const reader = clone("records-reader");
+    const listed = answerRecords(await points(reader, { json: true }, runWorkspaceRecords)).find((r) => r.id === id);
+    expect(listed).toMatchObject({ id, state: "answered", data: { answer: true }, ledger: expect.stringContaining("chant/lifecycle:") });
+    expect(listed!.worktree).toBeUndefined();
+
+    const doc = (await points(reader, { json: true })) as { questions: { id: string; state: string; answer: unknown; ledger: string | null; path: string }[] };
+    const question = doc.questions.find((q) => q.id === id)!;
+    expect({ id: listed!.id, state: listed!.state, answer: listed!.data.answer, ledger: listed!.ledger, path: listed!.path }).toEqual({
+      id: question.id,
+      state: question.state,
+      answer: question.answer,
+      ledger: question.ledger,
+      path: question.path,
+    });
+
+    // The checkout doesn't hold it: --uncommitted leaves it out, and the text output says where it is.
+    expect(answerRecords(await points(reader, { json: true, uncommitted: true }, runWorkspaceRecords)).map((r) => r.id)).not.toContain(id);
   });
 });

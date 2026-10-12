@@ -99,6 +99,13 @@ export interface RecordsQuery {
   workGaps?: boolean;
   /** List only the records that are modified or new against `HEAD` (#3160). Needs git and a working-tree read. */
   uncommitted?: boolean;
+  /**
+   * For an answer kind read in the working tree (#3833): fetch `chant/lifecycle`
+   * first, best effort, as `points answer` does, so an answer held there by
+   * another clone or a CI job is listed. The command sets it; other readers
+   * read the local ledger as it is.
+   */
+  fetchLedger?: boolean;
 }
 
 /**
@@ -146,6 +153,14 @@ export type RecordView = RecordEntry & {
    * steward keeps on the lifecycle ledger (#2786) laid over it.
    */
   answers?: WorkAnswer[];
+  /**
+   * For a record of an answer kind (one with an `answers` block) read in the
+   * working tree (#3833): where the record is held on the lifecycle ledger,
+   * `chant/lifecycle:<path>`, as `points` names it for a question, or null
+   * when it is the working tree's file. A record held on the ledger has no
+   * `worktree` or `lastWrite`, since the checkout doesn't hold it.
+   */
+  ledger?: string | null;
 };
 
 /** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
@@ -398,7 +413,19 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
   // A revision has no working tree to hold anything uncommitted; the CLI and the MCP tool refuse the pair first.
   if (query.uncommitted && query.at !== undefined) throw new Error("--uncommitted reads the working tree and takes no --at");
   try {
-    const { loaded, root, top, at, workspaceRoot, tree, result } = await readRecordsFor(query);
+    // An answer kind's records include the answers held on the lifecycle ledger (#2786, #3815), as `points` lists them (#3833).
+    let heldOnLedger: Map<string, string> | undefined;
+    const { loaded, root, top, at, workspaceRoot, tree, result } = await readRecordsFor({
+      ...query,
+      overlay: async (base, { loaded: l, root: r }) => {
+        if (!l.kind.answers) return base;
+        const { readLedgerAnswers, refreshLedger, withLedgerAnswers } = await import("./answers-ledger");
+        if (query.fetchLedger) await refreshLedger(l.file);
+        const ledger = await readLedgerAnswers({ file: l.file, name: l.kind.name, dirRel: relative(r, l.dir).split(sep).join("/") || "." });
+        heldOnLedger = new Map([...ledger.byPath.values()].map((a) => [a.path, a.ledger]));
+        return withLedgerAnswers(base, ledger);
+      },
+    });
     // Provenance, judged by the policy at base and never by the tree read (#2547).
     const base = top ? resolveBase(top, query.base) : { commit: null, from: null };
     const policy = top ? policyAtBase(top, base) : policyAtBase(root, base);
@@ -426,6 +453,7 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
         ...(seals ? authorSeal(loaded.kind, r, recordPolicy, seals.checkRecordSeal) : {}),
       });
     }
+    if (heldOnLedger) for (const r of records) r.ledger = heldOnLedger.get(r.path) ?? null;
     if (loaded.kind.approval && !loaded.kind.work && top) {
       const decided = decidedCommits(top, at ?? "HEAD", records.map((r) => r.path), loaded.kind);
       for (const r of records) r.decidedIn = decided.get(r.path) ?? null;
@@ -461,13 +489,15 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
     if (at === null && top) {
       const { head, ...rest } = readCheckoutHead(top, query.base);
       const dir = relative(root, loaded.dir).split(sep).join("/") || ".";
+      // A record held on the ledger is not the checkout's: it has no worktree state, and is never uncommitted (#3833).
+      const inTree = records.filter((r) => !r.ledger);
       const { states, deleted } = worktreeStates(top, head, dir, records.map((r) => r.path), new RegExp(loaded.kind.location.match));
-      for (const r of records) r.worktree = states.get(r.path) ?? "new";
+      for (const r of inTree) r.worktree = states.get(r.path) ?? "new";
       const lastWrite = lastWriteReader(top);
-      for (const r of records) r.lastWrite = lastWrite(r.path, readTextOrNull(join(top, ...r.path.split("/"))));
+      for (const r of inTree) r.lastWrite = lastWrite(r.path, readTextOrNull(join(top, ...r.path.split("/"))));
       checkout = { branch: rest.branch, head, base: rest.base, baseFrom: rest.baseFrom, deleted };
       if (query.uncommitted) {
-        listed = records.filter((r) => r.worktree !== "committed");
+        listed = inTree.filter((r) => r.worktree !== "committed");
         summary = { ...summary, total: listed.length, valid: listed.filter((r) => r.valid).length, invalid: listed.filter((r) => !r.valid).length };
       }
     } else if (query.uncommitted && !top) {
@@ -664,7 +694,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     else console.log(formatSince(since));
     return "error" in since ? 1 : 0;
   }
-  const doc = await queryRecords({ kind: args.kind, current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd() });
+  const doc = await queryRecords({ kind: args.kind, current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd(), fetchLedger: true });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));
   } else if ("error" in doc) {
@@ -728,7 +758,7 @@ async function runDeclaredRecords(args: CommandContext["args"]): Promise<number>
     return 1;
   }
   if (args.since !== undefined) return runDeclaredSince(declared, args);
-  const set = await queryDeclaredRecords(declared, { current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd() });
+  const set = await queryDeclaredRecords(declared, { current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd(), fetchLedger: true });
   if (args.json) console.log(JSON.stringify(set, null, 2));
   for (const doc of args.json ? [] : set.kinds) {
     if ("error" in doc) {
@@ -827,7 +857,8 @@ function formatRecords(
     const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
     const sealed = r.attested === true ? `  sealed by ${(r.data?.[RECORD_SEAL_FIELD] as { signer: string }).signer}` : "";
     const uncommitted = r.worktree === "new" || r.worktree === "modified" ? `  (${r.worktree}, uncommitted)` : "";
-    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${remediated}${attested}${sealed}${uncommitted}${flag}`);
+    const ledger = r.ledger ? `  (held on ${r.ledger})` : "";
+    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${remediated}${attested}${sealed}${uncommitted}${ledger}${flag}`);
     if (r.ready !== undefined) {
       const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
       const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");
