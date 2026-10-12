@@ -78,6 +78,11 @@
         },
         "fields": {
           "$ref": "#/$defs/fields"
+        },
+        "reader": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "A link reader chant ships, by name, that derives a member's links from the member's own files (#3932): dbt-project reads a dbt project's sources. The reader is chant's code and runs offline, parsing files as data; the package supplies only the name. A name this chant doesn't have keeps the kind without a reader, and the load reports it. A chant older than this field fails a kinds file that uses it."
         }
       },
       "patternProperties": {

@@ -1,0 +1,109 @@
+/**
+ * Links a kind reads from its member's own files (#3932).
+ *
+ * A member's links usually come from its entry in `chant.workspace.json`, or
+ * are inferred from a chant member's parameters by `joinKey()`. Some members
+ * already say what they read in files of their own: a dbt project names the
+ * tables it reads in its `sources:` YAML. A kind can name a link reader in its
+ * kinds file (`reader`), and chant runs that reader over the member's
+ * directory to derive the member's links.
+ *
+ * The readers are chant's code, listed in {@link KIND_LINK_READERS}: a kinds
+ * file stays data, and chant never imports the package that supplies it. A
+ * reader runs offline and parses files as data. It never invokes the tool
+ * whose files it reads, so `chant workspace check` keeps its promise of no
+ * network and no member code.
+ *
+ * A reader returns links with the file and line that state them, and gaps:
+ * the places it could not read without guessing, such as a templated value.
+ * `resolveLinks` (`./links.ts`) resolves the links beside the declared ones,
+ * with origin `kind-reader`; WSP093 and WSP094 name the reader's file and line,
+ * and WSP099 reports the gaps.
+ */
+
+import type { Declaration, Member } from "./declaration";
+import { resolveMemberFields, type FieldValue, type KindLinkReaderName, type KindRegistry } from "./kinds";
+import type { WorkspaceTree } from "./tree";
+import { readDbtProject } from "./dbt-project-reader";
+
+/** One link a reader found in the member's files. */
+export interface KindReadLink {
+  /**
+   * The producer the link names, or null when the member's files don't say
+   * which member produces it. A null producer is found among the members
+   * whose outputs include {@link anchor}; see `resolveLinks`.
+   */
+  member: string | null;
+  /** The producer's output the link reads. */
+  output: string;
+  /**
+   * The output that picks the producer when `member` is null; unset, the
+   * output itself. A dbt source column is anchored on its table, so a dropped
+   * column is missing from the member that still has the table.
+   */
+  anchor?: string;
+  /** The file that states the link, relative to the workspace root. */
+  file: string;
+  /** Its line, from 1. */
+  line: number;
+}
+
+/** A place the reader could not read without guessing. The links it would have stated are left out. */
+export interface KindReadGap {
+  /** Relative to the workspace root. */
+  file: string;
+  line: number;
+  message: string;
+}
+
+export interface KindLinkRead {
+  /** The reader that ran. */
+  reader: KindLinkReaderName;
+  links: KindReadLink[];
+  gaps: KindReadGap[];
+  /**
+   * The member field that names the producer, for messages that ask the
+   * author to set it when the files don't say (`sqlMember` for dbt).
+   */
+  producerField?: string;
+}
+
+/** What a reader gets: the member, its directory and resolved fields, and the tree read. */
+export interface KindReaderInput {
+  member: Member;
+  /** The member's directory, tree-relative; "" for the workspace root. */
+  dir: string;
+  /** The member's fields, defaults filled in (#3151); null when its kind declares none. */
+  fields: Record<string, FieldValue | null | Record<string, FieldValue | null>> | null;
+  tree: WorkspaceTree;
+}
+
+export type KindLinkReader = (input: KindReaderInput) => KindLinkRead;
+
+/** Every reader chant ships, by the name a kinds file uses. */
+export const LINK_READERS: Record<KindLinkReaderName, KindLinkReader> = {
+  "dbt-project": readDbtProject,
+};
+
+/**
+ * Run the link reader of every member whose kind has one. A member whose
+ * directory is missing is left out. A reader that throws is reported as a
+ * gap on the member's directory, so one unreadable project never stops
+ * the check.
+ */
+export function readKindLinks(declaration: Declaration, tree: WorkspaceTree, kinds: KindRegistry): Map<string, KindLinkRead> {
+  const out = new Map<string, KindLinkRead>();
+  for (const m of declaration.members) {
+    const kind = kinds.get(m.kind);
+    if (!kind?.reader) continue;
+    const dir = m.dir === "." ? "" : m.dir;
+    if (tree.stat(dir) !== "dir") continue;
+    const { fields } = resolveMemberFields(kind, m.fields);
+    try {
+      out.set(m.name, LINK_READERS[kind.reader]({ member: m, dir, fields, tree }));
+    } catch (err) {
+      out.set(m.name, { reader: kind.reader, links: [], gaps: [{ file: dir || ".", line: 1, message: `the ${kind.reader} reader failed: ${(err as Error).message}` }] });
+    }
+  }
+  return out;
+}

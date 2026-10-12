@@ -1,0 +1,30 @@
+{
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3932). chant reads this file as data and never imports the lexicon. A dbt project reads the tables a sql member declares, so its kind ships beside them. Its reader, dbt-project, is chant's own code: it parses dbt_project.yml and the sources YAML under the model paths, never runs dbt, never renders Jinja and never reads profiles.yml, and turns each source table and column into a link to the sql member's <schema>.<table> and <schema>.<table>.<column> outputs (#3931).",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "dbt",
+      "description": "a dbt project, with a dbt_project.yml in its directory; its sources link to the tables and columns a sql member declares, and dbt is never run",
+      "precedence": 300,
+      "probe": {
+        "anyFile": [
+          "dbt_project.yml"
+        ]
+      },
+      "reader": "dbt-project",
+      "fields": {
+        "sqlMember": {
+          "type": "string",
+          "description": "The member whose tables the project's sources read. Unset, each source table links to the one member that exposes it, and a table two members expose is ambiguous (WSP095).",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+        },
+        "dialect": {
+          "type": "string",
+          "description": "How source names are cased before they are matched: postgres folds an unquoted name to lowercase and keeps a quoted one as written, the way dbt-postgres quotes a source's schema and identifier unless quoting turns it off; clickhouse keeps every name as written.",
+          "default": "postgres",
+          "pattern": "^(postgres|clickhouse)$"
+        }
+      }
+    }
+  ]
+}

@@ -643,8 +643,23 @@
             "origin": {
               "enum": [
                 "declared",
+                "kind-reader",
                 "inferred:joinKey"
-              ]
+              ],
+              "description": "How the row was found: declared in chant.workspace.json, read from the member's own files by its kind's link reader (#3932), or inferred by joinKey()."
+            },
+            "reader": {
+              "type": "string",
+              "description": "A kind-reader row (#3932): the link reader that found it, such as dbt-project."
+            },
+            "file": {
+              "type": "string",
+              "description": "A kind-reader row (#3932): the file that states the link, from the workspace root."
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "A kind-reader row (#3932): the line of file that states the link."
             },
             "resolves": {
               "const": "source"
@@ -735,8 +750,23 @@
             "origin": {
               "enum": [
                 "declared",
+                "kind-reader",
                 "inferred:joinKey"
-              ]
+              ],
+              "description": "How the row was found: declared in chant.workspace.json, read from the member's own files by its kind's link reader (#3932), or inferred by joinKey()."
+            },
+            "reader": {
+              "type": "string",
+              "description": "A kind-reader row (#3932): the link reader that found it, such as dbt-project."
+            },
+            "file": {
+              "type": "string",
+              "description": "A kind-reader row (#3932): the file that states the link, from the workspace root."
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "A kind-reader row (#3932): the line of file that states the link."
             },
             "resolves": {
               "const": "source"
@@ -753,7 +783,8 @@
               "description": "The consumer's parameter node, when known."
             },
             "input": {
-              "type": "string"
+              "type": "string",
+              "description": "The consumer's parameter the join would feed; for a kind-reader row (#3932), the output its file reads, which no single member was found to produce."
             },
             "status": {
               "const": "ambiguous"
