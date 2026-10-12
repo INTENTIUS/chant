@@ -267,6 +267,20 @@ export interface OpWaveHeldOn {
   waitingSince?: string;
   recorded?: boolean;
   mismatch?: GateDigestMismatch;
+  /**
+   * The gates the same hook call held the wave on before this one, each
+   * approved, oldest first (#3847): its approved re-runs asked for this one.
+   */
+  after?: OpWaveHeldOnApproval[];
+}
+
+/** An approved hold on another gate (#3847), as `CHANT_HOLD_APPROVED` and `CHANT_HOLDS_APPROVED` carry it. */
+export interface OpWaveHeldOnApproval {
+  op: string;
+  gate: string;
+  digest: string;
+  approvedBy: string;
+  approvedAt: string;
 }
 
 /** One hook's run (#3762). */
@@ -877,7 +891,9 @@ const hookRuns = (spec: OpWavesSpec, k: number, runs: readonly OpWaveRun[], memb
  * Run one moment's hooks in the wave job (#3762), recording each outcome on
  * the result. A hook that held the wave on another gate (#3821) has that
  * gate settled here: approved, the hook runs again with
- * `CHANT_HOLD_APPROVED` and must pass; otherwise the wave waits on it.
+ * `CHANT_HOLD_APPROVED`; otherwise the wave waits on it. The re-run passes,
+ * or holds the wave on a further gate (#3847), settled the same way, up to
+ * {@link OP_WAVE_MAX_CHAINED_HOLDS} gates per hook call.
  */
 async function runHooks(
   ctx: WaveContext,
@@ -894,30 +910,64 @@ async function runHooks(
   ctx.result.hooks.push(...out.outcomes);
   const back: HooksOutcome = { holds: out.holds, ...(out.failed ? { failed: out.failed } : {}) };
   if (out.failed) return back;
-  for (const hold of out.otherGates) {
-    const held = await settleOtherGate(ctx, hold);
-    if (held.status === "waiting") {
-      back.waitingOn ??= held;
-      continue;
+  for (const first of out.otherGates) {
+    // #3847: an approved re-run may hold the wave on a further gate (a second state migration that plans against the first one's states), settled in turn.
+    let hold = first;
+    const approved: OpWaveHeldOnApproval[] = [];
+    for (;;) {
+      const held = await settleOtherGate(ctx, hold);
+      if (held.status === "waiting") {
+        if (approved.length > 0) held.after = approved;
+        back.waitingOn ??= held;
+        break;
+      }
+      const now: OpWaveHeldOnApproval = { op: held.op, gate: held.gate, digest: held.digest, approvedBy: held.approvedBy!, approvedAt: held.approvedAt! };
+      approved.push(now);
+      const approvedEnv = {
+        ...hold.env,
+        CHANT_HOLD_APPROVED: JSON.stringify(now),
+        // Every hold this hook call was approved through so far, oldest first (#3847).
+        CHANT_HOLDS_APPROVED: JSON.stringify(approved),
+      };
+      const holdPath = join(ctx.cwd, hold.env.CHANT_HOLD!);
+      rmSync(holdPath, { force: true });
+      let code: number;
+      try {
+        code = ctx.exec(hold.argv, ctx.cwd, approvedEnv);
+      } catch (err) {
+        ctx.log(`${hold.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
+        code = 127;
+      }
+      const target = hold.target ? { target: hold.target } : {};
+      if (code === 0) {
+        ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: code, outcome: "passed" });
+        ctx.log(`${hold.label}: ${held.approvedBy} approved ${held.op} / ${held.gate} at ${held.digest}, and the hook ran again and passed`);
+        break;
+      }
+      const next = readHoldRequest(holdPath, ctx.log, hold.label);
+      const problem = !next
+        ? `${hold.label} exited ${code} after ${held.approvedBy} approved ${held.gate}`
+        : approved.some((a) => a.op === (next.op ?? ctx.spec.name) && a.gate === next.gate && a.digest === next.digest)
+          ? `${hold.label} exited ${code} after ${held.approvedBy} approved ${held.gate}, and holds the wave again on ${next.op ?? ctx.spec.name} / ${next.gate} at ${next.digest}, which is already approved`
+          : approved.length >= OP_WAVE_MAX_CHAINED_HOLDS
+            ? `${hold.label} held the wave on ${approved.length} gates in turn and asks for one more; a hook call holds on at most ${OP_WAVE_MAX_CHAINED_HOLDS}`
+            : undefined;
+      if (problem) {
+        ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: code, outcome: "failed" });
+        back.failed = problem;
+        ctx.log(back.failed);
+        return back;
+      }
+      ctx.result.hooks.push({ moment, name: hold.name, ...target, exit: code, outcome: "held" });
+      ctx.log(`${hold.label}: ${held.approvedBy} approved ${held.op} / ${held.gate}; the hook ran again, exited ${code} and holds wave ${ctx.k} (${ctx.wave.name}) on gate ${next!.op ?? ctx.spec.name} / ${next!.gate}, digest ${next!.digest}`);
+      hold = { ...hold, request: next! };
     }
-    const approvedEnv = { ...hold.env, CHANT_HOLD_APPROVED: JSON.stringify({ op: held.op, gate: held.gate, digest: held.digest, approvedBy: held.approvedBy, approvedAt: held.approvedAt }) };
-    let code: number;
-    try {
-      code = ctx.exec(hold.argv, ctx.cwd, approvedEnv);
-    } catch (err) {
-      ctx.log(`${hold.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
-      code = 127;
-    }
-    ctx.result.hooks.push({ moment, name: hold.name, ...(hold.target ? { target: hold.target } : {}), exit: code, outcome: code === 0 ? "passed" : "failed" });
-    if (code !== 0) {
-      back.failed = `${hold.label} exited ${code} after ${held.approvedBy} approved ${held.gate}`;
-      ctx.log(back.failed);
-      return back;
-    }
-    ctx.log(`${hold.label}: ${held.approvedBy} approved ${held.op} / ${held.gate} at ${held.digest}, and the hook ran again and passed`);
   }
   return back;
 }
+
+/** How many gates one hook call holds a wave on in turn (#3847): the first hold and the holds its approved re-runs ask for. */
+export const OP_WAVE_MAX_CHAINED_HOLDS = 10;
 
 /** The gate ledger a wave decides by: the job's port, with the signers at base as the rule when `approval` is `sealed`. */
 async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, approval: GateApprovalSource, base: string): Promise<{ ledger: GateLedgerPort; port: GateLedgerPort }> {

@@ -906,6 +906,84 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     expect(result.hooks.filter((o) => o.name === "migrate").map((o) => o.outcome)).toEqual(["held", "passed"]);
     again.done();
   });
+
+  test("an approved re-run holds the wave on a further gate: two migrations wait, then apply in turn (#3847)", async () => {
+    const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
+    const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };
+    // The first migration holds on its gate; once approved it applies, and the second (whose digest is known only now) holds on its own.
+    const applied: string[] = [];
+    const hook = (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      const done = env.CHANT_HOLDS_APPROVED ? (JSON.parse(env.CHANT_HOLDS_APPROVED) as Array<{ gate: string }>).map((a) => a.gate) : [];
+      for (const gate of done) if (!applied.includes(gate)) applied.push(gate);
+      const next = ["split-queues", "move-topics"].find((g) => !done.includes(g));
+      if (!next) return 0;
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: next, digest: digest(next === "split-queues" ? "m" : "n") }));
+      return 3;
+    };
+    const plans = { vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true } };
+    const first = { version: 1 as const, op: "tf-migrate", gate: "split-queues", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") };
+
+    // Only the first is approved: it applies, and the wave waits on the second (exit 3), naming it.
+    const h = harness(plans, { hook, atBase: spec });
+    const gates = memoryGateLedgerPort({ resolutions: [first] });
+    const waiting = await run(h, gates, spec);
+    expect(waiting.exitCode).toBe(3);
+    expect(waiting.decision).toMatchObject({
+      status: "waiting",
+      approve: `chant approve tf-migrate move-topics --plan ${digest("n")}`,
+      heldOn: { op: "tf-migrate", gate: "move-topics", digest: digest("n"), status: "waiting", after: [{ gate: "split-queues", digest: digest("m"), approvedBy: "alice" }] },
+    });
+    expect(gates.appended).toEqual([expect.objectContaining({ op: "tf-migrate", gate: "move-topics", planDigest: digest("n") })]);
+    expect(applied).toEqual(["split-queues"]);
+    expect(h.calls.some((c) => c.startsWith("tg plan"))).toBe(false);
+    expect(waiting.hooks.filter((o) => o.name === "migrate").map((o) => o.outcome)).toEqual(["held", "held"]);
+    h.done();
+
+    // Both approved: the hook runs three times, the last with both approvals, and the wave applies.
+    applied.length = 0;
+    const again = harness(plans, { hook, atBase: spec });
+    const both = memoryGateLedgerPort({ resolutions: [first, { ...first, gate: "move-topics", resolvedBy: "bob", planDigest: digest("n") }] });
+    const result = await run(again, both, spec);
+    expect(result.exitCode).toBe(0);
+    expect(applied).toEqual(["split-queues", "move-topics"]);
+    const reruns = again.envs.filter((_, i) => again.calls[i]!.startsWith("migrate"));
+    expect(reruns).toHaveLength(3);
+    expect(JSON.parse(reruns[2]!.CHANT_HOLD_APPROVED!)).toMatchObject({ gate: "move-topics", approvedBy: "bob" });
+    expect(JSON.parse(reruns[2]!.CHANT_HOLDS_APPROVED!).map((a: { gate: string }) => a.gate)).toEqual(["split-queues", "move-topics"]);
+    expect(result.hooks.filter((o) => o.name === "migrate").map((o) => o.outcome)).toEqual(["held", "held", "passed"]);
+    again.done();
+  });
+
+  test("an approved re-run that holds again on the same gate and digest, or past the bound, fails the wave (#3847)", async () => {
+    const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
+    const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };
+    const plans = { vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") } };
+    const same = (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m") }));
+      return 3;
+    };
+    const h = harness(plans, { hook: same, atBase: spec });
+    const gates = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "tf-migrate", gate: "split-queues", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") }] });
+    expect((await run(h, gates, spec)).exitCode).toBe(1);
+    expect(h.calls.filter((c) => c.startsWith("migrate"))).toHaveLength(2);
+    h.done();
+
+    const { OP_WAVE_MAX_CHAINED_HOLDS } = await import("./op-waves-run");
+    let n = 0;
+    const endless = (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: `step-${n}`, digest: digest("m") }));
+      n++;
+      return 3;
+    };
+    const many = harness(plans, { hook: endless, atBase: spec });
+    const all = memoryGateLedgerPort({ resolutions: Array.from({ length: 20 }, (_, i) => ({ version: 1 as const, op: "tf-migrate", gate: `step-${i}`, resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") })) });
+    expect((await run(many, all, spec)).exitCode).toBe(1);
+    expect(many.calls.filter((c) => c.startsWith("migrate"))).toHaveLength(OP_WAVE_MAX_CHAINED_HOLDS + 1);
+    many.done();
+  });
 });
 
 describe("discovered waves, a cost member and applies that apply nothing (#3821)", () => {
