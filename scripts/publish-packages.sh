@@ -278,6 +278,38 @@ publish_one() {
   return $rc
 }
 
+# Wait until a version this run just published is installable.
+#
+# #3842: npm is eventually consistent across packages. After chant-v0.124.6 a
+# lexicon version was visible before the core version it requires, and a fresh
+# `npm install` failed with ETARGET on @intentius/chant@^0.124.6 for a few
+# minutes. So after publishing a package that others depend on (core first,
+# and e.g. github before forgejo), hold the loop until the version resolves
+# through `npm view` AND its tarball answers 200. Without that, no dependent
+# becomes visible before what it needs. Polls every WAIT_INTERVAL seconds
+# (default 15) up to WAIT_TIMEOUT seconds (default 600).
+wait_installable() {
+  local name="$1" version="$2" base tgz waited=0 seen code
+  local interval="${WAIT_INTERVAL:-15}" limit="${WAIT_TIMEOUT:-600}"
+  base="${name##*/}"
+  tgz="$REGISTRY/${name}/-/${base}-${version}.tgz"
+  while :; do
+    seen=$(npm view "$name@$version" version 2>/dev/null || true)
+    code=$(curl -s -o /dev/null -w '%{http_code}' "$tgz" 2>/dev/null || true)
+    if [ "$seen" = "$version" ] && [ "$code" = "200" ]; then
+      echo "  $name@$version is installable (after ${waited}s)"
+      return 0
+    fi
+    if [ "$waited" -ge "$limit" ]; then
+      echo "::error::$name@$version not installable after ${limit}s (npm view: ${seen:-nothing}, tarball HTTP ${code:-none}); not publishing packages that depend on it"
+      return 1
+    fi
+    echo "  waiting for $name@$version (npm view: ${seen:-nothing}, tarball HTTP ${code:-none})"
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
+}
+
 published=()
 skipped=()
 failed=()
@@ -325,6 +357,12 @@ while read -r dir; do
     skipped+=("$name@$version")
   elif publish_one "$dir" "$name"; then
     published+=("$name@$version")
+    # Only packages another package depends on need the wait (#3842).
+    if needed_by_publish "$dir" && ! wait_installable "$name" "$version"; then
+      failed+=("$name@$version")
+      echo "::endgroup::"
+      break
+    fi
   else
     failed+=("$name@$version")
   fi
