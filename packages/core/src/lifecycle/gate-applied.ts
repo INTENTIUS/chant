@@ -19,6 +19,7 @@
 
 import { samePlanDigest } from "./plan-digest";
 import type { GateAuditApply } from "./gate-audit";
+import type { GateRunLocator } from "../op/gate-run-locator";
 
 /** One approval a wave applied under: the approval of `planDigest` made at `approvedAt` was used. */
 export interface AppliedGateRecord {
@@ -38,6 +39,37 @@ export interface AppliedGateRecord {
   review?: { pr?: number; head?: string };
   runId?: string;
   commit?: string;
+  /**
+   * Where the run applying runs (#3858), as a pending fact's `resume` names
+   * it. A line that carries one and has no {@link FinishedGateRecord} is an
+   * apply that may have stopped: `chant run resume` starts that run again
+   * once it is gone, and the wave applies the rest under the same approval.
+   */
+  resume?: GateRunLocator;
+}
+
+/**
+ * A line of `applied.jsonl` that a wave applying under an approval writes
+ * (#3858): chant's own `applied` line, or a product's `changes` line beside
+ * it (terragucci's, which names the changes the approved plans make). Both
+ * name the approval the apply ran under.
+ */
+export type AppliedGateLine = Omit<AppliedGateRecord, "kind"> & { kind: "applied" | "changes" };
+
+/**
+ * How the apply an applied line names ended, in the same file (#3858). A
+ * product writes it when the apply finishes; an apply that was killed writes
+ * none. `applied` is that line's `timestamp`.
+ */
+export interface FinishedGateRecord {
+  version: 1;
+  kind: "finished";
+  op: string;
+  gate: string;
+  planDigest: string;
+  applied: string;
+  result: "applied" | "failed";
+  timestamp: string;
 }
 
 /** Where the applied lines of `op` live on `chant/lifecycle`: the directory and the file, as `writeBlobToPath` takes them. */
@@ -68,6 +100,36 @@ export function parseAppliedGateLines(text: string): AppliedGateRecord[] {
 const time = (iso: string): number => new Date(iso).getTime();
 
 /**
+ * Every line of an `applied.jsonl` file a resume reads (#3858): the
+ * `applied` and `changes` lines, and the `finished` lines that say how an
+ * apply ended. Oldest first; a line that is none of them is skipped.
+ */
+export function parseAppliedGateFile(text: string): { applied: AppliedGateLine[]; finished: FinishedGateRecord[] } {
+  const applied: AppliedGateLine[] = [];
+  const finished: FinishedGateRecord[] = [];
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    let r: Record<string, unknown>;
+    try {
+      r = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (r?.version !== 1 || typeof r.gate !== "string" || typeof r.planDigest !== "string" || typeof r.timestamp !== "string") continue;
+    if ((r.kind === "applied" || r.kind === "changes") && typeof r.approvedAt === "string") {
+      applied.push({ op: "", approvedBy: "", ...r } as unknown as AppliedGateLine);
+    } else if (r.kind === "finished" && typeof r.applied === "string" && (r.result === "applied" || r.result === "failed")) {
+      finished.push({ op: "", ...r } as unknown as FinishedGateRecord);
+    }
+  }
+  return { applied, finished };
+}
+
+/** The finished line for the apply `line` names, or undefined while it has none. */
+export function finishedApply(finished: readonly FinishedGateRecord[], line: Pick<AppliedGateLine, "gate" | "planDigest" | "timestamp">): FinishedGateRecord | undefined {
+  return finished.find((f) => f.gate === line.gate && samePlanDigest(f.planDigest, line.planDigest) && time(f.applied) === time(line.timestamp));
+}
+
+/**
  * Whether an approval is spent: a wave applied under an approval of the same
  * gate and digest made at or after it. One that names no digest is never
  * spent. With `review`, an approval that came from a pull request's review
@@ -76,7 +138,7 @@ const time = (iso: string): number => new Date(iso).getTime();
  * review not yet recorded has no `timestamp`.
  */
 export function isApprovalSpent(
-  applied: readonly AppliedGateRecord[],
+  applied: readonly Pick<AppliedGateRecord, "gate" | "planDigest" | "approvedAt" | "review">[],
   approval: { gate: string; planDigest?: string; timestamp?: string; review?: { pr?: number; head?: string } },
 ): boolean {
   const digest = approval.planDigest;

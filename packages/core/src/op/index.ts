@@ -121,6 +121,8 @@ export type { OpRunContext, PassedGate } from "./run-context";
 export { evaluateGate, gitGateLedgerPort, memoryGateLedgerPort, approveCommand, describeGateMismatch, gateIsSealed } from "./gate";
 export type { GateLedgerPort, GateCheck, GateCheckInput, PendingGatePush, GateDigestMismatch, GateQuorumProgress, GateTally } from "./gate";
 export { tallyGateApprovals, humanQuorumSince, approverOf } from "./gate";
+export { planGateResumes, standingGateFacts } from "./gate-resume-plan";
+export type { GateResumeCandidate, GateResumeReason, GateAnswering, PlanGateResumesInput } from "./gate-resume-plan";
 export {
   gateApprovalProblems, gateContextDigest, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES,
 } from "./gate-approval";

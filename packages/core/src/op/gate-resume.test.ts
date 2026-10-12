@@ -138,6 +138,24 @@ describe("resumeGateRun", () => {
     expect(await resumeGateRun(forgejo, { token: "t", since: "2026-10-02T00:00:00Z", fetch: again.fetch })).toMatchObject({ status: "skipped" });
   });
 
+  test("dryRun reads each forge as a resume would and starts nothing (#3858)", async () => {
+    const gh = fakeForge({ "GET /repos/acme/db/actions/runs/42": { status: "completed", conclusion: "failure", run_attempt: 1 } });
+    expect(await resumeGateRun(github, { token: "t", fetch: gh.fetch, dryRun: true })).toMatchObject({ status: "would-resume", how: "would re-run the failed jobs of run 42" });
+    const gitlab: GateRunLocator = { forge: "gitlab", api: "https://gl/api/v4", repo: "7", run: "100", job: "555", jobName: "wave-2-staging" };
+    const gl = fakeForge({
+      "GET /api/v4/projects/7/jobs/555": { status: "canceled", name: "wave-2-staging" },
+      "GET /api/v4/projects/7/pipelines/100/jobs": [{ id: 555, name: "wave-2-staging" }],
+    });
+    expect(await resumeGateRun(gitlab, { token: "t", fetch: gl.fetch, dryRun: true })).toMatchObject({ status: "would-resume", how: "would retry job 555" });
+    const forgejo: GateRunLocator = { forge: "forgejo", api: "https://fj/api/v1", repo: "acme/db", run: "9", workflow: "migrations.yml", ref: "main" };
+    const fj = fakeForge({
+      "GET /api/v1/repos/acme/db/actions/runs/9": { status: "cancelled" },
+      "GET /api/v1/repos/acme/db/actions/runs": { workflow_runs: [] },
+    });
+    expect(await resumeGateRun(forgejo, { token: "t", fetch: fj.fetch, dryRun: true })).toMatchObject({ status: "would-resume", how: "would dispatch migrations.yml on main" });
+    expect([...gh.calls, ...gl.calls, ...fj.calls].every((c) => c.method === "GET")).toBe(true);
+  });
+
   test("a refusal from the forge is thrown with its status", async () => {
     const fetch: ForgeFetch = async () => ({ ok: false, status: 403, text: async () => "Resource not accessible by integration" });
     await expect(resumeGateRun(github, { token: "t", fetch })).rejects.toThrow(/403/);

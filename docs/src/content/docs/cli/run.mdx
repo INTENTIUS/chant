@@ -211,9 +211,14 @@ Starts again each CI job that waits at a gate an approval now answers, through t
 chant run resume --op migrations
 chant run resume --op migrations --gate migrations-wave-3
 chant run resume --dry-run
+chant run resume --op tf-apply --dry-run --json
 ```
 
 `--gate <name>` resumes only the job waiting at that gate, so a caller that has just approved one wave starts that wave's job and leaves the op's other waiting jobs alone ([#3854](https://github.com/INTENTIUS/chant/issues/3854)). Without `--op` it looks for the gate in every gate ledger.
+
+A pending fact whose answering approval a wave already applied under (`approvals.spend`) is `spent` and resumes nothing. An apply under an approval that stopped before it wrote its `finished` line, and whose applied line names its run, is started again once the forge says that run is gone ([A spent approval and a stopped apply](/chant/guide/op-waves/#a-spent-approval-and-a-stopped-apply)).
+
+`--dry-run` starts nothing. With `--json` it prints `{ dryRun, reports }`, one report per gate with `resumable`, `reason` (`approved`, `answered`, `not-approved`, `spent` or `stopped`), `source` (`pending` or `stopped`) and `status` (`would-resume` where it would start a job), so a product that resumes in its own job can act on chant's decision ([Resume in the product's own job](/chant/guide/op-waves/#resume-in-the-products-own-job)). A dry run reads the forge only to ask whether a stopped apply's run is gone.
 
 A gate that asks a decision point counts as answered once its question has an answer the gate passes on. The command reads the workspace's questions for it, including those held on `chant/lifecycle` ([#3835](https://github.com/INTENTIUS/chant/issues/3835)). A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
 
