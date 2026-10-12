@@ -1067,7 +1067,8 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
     planDigest: hold.request.digest,
     description: hold.request.description ?? `wave ${k} (${wave.name}) of ${spec.name} is held on it by ${hold.label}`,
     now,
-    ...(hold.request.pending ? { fields: hold.request.pending } : {}),
+    // #3839: the wave a hold belongs to, as a field, whatever the hook's own description says.
+    fields: { ...hold.request.pending, wave: { number: k, name: wave.name, op: spec.name } },
     ...(neverOverMcp ? { neverOverMcp: true } : {}),
   });
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };
@@ -1559,7 +1560,7 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
         description: m.denied.reason ?? `wave ${k} (${wave.name}) of ${spec.name}: ${m.member}: plan ${m.planDigest} denied by ${og.sortedRules(m.denied.rules).join(", ")}`,
       });
       try {
-        await port.appendPending({ ...fact, members: [{ member: m.member, planDigest: m.planDigest }] } as typeof fact);
+        await port.appendPending({ ...fact, members: [{ member: m.member, planDigest: m.planDigest }], wave: { number: k, name: wave.name, op: spec.name } } as typeof fact);
       } catch (err) {
         log(`${m.member}: the denial was not recorded for an override: ${err instanceof Error ? err.message : String(err)}`);
       }

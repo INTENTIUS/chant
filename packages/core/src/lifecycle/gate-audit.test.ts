@@ -12,6 +12,12 @@ const resolution = (o: Record<string, unknown> = {}) =>
 const ledger = (op: string, ...texts: string[]) => ({ op, lines: texts.map((text) => ({ text })) });
 
 describe("lifecycle/gate-audit", () => {
+  test("a pending fact's wave is surfaced (#3839)", () => {
+    const { entries } = deriveGateAudit({ ledgers: [ledger("tf-apply", pending({ wave: { number: 2, name: "prod", op: "tg" } }))] });
+    expect(entries[0]).toMatchObject({ wave: { number: 2, name: "prod", op: "tg" } });
+    expect(entries[0]!.detail).not.toHaveProperty("wave");
+  });
+
   test("a request, then an approval with its seal and approver", () => {
     const seal = { signer: "alex", key: "SHA256:k", signature: "-----BEGIN" };
     const { entries, gaps } = deriveGateAudit({
