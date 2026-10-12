@@ -759,3 +759,136 @@ describe("a product's wave gate moved onto the waves (#3821)", () => {
     h.done();
   });
 });
+
+describe("gates and holds a product's wave needs (#3821)", () => {
+  const digest = (n: string) => `sha256:${n.repeat(64)}`;
+  const tg: OpWavesSpec = {
+    name: "tf-apply",
+    op: "tf-apply",
+    gateName: "wave-{k}",
+    planWave: ["tg", "plan", "{wave}", "{runs}", "{plans}"],
+    applyWave: ["tg", "apply", "{wave}", "{runs}", "{plans}"],
+    hooks: { after: { gate: [{ name: "report", command: ["tg", "report", "{runs}"] }] } },
+    waves: [{ name: "net", runs: [{ target: "vpc" }, { target: "dns" }], gate: "always" }],
+  };
+  type Plan = { planDigest: string; empty?: boolean; denied?: { rules: string[] } };
+  function harness(plans: Record<string, Plan>, opts: { extra?: Record<string, unknown>; atBase?: OpWavesSpec; hook?: (argv: string[], env: Record<string, string>, dir: string) => number } = {}) {
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-3821b-"));
+    const calls: string[] = [];
+    const envs: Array<Record<string, string>> = [];
+    const exec: OpWaveExec = (argv, dir, env = {}) => {
+      calls.push(argv.join(" "));
+      envs.push(env);
+      if (argv[0] !== "tg") return opts.hook?.(argv, env, dir) ?? 0;
+      if (argv[1] === "report") return opts.hook?.(argv, env, dir) ?? 0;
+      const runs = JSON.parse(readFileSync(join(dir, argv[3]!), "utf-8")) as OpWaveRunsFile;
+      if (argv[1] === "plan") writeFileSync(join(dir, argv[4]!), JSON.stringify({ runs: runs.runs.map((r) => ({ target: r.target, ...plans[r.target] })), ...(opts.extra ?? {}) }));
+      return 0;
+    };
+    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: JSON.stringify(opts.atBase ?? tg) });
+    return { cwd, calls, envs, exec, show, done: () => rmSync(cwd, { recursive: true, force: true }) };
+  }
+  const run = (h: ReturnType<typeof harness>, gates = memoryGateLedgerPort(), spec: OpWavesSpec = tg) =>
+    runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00.000Z", log: () => {} });
+
+  test("the spec checks after.gate hooks and override", () => {
+    expect(() => assertOpWavesSpec(tg)).not.toThrow();
+    expect(() => assertOpWavesSpec({ ...tg, hooks: { before: { gate: [{ command: ["x"] }] } } as OpWavesSpec["hooks"] })).toThrow(/runs after the gate/);
+    expect(() => assertOpWavesSpec({ ...tg, hooks: { after: { gate: [{ command: ["x"], onFailure: "approve" }] } } })).toThrow(/already decided/);
+    expect(() => assertOpWavesSpec({ ...tg, override: { overriders: "" } })).toThrow(/override.overriders/);
+    expect(() => assertOpWavesSpec({ ...tg, override: { who: "x" } as OpWavesSpec["override"] })).toThrow(/override.who/);
+  });
+
+  test("the after-gate hook runs when the wave waits, with the decision in its environment", async () => {
+    const h = harness({ vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") } });
+    const result = await run(h);
+    expect(result.exitCode).toBe(3);
+    const at = h.calls.indexOf(`tg report .chant/op-waves/tf-apply/wave-1/runs.json`);
+    expect(at).toBeGreaterThan(0);
+    const env = h.envs[at]!;
+    expect(env).toMatchObject({ CHANT_HOOK: "after-gate", CHANT_GATE_STATUS: "waiting", CHANT_GATE_OP: "tf-apply", CHANT_GATE: "wave-1", CHANT_GATE_DIGEST: result.decision!.digest, CHANT_GATE_RECORDED: "true", CHANT_GATE_WAITING_SINCE: "2026-10-11T00:00:00.000Z" });
+    expect(env.CHANT_GATE_APPROVE).toBe(`chant approve tf-apply wave-1 --plan ${result.decision!.digest}`);
+    const record = JSON.parse(readFileSync(join(h.cwd, env.CHANT_DECISION!), "utf-8")) as OpWaveDecision;
+    expect(record).toMatchObject({ status: "waiting", recorded: true, pendingFact: { gate: "wave-1", planDigest: result.decision!.digest } });
+    expect(h.calls.some((c) => c.startsWith("tg apply"))).toBe(false);
+    h.done();
+  });
+
+  test("the after-gate hook names the approval of another digest; a failing one stops a wave that would apply, and not a waiting one", async () => {
+    const h = harness({ vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") } }, { hook: () => 1 });
+    const gates = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("9") }] });
+    const waiting = await run(h, gates);
+    expect(waiting.exitCode).toBe(3);
+    expect(waiting.decision).toMatchObject({ mismatch: { approved: digest("9"), resolvedBy: "alice" } });
+    h.done();
+
+    const open = harness({ vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true } }, { hook: () => 1 });
+    const stopped = await run(open);
+    expect(stopped).toMatchObject({ exitCode: 1, decision: { status: "not-required" } });
+    expect(open.calls.some((c) => c.startsWith("tg apply"))).toBe(false);
+    open.done();
+  });
+
+  test("a run the policy denied refuses the wave (exit 7) and records a denial an override answers", async () => {
+    const h = harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2") } });
+    const gates = memoryGateLedgerPort();
+    const result = await run(h, gates);
+    expect(result).toMatchObject({ exitCode: 7, decision: { status: "refused", refused: { reason: "policy", runs: ["vpc"] } } });
+    expect(gates.appended).toHaveLength(1);
+    expect(gates.appended[0]).toMatchObject({ op: "policy-override", gate: "vpc", plan: digest("1"), rules: ["no-public-s3"], members: [{ member: "vpc", planDigest: digest("1") }] });
+    expect(h.envs.find((e) => e.CHANT_HOOK === "after-gate")).toMatchObject({ CHANT_GATE_STATUS: "refused" });
+    expect(h.calls.some((c) => c.startsWith("tg apply"))).toBe(false);
+    const { opWaveNotifyFields } = await import("./op-waves-notify");
+    expect(opWaveNotifyFields(tg, 1, { result })).toMatchObject({ event: "refused", status: "denied", targets: ["vpc"] });
+    h.done();
+  });
+
+  test("an override by a listed overrider lets the denied run through, and is spent before the apply", async () => {
+    const { overrideDigest } = await import("../override-gate");
+    const od = overrideDigest("vpc", digest("1"), ["no-public-s3"]);
+    const h = harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2"), empty: true } }, { extra: { overriders: ["github:carol"] }, atBase: { ...tg, waves: [{ ...tg.waves[0]!, gate: "never" }] } });
+    const gates = memoryGateLedgerPort({
+      resolutions: [{ version: 1, op: "policy-override", gate: "vpc", resolvedBy: "github:carol", timestamp: "2026-10-10T00:00:00Z", planDigest: od, note: "the bucket is the public docs site" }],
+    });
+    const result = await run(h, gates);
+    expect(result).toMatchObject({ exitCode: 0, applied: ["vpc", "dns"] });
+    expect(result.decision!.members.find((m) => m.member === "vpc")).toMatchObject({ override: { by: "github:carol", digest: od } });
+    expect(gates.applied).toEqual([expect.objectContaining({ op: "policy-override", gate: "vpc", planDigest: od, approvedBy: "github:carol" })]);
+    h.done();
+
+    // Somebody the list does not name does not count.
+    const other = harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2") } }, { extra: { overriders: ["github:dave"] } });
+    expect((await run(other, memoryGateLedgerPort({ resolutions: [{ version: 1, op: "policy-override", gate: "vpc", resolvedBy: "github:carol", timestamp: "2026-10-10T00:00:00Z", planDigest: od, note: "ok" }] }))).exitCode).toBe(7);
+    other.done();
+  });
+
+  test("a hook holds the wave on another gate: it waits on that gate's digest, then runs again once approved", async () => {
+    const migrate = { name: "migrate", command: ["migrate", "{runs}"], onFailure: "approve" as const };
+    const spec: OpWavesSpec = { ...tg, hooks: { before: { plan: [migrate] }, after: tg.hooks!.after } };
+    const hook = (argv: string[], env: Record<string, string>, dir: string) => {
+      if (argv[0] !== "migrate") return 0;
+      if (env.CHANT_HOLD_APPROVED) return 0;
+      writeFileSync(join(dir, env.CHANT_HOLD!), JSON.stringify({ op: "tf-migrate", gate: "split-queues", digest: digest("m"), pending: { members: [] } }));
+      return 3;
+    };
+    const h = harness({ vpc: { planDigest: digest("1") }, dns: { planDigest: digest("2") } }, { hook, atBase: spec });
+    const gates = memoryGateLedgerPort();
+    const waiting = await run(h, gates, spec);
+    expect(waiting).toMatchObject({ exitCode: 3, decision: { status: "waiting", heldOn: { op: "tf-migrate", gate: "split-queues", digest: digest("m"), status: "waiting" } } });
+    expect(waiting.decision!.approve).toBe(`chant approve tf-migrate split-queues --plan ${digest("m")}`);
+    expect(gates.appended[0]).toMatchObject({ op: "tf-migrate", gate: "split-queues", planDigest: digest("m"), members: [] });
+    expect(h.calls.some((c) => c.startsWith("tg plan"))).toBe(false);
+    expect(h.envs.find((e) => e.CHANT_HOOK === "after-gate")).toMatchObject({ CHANT_GATE_STATUS: "waiting", CHANT_GATE_OP: "tf-migrate", CHANT_GATE: "split-queues" });
+    h.done();
+
+    const again = harness({ vpc: { planDigest: digest("1"), empty: true }, dns: { planDigest: digest("2"), empty: true } }, { hook, atBase: spec });
+    const approved = memoryGateLedgerPort({ resolutions: [{ version: 1, op: "tf-migrate", gate: "split-queues", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00Z", planDigest: digest("m") }] });
+    const result = await run(again, approved, spec);
+    expect(result.exitCode).toBe(0);
+    const reruns = again.envs.filter((e, i) => again.calls[i]!.startsWith("migrate"));
+    expect(reruns).toHaveLength(2);
+    expect(JSON.parse(reruns[1]!.CHANT_HOLD_APPROVED!)).toMatchObject({ op: "tf-migrate", gate: "split-queues", approvedBy: "alice" });
+    expect(result.hooks.filter((o) => o.name === "migrate").map((o) => o.outcome)).toEqual(["held", "passed"]);
+    again.done();
+  });
+});

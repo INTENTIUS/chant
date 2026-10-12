@@ -102,12 +102,17 @@ export interface OpWaveHook {
 }
 
 /** The stages a hook runs around. */
-export type OpWaveHookStage = "plan" | "apply";
+export type OpWaveHookStage = "plan" | "apply" | "gate";
 
 /** When a hook runs. */
-export type OpWaveHookMoment = "before-plan" | "after-plan" | "before-apply" | "after-apply";
+export type OpWaveHookMoment = "before-plan" | "after-plan" | "after-gate" | "before-apply" | "after-apply";
 
-export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-plan", "after-plan", "before-apply", "after-apply"];
+/**
+ * Every moment, in the order a wave reaches them. `after-gate` (#3821) runs
+ * once the gate decided, whatever it decided: approved, let through,
+ * waiting, or refused by a policy denial.
+ */
+export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
 
 /**
  * Who runs the `before.apply` and `after.apply` hooks (#3804). `chant`: the
@@ -122,7 +127,8 @@ export const OP_WAVE_APPLY_HOOKS_RUNNERS: readonly OpWaveApplyHooksRunner[] = ["
 /** Stage hooks (#3762), read from the spec at the base commit like the gate policy. */
 export interface OpWaveHooks {
   before?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
-  after?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
+  /** `after.gate` (#3821) runs once the gate decided, whatever it decided, with the decision in its environment. */
+  after?: { plan?: OpWaveHook[]; gate?: OpWaveHook[]; apply?: OpWaveHook[] };
   /** Who runs the apply-stage hooks (#3804). Default `{ runBy: "chant" }`. A wave's own setting wins over the spec's. */
   apply?: { runBy?: OpWaveApplyHooksRunner };
 }
@@ -228,6 +234,13 @@ export interface OpWavesSpec {
   hooks?: OpWaveHooks;
   /** What happens to an approval once a wave applies under it (#3784). Read at the base commit. */
   approvals?: OpWavesApprovals;
+  /**
+   * Who may override a run the product's policy denied at plan time (#3821).
+   * A plan entry with `denied` refuses the wave unless an override on
+   * `_gates/policy-override.jsonl` counts for that run, its plan digest and
+   * the rules (`@intentius/chant/override-gate`).
+   */
+  override?: OpWavesOverride;
   waves: OpWave[];
   /**
    * A scheduled job that starts again a wave job whose approval has arrived
@@ -268,6 +281,16 @@ export const OP_WAVE_DEFAULT_GATE_NAME = "{gate}-wave-{k}";
 /** The gate wave `k` waits on (#3821): the spec's `gateName` pattern, by default `<gate>-wave-<k>`. */
 export function opWaveGateName(spec: Pick<OpWavesSpec, "name" | "gate" | "gateName">, k: number): string {
   return (spec.gateName ?? OP_WAVE_DEFAULT_GATE_NAME).replaceAll("{gate}", spec.gate ?? spec.name).replaceAll("{k}", String(k));
+}
+
+/** Where a wave reads who may override a policy denial (#3821). */
+export interface OpWavesOverride {
+  /**
+   * The overriders file, read at the base commit. Default
+   * `.chant/overriders`. A plans file that names `overriders` (a product
+   * that keeps its list in its own config at base) wins over it.
+   */
+  overriders?: string;
 }
 
 /** What happens to an approval once a wave applies under it (#3784). */
@@ -386,6 +409,14 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       if (!OP_WAVES_DIGEST_OVER.includes(value as "all")) throw new Error(`${where}: digest.over is ${JSON.stringify(value)}; use "all" or "changing".`);
     }
   }
+  if (spec.override !== undefined) {
+    const o = spec.override as unknown;
+    if (o === null || typeof o !== "object" || Array.isArray(o)) throw new Error(`${where}: \`override\` must be { "overriders"?: "<file at base>" }.`);
+    for (const [key, value] of Object.entries(o as Record<string, unknown>)) {
+      if (key !== "overriders") throw new Error(`${where}: override.${key} is not a setting; the one there is override.overriders.`);
+      if (typeof value !== "string" || value.trim() === "") throw new Error(`${where}: override.overriders must be a path, such as ".chant/overriders".`);
+    }
+  }
   if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
@@ -449,7 +480,8 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
     if (stages === null || typeof stages !== "object" || Array.isArray(stages)) throw new Error(`${where}: hooks.${side} must be { "plan"?: [...], "apply"?: [...] }.`);
     for (const [stage, list] of Object.entries(stages as Record<string, unknown>)) {
       const at = `hooks.${side}.${stage}`;
-      if (stage !== "plan" && stage !== "apply") throw new Error(`${where}: ${at} is not a stage; a hook runs before or after plan or apply.`);
+      if (stage === "gate" && side === "before") throw new Error(`${where}: ${at} is not a moment; a hook runs after the gate (hooks.after.gate), or before the plan or the apply.`);
+      if (stage !== "plan" && stage !== "apply" && stage !== "gate") throw new Error(`${where}: ${at} is not a stage; a hook runs before or after plan or apply, or after the gate.`);
       if (!Array.isArray(list)) throw new Error(`${where}: ${at} must be a list of hooks.`);
       list.forEach((hook: OpWaveHook, i: number) => {
         const which = `${at}[${i}]${hook && typeof hook === "object" && typeof hook.name === "string" ? ` (${hook.name})` : ""}`;
@@ -460,6 +492,9 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
         }
         if (hook.onFailure === "approve" && side === "after" && stage === "apply") {
           throw new Error(`${where}: ${which} has onFailure "approve", but after the apply there is nothing left to hold. Use "fail".`);
+        }
+        if (hook.onFailure === "approve" && stage === "gate") {
+          throw new Error(`${where}: ${which} has onFailure "approve", but the gate has already decided when it runs. Use "fail", or hold the wave from an after.plan hook.`);
         }
         if (hook.perRun !== undefined && typeof hook.perRun !== "boolean") throw new Error(`${where}: ${which}.perRun must be true or false.`);
         if (!hook.perRun) {
@@ -478,7 +513,7 @@ export function opWaveHooksAt(spec: Pick<OpWavesSpec, "hooks" | "waves">, name: 
   const wave = spec.waves.find((w) => w.name === name);
   const at = (hooks: OpWaveHooks | undefined, moment: OpWaveHookMoment): OpWaveHook[] => {
     const [side, stage] = moment.split("-") as ["before" | "after", OpWaveHookStage];
-    return hooks?.[side]?.[stage] ?? [];
+    return (hooks?.[side] as Partial<Record<OpWaveHookStage, OpWaveHook[]>> | undefined)?.[stage] ?? [];
   };
   return Object.fromEntries(OP_WAVE_HOOK_MOMENTS.map((m) => [m, [...at(spec.hooks, m), ...at(wave?.hooks, m)]])) as Record<OpWaveHookMoment, OpWaveHook[]>;
 }

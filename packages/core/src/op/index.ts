@@ -66,7 +66,7 @@ export {
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
-export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesDigest, OpWavesSpec } from "./op-waves";
+export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesDigest, OpWavesOverride, OpWavesSpec } from "./op-waves";
 export {
   opWaveHooksAtBase,
   opWaveNeedsApproval,
@@ -85,6 +85,8 @@ export type {
   OpWaveDecision,
   OpWaveApplyHooksRun,
   OpWaveExec,
+  OpWaveHeldOn,
+  OpWaveHoldRequest,
   OpWaveHookOutcome,
   OpWaveHookRun,
   OpWaveHooksFile,

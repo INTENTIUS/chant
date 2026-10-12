@@ -5,7 +5,8 @@
  * approval command, the digest and, under `pr-review`, the pull request to
  * review. A share job that refused a run whose plan moved (exit 4) sends
  * `refused`. A wave whose plan, apply or stage hook failed (exit 1) sends
- * `failed`. A share job of a waiting wave sends nothing, since its deciding
+ * `failed`. A wave the product's policy refused (exit 7, #3821) sends
+ * `refused` with the runs it denied. A share job of a waiting wave sends nothing, since its deciding
  * job already did, unless a hook in the share job itself held it (#3762). Delivery is `../notify.ts`: it never throws, and the job's exit code
  * is what the wave decided.
  */
@@ -46,11 +47,27 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       summary: `${label} waits for an approval`,
       targets: decision.members.map((m) => m.member),
       approve: { command: decision.approve ?? `chant approve ${decision.op} ${decision.gate} --plan ${decision.digest}`, ...review },
-      ...(decision.heldBy?.length
+      ...(decision.heldOn
+        ? { reason: `held on ${decision.heldOn.op} / ${decision.heldOn.gate} by ${decision.heldOn.hook}` }
+        : decision.heldBy?.length
         ? { reason: `held by ${decision.heldBy.join(", ")}` }
         : decision.review?.reason
           ? { reason: decision.review.reason }
           : {}),
+    };
+  }
+  if (result.exitCode === 7 && decision?.refused) {
+    // #3821: the product's policy denied a run, and no override counts for it.
+    return {
+      ...base,
+      event: "refused",
+      status: decision.refused.reason === "override-moved" ? "override-moved" : "denied",
+      summary: `${label} refused: the policy denied ${decision.refused.runs.join(", ")}`,
+      targets: decision.refused.runs,
+      reason:
+        decision.refused.reason === "override-moved"
+          ? "an override stands for an earlier plan or other rules, so it counts for nothing"
+          : "the policy denied these runs, and no override counts for them",
     };
   }
   if (result.exitCode === 4) {
