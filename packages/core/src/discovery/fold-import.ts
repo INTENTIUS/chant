@@ -3620,8 +3620,7 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
   } catch {
     return false;
   }
-  const root = chantCoreRoot();
-  return targetPath === root || targetPath.startsWith(root + sep);
+  return isChantCorePath(targetPath);
 }
 
 /**
@@ -3643,7 +3642,7 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
  *     modules by subpath instead of through the barrel names code the process
  *     already trusts, not code the project controls.
  *  2. **chant-core's own executing tree** — the specifier is RESOLVED and the
- *     resulting path checked against {@link chantCoreRoot}. A text match is
+ *     resulting path checked against {@link chantCoreRoots}. A text match is
  *     not enough here: `@intentius/chant` and `@intentius/chant-lexicon-evil`
  *     are both strings an untrusted repo can write into its own source and
  *     back with its own `node_modules` directory, and
@@ -3700,8 +3699,7 @@ function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): bo
   // chant#2590 — the subpath case of the same arm: another file of a
   // multi-file path lexicon, under its trusted directory.
   if (inPathLexiconRoot(targetPath, ctx.lexiconRoots)) return true;
-  const root = chantCoreRoot();
-  return targetPath === root || targetPath.startsWith(root + sep);
+  return isChantCorePath(targetPath);
 }
 
 /**
@@ -3737,17 +3735,29 @@ function sandboxedExecutionRefusal(
 }
 
 /**
- * chant-core's own module root — `packages/core/src` in this repo,
- * `<pkg>/dist` in a published install — derived from THIS module's location.
+ * chant-core's own module roots, derived from THIS module's location:
+ * `packages/core/src` in this repo, and in a published install both
+ * `<pkg>/src` (where `@intentius/chant/*` specifiers resolve, through the
+ * package exports) and `<pkg>/dist` (where the compiled CLI runs from, #3878).
  * Pure string arithmetic on `import.meta.url`, no filesystem access at all, so
  * it is safe in the #1045 sandbox child (which locks reads to an allowlist);
  * lazy and memoized purely to avoid doing it per call.
  */
-let chantCoreRootMemo: string | undefined;
-function chantCoreRoot(): string {
-  // .../<root>/discovery/fold-import.ts -> .../<root>
-  chantCoreRootMemo ??= dirname(dirname(fileURLToPath(import.meta.url)));
-  return chantCoreRootMemo;
+let chantCoreRootsMemo: readonly string[] | undefined;
+function chantCoreRoots(): readonly string[] {
+  if (!chantCoreRootsMemo) {
+    // .../<root>/discovery/fold-import.{ts,js} -> .../<root>
+    const root = dirname(dirname(fileURLToPath(import.meta.url)));
+    const name = basename(root);
+    const sibling = name === "dist" ? join(dirname(root), "src") : name === "src" ? join(dirname(root), "dist") : undefined;
+    chantCoreRootsMemo = sibling ? [root, sibling] : [root];
+  }
+  return chantCoreRootsMemo;
+}
+
+/** Whether `path` is one of chant-core's own modules (see {@link chantCoreRoots}). */
+function isChantCorePath(path: string): boolean {
+  return chantCoreRoots().some((root) => path === root || path.startsWith(root + sep));
 }
 
 /** Revive every value in a folded props/attributes object (see {@link reviveFoldedValue}). */
@@ -4467,8 +4477,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
   // exclusion has to be explicit, or a fixture/in-repo import by path would
   // walk fold into chant's own tree and fold `params` to an empty object.
   {
-    const root = chantCoreRoot();
-    if (file === root || file.startsWith(root + sep)) {
+    if (isChantCorePath(file)) {
       return { ok: false, reason: "chant's own module is not project source" };
     }
   }

@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import schema from "./workspace-kinds.schema.json";
+import schema from "./workspace-kinds.schema.json" with { type: "json" };
 import type { WorkspaceTree } from "./tree";
 import { joinPath, skippedDir } from "./tree";
 import { checkPinIntegrity } from "./pin-integrity";

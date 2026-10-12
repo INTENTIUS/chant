@@ -1,4 +1,5 @@
 import { DiscoveryError } from "../errors";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 /**
  * Modules whose evaluation threw, and the error each threw with (#2368).
@@ -57,6 +58,7 @@ export async function importModule(
   if (failed) throw failed;
 
   try {
+    ensureTypeScriptLoader();
     return await import(path);
   } catch (error) {
     const message =

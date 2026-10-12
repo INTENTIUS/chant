@@ -6,7 +6,7 @@ import type { Severity, RuleConfig } from "./rule";
 import type { PostSynthDiagnostic } from "./post-synth";
 import { moduleDir, getRuntime } from "../runtime-adapter";
 import { canonicalRuleId, type RuleMeta } from "../audit/catalog";
-import strictPreset from "./presets/strict.json";
+import strictPreset from "./presets/strict.json" with { type: "json" };
 
 // chant #1117 — the upward config-discovery walk moved to a shared module
 // (`../project-root`) so `chant build`/`lint.policies` use the identical walk

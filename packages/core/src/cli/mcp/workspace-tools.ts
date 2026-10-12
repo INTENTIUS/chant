@@ -51,7 +51,7 @@ const AGENT_ENV = "CHANT_AGENT";
 export type ChantCommand = string[];
 
 /**
- * The chant this process runs as: node with the same flags (the tsx loader
+ * The chant this process runs as: node with the same flags (from source, the tsx loader
  * `bin/chant` registers) and the same entry script.
  */
 export function ownChantCommand(): ChantCommand {

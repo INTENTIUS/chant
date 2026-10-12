@@ -47,7 +47,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import yaml from "js-yaml";
-import answerSchema from "../point-answer.schema.json";
+import answerSchema from "../point-answer.schema.json" with { type: "json" };
 import { fileHash } from "../lineage-lock";
 import { DECISION_POINTS_SCHEMA_ID, POINT_INPUT_OUTPUT_NAMES, parsePoints, PointsError } from "../points";
 import type { ChantMigration, ChantMigrationContext, ChantMigrationPlan, NotMoved, PlanConflict, PlannedChange } from "../chant-migrations";

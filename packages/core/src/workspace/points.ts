@@ -35,7 +35,7 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, posix, relative, resolve, sep } from "node:path";
-import schema from "./decision-points.schema.json";
+import schema from "./decision-points.schema.json" with { type: "json" };
 import type { ReasonCode } from "./reason-codes";
 import type { RecordSource } from "./record-source";
 import type { LoadedRecordKind, ReadRecordsOptions, RecordEntry } from "./records";

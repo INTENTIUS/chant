@@ -29,6 +29,7 @@ import { regenLexicon, type RegenResult } from "./lexicon-regen";
 import { fetchWithRetry } from "./fetch";
 import { isLexiconPlugin, type UpstreamPin } from "../lexicon";
 import { importLexiconPackage } from "../lexicon-module";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -251,6 +252,7 @@ export async function loadUpstreamPins(lexicon: LexiconId, lexiconDir?: string):
   const entry = lexiconDir ? lexiconEntry(lexiconDir) : null;
   if (entry) {
     try {
+      ensureTypeScriptLoader();
       const pins = pinsOf((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
       if (pins.length > 0) return pins;
     } catch {

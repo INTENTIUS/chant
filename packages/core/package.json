@@ -115,7 +115,7 @@
     }
   },
   "scripts": {
-    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) ! -path dist/notify.js ! -path dist/notify-verify.js -delete",
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {

@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { params as currentBuildParams } from "../../params";
+import { chantSourceDir } from "../../ts-loader";
 
 /**
  * chant #1045 Phase 2 — generates the source of the "driver" module that runs
@@ -30,7 +31,8 @@ import { params as currentBuildParams } from "../../params";
  * boundary at all.
  */
 
-const HERE = import.meta.dirname;
+// #3878: the TypeScript source, also when this module runs compiled from dist/.
+const HERE = chantSourceDir(import.meta.url);
 const DISCOVERY_DIR = join(HERE, "..");
 
 /** Absolute paths to chant's OWN trusted modules the generated driver imports — always resolved relative to THIS file's own location on disk, so this works whether chant is running from the monorepo or from a consumer's `node_modules` (both route runtime resolution at `src/*.ts` — see `packages/core/package.json`'s `development`/`default` export conditions). */
