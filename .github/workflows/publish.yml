@@ -137,9 +137,17 @@ jobs:
       # package whose publish step was wrong, and every release since
       # chant-v0.33.0 went red. The skip-if-unchanged check makes re-running
       # idempotent, so a partial release is recovered by re-running or
-      # dispatching this workflow. It packs every package first, then
-      # publishes the tarballs in dependency layers, waiting on registry
-      # metadata between layers (#3842, #3857).
+      # dispatching this workflow. It packs every package first (#3857),
+      # publishes every tarball under the `next` dist-tag, waits until each
+      # one installs, then moves `latest`, core and k8s-client first (#3903).
+      # A failure before the tag move leaves `latest` where it was; a re-run
+      # skips what is on npm and only moves the tags.
+      #
+      # The tag move uses the same OIDC token as the publish (id-token: write
+      # above) through npm 12.2.0's `dist-tag`, and needs "Allow npm
+      # dist-tag" on each package's trusted-publisher record on npmjs.com
+      # (#3904). Without it the script names the setting and falls back to
+      # NPM_TOKEN.
       - name: Publish workspace packages
         id: publish
         env:

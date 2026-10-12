@@ -200,8 +200,17 @@ tag matches neither and silently does nothing.
 
 Publishing itself is `scripts/publish-packages.sh`. It enumerates every
 non-private workspace package, so a new lexicon is picked up with no workflow
-edit. A package already at its version on the registry is skipped, which makes
-re-running the workflow a safe way to recover a partial release.
+edit. It publishes every package under the `next` dist-tag, waits until each
+one can be installed, and then moves `latest`, core first and the lexicons
+after it. Until `latest` moves, `npm install` with a version range keeps
+resolving the previous release. If anything fails before the tag move,
+`latest` stays where it was. A package already at its version on the registry
+is not published again, and a tag already at the version is not moved, so
+re-running the workflow is a safe way to recover a partial release.
+
+A new package needs its trusted-publisher record on npmjs.com to allow both
+publishing and "Allow npm dist-tag". Without the second, the package publishes
+under `next`, its `latest` move fails, and the run fails with the setting named.
 
 <Aside type="caution" title="First-time scoped packages">
 `npm publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.
