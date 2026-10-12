@@ -342,9 +342,35 @@ The token is read from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN` or `GH_TOKEN` on
 
 Resuming approves nothing. The resumed job decides the gate again from the ledger. A run that is still going, that succeeded, or that was resumed already (a later GitHub attempt, a newer GitLab job of the same name, a Forgejo run of the workflow created after the approval) is left alone.
 
+### A gate that asks a decision point
+
+A gate that [asks a decision point](/chant/guide/ops/#a-gate-that-asks-a-decision-point) waits on a question, not an approval, and writes its resolution only when the run asks the point again. Its pending fact cites the question and, when the gate names one, its `pass` list. `chant run resume` reads the workspace's questions (those held on `chant/lifecycle` included) and resumes such a job once its question is answered with an answer the gate passes on, a noul point's yes by default. An open question, or an answer the gate does not pass on, resumes nothing ([#3835](https://github.com/INTENTIUS/chant/issues/3835)).
+
+`points answer` takes `--resume` as `approve` does:
+
+```bash
+chant workspace points answer <id> --answer yes --by alice --resume
+```
+
+It records the answer, then resumes the job waiting at the gate the question names in its subject (`gate:<op>/<gate>`). The answer has to reach the remote first. One held on `chant/lifecycle` is pushed, and one in the working tree resumes nothing until it is committed and pushed.
+
+A product's own resume job makes the same check with `@intentius/chant/point-decision`, which bundles without the workspace code:
+
+```typescript
+import { chantPointQuestions, pointGateResumable } from "@intentius/chant/point-decision";
+
+const questions = await chantPointQuestions({ command: ["npx", "chant"] });
+const check = pointGateResumable(pending, questions.get(pending.answer!.id));
+if (check.resumable) {
+  // start the job pending.resume names again
+}
+```
+
+`pending` is the gate's newest pending fact. `check` is `{ resumable: true, answer, answeredBy, answeredOn }`, or `{ resumable: false, why, message }`, where `why` is `open`, `refused`, `unknown` or `not-a-point`. `evaluatePointGate` records the job's locator on the pending fact in CI, so `pending.resume` names the run to start again.
+
 ### On a schedule
 
-With `"resume": { "schedule": "*/10 * * * *" }` in the spec, the rendered pipeline gets a job that runs `chant run resume --op <name>` on that schedule. It resumes every waiting wave of the spec whose approval has arrived, so an approval needs no `--resume` and no second step.
+With `"resume": { "schedule": "*/10 * * * *" }` in the spec, the rendered pipeline gets a job that runs `chant run resume --op <name>` on that schedule. It resumes every waiting wave of the spec whose approval has arrived, or whose decision point has a passing answer, so an approval or an answer needs no `--resume` and no second step.
 
 | Forge | The resume job |
 |---|---|

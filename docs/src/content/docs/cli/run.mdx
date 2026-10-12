@@ -212,7 +212,7 @@ chant run resume --op migrations
 chant run resume --dry-run
 ```
 
-A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
+A gate that asks a decision point counts as answered once its question has an answer the gate passes on. The command reads the workspace's questions for it, including those held on `chant/lifecycle` ([#3835](https://github.com/INTENTIUS/chant/issues/3835)). A pending fact recorded outside CI names no job, and is listed as such. A run still going, already successful, or already resumed is left alone, so the command is safe to run every few minutes. The token comes from `CHANT_FORGE_TOKEN`, else `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN`; [Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job) lists the access each forge needs. It exits 1 when a forge refuses a call or no token is set.
 
 `--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
 

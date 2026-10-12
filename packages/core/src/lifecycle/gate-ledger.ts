@@ -82,6 +82,13 @@ export interface GateAnswerRef {
   /** `table`, `model` or `quorum`. */
   decider?: string;
   answeredBy?: string[];
+  /**
+   * On a pending fact: the answers the gate passes on, when the gate names
+   * them (`point.pass`); absent means a noul point's yes. `chant run resume`
+   * reads it to tell an answer that passes the gate from one that does not,
+   * without the Op's config (#3835).
+   */
+  pass?: Array<string | boolean>;
 }
 
 /** One immutable gate-resolution record. */

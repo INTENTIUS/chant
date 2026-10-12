@@ -32,7 +32,10 @@ import type { GatePointAsker } from "../point-decision";
 // The decision itself bundles without the workspace (#3816): `@intentius/chant/point-decision`.
 export {
   evaluatePointGate,
+  pointGateResumable,
   type GatePointAsker,
+  type PointQuestionState,
+  type PointResumeCheck,
   type GatePointQuestion,
   type GatePointRequest,
   type PointGateCheck,

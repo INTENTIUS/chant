@@ -54,6 +54,7 @@ describe("the point-decision bundle", () => {
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/op/duration.ts",
       "packages/core/src/op/gate-point.ts",
+      "packages/core/src/op/gate-run-locator.ts",
       "packages/core/src/point-decision.ts",
     ]);
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
