@@ -1,5 +1,4 @@
-import { checkOf, isTable, mentionedNames } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, mentionedNames, tablesOf } from "./clickhouse-helpers";
 
 /**
  * SQLCH106: a data skipping index expression mentions a column the table does
@@ -11,7 +10,7 @@ import { clickhouseObjects } from "./sql-helpers";
  * SQL parser would guess.
  */
 export const sqlch106 = checkOf({ id: "SQLCH106", description: "A skip index expression names a column the table does not declare" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (t.columns.length === 0) continue;
     const declared = new Set(t.columns.map((c) => c.name));
     for (const index of t.indexes ?? []) {

@@ -1,41 +1,26 @@
 /**
  * Reading the sql lexicon's build output in a post-synth check: the JSON
- * document the serializer writes (`dialect`, `applyOrder`, `objects`).
+ * document the serializer writes (`dialect`, `applyOrder`, `objects`). The
+ * documents are found by `../../read/objects.ts`, the same path the public
+ * read API (`@intentius/chant-lexicon-sql/read`) takes.
  */
 
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
+import { dialectObjects, recordedPostgresMajor, type SqlObjectJson } from "../../read/objects";
 
-export interface OutputObject {
-  export: string;
-  type: string;
-  name: string;
+export interface OutputObject extends SqlObjectJson {
   database?: string;
   engine?: { name: string; args?: string[] };
-  [key: string]: unknown;
 }
 
 /** Every schema object in the build's sql output, ClickHouse dialect. */
 export function clickhouseObjects(ctx: PostSynthContext): OutputObject[] {
-  const out: OutputObject[] = [];
-  for (const doc of ctx.docs ?? []) {
-    if (doc.error || doc.lexicon !== "sql" || doc.format !== "json") continue;
-    const value = doc.value as { dialect?: unknown; objects?: unknown };
-    if (value?.dialect !== "clickhouse" || !Array.isArray(value.objects)) continue;
-    out.push(...(value.objects as OutputObject[]));
-  }
-  return out;
+  return dialectObjects(ctx, "clickhouse") as OutputObject[];
 }
 
 /** Every schema object in the build's sql output, Postgres dialect. */
 export function postgresObjects(ctx: PostSynthContext): OutputObject[] {
-  const out: OutputObject[] = [];
-  for (const doc of ctx.docs ?? []) {
-    if (doc.error || doc.lexicon !== "sql" || doc.format !== "json") continue;
-    const value = doc.value as { dialect?: unknown; objects?: unknown };
-    if (value?.dialect !== "postgres" || !Array.isArray(value.objects)) continue;
-    out.push(...(value.objects as OutputObject[]));
-  }
-  return out;
+  return dialectObjects(ctx, "postgres") as OutputObject[];
 }
 
 /**
@@ -44,10 +29,5 @@ export function postgresObjects(ctx: PostSynthContext): OutputObject[] {
  * output that carries none.
  */
 export function postgresMajorOf(ctx: PostSynthContext, fallback: number): number {
-  for (const doc of ctx.docs ?? []) {
-    if (doc.error || doc.lexicon !== "sql" || doc.format !== "json") continue;
-    const value = doc.value as { dialect?: unknown; postgresMajor?: unknown };
-    if (value?.dialect === "postgres" && typeof value.postgresMajor === "number") return value.postgresMajor;
-  }
-  return fallback;
+  return recordedPostgresMajor(ctx, fallback);
 }

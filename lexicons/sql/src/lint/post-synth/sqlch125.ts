@@ -1,6 +1,5 @@
 import { CODECS, CLICKHOUSE_VERSION } from "../../generated/clickhouse";
-import { checkOf, isTable, splitTop } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, splitTop, tablesOf } from "./clickhouse-helpers";
 
 type Param = { name: string; kind: string; optional?: boolean; range?: readonly [number, number]; values?: readonly string[] };
 
@@ -17,7 +16,7 @@ const NUMBER = /^-?\d+(\.\d+)?$/;
  */
 export const sqlch125 = checkOf({ id: "SQLCH125", description: "A codec parameter is outside what the codec takes" }, (ctx, report) => {
   const codecs = CODECS as Record<string, { parameters: readonly Param[] | "unknown" } | undefined>;
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     for (const c of t.columns) {
       if (!c.codec) continue;
       for (const part of splitTop(c.codec)) {

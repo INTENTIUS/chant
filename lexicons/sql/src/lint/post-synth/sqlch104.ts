@@ -1,5 +1,4 @@
-import { baseEngineName, checkOf, engineArguments, isTable, splitTop } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { baseEngineName, checkOf, engineArguments, splitTop, tablesOf } from "./clickhouse-helpers";
 
 /** The engine arguments that name columns, by base engine. */
 function columnArguments(engine: string, args: string[]): string[] {
@@ -26,7 +25,7 @@ function columnArguments(engine: string, args: string[]): string[] {
  * sign, version, is_deleted and summed columns are columns of the table).
  */
 export const sqlch104 = checkOf({ id: "SQLCH104", description: "A MergeTree engine argument names a column the table does not declare" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (!t.engine || t.columns.length === 0) continue;
     const declared = new Set(t.columns.map((c) => c.name));
     for (const arg of columnArguments(baseEngineName(t.engine), engineArguments(t.engine))) {

@@ -1,6 +1,5 @@
 import { CODECS } from "../../generated/clickhouse";
-import { checkOf, codecNames, isTable } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { checkOf, codecNames, tablesOf } from "./clickhouse-helpers";
 
 const SENSITIVE = /(^|_)(password|passwd|pwd|secret|api_?key|access_?key|private_?key|token|ssn|social_?security|credit_?card|card_?number|iban)(_|$)/i;
 
@@ -17,7 +16,7 @@ const SENSITIVE = /(^|_)(password|passwd|pwd|secret|api_?key|access_?key|private
  */
 export const sqlch115 = checkOf({ id: "SQLCH115", description: "A secret- or PII-named column carries no comment, TTL or encryption" }, (ctx, report) => {
   const encryption = new Set(Object.entries(CODECS).filter(([, s]) => s.encryption).map(([n]) => n.toLowerCase()));
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     for (const c of t.columns) {
       if (!SENSITIVE.test(c.name) || c.comment || c.ttl || t.ttl) continue;
       if (c.codec && codecNames(c.codec).some((n) => encryption.has(n.toLowerCase()))) continue;

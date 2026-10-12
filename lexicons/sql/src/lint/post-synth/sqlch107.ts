@@ -1,5 +1,4 @@
-import { bareName, checkOf, isTable, splitTop, typeFamily } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { bareName, checkOf, splitTop, tablesOf, typeFamily } from "./clickhouse-helpers";
 
 const DATE_TYPES = new Set(["Date", "Date32", "DateTime", "DateTime64"]);
 const TTL_ACTION = /\s+(DELETE|TO\s+DISK|TO\s+VOLUME|RECOMPRESS|GROUP\s+BY|WHERE)\b[\s\S]*$/i;
@@ -13,7 +12,7 @@ const TTL_ACTION = /\s+(DELETE|TO\s+DISK|TO\s+VOLUME|RECOMPRESS|GROUP\s+BY|WHERE
  * a function call is left to the server.
  */
 export const sqlch107 = checkOf({ id: "SQLCH107", description: "A TTL expression is built on a column that is not a Date or DateTime" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     const ttls: Array<{ where: string; expr: string }> = [];
     if (t.ttl) for (const clause of splitTop(t.ttl)) ttls.push({ where: "table TTL", expr: clause.replace(TTL_ACTION, "") });
     for (const c of t.columns) if (c.ttl) ttls.push({ where: `column ${c.name} TTL`, expr: c.ttl.replace(TTL_ACTION, "") });

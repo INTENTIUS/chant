@@ -1,5 +1,4 @@
-import { bareName, checkOf, isTable, keyElements } from "./clickhouse-helpers";
-import { clickhouseObjects } from "./sql-helpers";
+import { bareName, checkOf, keyElements, tablesOf } from "./clickhouse-helpers";
 
 /**
  * SQLCH105: ORDER BY, PRIMARY KEY, PARTITION BY or SAMPLE BY lists a bare
@@ -10,7 +9,7 @@ import { clickhouseObjects } from "./sql-helpers";
  * judged; an expression is left to the server.
  */
 export const sqlch105 = checkOf({ id: "SQLCH105", description: "A table key clause names a column the table does not declare" }, (ctx, report) => {
-  for (const t of clickhouseObjects(ctx).filter(isTable)) {
+  for (const t of tablesOf(ctx)) {
     if (t.columns.length === 0) continue;
     const declared = new Set(t.columns.map((c) => c.name));
     const clauses: Array<[string, string | undefined]> = [

@@ -105,3 +105,15 @@ export {
 } from "./postgres/migrate/op";
 export { POSTGRES_RECEIPTS_TABLE } from "./postgres/migrate/receipts";
 export * from "./composites/postgres";
+
+// The build's Postgres objects as typed values, for a project's own
+// `lint.policies` (#3870); also at `@intentius/chant-lexicon-sql/read`.
+export {
+  readPostgres,
+  canonicalPostgresType,
+  type PostgresRead,
+  type PostgresTableInfo,
+  type PostgresColumnInfo,
+  type PostgresIndexInfo,
+  type PostgresViewInfo,
+} from "./read/postgres";

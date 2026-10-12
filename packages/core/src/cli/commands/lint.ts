@@ -32,6 +32,7 @@ import { applyConfiguredPreset, applyConfiguredSeverity, resolvePresetIds } from
 import { applyInlineSuppressions } from "../../lint/suppressions";
 import { getProvenance } from "../../provenance";
 import { runLexiconPostSynthChecks } from "./build";
+import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
@@ -665,9 +666,15 @@ async function runOpCheckDiagnostics(
  * builds `infraPath`, the target the caller asked to lint, never the project
  * root above it, so `chant lint <dir>` costs a build of `<dir>` and nothing
  * more (the same scoping {@link runOpCheckDiagnostics} documents). It is
- * skipped outright when no loaded lexicon ships post-synth checks, which keeps
- * a project with no lexicon, and every core-only fixture, from building at
- * all.
+ * skipped outright when no loaded lexicon ships post-synth checks and the
+ * project declares no `lint.policies`, which keeps a project with no lexicon,
+ * and every core-only fixture, from building at all.
+ *
+ * The project's `lint.policies` run over the same build after the lexicons'
+ * checks (#3870), with every lexicon's output and the env, as `chant build`
+ * runs them, and sandboxed when the build is. `lint.rules` applies to their
+ * ids; a policy that does not load is reported under
+ * {@link BUILD_FAILURE_RULE_ID}.
  *
  * A target that does not build reports each build error under
  * {@link BUILD_FAILURE_RULE_ID} and skips the checks. Findings go through
@@ -686,10 +693,10 @@ async function runLexiconPostSynthDiagnostics(
   const diagnostics: LintDiagnostic[] = [];
   const suppressed: Array<LintDiagnostic & { reason?: string }> = [];
   const withChecks = plugins.filter((plugin) => (plugin.postSynthChecks?.() ?? []).length > 0);
-  if (withChecks.length === 0) return { diagnostics, suppressed };
-
   const projectRoot = findProjectRoot(infraPath);
   const lintConfig = loadConfig(projectRoot);
+  if (withChecks.length === 0 && (lintConfig.policies ?? []).length === 0) return { diagnostics, suppressed };
+
   // Where a finding that names no declared entity is reported: the config the
   // build loads once it is known (past a lint-only fragment), else the nearest.
   let fallbackFile = findProjectConfig(projectRoot).configPath ?? projectRoot;
@@ -707,6 +714,7 @@ async function runLexiconPostSynthDiagnostics(
   let telemetry: Awaited<ReturnType<typeof resolveTelemetryAttribution>>;
   let configDir = infraPath;
   let loadedConfig: Record<string, unknown> | undefined;
+  let policies: readonly string[] = [];
   try {
     const loaded = await loadChantConfigUpward(infraPath);
     const config = loaded.config;
@@ -720,6 +728,10 @@ async function runLexiconPostSynthDiagnostics(
     // fragment with no `buildParams` (a `src/chant.config.json`).
     const params = buildParams ?? resolveBuildParams(config.buildParams, { env: process.env }).provenance;
     env = resolveOwnershipEnv(config, params);
+    policies = config.lint?.policies ?? [];
+    // #3870: a sandboxed build sandboxes the policies too, as `chant build` arms it.
+    const modes = resolveBuildModes(config, { sandbox });
+    if (modes.sandbox && policies.length > 0) armSandboxPolicyExecution();
     telemetry = await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env);
     // Every lexicon the lint loaded, as `chant build` serializes with every
     // lexicon it loaded: a check may read another lexicon's entities, and the
@@ -732,7 +744,7 @@ async function runLexiconPostSynthDiagnostics(
         config,
         configDir,
         plugins,
-        modes: resolveBuildModes(config, { sandbox }),
+        modes,
         ownership: resolveOwnershipMarker(config, params),
         buildParams: params,
         telemetry,
@@ -779,6 +791,21 @@ async function runLexiconPostSynthDiagnostics(
     for (const m of inline.meta) {
       diagnostics.push({ file: m.file, line: m.line, column: 1, ruleId: m.checkId, severity: m.severity, message: m.message });
     }
+  }
+
+  // #3870: the project's `lint.policies`, over the same build, as `chant
+  // build` runs them: every lexicon's output at once, with the env, and
+  // `lint.rules` applied to their ids.
+  if (policies.length > 0) {
+    let raw: Awaited<ReturnType<typeof runProjectPolicies>>;
+    try {
+      raw = await runProjectPolicies({ policies, configDir, buildResult: result, env });
+    } catch (err) {
+      diagnostics.push(buildFailure(err instanceof Error ? err.message : String(err)));
+      return { diagnostics, suppressed };
+    }
+    const configured = applyConfiguredSeverity(raw, lintConfig.rules);
+    for (const d of configured.diagnostics) diagnostics.push(toLint(d));
   }
 
   return { diagnostics, suppressed };
