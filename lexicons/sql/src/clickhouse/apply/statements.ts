@@ -187,6 +187,8 @@ export function refusalDetail(changes: readonly Change[], key?: string, type?: s
     type === undefined || type === CLICKHOUSE_ENTITY_TYPES.table
       ? `Run it as the rebuild migration Op: ClickHouseRebuildOp({ table: ${JSON.stringify(key ?? "<database.table>")}, ... }) from @intentius/chant-lexicon-sql/clickhouse`
       : "The rebuild migration Op rebuilds tables only; drop and create this object instead";
+  // A clause chant does not read (#3872) is refused for review: whether ALTER can make it is not known.
+  if (changes.every((c) => c.rule === "SQLCH290")) return `needs review, since chant does not read the clause: ${parts.join("; ")}`;
   return `needs a rebuild, which ALTER cannot make: ${parts.join("; ")}. ${instead}`;
 }
 

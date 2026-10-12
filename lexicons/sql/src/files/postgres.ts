@@ -26,7 +26,7 @@ import * as tags from "../postgres/entities";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../postgres/entity-types";
 import { POSTGRES_TAG_OF } from "../postgres/import/generator";
 import type { ImportedPgObject } from "../postgres/import/ir";
-import { firstLine, quoteBare, splitTokens, tokensText, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, type FileLine, type ReadOptions } from "./common";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
 
@@ -54,6 +54,10 @@ interface PgFileObject {
   statements: Token[][];
   /** Table constraints folded in from ALTER TABLE ... ADD, as SQL text. */
   constraints: string[];
+  /** The line its CREATE starts on in the file. */
+  line: number;
+  /** The clauses in it the parser does not know, with their lines (#3872). */
+  unparsed: FileLine["unparsed"];
 }
 
 /** Transaction control, which declares nothing. */
@@ -69,8 +73,8 @@ function isTransactionControl(sig: readonly Token[]): boolean {
  * joined as one declaration's DDL. Problems are collected, not thrown, so a
  * file is reported whole.
  */
-export function readPostgres(ddl: string, options: ReadOptions, problems: string[]): ImportedPgObject[] {
-  const parsed: Array<{ tokens: Token[]; node: StatementNode }> = [];
+export function readPostgres(ddl: string, options: ReadOptions, problems: string[]): Array<ImportedPgObject & FileLine> {
+  const parsed: Array<{ tokens: Token[]; node: StatementNode; line: number }> = [];
   const alters: Array<{ table: string[]; constraint: string; sql: string }> = [];
   for (const stmt of splitTokens(tokenizeText(ddl, 0), isTrivia)) {
     const sig = stmt.filter((t) => !isTrivia(t));
@@ -89,7 +93,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     }
     try {
       const tokens = tokenizeText(sql, 0);
-      for (const node of parseStatements(tokens)) parsed.push({ tokens, node });
+      for (const node of parseStatements(tokens)) parsed.push({ tokens, node, line: lineAt(ddl, stmt[0]!.start) });
     } catch (e) {
       const what = word(sig[0], "ALTER") && word(sig[1], "TABLE") ? "an ALTER TABLE other than ADD of a table constraint or ROW LEVEL SECURITY" : `does not parse (${e instanceof Error ? e.message : String(e)})`;
       problems.push(`${what}: ${firstLine(sql)}`);
@@ -118,7 +122,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
   /** Objects by namespace and name: `rel` (anything in a schema), `index`, `schema`, `extension`, `role`, and `trigger`/`policy` with their table. */
   const owners = new Map<string, PgFileObject>();
   const followOns: Array<{ tokens: Token[]; node: StatementNode; inserts: Set<number> }> = [];
-  for (const { tokens, node } of parsed) {
+  for (const { tokens, node, line } of parsed) {
     const inserts = new Set<number>();
     /** Qualifies an unqualified name in the statement, when `schema` is set. */
     const mark = (n: NameNode | undefined) => {
@@ -170,7 +174,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     }
     const ownName = !["schema", "extension", "index", "trigger", "policy", "role", "grant"].includes(node.statement);
     if (ownName && "name" in node) mark(node.name);
-    const object: PgFileObject = { node, statements: [rewrite(tokens, inserts, options.schema)], constraints: [] };
+    const object: PgFileObject = { node, statements: [rewrite(tokens, inserts, options.schema)], constraints: [], line, unparsed: fileUnparsed("unknown" in node ? node.unknown : undefined, tokens, tokensText(tokens), line) };
     objects.push(object);
     const k = ownerKey(node, tokens, nameOf, qualify);
     if (k) owners.set(k, object);
@@ -196,7 +200,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     table.constraints.push(qualifyConstraint(alter.constraint, options.schema));
   }
 
-  const out: ImportedPgObject[] = [];
+  const out: Array<ImportedPgObject & FileLine> = [];
   for (const o of objects) {
     const [create = [], ...rest] = o.statements;
     const ddlText = [o.constraints.length > 0 ? addConstraints(create, o.constraints) : tokensText(create), ...rest.map((c) => tokensText(c))].join(";\n");
@@ -205,7 +209,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
       problems.push(`${identity}: ${firstLine(ddlText)}`);
       continue;
     }
-    out.push({ ...identity, ddl: ddlText });
+    out.push({ ...identity, ddl: ddlText, line: o.line, ...(o.unparsed ? { unparsed: o.unparsed } : {}) });
   }
   return out;
 }

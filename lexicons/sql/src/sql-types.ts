@@ -22,6 +22,9 @@
  *   (`./lint/post-synth/postgres-names.ts`'s `typeIdentity`), the type
  *   family in ClickHouse; `never` when it cannot be told.
  *
+ * A column that carries a clause chant does not read (#3872) keeps the type
+ * that was read, with `nullable` and `cmp` `never`.
+ *
  * A view's column that is one column reference (`${t.columns.c}`, `o.${t.columns.c}`)
  * is that column's type; any other expression is `unknown`.
  */
@@ -107,6 +110,17 @@ interface RelationEntry {
 }
 
 const UNKNOWN_COLUMN = (name: string): ColumnEntry => ({ name, sqlType: "unknown", ts: "unknown", nullable: "never" });
+
+/** The columns that carry a clause chant does not read (#3872). */
+const opaqueColumns = (o: OutputObject): Set<string> =>
+  new Set(((o.unparsed as Array<{ column?: string }> | undefined) ?? []).flatMap((u) => (u.column !== undefined ? [u.column] : [])));
+
+/**
+ * A column with a clause chant does not read (#3872): its type is what was
+ * read, but whether it can be NULL and how it compares in a key are not
+ * told, so it fits every slot rather than a guessed one.
+ */
+const opaque = (c: ColumnEntry): ColumnEntry => ({ name: c.name, sqlType: c.sqlType, ts: c.ts, nullable: "never" });
 
 const posix = (p: string) => p.split(sep).join("/");
 
@@ -215,13 +229,15 @@ function postgresEntries(objects: OutputObject[], major: number, entities: Reado
         for (const c of pt?.columns ?? []) if (!inherited.has(c.name)) inherited.set(c.name, c.type);
       }
       const pk = new Set(t.primaryKey?.columns ?? []);
+      const unread = opaqueColumns(o);
       columns = names.map((name) => {
         const c = own.get(name);
         const text = c?.type ?? inherited.get(name);
         if (text === undefined) return UNKNOWN_COLUMN(name);
         const ty = pgType(p, text);
         const notNull = c?.notNull === true || pk.has(name) || c?.generated?.kind === "identity" || ty.notNull;
-        return { name, sqlType: ty.sqlType, ts: ty.ts, nullable: !notNull, cmp: typeIdentity(p, text) };
+        const entry: ColumnEntry = { name, sqlType: ty.sqlType, ts: ty.ts, nullable: !notNull, cmp: typeIdentity(p, text) };
+        return unread.has(name) ? opaque(entry) : entry;
       });
     } else {
       columns = names.map((name) => {
@@ -265,9 +281,10 @@ function clickhouseEntries(objects: OutputObject[], entities: ReadonlyMap<string
     const entity = entities.get(exportName);
     if (!o || !entity || !CH_RELATIONS.has(o.type)) return undefined;
     const declared = new Map(((o.columns as Array<{ name: string; type?: string; nullable?: boolean }> | undefined) ?? []).map((c) => [c.name, c]));
+    const unread = opaqueColumns(o);
     const columns = runtimeColumns(entity).map((name) => {
       const c = declared.get(name);
-      if (c) return chColumn(name, c.type, c.nullable);
+      if (c) return unread.has(name) ? opaque(chColumn(name, c.type, c.nullable)) : chColumn(name, c.type, c.nullable);
       const via = passthrough(o, name, quoteIdentifier);
       const source = via && entryOf(via.export)?.columns.find((x) => x.name === via.column);
       return source ? { ...source, name } : UNKNOWN_COLUMN(name);

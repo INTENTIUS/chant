@@ -49,6 +49,8 @@ Both exit 2 when a change needs a rebuild. \`chant sql diff\` compares a pull re
 
 \`chant sql plan\` also exits 2 when a declared database holds an object whose definition it cannot read. It names each one under \`Refused\` (\`unreadable\` in \`--json\`) instead of leaving it out. Dictionaries are read and planned like the other objects: any change but a comment replaces one (SQLCH245).
 
+A clause chant's parser does not know ([Plain .sql Files](../sql-files/#clauses-chant-does-not-read)) is compared as text, and the rest of its object is planned as usual. A change to one is SQLCH290, refused for review with no rebuild Op suggested, since chant cannot tell what the change takes. A clause only the server prints is a hint, not a change: a newer server printing a clause with its default looks the same as a clause removed from the declaration.
+
 ## After the plan
 
 The plan only reports. [\`clickhouseApply\`](../applying/) makes the metadata-only and background-rewrite changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as \`ClickHouseRebuildOp\`, a gated migration Op that creates the new table, backfills it, verifies it and swaps it in: see [Rebuilding a Table](../rebuild/). Both commands print the Op declaration to start from for each refused table.

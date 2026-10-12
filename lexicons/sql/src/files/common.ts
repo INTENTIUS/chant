@@ -1,6 +1,7 @@
 /** What reading a file of DDL shares across dialects. */
 
 import type { Token } from "../core/tokens";
+import type { UnknownClause } from "../core/cursor";
 
 export interface ReadOptions {
   /** Names the DDL in errors: a file's path, a command. */
@@ -46,6 +47,28 @@ export function splitTokens(tokens: readonly Token[], isTrivia: (t: Token) => bo
 }
 
 export const tokensText = (tokens: readonly Token[]): string => tokens.map((t) => t.text).join("");
+
+/** Where an object's statement starts in its file, and the clauses in it chant does not read (#3872). */
+export interface FileLine {
+  /** The line its statement starts on, from 1. */
+  line?: number;
+  /** Each clause the parser does not know, with the file line it starts on; absent when there are none. */
+  unparsed?: Array<{ clause: string; line: number; column?: string }>;
+}
+
+/** A statement's unknown clauses with their lines in the file: `line` is the statement's, `sql` its text, `tokens` its tokens. */
+export function fileUnparsed(
+  unknown: readonly UnknownClause[] | undefined,
+  tokens: readonly Token[],
+  sql: string,
+  line: number,
+): FileLine["unparsed"] {
+  if (!unknown || unknown.length === 0) return undefined;
+  return unknown.map((u) => ({ clause: u.clause, line: line + lineAt(sql, tokens[u.span.from]?.start ?? 0) - 1, ...(u.column !== undefined ? { column: u.column } : {}) }));
+}
+
+/** The line, from 1, that offset `at` of `text` is on. */
+export const lineAt = (text: string, at: number): number => text.slice(0, at).split("\n").length;
 
 /** A statement's first line, for a message. */
 export const firstLine = (s: string): string => (s.split("\n")[0] ?? "").slice(0, 100);

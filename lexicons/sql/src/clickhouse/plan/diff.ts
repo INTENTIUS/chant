@@ -129,7 +129,26 @@ function diffMap(key: string, field: string, before: Record<string, string>, aft
   for (const name of changedEntries(before, after)) out.push(change(key, `${field}.${name}`, rule, before[name], after[name]));
 }
 
+/**
+ * The clauses chant does not read (#3872), compared as text. One the
+ * declaration has and the server does not, or has differently, is a change
+ * to review (SQLCH290). One only the server prints is a hint, not a change: a
+ * clause a new server prints with its default cannot be told from one
+ * removed from the declaration.
+ */
+function diffUnparsed(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[], hints: string[]): void {
+  const b = before.unparsed ?? {};
+  const a = after.unparsed ?? {};
+  for (const clause of Object.keys(a)) {
+    if (b[clause] !== a[clause]) out.push(change(key, `unparsed.${clause}`, "SQLCH290", b[clause], a[clause], { note: "chant does not read this clause; review the change" }));
+  }
+  for (const clause of Object.keys(b)) {
+    if (!(clause in a)) hints.push(`${key}: the current definition has ${clause} (${b[clause]}), a clause chant does not read and the declaration does not have; it is not compared`);
+  }
+}
+
 function diffObject(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[], hints: string[]): void {
+  diffUnparsed(key, before, after, out, hints);
   if (before.kind !== after.kind) {
     out.push(change(key, "kind", "SQLCH224", before.kind, after.kind, { destructive: before.kind === "table" }));
     return;

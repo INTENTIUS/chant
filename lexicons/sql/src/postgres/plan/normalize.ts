@@ -797,6 +797,18 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
       break;
     }
   }
+  // Clauses the parser does not know (#3872): compared as text, by clause.
+  const unparsed = props.unparsed as Array<{ clause: string; text: string; column?: string }> | undefined;
+  if (unparsed && unparsed.length > 0) {
+    const out: Record<string, string> = {};
+    for (const u of unparsed) {
+      const base = u.column !== undefined ? `columns.${u.column}.${u.clause}` : u.clause;
+      let key = base;
+      for (let n = 2; key in out; n++) key = `${base}#${n}`;
+      out[key] = canonicalExpr(u.text) ?? u.text;
+    }
+    fields.unparsed = out;
+  }
   return { ...base, fields: Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== false)), columns, constraints };
 }
 

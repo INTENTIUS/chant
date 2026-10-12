@@ -35,11 +35,11 @@
  * `src/backend/parser/gram.y` at `REL_18_6` where a page is silent.
  */
 
-import { kw, SqlCursor, type Span } from "../core/cursor";
+import { kw, SqlCursor, type Span, type UnknownClause } from "../core/cursor";
 import { SqlSyntaxError, type Token } from "../core/tokens";
 import { keywordCategory } from "./keywords";
 
-export type { Span } from "../core/cursor";
+export type { Span, UnknownClause } from "../core/cursor";
 export { SqlSyntaxError };
 
 /** An identifier as Postgres reads it: an unquoted name folds to lower case, a quoted one is exact. */
@@ -116,6 +116,8 @@ export interface ColumnNode {
 
 export interface TableNode {
   statement: "table";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   persistence?: "temporary" | "unlogged";
   ifNotExists: boolean;
   name: NameNode;
@@ -141,6 +143,8 @@ export interface IndexElement {
 
 export interface IndexNode {
   statement: "index";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   unique: boolean;
   concurrently: boolean;
   ifNotExists: boolean;
@@ -158,6 +162,8 @@ export interface IndexNode {
 
 export interface ViewNode {
   statement: "view";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   materialized: boolean;
   orReplace: boolean;
   temporary: boolean;
@@ -176,6 +182,8 @@ export interface ViewNode {
 
 export interface SequenceNode {
   statement: "sequence";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   persistence?: "temporary" | "unlogged";
   ifNotExists: boolean;
   name: NameNode;
@@ -365,6 +373,18 @@ const COLUMN_CLAUSE = [
   "STORAGE",
   "ENFORCED",
 ];
+
+/** A column's clause words, and its constraints' attributes: an unknown clause stops at the next (#3872). */
+const COLUMN_WORDS = [...COLUMN_CLAUSE, "REFERENCES", "ON", "MATCH", "NO", "WITH", "INCLUDE", "USING"];
+
+/** The clauses after a table's column list. */
+const TABLE_WORDS = ["INHERITS", "PARTITION", "USING", "WITH", "WITHOUT", "ON", "TABLESPACE", "FOR", "DEFAULT"];
+
+/** The clauses after an index's elements. */
+const INDEX_WORDS = ["INCLUDE", "NULLS", "WITH", "TABLESPACE", "WHERE"];
+
+/** The clauses before a view's AS. */
+const VIEW_WORDS = ["USING", "WITH", "TABLESPACE", "AS"];
 
 /** `LIKE source_table [ like_option ... ]`'s option words. */
 const LIKE_OPTIONS = ["COMMENTS", "COMPRESSION", "CONSTRAINTS", "DEFAULTS", "GENERATED", "IDENTITY", "INDEXES", "STATISTICS", "STORAGE", "ALL"];
@@ -653,7 +673,7 @@ class PgParser extends SqlCursor {
       if (this.accept("COMPRESSION")) col.compression = this.expr(COLUMN_CLAUSE);
       else if (this.accept("STORAGE")) col.storage = this.expr(COLUMN_CLAUSE);
       else if (this.accept("COLLATE")) col.collate = this.expr(COLUMN_CLAUSE);
-      else if (!this.columnConstraint(col)) break;
+      else if (!this.columnConstraint(col) && !this.unknownClause(COLUMN_WORDS, { inList: true, column: text || undefined })) break;
     }
     const after = this.peek();
     if (after && !(after.kind === "punct" && (after.text === "," || after.text === ")"))) this.fail("expected a column constraint, ',' or ')'");
@@ -991,7 +1011,7 @@ class PgParser extends SqlCursor {
         if (!(this.acceptSeq("PRESERVE", "ROWS") || this.acceptSeq("DELETE", "ROWS") || this.accept("DROP"))) this.fail("expected PRESERVE ROWS, DELETE ROWS or DROP");
         node.onCommit = this.span(from, []);
       } else if (this.accept("TABLESPACE")) node.tablespace = this.nameTok("a tablespace").span;
-      else break;
+      else if (!this.unknownClause(TABLE_WORDS)) break;
     }
     return node;
   }
@@ -1061,7 +1081,7 @@ class PgParser extends SqlCursor {
         node.with = this.reloptions();
       } else if (this.accept("TABLESPACE")) node.tablespace = this.nameTok("a tablespace").span;
       else if (this.accept("WHERE")) node.where = this.checkedExpr([], false);
-      else return node;
+      else if (!this.unknownClause(INDEX_WORDS)) return node;
     }
   }
 
@@ -1085,7 +1105,7 @@ class PgParser extends SqlCursor {
         this.p++;
         node.with = this.reloptions();
       } else if (materialized && this.accept("TABLESPACE")) node.tablespace = this.nameTok("a tablespace").span;
-      else break;
+      else if (!this.unknownClause(VIEW_WORDS)) break;
     }
     this.expect("AS");
     const tail = materialized
@@ -1131,7 +1151,7 @@ class PgParser extends SqlCursor {
       else if (this.acceptSeq("OWNED", "BY")) {
         if (this.accept("NONE")) node.options.push({ option: "OWNED BY", value: this.span(this.idx(-1), []) });
         else node.options.push({ option: "OWNED BY", value: this.qualifiedName("a column").span });
-      } else return node;
+      } else if (!this.unknownClause(STOP)) return node;
     }
   }
 
@@ -1575,7 +1595,10 @@ class PgParser extends SqlCursor {
     const out: StatementNode[] = [];
     while (this.peek() !== undefined) {
       if (this.acceptPunct(";")) continue;
-      out.push(this.parse());
+      const before = this.unknownClauses.length;
+      const node = this.parse();
+      if (this.unknownClauses.length > before) (node as { unknown?: UnknownClause[] }).unknown = this.unknownClauses.slice(before);
+      out.push(node);
       if (this.peek() !== undefined && !this.isPunct(";")) this.fail(`unexpected token after the ${describe(out[out.length - 1]!)}`);
     }
     if (out.length === 0) this.fail("expected a statement");

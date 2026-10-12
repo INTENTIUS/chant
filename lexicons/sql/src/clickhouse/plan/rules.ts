@@ -278,6 +278,13 @@ export const CLASSIFIER_RULES = {
     "REVOKE takes a privilege or a role away, including one granted by hand to a grantee the build declares grants for; queries that relied on it fail from then on.",
     `${DOCS}/revoke`,
   ),
+  SQLCH290: rule(
+    "SQLCH290",
+    "rebuild",
+    "Change a clause chant does not read",
+    "chant's parser does not know this clause, so it cannot tell whether ALTER can make the change in place; the plan refuses it rather than guess. Review it: make it by hand with the ALTER the server documents for the clause, or drop and create the object.",
+    `${DOCS}/create/table`,
+  ),
   SQLCH250: rule("SQLCH250", "drop", "Drop an object", "DROP removes the object and, for a table, its data; it is not undone.", `${DOCS}/drop`),
 } as const satisfies Record<string, ClassifierRule>;
 

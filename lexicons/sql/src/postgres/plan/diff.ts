@@ -197,7 +197,25 @@ function diffConstraints(key: string, before: PgDiffObject, after: PgDiffObject,
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const show = (v: unknown): string | undefined => (v === undefined ? undefined : typeof v === "string" ? v : JSON.stringify(v));
 
+/**
+ * The clauses chant does not read (#3872), compared as text: one the
+ * declaration has and the server does not, or has differently, is a change
+ * to review (SQLPG299); one only the server prints is a hint, since a
+ * default a newer server prints cannot be told from a clause removed.
+ */
+function diffUnparsed(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[]): void {
+  const b = (before.fields.unparsed as Record<string, string> | undefined) ?? {};
+  const a = (after.fields.unparsed as Record<string, string> | undefined) ?? {};
+  for (const clause of Object.keys(a)) {
+    if (b[clause] !== a[clause]) out.push(change(key, `unparsed.${clause}`, "SQLPG299", b[clause], a[clause], { note: "chant does not read this clause; review the change" }));
+  }
+  for (const clause of Object.keys(b)) {
+    if (!(clause in a)) hints.push(`${key}: the current definition has ${clause} (${b[clause]}), a clause chant does not read and the declaration does not have; it is not compared`);
+  }
+}
+
 function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[], major: number): void {
+  diffUnparsed(key, before, after, out, hints);
   if (before.kind !== after.kind) {
     out.push(change(key, "kind", "SQLPG268", before.kind, after.kind));
     return;
