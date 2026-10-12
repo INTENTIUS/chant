@@ -12,7 +12,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
@@ -472,7 +472,12 @@ describe("the write commands through a declared kind (#2680)", () => {
 
 describe("the decision kind", () => {
   test("still reads as markdown front matter, and says so", async () => {
-    const doc = await queryRecords({ kind: "docs/design/decisions/decision.kind.mjs", cwd: REPO });
+    // The repository's own decision records, copied into a one-commit repository:
+    // a read in the real checkout asks git for the history of every pinned path
+    // across thousands of commits, which took 12 s alone and 20+ s under load.
+    cpSync(join(REPO, "docs", "design", "decisions"), join(root, "docs", "design", "decisions"), { recursive: true });
+    commit();
+    const doc = await queryRecords({ kind: "docs/design/decisions/decision.kind.mjs", cwd: root });
     expect(validateOutput(doc)).toBe(true);
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.kind.format).toBe("markdown-front-matter");

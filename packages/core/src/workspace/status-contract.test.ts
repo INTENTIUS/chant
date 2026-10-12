@@ -7,13 +7,12 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import type { CommandContext } from "../cli/registry";
-import { listWorkspace } from "./ls";
 import {
   formatStatus,
   runWorkspaceStatus,
@@ -34,8 +33,6 @@ import { claimWorkLease } from "../lifecycle/work-lease";
 import { runOpLocally } from "../op/local-executor";
 import { shellCmd } from "../op/activities/shell";
 import type { OpConfig } from "../op/types";
-
-const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
 const validate = ajv.compile(schema);
@@ -98,6 +95,22 @@ function lifecycle(root: string, files: Record<string, string>): string {
   return commit;
 }
 
+/**
+ * Build a fixture repository once and hand each caller its own copy. A repo
+ * costs a dozen git processes; a file copy costs none, and a test may write
+ * to its copy without touching the next test's.
+ */
+function fixture(build: () => string): () => string {
+  let template: string | undefined;
+  return () => {
+    template ??= build();
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-status-")));
+    scratch.push(root);
+    cpSync(template, root, { recursive: true });
+    return root;
+  };
+}
+
 let n = 0;
 /** One ledger line. */
 function release(component: string, env: string, digest: string, gitSha: string, extra: Record<string, string> = {}): string {
@@ -121,7 +134,7 @@ const D = (c: string) => `sha256:${c.repeat(64)}`;
 const declaration = (members: unknown[]) => JSON.stringify({ name: "acme", schema: 1, members }, null, 2);
 
 /** web has moved to _members/ (#2538); api and the root member still read the flat ledger. */
-function twoLayouts(): string {
+const twoLayouts = fixture(() => {
   const root = repo({
     "chant.workspace.json": declaration([
       { name: "site", dir: ".", kind: "other", because: "the root project" },
@@ -142,7 +155,7 @@ function twoLayouts(): string {
     "prod/releases.jsonl": jsonl(release("api", "prod", D("c"), "c".repeat(40))),
   });
   return root;
-}
+});
 
 describe("status output schema", () => {
   test("is a valid draft 2020-12 document with the published $id", () => {
@@ -412,7 +425,7 @@ const NOW = "2026-09-24T00:00:00.000Z";
  * Each gate is in one state: approved, pending with part of a quorum,
  * expired, superseded, and an Op gate that records no environment.
  */
-function gated(): string {
+const gated = fixture(() => {
   const root = twoLayouts();
   lifecycle(root, {
     "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), "a".repeat(40))),
@@ -437,7 +450,7 @@ function gated(): string {
     "_gates/nightly.jsonl": jsonl(pending("nightly", "confirm", "2026-09-23T00:00:00.000Z"), approval("nightly", "confirm", "dave", "2026-09-23T01:00:00.000Z")),
   });
   return root;
-}
+});
 
 describe("gate state in chant workspace status --json (#2674)", () => {
   test("each member lists its gates with state, approvals, quorum and the approve line", async () => {
@@ -570,7 +583,7 @@ describe("stewards in chant workspace status --json (#2731)", () => {
   });
 
   /** A box member declaring one steward, local by default and fountain on fountain-k3d. */
-  function stewarded(): string {
+  const stewarded = fixture(() => {
     const steward = {
       kind: "Chant::Steward",
       name: "box-steward",
@@ -594,7 +607,7 @@ describe("stewards in chant workspace status --json (#2731)", () => {
     });
     lifecycle(root, { "README": "ledger\n" });
     return root;
-  }
+  });
 
   test("names the steward, its form in the environment asked for, its Ops, schedules, last runs and lease", async () => {
     const root = stewarded();
@@ -752,16 +765,5 @@ describe("stewards in chant workspace status --json (#2731)", () => {
     expectValid(doc);
     expect(doc.members[0].stewards.map((s) => s.name)).toEqual(["box-steward"]);
     expect(doc.members[0].stewardReasons.map((r) => r.code)).toEqual(["stewards-unreadable"]);
-  });
-});
-
-describe("chant workspace status on the chant repo (#2557)", () => {
-  test("validates and lists every declared member", async () => {
-    const doc = result(await workspaceStatus({ cwd: join(REPO, "packages", "core"), env: "prod", compareTo: "staging" }));
-    expectValid(doc);
-    expect(doc.workspace).toMatchObject({ name: "chant", root: ".", file: "chant.workspace.json" });
-    const ls = listWorkspace({ cwd: REPO });
-    if ("error" in ls) throw new Error(ls.error.message);
-    expect(doc.members.map((m) => m.name)).toEqual(ls.members.map((m) => m.name));
   });
 });

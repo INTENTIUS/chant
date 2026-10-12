@@ -4,7 +4,7 @@
  * when it ends, and a lost lease stopping the run. An Op that changes the
  * checkout runs its leased steps in a worktree of its own.
  */
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -230,6 +230,11 @@ describe("a run under a work lease", () => {
   }, 30_000);
 
   test("a lease lost mid-step stops the step and the run, which fails lease-lost and releases nothing", async () => {
+    // The heartbeat is the only timer faked: the test fires its beat itself
+    // once the thief holds the lease, instead of waiting a wall-clock second
+    // for a renewal that a loaded machine can delay past any fixed bound.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
     await withTestDir(async (dir) => {
       await initRepo(dir);
       const log: string[] = [];
@@ -241,9 +246,9 @@ describe("a run under a work lease", () => {
             // The lease runs out from under this run and another worker takes it.
             await releaseWorkLease(lease.item, lease.holder, { cwd: dir, token: lease.token });
             expect((await claimWorkLease(lease.item, "thief", { cwd: dir, ttlMs: 60_000 })).ok).toBe(true);
-            await new Promise<void>((resolve, reject) => {
-              const t = setTimeout(() => reject(new Error("never stopped")), 20_000);
-              signal?.addEventListener("abort", () => { clearTimeout(t); log.push("stopped"); reject(new Error("aborted")); }, { once: true });
+            await new Promise<void>((_resolve, reject) => {
+              signal?.addEventListener("abort", () => { log.push("stopped"); reject(new Error("aborted")); }, { once: true });
+              void vi.advanceTimersByTimeAsync(1_000);
             });
             return {};
           },
@@ -270,6 +275,9 @@ describe("a run under a work lease", () => {
       expect((await listWorkLeases({ cwd: dir, memberPrefix: "" }))[0]).toMatchObject({ holder: "thief", state: "active" });
       expect((await readRunLedger("local", "dispatch", { cwd: dir })).records.at(-1)?.status).toBe("fail");
     });
+    } finally {
+      vi.useRealTimers();
+    }
   }, 30_000);
 
   test("a run whose lease was lost before it is recorded is never recorded as done", async () => {

@@ -12,7 +12,7 @@
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { cleanScratch, commitAll, contract, git, REPO, scratchDir } from "./__fixtures__/contract-repo";
+import { cleanScratch, commitAll, contract, git, REPO, repoFixture, scratchDir } from "./__fixtures__/contract-repo";
 import { declareSessions, DECISIONS_KIND, newSessionFields, sessionsRepo, SESSIONS_KIND } from "./__fixtures__/sessions";
 import { sessionSeal } from "./record-sessions";
 import { parseFrontMatter, recordTextDigest } from "./records";
@@ -36,12 +36,12 @@ const code = (doc: object) => ("error" in doc ? (doc as { error: { code: string 
 const HEX = /^[0-9a-f]{40}$/;
 
 /** The reference fixture with a declaration, committed. */
-function declared(): string {
+const declared = repoFixture(() => {
   const root = sessionsRepo();
   declareSessions(root);
   commitAll(root, "declare");
   return root;
-}
+});
 
 function front(root: string, path: string): Record<string, unknown> {
   const fm = parseFrontMatter(readFileSync(join(root, path), "utf-8"));
