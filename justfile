@@ -394,6 +394,7 @@ release bump="patch" *args:
           .version = $v
           | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
           | if .optionalDependencies then .optionalDependencies |= with_entries(if ((.key | startswith("@intentius/")) and .value != "*") then .value = "^" + $v else . end) else . end
+          | if .dependencies then .dependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
         ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
       done
       # Keep the committed lockfile's workspace entries in step with the bump —
@@ -454,8 +455,12 @@ release-lexicon name bump="patch" *args:
     apply_bump() {
       core=$(jq -r .version packages/core/package.json)
       github_lexicon=$(jq -r .version lexicons/github/package.json)
-      jq --arg v "$next" --arg core "$core" --arg ghl "$github_lexicon" '
+      family=$(release_family_versions)
+      jq --arg v "$next" --arg core "$core" --arg ghl "$github_lexicon" --argjson fam "$family" '
         .version = $v
+        # In-family dependencies follow the sibling's own current version, not
+        # `*` (which tracks latest, #3905). A missing sibling keeps its range.
+        | if .dependencies then .dependencies |= with_entries(if ((.key | startswith("@intentius/")) and $fam[.key]) then .value = "^" + $fam[.key] else . end) else . end
         | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $core else . end
         | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $ghl else . end
       ' lexicons/{{name}}/package.json \

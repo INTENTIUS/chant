@@ -63,7 +63,7 @@
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-otel": "*"
+    "@intentius/chant-lexicon-otel": "^0.124.17"
   },
   "devDependencies": {
     "@intentius/chant": "*",

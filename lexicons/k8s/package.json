@@ -72,8 +72,8 @@
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete && cp src/generated/index.d.ts dist/generated/index.d.d.ts"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-otel": "*",
-    "@intentius/chant-lexicon-prometheus": "*",
+    "@intentius/chant-lexicon-otel": "^0.124.17",
+    "@intentius/chant-lexicon-prometheus": "^0.124.17",
     "js-yaml": "^4.3.1",
     "@types/js-yaml": "^4.0.9"
   },

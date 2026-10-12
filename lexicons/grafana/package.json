@@ -68,9 +68,9 @@
   "dependencies": {
     "@grafana/lezer-logql": "0.4.2",
     "@grafana/lezer-traceql": "1.0.3",
-    "@intentius/chant-lexicon-k8s": "*",
-    "@intentius/chant-lexicon-otel": "*",
-    "@intentius/chant-lexicon-prometheus": "*",
+    "@intentius/chant-lexicon-k8s": "^0.124.17",
+    "@intentius/chant-lexicon-otel": "^0.124.17",
+    "@intentius/chant-lexicon-prometheus": "^0.124.17",
     "@lezer/lr": "^1.4.10",
     "ajv": "^8.20.0",
     "js-yaml": "^4.3.1"
