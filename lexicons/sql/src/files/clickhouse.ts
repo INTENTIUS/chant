@@ -20,7 +20,7 @@ import { isAccessStatement, parseAccess, type AccessNode } from "../clickhouse/a
 import type { Token } from "../clickhouse/tokens";
 import { CLICKHOUSE_TAG_OF } from "../clickhouse/import/generator";
 import { describeStatement, type ImportedObject } from "../clickhouse/import/ir";
-import { firstLine, quoteBare, splitTokens, tokensText, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, type FileLine, type ReadOptions } from "./common";
 import { templateSafe, templateStrings } from "./postgres";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
@@ -82,15 +82,16 @@ export function clickhouseTag(type: string): Tag | undefined {
 }
 
 /** The objects a file of ClickHouse DDL declares. Problems are collected, not thrown, so a file is reported whole. */
-export function readClickHouse(ddl: string, options: ReadOptions, problems: string[]): ImportedObject[] {
-  const objects: ImportedObject[] = [];
+export function readClickHouse(ddl: string, options: ReadOptions, problems: string[]): Array<ImportedObject & FileLine> {
+  const objects: Array<ImportedObject & FileLine> = [];
   for (const stmt of splitTokens(tokenizeText(ddl, 0), isTrivia)) {
     let sql = tokensText(stmt);
+    const line = lineAt(ddl, stmt[0]!.start);
     if (isAccessStatement(sql)) {
       try {
         const read = readAccess(sql, options);
         if (typeof read === "string") problems.push(`${read}: ${firstLine(sql)}`);
-        else objects.push(read);
+        else objects.push({ ...read, line });
       } catch (e) {
         problems.push(`does not parse (${e instanceof Error ? e.message : String(e)}): ${firstLine(sql)}`);
       }
@@ -109,7 +110,8 @@ export function readClickHouse(ddl: string, options: ReadOptions, problems: stri
         const at = tokens.indexOf(only);
         sql = tokensText(tokens.slice(0, at)) + `${quoteBare(options.schema)}.` + tokensText(tokens.slice(at));
       }
-      objects.push(describeStatement(sql));
+      const unparsed = fileUnparsed(node.unknown, tokens, sql, line);
+      objects.push({ ...describeStatement(sql), line, ...(unparsed ? { unparsed } : {}) });
     } catch (e) {
       problems.push(`does not parse (${e instanceof Error ? e.message : String(e)}): ${firstLine(sql)}`);
     }

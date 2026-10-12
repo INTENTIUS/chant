@@ -20,9 +20,9 @@
  */
 
 import type { Token } from "./tokens";
-import { kw, SqlCursor, unquoteWith, type Span } from "../core/cursor";
+import { kw, SqlCursor, unquoteWith, type Span, type UnknownClause } from "../core/cursor";
 
-export type { Span } from "../core/cursor";
+export type { Span, UnknownClause } from "../core/cursor";
 
 export interface ColumnNode {
   /** The name as written, unquoted. Empty when the name is an interpolation. */
@@ -73,6 +73,8 @@ export interface StorageNode {
 
 export interface DatabaseNode {
   statement: "database";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   ifNotExists: boolean;
   name: Span;
   onCluster?: Span;
@@ -83,6 +85,8 @@ export interface DatabaseNode {
 
 export interface TableNode extends StorageNode {
   statement: "table";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   orReplace: boolean;
   ifNotExists: boolean;
   name: Span;
@@ -96,6 +100,8 @@ export interface TableNode extends StorageNode {
 
 export interface ViewNode extends StorageNode {
   statement: "view";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   materialized: boolean;
   orReplace: boolean;
   ifNotExists: boolean;
@@ -128,6 +134,8 @@ export interface DictionaryAttributeNode {
 
 export interface DictionaryNode {
   statement: "dictionary";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   orReplace: boolean;
   ifNotExists: boolean;
   name: Span;
@@ -151,6 +159,8 @@ export interface DictionaryNode {
 /** A SQL user-defined function: `CREATE FUNCTION name AS (x, y) -> expr`. It lives outside any database. */
 export interface FunctionNode {
   statement: "function";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
   orReplace: boolean;
   ifNotExists: boolean;
   name: Span;
@@ -177,16 +187,73 @@ export const unquote = (text: string): string => unquoteWith(text, '`"');
 
 const countOf = (text: string, c: string): number => text.split(c).length - 1;
 
+/**
+ * Words an expression in a DDL clause holds between two operands, or right
+ * after one: operators, `CASE`, `INTERVAL` and its units, a TTL's actions.
+ * Any other key word right after an operand starts a new clause (#3872).
+ */
+const EXPRESSION_WORDS = new Set(
+  (
+    "AND OR NOT IN IS NULL LIKE ILIKE BETWEEN ASC DESC NULLS FIRST LAST COLLATE CASE WHEN THEN ELSE END AS INTERVAL GLOBAL ANY ALL " +
+    "DISTINCT FROM TO IF EXISTS DISK VOLUME DELETE RECOMPRESS CODEC WHERE GROUP BY SET WITH FILL STEP TRUE FALSE " +
+    "NANOSECOND MICROSECOND MILLISECOND SECOND MINUTE HOUR DAY WEEK MONTH QUARTER YEAR"
+  ).split(" "),
+);
+
 const STORAGE_KEYWORDS = ["ENGINE", "ORDER", "PRIMARY", "PARTITION", "SAMPLE", "TTL", "SETTINGS", "COMMENT"];
 
+/** A column's own clause words: an unknown one stops at the next of these (#3872). */
+const COLUMN_WORDS = ["DEFAULT", "MATERIALIZED", "ALIAS", "EPHEMERAL", "NULL", "NOT", "COMMENT", "CODEC", "TTL", "STATISTICS", "SETTINGS", "PRIMARY"];
+
 class Parser extends SqlCursor {
-  /** `ORDER`, `PARTITION`, `SAMPLE` and `GROUP` stop only before `BY`, `PRIMARY` only before `KEY`. */
+  /** Where the clause-aware expression being read started (#3872); undefined outside one. */
+  private clauseFrom: number | undefined;
+
+  /**
+   * `ORDER`, `PARTITION`, `SAMPLE` and `GROUP` stop only before `BY`, `PRIMARY`
+   * only before `KEY`. In a clause-aware expression, a clause the parser does
+   * not know stops it too.
+   */
   protected override stopsAt(stop: readonly string[]): boolean {
-    if (!super.stopsAt(stop)) return false;
+    if (!super.stopsAt(stop)) return this.startsUnknownClause();
     const word = this.peek()!.text.toUpperCase();
     const two = ["ORDER", "PARTITION", "SAMPLE", "GROUP"].includes(word) ? kw(this.peek(1), "BY") : true;
     const key = word === "PRIMARY" ? kw(this.peek(1), "KEY") : true;
     return two && key;
+  }
+
+  /**
+   * Whether a clause the parser does not know starts here, inside a
+   * clause-aware expression (#3872): a bare key word right after a complete
+   * operand (a name, a literal, a closing parenthesis), which no expression
+   * puts side by side unless the word is one of an expression's own.
+   */
+  private startsUnknownClause(): boolean {
+    if (this.clauseFrom === undefined || this.p <= this.clauseFrom) return false;
+    const t = this.peek();
+    const prev = this.peek(-1);
+    if (t?.kind !== "ident" || !/^[A-Za-z_]{3,}$/.test(t.text) || EXPRESSION_WORDS.has(t.text.toUpperCase())) return false;
+    if (prev === undefined) return false;
+    // A query read into the expression (`ORDER BY id AS SELECT ...`, which the server takes as CREATE TABLE ... AS) is the query's, as it always was.
+    for (let n = this.clauseFrom; n < this.p; n++) if (kw(this.tokens[this.sig[n]!], "SELECT")) return false;
+    return (
+      prev.kind === "number" ||
+      prev.kind === "string" ||
+      prev.kind === "qident" ||
+      (prev.kind === "punct" && prev.text === ")") ||
+      (prev.kind === "ident" && !EXPRESSION_WORDS.has(prev.text.toUpperCase()))
+    );
+  }
+
+  /** An expression a clause the parser does not know can follow (#3872): it ends where that clause starts. */
+  private clauseExpr(stop: readonly string[] = [], stopAtComma = true): Span {
+    const saved = this.clauseFrom;
+    this.clauseFrom = this.p;
+    try {
+      return this.expr(stop, stopAtComma);
+    } finally {
+      this.clauseFrom = saved;
+    }
   }
 
   /** Array and map literals: `[` and `]` arrive inside operator runs. */
@@ -255,20 +322,20 @@ class Parser extends SqlCursor {
         col.nullable = false;
       } else if (kw(this.peek(), "DEFAULT", "MATERIALIZED", "ALIAS")) {
         const kind = this.next().text.toUpperCase() as "DEFAULT" | "MATERIALIZED" | "ALIAS";
-        col.default = { kind, expr: this.expr(STOP) };
+        col.default = { kind, expr: this.clauseExpr(STOP) };
       } else if (this.accept("EPHEMERAL")) {
         const t = this.peek();
         const hasExpr = t && !(t.kind === "punct" && (t.text === "," || t.text === ")")) && !kw(t, ...STOP);
-        col.default = { kind: "EPHEMERAL", expr: hasExpr ? this.expr(STOP) : undefined };
-      } else if (this.accept("COMMENT")) col.comment = this.expr(STOP);
+        col.default = { kind: "EPHEMERAL", expr: hasExpr ? this.clauseExpr(STOP) : undefined };
+      } else if (this.accept("COMMENT")) col.comment = this.clauseExpr(STOP);
       else if (this.accept("CODEC")) col.codec = this.parenthesized();
       else if (this.accept("STATISTICS")) col.statistics = this.parenthesized();
-      else if (this.accept("TTL")) col.ttl = this.expr(STOP);
+      else if (this.accept("TTL")) col.ttl = this.clauseExpr(STOP);
       else if (this.accept("SETTINGS")) col.settings = this.parenthesized();
       else if (kw(this.peek(), "PRIMARY") && kw(this.peek(1), "KEY")) {
         this.p += 2;
         col.primaryKey = true;
-      } else break;
+      } else if (!this.unknownClause(COLUMN_WORDS, { inList: true, column: text || undefined })) break;
     }
     return col;
   }
@@ -360,7 +427,7 @@ class Parser extends SqlCursor {
     for (;;) {
       const key = this.name("a setting name").text;
       this.expectPunct("=");
-      out.push({ key, value: this.expr(stop) });
+      out.push({ key, value: this.clauseExpr(stop) });
       if (!this.acceptPunct(",")) return out;
     }
   }
@@ -372,27 +439,33 @@ class Parser extends SqlCursor {
       if (this.accept("ENGINE")) into.engine = this.engine();
       else if (kw(this.peek(), "ORDER") && kw(this.peek(1), "BY")) {
         this.p += 2;
-        into.orderBy = this.expr(STOP, false);
+        into.orderBy = this.clauseExpr(STOP, false);
       } else if (kw(this.peek(), "PRIMARY") && kw(this.peek(1), "KEY")) {
         this.p += 2;
-        into.primaryKey = this.expr(STOP, false);
+        into.primaryKey = this.clauseExpr(STOP, false);
       } else if (kw(this.peek(), "PARTITION") && kw(this.peek(1), "BY")) {
         this.p += 2;
-        into.partitionBy = this.expr(STOP, false);
+        into.partitionBy = this.clauseExpr(STOP, false);
       } else if (kw(this.peek(), "SAMPLE") && kw(this.peek(1), "BY")) {
         this.p += 2;
-        into.sampleBy = this.expr(STOP, false);
-      } else if (this.accept("TTL")) into.ttl = this.expr(STOP, false);
+        into.sampleBy = this.clauseExpr(STOP, false);
+      } else if (this.accept("TTL")) into.ttl = this.clauseExpr(STOP, false);
       else if (kw(this.peek(), "SETTINGS")) {
         const from = this.idx();
         this.p++;
         into.settings = this.settingsList(STOP);
         into.settingsClause = this.span(from, into.settings.flatMap((s) => s.value.refs));
-      } else return;
+      } else if (!this.unknownClause(STOP)) return;
     }
   }
 
   parse(): CreateNode {
+    const node = this.statement();
+    if (this.unknownClauses.length > 0) node.unknown = [...this.unknownClauses];
+    return node;
+  }
+
+  private statement(): CreateNode {
     this.expect("CREATE");
     let orReplace = false;
     if (this.accept("OR")) {
@@ -429,7 +502,9 @@ class Parser extends SqlCursor {
     if (kw(this.peek(), "UUID") && this.peek(1)?.kind === "string") this.p += 2;
   }
 
-  private finish(what: string): void {
+  /** The statement's end, after any trailing clauses the parser does not know (#3872); `known` are the statement's own clause words. */
+  private finish(what: string, known: readonly string[] = []): void {
+    while (this.unknownClause(known));
     this.acceptPunct(";");
     if (this.peek() !== undefined) this.fail(`unexpected token after the ${what}`);
   }
@@ -438,10 +513,15 @@ class Parser extends SqlCursor {
     const node: DatabaseNode = { statement: "database", ifNotExists: this.ifNotExists(), name: this.qualifiedName() };
     this.uuid();
     node.onCluster = this.onCluster();
-    if (this.accept("ENGINE")) node.engine = this.engine();
-    if (this.accept("SETTINGS")) node.settings = this.settingsList(["COMMENT"]);
-    if (this.accept("COMMENT")) node.comment = this.expr();
-    this.finish("database definition");
+    const CLAUSES = ["ENGINE", "SETTINGS", "COMMENT"];
+    for (;;) {
+      // In the server's order: ENGINE, SETTINGS, COMMENT, with clauses chant does not know between them.
+      if (!node.engine && !node.settings && !node.comment && this.accept("ENGINE")) node.engine = this.engine();
+      else if (!node.settings && !node.comment && this.accept("SETTINGS")) node.settings = this.settingsList(CLAUSES);
+      else if (!node.comment && this.accept("COMMENT")) node.comment = this.clauseExpr();
+      else if (!this.unknownClause(CLAUSES)) break;
+    }
+    this.finish("database definition", CLAUSES);
     return node;
   }
 
@@ -463,8 +543,8 @@ class Parser extends SqlCursor {
     if (!this.isPunct("(")) this.fail("expected the column list (CREATE TABLE ... AS is not declared here)");
     this.tableElements(node, true);
     this.storage(node, []);
-    if (this.accept("COMMENT")) node.comment = this.expr();
-    this.finish("table definition");
+    if (this.accept("COMMENT")) node.comment = this.clauseExpr();
+    this.finish("table definition", STORAGE_KEYWORDS);
     return node;
   }
 
@@ -473,10 +553,10 @@ class Parser extends SqlCursor {
     const STOP = ["DEFAULT", "EXPRESSION", "HIERARCHICAL", "BIDIRECTIONAL", "INJECTIVE", "IS_OBJECT_ID"];
     const attr: DictionaryAttributeNode = { name: text, nameSpan: span, type: this.typeSpan(), flags: [] };
     for (;;) {
-      if (this.accept("DEFAULT")) attr.default = this.expr(STOP);
-      else if (this.accept("EXPRESSION")) attr.expression = this.expr(STOP);
+      if (this.accept("DEFAULT")) attr.default = this.clauseExpr(STOP);
+      else if (this.accept("EXPRESSION")) attr.expression = this.clauseExpr(STOP);
       else if (kw(this.peek(), "HIERARCHICAL", "BIDIRECTIONAL", "INJECTIVE", "IS_OBJECT_ID")) attr.flags.push(this.next().text.toUpperCase());
-      else return attr;
+      else if (!this.unknownClause(STOP, { inList: true, column: text || undefined })) return attr;
     }
   }
 
@@ -499,19 +579,19 @@ class Parser extends SqlCursor {
     for (;;) {
       if (kw(this.peek(), "PRIMARY") && kw(this.peek(1), "KEY")) {
         this.p += 2;
-        node.primaryKey = this.expr(CLAUSES, false);
+        node.primaryKey = this.clauseExpr(CLAUSES, false);
       } else if (this.accept("SOURCE")) node.source = this.parenthesized();
       else if (this.accept("LAYOUT")) node.layout = this.parenthesized();
       else if (this.accept("LIFETIME")) node.lifetime = this.parenthesized();
       else if (this.accept("RANGE")) node.range = this.parenthesized();
       else if (this.accept("SETTINGS")) node.settings = this.parenthesized();
-      else if (this.accept("COMMENT")) node.comment = this.expr();
-      else break;
+      else if (this.accept("COMMENT")) node.comment = this.clauseExpr();
+      else if (!this.unknownClause(CLAUSES)) break;
     }
     if (!node.primaryKey) this.fail("expected PRIMARY KEY: a dictionary needs its key columns");
     if (!node.source) this.fail("expected SOURCE(...): a dictionary needs a source");
     if (!node.layout) this.fail("expected LAYOUT(...): a dictionary needs a layout");
-    this.finish("dictionary definition");
+    this.finish("dictionary definition", CLAUSES);
     return node;
   }
 
@@ -573,10 +653,12 @@ class Parser extends SqlCursor {
       this.tableElements(holder, false);
       node.columnsSpan = this.span(from, []);
     }
-    this.storage(node, ["AS", "POPULATE", "EMPTY", "DEFINER", "SQL"]);
+    const BEFORE_AS = ["AS", "POPULATE", "EMPTY", "DEFINER", "SQL"];
+    this.storage(node, BEFORE_AS);
     if (this.accept("POPULATE")) node.populate = true;
     if (this.accept("EMPTY")) node.empty = true;
     if (kw(this.peek(), "DEFINER", "SQL")) node.security = this.expr(["AS"], false);
+    while (!kw(this.peek(), "AS") && this.unknownClause([...STORAGE_KEYWORDS, ...BEFORE_AS]));
     this.expect("AS");
     node.select = this.expr(["COMMENT"], false);
     if (this.accept("COMMENT")) node.comment = this.expr();

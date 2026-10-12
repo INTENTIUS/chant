@@ -52,7 +52,7 @@ export const ticketsTitle = index`
 | `role` | `CREATE ROLE`, without a password or memberships | `Postgres::Role` |
 | `grant` | `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` | `Postgres::Grant`, `Postgres::DefaultPrivileges` |
 
-A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. The `type` tag declares enum types only; a composite or range type is refused at `(` or `RANGE`.
+A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. A clause chant's parser does not know yet, after a table's column list, on a column, after an index's elements or before a view's `AS`, is kept and sent as written with a build warning, and a plan classes a change to it as one to review (SQLPG299); [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls. The `type` tag declares enum types only; a composite or range type is refused at `(` or `RANGE`.
 
 A table's template may also turn row-level security on after its `CREATE TABLE` (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`). Policies, roles, grants and row-level security are planned and applied only where the profile manages access; see [Access](../postgres-access/).
 

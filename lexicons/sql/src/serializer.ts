@@ -25,6 +25,9 @@
  * targets (`sql.postgresMajor`, else the newest pinned major). Post-synth
  * checks and the lock classifier read it; ClickHouse output has no such field.
  *
+ * A clause chant's parser does not know (#3872) is kept in the statement as
+ * written and named in a build warning ({@link unparsedWarnings}).
+ *
  * Rule ids: `SQL` for rules that hold in every dialect, `SQLCH` for the
  * ClickHouse dialect's (#3199), `SQLPG` for Postgres's (#3289).
  */
@@ -36,9 +39,38 @@ import { isClickHouseObject, type ClickHouseObject } from "./clickhouse/entities
 import { isPostgresObject, type PostgresObject } from "./postgres/entities";
 import { POSTGRES_LATEST_MAJOR } from "./spec/postgres-pin";
 import { applyOrder, lineageJson, referenceName, type LineageEdge } from "./core/references";
-import { sqlFileReferences } from "./sql-files";
+import { sqlFileLineOf, sqlFileOf, sqlFileReferences } from "./sql-files";
+import { relative } from "node:path";
+import { getProvenance } from "@intentius/chant/provenance";
+import type { UnparsedClause } from "./core/interpolation";
 
 export { applyOrder } from "./core/references";
+
+/**
+ * A warning for each clause chant's parser does not know (#3872): where it
+ * is (the `.sql` file and line, or the template's file and the line in its
+ * statement), which object, and what follows from it. The statement is sent
+ * as written; the server decides.
+ */
+export function unparsedWarnings(objects: ReadonlyMap<string, Declarable>): string[] {
+  const out: string[] = [];
+  for (const [name, entity] of objects) {
+    const unparsed = (entity as unknown as { props?: { unparsed?: UnparsedClause[] } }).props?.unparsed;
+    if (!unparsed || unparsed.length === 0) continue;
+    const file = sqlFileOf(entity);
+    const start = sqlFileLineOf(entity);
+    const source = getProvenance(entity)?.sourceFile;
+    for (const u of unparsed) {
+      const where = file !== undefined ? `${file}:${start !== undefined ? start + u.line - 1 : u.line}` : `${source ? relative(process.cwd(), source) : "?"}: ${name}, line ${u.line} of its statement`;
+      const on = u.column !== undefined ? ` on column ${u.column}` : "";
+      out.push(
+        `${where}: ${(entity as { sqlName?: string }).sqlName ?? name} has a clause chant does not read, ${u.clause}${on}. ` +
+          "It is sent as written and the server checks it; a plan reads the rest of the object, and classes any change to the clause as one to review",
+      );
+    }
+  }
+  return out;
+}
 
 /** The file the statements are written to, beside the primary output. */
 export const CLICKHOUSE_DDL_FILE = "clickhouse.sql";
@@ -104,10 +136,12 @@ function serializePostgres(
     objects: order.map((n) => postgresObjectJson(n, objects.get(n)!, names, extra.get(n))),
   };
   const ddl = order.map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`).join("\n\n");
+  const warnings = unparsedWarnings(objects);
   return {
     primary: `${JSON.stringify(doc, null, 2)}\n`,
     files: { [POSTGRES_DDL_FILE]: `${ddl}\n` },
     verbatimFiles: [POSTGRES_DDL_FILE],
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
@@ -144,10 +178,12 @@ export const sqlSerializer: Serializer = {
     const ddl = order
       .map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`)
       .join("\n\n");
+    const warnings = unparsedWarnings(objects);
     return {
       primary: `${JSON.stringify(doc, null, 2)}\n`,
       files: { [CLICKHOUSE_DDL_FILE]: `${ddl}\n` },
       verbatimFiles: [CLICKHOUSE_DDL_FILE],
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   },
 };

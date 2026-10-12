@@ -19,7 +19,9 @@
  * - a codec's default level goes (`ZSTD(1)` is `ZSTD`, `Delta(4)` is `Delta`);
  * - a TTL rule's trailing `DELETE` goes;
  * - a setting at the pinned server's default goes;
- * - a view's column list is not compared: the server infers it.
+ * - a view's column list is not compared: the server infers it;
+ * - a clause the parser does not know (#3872) is kept as an expression, by
+ *   its name, and compared as one.
  *
  * What the rules cannot see is the server's own expression formatting
  * (`a+b*2` prints as `a + (b * 2)`). When a plan reads a live server it asks
@@ -32,7 +34,7 @@
  */
 
 import { isTrivia, tokenizeText, type Token } from "../tokens";
-import { parseCreate, unquote, type ColumnNode, type CreateNode, type DictionaryAttributeNode, type DictionaryNode, type Span } from "../parser";
+import { parseCreate, unquote, type ColumnNode, type CreateNode, type DictionaryAttributeNode, type DictionaryNode, type Span, type UnknownClause } from "../parser";
 import { MERGE_TREE_SETTINGS, TYPE_FAMILIES } from "../../generated/clickhouse";
 import { previouslyIn, splitTopLevel as splitTop } from "../../core/normalize";
 import { accessCanonical, grantsCanonical, isAccessStatement } from "../access";
@@ -100,6 +102,14 @@ export interface CanonicalObject {
   previously?: string;
   /** The tool that keeps a live table (a migration runner's history table): a plan never drops it. */
   foreign?: string;
+  /**
+   * Clauses the parser does not know (#3872), each canonical as an
+   * expression, keyed by the clause (`columns.<name>.<clause>` for a
+   * column's). Absent when there are none. The rest of the object is read
+   * as usual; these are compared as text, and a plan classes a change in
+   * one as a change to review.
+   */
+  unparsed?: Record<string, string>;
 }
 
 const KEYWORDS = new Set(
@@ -305,6 +315,8 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
   };
   const previously = previouslyIn(leading);
   if (previously) obj.previously = previously;
+  const unparsed = unparsedOf(tokens, node.unknown, database);
+  if (unparsed) obj.unparsed = unparsed;
 
   const comment0 = stringValue(spanText(tokens, node.comment));
   if (node.statement === "dictionary") {
@@ -377,6 +389,19 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
   if (node.to) obj.to = qualified(tokens, node.to, defaultDatabase);
   if (node.refresh) obj.refresh = expr(node.refresh);
   return obj;
+}
+
+/** A statement's unknown clauses (#3872), by clause, each canonical as an expression; a second of the same name is `CLAUSE#2`. */
+function unparsedOf(tokens: Token[], unknown: readonly UnknownClause[] | undefined, database: string | undefined): Record<string, string> | undefined {
+  if (!unknown || unknown.length === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const u of unknown) {
+    const base = u.column !== undefined ? `columns.${u.column}.${u.clause}` : u.clause;
+    let key = base;
+    for (let n = 2; key in out; n++) key = `${base}#${n}`;
+    out[key] = canonicalExpression(spanText(tokens, u.span) ?? "", database);
+  }
+  return out;
 }
 
 // ── dictionaries ──────────────────────────────────────────────────────

@@ -37,7 +37,8 @@ const TIME_TYPE = /^(?:Nullable\s*\(\s*)?(?:Date|Date32|DateTime|DateTime64)\b/;
  */
 export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<string, CanonicalObject>, env: string): RebuildOpSuggestion[] {
   const out: RebuildOpSuggestion[] = [];
-  for (const key of [...new Set(diff.rebuilds.map((c) => c.object))]) {
+  // A clause chant does not read (SQLCH290) is refused for review, not because a rebuild is known to be what it takes.
+  for (const key of [...new Set(diff.rebuilds.filter((c) => c.rule !== "SQLCH290").map((c) => c.object))]) {
     const c = declared.get(key);
     if (!c || c.kind !== "table") continue;
     const table = `${c.database ?? "default"}.${c.name}`;

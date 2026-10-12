@@ -18,7 +18,9 @@
  * `MATERIALIZED VIEW`, `DICTIONARY`, `FUNCTION`, `USER`, `ROLE` and `ROW
  * POLICY`, and `GRANT` (#3711). Any other statement, and any
  * statement that does not parse, throws a {@link SqlFileError} naming every
- * such statement: none is left out.
+ * such statement: none is left out. A statement that parses except for a
+ * clause the parser does not know (#3872) is read, kept as written, and the
+ * clause listed in its object's `unparsed` with the line it is on.
  *
  * A name is a reference where it is qualified (`app.users`), or bare where an
  * object is named (`REFERENCES users`, `FROM users`, an index's table, a
@@ -27,7 +29,7 @@
 
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SqlDialect } from "./dialects";
-import { SqlFileError, type ReadOptions } from "./files/common";
+import { SqlFileError, type FileLine, type ReadOptions } from "./files/common";
 import { postgresTag, readPostgres, templateStrings } from "./files/postgres";
 import { clickhouseTag, readClickHouse } from "./files/clickhouse";
 import { exportNames as pgExportNames, objectsToIR as pgObjectsToIR, type ImportedPgObject } from "./postgres/import/ir";
@@ -52,6 +54,14 @@ export interface SqlFileObject {
   ddl: string;
   /** The file it came from, the `origin` it was read under. */
   origin: string;
+  /** The line its statement starts on in the file, from 1. */
+  line?: number;
+  /**
+   * Clauses in it chant's parser does not know (#3872), each with the line
+   * it starts on: kept in `ddl` as written, for the server to check. Absent
+   * when there are none.
+   */
+  unparsed?: Array<{ clause: string; line: number; column?: string }>;
 }
 
 /** A file to read: its DDL and the name errors give it. */
@@ -64,8 +74,8 @@ type Imported = ImportedPgObject | ImportedObject;
 const qualifierOf = (o: Imported): string | undefined => ("schema" in o ? o.schema : "database" in o ? o.database : undefined);
 const qualifiedName = (o: Imported): string => (qualifierOf(o) ? `${qualifierOf(o)}.${o.name}` : o.name);
 
-function readObjects(dialect: SqlDialect, sources: readonly SqlFileSource[]): Array<Imported & { origin: string }> {
-  const out: Array<Imported & { origin: string }> = [];
+function readObjects(dialect: SqlDialect, sources: readonly SqlFileSource[]): Array<Imported & FileLine & { origin: string }> {
+  const out: Array<Imported & FileLine & { origin: string }> = [];
   for (const source of sources) {
     const problems: string[] = [];
     const objects = dialect === "postgres" ? readPostgres(source.ddl, source, problems) : readClickHouse(source.ddl, source, problems);
@@ -74,6 +84,9 @@ function readObjects(dialect: SqlDialect, sources: readonly SqlFileSource[]): Ar
   }
   return out;
 }
+
+/** An object's line and unknown clauses, the fields that are set. */
+const fileMeta = (o: FileLine): FileLine => ({ ...(o.line !== undefined ? { line: o.line } : {}), ...(o.unparsed ? { unparsed: o.unparsed } : {}) });
 
 /** Export names for objects read from files, unique across them. */
 function namesFor(dialect: SqlDialect, objects: readonly Imported[]): string[] {
@@ -84,7 +97,7 @@ function namesFor(dialect: SqlDialect, objects: readonly Imported[]): string[] {
 export function readSqlFile(dialect: SqlDialect, ddl: string, options: ReadOptions): SqlFileObject[] {
   const objects = readObjects(dialect, [{ ...options, ddl }]);
   const names = namesFor(dialect, objects);
-  return objects.map((o, i) => ({ export: names[i]!, type: o.type, name: qualifiedName(o), ddl: o.ddl, origin: o.origin }));
+  return objects.map((o, i) => ({ export: names[i]!, type: o.type, name: qualifiedName(o), ddl: o.ddl, origin: o.origin, ...fileMeta(o) }));
 }
 
 /**
@@ -100,7 +113,7 @@ export function sqlFileDeclarations(dialect: SqlDialect, ddl: string, options: R
   if (!file) throw new SqlFileError(options.origin, ["the DDL creates no objects"]);
   return {
     content: file.content,
-    objects: ir.resources.map((r, i) => ({ export: r.logicalId, type: r.type, name: qualifiedName(objects[i]!), ddl: objects[i]!.ddl, origin: options.origin })),
+    objects: ir.resources.map((r, i) => ({ export: r.logicalId, type: r.type, name: qualifiedName(objects[i]!), ddl: objects[i]!.ddl, origin: options.origin, ...fileMeta(objects[i]!) })),
   };
 }
 
@@ -109,7 +122,13 @@ export function sqlFileOf(entity: unknown): string | undefined {
   return typeof entity === "object" && entity !== null ? ((entity as Record<symbol, unknown>)[FROM_FILE] as string | undefined) : undefined;
 }
 
+/** The line an entity read from a `.sql` file starts on in it. Undefined for any other entity. */
+export function sqlFileLineOf(entity: unknown): number | undefined {
+  return typeof entity === "object" && entity !== null ? ((entity as Record<symbol, unknown>)[FROM_LINE] as number | undefined) : undefined;
+}
+
 const FROM_FILE = Symbol.for("chant.sql.fromFile");
+const FROM_LINE = Symbol.for("chant.sql.fromLine");
 
 /** A declared entity as a template target: its export, type and name. */
 function targetOf(dialect: SqlDialect, exportName: string, entity: Declarable): PgTemplateItem | undefined {
@@ -150,6 +169,7 @@ export function sqlFileEntities(dialect: SqlDialect, sources: readonly SqlFileSo
 
   const items: PgTemplateItem[] = objects.map((o, i) => ({ exportName: names[i]!, type: o.type, ...("schema" in o && o.schema ? { schema: o.schema } : {}), ...("database" in o && o.database ? { database: o.database } : {}), name: o.name, ddl: o.ddl }) as PgTemplateItem);
   const origin = new Map(objects.map((o, i) => [names[i]!, o.origin]));
+  const lineOf = new Map(objects.map((o, i) => [names[i]!, o.line]));
   const knownItems = [...known].map(([n, e]) => targetOf(dialect, n, e)).filter((t): t is PgTemplateItem => t !== undefined);
   const declared = new Map(knownItems.map((t) => [`${t.type} ${qualifiedName(t as Imported)}`, t.exportName]));
   const seen = new Map<string, string>();
@@ -186,6 +206,7 @@ export function sqlFileEntities(dialect: SqlDialect, sources: readonly SqlFileSo
     try {
       const entity = tagOf(it.type)!(templateStrings(body.parts), ...values);
       Object.defineProperty(entity, FROM_FILE, { value: origin.get(it.exportName), enumerable: false });
+      if (lineOf.get(it.exportName) !== undefined) Object.defineProperty(entity, FROM_LINE, { value: lineOf.get(it.exportName), enumerable: false });
       built.set(it.exportName, entity);
     } catch (e) {
       failed.add(it.exportName);

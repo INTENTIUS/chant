@@ -1,0 +1,38 @@
+{
+  "release": "REL_18_6",
+  "unknownClauses": [
+    "USING"
+  ],
+  "failures": [
+    "expected AS at 'USING'",
+    "expected IDENTITY (a generated column is GENERATED ALWAYS AS) at '('",
+    "expected NOT NULL, NULL or CHECK at 'REFERENCES'",
+    "expected NOT NULL, NULL or CHECK at 'generated'",
+    "expected RANGE or LIST or HASH at 'MAGIC'",
+    "expected a column constraint, ',' or ')' at 'NOT'",
+    "expected a column name ('with' is a reserved key word; quote it to use it as a name) at 'with'",
+    "expected a column type at ')'",
+    "expected a column type at ','",
+    "expected a partition bound value at ')'",
+    "expected a table name at '\\'",
+    "expected an expression at ')'",
+    "expected an index name ('ON' is a reserved key word; quote it to use it as a name) at 'ON'",
+    "expected the column list (CREATE TABLE ... AS is not declared here) at 'AS'",
+    "expected the column list (CREATE TABLE ... AS is not declared here) at 'TABLESPACE'",
+    "expected the column list (CREATE TABLE ... AS is not declared here) at 'USING'",
+    "expected the column list (CREATE TABLE ... AS is not declared here) at 'WITH'",
+    "expected the column list (CREATE TABLE ... AS is not declared here) at 'as'",
+    "expected the end of the default (a default cannot hold this operator unparenthesized) at 'IN'",
+    "schema elements inside CREATE SCHEMA are not declared here; declare each object on its own at 'CREATE'",
+    "schema elements inside CREATE SCHEMA are not declared here; declare each object on its own at 'create'",
+    "unexpected end of statement",
+    "unexpected token after the domain definition at 'ENFORCED'",
+    "unexpected token after the domain definition at 'NOT'",
+    "unexpected token after the domain definition at 'PRIMARY'",
+    "unexpected token after the domain definition at 'deferrable'",
+    "unexpected token after the domain definition at 'no'",
+    "unexpected token after the domain definition at 'unique'",
+    "unexpected token after the table definition at 'WITH'",
+    "unexpected token after the table definition at '\\'"
+  ]
+}

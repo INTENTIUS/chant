@@ -46,12 +46,37 @@ Postgres reads each `CREATE` statement chant declares (schema, table, index, vie
 
 ClickHouse reads `CREATE DATABASE`, `CREATE TABLE`, `CREATE VIEW`, `CREATE MATERIALIZED VIEW`, `CREATE DICTIONARY` and `CREATE FUNCTION`, and the access statements `CREATE USER`, `CREATE ROLE`, `CREATE ROW POLICY` and `GRANT` ([Access Control](../clickhouse-access/)). Each access statement is read by its tag, so what the tag refuses is refused in its words: a password (`IDENTIFIED BY`), or a `REVOKE`.
 
-Anything else fails the build: an `INSERT`, a `DROP`, a `SET`, a `COMMENT ON` for an object the file does not create, or a statement that does not parse. The error names the file and every statement it could not read, so the whole file is reported at once:
+Anything else fails the build: an `INSERT`, a `DROP`, a `SET`, a `CREATE` of a kind chant does not declare, a `COMMENT ON` for an object the file does not create, or a statement that does not parse. The error names the file and every statement it could not read, so the whole file is reported at once:
 
 ```
 src/users.sql: a statement chant cannot read as declarations:
   - not a statement that declares an object: DROP TABLE app.old_users
 ```
+
+A statement chant reads except for a clause its parser does not know builds, with a warning. See the next section.
+
+## Clauses chant does not read
+
+The SQL is the server's, so a clause the server accepts belongs in the statement even when chant's parser does not know it yet, such as a clause a new ClickHouse or Postgres release adds. The build keeps the statement as written, sends it as written, and warns naming the file, the line and the clause:
+
+```
+src/events.sql:7: analytics.events has a clause chant does not read, PARTITION_STRATEGY. It is sent as written and the server checks it; a plan reads the rest of the object, and classes any change to the clause as one to review
+```
+
+A template gets the same warning, naming its `.ts` file, its export and the line within the statement. The post-synth checks still run over what chant does read (column types, codecs, settings it knows), and the server decides on the clause when the statement runs.
+
+What chant does not read stays opaque, and nothing that depends on it is guessed:
+
+- The rest of the object is read as usual: its name, its columns, its keys and its references, so dependency order and lineage hold. The build output lists the clauses under `unparsed`, each with its text and line.
+- A column that carries such a clause keeps its type in [Typed Columns](../typed-columns/), but its nullability and its key comparison are `never`, so it fits every slot instead of a guessed one.
+- A plan compares the clause as text. A change to it is classed as one to review, SQLCH290 or SQLPG299, which the plan and the applier refuse rather than guess what `ALTER` it takes ([Planning ClickHouse Changes](../change-classifier/), [Postgres Locks and the Change Classifier](../postgres-change-classifier/)). A clause only the server prints is a hint, not a change.
+
+Where the line falls between a clause chant does not know and SQL that is wrong:
+
+- A clause is kept only where a clause can start: after a table's column list and its storage clauses, among a column's or a dictionary attribute's clauses, before a view's `AS`, among a database's, a dictionary's, an index's or a sequence's clauses, and at the end of a statement. It starts with a key word of three letters or more, runs to the next clause chant knows, and its parentheses balance.
+- These still fail: a statement that is not schema (above), a `CREATE` of a kind chant does not declare, a key word one letter from a clause chant knows (`ORDR BY`, `TABLESPAC`), a clause chant knows written where it cannot go, punctuation, a string or a number where a clause should start, unbalanced parentheses, and what chant refuses on purpose (a password, `SET ... FROM CURRENT`, a SQL-standard function body).
+- An unknown word inside an expression (a default, a check, a view's query) is the expression's, and the server reads it. In ClickHouse, a key word right after a complete key, default or setting value (`ORDER BY ts PARTITION_STRATEGY = 'hourly'`) starts a new clause. In Postgres, such a word in a default or a sequence option is an error, as before.
+- Roles, users, grants and policies are read strictly: an option chant does not know there is an error, because access control is not something to send unread.
 
 ## SQL that is not schema
 

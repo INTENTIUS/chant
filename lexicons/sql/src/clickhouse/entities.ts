@@ -42,7 +42,7 @@ import { setInterpolationFields } from "@intentius/chant/provenance";
 import { CLICKHOUSE_LEXICAL, isTrivia, SqlSyntaxError, untokenize } from "./tokens";
 import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span, type StorageNode } from "./parser";
 import { parseAccess, type AccessNode } from "./access";
-import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, type TemplateCtx, type TemplateDialect } from "../core/interpolation";
+import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, unparsedClauses, type TemplateCtx, type TemplateDialect, type UnparsedClause } from "../core/interpolation";
 import { SQL_LEXICON, SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
 import type { LineageEdge } from "../core/references";
 import { SqlLiteral, SqlTemplateError, describeValue as describe, stripUnset as strip, templateParts } from "../core/template";
@@ -50,6 +50,7 @@ import { setTypedSlots, type ColumnsIn, type Named, type RowIn, type SlotsIn, ty
 
 export { SQL_LEXICON } from "../core/entity";
 export type { LineageEdge } from "../core/references";
+export type { UnparsedClause } from "../core/interpolation";
 export { SqlLiteral, SqlTemplateError, templateParts, unescapeTemplateDelimiters } from "../core/template";
 export type { AnyColumn, Column, ColumnTraits, KeyColumn, Named, NotNullColumn, UncheckedColumn, Unnamed } from "../core/typed";
 
@@ -110,6 +111,11 @@ interface CommonProps {
   ddl: string;
   /** The template's raw parts, as written, for a source round trip. */
   source: { strings: string[] };
+  /**
+   * Clauses chant's parser does not know (#3872), kept in `ddl` as written
+   * and left to the catalog checks and the server. Absent when there are none.
+   */
+  unparsed?: UnparsedClause[];
 }
 
 export interface DatabaseProps extends CommonProps {
@@ -540,6 +546,7 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
     database,
     onCluster: text(ctx, node.onCluster, "onCluster"),
     comment: stringValue(text(ctx, node.comment, "comment")),
+    unparsed: unparsedClauses(ctx, node.unknown),
   };
   const done = <T extends ClickHouseObject>(entity: T): T => {
     setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));

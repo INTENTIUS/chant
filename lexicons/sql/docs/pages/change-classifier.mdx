@@ -28,6 +28,8 @@ Both exit 2 when a change needs a rebuild. `chant sql diff` compares a pull requ
 
 `chant sql plan` also exits 2 when a declared database holds an object whose definition it cannot read. It names each one under `Refused` (`unreadable` in `--json`) instead of leaving it out. Dictionaries are read and planned like the other objects: any change but a comment replaces one (SQLCH245).
 
+A clause chant's parser does not know ([Plain .sql Files](../sql-files/#clauses-chant-does-not-read)) is compared as text, and the rest of its object is planned as usual. A change to one is SQLCH290, refused for review with no rebuild Op suggested, since chant cannot tell what the change takes. A clause only the server prints is a hint, not a change: a newer server printing a clause with its default looks the same as a clause removed from the declaration.
+
 ## After the plan
 
 The plan only reports. [`clickhouseApply`](../applying/) makes the metadata-only and background-rewrite changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as `ClickHouseRebuildOp`, a gated migration Op that creates the new table, backfills it, verifies it and swaps it in: see [Rebuilding a Table](../rebuild/). Both commands print the Op declaration to start from for each refused table.
@@ -110,4 +112,5 @@ Without the hint the change is a drop and an add, and the report points out a dr
 | SQLCH272 | metadata only | Change a row policy | CREATE ROW POLICY OR REPLACE replaces the policy's condition, kind and roles; queries started after it see the new one. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create/row-policy) |
 | SQLCH273 | metadata only | Grant a privilege or a role | GRANT adds a privilege or a role to a user or role; it takes effect for new queries. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/grant) |
 | SQLCH274 | metadata only | Revoke a privilege or a role | REVOKE takes a privilege or a role away, including one granted by hand to a grantee the build declares grants for; queries that relied on it fail from then on. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/revoke) |
+| SQLCH290 | rebuild | Change a clause chant does not read | chant's parser does not know this clause, so it cannot tell whether ALTER can make the change in place; the plan refuses it rather than guess. Review it: make it by hand with the ALTER the server documents for the clause, or drop and create the object. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/create/table) |
 | SQLCH250 | drop | Drop an object | DROP removes the object and, for a table, its data; it is not undone. [ClickHouse docs](https://clickhouse.com/docs/sql-reference/statements/drop) |

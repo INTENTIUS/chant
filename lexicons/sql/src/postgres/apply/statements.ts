@@ -789,6 +789,8 @@ export function refusalDetail(changes: readonly PgChange[], name: string, declar
       ? `Run it as the expand-and-contract migration Op: ${ops.join(", ")} from @intentius/chant-lexicon-sql/postgres (add the new column, write both, backfill, switch readers, then drop the old).` +
         (ops.length < changes.length ? " The other changes have no migration Op yet: make them by hand as expand and contract." : "")
       : "No migration Op makes this change yet: make it by hand as expand and contract (add the new, write both, backfill, move readers, then drop the old).";
+  // A clause chant does not read (#3872) is refused for review: what the change takes is not known.
+  if (changes.every((c) => c.rule === "SQLPG299")) return `${name} needs review, since chant does not read the clause, so nothing was sent for it. ${lines.join(" ")}`;
   return `${name} needs expand and contract, which no in-place statement makes, so nothing was sent for it. ${lines.join(" ")} ${instead}`;
 }
 

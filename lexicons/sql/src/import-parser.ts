@@ -9,7 +9,8 @@
  * anything else is ClickHouse.
  *
  * A statement that declares nothing, or does not parse, is an error naming
- * it (`./sql-files.ts`); none is left out.
+ * it (`./sql-files.ts`); none is left out. A clause the parser does not know
+ * (#3872) is kept in the template as written.
  */
 
 import type { ParserOptions, TemplateIR, TemplateParser } from "@intentius/chant/import/parser";

@@ -350,6 +350,13 @@ export const PG_CLASSIFIER_RULES = {
     "ALTER DEFAULT PRIVILEGES changes what objects created afterwards are given; objects that exist keep their privileges.",
     `${DOCS}/sql-alterdefaultprivileges.html`,
   ),
+  SQLPG299: rule(
+    "SQLPG299",
+    "expand",
+    "Change a clause chant does not read",
+    "chant's parser does not know this clause, so it cannot tell which lock the change takes or whether an in-place statement makes it; the plan refuses it rather than guess. Review it: make it by hand with the ALTER the server documents for the clause, or as expand and contract.",
+    `${DOCS}/sql-altertable.html`,
+  ),
   SQLPG270: rule("SQLPG270", "drop", "Drop an object", "The object and, for a table, a materialized view or a sequence, its data are gone.", `${DOCS}/sql-droptable.html`),
 } as const satisfies Record<string, PgClassifierRule>;
 

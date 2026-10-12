@@ -12,7 +12,7 @@
 
 import type { AttrRef } from "@intentius/chant/attrref";
 import { isTrivia, SqlSyntaxError, tokenize, tokenizeText, untokenize, type LexicalRules, type Token } from "./tokens";
-import type { Span } from "./cursor";
+import type { Span, UnknownClause } from "./cursor";
 import type { LineageEdge } from "./references";
 import type { SqlObject } from "./entity";
 import { interpolationLine, spliceText, SqlTemplateError } from "./template";
@@ -122,6 +122,37 @@ export function spanText(ctx: TemplateCtx, span: Span | undefined, path?: string
   if (!span || span.to <= span.from) return undefined;
   if (path) feed(ctx, span, path);
   return untokenize(ctx.tokens.slice(span.from, span.to), (i) => ctx.d.renderReference(ctx.values[i], i)).trim();
+}
+
+/**
+ * A clause the parser does not know (#3872), as an entity's props carry it:
+ * kept in the DDL as written, its text here so a plan can compare it and a
+ * build can warn about it.
+ */
+export interface UnparsedClause {
+  /** Its leading words, upper case: `TABLESPACE_POLICY`. */
+  clause: string;
+  /** The clause as written, interpolations rendered. */
+  text: string;
+  /** The column (or dictionary attribute) it is written on, when it is one of a column's. */
+  column?: string;
+  /** The line of the statement (the props' `ddl`) it starts on, from 1. */
+  line: number;
+}
+
+/** A parsed statement's unknown clauses as props carry them; undefined when there are none. */
+export function unparsedClauses(ctx: TemplateCtx, unknown: readonly UnknownClause[] | undefined): UnparsedClause[] | undefined {
+  if (!unknown || unknown.length === 0) return undefined;
+  const render = (i: number) => ctx.d.renderReference(ctx.values[i], i);
+  return unknown.map((u) => {
+    const before = untokenize(ctx.tokens.slice(0, u.span.from), render).replace(/^\s+/, "");
+    return {
+      clause: u.clause,
+      text: spanText(ctx, u.span, "unparsed") ?? u.clause,
+      ...(u.column !== undefined ? { column: u.column } : {}),
+      line: before.split("\n").length,
+    };
+  });
 }
 
 /** A parse error as the tag reports it: on the template line, or in the interpolated text it came from. */
