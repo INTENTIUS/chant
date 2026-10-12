@@ -67,6 +67,7 @@
  */
 
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
+import type { CiRunner } from "../ci-jobs";
 import { gatePointProblems, type GatePoint } from "./gate-point";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
@@ -197,6 +198,51 @@ export interface OpWaveRun {
   op?: string;
 }
 
+/**
+ * Where a wave's jobs run (#3914): a runner label, a list of labels the
+ * runner must all carry, or on GitHub a runner group with optional labels.
+ * Rendered as `runs-on` on GitHub and Forgejo and as `tags` on GitLab; a
+ * runner group on GitLab or Forgejo is a spec error.
+ */
+export type OpWaveRunner = CiRunner;
+
+/**
+ * One job group of a wave (#3914): the runs it applies, and the job that
+ * applies them, with its own runner, forge environment, variables, setup and
+ * id tokens. The wave's deciding job plans every run and decides the wave's
+ * one gate; the group's job plans its own runs again and applies those whose
+ * plan has not moved since.
+ */
+export interface OpWaveJobGroup {
+  /** The group's name, in its job's name (`wave-<k>-<wave>-<name>`). Lowercase letters, digits, `-` and `_`. */
+  name: string;
+  /**
+   * The runs it applies: targets, or patterns where `*` matches within one
+   * path segment and `**` across segments. Each run of the wave is in exactly
+   * one group. On a `discover` wave the deciding job checks this once the
+   * runs are found.
+   */
+  runs: string[];
+  /** Split the group's runs across this many jobs, as a wave's `shares` does. Default 1. */
+  shares?: number;
+  /** The group's runner. Default: the wave's, else the spec's. */
+  runner?: OpWaveRunner;
+  /** The forge deployment environment of the group's jobs (GitHub and GitLab; a spec error on Forgejo). Default: the wave's. */
+  environment?: OpEnvironment;
+  /** Variables for the group's jobs, over the wave's own. */
+  variables?: Record<string, string>;
+  /** Steps the group's jobs run after the wave's setup. */
+  setup?: OpSetupStep[];
+  /**
+   * The OIDC tokens the group's jobs get, as `{ <variable>: <audience> }`, in
+   * place of the wave's. GitLab declares them as the job's `id_tokens:`.
+   * GitHub and Forgejo give the job `id-token: write` and the audience as
+   * `<variable>_AUDIENCE`, since there the audience is chosen when the token
+   * is requested.
+   */
+  idTokens?: Record<string, string>;
+}
+
 /** One wave: runs that apply together, behind one gate. */
 export interface OpWave {
   /** The wave's name, usually its environment. Lowercase letters, digits, `-` and `_`. */
@@ -247,6 +293,21 @@ export interface OpWave {
   setup?: OpSetupStep[];
   /** This wave's stage hooks (#3762), run after the spec's own. Read at the base commit. */
   hooks?: OpWaveHooks;
+  /** Where this wave's jobs run (#3914). Default: the spec's `runner`. */
+  runner?: OpWaveRunner;
+  /**
+   * The OIDC tokens this wave's jobs get (#3914), as `{ <variable>: <audience> }`;
+   * see {@link OpWaveJobGroup.idTokens}. With `jobs`, these are the deciding
+   * job's, and a group's own replace them.
+   */
+  idTokens?: Record<string, string>;
+  /**
+   * Split the wave's apply into job groups (#3914): a deciding job, which
+   * runs with the wave's own settings, plans every run and decides the gate,
+   * and a job per group (per share of a group), each applying its runs. Not
+   * with the wave's own `shares` (a group has its own) or `rest`.
+   */
+  jobs?: OpWaveJobGroup[];
 }
 
 /**
@@ -279,6 +340,12 @@ export interface OpWavesSpec {
   neverOverMcp?: boolean;
   /** Branches whose pushes run the waves. Default `["main"]`. */
   branches?: string[];
+  /**
+   * Where every job the spec renders runs unless a wave or a job group names
+   * another (#3914). Default: the forge's default runner (`ubuntu-latest` on
+   * GitHub, the dialect's label on Forgejo, no `tags` on GitLab).
+   */
+  runner?: OpWaveRunner;
   /**
    * The commit the gate policy is read from. Default `HEAD^1`, the first
    * parent: on a merge or squash onto the branch, the branch before the change.
@@ -423,8 +490,10 @@ export interface OpWaveJob {
   waveName: string;
   /** `wave`: plan, decide and apply. `decide`: plan and decide. `share`: apply one slice. */
   kind: "wave" | "decide" | "share";
-  /** 1-based, on a share job. */
+  /** 1-based, on a share job (and a group's job when the group has shares). */
   share?: number;
+  /** On a job group's job (#3914): the group's name. Its kind is `share`. */
+  group?: string;
   /** Jobs this one waits on. */
   needs: string[];
   /** The job's command, as argv. */
@@ -508,6 +577,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
   }
   if (spec.neverOverMcp !== undefined && typeof spec.neverOverMcp !== "boolean") throw new Error(`${where}: neverOverMcp must be true or false.`);
+  if (spec.runner !== undefined) assertOpWaveRunner(where, "runner", spec.runner);
   if (spec.notify !== undefined) {
     const problem = notifyConfigProblem(spec.notify, "notify");
     if (problem) throw new Error(`${where}: ${problem}`);
@@ -530,6 +600,9 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       const problems = opWavePointProblems(wave.point);
       if (problems.length > 0) throw new Error(`${where}: wave "${wave.name}": ${problems.join("; ")}.`);
     }
+    if (wave.runner !== undefined) assertOpWaveRunner(where, `wave "${wave.name}" runner`, wave.runner);
+    if (wave.idTokens !== undefined) assertOpWaveIdTokens(where, `wave "${wave.name}" idTokens`, wave.idTokens);
+    if (wave.jobs !== undefined) assertOpWaveJobGroups(where, wave);
     if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
     if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
     if (wave.discover) {
@@ -560,7 +633,109 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (shares > wave.runs.length) {
       throw new Error(`${where}: wave "${wave.name}" has ${shares} shares for ${wave.runs.length} runs, so a share would apply nothing.`);
     }
+    if (wave.jobs !== undefined) {
+      const problem = opWaveGroupsProblem(wave, wave.runs.map((r) => r.target));
+      if (problem) throw new Error(`${where}: ${problem}.`);
+    }
   }
+}
+
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Refuse a `runner` no forge could read (#3914). */
+function assertOpWaveRunner(where: string, field: string, runner: unknown): void {
+  const labels = (value: unknown): boolean => Array.isArray(value) && value.length > 0 && value.every((l) => typeof l === "string" && l.trim() !== "");
+  if (typeof runner === "string" && runner.trim() !== "") return;
+  if (labels(runner)) return;
+  if (runner !== null && typeof runner === "object" && !Array.isArray(runner)) {
+    const { group, labels: l, ...rest } = runner as Record<string, unknown>;
+    const extra = Object.keys(rest)[0];
+    if (extra !== undefined) throw new Error(`${where}: ${field}.${extra} is not a setting; a runner group is { "group": "<name>", "labels"?: [...] }.`);
+    if (typeof group === "string" && group.trim() !== "" && (l === undefined || labels(l))) return;
+  }
+  throw new Error(`${where}: ${field} must be a runner label, a non-empty list of labels, or { "group": "<name>", "labels"?: [...] } (GitHub only).`);
+}
+
+/** Refuse `idTokens` that are not `{ <variable>: <audience> }` (#3914). */
+function assertOpWaveIdTokens(where: string, field: string, idTokens: unknown): void {
+  if (idTokens === null || typeof idTokens !== "object" || Array.isArray(idTokens) || Object.keys(idTokens).length === 0) {
+    throw new Error(`${where}: ${field} must be { "<variable>": "<audience>" }, with at least one token.`);
+  }
+  for (const [name, aud] of Object.entries(idTokens as Record<string, unknown>)) {
+    if (!ENV_NAME.test(name)) throw new Error(`${where}: ${field} names "${name}", which is not a variable name (letters, digits and "_", not starting with a digit).`);
+    if (typeof aud !== "string" || aud.trim() === "") throw new Error(`${where}: ${field}.${name} must be an audience, a non-empty string.`);
+  }
+}
+
+/** Refuse a wave's `jobs` no pipeline could render (#3914). Which runs each group holds is {@link opWaveGroupsProblem}'s. */
+function assertOpWaveJobGroups(where: string, wave: OpWave): void {
+  const at = `wave "${wave.name}"`;
+  if (!Array.isArray(wave.jobs) || wave.jobs.length === 0) throw new Error(`${where}: ${at} jobs must be a non-empty list of job groups.`);
+  if ((wave.shares ?? 1) > 1) throw new Error(`${where}: ${at} has jobs and shares; split each job group with its own shares.`);
+  if (wave.rest) throw new Error(`${where}: ${at} has jobs and rest; the waves after it run in its one job, so its apply cannot be split into groups.`);
+  const names = new Set<string>();
+  wave.jobs.forEach((group, i) => {
+    if (group === null || typeof group !== "object") throw new Error(`${where}: ${at} jobs[${i}] must be { "name", "runs", ... }.`);
+    const field = `${at} jobs[${i}]${typeof group.name === "string" ? ` (${group.name})` : ""}`;
+    if (typeof group.name !== "string" || !NAME.test(group.name)) throw new Error(`${where}: ${field} must be named with lowercase letters, digits, "-" and "_".`);
+    if (group.name === "decide" || /^share-\d+$/.test(group.name)) throw new Error(`${where}: ${field} is named like the wave's own jobs (decide, share-<i>); name it another way.`);
+    if (names.has(group.name)) throw new Error(`${where}: ${at} names job group "${group.name}" twice.`);
+    names.add(group.name);
+    const known = new Set(["name", "runs", "shares", "runner", "environment", "variables", "setup", "idTokens"]);
+    const extra = Object.keys(group).find((key) => !known.has(key));
+    if (extra !== undefined) throw new Error(`${where}: ${field}.${extra} is not a setting; a job group takes ${[...known].join(", ")}.`);
+    if (!Array.isArray(group.runs) || group.runs.length === 0 || !group.runs.every((r) => typeof r === "string" && r.trim() !== "")) {
+      throw new Error(`${where}: ${field} runs must be a non-empty list of targets or patterns.`);
+    }
+    const shares = group.shares ?? 1;
+    if (!Number.isInteger(shares) || shares < 1) throw new Error(`${where}: ${field} has shares ${group.shares}; use a whole number from 1.`);
+    if (group.runner !== undefined) assertOpWaveRunner(where, `${field} runner`, group.runner);
+    if (group.idTokens !== undefined) assertOpWaveIdTokens(where, `${field} idTokens`, group.idTokens);
+    if (group.variables !== undefined && (group.variables === null || typeof group.variables !== "object" || Array.isArray(group.variables) || !Object.values(group.variables).every((v) => typeof v === "string"))) {
+      throw new Error(`${where}: ${field} variables must be { "<name>": "<value>" }.`);
+    }
+    if (group.setup !== undefined && !Array.isArray(group.setup)) throw new Error(`${where}: ${field} setup must be a list of steps.`);
+    if (group.environment !== undefined && (group.environment === null || typeof group.environment !== "object" || typeof group.environment.name !== "string")) {
+      throw new Error(`${where}: ${field} environment must be { "name", "url"? }.`);
+    }
+  });
+}
+
+/**
+ * True when `target` matches a job group's `runs` entry (#3914): the target
+ * itself, or a pattern where `*` matches within one `/` segment and `**`
+ * across segments.
+ */
+export function opWaveRunMatches(pattern: string, target: string): boolean {
+  if (!pattern.includes("*")) return pattern === target;
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "*" && pattern[i + 1] === "*") {
+      re += ".*";
+      i++;
+    } else if (c === "*") re += "[^/]*";
+    else re += c.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`).test(target);
+}
+
+/** The runs of `runs` that job group `group` holds (#3914). */
+export function opWaveGroupRuns<T extends { target: string }>(group: Pick<OpWaveJobGroup, "runs">, runs: readonly T[]): T[] {
+  return runs.filter((run) => group.runs.some((pattern) => opWaveRunMatches(pattern, run.target)));
+}
+
+/**
+ * What is wrong with how a wave's job groups hold `targets` (#3914): a run in
+ * two groups, or in none. Undefined when each run is in exactly one.
+ */
+export function opWaveGroupsProblem(wave: Pick<OpWave, "name" | "jobs">, targets: readonly string[]): string | undefined {
+  for (const target of targets) {
+    const holders = (wave.jobs ?? []).filter((group) => group.runs.some((pattern) => opWaveRunMatches(pattern, target))).map((g) => `"${g.name}"`);
+    if (holders.length > 1) return `wave "${wave.name}" jobs: run "${target}" is in job groups ${holders.join(" and ")}; each run is in exactly one`;
+    if (holders.length === 0) return `wave "${wave.name}" jobs: run "${target}" is in no job group; each run is in exactly one`;
+  }
+  return undefined;
 }
 
 function assertArgv(where: string, field: string, argv: unknown): void {
@@ -655,7 +830,7 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     const command = ["chant", "run", "wave", "--spec", specFile, "--wave", String(k), ...(spec.base ? ["--base", spec.base] : [])];
     const prefix = `wave-${k}-${wave.name}`;
     const shares = wave.shares ?? 1;
-    if (shares === 1) {
+    if (shares === 1 && wave.jobs === undefined) {
       jobs.push({ jobName: prefix, wave: k, waveName: wave.name, kind: "wave", needs: previous, command });
       previous = [prefix];
       return;
@@ -664,6 +839,26 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     const decide = `${prefix}-decide`;
     jobs.push({ jobName: decide, wave: k, waveName: wave.name, kind: "decide", needs: previous, command: [...command, "--decide"], record });
     const shareJobs: string[] = [];
+    if (wave.jobs !== undefined) {
+      // #3914: a job per group, or per share of a group, each applying its runs under the deciding job's decision.
+      for (const group of wave.jobs) {
+        const groupShares = group.shares ?? 1;
+        const groupCommand = [...command, "--group", group.name];
+        if (groupShares === 1) {
+          const jobName = `${prefix}-${group.name}`;
+          shareJobs.push(jobName);
+          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, needs: [decide], command: groupCommand, record });
+          continue;
+        }
+        for (let share = 1; share <= groupShares; share++) {
+          const jobName = `${prefix}-${group.name}-share-${share}`;
+          shareJobs.push(jobName);
+          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, share, needs: [decide], command: [...groupCommand, "--share", String(share)], record });
+        }
+      }
+      previous = shareJobs;
+      return;
+    }
     for (let share = 1; share <= shares; share++) {
       const jobName = `${prefix}-share-${share}`;
       shareJobs.push(jobName);
@@ -672,6 +867,11 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     previous = shareJobs;
   });
   return jobs;
+}
+
+/** The job group a job applies (#3914), or undefined for a wave's own jobs. */
+export function opWaveGroupOf(spec: OpWavesSpec, job: Pick<OpWaveJob, "wave" | "group">): OpWaveJobGroup | undefined {
+  return job.group === undefined ? undefined : spec.waves[job.wave - 1]?.jobs?.find((g) => g.name === job.group);
 }
 
 /** The wave a job belongs to. */

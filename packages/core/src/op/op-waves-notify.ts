@@ -22,7 +22,7 @@ import type { RunOpWaveResult } from "./op-waves-run";
 export type OpWaveOutcome = { result: RunOpWaveResult; error?: undefined } | { result?: undefined; error: string };
 
 /** The event a wave job sends, or undefined when it sends none. */
-export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWaveOutcome, job: { share?: number } = {}): NotifyFields | undefined {
+export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWaveOutcome, job: { share?: number; group?: string } = {}): NotifyFields | undefined {
   const wave = spec.waves[k - 1];
   const name = wave?.name;
   const label = `wave ${k}${name ? ` (${name})` : ""} of ${spec.name}`;
@@ -39,9 +39,9 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
   };
   if (result.exitCode === 3) {
     if (!decision) return undefined;
-    // A share job's wait was announced by its deciding job, unless a hook in this job held it (#3762).
+    // A share job's wait (or a job group's, #3914) was announced by its deciding job, unless a hook in this job held it (#3762).
     const heldHere = result.hooks.filter((h) => h.outcome === "held");
-    if (job.share !== undefined && heldHere.length === 0) return undefined;
+    if ((job.share !== undefined || job.group !== undefined) && heldHere.length === 0) return undefined;
     const review = decision.review?.pr !== undefined && decision.review.url ? { review: { pr: decision.review.pr, url: decision.review.url } } : {};
     return {
       ...base,
@@ -102,7 +102,7 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
       ...base,
       event: "refused",
       status: "moved",
-      summary: `${label}${job.share !== undefined ? `, share ${job.share},` : ""} refused ${result.moved.length} run${result.moved.length === 1 ? "" : "s"} whose plan moved since the wave was decided`,
+      summary: `${label}${jobPart(job)} refused ${result.moved.length} run${result.moved.length === 1 ? "" : "s"} whose plan moved since the wave was decided`,
       targets: result.moved,
       reason: "their plans moved since the wave was decided, so they were not applied",
     };
@@ -124,12 +124,18 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
   return undefined;
 }
 
+/** `, share 2,`, `, job group prod,` or `, share 2 of job group prod,`; empty for a wave's own job. */
+function jobPart(job: { share?: number; group?: string }): string {
+  if (job.group !== undefined) return `, ${job.share !== undefined ? `share ${job.share} of ` : ""}job group ${job.group},`;
+  return job.share !== undefined ? `, share ${job.share},` : "";
+}
+
 /** Send what the job's outcome calls for to what `spec.notify` names. Never throws. */
 export async function notifyOpWave(
   spec: OpWavesSpec,
   k: number,
   outcome: OpWaveOutcome,
-  job: { share?: number } = {},
+  job: { share?: number; group?: string } = {},
   options: SendNotifyOptions = {},
 ): Promise<NotifyDelivery[]> {
   // A spec whose notify the run refused (it may name a URL in place of a variable) sends nothing.

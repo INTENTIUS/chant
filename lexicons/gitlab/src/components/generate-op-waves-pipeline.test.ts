@@ -69,3 +69,43 @@ describe("a wave's environment is checked as an Op's is (#3765)", () => {
     expect(generateGitlabOpWavesPipeline(one({ name: "dev", url: "$CI_ENVIRONMENT_URL" }), { specFile: "waves.json" }).files[0]!.yaml).toContain("url: '$CI_ENVIRONMENT_URL'");
   });
 });
+
+describe("a runner per wave and job groups per wave (#3914)", () => {
+  const grouped: OpWavesSpec = {
+    ...spec,
+    runner: "plan",
+    waves: [
+      { name: "dev", runs: [{ target: "dev" }], gate: "never", runner: ["docker", "dev"] },
+      {
+        name: "prod",
+        runs: [{ target: "us/a" }, { target: "eu/a" }],
+        idTokens: { PLAN_TOKEN: "plan.example" },
+        jobs: [
+          { name: "us", runs: ["us/*"], runner: "us-apply", environment: { name: "prod-us" }, variables: { REGION: "us" }, setup: [{ run: "echo us" }], idTokens: { CLOUD_TOKEN: "us.example" } },
+          { name: "eu", runs: ["eu/*"], runner: "eu-apply", environment: { name: "prod-eu" }, idTokens: { CLOUD_TOKEN: "eu.example" } },
+        ],
+      },
+    ],
+  };
+
+  test("the rendered pipeline matches its golden", async () => {
+    await expect(generateGitlabOpWavesPipeline(grouped, { specFile: "waves.json" }).files[0]!.yaml).toMatchFileSnapshot("./__golden__/op-waves-jobs.yml");
+  });
+
+  test("tags, environment, id_tokens, variables and the group's command on each job", () => {
+    const yaml = generateGitlabOpWavesPipeline(grouped, { specFile: "waves.json" }).files[0]!.yaml;
+    expect(yaml).toMatch(/wave-1-dev:\n\s+stage: wave-1-dev\n\s+image: node:22\n\s+tags:\n\s+- docker\n\s+- dev\n/);
+    expect(yaml).toMatch(/wave-2-prod-decide:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- plan\n\s+resource_group: migrations-prod\n\s+id_tokens:\n\s+PLAN_TOKEN:\n\s+aud: plan.example\n/);
+    expect(yaml).toMatch(
+      /wave-2-prod-us:\n\s+stage: wave-2-prod\n\s+image: node:22\n\s+tags:\n\s+- us-apply\n\s+resource_group: migrations-prod\n\s+environment:\n\s+name: prod-us\n\s+id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: us.example\n\s+variables:\n\s+GIT_DEPTH: '0'\n\s+REGION: us\n[\s\S]*?needs:\n\s+- wave-2-prod-decide\n\s+script:\n\s+- echo us\n\s+- chant run wave --spec waves.json --wave 2 --group us\n/,
+    );
+    expect(yaml).toMatch(/wave-2-prod-eu:[\s\S]*?id_tokens:\n\s+CLOUD_TOKEN:\n\s+aud: eu.example\n/);
+    expect(yaml).not.toContain("_AUDIENCE");
+  });
+
+  test("a runner group is a spec error naming the wave and the field", () => {
+    const withGroup = (runner: { group: string }) => ({ ...grouped, waves: [grouped.waves[0]!, { ...grouped.waves[1]!, jobs: [{ ...grouped.waves[1]!.jobs![0]!, runner }, grouped.waves[1]!.jobs![1]!] }] });
+    expect(() => generateGitlabOpWavesPipeline(withGroup({ group: "apply" }), { specFile: "waves.json" })).toThrow(/wave "prod" job group "us" runner is the runner group "apply", which only GitHub has/);
+    expect(() => generateGitlabOpWavesPipeline({ ...spec, runner: { group: "apply" } }, { specFile: "waves.json" })).toThrow(/Op waves "migrations": runner is the runner group/);
+  });
+});

@@ -28,7 +28,8 @@
  * - Apply: each run's `apply` command, or one `applyWave` call for the
  *   approved set (#3762). A share job (`--share i`) re-plans its
  *   slice first and refuses, without applying it, a run whose plan digest is
- *   not the one the deciding job recorded (exit 4).
+ *   not the one the deciding job recorded (exit 4). A job group's job
+ *   (`--group <name>`, #3914) is a share job over the group's runs.
  * - Hooks file (#3804): every apply call gets `CHANT_HOOKS`, a JSON file
  *   ({@link OpWaveHooksFile}) with the outcomes of the hooks that already ran
  *   and whether an approval stands. Under `hooks.apply.runBy: "apply"` (read
@@ -83,6 +84,8 @@ import {
   opWavePointAt,
   opWavePointProblems,
   opWaveRecordPath,
+  opWaveGroupRuns,
+  opWaveGroupsProblem,
   opWaveShare,
   type GateApprovalSource,
   type OpWave,
@@ -582,8 +585,13 @@ export interface RunOpWaveOptions {
   wave: number;
   /** Plan and decide only (a wide wave's deciding job). */
   decide?: boolean;
-  /** Apply this 1-based share of a decided wave. */
+  /** Apply this 1-based share of a decided wave, or with `group`, of that job group. */
   share?: number;
+  /**
+   * Apply this job group's runs of a decided wave (#3914), as a share job
+   * does: plan them again and apply those whose plan has not moved.
+   */
+  group?: string;
   /** Overrides the spec's base. */
   base?: string;
   cwd?: string;
@@ -1268,13 +1276,19 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
       applied.push(...outcome.applied);
       // #3821: a `rest` wave goes on through the waves its plan command found.
       const found = outcome.decision?.discovered?.waves;
-      const onward = k >= spec.waves.length && last.rest === true && options.share === undefined && !options.decide && outcome.exitCode === 0 && found !== undefined && k < found;
+      const onward = k >= spec.waves.length && last.rest === true && options.share === undefined && options.group === undefined && !options.decide && outcome.exitCode === 0 && found !== undefined && k < found;
       if (rest.length > 0 || onward) rest.push({ wave: k, exitCode: outcome.exitCode, ...(outcome.decision ? { digest: outcome.decision.digest } : {}) });
       if (onward) log(`wave ${k} applied; the plan found ${found} waves, so this job goes on to wave ${k + 1}`);
       return onward;
     },
   });
   return { ...result, applied, ...(rest.length > 0 ? { rest } : {}) };
+}
+
+/** What a share or job group's job calls itself in the log: `share 2`, `job group "prod"`, `share 2 of job group "prod"`. */
+function shareLabel(options: Pick<RunOpWaveOptions, "share" | "group">): string {
+  if (options.group === undefined) return `share ${options.share}`;
+  return `${options.share !== undefined ? `share ${options.share} of ` : ""}job group "${options.group}"`;
 }
 
 /** How many times one wave job plans again when its apply asks to (#3821). */
@@ -1337,21 +1351,31 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   // #3821: past the spec's waves, a `rest` wave stands for each wave its plan command found.
   let wave = spec.waves[k - 1] ?? (last.rest ? last : undefined);
   if (!wave) throw new Error(`Op waves "${spec.name}" has ${spec.waves.length} waves; there is no wave ${k}.`);
-  const shares = wave.shares ?? 1;
-  if (options.share !== undefined && (options.share < 1 || options.share > shares)) {
-    throw new Error(`wave ${k} (${wave.name}) has ${shares} share${shares === 1 ? "" : "s"}; there is no share ${options.share}.`);
+  // #3914: a job group's job is a share job over the group's runs, split by the group's own shares.
+  const group = options.group === undefined ? undefined : wave.jobs?.find((g) => g.name === options.group);
+  if (options.group !== undefined && !group) {
+    const names = (wave.jobs ?? []).map((g) => g.name);
+    throw new Error(`wave ${k} (${wave.name}) has ${names.length > 0 ? `the job groups ${names.join(", ")}` : "no job groups"}; there is no group "${options.group}".`);
   }
+  if (options.share !== undefined && options.group === undefined && wave.jobs !== undefined) {
+    throw new Error(`wave ${k} (${wave.name}) is split into job groups; name the group a share belongs to with --group.`);
+  }
+  const shares = group ? (group.shares ?? 1) : (wave.shares ?? 1);
+  if (options.share !== undefined && (options.share < 1 || options.share > shares)) {
+    throw new Error(`${group ? `job group "${group.name}" of ` : ""}wave ${k} (${wave.name}) has ${shares} share${shares === 1 ? "" : "s"}; there is no share ${options.share}.`);
+  }
+  const part = shareLabel(options);
   const recordPath = join(cwd, opWaveRecordPath(spec, k));
   const result: RunOpWaveResult = { exitCode: 0, applied: [], failed: [], moved: [], hooks: [] };
   const ctx: WaveContext = { spec, k, wave, cwd, exec, log, result, options, gateRule: { approval: "ledger", base: "HEAD", neverOverMcp: spec.neverOverMcp === true } };
   if (pass > 0) log(`wave ${k} (${wave.name}): plan ${pass + 1}`);
 
-  if (options.share !== undefined) {
+  if (options.share !== undefined || group !== undefined) {
     let decision: OpWaveDecision;
     try {
       decision = JSON.parse(readFileSync(recordPath, "utf-8")) as OpWaveDecision;
     } catch {
-      throw new Error(`share ${options.share} of wave ${k} (${wave.name}) found no decision at ${opWaveRecordPath(spec, k)}. Run the deciding job first.`);
+      throw new Error(`${part} of wave ${k} (${wave.name}) found no decision at ${opWaveRecordPath(spec, k)}. Run the deciding job first.`);
     }
     result.decision = decision;
     ctx.gateRule = { approval: decision.approval, base: decision.base, neverOverMcp: decision.neverOverMcp === true };
@@ -1365,14 +1389,18 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
       wave = { ...wave, runs: decision.members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
       ctx.wave = wave;
     }
-    const slice = opWaveShare(wave.runs, options.share, shares);
+    const slice = opWaveShare(group ? opWaveGroupRuns(group, wave.runs) : wave.runs, options.share ?? 1, shares);
+    if (group && slice.length === 0) {
+      log(`${part} of wave ${k} (${wave.name}) holds none of the wave's runs; nothing to apply`);
+      return { end: result };
+    }
     const before = await runHooks(ctx, "before-plan", decision.hooks?.["before-plan"], slice);
-    if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in share ${options.share} of wave ${k} was planned or applied`) };
+    if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in ${part} of wave ${k} was planned or applied`) };
     if (before.waitingOn) return { end: await waitOnOther(ctx, decision, before.waitingOn) };
     const { members } = planRuns(ctx, slice);
     const planned = new Map(members.map((m) => [m.member, m]));
     const after = await runHooks(ctx, "after-plan", decision.hooks?.["after-plan"], slice, planned);
-    if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in share ${options.share} of wave ${k} was applied`) };
+    if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in ${part} of wave ${k} was applied`) };
     if (after.waitingOn) return { end: await waitOnOther(ctx, decision, after.waitingOn) };
     return { go: { kind: "share", ctx, decision, slice, planned, holds: [...before.holds, ...after.holds] } };
   }
@@ -1424,6 +1452,9 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     ctx.wave = wave;
     decision.discovered = { ...(found !== undefined ? { waves: found } : {}) };
     log(`wave ${k} (${wave.name}): the plan found ${members.length} run${members.length === 1 ? "" : "s"}${found !== undefined ? ` of ${found} waves` : ""}${members.length ? `: ${members.map((m) => m.member).join(", ")}` : ""}`);
+    // #3914: each run found is in exactly one job group, or no group's job could apply it.
+    const problem = wave.jobs ? opWaveGroupsProblem(wave, members.map((m) => m.member)) : undefined;
+    if (problem) return { end: failed(ctx, `wave ${k} (${wave.name}): ${problem}, so nothing in it was applied`) };
   }
   const planned = new Map(members.map((m) => [m.member, m]));
   return {
@@ -1580,7 +1611,7 @@ function markHeldOn(decision: OpWaveDecision, heldOn: OpWaveHeldOn): void {
 /** A share job held on another gate that waits (#3821). */
 async function waitOnOther(ctx: WaveContext, decision: OpWaveDecision, heldOn: OpWaveHeldOn): Promise<RunOpWaveResult> {
   markHeldOn(decision, heldOn);
-  ctx.log(`share ${ctx.options.share} of wave ${ctx.k} (${ctx.wave.name}) waits on ${heldOn.op} / ${heldOn.gate}; nothing in it applied. Approve: ${heldOn.approve}`);
+  ctx.log(`${shareLabel(ctx.options)} of wave ${ctx.k} (${ctx.wave.name}) waits on ${heldOn.op} / ${heldOn.gate}; nothing in it applied. Approve: ${heldOn.approve}`);
   return { ...ctx.result, decision, exitCode: 3 };
 }
 

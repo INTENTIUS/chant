@@ -333,6 +333,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.decide = true;
     } else if (arg === "--record-plans") {
       result.recordPlans = true;
+    } else if (arg === "--group") {
+      const raw = args[++i];
+      if (!raw || raw.startsWith("-")) throw new Error("--group needs a job group's name: --group <name>");
+      result.group = raw;
     } else if (arg === "--share") {
       const raw = args[++i];
       const share = Number(raw);

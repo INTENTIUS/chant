@@ -1,0 +1,86 @@
+# chant Op waves "migrations": one stage per wave, each needing the one before.
+# A wave that waits at its gate exits 3 and stops the waves after it; approve the
+# digest it prints, then retry the job.
+
+stages:
+  - wave-1-dev
+  - wave-2-prod
+
+wave-1-dev:
+  stage: wave-1-dev
+  image: node:22
+  tags:
+    - docker
+    - dev
+  resource_group: migrations-dev
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  script:
+    - chant run wave --spec waves.json --wave 1
+
+wave-2-prod-decide:
+  stage: wave-2-prod
+  image: node:22
+  tags:
+    - plan
+  resource_group: migrations-prod
+  id_tokens:
+    PLAN_TOKEN:
+      aud: plan.example
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - wave-1-dev
+  script:
+    - chant run wave --spec waves.json --wave 2 --decide
+  artifacts:
+    when: always
+    paths:
+      - .chant/op-waves/migrations/wave-2.json
+    expire_in: '30 days'
+
+wave-2-prod-us:
+  stage: wave-2-prod
+  image: node:22
+  tags:
+    - us-apply
+  resource_group: migrations-prod
+  environment:
+    name: prod-us
+  id_tokens:
+    CLOUD_TOKEN:
+      aud: us.example
+  variables:
+    GIT_DEPTH: '0'
+    REGION: us
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - wave-2-prod-decide
+  script:
+    - echo us
+    - chant run wave --spec waves.json --wave 2 --group us
+
+wave-2-prod-eu:
+  stage: wave-2-prod
+  image: node:22
+  tags:
+    - eu-apply
+  resource_group: migrations-prod
+  environment:
+    name: prod-eu
+  id_tokens:
+    CLOUD_TOKEN:
+      aud: eu.example
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+  needs:
+    - wave-2-prod-decide
+  script:
+    - chant run wave --spec waves.json --wave 2 --group eu

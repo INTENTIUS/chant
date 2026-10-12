@@ -51,6 +51,9 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
 | `waves[].hooks` | This wave's own hooks, run after the spec's |
 | `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
+| `runner`, `waves[].runner` | Where the jobs run: a label, a list of labels, or `{ "group", "labels"? }` (GitHub only). `runs-on` on GitHub and Forgejo, `tags` on GitLab. A wave's wins over the spec's. Default: the forge's default runner ([Runners and job groups](#runners-and-job-groups)) |
+| `waves[].idTokens` | `{ "<VARIABLE>": "<audience>" }`: the OIDC tokens the wave's jobs get ([Runners and job groups](#runners-and-job-groups)) |
+| `waves[].jobs` | Job groups: the wave's apply split into one job per group, each with the runs it applies and its own `runner`, `environment`, `variables`, `setup`, `idTokens` and `shares` ([Runners and job groups](#runners-and-job-groups)) |
 | `resume` | `{ "schedule": "<cron>" }` renders a scheduled job that resumes waiting waves whose approval arrived ([Resume the waiting job](#resume-the-waiting-job)) |
 | `notify` | The environment variables holding Slack, Teams or signed webhook URLs that hear when a wave waits, is refused or fails ([Notify](/chant/guide/notify/)) |
 
@@ -624,6 +627,52 @@ A wave with hundreds of targets can be split with `shares`:
 
 This renders `wave-<k>-prod-decide` and `wave-<k>-prod-share-1` to `-share-4`. The deciding job plans every run and decides one gate over all of them. Its decision (`.chant/op-waves/<name>/wave-<k>.json`) is kept as an artifact. A share job plans its slice of the runs again, with the runs sorted by target and cut into contiguous slices. It applies only the runs whose plan digest matches the recorded decision. When a run's plan has moved since then, that run is named and skipped. The rest of the slice still applies, and the job exits 4. The next wave needs every share job.
 
+## Runners and job groups
+
+`runner` puts jobs on a runner. The spec's covers every job the spec renders, the resume and record-plans jobs included, and a wave's covers that wave's jobs. A spec with no `runner` renders the jobs it always has: `ubuntu-latest` on GitHub, the dialect's label on Forgejo, and no `tags` on GitLab.
+
+A wave whose runs need different identities, such as an apply per environment with each environment's own cloud role, splits its apply with `jobs`:
+
+```json
+{
+  "name": "apply",
+  "runner": "plan",
+  "idTokens": { "PLAN_TOKEN": "plan.example.com" },
+  "runs": [{ "target": "live/dev/vpc" }, { "target": "live/prod/vpc" }, { "target": "live/prod/db" }],
+  "jobs": [
+    { "name": "dev", "runs": ["live/dev/**"], "runner": "dev-apply", "environment": { "name": "dev" }, "idTokens": { "CLOUD_TOKEN": "dev.example.com" } },
+    { "name": "prod", "runs": ["live/prod/**"], "shares": 2, "runner": ["self-hosted", "prod-apply"], "environment": { "name": "prod" }, "variables": { "ENV": "prod" }, "idTokens": { "CLOUD_TOKEN": "prod.example.com" } }
+  ]
+}
+```
+
+This renders `wave-<k>-apply-decide`, `wave-<k>-apply-dev`, and `wave-<k>-apply-prod-share-1` and `-share-2`. The deciding job runs with the wave's own settings (here the `plan` runner and the plan token), plans every run, and decides the wave's one gate. Each group's job runs `chant run wave --wave <k> --group <name>` (with `--share <i>` when the group has shares). It plans its own runs again with its own identity and applies those whose plan digest matches the decision, as a share job does. One approval of the wave's digest is enough for all of them. A refused run refuses the whole wave, since the deciding job decides for every group, and the wave after it waits for every group's job to finish.
+
+| Group field | Meaning |
+|---|---|
+| `name` | The group's name, in its job's name. Not `decide` or `share-<i>` |
+| `runs` | The runs it applies: targets, or patterns where `*` matches within one `/` segment and `**` across segments |
+| `shares` | Split the group's runs across this many jobs. Default 1 |
+| `runner` | Default: the wave's, else the spec's |
+| `environment` | The group's forge environment. Default: the wave's. A spec error on Forgejo |
+| `variables` | Added over the wave's variables |
+| `setup` | Run after the wave's setup steps |
+| `idTokens` | Replace the wave's id tokens |
+
+Each run of the wave is in exactly one group. A run in two groups or in none is a spec error that names the run. On a `discover` wave the runs are known only at plan time, so the deciding job checks them and fails (exit 1) before the gate when one is in no group or in two. A group that holds none of the runs found applies nothing and exits 0. A wave with `jobs` cannot have its own `shares` or `rest`.
+
+How each forge renders a job's settings:
+
+| Setting | GitHub | GitLab | Forgejo |
+|---|---|---|---|
+| `runner` | `runs-on`; a runner group as `{ group, labels }` | `tags`; a runner group is a spec error | `runs-on`, through the dialect's label map; a runner group is a spec error |
+| `environment` | `environment:` | `environment:` | a group's is a spec error; a wave's is dropped with a header line, as before |
+| `idTokens` | `permissions:` on the job (the workflow's plus `id-token: write`) and each audience as `<VARIABLE>_AUDIENCE` | `id_tokens: { <VARIABLE>: { aud } }` | `permissions: id-token: write` and each audience as `<VARIABLE>_AUDIENCE` |
+
+On GitHub and Forgejo the job asks for its token at run time, with the audience it names in the request (`$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$CLOUD_TOKEN_AUDIENCE`), so the variable is how the job's own code finds it. GitLab mints the token into `$<VARIABLE>` before the job starts, with only the audiences the job declares.
+
+A job that applies with an identity is only as separate as the forge and the cloud make it. The forge's environment rules and protected runners decide which refs may run a group's job, and the cloud role's trust decides which token may assume it.
+
 ## Exit codes
 
 With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event saying so ([Notify](/chant/guide/notify/)). A delivery that fails never changes the exit code.
@@ -633,7 +682,7 @@ With `notify` in the spec, a job that exits 1, 3, 4 or 7 also posts an event say
 | 0 | The wave applied, or the deciding job decided it may apply |
 | 1 | A plan, an apply or a hook failed |
 | 3 | The wave is waiting for an approval of its set digest, because its policy or a hook holds it; nothing in it was applied |
-| 4 | A share job refused a run whose plan moved since the decision |
+| 4 | A share job, or a job group's job, refused a run whose plan moved since the decision |
 | 5 | The apply applied nothing: another run holds what it changes |
 | 6 | The apply stood down for a newer run |
 | 7 | The product's policy denied a run and no override counts for it; nothing in the wave was applied |
@@ -661,7 +710,7 @@ Reading the ledger and the forge's review is the caller's job, and so is recordi
 
 ## The forge's own reviewers
 
-A wave's `environment` lands on its jobs on GitHub and GitLab, where a protected environment can hold the job for a reviewer before it starts. Forgejo Actions has no environments, so the Forgejo workflow drops the key and its header says so. The chant gate holds the wave on all three.
+A wave's `environment`, or a job group's, lands on its jobs on GitHub and GitLab, where a protected environment can hold the job for a reviewer before it starts. Forgejo Actions has no environments, so the Forgejo workflow drops the key and its header says so. The chant gate holds the wave on all three.
 
 ## See also
 

@@ -18,22 +18,31 @@
  *
  * A `pr-review` wave (#3684) adds `<name>-record-plans`, run in merge request
  * pipelines only, which records the digests the merge request's head plans.
+ *
+ * `runner` (on the spec, a wave or a job group, #3914) is the job's `tags:`; a
+ * GitHub runner group is a spec error here. A wave's `jobs` renders its
+ * deciding job with the wave's own settings and a job per group (per share of
+ * a group) with the group's: its tags, environment, variables over the
+ * wave's, setup after the wave's, and `id_tokens:` from its `idTokens`.
  */
 
 import {
   assertGitlabBranch,
   assertGitlabEnvironment,
+  assertRunnerLabels,
   CI_IMAGE,
   environmentDoc,
   GITLAB_FULL_HISTORY,
   GITLAB_MERGE_REQUEST_SOURCE,
   GITLAB_SCHEDULE_SOURCE,
+  gitlabIdTokensDoc,
   gitlabPushRule,
   gitlabSetupScript,
+  gitlabTags,
   nonEmpty,
   pushBranches,
 } from "@intentius/chant/ci-jobs";
-import { opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { opWaveGroupOf, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { emitGitlabFile } from "./ci-jobs";
 
@@ -49,6 +58,18 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   // The setup and environment each wave's jobs carry, checked as an Op's are.
   const setupOf = spec.waves.map((wave) => gitlabSetupScript(`${subject} wave "${wave.name}"`, wave.setup));
   for (const wave of spec.waves) if (wave.environment) assertGitlabEnvironment(`${spec.name}/${wave.name}`, wave.environment);
+  // #3914: GitLab picks a runner by tags, and each job group carries its own setup and environment.
+  assertRunnerLabels(subject, "runner", spec.runner, "GitLab");
+  const groupSetup = new Map<string, string[]>();
+  for (const wave of spec.waves) {
+    assertRunnerLabels(subject, `wave "${wave.name}" runner`, wave.runner, "GitLab");
+    for (const group of wave.jobs ?? []) {
+      assertRunnerLabels(subject, `wave "${wave.name}" job group "${group.name}" runner`, group.runner, "GitLab");
+      if (group.environment) assertGitlabEnvironment(`${spec.name}/${wave.name}/${group.name}`, group.environment);
+      groupSetup.set(`${wave.name}/${group.name}`, gitlabSetupScript(`${subject} wave "${wave.name}" job group "${group.name}"`, group.setup));
+    }
+  }
+  const specTags = gitlabTags(spec.runner);
 
   const byReview = spec.waves.some((w) => w.approval === "pr-review");
   const stages = [...(byReview ? ["plans"] : []), ...spec.waves.map((wave, i) => `wave-${i + 1}-${wave.name}`)];
@@ -62,6 +83,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       {
         stage: "plans",
         image,
+        ...(specTags ? { tags: specTags } : {}),
         variables: { ...GITLAB_FULL_HISTORY },
         rules: [{ if: GITLAB_MERGE_REQUEST_SOURCE }],
         script: [...(options.beforeScript ?? []), ["chant", "run", "wave", "--spec", options.specFile, "--record-plans"].join(" ")],
@@ -70,15 +92,21 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   }
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
-    const setup = setupOf[job.wave - 1]!;
+    const group = opWaveGroupOf(spec, job);
+    const setup = [...setupOf[job.wave - 1]!, ...(group ? groupSetup.get(`${wave.name}/${group.name}`)! : [])];
+    const tags = gitlabTags(group?.runner ?? wave.runner ?? spec.runner);
+    const environment = group?.environment ?? wave.environment;
+    const idTokens = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
     entries.push([
       job.jobName,
       {
         stage: stages[job.wave - 1 + (byReview ? 1 : 0)],
         image,
+        ...(tags ? { tags } : {}),
         resource_group: `${spec.name}-${wave.name}`,
-        ...(wave.environment ? { environment: environmentDoc(wave.environment) } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}) },
+        ...(environment ? { environment: environmentDoc(environment) } : {}),
+        ...(idTokens ? { id_tokens: idTokens } : {}),
+        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
@@ -92,6 +120,7 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
       {
         stage: "resume",
         image,
+        ...(specTags ? { tags: specTags } : {}),
         rules: [{ if: GITLAB_SCHEDULE_SOURCE }],
         script: [...(options.beforeScript ?? []), opWavesResumeCommand(spec).join(" ")],
       },

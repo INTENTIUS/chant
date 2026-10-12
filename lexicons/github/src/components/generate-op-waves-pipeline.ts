@@ -27,9 +27,16 @@
  * With `notify` on the spec (#3761), the workflow maps each variable it names
  * from the repository secret of the same name, so a wave job can post to
  * Slack, Teams or a signed webhook. `options.variables` wins over the mapping.
+ *
+ * `runner` (on the spec, a wave or a job group, #3914) is the job's `runs-on`.
+ * A wave's `jobs` renders its deciding job with the wave's own settings and a
+ * job per group (per share of a group) with the group's: its runner,
+ * environment, variables over the wave's, setup after the wave's, and id
+ * tokens. A job with id tokens gets `permissions:` of its own, the
+ * workflow's plus `id-token: write`, and each audience as `<NAME>_AUDIENCE`.
  */
 
-import { notifyVariables, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { notifyVariables, opWaveGroupOf, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import {
   assertEnvironment,
@@ -38,8 +45,9 @@ import {
   dirnameOf,
   environmentDoc,
   GITHUB_JOB_TOKEN,
-  GITHUB_RUNNER,
+  githubRunsOn,
   githubSecretEnv,
+  idTokenAudienceEnv,
   nonEmpty,
   pushBranches,
   setupStepDoc,
@@ -66,27 +74,38 @@ export function buildGithubOpWavesDoc(
   for (const wave of spec.waves) {
     assertSetupSteps(`${spec.name}/${wave.name}`, wave.setup ?? []);
     if (wave.environment) assertEnvironment(`${spec.name}/${wave.name}`, wave.environment);
+    for (const group of wave.jobs ?? []) {
+      assertSetupSteps(`${spec.name}/${wave.name}/${group.name}`, group.setup ?? []);
+      if (group.environment) assertEnvironment(`${spec.name}/${wave.name}/${group.name}`, group.environment);
+    }
   }
+  const permissions = { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) };
 
   const jobsDoc: Record<string, unknown> = {};
   for (const job of jobs) {
     const wave = spec.waves[job.wave - 1]!;
+    // #3914: a job group's job runs with the group's settings over the wave's.
+    const group = opWaveGroupOf(spec, job);
     const steps: Array<Record<string, unknown>> = [checkoutStep(true)];
     if (job.kind === "share") {
       steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
-    steps.push(...(wave.setup ?? []).map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
-    steps.push({ name: describeJob(job.kind, job.wave, wave.name, job.share), run: job.command.join(" ") });
+    steps.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
+    steps.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), run: job.command.join(" ") });
     steps.push(...runSteps(options.extraScript ?? []));
     if (job.kind === "decide") {
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
+    const environment = group?.environment ?? wave.environment;
+    const idTokens = group?.idTokens ?? wave.idTokens;
     jobsDoc[job.jobName] = {
-      "runs-on": GITHUB_RUNNER,
+      "runs-on": githubRunsOn(group?.runner ?? wave.runner ?? spec.runner),
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       container: image,
-      ...(wave.environment ? { environment: environmentDoc(wave.environment) } : {}),
-      ...nonEmpty("env", wave.variables),
+      ...(environment ? { environment: environmentDoc(environment) } : {}),
+      // #3914: a job's own permissions replace the workflow's, so they repeat them.
+      ...(idTokens ? { permissions: { ...permissions, "id-token": "write" } } : {}),
+      ...nonEmpty("env", group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables),
       steps,
     };
   }
@@ -98,7 +117,7 @@ export function buildGithubOpWavesDoc(
     on: { push: { branches: pushBranches(spec.branches) }, workflow_dispatch: {} },
     ...nonEmpty("env", env),
     concurrency: concurrency(spec.name),
-    permissions: { contents: "write", ...(byReview ? { "pull-requests": "read" } : {}) },
+    permissions,
     jobsDoc,
   };
   return {
@@ -123,7 +142,7 @@ function buildResumeDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Git
     concurrency: concurrency(`${spec.name}-resume`, true),
     // contents: read fetches chant/lifecycle; actions: write re-runs a waiting run.
     permissions: { contents: "read", actions: "write" },
-    jobsDoc: { resume: { "runs-on": GITHUB_RUNNER, container: options.image ?? OP_WAVES_IMAGE, steps } },
+    jobsDoc: { resume: { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
 }
 
@@ -138,12 +157,13 @@ function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Gith
     concurrency: concurrency(spec.name + "-plans-${{ github.event.number }}", true),
     // contents: write pushes the record to chant/lifecycle.
     permissions: { contents: "write" },
-    jobsDoc: { "record-plans": { "runs-on": GITHUB_RUNNER, container: options.image ?? OP_WAVES_IMAGE, steps } },
+    jobsDoc: { "record-plans": { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
 }
 
-function describeJob(kind: "wave" | "decide" | "share", wave: number, name: string, share?: number): string {
+function describeJob(kind: "wave" | "decide" | "share", wave: number, name: string, share?: number, group?: string): string {
   if (kind === "decide") return `Plan wave ${wave} (${name}) and decide its gate`;
+  if (group !== undefined) return `Apply ${share !== undefined ? `share ${share} of ` : ""}job group ${group} of wave ${wave} (${name})`;
   if (kind === "share") return `Apply share ${share} of wave ${wave} (${name})`;
   return `Plan, gate and apply wave ${wave} (${name})`;
 }

@@ -63,3 +63,43 @@ describe("generateForgejoOpWavesPipeline", () => {
     expect(() => generateForgejoOpWavesPipeline({ ...waveLevel, hooks: { after: { apply: [{ command: ["./bin/smoke"], onFailure: "approve" }] } } }, { specFile: "waves.json" })).toThrow(/nothing left to hold/);
   });
 });
+
+describe("a runner per wave and job groups per wave (#3914)", () => {
+  const grouped: OpWavesSpec = {
+    ...spec,
+    runner: "plan",
+    waves: [
+      { name: "dev", runs: [{ target: "dev" }], gate: "never" },
+      {
+        name: "prod",
+        runs: [{ target: "us/a" }, { target: "eu/a" }],
+        jobs: [
+          { name: "us", runs: ["us/*"], runner: ["self-hosted", "us"], variables: { REGION: "us" }, idTokens: { CLOUD_TOKEN: "us.example" } },
+          { name: "eu", runs: ["eu/*"], runner: "eu-apply" },
+        ],
+      },
+    ],
+  };
+
+  test("the rendered pipeline matches its golden", async () => {
+    await expect(generateForgejoOpWavesPipeline(grouped, { specFile: "waves.json" }).files[0]!.yaml).toMatchFileSnapshot("./__golden__/op-waves-jobs.yml");
+  });
+
+  test("groups render as their own jobs with their runner, variables and id-token: write", () => {
+    const { files, jobs } = generateForgejoOpWavesPipeline(grouped, { specFile: "waves.json" });
+    expect(jobs.map((j) => j.jobName)).toEqual(["wave-1-dev", "wave-2-prod-decide", "wave-2-prod-us", "wave-2-prod-eu"]);
+    const yaml = files[0]!.yaml;
+    expect(yaml).toMatch(/wave-1-dev:\n\s+runs-on: plan\n/);
+    expect(yaml).toMatch(/wave-2-prod-us:\n\s+runs-on:\n\s+- self-hosted\n\s+- us\n[\s\S]*?permissions:\n\s+id-token: write\n\s+env:\n\s+REGION: us\n\s+CLOUD_TOKEN_AUDIENCE: us.example\n/);
+    expect(yaml).toMatch(/wave-2-prod-eu:\n\s+runs-on: eu-apply\n\s+needs:\n\s+- wave-2-prod-decide\n\s+container: node:22\n\s+steps:/);
+    expect(yaml).not.toContain("contents: write");
+  });
+
+  test("a runner group, or an environment on a job group, is a spec error naming the wave and the field", () => {
+    const prod = grouped.waves[1]!;
+    const withGroup = (g: Record<string, unknown>): OpWavesSpec => ({ ...grouped, waves: [grouped.waves[0]!, { ...prod, jobs: [{ ...prod.jobs![0]!, ...g }, prod.jobs![1]!] }] });
+    expect(() => generateForgejoOpWavesPipeline(withGroup({ environment: { name: "prod-us" } }), { specFile: "waves.json" })).toThrow(/wave "prod" job group "us" names the environment "prod-us", but Forgejo Actions has no environments/);
+    expect(() => generateForgejoOpWavesPipeline(withGroup({ runner: { group: "apply" } }), { specFile: "waves.json" })).toThrow(/wave "prod" job group "us" runner is the runner group "apply", which only GitHub has/);
+    expect(() => generateForgejoOpWavesPipeline({ ...grouped, waves: [{ ...grouped.waves[0]!, runner: { group: "x" } }] }, { specFile: "waves.json" })).toThrow(/wave "dev" runner is the runner group/);
+  });
+});
