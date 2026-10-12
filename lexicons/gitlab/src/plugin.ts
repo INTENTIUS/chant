@@ -14,6 +14,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { gitlabSerializer } from "./serializer";
+import { gitlabGraphEdges } from "./graph-edges";
 import { gitlabContextTools } from "./mcp/context-tools";
 import { deprecatedOnlyExceptRule } from "./lint/rules/deprecated-only-except";
 import { missingScriptRule } from "./lint/rules/missing-script";
@@ -46,6 +47,8 @@ export const gitlabPlugin: LexiconPlugin = {
     upstream: { owner: "gitlab-org", repo: "gitlab", kind: "tags", tagSuffix: "-ee" },
   },
   serializer: gitlabSerializer,
+  // `needs`, stage order, `extends`, `trigger:` and `include:` as graph edges (#3910).
+  graphEdges: (entities) => gitlabGraphEdges(entities),
 
   lintRules(): LintRule[] {
     return [deprecatedOnlyExceptRule, missingScriptRule, missingStageRule, artifactNoExpiryRule];

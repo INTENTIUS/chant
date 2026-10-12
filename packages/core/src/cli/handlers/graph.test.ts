@@ -249,6 +249,29 @@ describe("runGraph", () => {
       expect(JSON.parse(stdoutBuf.join("\n")).meta).toEqual({ collector: { pipelines: [] } });
     });
 
+    // #3910 — a lexicon's graphEdges answer becomes edges and dangling refs.
+    test("--format ir carries what a lexicon's graphEdges reports", async () => {
+      lintClean(); discovered();
+      loadPluginsMock.mockResolvedValue([{
+        name: "gitlab",
+        serializer: {},
+        graphEdges: () => ({
+          references: [
+            { from: "pod", to: "vpc", kind: "needs", viaAttr: "needs" },
+            { from: "pod", to: "group/other", kind: "triggers", viaAttr: "trigger", crossPipeline: true, dangling: true },
+          ],
+          pipelines: { ".gitlab-ci.yml": ["pod", "vpc"] },
+        }),
+      }, { name: "broken", serializer: {}, graphEdges: () => { throw new Error("boom"); } }]);
+      resolveLexMock.mockResolvedValue(["gitlab", "broken"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.edges).toContainEqual({ from: "pod", to: "vpc", kind: "needs", viaAttr: "needs" });
+      expect(ir.dangling).toEqual([{ from: "pod", kind: "triggers", path: "trigger", value: "group/other", crossPipeline: true }]);
+      expect(ir.groups.byPipeline).toEqual({ ".gitlab-ci.yml": ["pod", "vpc"] });
+    });
+
     test("--format ir has no meta when no lexicon reports anything", async () => {
       lintClean(); discovered();
       loadPluginsMock.mockResolvedValue([{ name: "gcp", serializer: {}, graphMeta: () => undefined }, { name: "k8s", serializer: {} }]);

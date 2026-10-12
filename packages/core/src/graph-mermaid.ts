@@ -25,15 +25,34 @@ export function toMermaid(ir: GraphIR): string {
   // sorted, so output is deterministic.
   const clusters = ir.groups.byWave ?? ir.groups.byLexicon;
   const clusterPrefix = ir.groups.byWave ? "wave" : "lex";
+  // CI pipelines (#3910) nest inside their lexicon's cluster, one subgraph per
+  // workflow or pipeline, so a cross-pipeline edge visibly leaves its box.
+  const pipelineOf = new Map<string, string>();
+  for (const [name, members] of Object.entries(ir.groups.byPipeline ?? {})) {
+    for (const id of members) if (!pipelineOf.has(id)) pipelineOf.set(id, name);
+  }
   const grouped = new Set<string>();
   if (clusters) {
     for (const [name, members] of Object.entries(clusters)) {
       lines.push(`  subgraph ${safeId(`${clusterPrefix}_${name}`, ids)}[${quote(name)}]`);
+      const nested = new Map<string, IRNode[]>();
       for (const id of members) {
         const node = ir.nodes.find((n) => n.id === id);
         if (!node) continue;
         grouped.add(id);
+        const pipeline = pipelineOf.get(id);
+        if (pipeline !== undefined) {
+          const arr = nested.get(pipeline) ?? [];
+          arr.push(node);
+          nested.set(pipeline, arr);
+          continue;
+        }
         lines.push(`    ${nodeLine(node, ids)}`);
+      }
+      for (const [pipeline, nodes] of [...nested].sort(([a], [b]) => a.localeCompare(b))) {
+        lines.push(`    subgraph ${safeId(`pipe_${name}_${pipeline}`, ids)}[${quote(pipeline)}]`);
+        for (const node of nodes) lines.push(`      ${nodeLine(node, ids)}`);
+        lines.push("    end");
       }
       lines.push("  end");
     }
@@ -45,6 +64,19 @@ export function toMermaid(ir: GraphIR): string {
 
   for (const e of ir.edges) {
     lines.push(`  ${edgeLine(e, ids)}`);
+  }
+
+  // A reference to nothing in the graph (#3910) is drawn, not dropped: a
+  // dashed edge to a rounded stub named by the string as written.
+  const stubs = new Map<string, string>();
+  for (const d of ir.dangling ?? []) {
+    let stub = stubs.get(d.value);
+    if (!stub) {
+      stub = safeId(`dangling_${d.value}`, ids);
+      stubs.set(d.value, stub);
+      lines.push(`  ${stub}([${quote(`${d.value}\n(not declared)`)}])`);
+    }
+    lines.push(`  ${safeId(d.from, ids)} -.->|${quote(d.kind)}| ${stub}`);
   }
 
   return lines.join("\n") + "\n";
@@ -60,8 +92,18 @@ function nodeLine(node: IRNode, ids: Map<string, string>): string {
 function edgeLine(e: IREdge, ids: Map<string, string>): string {
   const from = safeId(e.from, ids);
   const to = safeId(e.to, ids);
-  const label = [e.viaAttr, e.toAttr].filter(Boolean).join(" → ");
-  return label ? `${from} -->|${quote(label)}| ${to}` : `${from} --> ${to}`;
+  const label = edgeLabel(e);
+  // A cross-pipeline edge is dashed, so it reads as leaving its workflow.
+  const arrow = e.crossPipeline ? "-.->" : "-->";
+  return label ? `${from} ${arrow}|${quote(label)}| ${to}` : `${from} ${arrow} ${to}`;
+}
+
+/** A typed reference is labelled by the attribute it flows through; a CI edge
+ * (#3910) by its kind, plus the attribute when that says something more
+ * (`needs (stage)` for GitLab's stage order). */
+export function edgeLabel(e: IREdge): string {
+  if (e.kind === "ref" || !e.kind) return [e.viaAttr, e.toAttr].filter(Boolean).join(" → ");
+  return e.viaAttr && e.viaAttr !== e.kind ? `${e.kind} (${e.viaAttr})` : e.kind;
 }
 
 /** Map an arbitrary logical name to a stable, unique Mermaid-safe node id. */

@@ -23,7 +23,7 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
-import type { IREdge } from "./graph-ir";
+import type { IREdge, LexiconGraphEdges } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
@@ -1432,6 +1432,23 @@ export interface LexiconPlugin {
    * to report.
    */
   graphMeta?(entities: ReadonlyMap<string, Declarable>): Record<string, unknown> | undefined;
+
+  /**
+   * Edges this lexicon's entities declare as strings (#3910). A typed lexicon
+   * gets its edges from `AttrRef`s for free; a CI lexicon writes its
+   * dependencies as job names (`needs: ["build"]`), workflow paths (`uses:
+   * ./.github/workflows/ci.yml`) and file names (`include:`), which only the
+   * lexicon can resolve. It resolves them here, against the whole entity map,
+   * and reports each as a `{ from, to, kind }` between entity keys, or as
+   * `dangling` with the string as written when nothing declared matches.
+   * `pipelines` says which entities run in which workflow or pipeline.
+   *
+   * Called by `chant graph` with the discovered entities, after the plugins
+   * are loaded; merged by `applyLexiconGraphEdges` (./graph-ir.ts). Pure: no
+   * I/O. Return `undefined` when the project declares nothing this lexicon
+   * reads. Omit for lexicons whose references are typed.
+   */
+  graphEdges?(entities: ReadonlyMap<string, Declarable>): LexiconGraphEdges | undefined;
 
   // LSP
   /** Provide completions for LSP */

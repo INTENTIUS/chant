@@ -1,5 +1,6 @@
 // Serializer
 export { githubSerializer } from "./serializer";
+export { githubGraphEdges } from "./graph-edges";
 
 // Plugin
 export { githubPlugin } from "./plugin";
