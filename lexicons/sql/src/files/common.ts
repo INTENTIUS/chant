@@ -2,6 +2,8 @@
 
 import type { Token } from "../core/tokens";
 import type { UnknownClause } from "../core/cursor";
+import type { SqlDialect } from "../dialects";
+import { statementKind } from "../coverage";
 
 export interface ReadOptions {
   /** Names the DDL in errors: a file's path, a command. */
@@ -11,6 +13,22 @@ export interface ReadOptions {
    * unqualified, as an ORM does when the schema comes from its connection.
    */
   schema?: string;
+  /**
+   * Where a statement of a kind chant cannot declare goes (#3911), as a line
+   * naming it, instead of among the problems: `chant import
+   * --parser-option skipUndeclarable` lists them as warnings.
+   */
+  undeclarable?: string[];
+}
+
+/**
+ * A `CREATE` of a kind the coverage table does not mark declared, as the line
+ * that names it with why, or undefined for any other statement.
+ */
+export function undeclarableStatement(dialect: SqlDialect, sql: string): string | undefined {
+  const row = statementKind(dialect, sql);
+  if (!row || row.status === "declared") return undefined;
+  return `${row.kind}: chant cannot declare it (${row.reason ?? row.status}): ${firstLine(sql)}`;
 }
 
 /** A file of DDL with statements that declare nothing chant can hold: each problem names its statement. */

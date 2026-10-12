@@ -2068,6 +2068,10 @@ export interface LexiconPlugin {
    * (the form a user would have authored). `verbatim: true` keeps them. Targets
    * whose live config is already the declared shape (e.g. a CloudFormation
    * original template) may ignore it.
+   *
+   * `skipUndeclarable` (`--skip-undeclarable`): an implementation that fails
+   * an import for live objects no declaration can hold, naming them, imports
+   * the rest instead and returns them as warnings.
    */
   exportResources?(options: {
     environment: string;
@@ -2081,6 +2085,7 @@ export interface LexiconPlugin {
     selector?: ResourceSelector;
     owned?: boolean;
     verbatim?: boolean;
+    skipUndeclarable?: boolean;
   }): Promise<ExportedTemplate>;
 }
 

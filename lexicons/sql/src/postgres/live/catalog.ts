@@ -18,7 +18,7 @@
  * - objects an extension owns (`pg_depend.deptype = 'e'`): the extension
  *   declares them, so the extension is what is imported;
  * - `plpgsql`, installed in every database;
- * - aggregates, and a trigger the server makes for itself (a foreign key's)
+ * - a trigger the server makes for itself (a foreign key's)
  *   or clones onto a partition from its parent's;
  * - a routine with a SQL-standard body (`RETURN`, `BEGIN ATOMIC`): read, but
  *   marked `unsupported`, since the server prints it rewritten and a
@@ -31,6 +31,10 @@
  *   columns, constraints and indexes of an expand-and-contract migration in
  *   progress (`../migrate/names.ts`, `../migrate/carry.ts`), so a table reads
  *   as it was before the migration until its switch, and as declared after it.
+ *
+ * Objects of the kinds no declaration holds (aggregates, casts, collations,
+ * composite and range types, event triggers, ...) are not read here: import
+ * finds them with `./undeclarable.ts` and refuses them by name (#3911).
  *
  * Objects another tool owns, an ORM's or a migration runner's revision table
  * ({@link FOREIGN_TABLES}), are read and marked with the tool, so import
@@ -112,7 +116,7 @@ const commentOn = (what: string, comment: unknown): string[] => {
 };
 
 /** The scope as a predicate on a schema name column, with its parameter. */
-function scopeSql(column: string, scope: SchemaScope): { sql: string; params: unknown[] } {
+export function scopeSql(column: string, scope: SchemaScope): { sql: string; params: unknown[] } {
   if (scope.schemas) return { sql: `${column} = ANY($1::text[])`, params: [[...scope.schemas]] };
   return {
     sql: `${column} NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND ${column} NOT LIKE 'pg\\_temp\\_%' AND ${column} NOT LIKE 'pg\\_toast\\_temp\\_%'`,
@@ -121,7 +125,7 @@ function scopeSql(column: string, scope: SchemaScope): { sql: string; params: un
 }
 
 /** `NOT <object is owned by an extension>`, for an object of catalog `catalog` with oid column `oid`. */
-const notExtensionOwned = (catalog: string, oid: string): string =>
+export const notExtensionOwned = (catalog: string, oid: string): string =>
   `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'e')`;
 
 /** A collation name as a clause, `pg_catalog` names unqualified. */

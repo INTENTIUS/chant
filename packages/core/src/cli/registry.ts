@@ -158,6 +158,8 @@ export interface ParsedArgs {
   confirmProd?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
+  /** `chant import --skip-undeclarable` — import what can be declared and warn about the live objects that cannot, instead of failing */
+  skipUndeclarable?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
   src?: string;
   /** `--env <name>` — active environment: sets CHANT_ENV so env-aware source

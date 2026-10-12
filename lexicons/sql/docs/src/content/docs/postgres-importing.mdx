@@ -83,10 +83,21 @@ The import builds and plans as no change against the server it came from, becaus
 - Every object an extension created (`pg_depend.deptype = 'e'`). The extension is imported, not its types and functions, and `plpgsql`, which every database has, is not imported at all.
 - An identity column's sequence, the indexes a primary key or unique constraint creates, and the partitions of a partitioned index: each comes with the object that makes it.
 - chant's own working objects: the `__chant_receipts` tables and the columns and constraints of a migration in progress.
-- Aggregates, the triggers Postgres makes for itself (a foreign key's), and the copies of a partitioned table's trigger on its partitions.
-- A function or procedure with a SQL-standard body (`RETURN expr`, `BEGIN ATOMIC`), which the server prints back rewritten; the import names each one in a warning. Declare it again with a string body (`AS $$ ... $$`).
+- The triggers Postgres makes for itself (a foreign key's), and the copies of a partitioned table's trigger on its partitions.
 - The working function and trigger of a column migration in progress.
 - Roles, which are the environment's. Policies, row-level security and privileges are imported only where the profile manages access (`sql.profiles.<env>.access`); see [Access](../postgres-access/#import).
+
+### Objects chant cannot declare
+
+An object of a kind no tag declares yet, such as an aggregate, a cast, a collation, a composite or range type, an event trigger, an operator, extended statistics or a foreign table, stops the import. The error names every such object at once, by kind, schema and name, with why for each kind:
+
+```
+the Postgres server has 2 objects of a kind chant cannot declare, so the import would leave them out:
+  - aggregate app.total(integer)
+  - composite type app.pair
+```
+
+A function or procedure with a SQL-standard body (`RETURN expr`, `BEGIN ATOMIC`) is refused the same way, since the server prints it back rewritten; declare it again with a string body (`AS $$ ... $$`). `--skip-undeclarable` imports everything else and prints each of them as a warning. What an extension or a managed provider made is not refused. [Object Coverage](../object-coverage/) lists every kind and its status.
 
 ### Objects another tool keeps
 

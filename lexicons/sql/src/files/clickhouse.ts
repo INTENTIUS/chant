@@ -20,7 +20,7 @@ import { isAccessStatement, parseAccess, type AccessNode } from "../clickhouse/a
 import type { Token } from "../clickhouse/tokens";
 import { CLICKHOUSE_TAG_OF } from "../clickhouse/import/generator";
 import { describeStatement, type ImportedObject } from "../clickhouse/import/ir";
-import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, type FileLine, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, undeclarableStatement, type FileLine, type ReadOptions } from "./common";
 import { templateSafe, templateStrings } from "./postgres";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
@@ -87,6 +87,11 @@ export function readClickHouse(ddl: string, options: ReadOptions, problems: stri
   for (const stmt of splitTokens(tokenizeText(ddl, 0), isTrivia)) {
     let sql = tokensText(stmt);
     const line = lineAt(ddl, stmt[0]!.start);
+    const undeclarable = undeclarableStatement("clickhouse", sql);
+    if (undeclarable) {
+      (options.undeclarable ?? problems).push(undeclarable);
+      continue;
+    }
     if (isAccessStatement(sql)) {
       try {
         const read = readAccess(sql, options);

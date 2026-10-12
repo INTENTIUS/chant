@@ -1,0 +1,138 @@
+/**
+ * Import never leaves an object out without a word (#3911): an object of a
+ * kind no declaration holds fails the import, which names every one, and
+ * `skipUndeclarable` turns the failure into a warning per object. Against
+ * fakes; the e2e tests (`../postgres/live/undeclarable.e2e.test.ts`,
+ * `../clickhouse/live/undeclarable.e2e.test.ts`) run the same against servers.
+ */
+
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { fakeClient, type FakeCatalog } from "../postgres/testing/fake-client";
+import { fakeClickHouse, type FakeServer } from "../clickhouse/testing/fake-server";
+import { exportResources as exportClickHouse } from "../clickhouse/import/live-export";
+import { SqlFileParser } from "../import-parser";
+import { UndeclarableObjectsError } from "./undeclarable";
+
+const pg: { catalog: FakeCatalog; provider?: string } = { catalog: {} };
+
+vi.mock("../postgres/live/bind", async (orig) => ({
+  ...(await orig<typeof import("../postgres/live/bind")>()),
+  bindPostgres: async () => ({
+    target: { endpoint: { url: "postgres://x/db" }, source: "test", defaultSchema: "public", ...(pg.provider ? { provider: pg.provider } : {}) },
+    client: fakeClient(pg.catalog),
+  }),
+}));
+
+const { exportResources: exportPostgres } = await import("../postgres/import/live-export");
+
+const CATALOG: FakeCatalog = {
+  schemas: [{ name: "app" }],
+  tables: [{ schema: "app", name: "users", columns: [{ name: "id", type: "bigint", notnull: true }] }],
+  undeclarable: [
+    { kind: "aggregate", schema: "app", name: "total(integer)" },
+    { kind: "cast", name: "(app.pair AS text)" },
+    { kind: "composite type", schema: "app", name: "pair" },
+    { kind: "event trigger", name: "audit_ddl" },
+  ],
+};
+
+describe("Postgres live import", () => {
+  test("fails naming every object of a kind chant cannot declare, and why", async () => {
+    pg.catalog = CATALOG;
+    const err = await exportPostgres({ environment: "prod" }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(UndeclarableObjectsError);
+    const message = (err as Error).message;
+    for (const line of ["  - aggregate app.total(integer)", "  - cast (app.pair AS text)", "  - composite type app.pair", "  - event trigger audit_ddl"]) {
+      expect(message).toContain(line);
+    }
+    expect(message).toContain("  - aggregate: no tag declares an aggregate yet");
+    expect(message).toContain("--skip-undeclarable");
+  });
+
+  test("with skipUndeclarable, imports the rest and warns once per object", async () => {
+    pg.catalog = CATALOG;
+    const ir = await exportPostgres({ environment: "prod", skipUndeclarable: true });
+    expect(ir.resources.map((r) => r.properties.name)).toContain("users");
+    const left = (ir.warnings ?? []).filter((w) => w.includes("is left out (--skip-undeclarable)"));
+    expect(left).toHaveLength(4);
+    expect(left[0]).toBe("aggregate app.total(integer) is left out (--skip-undeclarable): no tag declares an aggregate yet");
+  });
+
+  test("a selector or owned import does not look", async () => {
+    pg.catalog = CATALOG;
+    await expect(exportPostgres({ environment: "prod", selector: { type: "Postgres::Table" } })).resolves.toBeDefined();
+    await expect(exportPostgres({ environment: "prod", owned: true })).resolves.toBeDefined();
+  });
+
+  test("a managed provider's own objects are its, with a warning, not a refusal", async () => {
+    pg.catalog = { ...CATALOG, undeclarable: [{ kind: "aggregate", schema: "auth", name: "x(integer)" }] };
+    pg.provider = "supabase";
+    try {
+      const ir = await exportPostgres({ environment: "prod" });
+      expect(ir.warnings).toContain("aggregate auth.x(integer) is kept by Supabase; left out");
+    } finally {
+      pg.provider = undefined;
+    }
+  });
+});
+
+describe("ClickHouse live import", () => {
+  let server: FakeServer;
+  beforeAll(async () => {
+    server = await fakeClickHouse(
+      [
+        { name: "analytics", engine: "Atomic", statement: "CREATE DATABASE analytics\nENGINE = Atomic" },
+        { database: "analytics", name: "events", engine: "MergeTree", statement: "CREATE TABLE analytics.events\n(\n    `id` UInt64\n)\nENGINE = MergeTree\nORDER BY id" },
+        { database: "analytics", name: "wv", engine: "WindowView", statement: "CREATE WINDOW VIEW analytics.wv AS SELECT 1" },
+      ],
+      {
+        undeclarable: [
+          { kind: "quota", name: "q1" },
+          { kind: "settings profile", name: "sp1" },
+          { kind: "window view", database: "analytics", name: "wv" },
+        ],
+      },
+    );
+  });
+  afterAll(() => server.close());
+  const run = (extra: Record<string, unknown> = {}) => exportClickHouse({ environment: "x", config: {}, env: { CLICKHOUSE_URL: server.url }, ...extra });
+
+  test("fails naming them", async () => {
+    await expect(run()).rejects.toThrow(/  - quota q1\n  - settings profile sp1\n  - window view analytics\.wv\n/);
+  });
+
+  test("with skipUndeclarable, warns, and the window view is not imported as a table", async () => {
+    const ir = await run({ skipUndeclarable: true });
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["analytics", "events"]);
+    expect((ir.warnings ?? []).filter((w) => w.includes("--skip-undeclarable"))).toHaveLength(3);
+  });
+});
+
+describe("file import", () => {
+  const DDL = `CREATE SCHEMA app;
+CREATE TABLE app.t (id int PRIMARY KEY);
+CREATE AGGREGATE app.total(int) (sfunc = int4pl, stype = int);
+CREATE TYPE app.pair AS (a int, b text);
+CREATE COLLATION app.ci (provider = icu, locale = 'und');`;
+
+  test("a CREATE of a kind chant cannot declare is an error naming it", () => {
+    expect(() => new SqlFileParser("postgres").parse(DDL)).toThrow(/aggregate: chant cannot declare it \(no tag declares an aggregate yet\): CREATE AGGREGATE app\.total/);
+  });
+
+  test("skipUndeclarable imports the rest and lists them as warnings", () => {
+    const ir = new SqlFileParser("postgres", { skipUndeclarable: true }).parse(DDL);
+    expect(ir.resources.map((r) => r.properties.name)).toEqual(["app", "t"]);
+    expect(ir.warnings).toEqual([
+      "left out (skipUndeclarable): aggregate: chant cannot declare it (no tag declares an aggregate yet): CREATE AGGREGATE app.total(int) (sfunc = int4pl, stype = int)",
+      "left out (skipUndeclarable): composite type: chant cannot declare it (no tag declares a composite type yet): CREATE TYPE app.pair AS (a int, b text)",
+      "left out (skipUndeclarable): collation: chant cannot declare it (no tag declares a collation yet): CREATE COLLATION app.ci (provider = icu, locale = 'und')",
+    ]);
+  });
+
+  test("ClickHouse: a quota in a file is refused too", () => {
+    expect(() => new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE QUOTA q1")).toThrow(/quota: chant cannot declare it/);
+  });
+});

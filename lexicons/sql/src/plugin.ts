@@ -159,7 +159,7 @@ export const sqlPlugin: LexiconPlugin = {
 
   /** `chant import schema.sql`: a file of Postgres or ClickHouse DDL (`./import-parser.ts`). */
   templateParser(options) {
-    return new SqlFileParser(dialectOption(options));
+    return new SqlFileParser(dialectOption(options), { skipUndeclarable: options?.skipUndeclarable === true });
   },
 
   parserOptions() {
@@ -168,6 +168,11 @@ export const sqlPlugin: LexiconPlugin = {
         name: "dialect",
         type: "string" as const,
         description: "the DDL's dialect, clickhouse or postgres; read off its statements when omitted",
+      },
+      {
+        name: "skipUndeclarable",
+        type: "boolean" as const,
+        description: "import the rest of the file, and list each CREATE of a kind chant cannot declare (an aggregate, a cast, a quota) as a warning instead of failing",
       },
     ];
   },

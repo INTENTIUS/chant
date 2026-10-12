@@ -23,6 +23,12 @@
  *   (#3745), so a use is found by that body (`./inlined.ts`) as well as by
  *   the name. A function carries no comment, so `owned` does
  *   not apply to it.
+ * - An object of a kind no declaration holds (a window view, a quota, a
+ *   settings profile, a named collection, ...; `../live/undeclarable.ts`)
+ *   fails the import, which names every one of them (#3911).
+ *   `skipUndeclarable` (`--skip-undeclarable`) imports the rest and lists
+ *   them as warnings. A selector or `owned` import asks for objects chant can
+ *   hold, so it does not look.
  */
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
@@ -35,6 +41,8 @@ import { isTrivia, tokenizeText } from "../tokens";
 import { unquote } from "../parser";
 import type { LiveObject } from "../live/catalog";
 import { inlinedFunctions } from "./inlined";
+import { readUndeclarable } from "../live/undeclarable";
+import { refuseUndeclarable } from "../../core/undeclarable";
 
 /** The functions among `names` a statement calls: a name followed by `(`. */
 export function calledFunctions(ddl: string, names: ReadonlySet<string>): string[] {
@@ -83,11 +91,19 @@ export interface ExportOptions extends Omit<BindOptions, "environment"> {
   selector?: ResourceSelector;
   owned?: boolean;
   verbatim?: boolean;
+  /** Import what can be declared, and list the objects of kinds no declaration holds as warnings instead of failing (#3911). */
+  skipUndeclarable?: boolean;
 }
 
 export async function exportResources(options: ExportOptions): Promise<ExportedTemplate> {
   const target = await bindClickHouse(options);
-  const all = await readLiveSchema(target);
+  // A selector or an owned import asks only for what chant can hold.
+  const undeclarable = !options.selector && !options.owned ? await readUndeclarable(target) : { objects: [], unread: [] };
+  const warnings: string[] = undeclarable.unread.map((u) => `the server was not checked for objects of one kind chant cannot declare, so some may be left out: ${u}`);
+  refuseUndeclarable("clickhouse", undeclarable.objects, options.skipUndeclarable, warnings);
+  // What is refused, and with --skip-undeclarable left out, is not also read as a table (a window view is in system.tables).
+  const refused = new Set(undeclarable.objects.filter((o) => o.schema !== undefined).map((o) => `${o.schema}.${o.name}`));
+  const all = (await readLiveSchema(target)).filter((o) => !(o.database !== undefined && refused.has(`${o.database}.${o.name}`)));
   const isFunction = (o: LiveObject) => o.type === CLICKHOUSE_ENTITY_TYPES.function;
   // A selector picks what it names, functions included; without one, functions go with what calls them (#3718).
   const live = options.selector ? all : all.filter((o) => !isFunction(o));
@@ -98,7 +114,6 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
     if (name !== undefined && name !== o.name && name !== `${o.database}.${o.name}`) return false;
     return true;
   });
-  const warnings: string[] = [];
   if (!options.selector) {
     const { adopted, skipped } = scopedFunctions(selected.filter((o) => !o.foreign), all.filter(isFunction), target.importFunctions);
     selected.push(...adopted);

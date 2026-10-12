@@ -1,0 +1,25 @@
+{
+  "dialect": "clickhouse",
+  "kinds": [
+    { "command": "CREATE DATABASE", "kind": "database", "status": "declared", "entity": "ClickHouse::Database" },
+    { "command": "CREATE DICTIONARY", "kind": "dictionary", "status": "declared", "entity": "ClickHouse::Dictionary" },
+    { "command": "CREATE FUNCTION", "kind": "SQL function", "status": "declared", "entity": "ClickHouse::Function" },
+    { "command": "CREATE FUNCTION", "form": "LANGUAGE WASM, or with a driver", "match": "\\bLANGUAGE\\b|\\bUSING\\s+DRIVER\\b", "kind": "non-SQL function", "status": "refused", "reason": "only a SQL function (CREATE FUNCTION f AS (x) -> ...) is declared" },
+    { "command": "CREATE HANDLER", "kind": "HTTP handler", "status": "refused", "reason": "no declaration holds an HTTP handler yet" },
+    { "command": "CREATE INDEX", "kind": "index", "status": "declared", "entity": "ClickHouse::Table", "note": "an index is part of its table: SHOW CREATE TABLE prints it, and the table's declaration holds it" },
+    { "command": "CREATE MASKING POLICY", "kind": "masking policy", "status": "refused", "reason": "no declaration holds a masking policy yet" },
+    { "command": "CREATE NAMED COLLECTION", "kind": "named collection", "status": "refused", "reason": "no declaration holds a named collection yet; one usually carries credentials" },
+    { "command": "CREATE QUOTA", "kind": "quota", "status": "refused", "reason": "no declaration holds a quota yet" },
+    { "command": "CREATE RESOURCE", "kind": "workload resource", "status": "refused", "reason": "no declaration holds a workload scheduling resource yet" },
+    { "command": "CREATE ROLE", "kind": "role", "status": "declared", "entity": "ClickHouse::Role", "note": "import reads only the access objects a build declares" },
+    { "command": "CREATE ROW POLICY", "kind": "row policy", "status": "declared", "entity": "ClickHouse::RowPolicy", "note": "import reads only the access objects a build declares" },
+    { "command": "CREATE SETTINGS PROFILE", "kind": "settings profile", "status": "refused", "reason": "no declaration holds a settings profile yet" },
+    { "command": "CREATE TABLE", "kind": "table", "status": "declared", "entity": "ClickHouse::Table" },
+    { "command": "CREATE TABLE", "form": "TEMPORARY", "match": "^CREATE\\s+TEMPORARY\\b", "kind": "temporary table", "status": "out-of-scope", "reason": "a temporary table lives in one session" },
+    { "command": "CREATE USER", "kind": "user", "status": "declared", "entity": "ClickHouse::User", "note": "import reads only the access objects a build declares" },
+    { "command": "CREATE VIEW", "kind": "view", "status": "declared", "entity": "ClickHouse::View" },
+    { "command": "CREATE VIEW", "form": "MATERIALIZED", "match": "^CREATE\\s+(?:OR\\s+REPLACE\\s+)?MATERIALIZED\\b", "kind": "materialized view", "status": "declared", "entity": "ClickHouse::MaterializedView" },
+    { "command": "CREATE WINDOW VIEW", "kind": "window view", "status": "refused", "reason": "no declaration holds a window view, an experimental feature" },
+    { "command": "CREATE WORKLOAD", "kind": "workload", "status": "refused", "reason": "no declaration holds a workload yet" }
+  ]
+}

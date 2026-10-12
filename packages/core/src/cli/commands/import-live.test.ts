@@ -143,6 +143,30 @@ describe("liveImportFromPlugins (#114)", () => {
     expect(result.error).toContain("No resources exported");
   });
 
+  // #3911 — an exporter that refuses (the sql lexicon naming objects it cannot
+  // declare) is the import's error, not a warning behind "No resources exported".
+  test("an exporter's failure is the error when nothing else exported, and --skip-undeclarable reaches it", async () => {
+    let seen: unknown;
+    const refusing: LexiconPlugin = {
+      ...fakeExporter("sql", sampleIR),
+      async exportResources(opts: { skipUndeclarable?: boolean }) {
+        seen = opts.skipUndeclarable;
+        if (!opts.skipUndeclarable) throw new Error("the server has an object of a kind chant cannot declare:\n  - aggregate app.total(integer)");
+        return { ...sampleIR, warnings: ["aggregate app.total(integer) is left out (--skip-undeclarable)"] };
+      },
+    };
+    const failed = await liveImportFromPlugins([refusing], { environment: "prod", output: outputDir, force: true });
+    expect(failed.success).toBe(false);
+    expect(failed.error).toContain("sql: live export failed");
+    expect(failed.error).toContain("  - aggregate app.total(integer)");
+    expect(seen).toBeUndefined();
+
+    const skipped = await liveImportFromPlugins([refusing], { environment: "prod", output: outputDir, force: true, skipUndeclarable: true });
+    expect(skipped.success).toBe(true);
+    expect(seen).toBe(true);
+    expect(skipped.warnings).toContain("aggregate app.total(integer) is left out (--skip-undeclarable)");
+  });
+
   // #932 — a multi-stack reconcile imports each stack from its own live
   // CloudFormation stack; the `stack` option must reach `exportResources` so
   // the right stack is queried (not one env-named stack for all of them).
