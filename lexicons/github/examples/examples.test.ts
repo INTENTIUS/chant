@@ -1,4 +1,6 @@
-import { expect } from "vitest";
+import { describe, expect, test } from "vitest";
+import { resolve } from "path";
+import { build } from "@intentius/chant/build";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { githubSerializer } from "@intentius/chant-lexicon-github";
 
@@ -60,9 +62,27 @@ describeAllExamples(
     "reusable-workflow": {
       skipLint: true,
       checks: (output) => {
+        // The primary output is the caller workflow: it only calls the reusable one.
         expect(output).toContain("uses: ./.github/workflows/reusable-workflow.yml");
-        expect(output).toContain("node-version");
+        expect(output).toMatch(/^jobs:\n {2}call-ci:/m);
+        expect(output).not.toContain("npm ci");
       },
     },
   },
 );
+
+describe("github reusable-workflow example: reusable workflow file", () => {
+  test("reusable-workflow.yml has the jobs and the caller references it", async () => {
+    const result = await build(
+      resolve(import.meta.dirname, "reusable-workflow", "src"),
+      [githubSerializer],
+    );
+    const out = result.outputs.get("github") as { primary: string; files?: Record<string, string> };
+    const reusable = out.files?.["reusable-workflow.yml"];
+    expect(reusable).toBeDefined();
+    expect(reusable).toContain("workflow_call:");
+    expect(reusable).toMatch(/^jobs:\n {2}ci:/m);
+    expect(reusable).toContain("npm ci");
+    expect(out.primary).toContain(`uses: ./.github/workflows/reusable-workflow.yml`);
+  });
+});
