@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, isAbsolute, join, posix } from "node:path";
 import { waveSetDigest, type WaveMember } from "../gated-waves";
 import type { ReviewApproval } from "../gate-decision";
-import { approveCommand, evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "./gate";
+import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateDigestMismatch, type GateLedgerPort } from "./gate";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
@@ -969,10 +969,15 @@ async function runHooks(
 /** How many gates one hook call holds a wave on in turn (#3847): the first hold and the holds its approved re-runs ask for. */
 export const OP_WAVE_MAX_CHAINED_HOLDS = 10;
 
-/** The gate ledger a wave decides by: the job's port, with the signers at base as the rule when `approval` is `sealed`. */
+/**
+ * The gate ledger a wave decides by: the job's port, its `identity.gates`
+ * rule read at the wave's base (#3841), and the signers at base as a second
+ * rule when `approval` is `sealed`.
+ */
 async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, approval: GateApprovalSource, base: string): Promise<{ ledger: GateLedgerPort; port: GateLedgerPort }> {
   const ledger = options.gates ?? gitGateLedgerPort({ cwd });
-  if (approval !== "sealed") return { ledger, port: ledger };
+  const atBase = (g: string) => ledger.approvalRule?.(g, { base }) ?? Promise.resolve(null);
+  if (approval !== "sealed") return { ledger, port: ledger.approvalRule ? { ...ledger, approvalRule: atBase } : ledger };
   // #3684: only an approval sealed by a signer listed at base counts.
   const review = await import("./gate-review");
   const sealed = review.sealedApprovalRule(gate, (options.trust ?? ((b) => review.trustPolicyAt(cwd, b)))(base));
@@ -981,11 +986,17 @@ async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, ap
     port: {
       ...ledger,
       async approvalRule(g) {
-        const own = (await ledger.approvalRule?.(g)) ?? null;
+        const own = await atBase(g);
         return g === gate ? review.bothRules(own, sealed) : own;
       },
     },
   };
+}
+
+/** Log each approval of the digest a rule did not count (#3841), so a wait says why. */
+function logRefused(log: (line: string) => void, label: string, check: GateCheck): void {
+  if (check.satisfied) return;
+  for (const { resolution: r, reason } of check.refused ?? []) log(`${label}: the approval by ${r.resolvedBy} at ${r.timestamp} does not count: ${reason}`);
 }
 
 /**
@@ -1011,6 +1022,7 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold): Promise<O
     ...(neverOverMcp ? { neverOverMcp: true } : {}),
   });
   const base = { op, gate: hold.request.gate, digest: hold.request.digest, hook: hold.label };
+  logRefused(log, `${op} / ${hold.request.gate}`, check);
   if (check.satisfied) return { ...base, status: "approved", approvedBy: check.resolution.resolvedBy, approvedAt: check.resolution.timestamp };
   const approve = approveCommand(op, hold.request.gate, undefined, hold.request.digest, mode === "sealed");
   log(`wave ${k} (${wave.name}) waits on ${op} / ${hold.request.gate}, which ${hold.label} holds it on: nobody approved ${hold.request.digest}. Approve: ${approve}`);
@@ -1564,6 +1576,7 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     decision.approvedAt = check.resolution.timestamp;
     return;
   }
+  logRefused(ctx.log, `wave ${k} (${wave.name})`, check);
   // #3821: what the wait is, for the after-gate hooks and the record.
   decision.pendingFact = check.pending;
   decision.recorded = check.recorded;

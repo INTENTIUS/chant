@@ -368,11 +368,12 @@ function readAt(cwd: string, at?: string): { declaration: Declaration; rootOnDis
  * The scope for a write from `cwd`: the declaration and the trust policy at
  * the base revision (`origin/HEAD`, `main` or `master`), so a write can't
  * widen its own scope by editing its copy of the declaration. Without a base,
- * or without a declaration at it, the working tree's declaration.
+ * or without a declaration at it, the working tree's declaration. `at` names
+ * the base instead, as an op wave's `--base` does (#3841).
  */
-export function scopeSource(cwd: string): ScopeSource {
+export function scopeSource(cwd: string, at?: string): ScopeSource {
   const top = gitRoot(cwd);
-  const base = top ? resolveBase(top) : null;
+  const base = top ? resolveBase(top, at) : null;
   const policy = top && base ? policyAtBase(top, base) : emptyPolicy(null);
   const withClasses = (read: NonNullable<ReturnType<typeof readAt>>) => {
     const { tree, ...rest } = read;

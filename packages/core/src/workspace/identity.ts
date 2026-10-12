@@ -179,8 +179,9 @@ export function gateAdmissionFrom(source: GateRuleSource, gate: string): GateAdm
  * The rule for `gate` in the workspace holding `cwd`, read at base (the
  * target branch tip), or null when there is no declaration or it names none.
  * What a run, `chant approve` and `workspace status` ask before counting an
- * approval.
+ * approval. `base` names the commit to read at instead, as an op wave reads
+ * every rule at its `--base` (#3841).
  */
-export function gateAdmission(cwd: string, gate: string): GateAdmission | null {
-  return gateAdmissionFrom(scopeSource(cwd), gate);
+export function gateAdmission(cwd: string, gate: string, base?: string): GateAdmission | null {
+  return gateAdmissionFrom(scopeSource(cwd, base), gate);
 }

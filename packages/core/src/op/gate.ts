@@ -90,9 +90,11 @@ export interface GateLedgerPort {
   /**
    * The rule a workspace sets for approvals of `gate` (#3163, ws-080), or
    * null when none applies: the declaration's `identity.gates`, read at base.
+   * `at.base` names that commit, as an op wave reads every rule at its
+   * `--base` (#3841); absent, origin/HEAD, else `main`, else `master`.
    * Absent, every approval is judged as before.
    */
-  approvalRule?(gate: string): Promise<GateApprovalRule | null>;
+  approvalRule?(gate: string, at?: { base?: string }): Promise<GateApprovalRule | null>;
   /** The approvals a wave applied under (#3784), from `_gates/<op>/applied.jsonl`. Absent on a port that never spends approvals. */
   readApplied?(op: string): Promise<AppliedGateRecord[]>;
   /** Record that a wave is about to apply under an approval (#3784), which spends it. */
@@ -132,10 +134,10 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       const { resolutions, pending } = await readGateLedger(op, opts);
       return { resolutions, pending };
     },
-    async approvalRule(gate) {
+    async approvalRule(gate, at) {
       // Loaded on demand: the rule lives in the workspace modules, which import the Op modules.
       const { gateAdmission } = await import("../workspace/identity");
-      return gateAdmission(opts?.cwd ?? process.cwd(), gate);
+      return gateAdmission(opts?.cwd ?? process.cwd(), gate, at?.base);
     },
     async appendResolution(input) {
       const { record } = await appendGateResolution(input, opts);
@@ -355,7 +357,19 @@ export type GateCheck =
       mismatch?: GateDigestMismatch;
       /** Present on a gate with a quorum (#2508): who has approved this plan so far. */
       quorum?: GateQuorumProgress;
+      /**
+       * Approvals of this gate and plan, newer than the standing pending fact,
+       * that the port's approval rule did not count, and why (#3841), oldest
+       * first. Absent when there are none.
+       */
+      refused?: GateRefusedApproval[];
     };
+
+/** An approval the port's {@link GateLedgerPort.approvalRule} did not count, and why. */
+export interface GateRefusedApproval {
+  resolution: GateResolutionRecord;
+  reason: string;
+}
 
 /** How a recorded approval reads: its own `approver`, or for a record written before #2508, a human unless a model-authored channel wrote it. */
 export function approverOf(record: GateResolutionRecord): GateApprover {
@@ -527,16 +541,24 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   const pending = env === undefined ? ledger.pending : ledger.pending.filter((p) => p.environment === env);
   // #3163: a gate the workspace's identity.gates names counts only signed approvals from its class.
   const rule = (await port.approvalRule?.(input.gate)) ?? null;
+  const standing = latestPendingGate(pending, input.gate);
+  const since = standing?.timestamp ?? EPOCH;
+  // #3841: an approval of this plan the rule refuses is named, so a wait says why.
+  const refused: GateRefusedApproval[] = [];
   const resolutions = (
     env === undefined
       ? ledger.resolutions
       : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env)
   )
-    .filter((r) => rule === null || r.gate !== input.gate || rule.refuses(r) === null)
-    .filter((r) => input.spent === undefined || r.gate !== input.gate || !isApprovalSpent(input.spent, r));
-
-  const standing = latestPendingGate(pending, input.gate);
-  const since = standing?.timestamp ?? EPOCH;
+    .filter((r) => input.spent === undefined || r.gate !== input.gate || !isApprovalSpent(input.spent, r))
+    .filter((r) => {
+      if (rule === null || r.gate !== input.gate) return true;
+      const reason = rule.refuses(r);
+      if (reason === null) return true;
+      if (samePlanDigest(r.planDigest, input.planDigest) && new Date(r.timestamp).getTime() >= new Date(since).getTime()) refused.push({ resolution: r, reason });
+      return false;
+    });
+  refused.sort((a, b) => new Date(a.resolution.timestamp).getTime() - new Date(b.resolution.timestamp).getTime());
 
   let mismatched: GateResolutionRecord | undefined;
   let quorum: GateQuorumProgress | undefined;
@@ -579,7 +601,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
         ...(env !== undefined ? { environment: env } : {}),
       }
     : undefined;
-  const asMismatch = { ...(mismatch ? { mismatch } : {}), ...(quorum ? { quorum } : {}) };
+  const asMismatch = { ...(mismatch ? { mismatch } : {}), ...(quorum ? { quorum } : {}), ...(refused.length > 0 ? { refused } : {}) };
 
   // A standing fact only stands for the plan it was recorded against. When
   // the plan has moved, re-recording is what gives `chant approve` (which
