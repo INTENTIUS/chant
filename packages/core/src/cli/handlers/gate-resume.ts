@@ -212,11 +212,36 @@ export async function resumeAfterAnswer(question: { id: string; subject: string 
   return reports.some((r) => r.status === "failed" || r.status === "no-token") ? 1 : 0;
 }
 
+/** What {@link resumeWaitingGates} reads. */
+export interface ResumeWaitingOptions extends ResumeGateOptions {
+  /** One op's gate ledger; absent, every gate ledger on `chant/lifecycle`. */
+  op?: string;
+  /** Only this gate's waiting job (#3854); absent, every gate's. */
+  gate?: string;
+}
+
 /**
- * `chant run resume [--op <op>] [--dry-run] [--json]`: the scheduled job.
- * Reads every gate ledger on `chant/lifecycle` (or `--op`'s), and starts
- * again each CI job that waits at a gate an approval now answers, or at a
- * gate whose decision point now has an answer that passes it (#3835).
+ * What `chant run resume` does, callable in process: read the gate ledgers
+ * (`op`'s alone, when given) and start again each CI job that waits at a
+ * gate an approval now answers. With `gate`, only that gate's job is touched,
+ * so a caller that just approved one wave resumes that wave's job and no
+ * other (#3854). The lifecycle ledger has to be readable
+ * (`requireLifecycleLedger`).
+ */
+export async function resumeWaitingGates(opts: ResumeWaitingOptions = {}): Promise<GateResumeReport[]> {
+  const { op, gate, ...rest } = opts;
+  const ops = op ? [op] : (await listFilesInDir(GATES_DIR)).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -".jsonl".length));
+  const reports: GateResumeReport[] = [];
+  for (const o of ops) reports.push(...(await resumeOpGates(o, gate, rest)));
+  return reports;
+}
+
+/**
+ * `chant run resume [--op <op>] [--gate <gate>] [--dry-run] [--json]`: the
+ * scheduled job. Reads every gate ledger on `chant/lifecycle` (or `--op`'s),
+ * and starts again each CI job that waits at a gate (or at `--gate` alone)
+ * an approval now answers, or at a gate whose decision point now has an
+ * answer that passes it (#3835).
  */
 export async function runResumeCommand(ctx: CommandContext): Promise<number> {
   try {
@@ -225,11 +250,11 @@ export async function runResumeCommand(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `Cannot read the gate ledgers: ${err instanceof Error ? err.message : String(err)}` }));
     return 1;
   }
-  const ops = ctx.args.op
-    ? [ctx.args.op]
-    : (await listFilesInDir(GATES_DIR)).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -".jsonl".length));
-  const reports: GateResumeReport[] = [];
-  for (const op of ops) reports.push(...(await resumeOpGates(op, undefined, { dryRun: ctx.args.dryRun === true })));
+  const reports = await resumeWaitingGates({
+    ...(ctx.args.op ? { op: ctx.args.op } : {}),
+    ...(ctx.args.gate ? { gate: ctx.args.gate } : {}),
+    dryRun: ctx.args.dryRun === true,
+  });
   if (ctx.args.json) console.log(JSON.stringify({ reports }, null, 2));
   else {
     for (const r of reports.filter((r) => r.status !== "not-approved")) printReport(r);
