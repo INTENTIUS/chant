@@ -7,6 +7,8 @@ order: 3
 
 `tsc` sees a tagged template's text as a plain string, so on its own it cannot tell that `${orders.columns.emial}` names no column. `chant sql types` closes the gap: it builds the project and writes the columns of every table, view and dictionary the build declares as TypeScript declarations. A tag that names its object as a type argument then returns typed columns.
 
+The example `lexicons/sql/examples/postgres-typed-columns` shows the whole setup: typed declarations, a committed `sql-types.d.ts`, `RowOf`, and its own tsconfig so the augmentation stays out of other programs. A test runs plain `tsc` over it and plants a misspelled column to see it fail.
+
 ## Name the declaration
 
 Give the `table`, `view` or ClickHouse `dictionary` tag the object's qualified name as its type argument:
