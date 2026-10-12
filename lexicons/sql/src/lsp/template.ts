@@ -5,7 +5,7 @@
  * is and which module's tags count.
  */
 
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { isTrivia, tokenize, type Token } from "../clickhouse/tokens";
 import { parseCreate, type Span } from "../clickhouse/parser";
 import { CLICKHOUSE_TEMPLATE_SOURCE, findTemplates, type FoundTemplate, type SqlTag } from "../lint/rules/templates";

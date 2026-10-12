@@ -7,7 +7,7 @@
  * because of the module it is imported from.
  */
 
-import type * as ts from "typescript";
+import type { ts } from "@intentius/chant/lint/typescript";
 import { tokenize, type Token } from "../../clickhouse/tokens";
 import { findSqlTemplates, type FoundTemplate as SqlFoundTemplate, type TemplateSource } from "../../core/find-templates";
 

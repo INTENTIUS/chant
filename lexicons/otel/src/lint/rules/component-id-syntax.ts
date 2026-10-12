@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { isComponentId } from "../../model";
 import { calleeName, COMPONENT_CLASS, literalText, position, propertyName } from "./otel-ast";

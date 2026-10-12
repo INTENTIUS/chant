@@ -25,7 +25,7 @@
  * to do with Cedar is never flagged.
  */
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /** Module specifiers whose exports construct Cedar declarables. */
 const CEDAR_MODULE = /chant-lexicon-cedar/;

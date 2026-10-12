@@ -1,5 +1,5 @@
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * Render's regions, per the `region` enum in the Public API spec. The generated

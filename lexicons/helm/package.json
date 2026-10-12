@@ -87,7 +87,6 @@
   },
   "peerDependencies": {
     "@intentius/chant": "^0.124.11",
-    "typescript": "^5.9.3",
     "zod": "^4.3.6"
   }
 }

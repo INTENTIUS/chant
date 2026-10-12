@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { calleeName, COMPONENT_CLASS, literalText, position, propertyName } from "./otel-ast";
 // Shared with OTEL120, which applies the same check to the emitted YAML.

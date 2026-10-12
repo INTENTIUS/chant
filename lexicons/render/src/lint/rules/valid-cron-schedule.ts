@@ -1,5 +1,5 @@
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /** One cron field: `*`, a number, a range, a list, or any of those with a `/step`. */
 const FIELD = String.raw`(?:\*|\d+(?:-\d+)?)(?:,(?:\*|\d+(?:-\d+)?))*(?:\/\d+)?`;

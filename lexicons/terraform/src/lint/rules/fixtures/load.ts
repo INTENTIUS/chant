@@ -29,7 +29,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintContext } from "@intentius/chant/lint/rule";
 
 const FIXTURES_DIR = dirname(fileURLToPath(import.meta.url));

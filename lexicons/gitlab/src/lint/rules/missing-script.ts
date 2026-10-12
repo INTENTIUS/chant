@@ -6,7 +6,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { isJobFromAnotherLexicon } from "./import-source";
 
 const VALID_EXECUTION_PROPS = new Set(["script", "trigger", "run"]);

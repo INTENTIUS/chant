@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /** The constructor name of a `new X(...)` or `X(...)` expression, if it is a plain or dotted name. */
 export function calleeName(node: ts.CallExpression | ts.NewExpression): string | undefined {

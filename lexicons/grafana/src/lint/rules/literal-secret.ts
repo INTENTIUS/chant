@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { constInitializers, constructorArgs, literalText, position, propertyName, resolveObject } from "./grafana-ast";
 import { CONTACT_POINT_SECRET_SETTINGS, EXPANDED_VALUE as EXPANDED } from "../../contact-point-secrets";

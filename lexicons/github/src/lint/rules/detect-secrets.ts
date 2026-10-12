@@ -6,7 +6,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { secretPatterns } from "./data/secret-patterns";
 
 export const detectSecretsRule: LintRule = {

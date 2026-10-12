@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { SLACK_APP_URL } from "../../validate-integrations";
 import { calleeName, constInitializers, CREDENTIAL_CLASS, literalText, position, propertyName, resolveConst } from "./prom-ast";

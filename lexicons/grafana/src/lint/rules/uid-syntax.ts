@@ -1,4 +1,4 @@
-import type * as ts from "typescript";
+import type { ts } from "@intentius/chant/lint/typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { UID_PATTERN } from "../../util";
 import { VARIABLE_NAME } from "../../variables";

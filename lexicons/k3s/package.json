@@ -50,8 +50,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.11",
-    "typescript": "^5.9.3"
+    "@intentius/chant": "^0.124.11"
   },
   "description": "k3s lexicon for chant — the k3s distro's host configuration as declarable data",
   "license": "Apache-2.0",

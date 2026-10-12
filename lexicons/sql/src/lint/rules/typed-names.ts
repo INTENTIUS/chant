@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /** The generated file's name, beside the source (`chant sql types`). */
 export const SQL_TYPES_FILE = "sql-types.d.ts";
