@@ -38,6 +38,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `gateName` | The pattern of wave k's gate name: `{gate}` and `{k}` are filled in. Default `{gate}-wave-{k}` ([Keep a product's gate names](#keep-a-products-gate-names)) |
 | `digest` | `{ "over": "changing" }` makes the set digest cover only the runs whose plan is not empty. Default `{ "over": "all" }` |
 | `override` | `{ "overriders": "<file>" }`: who may override a run the product's policy denied, read at the base commit. Default `.chant/overriders` ([Policy denials](#policy-denials)) |
+| `point` | A decision point every wave's gate asks in place of the ledger, read at the base commit ([Ask a decision point](#ask-a-decision-point)) |
 | `neverOverMcp` | The waves' pending facts carry `neverOverMcp`, so their gates are never approved over MCP or ACP. Read at the base commit too |
 | `branches` | Pushes to these branches run the waves. Default `["main"]` |
 | `base` | The commit the gate policy is read from. Default `HEAD^1` |
@@ -46,6 +47,7 @@ The spec is a JSON file committed to the repository. Its jobs read it at run tim
 | `waves[].rest` | On the last, discovering wave: once it applies, the job goes on through every wave the plan found |
 | `waves[].gate` | `always`, `on-destructive` or `never`. Default `always` |
 | `waves[].approval` | `ledger`, `pr-review` or `sealed`: which approvals count ([Which approvals count](#which-approvals-count)). Default `ledger` |
+| `waves[].point` | This wave's own decision point, in place of the spec's |
 | `waves[].shares` | Split a wide wave into a deciding job and this many share jobs |
 | `waves[].hooks` | This wave's own hooks, run after the spec's |
 | `waves[].environment`, `variables`, `setup` | The wave's forge environment, its jobs' variables, and steps run after the checkout |
@@ -76,7 +78,7 @@ Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push 
 
 `chant run wave --spec waves.json --wave <k>` does three things:
 
-1. Reads the wave's `gate`, `approval` and hooks from the spec file at the base commit.
+1. Reads the wave's `gate`, `approval`, `point` and hooks from the spec file at the base commit.
 2. Plans every run in wave `k` with the `plan` command (or once with `planWave`), and decides.
 3. Runs `apply` for each run, or `applyWave` once for the set.
 
@@ -418,6 +420,30 @@ chant approve migrations migrations-wave-3 --plan jcs1-sha256:... --actor github
 
 The signers file is read at the base commit, like the policy. A pull request that adds its author's key to it cannot use that key to approve its own waves. Without a signers file at base, no approval counts.
 
+## Ask a decision point
+
+A wave whose gate should be decided by a workspace [decision point](/chant/guide/ops/#a-gate-that-asks-a-decision-point), the way an Op gate with a `point` is, names the point on the spec, or on one wave:
+
+```json
+{ "point": { "name": "prod-apply", "timeout": "48h" } }
+```
+
+`point` takes a point's name, or `{ name, inputs?, pass?, store?, timeout? }`. `inputs`, `pass` and `store` mean what they mean on an Op gate, and `timeout` is how long the pending fact stands (default 48h). A wave's own `point` wins over the spec's. Like the policy, it is read at the base commit: a change can neither add a point to its own gate nor drop one, and a point at base that cannot be asked (a bad name, an unknown field) fails the wave rather than fall back to the ledger.
+
+When the policy asks for an approval, the wave asks the point with `gate.planDigest` set to its set digest, under the subject `gate:<name>/<gate>`. The point has to declare that input, so each plan is its own question and a yes for one digest never passes another. Then:
+
+| The question | The wave |
+|---|---|
+| open | applies nothing and exits 3. Its pending fact cites the question, and `approve` in the decision is the `chant workspace points answer <id> --answer <answer> --by <name>` line |
+| answered with an answer `pass` names (default yes) | records a resolution on `chant/lifecycle` that cites the answer, once per answer and digest, and applies (`via: "point"`) |
+| answered otherwise | applies nothing and exits 8. The decision is `refused` with `refused.reason: "point"`, every run, and the message naming the record. `chant workspace points retract <id>` takes the answer back so the point is asked again |
+
+A `chant approve` of the digest does not pass such a gate, and the wave's `approval` mode does not apply: the point's deciders and quorum decide. `approvals.spend` does not re-ask a point either, since the same plan asks the same question. A wide wave's deciding job asks the point, and its share jobs exit 3 or 8 with it.
+
+Once the question is answered, `chant run resume --op <name>` (or the scheduled resume job) starts the waiting job again, as for any [gate that asks a decision point](#a-gate-that-asks-a-decision-point). In a CI job the question goes to the ledger unless `point.store` says otherwise, so it outlives the job's checkout.
+
+From code, `runOpWave` takes `points`, the asker to use. The default reads the workspace in the job's working directory; a tool that bundles chant passes `chantGatePointAsker` from `@intentius/chant/point-decision`.
+
 ## Spend an approval
 
 By default an approval of a digest passes that digest whenever it is planned. Re-run a wave job, or revert a change and merge it again, and the wave applies the same plans under the same approval. With `approvals.spend` an approval is good for one apply, as terragucci's wave gate has it:
@@ -485,7 +511,7 @@ A pending fact the product recorded before the move still stands for its digest,
 
 ## Where the policy is read from
 
-The policy, the approval mode, the spend rule and the hooks for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
+The policy, the approval mode, the decision point, the spend rule and the hooks for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
 
 The same goes for hooks. A change cannot add, edit or remove a hook that its own apply runs, and the log says so when the change's hooks differ from the ones at base. A wave or file missing at base has no hooks. If the hooks at base are malformed, none of them run and the wave waits for an approval.
 

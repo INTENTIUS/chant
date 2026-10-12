@@ -37,6 +37,15 @@
  *   {@link runOpWaveApplyHooks}, and their outcomes come back through
  *   `CHANT_HOOKS_RESULT`. A non-wave apply reads the same hooks at base with
  *   {@link opWaveHooksAtBase}.
+ * - Point (#3836): with `point` at base (the wave's, else the spec's), a wave
+ *   that needs an approval asks that decision point through
+ *   `evaluatePointGate` (`../point-decision.ts`) with `gate.planDigest` set to
+ *   its set digest: an open question waits (exit 3, the pending fact cites
+ *   it, `approve` is the `points answer` line), an answer the gate passes on
+ *   records the resolution that cites it and the wave goes on, and any other
+ *   answer refuses the wave (`refused.reason: "point"`, exit 8). Once the
+ *   question is answered, `chant run resume --op <name>` starts the job again
+ *   (`pointGateResumable`, #3835).
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -45,7 +54,9 @@ import { dirname, isAbsolute, join, posix } from "node:path";
 import { waveSetDigest, type WaveMember } from "../gated-waves";
 import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateDigestMismatch, type GateLedgerPort } from "./gate";
-import type { PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GatePointAsker } from "../point-decision";
+import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
@@ -60,6 +71,8 @@ import {
   opWaveApplyHooksRunBy,
   opWaveGateName,
   opWaveHooksAt,
+  opWavePointAt,
+  opWavePointProblems,
   opWaveRecordPath,
   opWaveShare,
   type GateApprovalSource,
@@ -68,6 +81,7 @@ import {
   type OpWaveGatePolicy,
   type OpWaveHook,
   type OpWaveHookMoment,
+  type OpWavePoint,
   type OpWaveRun,
   type OpWavesSpec,
 } from "./op-waves";
@@ -169,8 +183,14 @@ export interface OpWaveDecision {
    */
   status: "approved" | "not-required" | "waiting" | "refused";
   approvedBy?: string;
-  /** How the approval arrived: a resolution on the ledger, or the merged pull request's review (#3684). */
-  via?: "ledger" | "pr-review";
+  /** How the approval arrived: a resolution on the ledger, the merged pull request's review (#3684), or a decision point's answer (#3836). */
+  via?: "ledger" | "pr-review" | "point";
+  /**
+   * The decision point the gate asks, as read at base (#3836), and what it
+   * said: the open `question` while the wave waits, the `answer` once it is
+   * answered (the one that passed, or the one that refused the wave).
+   */
+  point?: OpWavePoint & { question?: WaitingPoint; answer?: GateAnswerRef };
   /** The review that approved the wave, or why the review did not, under `pr-review`. */
   review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
   /** The command that approves this digest, when waiting. */
@@ -208,8 +228,19 @@ export interface OpWaveDecision {
   waitingSince?: string;
   /** While waiting: the newest approval of this gate for another digest, which the plans moved away from. */
   mismatch?: GateDigestMismatch;
-  /** Why a `refused` wave applies nothing (#3821): the runs the policy denied, and whether an override stands for an earlier plan or other rules. */
-  refused?: { reason: "policy" | "override-moved"; runs: string[]; /** Where the plans file said its overriders come from (#3848), when it did. */ overridersSource?: string };
+  /**
+   * Why a `refused` wave applies nothing: the runs the policy denied, and
+   * whether an override stands for an earlier plan or other rules (#3821,
+   * exit 7); or `point`, the gate's decision point answered with an answer
+   * it does not pass on (#3836, exit 8), with every run and the `message`.
+   */
+  refused?: {
+    reason: "policy" | "override-moved" | "point";
+    runs: string[];
+    message?: string;
+    /** Where the plans file said its overriders come from (#3848), when it did. */
+    overridersSource?: string;
+  };
   /**
    * A hook held the wave on another gate (#3821), such as a state migration
    * behind its own: that gate, its digest, and how it came out. While it
@@ -440,6 +471,10 @@ export interface OpWaveBaseRules {
   applyHooksRunBy: OpWaveApplyHooksRunner;
   /** The spec at base sets `neverOverMcp` (#3821). */
   neverOverMcp: boolean;
+  /** The decision point the wave's gate asks, as read at base (#3836): the wave's, else the spec's. */
+  point?: OpWavePoint;
+  /** Set when the point at base cannot be asked: the wave fails rather than fall back to the ledger (#3836). */
+  pointRefused?: string;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -471,12 +506,14 @@ export function readOpWavePolicy(
   // The spend rule is the spec's, so it holds for a wave the base does not have yet.
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
+  // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
+  const asks = pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`);
   const wave = spec.waves.find((w) => w.name === name);
-  if (!wave) return { ...absent, spend, neverOverMcp };
+  if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
   // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
   const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
-  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, applyHooksRunBy: "chant", neverOverMcp };
+  const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, applyHooksRunBy: "chant", neverOverMcp, ...asks };
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
@@ -487,6 +524,15 @@ export function readOpWavePolicy(
     rules.hooksRefused = `the hooks at base cannot be run (${err instanceof Error ? err.message : String(err)})`;
   }
   return rules;
+}
+
+/** The point wave `name` asks at base (#3836), or why it cannot be asked. */
+function pointAtBase(spec: OpWavesSpec, name: string, where: string): Pick<OpWaveBaseRules, "point" | "pointRefused"> {
+  const raw = spec.waves.find((w) => w.name === name)?.point ?? spec.point;
+  if (raw === undefined) return {};
+  const problems = opWavePointProblems(raw);
+  if (problems.length > 0) return { pointRefused: `the decision point at base cannot be asked (${where}: ${problems.join("; ")})` };
+  return { point: opWavePointAt(spec, name)! };
 }
 
 /** Fill one argv template. A placeholder whose value is not given is left as it is. */
@@ -547,6 +593,8 @@ export interface RunOpWaveOptions {
   trust?: (base: string) => TrustPolicy;
   /** The signers at base, for a sealed override of a policy denial (#3821). Default: `gateSignersAt` from `@intentius/chant/gate-decision`. */
   signers?: (base: string) => GateSigners;
+  /** How a gate with a `point` asks it (#3836). Default: `workspaceGatePointAsker` over `cwd`. A tool that bundles chant passes `chantGatePointAsker`. */
+  points?: GatePointAsker;
 }
 
 export interface RunOpWaveResult {
@@ -555,7 +603,8 @@ export interface RunOpWaveResult {
    * approval, 4 a plan moved since the decision, 5 the apply applied nothing
    * because another run holds what it changes, 6 the apply stood down for a
    * newer run, 7 the product's policy denied a run and no override counts
-   * (5, 6 and 7: #3821).
+   * (5, 6 and 7: #3821), 8 the gate's decision point was answered with an
+   * answer it does not pass on (#3836).
    */
   exitCode: number;
   /** Set when the apply applied nothing and stood down or was held by another run (#3821): not a failure. */
@@ -1240,7 +1289,7 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     ctx.gateRule = { approval: decision.approval, base: decision.base, neverOverMcp: decision.neverOverMcp === true };
     if (decision.status === "waiting" || decision.status === "refused") {
       log(`wave ${k} (${wave.name}) is ${decision.status === "refused" ? "refused by its policy" : `waiting on ${decision.heldOn?.gate ?? decision.gate}`}; nothing applied. ${decision.approve ?? ""}`.trim());
-      return { ...result, exitCode: decision.status === "refused" ? 7 : 3 };
+      return { ...result, exitCode: decision.status === "refused" ? refusedExit(decision) : 3 };
     }
     // The share runs the hooks its deciding job read at base, around its own slice.
     if (wave.discover) {
@@ -1282,6 +1331,12 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
   const neverOverMcp = rules.neverOverMcp || spec.neverOverMcp === true;
   ctx.gateRule = { approval, base, neverOverMcp };
   noteHooksAtBase(ctx, rules);
+  // #3836: a point at base that cannot be asked fails the wave; the ledger never stands in for it.
+  if (rules.pointRefused) return failed(ctx, `wave ${k} (${wave.name}): ${rules.pointRefused}, so nothing in it was planned or applied`);
+  const own = opWavePointAt(spec, wave.name);
+  if (JSON.stringify(own) !== JSON.stringify(rules.point)) {
+    log(`wave ${k} (${wave.name}): its gate's decision point is read at ${base.slice(0, 12)} (${rules.point?.name ?? "none"}), and this change's differs (${own?.name ?? "none"}); the one at base holds`);
+  }
   const holds: string[] = [];
   if (rules.hooksRefused) {
     holds.push(rules.hooksRefused);
@@ -1306,6 +1361,7 @@ async function runOneWave(options: RunOpWaveOptions, k: number, prior: OpWaveDec
     ...(rules.applyHooksRunBy === "apply" ? { applyHooksRunBy: "apply" as const } : {}),
     ...(spec.digest?.over === "changing" ? { digestOver: "changing" as const } : {}),
     ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
+    ...(rules.point ? { point: { ...rules.point } } : {}),
   };
   const before = await runHooks(ctx, "before-plan", rules.hooks["before-plan"], wave.runs);
   if (before.failed) return failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`);
@@ -1382,6 +1438,10 @@ async function decided(ctx: WaveContext, decision: OpWaveDecision, recordPath: s
   if (decision.status === "waiting") {
     log(`Nothing in wave ${k} or after it ran. ${decision.heldOn ? `It waits on ${decision.heldOn.op} / ${decision.heldOn.gate}.` : "Read the plans, then"} approve: ${decision.approve} (with --resume, the approval also starts this job again)`);
     return { ...result, exitCode: 3 };
+  }
+  if (decision.status === "refused" && decision.refused?.reason === "point") {
+    log(`Nothing in wave ${k} (${wave.name}) or after it ran: ${decision.refused.message}`);
+    return { ...result, exitCode: 8 };
   }
   if (decision.status === "refused") {
     log(`Nothing in wave ${k} (${wave.name}) or after it ran: the policy denied ${decision.refused?.runs.join(", ")}, and no override counts for ${decision.refused?.runs.length === 1 ? "it" : "them"}.`);
@@ -1540,6 +1600,11 @@ async function spendOverrides(ctx: WaveContext, decision: OpWaveDecision): Promi
   return true;
 }
 
+/** The exit code of a refused wave: 8 when its decision point refused it (#3836), 7 when the product's policy did (#3821). */
+function refusedExit(decision: OpWaveDecision): number {
+  return decision.refused?.reason === "point" ? 8 : 7;
+}
+
 function failed(ctx: WaveContext, line: string): RunOpWaveResult {
   ctx.log(line);
   ctx.result.exitCode = 1;
@@ -1552,6 +1617,7 @@ function failed(ctx: WaveContext, line: string): RunOpWaveResult {
  * asks for one, or when a hook holds the wave (#3762).
  */
 async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<void> {
+  if (decision.point) return settlePointGate(options, ctx, decision, decision.point);
   const { spec, k, wave, cwd } = ctx;
   const { gate, digest, approval, base, policy, members } = decision;
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
@@ -1605,6 +1671,54 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
 }
 
+/**
+ * Decide a gate that asks a decision point (#3836), as an Op gate with a
+ * `point` is decided (#3170): ask it with `gate.planDigest` set to the set
+ * digest, then wait on an open question, pass on an answer the gate passes
+ * on, or refuse the wave on any other. The wave's `approval` mode and spent
+ * approvals do not apply: the point's deciders and quorum decide, and a
+ * `chant approve` of the digest does not pass it.
+ */
+async function settlePointGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, point: NonNullable<OpWaveDecision["point"]>): Promise<void> {
+  const { spec, k, wave, cwd, log } = ctx;
+  const { gate, digest, policy, members } = decision;
+  if (decision.approval !== "ledger") log(`wave ${k} (${wave.name}): its gate asks decision point ${point.name}, so its approval mode (${decision.approval}) does not apply`);
+  const { evaluatePointGate } = await import("../point-decision");
+  const asker = options.points ?? (await import("./gate-point-run")).workspaceGatePointAsker(cwd);
+  const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
+  const check = await evaluatePointGate(options.gates ?? gitGateLedgerPort({ cwd }), asker, {
+    op: spec.name,
+    gate,
+    point: { name: point.name, ...(point.pass ? { pass: point.pass } : {}), ...(point.store ? { store: point.store } : {}) },
+    ...(point.inputs ? { inputs: point.inputs } : {}),
+    description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, decision point ${point.name}${held}`,
+    ...(point.timeout ? { timeout: point.timeout } : {}),
+    planDigest: digest,
+    ...(options.now ? { now: options.now } : {}),
+  });
+  if (check.satisfied) {
+    decision.status = "approved";
+    decision.via = "point";
+    decision.approvedBy = check.resolution.resolvedBy;
+    decision.approvedAt = check.resolution.timestamp;
+    point.answer = check.answer;
+    return;
+  }
+  if ("refused" in check) {
+    decision.status = "refused";
+    decision.refused = { reason: "point", runs: members.map((m) => m.member), message: check.refused };
+    point.answer = check.answer;
+    return;
+  }
+  decision.status = "waiting";
+  decision.pendingFact = check.pending;
+  decision.recorded = check.recorded;
+  decision.waitingSince = check.pending.timestamp;
+  point.question = check.waiting;
+  decision.approve = `chant workspace points answer ${check.waiting.id} --answer <answer> --by <your name>`;
+  log(`wave ${k} (${wave.name}) asks decision point ${point.name} about ${digest}: question ${check.waiting.id} is ${check.waiting.state}`);
+}
+
 /** Write the decision record, with every hook's outcome so far (#3804). */
 function writeRecord(recordPath: string, decision: OpWaveDecision, result: RunOpWaveResult): void {
   if (result.hooks.length > 0) decision.outcomes = [...result.hooks];
@@ -1627,6 +1741,13 @@ async function settleHolds(
   decision.heldBy = [...(decision.heldBy ?? []), ...holds];
   await settleGate(options, ctx, decision);
   if (recordPath) writeRecord(recordPath, decision, result);
+  if (decision.status === "refused") {
+    // #3836: the gate's decision point refused the held wave.
+    if (recordPath) await runGateHooks(ctx, decision, recordPath);
+    log(`wave ${k} (${wave.name}) is held by ${holds.join(", ")}; nothing applied: ${decision.refused?.message ?? "refused"}`);
+    result.exitCode = refusedExit(decision);
+    return false;
+  }
   if (decision.status === "waiting") {
     // #3821: the gate decided again, and the wave now waits: the after-gate hooks hear so.
     if (recordPath) await runGateHooks(ctx, decision, recordPath);
@@ -1856,7 +1977,7 @@ async function applyStage(
     return;
   }
   if (waiting) {
-    result.exitCode = 3;
+    result.exitCode = decision.status === "refused" ? refusedExit(decision) : 3;
     return;
   }
   if (result.failed.length > 0) {

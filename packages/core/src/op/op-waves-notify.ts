@@ -7,7 +7,8 @@
  * `refused`. A wave whose plan, apply or stage hook failed (exit 1) sends
  * `failed`. A wave the product's policy refused (exit 7, #3821) sends
  * `refused` with the runs it denied, and one whose apply was held by another
- * run (exit 5) sends `refused` with status `held`; one that stood down for a
+ * run (exit 5) sends `refused` with status `held`, and one whose decision
+ * point refused it (exit 8, #3836) sends `refused` with status `point`; one that stood down for a
  * newer run (exit 6) sends nothing. A share job of a waiting wave sends nothing, since its deciding
  * job already did, unless a hook in the share job itself held it (#3762). Delivery is `../notify.ts`: it never throws, and the job's exit code
  * is what the wave decided.
@@ -56,6 +57,17 @@ export function opWaveNotifyFields(spec: OpWavesSpec, k: number, outcome: OpWave
         : decision.review?.reason
           ? { reason: decision.review.reason }
           : {}),
+    };
+  }
+  if (result.exitCode === 8 && decision?.refused?.reason === "point") {
+    // #3836: the gate's decision point was answered with an answer it does not pass on.
+    return {
+      ...base,
+      event: "refused",
+      status: "point",
+      summary: `${label} refused: decision point ${decision.point?.name ?? ""} answered ${JSON.stringify(decision.point?.answer?.answer ?? null)}`,
+      targets: decision.refused.runs,
+      ...(decision.refused.message ? { reason: decision.refused.message } : {}),
     };
   }
   if (result.exitCode === 7 && decision?.refused) {
