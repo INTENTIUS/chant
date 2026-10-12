@@ -6,17 +6,26 @@
  */
 
 import { execFile } from "node:child_process";
+import { ghHostEnv } from "@intentius/chant/op/activities/gh-host";
 
 /** Runs `git` or `gh`, returning stdout. Rejects on a non-zero exit. */
 export type CommandRunner = (bin: "git" | "gh", args: string[], cwd: string) => Promise<string>;
 
-export const defaultRunner: CommandRunner = (bin, args, cwd) =>
-  new Promise((resolve, reject) => {
-    execFile(bin, args, { cwd, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" }, (err, stdout, stderr) => {
+/**
+ * Runs the command in `cwd`. `gh issue` and `gh pr` name no host, so a `gh`
+ * call is told the job's forge or `cwd`'s `origin` host (core's
+ * `ghHostEnv`, #3780, #3798): a GitHub Enterprise Server checkout is not sent
+ * to github.com.
+ */
+export const defaultRunner: CommandRunner = async (bin, args, cwd) => {
+  const env = bin === "gh" ? await ghHostEnv(process.env, cwd) : process.env;
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { cwd, env, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" }, (err, stdout, stderr) => {
       if (err) reject(new Error(`${bin} ${args.join(" ")} failed: ${(stderr || err.message).trim()}`));
       else resolve(stdout);
     });
   });
+};
 
 export interface Release {
   tag: string;

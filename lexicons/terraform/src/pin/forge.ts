@@ -6,6 +6,12 @@
  * (#2550) opens its pull request: `gh pr list --head`, `gh pr create`, and
  * `gh api` for the commit's check runs and statuses. A test, or a caller with
  * its own forge client, passes a {@link PinForge} instead.
+ *
+ * None of those calls names a host. The rollout's default runner hands `gh`
+ * the job's forge or `origin`'s host (core's `ghHostEnv`, #3798), so a GitHub
+ * Enterprise Server checkout is answered by its own instance. `gh pr` speaks
+ * GraphQL, which Forgejo does not serve, so a rollout on Forgejo passes its
+ * own {@link PinForge}.
  */
 
 import type { CommandRunner } from "@intentius/chant/op/activities/propose-upgrade";

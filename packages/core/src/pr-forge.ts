@@ -2,7 +2,8 @@
  * What chant and the products built on it ask of a forge: keep one comment
  * (a merge request note on GitLab) on a pull request up to date, set a commit
  * status, keep one tracking issue in the repository, list who approved a pull
- * request, and find the pull request that merged a commit.
+ * request, find the pull request that merged a commit, and open or edit a
+ * pull request (a merge request on GitLab) for a branch.
  *
  * The pull-request loop (#3183) uses the note, the status and the review
  * calls. `reconcilePr`'s `comment` and `issue` finding modes post through the
@@ -20,6 +21,10 @@
  * A reviewer is named the way #3163 names a person: `github:<login>`,
  * `gitlab:<login>`, or `<forge>@<host>:<login>` off the forge's default host.
  * The apply compares that string with the approval's `resolvedBy`.
+ *
+ * Opening a pull request goes over REST too (#3798): `gh pr` speaks GitHub's
+ * GraphQL, which Forgejo does not serve, so chant's own pull-request paths
+ * open theirs through {@link PrForge.openPullRequest} on Forgejo and GitLab.
  *
  * Like `./pr-loop.ts`, this bundles without the TypeScript toolchain (#3421):
  * it imports nothing but `node:fs`, to read a CI job's event payload.
@@ -179,6 +184,34 @@ export interface IssueResult {
   created?: string;
 }
 
+/** A pull request (merge request) for {@link PrForge.openPullRequest} to open. */
+export interface PullRequestSpec {
+  /** The branch with the change, in the same repository. */
+  head: string;
+  /** The branch it merges into. Default: the repository's default branch, read from the forge. */
+  base?: string;
+  title: string;
+  body: string;
+  /**
+   * Open it as a draft: GitHub's `draft`, GitLab's `Draft: ` title prefix,
+   * Forgejo's `WIP: ` title prefix (it has no draft field).
+   */
+  draft?: boolean;
+}
+
+/** A pull request (merge request) as the forge answered it. */
+export interface PullRequest {
+  /** The pull request's number, or the merge request's iid. */
+  number: number;
+  url?: string;
+  title: string;
+  body: string;
+  /** Its head (source) branch. */
+  head: string;
+  /** Its base (target) branch. */
+  base?: string;
+}
+
 export interface PrForge {
   kind: ForgeKind;
   /** Lower-cased, such as `github.com`. */
@@ -241,6 +274,22 @@ export interface PrForge {
   approvers(pr: number): Promise<string[]>;
   /** The merged pull request that produced `sha`, or null. */
   pullRequestFor(sha: string): Promise<number | null>;
+  /**
+   * Open a pull request (a merge request on GitLab) from `head` into `base`,
+   * or into the default branch when `base` is not given. Over REST on every
+   * forge, so it works on Forgejo, where `gh pr create` cannot (#3798).
+   */
+  openPullRequest(spec: PullRequestSpec): Promise<PullRequest>;
+  /**
+   * The OPEN pull request whose head is branch `head` in this repository (a
+   * fork's branch of the same name is not it), or undefined. The oldest when
+   * there are several.
+   */
+  findPullRequest(head: string): Promise<PullRequest | undefined>;
+  /** Change an open pull request's title or body. */
+  editPullRequest(pr: number, change: { title?: string; body?: string }): Promise<PullRequest | undefined>;
+  /** Add labels to a pull request by name. Forgejo needs them to exist; GitHub and GitLab make them. */
+  addLabels(pr: number, labels: readonly string[]): Promise<void>;
 }
 
 /** A GitHub or Forgejo client. */
@@ -460,6 +509,21 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     return { id, body: str(v.body) ?? "", ...(created ? { created } : {}), ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
   };
   const threads = (items: unknown[]): Thread[] => items.map(thread).filter((t): t is Thread => t !== undefined);
+  const pull = (v: unknown): PullRequest | undefined => {
+    if (!isObject(v)) return undefined;
+    const number = num(v.number);
+    const head = isObject(v.head) ? str(v.head.ref) : undefined;
+    if (number === undefined) return undefined;
+    const base = isObject(v.base) ? str(v.base.ref) : undefined;
+    const url = str(v.html_url);
+    return { number, title: str(v.title) ?? "", body: str(v.body) ?? "", head: head ?? "", ...(base ? { base } : {}), ...(url ? { url } : {}) };
+  };
+  /** A pull request whose head branch lives in this repository, not a fork. */
+  const fromHere = (v: unknown, head: string): boolean => {
+    if (!isObject(v) || !isObject(v.head) || v.head.ref !== head) return false;
+    const full = isObject(v.head.repo) ? str(v.head.repo.full_name) : undefined;
+    return full === undefined || full.toLowerCase() === opts.repo.toLowerCase();
+  };
   const t: Threads = {
     comments: async (pr) => threads(await api.list(`${repo}/issues/${pr}/comments`, pageParams, pageSize)),
     addComment: async (pr, body) => thread(await api.call("POST", `${repo}/issues/${pr}/comments`, { body })),
@@ -523,7 +587,42 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const pick = (exact ?? merged[0]) as Record<string, unknown> | undefined;
       return pick && typeof pick.number === "number" ? pick.number : null;
     },
+    async openPullRequest(spec) {
+      const base = spec.base ?? (await defaultBranchOf(api, repo, "default_branch"));
+      const title = spec.draft && kind === "forgejo" ? `WIP: ${spec.title}` : spec.title;
+      const made = await api.call("POST", `${repo}/pulls`, {
+        title,
+        body: spec.body,
+        head: spec.head,
+        base,
+        ...(spec.draft && kind === "github" ? { draft: true } : {}),
+      });
+      return pull(made) ?? { number: 0, title, body: spec.body, head: spec.head, base };
+    },
+    async findPullRequest(head) {
+      // GitHub filters by `owner:branch` server-side; Forgejo's list takes no
+      // head filter, so every open page is read and matched here.
+      const owner = opts.repo.split("/")[0];
+      const query = kind === "github" ? `?state=open&head=${encodeURIComponent(`${owner}:${head}`)}` : "?state=open";
+      const open = (await api.list(`${repo}/pulls${query}`, pageParams, pageSize)).filter((p) => fromHere(p, head));
+      return open.map(pull).filter((p): p is PullRequest => p !== undefined).sort((a, b) => a.number - b.number)[0];
+    },
+    async editPullRequest(pr, change) {
+      return pull(await api.call("PATCH", `${repo}/pulls/${pr}`, { ...(change.title !== undefined ? { title: change.title } : {}), ...(change.body !== undefined ? { body: change.body } : {}) }));
+    },
+    async addLabels(pr, labels) {
+      if (labels.length === 0) return;
+      await api.call("POST", `${repo}/issues/${pr}/labels`, { labels: [...labels] });
+    },
   };
+}
+
+/** The repository's default branch, from `GET` on the repository (`/repos/{repo}`, `/projects/{id}`). */
+async function defaultBranchOf(api: Transport, path: string, field: string): Promise<string> {
+  const r = await api.call("GET", path);
+  const branch = isObject(r) ? str(r[field]) : undefined;
+  if (!branch) throw new Error(`${path} names no default branch to open the pull request against; pass base`);
+  return branch;
 }
 
 /** A GitHub client (github.com or GitHub Enterprise Server). */
@@ -583,6 +682,14 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     return { id, body: str(v.description) ?? "", ...(created ? { created } : {}), ...(str(v.title) !== undefined ? { title: str(v.title) } : {}), ...(author ? { author } : {}), ...(url ? { url } : {}) };
   };
   const notes = `${project}/merge_requests`;
+  const mergeRequest = (v: unknown): PullRequest | undefined => {
+    if (!isObject(v)) return undefined;
+    const number = num(v.iid);
+    if (number === undefined) return undefined;
+    const base = str(v.target_branch);
+    const url = str(v.web_url);
+    return { number, title: str(v.title) ?? "", body: str(v.description) ?? "", head: str(v.source_branch) ?? "", ...(base ? { base } : {}), ...(url ? { url } : {}) };
+  };
   const t: Threads = {
     comments: async (mr) =>
       (await api.list(`${notes}/${mr}/notes`, pageParams, 100))
@@ -643,6 +750,28 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       const merged = mrs.find((m) => isObject(m) && m.state === "merged" && (m.merge_commit_sha === sha || m.squash_commit_sha === sha))
         ?? mrs.find((m) => isObject(m) && m.state === "merged");
       return isObject(merged) && typeof merged.iid === "number" ? merged.iid : null;
+    },
+    async openPullRequest(spec) {
+      const base = spec.base ?? (await defaultBranchOf(api, project, "default_branch"));
+      const title = spec.draft ? `Draft: ${spec.title}` : spec.title;
+      const made = await api.call("POST", notes, { source_branch: spec.head, target_branch: base, title, description: spec.body });
+      return mergeRequest(made) ?? { number: 0, title, body: spec.body, head: spec.head, base };
+    },
+    async findPullRequest(head) {
+      const open = await api.list(`${notes}?state=opened&source_branch=${encodeURIComponent(head)}`, pageParams, 100);
+      return open
+        // A fork's merge request into this project has another source project.
+        .filter((m) => isObject(m) && m.source_branch === head && (m.source_project_id === undefined || m.source_project_id === m.project_id))
+        .map(mergeRequest)
+        .filter((m): m is PullRequest => m !== undefined)
+        .sort((a, b) => a.number - b.number)[0];
+    },
+    async editPullRequest(mr, change) {
+      return mergeRequest(await api.call("PUT", `${notes}/${mr}`, { ...(change.title !== undefined ? { title: change.title } : {}), ...(change.body !== undefined ? { description: change.body } : {}) }));
+    },
+    async addLabels(mr, labels) {
+      if (labels.length === 0) return;
+      await api.call("PUT", `${notes}/${mr}`, { add_labels: labels.join(",") });
     },
   };
 }

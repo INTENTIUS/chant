@@ -739,3 +739,61 @@ describe("a lexicon with several pins (#3288)", () => {
     expect(upgradePrTitle("sql", "17.11", "17.12", "postgres-17")).toBe("feat(sql): upgrade postgres-17 17.11 to 17.12");
   });
 });
+
+// ── Forgejo and GitLab open the PR over REST (#3798) ──────────────────
+
+describe("lexiconUpgrade pull request over REST", () => {
+  const pin = {
+    file: "src/pin.ts",
+    pattern: /V = "(.+)"/,
+    replace: (v: string) => `V = "${v}"`,
+    upstream: { owner: "o", repo: "r", kind: "releases" as const },
+  };
+
+  function fakeForge(open?: { number: number; url: string; body: string }) {
+    const calls: string[] = [];
+    const forge = {
+      findPullRequest: vi.fn(async (head: string) => (calls.push(`find ${head}`), open ? { ...open, title: "t", head } : undefined)),
+      openPullRequest: vi.fn(async (spec: { head: string; base?: string }) => (calls.push(`open ${spec.head} -> ${spec.base}`), { number: 5, url: "https://forge/pulls/5", title: "t", body: "b", head: spec.head })),
+      editPullRequest: vi.fn(async (n: number) => (calls.push(`edit ${n}`), undefined)),
+      addLabels: vi.fn(async (n: number, labels: readonly string[]) => void calls.push(`label ${n} ${labels.join(",")}`)),
+    };
+    return { forge: forge as unknown as import("../../pr-forge").PrForge, calls };
+  }
+
+  async function run(forge: import("../../pr-forge").PrForge) {
+    const { gh, calls } = recordingGh();
+    const dir = join(tmpdir(), `chant-3798-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    const r = await lexiconUpgrade({
+      lexicon: "k3s",
+      lexiconDir: dir,
+      mode: "pull-request",
+      _loadPin: async () => pin,
+      _checkPinned: vi.fn(async () => pinnedResult()),
+      _applyBump: vi.fn(async () => ({ filePath: "/x/src/pin.ts" })),
+      _bumpPackageVersion: vi.fn(),
+      _gh: gh,
+      _forge: forge,
+    });
+    return { r, ghCalls: calls };
+  }
+
+  test("opens the pull request and labels it through the forge, with no gh pr call", async () => {
+    const { forge, calls } = fakeForge();
+    const { r, ghCalls } = await run(forge);
+    expect(r.prUrl).toBe("https://forge/pulls/5");
+    expect(calls.filter((c) => c.startsWith("open"))).toEqual([`open ${upgradeBranchName("k3s")} -> main`]);
+    expect(calls.some((c) => c.startsWith("label"))).toBe(r.semverLabel !== undefined && r.semverLabel !== null);
+    expect(ghCalls.filter((c) => c.startsWith("gh "))).toEqual([]);
+  });
+
+  test("edits the open pull request in place of opening another", async () => {
+    const { forge, calls } = fakeForge({ number: 9, url: "https://forge/pulls/9", body: "old" });
+    const { r } = await run(forge);
+    expect(r.prUrl).toBe("https://forge/pulls/9");
+    expect(calls).toContain("edit 9");
+    expect(calls.some((c) => c.startsWith("open"))).toBe(false);
+  });
+});

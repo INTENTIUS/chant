@@ -31,6 +31,8 @@ import type { UpgradeCheckResult, LexiconId, UpstreamPin } from "../../codegen/p
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
 import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
 import { ghHostEnv } from "./gh-host";
+import { restPullRequestForge } from "./forge-pull-request";
+import type { PrForge } from "../../pr-forge";
 import { postOrUpdateGithubIssue } from "./reconcile";
 
 export { bumpPackageJsonVersion };
@@ -99,6 +101,12 @@ export interface LexiconUpgradeArgs {
    * Defaults to bumpPackageJsonVersion.
    */
   _bumpPackageVersion?: BumpPackageVersionFn;
+  /**
+   * The REST client the pull request is found, opened and labelled through,
+   * or null for `gh`. Default: one on a Forgejo or GitLab job, `gh`
+   * elsewhere (#3798). For tests.
+   */
+  _forge?: PrForge | null;
 }
 
 export interface LexiconUpgradeResult {
@@ -416,7 +424,8 @@ async function postLexiconIssue(
  * Check whether an open PR exists for the given branch.
  * Returns the PR URL, or null if none.
  */
-async function openPrUrl(branch: string, gh: GhRunner): Promise<string | null> {
+async function openPrUrl(branch: string, gh: GhRunner, forge?: PrForge): Promise<string | null> {
+  if (forge) return (await forge.findPullRequest(branch))?.url ?? null;
   try {
     const { stdout } = await gh(
       `gh pr view ${shellQuote(branch)} --json url,state --jq 'select(.state=="OPEN") | .url'`,
@@ -432,7 +441,8 @@ async function openPrUrl(branch: string, gh: GhRunner): Promise<string | null> {
  * Read the body of the open PR for `branch`, if any.
  * Returns null when there is no open PR or gh is unavailable.
  */
-async function currentPrBody(branch: string, gh: GhRunner): Promise<string | null> {
+async function currentPrBody(branch: string, gh: GhRunner, forge?: PrForge): Promise<string | null> {
+  if (forge) return (await forge.findPullRequest(branch))?.body.trim() || null;
   try {
     const { stdout } = await gh(
       `gh pr view ${shellQuote(branch)} --json body,state --jq 'select(.state=="OPEN") | .body'`,
@@ -750,9 +760,12 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
 
   // Idempotency check: if the open PR already has this summary, nothing changed.
   // Compare trimmed — gh/git round-trips can alter trailing whitespace.
-  const existingPrBody = await currentPrBody(branch, gh);
+  // `gh pr` speaks GraphQL, which Forgejo does not serve: a Forgejo or
+  // GitLab job finds, opens and labels the pull request over REST (#3798).
+  const forge = args._forge !== undefined ? (args._forge ?? undefined) : await restPullRequestForge(process.env);
+  const existingPrBody = await currentPrBody(branch, gh, forge);
   if (existingPrBody !== null && existingPrBody.trim() === summary.trim()) {
-    const existingUrl = await openPrUrl(branch, gh);
+    const existingUrl = await openPrUrl(branch, gh, forge);
     return {
       lexicon,
       mode,
@@ -825,10 +838,23 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     });
 
     // Open or update the PR.
-    const existingUrl = await openPrUrl(branch, gh);
     let prUrl: string;
+    const open = forge ? await forge.findPullRequest(branch) : undefined;
+    const existingUrl = forge ? null : await openPrUrl(branch, gh);
 
-    if (existingUrl) {
+    if (forge) {
+      let pr = open;
+      if (pr) {
+        const edited = await forge.editPullRequest(pr.number, { title, body: summary });
+        prUrl = edited?.url ?? pr.url ?? "";
+      } else {
+        pr = await forge.openPullRequest({ head: branch, base: "main", title, body: summary });
+        prUrl = pr.url ?? "";
+      }
+      // Best-effort, as below. Forgejo adds only a label the repository
+      // already has; GitHub and GitLab make one.
+      if (semverLabel) await forge.addLabels(pr.number, [semverLabel]).catch(() => {/* best-effort */});
+    } else if (existingUrl) {
       await gh(`gh pr edit ${shellQuote(branch)} --title ${shellQuote(title)} --body ${shellQuote(summary)}`);
       prUrl = existingUrl;
     } else {
@@ -838,7 +864,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       prUrl = stdout.trim();
     }
 
-    if (semverLabel) {
+    if (semverLabel && !forge) {
       await ensureLabelOnPr(branch, semverLabel, gh);
     }
 
