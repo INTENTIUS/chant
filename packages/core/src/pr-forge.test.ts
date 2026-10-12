@@ -14,9 +14,12 @@ import {
   forgeTargetFromEnv,
   forgejoForge,
   forgePrincipalOf,
+  FORGE_STATUS_STATES,
   githubForge,
   gitlabForge,
+  statusStateFor,
   type ForgeFetch,
+  type ForgeStatusState,
 } from "./pr-forge";
 import { forgePrincipal, parseForgeIdentity } from "./workspace/identity";
 
@@ -673,5 +676,69 @@ describe("addComment and findIssue (#3818)", () => {
     const f = forgejoForge({ apiBase: "https://codeberg.org/api/v1", repo: "acme/infra", host: "codeberg.org", fetch: fj.fetch });
     expect((await f.findIssue("<!-- d -->"))?.created).toBe("2026-10-02T00:00:00Z");
     expect(fj.calls[0].headers.Authorization).toBeUndefined();
+  });
+});
+
+describe("status states and author lists (#3834)", () => {
+  const gh = { apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k" };
+
+  test("each state goes to each forge as its nearest state", () => {
+    const table = Object.fromEntries(FORGE_STATUS_STATES.map((s) => [s, [statusStateFor("github", s), statusStateFor("forgejo", s), statusStateFor("gitlab", s)]]));
+    expect(table).toEqual({
+      pending: ["pending", "pending", "pending"],
+      running: ["pending", "pending", "running"],
+      success: ["success", "success", "success"],
+      failed: ["failure", "failure", "failed"],
+      failure: ["failure", "failure", "failed"],
+      canceled: ["error", "error", "canceled"],
+      error: ["error", "error", "failed"],
+    });
+    expect(() => statusStateFor("gitlab", "skipped" as ForgeStatusState)).toThrow(/one of pending, running/);
+  });
+
+  test("a running status is running on GitLab and pending on GitHub and Forgejo", async () => {
+    const gl = fakeFetch({ [`POST /api/v4/projects/42/statuses/${SHA}`]: {} });
+    await gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch: gl.fetch }).setStatus(SHA, { context: "terragucci/plan", state: "running", description: "planning" });
+    await gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch: gl.fetch }).setStatus(SHA, { context: "terragucci/plan", state: "canceled", description: "stopped" });
+    expect(gl.calls.map((c) => (c.body as { state: string }).state)).toEqual(["running", "canceled"]);
+    const g = fakeFetch({ [`POST /repos/acme/infra/statuses/${SHA}`]: {} });
+    await githubForge({ ...gh, fetch: g.fetch }).setStatus(SHA, { context: "terragucci/plan", state: "running", description: "planning" });
+    await githubForge({ ...gh, fetch: g.fetch }).setStatus(SHA, { context: "terragucci/plan", state: "failed", description: "no" });
+    expect(g.calls.map((c) => (c.body as { state: string }).state)).toEqual(["pending", "failure"]);
+    const fj = fakeFetch({ [`POST /api/v1/repos/acme/infra/statuses/${SHA}`]: {} });
+    await forgejoForge({ ...gh, apiBase: "https://codeberg.org/api/v1", host: "codeberg.org", fetch: fj.fetch }).setStatus(SHA, { context: "c", state: "running", description: "d" });
+    expect(fj.calls[0].body).toMatchObject({ state: "pending" });
+  });
+
+  const BOTS = ["github-actions[bot]", "gitea-actions", "forgejo-actions"];
+
+  test("a comment by any of several logins is the caller's own, without case", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v1/repos/acme/infra/issues/4/comments": [
+        { id: 1, body: "<!-- tg -->\nplanted", user: { login: "mallory" } },
+        { id: 2, body: "<!-- tg -->\nold", user: { login: "Forgejo-Actions" } },
+      ],
+      "PATCH /api/v1/repos/acme/infra/issues/comments/2": { id: 2, html_url: "https://cb/2" },
+    });
+    const forge = forgejoForge({ ...gh, apiBase: "https://codeberg.org/api/v1", host: "codeberg.org", fetch });
+    expect(await forge.findComment(4, "<!-- tg -->", { author: BOTS })).toEqual({ id: 2, body: "<!-- tg -->\nold" });
+    expect(await forge.upsertComment(4, "<!-- tg -->", "<!-- tg -->\nnew", { author: BOTS })).toEqual({ action: "updated", id: 2, url: "https://cb/2" });
+    expect(calls.at(-1)?.url).toBe("https://codeberg.org/api/v1/repos/acme/infra/issues/comments/2");
+    expect(await forge.findComment(4, "<!-- tg -->", { author: [] })).toBeUndefined();
+    expect((await forge.findComment(4, "<!-- tg -->", { author: "mallory" }))?.id).toBe(1);
+  });
+
+  test("an issue by any of several logins, for findIssue and trackIssue", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/issues": [
+        { number: 3, title: "Drift", body: "<!-- d -->\nplanted", user: { login: "mallory" } },
+        { number: 4, title: "Drift", body: "<!-- d -->\nold", user: { login: "github-actions[bot]" } },
+      ],
+      "PATCH /repos/acme/infra/issues/4": { number: 4 },
+    });
+    const forge = githubForge({ ...gh, fetch });
+    expect((await forge.findIssue("<!-- d -->", { author: BOTS }))?.number).toBe(4);
+    expect(await forge.trackIssue("<!-- d -->", { title: "Drift", body: "<!-- d -->\nnew" }, { author: BOTS })).toMatchObject({ action: "updated", number: 4 });
+    expect(calls.at(-1)).toMatchObject({ method: "PATCH", url: "https://api.github.com/repos/acme/infra/issues/4" });
   });
 });

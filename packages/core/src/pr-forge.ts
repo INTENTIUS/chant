@@ -41,13 +41,43 @@ export type ForgeFetch = (
 export interface ForgeStatus {
   /** The status's name, such as `chant/plan` or `terragucci/plan`. */
   context: string;
-  state: "pending" | "success" | "failure";
+  /**
+   * GitLab's own states, plus GitHub's `failure` and `error`. Each forge gets
+   * the nearest state it has ({@link statusStateFor}): `running` is `pending`
+   * on GitHub and Forgejo, `canceled` is `error` there, and `failure` and
+   * `error` are `failed` on GitLab.
+   */
+  state: ForgeStatusState;
   /** Cut to what the forge keeps: 140 characters on GitHub and Forgejo, 255 on GitLab. */
   description: string;
   /** The pipeline run, linked from the status. */
   url?: string;
   /** GitLab only: the pipeline the status belongs to. */
   pipelineId?: number;
+}
+
+/** A commit status's state, as a caller names it. */
+export type ForgeStatusState = "pending" | "running" | "success" | "failed" | "failure" | "canceled" | "error";
+
+/** Every {@link ForgeStatusState}, for a caller that reads one from its own input. */
+export const FORGE_STATUS_STATES: readonly ForgeStatusState[] = ["pending", "running", "success", "failed", "failure", "canceled", "error"];
+
+/**
+ * What each forge is sent for a {@link ForgeStatusState} (#3834). GitHub
+ * keeps `pending`, `success`, `failure` and `error`; Forgejo the same and
+ * `warning`; GitLab `pending`, `running`, `success`, `failed` and `canceled`.
+ * A state the forge lacks becomes its nearest one.
+ */
+const STATUS_STATE: Record<"github" | "gitlab", Record<ForgeStatusState, string>> = {
+  github: { pending: "pending", running: "pending", success: "success", failed: "failure", failure: "failure", canceled: "error", error: "error" },
+  gitlab: { pending: "pending", running: "running", success: "success", failed: "failed", failure: "failed", canceled: "canceled", error: "failed" },
+};
+
+/** The state `kind` is sent for `state`. Forgejo takes GitHub's. */
+export function statusStateFor(kind: ForgeKind, state: ForgeStatusState): string {
+  const mapped = STATUS_STATE[kind === "gitlab" ? "gitlab" : "github"][state];
+  if (mapped === undefined) throw new Error(`a commit status state is one of ${FORGE_STATUS_STATES.join(", ")}, not ${JSON.stringify(state)}`);
+  return mapped;
 }
 
 /**
@@ -59,12 +89,15 @@ export interface MarkerMatch {
   /** `prefix` (the default): the body starts with the marker. `anywhere`: the body carries it. */
   match?: "prefix" | "anywhere";
   /**
-   * Only a comment or issue written by this login counts: `user.login` on
-   * GitHub and Forgejo, `author.username` on GitLab, compared without case.
-   * A merge request's author can write a note carrying any marker, so a
-   * product that reads its own notes back names its bot here.
+   * Only a comment or issue written by this login, or by any of these
+   * logins, counts: `user.login` on GitHub and Forgejo, `author.username` on
+   * GitLab, compared without case. A merge request's author can write a note
+   * carrying any marker, so a product that reads its own notes back names
+   * its bot here. A list is for a bot whose login the job cannot know in
+   * advance, such as `gitea-actions` or `forgejo-actions` on Forgejo (#3834).
+   * An empty list matches nobody.
    */
-  author?: string;
+  author?: string | readonly string[];
 }
 
 /** What {@link PrForge.upsertComment} did. */
@@ -301,8 +334,15 @@ interface Threads {
 const carries = (body: string, marker: string, match: MarkerMatch["match"]): boolean =>
   match === "anywhere" ? body.includes(marker) : body.startsWith(marker);
 
+/** Whether `author` is one of `want`, without case. No `want` (or `""`) takes anyone. */
+const authorIn = (want: MarkerMatch["author"], author: string | undefined): boolean => {
+  if (want === undefined || want === "") return true;
+  const logins = (typeof want === "string" ? [want] : want).map((l) => l.toLowerCase());
+  return author !== undefined && logins.includes(author.toLowerCase());
+};
+
 const ownedBy = (marker: string, opts: MarkerMatch) => (t: Thread): boolean =>
-  carries(t.body, marker, opts.match) && (!opts.author || t.author?.toLowerCase() === opts.author.toLowerCase());
+  carries(t.body, marker, opts.match) && authorIn(opts.author, t.author);
 
 function checkMarker(what: string, marker: string, body: string, match: MarkerMatch["match"]): void {
   if (!marker) throw new Error(`the ${what} needs a marker to be found again`);
@@ -445,7 +485,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     ...threadCalls(t),
     async setStatus(sha, status) {
       await api.call("POST", `${repo}/statuses/${sha}`, {
-        state: status.state,
+        state: statusStateFor(kind, status.state),
         context: status.context,
         description: status.description.slice(0, GITHUB_DESCRIPTION),
         ...(status.url ? { target_url: status.url } : {}),
@@ -515,8 +555,6 @@ export interface GitlabForgeOptions {
   fetch?: ForgeFetch;
 }
 
-const GITLAB_STATE: Record<ForgeStatus["state"], string> = { pending: "pending", success: "success", failure: "failed" };
-
 /**
  * A GitLab client. Writing notes needs an access token with the `api` scope
  * on most instances: the job token reaches only the endpoints the instance's
@@ -577,7 +615,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async setStatus(sha, status) {
       try {
         await api.call("POST", `${project}/statuses/${sha}`, {
-          state: GITLAB_STATE[status.state],
+          state: statusStateFor("gitlab", status.state),
           name: status.context,
           description: status.description.slice(0, GITLAB_DESCRIPTION),
           ...(status.url ? { target_url: status.url } : {}),
