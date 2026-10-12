@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-cedar",
-  "version": "0.124.13",
+  "version": "0.124.14",
   "description": "Cedar lexicon for chant — typed authoring for Cedar authorization policies",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -74,6 +74,6 @@
   },
   "peerDependencies": {
     "zod": "^4.3.6",
-    "@intentius/chant": "^0.124.13"
+    "@intentius/chant": "^0.124.14"
   }
 }
