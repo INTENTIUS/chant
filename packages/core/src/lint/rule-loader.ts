@@ -1,6 +1,7 @@
 import { readdirSync, existsSync } from "fs";
 import { dirname, join, resolve } from "path";
 import type { LintRule } from "./rule";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 /**
  * Type guard to check if a value conforms to the LintRule interface.
@@ -82,6 +83,7 @@ export async function loadLocalRules(projectDir: string): Promise<LintRule[]> {
     const filePath = resolve(rulesDir, file);
     let mod: Record<string, unknown>;
     try {
+      ensureTypeScriptLoader();
       mod = await import(filePath);
     } catch (err) {
       throw new Error(

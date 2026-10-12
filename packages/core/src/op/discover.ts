@@ -6,6 +6,7 @@ import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
 import { hasDiscoveryMarkerSync } from "../discovery/files";
 import { resolveDiscoveryGlobs } from "../config";
 import { isStewardDeclaration, type StewardDeclaration } from "./steward";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 export interface DiscoveredOp {
   config: OpConfig;
@@ -150,6 +151,7 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
 
   for (const filePath of files) {
     try {
+      ensureTypeScriptLoader();
       const mod = (await import(filePath)) as Record<string, unknown>;
       const exported = opsExportedBy(mod);
 
@@ -220,6 +222,7 @@ export async function discoverStewards(opts?: { cwd?: string }): Promise<Steward
   for (const filePath of files) {
     let mod: Record<string, unknown>;
     try {
+      ensureTypeScriptLoader();
       mod = (await import(filePath)) as Record<string, unknown>;
     } catch (err) {
       errors.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);

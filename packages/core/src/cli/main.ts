@@ -3,7 +3,6 @@
 import { resolve } from "node:path";
 import { isEntryPoint } from "./is-entry-point";
 import { formatSuccess, formatError } from "./format";
-import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
 import { findProjectRoot, findWorkspaceRoot } from "../project-root";
@@ -14,33 +13,117 @@ import { armSandboxConfigEvaluation } from "../config-sandbox";
 import { armSandboxPolicyExecution } from "../lint/policy-import";
 import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
-import { runBuild } from "./handlers/build";
-import { runLint } from "./handlers/lint";
-import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevSurfaceDiff, runDevPinnedUpgrade, runDevRollingUpgrade, runDevUnknown } from "./handlers/dev";
-import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
-import { runInit, runInitLexicon } from "./handlers/init";
-import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from "./handlers/misc";
-import { runVendor } from "./handlers/vendor";
-import { runMigrate } from "./handlers/migrate";
-import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
-import { runCarveEmit } from "./handlers/carve-emit";
-import { runCarveBridge } from "./handlers/carve-bridge";
-import { runCarveApply } from "./handlers/carve-apply";
-import { runCarveStatus } from "./handlers/carve-status";
-import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
-import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
-import { runComponentsFanOut } from "./handlers/fan-out";
-import { runComponentsPromote, runComponentsRollback, runComponentsRedeploy } from "./handlers/promote";
-import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
-import { runGraph } from "./handlers/graph";
-import { runExplain } from "./handlers/explain";
-import { runSearch } from "./handlers/search";
-import { runOp, runOpList, runOpStatus, runOpApprove, runOpSignalRenamed, runOpCancel, runOpLog } from "./handlers/run";
-import { runOpWaveCommand } from "./handlers/run-wave";
-import { runOperator, runOperatorStatus, runOperatorLog, runApprove } from "./handlers/operator";
-import { runEmulator, formatEmulatorHelp } from "./handlers/emulator";
+import { installCompiledCli } from "../ts-loader";
 import { splitJoinedFlags, dispatchCommandGroup, collectCommandGroups, formatCommandGroupsHelp, type CommandGroup } from "./command-group";
 import type { LexiconPlugin } from "../lexicon";
+
+/**
+ * #3878 — each command's handler module loads when that command runs, not on
+ * every start: together they pull in most of chant (the TypeScript compiler
+ * among it), and `chant --version` or `chant run wave` need almost none of it.
+ */
+type Handler = CommandDef["handler"];
+const handlerModules = new Map<Handler, () => Promise<unknown>>();
+function lazyHandler<M>(load: () => Promise<M>, pick: (module: M) => Handler): Handler {
+  const handler: Handler = async (ctx) => pick(await load())(ctx);
+  handlerModules.set(handler, load);
+  return handler;
+}
+const buildHandlers = () => import("./handlers/build");
+const runBuild = lazyHandler(buildHandlers, (m) => m.runBuild);
+const lintHandlers = () => import("./handlers/lint");
+const runLint = lazyHandler(lintHandlers, (m) => m.runLint);
+const devHandlers = () => import("./handlers/dev");
+const runDevGenerate = lazyHandler(devHandlers, (m) => m.runDevGenerate);
+const runDevPublish = lazyHandler(devHandlers, (m) => m.runDevPublish);
+const runDevOnboard = lazyHandler(devHandlers, (m) => m.runDevOnboard);
+const runDevCheckLexicon = lazyHandler(devHandlers, (m) => m.runDevCheckLexicon);
+const runDevSurfaceDiff = lazyHandler(devHandlers, (m) => m.runDevSurfaceDiff);
+const runDevPinnedUpgrade = lazyHandler(devHandlers, (m) => m.runDevPinnedUpgrade);
+const runDevRollingUpgrade = lazyHandler(devHandlers, (m) => m.runDevRollingUpgrade);
+const runDevUnknown = lazyHandler(devHandlers, (m) => m.runDevUnknown);
+const serveHandlers = () => import("./handlers/serve");
+const runServeLsp = lazyHandler(serveHandlers, (m) => m.runServeLsp);
+const runServeMcp = lazyHandler(serveHandlers, (m) => m.runServeMcp);
+const runServeUnknown = lazyHandler(serveHandlers, (m) => m.runServeUnknown);
+const initHandlers = () => import("./handlers/init");
+const runInit = lazyHandler(initHandlers, (m) => m.runInit);
+const runInitLexicon = lazyHandler(initHandlers, (m) => m.runInitLexicon);
+const miscHandlers = () => import("./handlers/misc");
+const runList = lazyHandler(miscHandlers, (m) => m.runList);
+const runDescribe = lazyHandler(miscHandlers, (m) => m.runDescribe);
+const runImport = lazyHandler(miscHandlers, (m) => m.runImport);
+const runAudit = lazyHandler(miscHandlers, (m) => m.runAudit);
+const runUpdate = lazyHandler(miscHandlers, (m) => m.runUpdate);
+const runDoctor = lazyHandler(miscHandlers, (m) => m.runDoctor);
+const vendorHandlers = () => import("./handlers/vendor");
+const runVendor = lazyHandler(vendorHandlers, (m) => m.runVendor);
+const migrateHandlers = () => import("./handlers/migrate");
+const runMigrate = lazyHandler(migrateHandlers, (m) => m.runMigrate);
+const carveHandlers = () => import("./handlers/carve");
+const runCarveAdvise = lazyHandler(carveHandlers, (m) => m.runCarveAdvise);
+const runCarveUnknown = lazyHandler(carveHandlers, (m) => m.runCarveUnknown);
+const carveEmitHandlers = () => import("./handlers/carve-emit");
+const runCarveEmit = lazyHandler(carveEmitHandlers, (m) => m.runCarveEmit);
+const carveBridgeHandlers = () => import("./handlers/carve-bridge");
+const runCarveBridge = lazyHandler(carveBridgeHandlers, (m) => m.runCarveBridge);
+const carveApplyHandlers = () => import("./handlers/carve-apply");
+const runCarveApply = lazyHandler(carveApplyHandlers, (m) => m.runCarveApply);
+const carveStatusHandlers = () => import("./handlers/carve-status");
+const runCarveStatus = lazyHandler(carveStatusHandlers, (m) => m.runCarveStatus);
+const lifecycleHandlers = () => import("./handlers/lifecycle");
+const runLifecycleSnapshot = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleSnapshot);
+const runLifecycleShow = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleShow);
+const runLifecycleDiff = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleDiff);
+const runLifecycleRollback = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleRollback);
+const runLifecyclePlan = lazyHandler(lifecycleHandlers, (m) => m.runLifecyclePlan);
+const runLifecycleAffected = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleAffected);
+const runLifecycleLog = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleLog);
+const runLifecycleTeardown = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleTeardown);
+const runLifecycleWhoami = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleWhoami);
+const runLifecycleUnknown = lazyHandler(lifecycleHandlers, (m) => m.runLifecycleUnknown);
+const componentsHandlers = () => import("./handlers/components");
+const runComponentsStatus = lazyHandler(componentsHandlers, (m) => m.runComponentsStatus);
+const runComponentsReleaseRecord = lazyHandler(componentsHandlers, (m) => m.runComponentsReleaseRecord);
+const runComponentsExport = lazyHandler(componentsHandlers, (m) => m.runComponentsExport);
+const runComponentsUnknown = lazyHandler(componentsHandlers, (m) => m.runComponentsUnknown);
+const fanOutHandlers = () => import("./handlers/fan-out");
+const runComponentsFanOut = lazyHandler(fanOutHandlers, (m) => m.runComponentsFanOut);
+const promoteHandlers = () => import("./handlers/promote");
+const runComponentsPromote = lazyHandler(promoteHandlers, (m) => m.runComponentsPromote);
+const runComponentsRollback = lazyHandler(promoteHandlers, (m) => m.runComponentsRollback);
+const runComponentsRedeploy = lazyHandler(promoteHandlers, (m) => m.runComponentsRedeploy);
+const scenarioHandlers = () => import("./handlers/scenario");
+const runScenarioCheck = lazyHandler(scenarioHandlers, (m) => m.runScenarioCheck);
+const runScenarioUnknown = lazyHandler(scenarioHandlers, (m) => m.runScenarioUnknown);
+const graphHandlers = () => import("./handlers/graph");
+const runGraph = lazyHandler(graphHandlers, (m) => m.runGraph);
+const explainHandlers = () => import("./handlers/explain");
+const runExplain = lazyHandler(explainHandlers, (m) => m.runExplain);
+const searchHandlers = () => import("./handlers/search");
+const runSearch = lazyHandler(searchHandlers, (m) => m.runSearch);
+const runHandlers = () => import("./handlers/run");
+const runOp = lazyHandler(runHandlers, (m) => m.runOp);
+const runOpList = lazyHandler(runHandlers, (m) => m.runOpList);
+const runOpStatus = lazyHandler(runHandlers, (m) => m.runOpStatus);
+const runOpApprove = lazyHandler(runHandlers, (m) => m.runOpApprove);
+const runOpSignalRenamed = lazyHandler(runHandlers, (m) => m.runOpSignalRenamed);
+const runOpCancel = lazyHandler(runHandlers, (m) => m.runOpCancel);
+const runOpLog = lazyHandler(runHandlers, (m) => m.runOpLog);
+const runWaveHandlers = () => import("./handlers/run-wave");
+const runOpWaveCommand = lazyHandler(runWaveHandlers, (m) => m.runOpWaveCommand);
+const operatorHandlers = () => import("./handlers/operator");
+const runOperator = lazyHandler(operatorHandlers, (m) => m.runOperator);
+const runOperatorStatus = lazyHandler(operatorHandlers, (m) => m.runOperatorStatus);
+const runOperatorLog = lazyHandler(operatorHandlers, (m) => m.runOperatorLog);
+const runApprove = lazyHandler(operatorHandlers, (m) => m.runApprove);
+const emulatorHandlers = () => import("./handlers/emulator");
+const runEmulator = lazyHandler(emulatorHandlers, (m) => m.runEmulator);
+
+/** The lexicon plugin loader, which imports the lint, fold and build machinery: loaded when a command needs plugins (#3878). */
+const loadPlugins: typeof import("./plugins").loadPlugins = async (...a) => (await import("./plugins")).loadPlugins(...a);
+const resolveProjectLexicons: typeof import("./plugins").resolveProjectLexicons = async (...a) =>
+  (await import("./plugins")).resolveProjectLexicons(...a);
 
 /**
  * Long-form flags that are pure booleans in {@link parseArgs} — their branch
@@ -2002,6 +2085,9 @@ export const commandRegistry: CommandDef[] = [
  * Main entry point
  */
 async function main(): Promise<void> {
+  // #3878 — run from dist/ with plain node, TypeScript loads only when
+  // something imports it. A no-op from source.
+  installCompiledCli();
   const rawArgv = process.argv.slice(2);
 
   let args: ParsedArgs;
@@ -2035,7 +2121,7 @@ async function main(): Promise<void> {
   // ports and sign-in each configured lexicon's emulator uses, not the
   // global command list it used to print.
   if (args.help && args.command === "emulator") {
-    console.log(formatEmulatorHelp(await loadPluginsBestEffort().catch(() => [])));
+    console.log((await emulatorHandlers()).formatEmulatorHelp(await loadPluginsBestEffort().catch(() => [])));
     await flushAndExit(0);
     return;
   }
@@ -2080,6 +2166,14 @@ async function main(): Promise<void> {
   // command gets no `--env` check against the declared environments either.
   const earlyMatch = resolveCommand(args, commandRegistry);
   const runsNoConfig = earlyMatch != null && commandRunsNoConfig(earlyMatch.def, args);
+  // #3878 — load the command's own modules (and the plugin loader, when it
+  // needs plugins) before anything imports TypeScript: once a chant.config.ts
+  // has registered tsx, every module after it is resolved and loaded through
+  // tsx's hooks, which costs far more than plain node.
+  await Promise.all([
+    earlyMatch ? handlerModules.get(earlyMatch.def.handler)?.() : undefined,
+    earlyMatch?.def.requiresPlugins ? import("./plugins") : undefined,
+  ]);
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
   let loadedConfig;
   try {

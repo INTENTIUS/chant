@@ -17,11 +17,13 @@
  * the *decision* and documents the reasoning, and re-exports these three
  * functions as its public surface) for one structural reason: `./policy.ts`
  * needs to consult it, `./policy-sandbox.ts` needs to call `./policy.ts`, and a
- * flag on a leaf module with no imports of its own breaks what would otherwise
+ * flag on a leaf module (its one import, `../ts-loader`, is a leaf too) breaks what would otherwise
  * be an import cycle. It also puts the check on the narrowest possible thing —
  * the function that actually executes project code — rather than on a caller
  * that might forget to ask.
  */
+
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 /** Whether this process must run project policy modules inside the sandbox boundary instead of here. */
 let armed = false;
@@ -66,5 +68,6 @@ export async function importPolicyModule(policyPath: string): Promise<PolicyModu
       `Refusing to import the policy module ${policyPath} into the chant process under --sandbox: it is project-authored code and must be imported inside the sandbox boundary (packages/core/src/lint/policy-sandbox.ts's runProjectPolicies).`,
     );
   }
+  ensureTypeScriptLoader();
   return (await import(policyPath)) as PolicyModuleNamespace;
 }

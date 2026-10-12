@@ -33,6 +33,7 @@ import { applyInlineSuppressions } from "../../lint/suppressions";
 import { getProvenance } from "../../provenance";
 import { runLexiconPostSynthChecks } from "./build";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
+import { ensureTypeScriptLoader } from "../../ts-loader";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, resolveConfiguredSeverity, findProjectRoot } from "../../lint/config";
@@ -90,6 +91,7 @@ export async function loadPluginRules(
     const resolved = resolve(configDir, pluginPath);
     let mod: Record<string, unknown>;
     try {
+      ensureTypeScriptLoader();
       mod = await import(resolved);
     } catch (err) {
       throw new Error(
@@ -592,6 +594,7 @@ async function runOpCheckDiagnostics(
   const fileByOpName = new Map<string, string>();
   for (const filePath of opFiles) {
     try {
+      ensureTypeScriptLoader();
       const mod: unknown = await import(filePath);
       const entity = (mod as { default?: unknown }).default;
       if (!entity || typeof entity !== "object") continue;

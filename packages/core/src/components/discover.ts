@@ -50,6 +50,7 @@ import { setBuildParams } from "../params";
 import { hasDiscoveryMarkerSync } from "../discovery/files";
 import { resolveDiscoveryGlobs } from "../config";
 import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 /** One discovered component, paired with the file it was exported from. */
 export interface DiscoveredComponent {
@@ -212,6 +213,7 @@ async function importAndCollectComponents(
       // `filePath` (e.g. from `chant build --components --generate`, which passes
       // a bare "." path) would otherwise be treated by `import()` as a bare
       // package specifier and fail with "Cannot find package 'x.component.ts'".
+      ensureTypeScriptLoader();
       const exports = await import(pathToFileURL(resolve(filePath)).href);
       modules.push({ file: filePath, exports });
     } catch (err) {

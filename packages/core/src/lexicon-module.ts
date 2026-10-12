@@ -27,6 +27,7 @@
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { ensureTypeScriptLoader } from "./ts-loader";
 
 /**
  * One `lexicons` entry: a package-backed name, or a name plus the module that
@@ -179,6 +180,7 @@ export async function importLexiconModule(name: string): Promise<Record<string, 
   const path = modulePaths.get(name);
   if (path === undefined) return undefined;
   try {
+    ensureTypeScriptLoader();
     return (await import(path)) as Record<string, unknown>;
   } catch (err) {
     throw new Error(
@@ -259,6 +261,7 @@ export function resolveFromProject(spec: string, fromDir: string = process.cwd()
  */
 export async function importLexiconPackage(spec: string, fromDir: string = process.cwd()): Promise<Record<string, unknown>> {
   try {
+    ensureTypeScriptLoader();
     return (await import(spec)) as Record<string, unknown>;
   } catch (err) {
     const pkg = packageNameOf(spec);

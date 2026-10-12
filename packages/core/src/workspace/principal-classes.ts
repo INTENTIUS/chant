@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, posix } from "node:path";
 import { kindsExportTarget, pinnedPackageDir, type KindLoadProblem, type PinLike } from "./kinds";
-import schema from "./workspace-principals.schema.json";
+import schema from "./workspace-principals.schema.json" with { type: "json" };
 import type { TrustPolicy } from "./trust/policy";
 import { joinPath, type WorkspaceTree } from "./tree";
 import { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, grantedClasses, type PrincipalClass } from "./identity-gate-rule";

@@ -10,16 +10,34 @@ import { join } from "path";
 import { createRequire } from "module";
 import type { LintRule } from "./rule";
 import type { PostSynthCheck } from "./post-synth";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
-// Register tsx so createRequire can load TypeScript files in Node.js ESM context.
-// This is a no-op if tsx is not available or already registered.
-try {
-  const _req = createRequire(import.meta.url);
-  const { register } = _req("tsx/cjs/api") as { register: () => void };
-  register();
-} catch {
-  // tsx not available; only pre-compiled .js files can be require()'d
+let cjsTypeScript = false;
+
+/**
+ * Register tsx so createRequire can load TypeScript files in Node.js ESM
+ * context. Does nothing when tsx is not available; then only pre-compiled .js
+ * files can be require()'d.
+ *
+ * From source this runs when the module loads, as it always has: vitest and
+ * the source CLI rely on tsx's CommonJS hook being in place from then on. The
+ * compiled CLI imports this module on every start and most commands read no
+ * rule directory, so there it waits for the first one (#3878).
+ */
+function registerTypeScriptRequire(): void {
+  if (cjsTypeScript) return;
+  cjsTypeScript = true;
+  if (ensureTypeScriptLoader()) return;
+  try {
+    const _req = createRequire(import.meta.url);
+    const { register } = _req("tsx/cjs/api") as { register: () => void };
+    register();
+  } catch {
+    // tsx not available; only pre-compiled .js files can be require()'d
+  }
 }
+
+if (!import.meta.url.endsWith(".js")) registerTypeScriptRequire();
 
 /**
  * Discover lint rules from a directory.
@@ -32,6 +50,7 @@ try {
  * @param importMetaUrl - The caller's import.meta.url (for createRequire)
  */
 export function discoverLintRules(dir: string, importMetaUrl: string): LintRule[] {
+  registerTypeScriptRequire();
   const require = createRequire(importMetaUrl);
   const rules: LintRule[] = [];
 
@@ -62,6 +81,7 @@ export function discoverLintRules(dir: string, importMetaUrl: string): LintRule[
  * @param importMetaUrl - The caller's import.meta.url (for createRequire)
  */
 export function discoverPostSynthChecks(dir: string, importMetaUrl: string): PostSynthCheck[] {
+  registerTypeScriptRequire();
   const require = createRequire(importMetaUrl);
   const checks: PostSynthCheck[] = [];
 
