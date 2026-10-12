@@ -22,13 +22,13 @@
  * installed package, which must be at the version the base pins.
  */
 
-import { createRequire } from "node:module";
 import { checkClassData, diskFiles, mergePinClasses, readClassFiles, type ClassData, type PackageFiles, type PinClassRead } from "./class-data";
 import { pinnedPackageDir, type KindLoadProblem, type PinLike } from "./kinds";
 import schema from "./workspace-principals.schema.json" with { type: "json" };
 import type { TrustPolicy } from "./trust/policy";
 import { joinPath, type WorkspaceTree } from "./tree";
 import { CORE_CLASSES, CORE_PRINCIPAL_CLASSES, grantedClasses, type PrincipalClass } from "./identity-gate-rule";
+import { loadAjv2020 } from "./ajv2020";
 
 export const PRINCIPALS_SCHEMA_ID = schema.$id;
 
@@ -99,10 +99,7 @@ type Validate = ((data: unknown) => boolean) & { errors?: AjvError[] | null };
 let compiled: Validate | undefined;
 function validator(): Validate {
   if (compiled) return compiled;
-  const require = createRequire(import.meta.url);
-  // ajv is CommonJS; its class is the default export, or that export's own default.
-  const mod = require("ajv/dist/2020") as { default?: unknown };
-  const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+  const Ajv = loadAjv2020() as new (opts: object) => { compile(s: object): Validate };
   compiled = new Ajv({ allErrors: true, strict: true }).compile(schema);
   return compiled;
 }

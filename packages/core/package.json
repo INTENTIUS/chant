@@ -31,7 +31,8 @@
     "access": "public"
   },
   "bin": {
-    "chant": "./bin/chant"
+    "chant": "./bin/chant",
+    "chant-wave": "./dist/wave-runtime.mjs"
   },
   "exports": {
     ".": {
@@ -108,6 +109,7 @@
       "import": "./dist/notify.js",
       "default": "./src/notify.ts"
     },
+    "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
@@ -115,7 +117,7 @@
     }
   },
   "scripts": {
-    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node scripts/copy-assets.mjs && node scripts/build-wave-runtime.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
