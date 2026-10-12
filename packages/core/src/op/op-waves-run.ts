@@ -51,7 +51,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
-import { waveSetDigest, type WaveMember } from "../gated-waves";
+import { decideWaveGate, waveDigestMembers, waveSetDigest, writeWaveRecordFile, type WaveMember } from "../wave-engine";
 import type { ReviewApproval } from "../gate-decision";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateDigestMismatch, type GateLedgerPort } from "./gate";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
@@ -817,8 +817,7 @@ function pendingFields(value: unknown, where: string): Record<string, unknown> |
  * file's members that are no run (a cost), are always in it.
  */
 export function opWaveSetDigest(spec: Pick<OpWavesSpec, "digest">, members: ReadonlyArray<WaveMember & { empty?: boolean }>, extras: readonly WaveMember[] = []): string {
-  const changing = spec.digest?.over === "changing" ? members.filter((m) => m.empty !== true) : [];
-  return waveSetDigest([...(changing.length > 0 ? changing : members), ...extras]);
+  return waveSetDigest(waveDigestMembers(members, { ...(spec.digest?.over ? { over: spec.digest.over } : {}), extras }));
 }
 
 /** What one moment's hooks came to. */
@@ -1627,10 +1626,10 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   // #3784: under the spend rule at base, an approval a wave already applied under counts for nothing.
   const spent: AppliedGateRecord[] | undefined = decision.spend === "base" ? ((await ledger.readApplied?.(spec.name)) ?? []).filter((a) => a.gate === gate) : undefined;
   const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
-  const check = await evaluateGate(port, {
+  const check = await decideWaveGate(port, {
     op: spec.name,
     gate,
-    planDigest: digest,
+    digest,
     description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
     now,
     ...(spent ? { spent } : {}),
@@ -1728,7 +1727,7 @@ async function settlePointGate(options: RunOpWaveOptions, ctx: WaveContext, deci
 /** Write the decision record, with every hook's outcome so far (#3804). */
 function writeRecord(recordPath: string, decision: OpWaveDecision, result: RunOpWaveResult): void {
   if (result.hooks.length > 0) decision.outcomes = [...result.hooks];
-  writeFileSync(recordPath, JSON.stringify(decision, null, 2) + "\n");
+  writeWaveRecordFile(recordPath, decision);
 }
 
 /**

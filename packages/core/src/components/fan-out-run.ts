@@ -31,8 +31,10 @@
  * ## Or one approval per wave
  *
  * `waveGate` (#3049) is the other mode. Each wave is planned once the waves
- * before it applied, and its gate binds that wave's set digest
- * (`../gated-waves.ts`). See {@link runGatedWaves}.
+ * before it applied, and its gate binds that wave's set digest. Gate names,
+ * the digest and the gate decision come from the wave engine
+ * (`../wave-engine.ts`, #3766), which `chant run wave` uses too. See
+ * {@link runGatedWaves}.
  */
 
 import {
@@ -50,7 +52,7 @@ import type { CapabilityRegistry } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
-import { waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../gated-waves";
+import { decideWaveGate, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
 
 /**
  * One gate per wave (#3049), each bound to its wave's set digest. The other
@@ -452,10 +454,10 @@ async function runGatedWaves(
       continue;
     }
 
-    const check = await evaluateGate(gates.port, {
+    const check = await decideWaveGate(gates.port, {
       op: waveGate.op,
       gate: gateName,
-      planDigest: digest,
+      digest,
       description: waveGate.description ?? `wave ${waveNum} of ${plan.waves.length}: ${toRun.join(", ")}`,
       ...(waveGate.timeout ? { timeout: waveGate.timeout } : {}),
       ...(options.now ? { now: options.now } : {}),
