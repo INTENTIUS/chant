@@ -4,15 +4,22 @@ import { parseAccess } from "../../clickhouse/access";
 import { SqlSyntaxError } from "../../clickhouse/tokens";
 import { findTemplates, templatePosition, tokensOf } from "./templates";
 
-const ACCESS_TAGS = new Set(["user", "role", "policy", "grant"]);
-const ACCESS_STATEMENT: Record<string, string> = { user: "CREATE USER", role: "CREATE ROLE", rowPolicy: "CREATE ROW POLICY", grant: "GRANT" };
+const ACCESS_TAGS = new Set(["user", "role", "policy", "quota", "settingsProfile", "grant"]);
+const ACCESS_STATEMENT: Record<string, string> = {
+  user: "CREATE USER",
+  role: "CREATE ROLE",
+  rowPolicy: "CREATE ROW POLICY",
+  quota: "CREATE QUOTA",
+  settingsProfile: "CREATE SETTINGS PROFILE",
+  grant: "GRANT",
+};
 
 const STATEMENT: Record<string, string> = { database: "CREATE DATABASE", table: "CREATE TABLE", view: "CREATE VIEW", dictionary: "CREATE DICTIONARY", function: "CREATE FUNCTION" };
 /** The tag a statement belongs in: `func` for a function, the statement's own name otherwise. */
 const tagOf = (statement: string): string => (statement === "function" ? "func" : statement);
 
 /**
- * SQLCH001: the DDL in a ClickHouse template (`database`, `table`, `view`, `dictionary`, `func`, `user`, `role`, `policy`, `grant`) does not parse, or holds another statement than its tag.
+ * SQLCH001: the DDL in a ClickHouse template (`database`, `table`, `view`, `dictionary`, `func`, `user`, `role`, `policy`, `quota`, `settingsProfile`, `grant`) does not parse, or holds another statement than its tag.
  *
  * The same parse runs when the build calls the tag, and fails the build there.
  * This rule reports it in the editor and in `chant lint`, at the token, before

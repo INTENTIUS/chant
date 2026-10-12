@@ -352,7 +352,7 @@ function renderOtherCreate(tokens: Token[], topology: Topology): string {
   if (w.accept("OR")) w.accept("REPLACE");
   w.accept("TEMPORARY");
   // Access control (`./access.ts`) belongs to no database: like a database's own DDL, it reaches every replica through the cluster.
-  if (w.accept("USER", "ROLE", "POLICY", "QUOTA") || w.acceptSeq("ROW", "POLICY") || w.acceptSeq("SETTINGS", "PROFILE")) {
+  if (w.accept("USER", "ROLE", "POLICY", "QUOTA", "PROFILE") || w.acceptSeq("ROW", "POLICY") || w.acceptSeq("SETTINGS", "PROFILE")) {
     w.acceptSeq("IF", "NOT", "EXISTS") || w.acceptSeq("OR", "REPLACE");
     if (!w.name()) return applyEdits(tokens, []);
     const edit = onClusterEdit(w, databaseCluster(topology, true), w.end());
@@ -430,7 +430,9 @@ export function renderStatement(sql: string, topology: Topology): string {
     if (word(head, "DROP", "DETACH", "ATTACH")) w.accept("TEMPORARY");
     if (w.accept("DATABASE")) return renderAfterName(tokens, w, databaseCluster(topology, word(head, "DROP")));
     // A function and access control belong to no database: like the database's own DDL, they reach every replica through the cluster.
-    if (w.accept("FUNCTION", "USER", "ROLE", "POLICY") || w.acceptSeq("ROW", "POLICY")) return renderAfterName(tokens, w, databaseCluster(topology, true));
+    if (w.accept("FUNCTION", "USER", "ROLE", "POLICY", "QUOTA", "PROFILE") || w.acceptSeq("ROW", "POLICY") || w.acceptSeq("SETTINGS", "PROFILE")) {
+      return renderAfterName(tokens, w, databaseCluster(topology, true));
+    }
     // `TRUNCATE t` may leave out TABLE.
     if (w.accept("TABLE", "VIEW", "DICTIONARY") || word(head, "TRUNCATE")) return renderAfterName(tokens, w, objectCluster(topology));
     return sql;

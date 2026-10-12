@@ -35,9 +35,11 @@ The export name (`events`) is the object's identity in chant. The name in the SQ
 
 A dictionary is a `dictionary` template holding `CREATE DICTIONARY`, with its attributes, `PRIMARY KEY`, `SOURCE`, `LAYOUT` and `LIFETIME`. Its attributes are columns (`${ratesDict.columns.rate}`). Any change but its comment is SQLCH245, and the applier replaces it with `CREATE OR REPLACE DICTIONARY`. Keep passwords out of `SOURCE`: name a server-side named collection instead.
 
+A table over a table function is a `table` template, `CREATE TABLE t [(cols)] AS numbers(10)`, with no engine; a change is SQLCH219 (`CREATE OR REPLACE TABLE`). `CREATE TABLE ... AS other`, `AS SELECT` and `CLONE AS`, live and window views, named collections (credentials), masking policies, workloads, resources and `CREATE INDEX` are refused with the reason.
+
 A SQL user-defined function is a `func` template holding `CREATE FUNCTION name AS (x) -> expr`, with no database in its name. A changed expression is SQLCH260 (`CREATE OR REPLACE FUNCTION`). It carries no ownership marker, so chant never drops one.
 
-Users, roles, row policies and grants are `user`, `role`, `policy` and `grant` templates. Never write a password: `IDENTIFIED BY` is refused, a user declared without `IDENTIFIED` is created by the environment with its password, and chant manages the rest of it. Grants are compared per grantee: every `grant` naming a grantee adds up to its complete list, and anything else it holds is revoked (SQLCH274). None of these is ever dropped by chant. They are planned and applied only where the profile sets `access: true` (`sql.profiles.<env>.access`); elsewhere each is reported `filtered`.
+Users, roles, row policies, quotas, settings profiles and grants are `user`, `role`, `policy`, `quota`, `settingsProfile` and `grant` templates; a quota or profile is changed with `ALTER` (SQLCH275, SQLCH276), never replaced. Never write a password: `IDENTIFIED BY` is refused, a user declared without `IDENTIFIED` is created by the environment with its password, and chant manages the rest of it. Grants are compared per grantee: every `grant` naming a grantee adds up to its complete list, and anything else it holds is revoked (SQLCH274). None of these is ever dropped by chant. They are planned and applied only where the profile sets `access: true` (`sql.profiles.<env>.access`); elsewhere each is reported `filtered`.
 
 ## Interpolations
 

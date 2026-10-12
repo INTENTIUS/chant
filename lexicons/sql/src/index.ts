@@ -12,7 +12,7 @@ export { sqlConfigSchema, type SqlConfig } from "./config";
 // them as intrinsics (check-lexicon resolves a registered intrinsic against the
 // root's exports). Declarations import them from the dialect subpath,
 // `@intentius/chant-lexicon-sql/clickhouse`.
-export { database, table, view, dictionary, user, role, policy, grant, literal } from "./clickhouse/entities";
+export { database, table, view, dictionary, user, role, policy, quota, settingsProfile, grant, literal } from "./clickhouse/entities";
 
 // The Postgres tags whose names ClickHouse does not export, for the same reason.
 // A tag folds as the function its file imports, so `table` imported from

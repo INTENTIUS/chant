@@ -42,7 +42,9 @@ export function declaredAddress(entity: DeclaredEntity, defaultDatabase: string)
     entity.type === CLICKHOUSE_ENTITY_TYPES.database ||
     entity.type === CLICKHOUSE_ENTITY_TYPES.function ||
     entity.type === CLICKHOUSE_ENTITY_TYPES.user ||
-    entity.type === CLICKHOUSE_ENTITY_TYPES.role
+    entity.type === CLICKHOUSE_ENTITY_TYPES.role ||
+    entity.type === CLICKHOUSE_ENTITY_TYPES.quota ||
+    entity.type === CLICKHOUSE_ENTITY_TYPES.settingsProfile
   ) {
     return { name };
   }

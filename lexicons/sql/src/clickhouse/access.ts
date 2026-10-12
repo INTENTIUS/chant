@@ -1,9 +1,10 @@
 /**
  * ClickHouse access control as declarations (#3682): users, roles, row
- * policies and grants.
+ * policies and grants, and quotas and settings profiles (#3911).
  *
  * Each is a statement the server keeps outside any table: `CREATE USER`,
- * `CREATE ROLE`, `CREATE ROW POLICY` and `GRANT`. This module parses them
+ * `CREATE ROLE`, `CREATE ROW POLICY`, `CREATE QUOTA`,
+ * `CREATE SETTINGS PROFILE` and `GRANT`. This module parses them
  * (the tags in `./entities.ts`, the lint rule, the plan), reduces each to
  * the fields a plan compares, and writes the statements that make a change.
  *
@@ -30,19 +31,24 @@ import { isTrivia, tokenizeText, type Token } from "./tokens";
 import { kw, SqlCursor, type Span } from "../core/cursor";
 import { unquote } from "./parser";
 
-export type AccessStatement = "user" | "role" | "rowPolicy" | "grant";
+export type AccessStatement = "user" | "role" | "rowPolicy" | "quota" | "settingsProfile" | "grant";
 
 /** One parsed access statement. Clause spans are token spans, keywords left out. */
 export interface AccessNode {
   statement: AccessStatement;
   orReplace: boolean;
   ifNotExists: boolean;
-  /** A user's, role's or row policy's name; none for a grant. */
+  /** A user's, role's, row policy's, quota's or settings profile's name; none for a grant. */
   name?: Span;
   onCluster?: Span;
   /** A row policy's table, `[db.]table`. */
   table?: Span;
-  /** Each clause after its keywords, by key: `identified`, `host`, `defaultRole`, `defaultDatabase`, `grantees`, `settings`, `validUntil`, `as`, `for`, `using`, `to`. */
+  /**
+   * Each clause after its keywords, by key: `identified`, `host`, `defaultRole`,
+   * `defaultDatabase`, `grantees`, `settings`, `validUntil`, `as`, `for`,
+   * `using`, `to`; a quota's `keyed`, `notKeyed` and `for` (every interval,
+   * `FOR` to `FOR`, as one span).
+   */
   clauses: Partial<Record<string, Span>>;
   /** A grant's privileges or roles, one span each. */
   items: Span[];
@@ -56,7 +62,9 @@ export interface AccessNode {
   revoke?: boolean;
 }
 
-const isName = (t: Token | undefined): boolean => t !== undefined && (t.kind === "ident" || t.kind === "qident" || t.kind === "ref");
+/** A token that can stand where a name goes: a name may start with a digit (`02294_profile`). */
+const isName = (t: Token | undefined): boolean =>
+  t !== undefined && (t.kind === "ident" || t.kind === "qident" || t.kind === "ref" || (t.kind === "number" && /[A-Za-z_]/.test(t.text)));
 
 class AccessParser extends SqlCursor {
   private name(what: string): Span {
@@ -108,18 +116,29 @@ class AccessParser extends SqlCursor {
     return undefined;
   }
 
-  /** Clauses in any order: each starts with one of `starts` (a keyword sequence) and runs to the next clause. */
-  private clauses(starts: Record<string, string[]>, node: AccessNode): void {
+  /**
+   * Clauses in any order: each starts with one of `starts` (a keyword
+   * sequence) and runs to the next clause. A key of `repeats` may follow
+   * itself (a quota's `FOR INTERVAL ..., FOR INTERVAL ...`): its span runs
+   * from the first to the last.
+   */
+  private clauses(starts: Record<string, string[]>, node: AccessNode, repeats: readonly string[] = []): void {
     const stopWords = [...new Set(Object.values(starts).map((w) => w[0]!))];
+    let last: string | undefined;
     for (;;) {
       if (this.atEnd()) return;
       const hit = Object.entries(starts).find(([, words]) => words.every((w, i) => kw(this.peek(i), w)));
       if (!hit) this.fail(`unexpected ${this.peek()?.text}: expected ${Object.values(starts).map((w) => w.join(" ")).join(", ")}`);
       const [key, words] = hit;
+      const again = node.clauses[key];
+      if (again && !(repeats.includes(key) && last === key)) this.fail(`${words.join(" ")} is written twice`);
+      // A repeated clause keeps its keywords inside the span: `FOR INTERVAL 1 hour ..., FOR INTERVAL 1 day ...`.
+      const from = this.idx();
       this.p += words.length;
-      if (node.clauses[key]) this.fail(`${words.join(" ")} is written twice`);
-      // `NOT IDENTIFIED` has no value; every other clause has one.
-      node.clauses[key] = key === "notIdentified" ? { from: this.idx(-1), to: this.idx(-1) + 1, refs: [] } : this.expr(stopWords, false);
+      // `NOT IDENTIFIED` and `NOT KEYED` have no value; every other clause has one.
+      const value = key === "notIdentified" || key === "notKeyed" ? { from: this.idx(-1), to: this.idx(-1) + 1, refs: [] } : this.expr(stopWords, false);
+      node.clauses[key] = repeats.includes(key) ? { from: again?.from ?? from, to: value.to, refs: [...(again?.refs ?? []), ...value.refs] } : value;
+      last = key;
     }
   }
 
@@ -160,8 +179,33 @@ class AccessParser extends SqlCursor {
       this.clauses({ in: ["IN"], settings: ["SETTINGS"] }, n);
       return n;
     }
+    if (this.accept("QUOTA")) {
+      this.head();
+      const n = node("quota");
+      n.name = this.name("a quota name");
+      if (this.isPunct(",")) this.fail("declare one quota per template");
+      n.onCluster = this.onClusterClause();
+      this.clauses({ in: ["IN"], keyed: ["KEYED", "BY"], keyBy: ["KEY", "BY"], notKeyed: ["NOT", "KEYED"], for: ["FOR"], to: ["TO"] }, n, ["for"]);
+      // `KEY BY` is the server's other spelling of `KEYED BY`.
+      if (n.clauses.keyBy) {
+        if (n.clauses.keyed) this.fail("KEYED BY is written twice");
+        n.clauses.keyed = n.clauses.keyBy;
+        delete n.clauses.keyBy;
+      }
+      if (n.clauses.keyed && n.clauses.notKeyed) this.fail("KEYED BY and NOT KEYED are both written");
+      return n;
+    }
+    if (this.acceptSeq("SETTINGS", "PROFILE") || this.accept("PROFILE")) {
+      this.head();
+      const n = node("settingsProfile");
+      n.name = this.name("a settings profile name");
+      if (this.isPunct(",")) this.fail("declare one settings profile per template");
+      n.onCluster = this.onClusterClause();
+      this.clauses({ in: ["IN"], settings: ["SETTINGS"], to: ["TO"] }, n);
+      return n;
+    }
     if (this.accept("ROW")) this.expect("POLICY");
-    else if (!this.accept("POLICY")) this.fail("expected USER, ROLE or ROW POLICY");
+    else if (!this.accept("POLICY")) this.fail("expected USER, ROLE, ROW POLICY, QUOTA or SETTINGS PROFILE");
     this.head();
     const n = node("rowPolicy");
     n.name = this.name("a policy name");
@@ -240,7 +284,7 @@ export function isAccessStatement(ddl: string): boolean {
     .map((w) => w.toUpperCase());
   if (words[0] === "GRANT" || words[0] === "REVOKE") return true;
   if (words[0] !== "CREATE") return false;
-  return words[1] === "USER" || words[1] === "ROLE" || words[1] === "ROW" || words[1] === "POLICY";
+  return ["USER", "ROLE", "ROW", "POLICY", "QUOTA", "PROFILE"].includes(words[1]!) || (words[1] === "SETTINGS" && words[2] === "PROFILE");
 }
 
 // ── canonical forms ───────────────────────────────────────────────────
@@ -284,9 +328,8 @@ function nameList(tokens: Token[], span: Span, keywords: string[]): string {
   return [...keys, ...names].join(" , ");
 }
 
-/** `SETTINGS a = 1 READONLY, b MIN 0 MAX 2`: each setting, sorted by name, `READONLY` as the server prints it (`CONST`). */
-function settingsList(tokens: Token[], span: Span): string {
-  const sig = sigOf(tokens, span);
+/** A span's significant tokens split at its top-level commas. */
+function topLevelParts(sig: Token[]): Token[][] {
   const parts: Token[][] = [[]];
   let depth = 0;
   for (const t of sig) {
@@ -295,12 +338,102 @@ function settingsList(tokens: Token[], span: Span): string {
     if (depth === 0 && t.kind === "punct" && t.text === ",") parts.push([]);
     else parts[parts.length - 1]!.push(t);
   }
-  const words = new Set(["MIN", "MAX", "CONST", "READONLY", "WRITABLE", "CHANGEABLE_IN_READONLY", "PROFILE", "NONE"]);
-  return parts
-    .filter((p) => p.length > 0)
-    .map((p) => join(p, (w) => (words.has(w.toUpperCase()) ? w.toUpperCase() : w)).replace(/\bREADONLY$/, "CONST"))
+  return parts.filter((p) => p.length > 0);
+}
+
+/**
+ * `SETTINGS a = 1 READONLY, b MIN 0 MAX 2, PROFILE 'base'`: each setting,
+ * sorted by name, `READONLY` as the server prints it (`CONST`), and a
+ * profile inherited as the server prints it (`INHERIT base`).
+ */
+function settingsList(tokens: Token[], span: Span): string {
+  const words = new Set(["MIN", "MAX", "CONST", "READONLY", "WRITABLE", "CHANGEABLE_IN_READONLY", "PROFILE", "INHERIT", "NONE"]);
+  return topLevelParts(sigOf(tokens, span))
+    .map((p) => {
+      const head = p[0]!.text.toUpperCase();
+      if ((head === "PROFILE" || head === "INHERIT") && p.length === 2 && p[0]!.kind === "ident") return `INHERIT ${p[1]!.kind === "string" ? stringText(p[1]!.text) : unquote(p[1]!.text)}`;
+      // The first word is the setting's name (`readonly = 1`), never a key word.
+      return [join(p.slice(0, 1), (w) => w), join(p.slice(1), (w) => (words.has(w.toUpperCase()) ? w.toUpperCase() : w))].filter(Boolean).join(" ").replace(/\bREADONLY$/, "CONST");
+    })
     .sort()
     .join(" , ");
+}
+
+/** A `'quoted'` string's value. */
+const stringText = (s: string): string => s.slice(1, -1).replace(/''/g, "'").replace(/\\(.)/g, "$1");
+
+/** The length of each interval unit a quota takes, in seconds, as the server counts it (a month is a twelfth of a year). */
+export const QUOTA_INTERVAL_SECONDS: Readonly<Record<string, number>> = {
+  SECOND: 1,
+  MINUTE: 60,
+  HOUR: 3600,
+  DAY: 86400,
+  WEEK: 604800,
+  MONTH: 2629746,
+  QUARTER: 7889238,
+  YEAR: 31556952,
+};
+
+/** A limit's number as the server prints it: `1e9` is `1000000000`, `1000.0` is `1000`. */
+function quotaNumber(text: string): string {
+  if (/^\d+$/.test(text)) return text.replace(/^0+(?=\d)/, "");
+  const n = Number(text);
+  return Number.isFinite(n) ? (Number.isSafeInteger(n) || !Number.isInteger(n) ? String(n) : BigInt(Math.round(n)).toString()) : text;
+}
+
+/**
+ * A quota's intervals (`FOR [RANDOMIZED] INTERVAL n unit {MAX k = v, ... |
+ * NO LIMITS | TRACKING ONLY}`, each `FOR` to the next), keyed by the
+ * interval's length in seconds, each as the server keeps it: limits sorted
+ * by name, lower case, `MAX queries 5` as `queries = 5`. An interval with
+ * `NO LIMITS` is no interval; a second one of the same length replaces the
+ * first, as on the server.
+ */
+export function quotaIntervals(tokens: Token[], span: Span): Record<string, string> {
+  const sig = sigOf(tokens, span);
+  const groups: Token[][] = [];
+  for (const t of sig) {
+    if (t.kind === "ident" && t.text.toUpperCase() === "FOR") groups.push([]);
+    else if (groups.length > 0) groups[groups.length - 1]!.push(t);
+  }
+  const out: Record<string, string> = {};
+  for (const g of groups) {
+    const words = g.filter((t) => !(t.kind === "punct" && t.text === ","));
+    let i = 0;
+    const randomized = words[i]?.text.toUpperCase() === "RANDOMIZED";
+    if (randomized) i++;
+    if (words[i]?.text.toUpperCase() !== "INTERVAL") throw new Error(`a quota's FOR takes INTERVAL n unit: FOR ${g.map((t) => t.text).join(" ")}`);
+    const count = Number(words[i + 1]?.text);
+    const unit = QUOTA_INTERVAL_SECONDS[(words[i + 2]?.text ?? "").toUpperCase().replace(/S$/, "")];
+    if (!Number.isInteger(count) || unit === undefined) throw new Error(`a quota's interval is a whole number and a unit (second to year): FOR ${g.map((t) => t.text).join(" ")}`);
+    const rest = words.slice(i + 3);
+    const head = rest.map((t) => t.text.toUpperCase()).slice(0, 2).join(" ");
+    const seconds = String(count * unit);
+    if (head === "NO LIMITS") {
+      delete out[seconds];
+      continue;
+    }
+    let limits: string;
+    if (head === "TRACKING ONLY") limits = "TRACKING ONLY";
+    else {
+      if (rest[0]?.text.toUpperCase() !== "MAX") throw new Error(`a quota's interval takes MAX, NO LIMITS or TRACKING ONLY: FOR ${g.map((t) => t.text).join(" ")}`);
+      // After MAX: `name = value` or `name value`, separated by commas (already left out).
+      const items: string[] = [];
+      const after = rest.slice(1);
+      for (let k = 0; k < after.length; ) {
+        const name = after[k]!.text.toLowerCase();
+        k++;
+        if (after[k]?.text === "=" && after[k]!.kind !== "string") k++;
+        const value = after[k];
+        if (!value) throw new Error(`a quota's limit ${name} has no value`);
+        items.push(`${name} = ${quotaNumber(value.text)}`);
+        k++;
+      }
+      limits = `MAX ${items.sort().join(" , ")}`;
+    }
+    out[seconds] = `${randomized ? "RANDOMIZED " : ""}${limits}`;
+  }
+  return out;
 }
 
 /** `HOST LOCAL, IP '10.0.0.0/8'`: each host, sorted, the kind of each upper case. */
@@ -326,9 +459,9 @@ function qualifiedName(tokens: Token[], span: Span, defaultDatabase: string): { 
   return parts.length >= 2 ? { database: parts[parts.length - 2]!, name: parts[parts.length - 1]! } : { database: defaultDatabase, name: parts[0] ?? "" };
 }
 
-/** What a plan compares of a user, role or row policy: one string per field, absent at its default. */
+/** What a plan compares of a user, role, row policy, quota or settings profile: one string per field, absent at its default. */
 export interface AccessCanonical {
-  kind: "user" | "role" | "rowPolicy";
+  kind: "user" | "role" | "rowPolicy" | "quota" | "settingsProfile";
   name: string;
   /** A row policy's table's database. */
   database?: string;
@@ -372,6 +505,21 @@ export function accessCanonical(ddl: string, defaultDatabase = "default"): Acces
   if (node.statement === "role") {
     put("settings", c.settings && settingsList(tokens, c.settings), "NONE");
     return { kind: "role", name, fields };
+  }
+  if (node.statement === "settingsProfile") {
+    put("settings", c.settings && settingsList(tokens, c.settings), "NONE");
+    put("to", c.to && nameList(tokens, c.to, ["ALL", "NONE", "EXCEPT"]), "NONE");
+    return { kind: "settingsProfile", name, fields };
+  }
+  if (node.statement === "quota") {
+    // `KEYED BY 'user_name'`, `KEYED BY client_key, user_name`, `KEYED BY ip_address IPV6_PREFIX_BITS 64`: unquoted, lower case.
+    if (c.keyed) {
+      const keys = topLevelParts(sigOf(tokens, c.keyed)).map((p) => p.map((t) => (t.kind === "string" ? stringText(t.text) : unquote(t.text)).toLowerCase()).join(" "));
+      put("keyed", keys.join(" , "));
+    }
+    if (c.for) for (const [seconds, limits] of Object.entries(quotaIntervals(tokens, c.for))) fields[`interval.${seconds}`] = limits;
+    put("to", c.to && nameList(tokens, c.to, ["ALL", "NONE", "EXCEPT"]), "NONE");
+    return { kind: "quota", name, fields };
   }
   const table = qualifiedName(tokens, node.table!, defaultDatabase);
   put("as", c.as && text(tokens, c.as)!.toUpperCase(), "PERMISSIVE");
@@ -554,6 +702,33 @@ export function alterAccessField(kind: "user" | "role", name: string, field: str
     default:
       throw new Error(`no ALTER for ${kind} field ${field}`);
   }
+}
+
+/**
+ * The `ALTER` that sets one field of a quota or settings profile to its
+ * declared value, or back to the server's default when the declaration
+ * leaves it out. Never `CREATE ... OR REPLACE`: that makes a new object
+ * under the name, and a profile that inherits the old one, or a quota's
+ * usage, is cut off from it.
+ *
+ * A quota's interval is set whole (`ALTER QUOTA q FOR INTERVAL 3600 second
+ * MAX queries = 5` replaces that interval's limits), and taken away with
+ * `NO LIMITS`.
+ */
+export function alterQuotaOrProfileField(kind: "quota" | "settingsProfile", name: string, field: string, declared: AccessCanonical["fields"], declaredText: Partial<Record<string, string>>): string {
+  const head = `ALTER ${kind === "quota" ? "QUOTA" : "SETTINGS PROFILE"} ${ident(name)}`;
+  const interval = /^interval\.(\d+)$/.exec(field);
+  if (kind === "quota" && interval) {
+    const value = declared[field];
+    if (value === undefined) return `${head} FOR INTERVAL ${interval[1]} second NO LIMITS`;
+    const randomized = value.startsWith("RANDOMIZED ");
+    const limits = (randomized ? value.slice("RANDOMIZED ".length) : value).replace(/ , /g, ", ");
+    return `${head} FOR ${randomized ? "RANDOMIZED " : ""}INTERVAL ${interval[1]} second ${limits}`;
+  }
+  if (kind === "quota" && field === "keyed") return declaredText.keyed === undefined ? `${head} NOT KEYED` : `${head} KEYED BY ${declaredText.keyed}`;
+  if (field === "to") return `${head} TO ${declaredText.to ?? "NONE"}`;
+  if (kind === "settingsProfile" && field === "settings") return `${head} SETTINGS ${declaredText.settings ?? "NONE"}`;
+  throw new Error(`no ALTER for ${kind} field ${field}`);
 }
 
 /** A user's or role's clauses as written, by field, for the `ALTER` that sets one. */

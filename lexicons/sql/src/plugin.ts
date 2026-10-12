@@ -99,6 +99,8 @@ export const sqlPlugin: LexiconPlugin = {
       },
       { name: "dictionary", isTag: true, description: "A ClickHouse CREATE DICTIONARY, parsed into a dictionary entity with its attributes, key, source and layout" },
       { name: "user", isTag: true, description: "A ClickHouse CREATE USER, parsed into a user entity; its password is the environment's" },
+      { name: "quota", isTag: true, description: "A ClickHouse CREATE QUOTA, parsed into a quota entity with its key, its intervals' limits and whom it applies to" },
+      { name: "settingsProfile", isTag: true, description: "A ClickHouse CREATE SETTINGS PROFILE, parsed into a settings profile entity with its settings, constraints and inherited profiles" },
       { name: "schema", isTag: true, description: "A Postgres CREATE SCHEMA, parsed into a schema entity" },
       { name: "index", isTag: true, description: "A Postgres CREATE INDEX, parsed into an index entity" },
       { name: "sequence", isTag: true, description: "A Postgres CREATE SEQUENCE, parsed into a sequence entity" },

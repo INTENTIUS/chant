@@ -37,7 +37,7 @@ import { ACCESS_ENTITY_TYPES, ACCESS_UNMANAGED_DETAIL, accessOf, readLiveAccess,
 import { clickhouseQuery } from "../http";
 import { sqlString } from "../apply/statements";
 import { stripMarkerFromStatement } from "../ownership";
-import { database, dictionary, func, policy, role, table, user, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
+import { database, dictionary, func, policy, quota, role, settingsProfile, table, user, view, CLICKHOUSE_ENTITY_TYPES, type ColumnDef } from "../entities";
 import { canonicalObject, grantsObject, objectKey, type CanonicalColumn, type CanonicalObject } from "./normalize";
 import { grantStatement, grantsByGrantee, revokeStatement, type GrantAtom } from "../access";
 import { renderFor } from "../topology";
@@ -67,7 +67,11 @@ function liveProps(o: LiveObject): Props {
                 ? role
                 : o.type === CLICKHOUSE_ENTITY_TYPES.rowPolicy
                   ? policy
-                  : view;
+                  : o.type === CLICKHOUSE_ENTITY_TYPES.quota
+                    ? quota
+                    : o.type === CLICKHOUSE_ENTITY_TYPES.settingsProfile
+                      ? settingsProfile
+                      : view;
   const strings = Object.assign([o.statement], { raw: [o.statement] }) as unknown as TemplateStringsArray;
   return { ...(tag(strings).props as unknown as Props) };
 }
@@ -89,8 +93,10 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   adopt("name", d.name === l.name);
   adopt("database", d.database === l.database);
   adopt("engine", same("engine"));
-  for (const k of ["orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl", "comment", "select", "refresh", "dataSource", "layout", "lifetime", "range"] as const) adopt(k, same(k));
+  for (const k of ["orderBy", "primaryKey", "partitionBy", "sampleBy", "ttl", "comment", "select", "refresh", "dataSource", "layout", "lifetime", "range", "asFunction"] as const) adopt(k, same(k));
   adopt("settings", same("settings"));
+  // A view's DEFINER and SQL SECURITY are not compared by a plan; the server adds its own to a refreshable materialized view (#3911).
+  adopt("security", d.kind === "view" || d.kind === "materializedView");
   // A user's, role's or row policy's fields, compared as `../access.ts` reads them.
   if (d.kind === "user" || d.kind === "role" || d.kind === "rowPolicy") {
     for (const k of ["identified", "host", "validUntil", "defaultRole", "defaultDatabase", "grantees", "settings", "as", "for", "using", "to"]) {
@@ -100,6 +106,12 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
     // A user's authentication is the environment's unless the declaration says it.
     if (d.kind === "user" && declared.identified === undefined) delete out.identified;
   }
+  // A quota's or settings profile's fields; a quota's intervals are one prop, the same when every interval is.
+  if (d.kind === "quota" || d.kind === "settingsProfile") {
+    const fields = (o: CanonicalObject, pick: (k: string) => boolean) => JSON.stringify(Object.entries(o.access ?? {}).filter(([k]) => pick(k)));
+    for (const k of ["keyed", "settings", "to"]) adopt(k, d.access?.[k] === l.access?.[k]);
+    adopt("intervals", fields(d, (k) => k.startsWith("interval.")) === fields(l, (k) => k.startsWith("interval.")));
+  }
   // A function's parameters and expression are one lambda: the same lambda is the declaration's words.
   adopt("params", d.kind === "function" && same("lambda"));
   adopt("body", d.kind === "function" && same("lambda"));
@@ -108,8 +120,8 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
   adopt("constraints", same("constraints"));
 
   const declaredColumns = (declared.columns as ColumnDef[] | undefined) ?? [];
-  if (d.kind === "view" || d.kind === "materializedView") {
-    // The server infers a view's columns; a declaration that lists none is not drift.
+  if (d.kind === "view" || d.kind === "materializedView" || (d.kind === "table" && d.asFunction !== undefined && declaredColumns.length === 0)) {
+    // The server infers a view's columns, and a table function's (#3911); a declaration that lists none is not drift.
     if (declaredColumns.length === 0) out.columns = [];
   } else if (d.kind === "table" || d.kind === "dictionary") {
     const liveColumns = (live.columns as ColumnDef[] | undefined) ?? [];
@@ -124,7 +136,14 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalO
 }
 
 /** The entity types that belong to no database. */
-const GLOBAL_TYPES: ReadonlySet<string> = new Set([CLICKHOUSE_ENTITY_TYPES.database, CLICKHOUSE_ENTITY_TYPES.function, CLICKHOUSE_ENTITY_TYPES.user, CLICKHOUSE_ENTITY_TYPES.role]);
+const GLOBAL_TYPES: ReadonlySet<string> = new Set([
+  CLICKHOUSE_ENTITY_TYPES.database,
+  CLICKHOUSE_ENTITY_TYPES.function,
+  CLICKHOUSE_ENTITY_TYPES.user,
+  CLICKHOUSE_ENTITY_TYPES.role,
+  CLICKHOUSE_ENTITY_TYPES.quota,
+  CLICKHOUSE_ENTITY_TYPES.settingsProfile,
+]);
 
 /** Whether the server's formatter prints two expressions the same. A formatter that cannot parse them says no. */
 async function sameExpression(target: ClickHouseTarget, a: string, b: string): Promise<boolean> {
