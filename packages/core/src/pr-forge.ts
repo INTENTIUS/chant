@@ -212,6 +212,48 @@ export interface PullRequest {
   base?: string;
 }
 
+/** What {@link PrForge.mergePullRequest} merges, and how. */
+export interface MergeOptions {
+  /** The head commit the caller reviewed. The merge happens only while the pull request's head is still this commit. */
+  sha: string;
+  /** Default `merge`. GitLab has no one-call rebase merge, so `rebase` is refused there. */
+  method?: "merge" | "squash" | "rebase";
+  /** The merge (squash) commit's title. */
+  title?: string;
+  /** The merge (squash) commit's message body. */
+  message?: string;
+  /** Delete the head branch after a merge. A failure to delete does not undo the merge. */
+  deleteBranch?: boolean;
+}
+
+/** The outcome of {@link PrForge.mergePullRequest}. */
+export interface MergeResult {
+  merged: boolean;
+  /** The commit the merge produced, when the forge says. */
+  sha?: string;
+  /** Why it was not merged: the head moved, a conflict, a failing check, a required review. */
+  reason?: string;
+}
+
+/** Statuses a forge answers a refused merge with: not allowed, head moved, conflict, invalid. */
+const MERGE_REFUSED = new Set([405, 406, 409, 422]);
+
+/** A refused merge as a result, any other failure rethrown. */
+function refusedMerge(err: unknown): MergeResult {
+  if (err instanceof ForgeApiError && MERGE_REFUSED.has(err.status)) {
+    let reason = err.detail;
+    try {
+      const j = JSON.parse(err.detail) as Record<string, unknown>;
+      const m = j.message ?? j.error;
+      if (typeof m === "string") reason = m;
+    } catch {
+      /* not JSON: the raw text is the reason */
+    }
+    return { merged: false, reason: reason.slice(0, 300) || `the forge refused the merge (${err.status})` };
+  }
+  throw err;
+}
+
 export interface PrForge {
   kind: ForgeKind;
   /** Lower-cased, such as `github.com`. */
@@ -290,6 +332,13 @@ export interface PrForge {
   editPullRequest(pr: number, change: { title?: string; body?: string }): Promise<PullRequest | undefined>;
   /** Add labels to a pull request by name. Forgejo needs them to exist; GitHub and GitLab make them. */
   addLabels(pr: number, labels: readonly string[]): Promise<void>;
+  /**
+   * Merge pull request `pr` only if its head is still `opts.sha`. A moved
+   * head, a conflict or a branch rule the forge enforces comes back as
+   * `{ merged: false, reason }`; auth, missing-pull-request and server errors
+   * still throw.
+   */
+  mergePullRequest(pr: number, opts: MergeOptions): Promise<MergeResult>;
 }
 
 /** A GitHub or Forgejo client. */
@@ -301,7 +350,7 @@ export class ForgeApiError extends Error {
     readonly method: string,
     readonly url: string,
     readonly status: number,
-    detail: string,
+    readonly detail: string,
   ) {
     super(`${method} ${url} answered ${status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
     this.name = "ForgeApiError";
@@ -604,7 +653,18 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       // head filter, so every open page is read and matched here.
       const owner = opts.repo.split("/")[0];
       const query = kind === "github" ? `?state=open&head=${encodeURIComponent(`${owner}:${head}`)}` : "?state=open";
-      const open = (await api.list(`${repo}/pulls${query}`, pageParams, pageSize)).filter((p) => fromHere(p, head));
+      let listed: unknown[];
+      try {
+        listed = await api.list(`${repo}/pulls${query}`, pageParams, pageSize);
+      } catch (err) {
+        // Forgejo answers the list with 404 while it still counts the repository
+        // as empty (just after the first push). That is no pull request; a
+        // repository that is really missing 404s on its own read too.
+        if (kind !== "forgejo" || !(err instanceof ForgeApiError) || err.status !== 404) throw err;
+        await api.call("GET", repo);
+        return undefined;
+      }
+      const open = listed.filter((p) => fromHere(p, head));
       return open.map(pull).filter((p): p is PullRequest => p !== undefined).sort((a, b) => a.number - b.number)[0];
     },
     async editPullRequest(pr, change) {
@@ -613,6 +673,38 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     async addLabels(pr, labels) {
       if (labels.length === 0) return;
       await api.call("POST", `${repo}/issues/${pr}/labels`, { labels: [...labels] });
+    },
+    async mergePullRequest(pr, m) {
+      const method = m.method ?? "merge";
+      let res: unknown;
+      try {
+        res =
+          kind === "github"
+            ? await api.call("PUT", `${repo}/pulls/${pr}/merge`, {
+                sha: m.sha,
+                merge_method: method,
+                ...(m.title !== undefined ? { commit_title: m.title } : {}),
+                ...(m.message !== undefined ? { commit_message: m.message } : {}),
+              })
+            : await api.call("POST", `${repo}/pulls/${pr}/merge`, {
+                Do: method,
+                head_commit_id: m.sha,
+                ...(m.title !== undefined ? { MergeTitleField: m.title } : {}),
+                ...(m.message !== undefined ? { MergeMessageField: m.message } : {}),
+                ...(m.deleteBranch ? { delete_branch_after_merge: true } : {}),
+              });
+      } catch (err) {
+        return refusedMerge(err);
+      }
+      if (isObject(res) && res.merged === false) return { merged: false, reason: str(res.message) ?? "the forge did not merge it" };
+      // Forgejo answers an empty body, so the merge commit is read back.
+      const after = await api.call("GET", `${repo}/pulls/${pr}`).catch(() => undefined);
+      const sha = (isObject(res) ? str(res.sha) : undefined) ?? (isObject(after) ? str(after.merge_commit_sha) : undefined);
+      if (kind === "github" && m.deleteBranch && isObject(after) && isObject(after.head) && str(after.head.ref) && fromHere(after, str(after.head.ref) as string)) {
+        const ref = (str(after.head.ref) as string).split("/").map(encodeURIComponent).join("/");
+        await api.call("DELETE", `${repo}/git/refs/heads/${ref}`).catch(() => undefined);
+      }
+      return { merged: true, ...(sha ? { sha } : {}) };
     },
   };
 }
@@ -772,6 +864,25 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async addLabels(mr, labels) {
       if (labels.length === 0) return;
       await api.call("PUT", `${notes}/${mr}`, { add_labels: labels.join(",") });
+    },
+    async mergePullRequest(mr, m) {
+      const method = m.method ?? "merge";
+      if (method === "rebase") throw new Error("GitLab has no one-call rebase merge; use method merge or squash");
+      const text = m.title !== undefined ? (m.message ? `${m.title}\n\n${m.message}` : m.title) : m.message;
+      let res: unknown;
+      try {
+        res = await api.call("PUT", `${notes}/${mr}/merge`, {
+          sha: m.sha,
+          ...(method === "squash" ? { squash: true, ...(text !== undefined ? { squash_commit_message: text } : {}) } : {}),
+          ...(text !== undefined ? { merge_commit_message: text } : {}),
+          ...(m.deleteBranch ? { should_remove_source_branch: true } : {}),
+        });
+      } catch (err) {
+        return refusedMerge(err);
+      }
+      const sha = isObject(res) ? (str(res.merge_commit_sha) ?? str(res.squash_commit_sha)) : undefined;
+      if (isObject(res) && res.state !== undefined && res.state !== "merged") return { merged: false, reason: `the merge request is ${String(res.state)}` };
+      return { merged: true, ...(sha ? { sha } : {}) };
     },
   };
 }
