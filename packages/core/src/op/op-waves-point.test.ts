@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertOpWavesSpec, type OpWavesSpec } from "./op-waves";
-import { runOpWave, type OpWaveDecision, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
+import { runOpWave, type OpWaveDecision, type OpWaveExec, type OpWaveRunsFile, type OpWaveShowAtBase } from "./op-waves-run";
 import { memoryGateLedgerPort } from "./gate";
 import { waveSetDigest } from "../gated-waves";
 import { pointGateResumable, type GatePointAsker, type GatePointQuestion, type GatePointRequest } from "../point-decision";
@@ -216,6 +216,62 @@ describe("a wave gate that asks a decision point (#3836)", () => {
     });
     expect(asker.asked).toHaveLength(0);
     h.done();
+  });
+
+  test("the plans file's pending fields and the spec's neverOverMcp land on the point gate's pending fact (#3863)", async () => {
+    const tg: OpWavesSpec = {
+      name: "tf-apply",
+      op: "tf-apply",
+      gateName: "wave-{k}",
+      planWave: ["tg", "plan", "{wave}", "{runs}", "{plans}"],
+      applyWave: ["tg", "apply", "{wave}", "{runs}", "{plans}"],
+      point: { name: "prod-apply" },
+      waves: [{ name: "net", runs: [{ target: "vpc" }, { target: "nat" }] }],
+    };
+    const members = [{ member: "vpc", planDigest: digest("1") }, { member: "nat", planDigest: digest("2") }];
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-point-3863-"));
+    const exec: OpWaveExec = (argv, dir) => {
+      const runs = JSON.parse(readFileSync(join(dir, argv[3]!), "utf-8")) as OpWaveRunsFile;
+      if (argv[1] === "plan") {
+        writeFileSync(join(dir, argv[4]!), JSON.stringify({
+          runs: runs.runs.map((r) => ({ target: r.target, planDigest: members.find((m) => m.member === r.target)!.planDigest })),
+          pending: { commit: "c".repeat(40), members, description: "wave 1 of 1: vpc, nat" },
+        }));
+      }
+      return 0;
+    };
+    // neverOverMcp at base counts even when the change drops it.
+    const show: OpWaveShowAtBase = () => ({ sha: "b".repeat(40), text: JSON.stringify({ ...tg, neverOverMcp: true }) });
+    const gates = memoryGateLedgerPort();
+    const asker = stubAsker();
+    const waiting = await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd, exec, show, gates, points: asker, now: NOW, log: () => {} });
+    expect(waiting.exitCode).toBe(3);
+    expect(gates.appended).toHaveLength(1);
+    expect(gates.appended[0]).toMatchObject({
+      op: "tf-apply",
+      gate: "wave-1",
+      commit: "c".repeat(40),
+      members,
+      description: "wave 1 of 1: vpc, nat",
+      neverOverMcp: true,
+      answer: { point: "prod-apply" },
+    });
+    expect(waiting.decision?.pendingFact).toMatchObject({ commit: "c".repeat(40), neverOverMcp: true });
+
+    // A standing fact for the same question that does not carry neverOverMcp does not stand: the run records one that does.
+    const old = { ...gates.appended[0]! };
+    delete (old as { neverOverMcp?: true }).neverOverMcp;
+    const stale = memoryGateLedgerPort({ pending: [old] });
+    await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd, exec, show, gates: stale, points: asker, now: NOW, log: () => {} });
+    expect(stale.appended).toHaveLength(1);
+    expect(stale.appended[0]).toMatchObject({ neverOverMcp: true });
+
+    // Without neverOverMcp at base, the fact carries the fields and no neverOverMcp.
+    const plain = memoryGateLedgerPort();
+    await runOpWave({ spec: tg, specFile: "waves.json", wave: 1, cwd, exec, show: () => ({ sha: "b".repeat(40), text: JSON.stringify(tg) }), gates: plain, points: asker, now: NOW, log: () => {} });
+    expect(plain.appended[0]).toMatchObject({ commit: "c".repeat(40), members });
+    expect(plain.appended[0]).not.toHaveProperty("neverOverMcp");
+    rmSync(cwd, { recursive: true, force: true });
   });
 
   test("resume picks up the waiting wave once its question is answered (#3835)", async () => {

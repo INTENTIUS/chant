@@ -436,11 +436,11 @@ When the policy asks for an approval, the wave asks the point with `gate.planDig
 
 | The question | The wave |
 |---|---|
-| open | applies nothing and exits 3. Its pending fact cites the question, and `approve` in the decision is the `chant workspace points answer <id> --answer <answer> --by <name>` line |
+| open | applies nothing and exits 3. Its pending fact cites the question and carries the plans file's `pending` fields and the spec's `neverOverMcp`, as an approval gate's does. `approve` in the decision is the `chant workspace points answer <id> --answer <answer> --by <name>` line |
 | answered with an answer `pass` names (default yes) | records a resolution on `chant/lifecycle` that cites the answer, once per answer and digest, and applies (`via: "point"`) |
 | answered otherwise | applies nothing and exits 8. The decision is `refused` with `refused.reason: "point"`, every run, and the message naming the record. `chant workspace points retract <id>` takes the answer back so the point is asked again |
 
-A `chant approve` of the digest does not pass such a gate, and the wave's `approval` mode does not apply: the point's deciders and quorum decide. `approvals.spend` does not re-ask a point either, since the same plan asks the same question. A wide wave's deciding job asks the point, and its share jobs exit 3 or 8 with it.
+A `chant approve` of the digest does not pass such a gate, and the wave's `approval` mode does not apply: the point's deciders and quorum decide. Under a `neverOverMcp` spec, an answer or retraction of the question over MCP or ACP is refused (`answer-never-over-mcp`), so a person answers it at a shell or through hud ([#3863](https://github.com/INTENTIUS/chant/issues/3863)). `approvals.spend` does not re-ask a point either, since the same plan asks the same question. A wide wave's deciding job asks the point, and its share jobs exit 3 or 8 with it.
 
 Once the question is answered, `chant run resume --op <name>` (or the scheduled resume job) starts the waiting job again, as for any [gate that asks a decision point](#a-gate-that-asks-a-decision-point). In a CI job the question goes to the ledger unless `point.store` says otherwise, so it outlives the job's checkout.
 
@@ -507,7 +507,7 @@ A product that ran its own wave gates before moving onto `chant run wave` has pe
 
 - `gateName` names wave k's gate. With `"wave-{k}"` and `name` `tf-apply`, wave 2 waits on `chant approve tf-apply wave-2`, as before the move. The pattern needs `{k}`, and fills in `{gate}` (the base gate name) and `{k}` only.
 - `digest.over: "changing"` takes the set digest over the runs whose plan is not `empty`. When every run is empty, it covers them all, and the wave does not wait anyway. An approval of a digest the product computed the same way still counts.
-- `neverOverMcp` puts `neverOverMcp: true` on each pending fact the waves record, so `op-approve` over MCP or ACP refuses the gate. It is read at the base commit as well as from the change, and either one is enough.
+- `neverOverMcp` puts `neverOverMcp: true` on each pending fact the waves record, so `op-approve` over MCP or ACP refuses the gate, and under a [decision point](#ask-a-decision-point) `points-answer` there refuses its question. It is read at the base commit as well as from the change, and either one is enough.
 
 A pending fact the product recorded before the move still stands for its digest, so the wave records no second one, and an approval newer than it lets the wave apply.
 
