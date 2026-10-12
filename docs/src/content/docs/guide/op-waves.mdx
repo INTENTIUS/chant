@@ -100,6 +100,8 @@ chant approve migrations migrations-wave-3 --plan jcs1-sha256:...
 
 The pending fact carries `approvalMode` (`ledger`, `pr-review` or `sealed`), the approval mode the wave asked under, read at base and not the quorum block in `approval`. A reader such as behold or a gate audit uses it to decide which approvals count, so a pipeline that passes `--approval` is not guessed from config ([#3861](https://github.com/INTENTIUS/chant/issues/3861)). A decision point's pending fact and the pending fact of a hold on another gate carry it too. A product's `pending` fields may not set it.
 
+A hold on another gate also carries `wave: { number, name, op }` and `heldBy: { hook, moment, target? }`, the hook that asked, the moment it ran at and its run for a `perRun` hook ([#3886](https://github.com/INTENTIUS/chant/issues/3886)). A reader names the holder from `heldBy` and not from `description`, which the hook writes. `PendingGateRecord` and `readGateLedger` type `wave`, `heldBy` and `approvalMode` ([#3887](https://github.com/INTENTIUS/chant/issues/3887)); a `wave` or `heldBy` of the wrong shape is dropped on read. `deriveGateAudit` surfaces `heldBy` and `approvalMode` on the request entry beside `wave`. A product's `pending` fields may not set `wave` or `heldBy`.
+
 Approve it, then start the job again: by hand in the forge (GitHub and Forgejo call it re-running failed jobs, GitLab calls it a retry), or with `--resume` as the next section shows. The wave plans again and applies once it finds the approval for its digest.
 
 ## Plan a wave in one call

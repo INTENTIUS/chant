@@ -81,6 +81,7 @@ import { contentDigest } from "../content-digest";
 import { samePlanDigest } from "./plan-digest";
 import type { GateLedgerPort } from "../op/gate";
 import type { LedgerReadPort } from "./ledger-port";
+import type { GateApprovalSource } from "../op/op-waves";
 
 export const GATE_AUDIT_KINDS = [
   "approval-requested",
@@ -196,6 +197,10 @@ export interface GateAuditEntry {
   description?: string;
   /** Pending facts an op wave wrote for a policy denial or a hold (#3839): the wave they belong to. */
   wave?: { number: number; name: string; op?: string };
+  /** Pending facts of a hold (#3886): the hook that holds the wave. */
+  heldBy?: { hook: string; moment: string; target?: string };
+  /** Pending facts of an op wave (#3861): the approval mode the wave asked under. */
+  approvalMode?: GateApprovalSource;
   /** Overrides: the rules the denial named (from the denial line when there is one). */
   rules?: string[];
   /** A hook entry: the hook's moment, name, run, how it came out, and why a moment was skipped (#3810). */
@@ -279,13 +284,18 @@ type Row = Record<string, unknown>;
 
 const KNOWN = new Set([
   "version", "kind", "op", "gate", "resolvedBy", "relayedBy", "timestamp", "note", "url", "planDigest", "environment",
-  "approver", "seal", "review", "runId", "expiresAt", "description", "wave", "rules", "pr", "head", "reviewers",
+  "approver", "seal", "review", "runId", "expiresAt", "description", "wave", "heldBy", "approvalMode", "rules", "pr", "head", "reviewers",
 ]);
 
 const waveOf = (v: unknown): { number: number; name: string; op?: string } | undefined => {
   const w = v as { number?: unknown; name?: unknown; op?: unknown } | null;
   return w && typeof w === "object" && typeof w.number === "number" && typeof w.name === "string" ? { number: w.number, name: w.name, ...(typeof w.op === "string" ? { op: w.op } : {}) } : undefined;
 };
+const heldByOf = (v: unknown): { hook: string; moment: string; target?: string } | undefined => {
+  const h = v as { hook?: unknown; moment?: unknown; target?: unknown } | null;
+  return h && typeof h === "object" && typeof h.hook === "string" && typeof h.moment === "string" ? { hook: h.hook, moment: h.moment, ...(typeof h.target === "string" ? { target: h.target } : {}) } : undefined;
+};
+const modeOf = (v: unknown): GateApprovalSource | undefined => (v === "ledger" || v === "pr-review" || v === "sealed" ? v : undefined);
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
 const time = (iso: string): number => Date.parse(iso) || 0;
@@ -414,7 +424,7 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
           ...base,
           kind: override ? "override-requested" : "approval-requested",
           at: String(r.timestamp),
-          ...drop({ runId: str(r.runId), expiresAt: str(r.expiresAt), description: str(r.description), url: str(r.url), rules: strings(r.rules), wave: waveOf(r.wave) }),
+          ...drop({ runId: str(r.runId), expiresAt: str(r.expiresAt), description: str(r.description), url: str(r.url), rules: strings(r.rules), wave: waveOf(r.wave), heldBy: heldByOf(r.heldBy), approvalMode: modeOf(r.approvalMode) }),
           detail: extra,
         }));
         continue;

@@ -12,6 +12,15 @@ const resolution = (o: Record<string, unknown> = {}) =>
 const ledger = (op: string, ...texts: string[]) => ({ op, lines: texts.map((text) => ({ text })) });
 
 describe("lifecycle/gate-audit", () => {
+  test("a hold's heldBy and approvalMode are surfaced (#3886, #3887)", () => {
+    const { entries } = deriveGateAudit({ ledgers: [ledger("tf-apply", pending({ approvalMode: "sealed", heldBy: { hook: "migrate", moment: "before-apply", target: "vpc" } }))] });
+    expect(entries[0]).toMatchObject({ approvalMode: "sealed", heldBy: { hook: "migrate", moment: "before-apply", target: "vpc" } });
+    expect(entries[0]!.detail).toEqual({});
+    const bad = deriveGateAudit({ ledgers: [ledger("tf-apply", pending({ approvalMode: "x", heldBy: { hook: 1 } }))] });
+    expect(bad.entries[0]!.heldBy).toBeUndefined();
+    expect(bad.entries[0]!.approvalMode).toBeUndefined();
+  });
+
   test("a pending fact's wave is surfaced (#3839)", () => {
     const { entries } = deriveGateAudit({ ledgers: [ledger("tf-apply", pending({ wave: { number: 2, name: "prod", op: "tg" } }))] });
     expect(entries[0]).toMatchObject({ wave: { number: 2, name: "prod", op: "tg" } });

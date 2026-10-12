@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
-  resolveApprovalUrl, isApprovalUrl, latestResolutionForPlan,
+  resolveApprovalUrl, isApprovalUrl, latestResolutionForPlan, parseGateLedger,
   type PendingGateRecord, type GateResolutionRecord,
 } from "./gate-ledger";
 import { readBlobFromPath, writeBlobToPath } from "./git";
@@ -482,5 +482,24 @@ describe("gate ledger newline termination (#3849)", () => {
       expect(raw.endsWith("\n")).toBe(true);
       expect(raw.split("\n").filter(Boolean)).toHaveLength(2);
     });
+  });
+});
+
+describe("pending fact wave and heldBy (#3886, #3887)", () => {
+  const line = (o: Record<string, unknown>) =>
+    JSON.stringify({ version: 1, kind: "pending", op: "tg", gate: "g", timestamp: "2026-10-01T00:00:00Z", expiresAt: "2026-10-02T00:00:00Z", ...o });
+  test("the reader types wave, heldBy and approvalMode", () => {
+    const { pending } = parseGateLedger(line({ approvalMode: "pr-review", wave: { number: 2, name: "prod", op: "tg" }, heldBy: { hook: "migrate", moment: "before-apply", target: "vpc" } }));
+    const p: PendingGateRecord = pending[0]!;
+    expect(p.wave).toEqual({ number: 2, name: "prod", op: "tg" });
+    expect(p.heldBy).toEqual({ hook: "migrate", moment: "before-apply", target: "vpc" });
+    expect(p.approvalMode).toBe("pr-review");
+  });
+  test("a wave or heldBy of the wrong shape is dropped, the line is kept", () => {
+    const { pending, malformed } = parseGateLedger(line({ wave: { number: "2" }, heldBy: "migrate" }));
+    expect(malformed).toBe(0);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.wave).toBeUndefined();
+    expect(pending[0]!.heldBy).toBeUndefined();
   });
 });
