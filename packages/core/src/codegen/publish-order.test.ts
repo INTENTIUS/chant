@@ -11,9 +11,10 @@
  * import existed. Half a release shipped and the failure only surfaced from
  * npm, after the tag.
  *
- * publish-packages.sh now derives the order instead of assuming one. This
- * asserts the derivation is actually topological, so the next lexicon that
- * depends on an alphabetically earlier one fails here rather than mid-release.
+ * publish-packages.sh now derives the order instead of assuming one, as
+ * dependency layers that pack and publish in parallel (#3857). This asserts
+ * the derivation is actually topological, so the next lexicon that depends on
+ * an alphabetically earlier one fails here rather than mid-release.
  */
 
 import { describe, expect, it } from "vitest";
@@ -34,7 +35,9 @@ function ask(fn: string): string[] {
     .filter(Boolean);
 }
 
-const publishOrder = () => ask("publishable_dirs");
+/** `layer dir name version deps` rows, in publish order. */
+const publishLayers = () => ask("publish_layers").map((line) => line.split("\t"));
+const publishOrder = () => publishLayers().map((row) => row[1]);
 
 function manifest(dir: string) {
   return JSON.parse(readFileSync(join(REPO, dir, "package.json"), "utf8"));
@@ -77,6 +80,19 @@ describe("publish order", () => {
           `${pkg.name} (${dir}) publishes before its dependency ${name} (${depDir}), ` +
             `so ${name}'s generated output will not exist when ${pkg.name} prepacks`,
         ).toBeLessThan(position.get(dir)!);
+      }
+    }
+  });
+
+  it("puts every package in a later layer than its dependencies", () => {
+    // #3857: a layer publishes in parallel, so a dependency in the same layer
+    // would race its dependent rather than precede it.
+    const rows = publishLayers();
+    const layer = new Map(rows.map(([l, d]) => [d, Number(l)]));
+    for (const [l, dir, name, , deps] of rows) {
+      for (const dep of deps ? deps.split(",") : []) {
+        expect(layer.get(dep), `${name} (${dir}) is in layer ${l}, not after its dependency ${dep}`)
+          .toBeLessThan(Number(l));
       }
     }
   });

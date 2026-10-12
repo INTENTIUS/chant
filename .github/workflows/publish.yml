@@ -14,7 +14,7 @@ on:
     # any package whose version changed. Only version-bumped packages publish
     # (per-package skip-if-unchanged in the publish job); the `test` gate is
     # skipped on this branch path since the merged code already passed PR CI and
-    # each `npm publish` re-runs the package's prepack (build + validate). This
+    # each package's `npm pack` re-runs its prepack (build + validate). This
     # reuses publish.yml (already the npm trusted-publisher), so NO npm/OIDC
     # change is needed. Un-gate by uncommenting the line below.
     # branches: [main]
@@ -53,7 +53,7 @@ jobs:
   # only tags a bump commit on top of a green commit (#2816). It now checks
   # that run through the API instead. For a bump commit, which only moves
   # version fields and has no run of its own, the run checked is its parent's
-  # (scripts/publish-verify-ci.sh). Each `npm publish` below still re-runs the
+  # (scripts/publish-verify-ci.sh). The publish step below still runs each
   # package's prepack under CHANT_RELEASE_GATE, so the build and the release
   # gate run on what ships. The job keeps the id `test` so `publish` and
   # `untag` read its result as before.
@@ -137,7 +137,9 @@ jobs:
       # package whose publish step was wrong, and every release since
       # chant-v0.33.0 went red. The skip-if-unchanged check makes re-running
       # idempotent, so a partial release is recovered by re-running or
-      # dispatching this workflow.
+      # dispatching this workflow. It packs every package first, then
+      # publishes the tarballs in dependency layers, waiting on registry
+      # metadata between layers (#3842, #3857).
       - name: Publish workspace packages
         id: publish
         env:
