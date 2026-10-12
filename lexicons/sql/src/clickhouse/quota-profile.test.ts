@@ -172,7 +172,7 @@ describe("import", () => {
       ["ClickHouse::SettingsProfile", "p"],
       ["ClickHouse::Quota", "q"],
     ]);
-    expect(problems).toEqual([expect.stringMatching(/NAMED COLLECTION is not declared: a named collection holds credentials/)]);
+    expect(problems).toEqual([expect.stringMatching(/^named collection: chant cannot declare it \(a named collection holds credentials/)]);
   });
 
   test("the generator writes them with their tags, never as a relation another object names", () => {

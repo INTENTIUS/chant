@@ -1,8 +1,9 @@
 /**
  * Import against a real ClickHouse server never leaves an object out without
- * a word (#3911): a server holding a quota, a settings profile, a named
- * collection and a workload made with SQL, beside a table, fails the import,
- * which names all of them; with `skipUndeclarable` the table is imported and
+ * a word (#3911): a server holding a named collection and a workload made
+ * with SQL, beside a table, fails the import, which names both; a quota and a
+ * settings profile are declared kinds, which an import reads only when a
+ * build declares them, so they are not refused; with `skipUndeclarable` the table is imported and
  * they are warnings. What `users.xml` defines (the `default` quota and
  * profile) is the server's, and is not refused.
  *
@@ -42,7 +43,7 @@ afterAll(async () => {
 
 const run = (extra: Record<string, unknown> = {}) => exportResources({ environment: "x", config: {}, env: { CLICKHOUSE_URL: server!.endpoint.url }, ...extra });
 
-const NAMED = ["named collection nc_s3", "quota q_reports", "settings profile p_reports", "workload all"];
+const NAMED = ["named collection nc_s3", "workload all"];
 
 describe.skipIf(!enabled)("importing a server with objects chant cannot declare", () => {
   test("fails, naming every one of them", async () => {
