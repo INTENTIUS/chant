@@ -22,7 +22,7 @@
 
 import { spawn } from "node:child_process";
 import type { ParsedArgs } from "../cli/registry";
-import type { ComposedMember, ComposedNode, WorkspaceGraph } from "./compose-graph";
+import { danglingKey, SCOPED_GROUPS, type ComposedMember, type ComposedNode, type WorkspaceGraph } from "./compose-graph";
 
 export type { NestedWorkspace } from "./compose-graph";
 import { readerToolchain, type Toolchain } from "./member-commands";
@@ -148,11 +148,16 @@ export function foldNested(graph: WorkspaceGraph, member: ComposedMember, inner:
       into[k] = [...(into[k] ?? []), ...v.map((id) => prefixed(outer, id))].sort();
     }
   }
-  for (const key of ["byStack", "byContainer", "byWave"] as const) {
+  for (const key of SCOPED_GROUPS) {
     for (const [k, v] of Object.entries(innerGroups[key] ?? {})) {
       const into = (groups[key] ??= {});
       into[prefixed(outer, k)] = v.map((id) => prefixed(outer, id)).sort();
     }
+  }
+  if (inner.dangling?.length) {
+    graph.dangling = [...(graph.dangling ?? []), ...inner.dangling.map((d) => ({ ...d, from: prefixed(outer, d.from), member: outer, nested: d.member }))].sort((a, b) =>
+      danglingKey(a).localeCompare(danglingKey(b)),
+    );
   }
   for (const c of inner.collectors ?? []) graph.collectors.push({ ...c, member: prefixed(outer, c.member) });
   for (const [kind, attrs] of Object.entries(inner.derivedAttrs ?? {})) {

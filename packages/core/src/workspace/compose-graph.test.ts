@@ -104,6 +104,61 @@ describe("composeWorkspaceGraph", () => {
   });
 });
 
+describe("CI edges, pipelines and dangling references (#3922)", () => {
+  /** A github member as `chant graph` reports it after #3910. */
+  const ci = (workflow: string, job: string): GraphIR => ({
+    version: 1,
+    nodes: [
+      { id: workflow, kind: "Workflow", lexicon: "github", attrs: {} },
+      { id: job, kind: "Job", lexicon: "github", attrs: {} },
+      { id: "deploy", kind: "Job", lexicon: "github", attrs: {} },
+    ],
+    edges: [
+      { from: "deploy", to: job, kind: "needs", viaAttr: "needs" },
+      { from: job, to: workflow, kind: "calls", viaAttr: "uses", crossPipeline: true },
+    ],
+    groups: { byLexicon: { github: [job, "deploy", workflow] }, byPipeline: { ci: [job, "deploy", workflow] } },
+    dangling: [
+      { from: "deploy", kind: "needs", path: "needs", value: "lint" },
+      { from: job, kind: "calls", path: "uses", value: "other/repo/.github/workflows/x.yml@main", crossPipeline: true },
+    ],
+  });
+  const doc = composeWorkspaceGraph({ name: "acme", root: "." }, [
+    { member: member("svc", "svc"), ir: ci("ciWorkflow", "build") },
+    { member: member("app", "app"), ir: ci("ciWorkflow", "test") },
+    { member: member("db", "db"), ir: db },
+  ]);
+
+  test("edges keep their kind and crossPipeline", () => {
+    expect(doc.edges.filter((e) => e.member === "svc")).toEqual([
+      { from: "svc/build", to: "svc/ciWorkflow", kind: "calls", viaAttr: "uses", crossPipeline: true, member: "svc" },
+      { from: "svc/deploy", to: "svc/build", kind: "needs", viaAttr: "needs", member: "svc" },
+    ]);
+  });
+
+  test("byPipeline keys and ids are prefixed with the member", () => {
+    expect(doc.groups.byPipeline).toEqual({
+      "app/ci": ["app/ciWorkflow", "app/deploy", "app/test"],
+      "svc/ci": ["svc/build", "svc/ciWorkflow", "svc/deploy"],
+    });
+  });
+
+  test("dangling references keep their fields, with from prefixed and the member named, sorted", () => {
+    expect(doc.dangling).toEqual([
+      { from: "app/deploy", kind: "needs", path: "needs", value: "lint", member: "app" },
+      { from: "app/test", kind: "calls", path: "uses", value: "other/repo/.github/workflows/x.yml@main", crossPipeline: true, member: "app" },
+      { from: "svc/build", kind: "calls", path: "uses", value: "other/repo/.github/workflows/x.yml@main", crossPipeline: true, member: "svc" },
+      { from: "svc/deploy", kind: "needs", path: "needs", value: "lint", member: "svc" },
+    ]);
+  });
+
+  test("no dangling section and no byPipeline when no member reports either", () => {
+    const plain = composeWorkspaceGraph({ name: "acme", root: "." }, [{ member: member("db", "db"), ir: db }]);
+    expect("dangling" in plain).toBe(false);
+    expect(plain.groups.byPipeline).toBeUndefined();
+  });
+});
+
 describe("the links section (#2539)", () => {
   test("inferred joins carry their label, and a declared link suppresses the inferred edge it covers", () => {
     const consumer: GraphIR = {

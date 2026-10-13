@@ -97,6 +97,20 @@ describe("foldNested", () => {
   });
 });
 
+describe("foldNested with CI pipelines and dangling references (#3922)", () => {
+  test("prefixes byPipeline and dangling with the outer member, and keeps the nested member on each reference", () => {
+    const outer = composeWorkspaceGraph({ name: "outer", root: "." }, [
+      { member: member("platform", { kind: "workspace", status: "skipped", reason: { code: "kind-not-run", message: "nested" }, chant: null, irVersion: null }) },
+    ]);
+    const inner = innerGraph();
+    inner.groups.byPipeline = { "api/ci": ["api/Queue"] };
+    inner.dangling = [{ from: "api/Queue", kind: "needs", path: "needs", value: "lint", member: "api" }];
+    foldNested(outer, outer.members[0], inner);
+    expect(outer.groups.byPipeline).toEqual({ "platform/api/ci": ["platform/api/Queue"] });
+    expect(outer.dangling).toEqual([{ from: "platform/api/Queue", kind: "needs", path: "needs", value: "lint", member: "platform", nested: "api" }]);
+  });
+});
+
 describe("the outer workspace never writes inside a nested one", () => {
   let root: string;
   afterEach(() => rmSync(root, { recursive: true, force: true }));
