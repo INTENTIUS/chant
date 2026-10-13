@@ -228,6 +228,27 @@ export async function computeComponentGraph(
 /** A generate-mode target lexicon name — any lexicon whose plugin implements `generateComponentPipeline` (gitlab, github, and forgejo today). */
 export type GenerateLexicon = string;
 
+/**
+ * The components an "all" run takes, in `discovered` order (chant #1522). A
+ * seam-gated component (`enabled: false`, computed from this run's own
+ * params) sits out: the run deploys the estate the parameters describe, not
+ * the units the seams turned off. A disabled dependency is satisfied
+ * vacuously, since ordering is dependsOn's only meaning, so it is also
+ * stripped from the survivors' dependsOn rather than failing wave resolution
+ * as an unknown name. `chant run --components all` and the generated
+ * pipelines (#3951) both select through this.
+ */
+export function withoutDisabled<T extends { name: string; dependsOn?: string[] }>(
+  discovered: ReadonlyArray<{ name: string; enabled?: boolean }>,
+  components: T[],
+): T[] {
+  const disabled = new Set(discovered.filter((c) => c.enabled === false).map((c) => c.name));
+  if (disabled.size === 0) return components;
+  return components
+    .filter((c) => !disabled.has(c.name))
+    .map((c) => (c.dependsOn?.some((d) => disabled.has(d)) ? { ...c, dependsOn: c.dependsOn.filter((d) => !disabled.has(d)) } : c));
+}
+
 /** Result of `chant build --components --generate <lexicon>`. */
 export interface GenerateComponentsResult {
   success: boolean;
@@ -301,11 +322,13 @@ export async function generateComponentsPipeline(
     return { success: false, error: result.errors.map((e) => e.message).join("\n") };
   }
 
-  const driverComponents: DriverComponent[] = [...result.components.values()].map(({ component }) => ({
-    name: component.name,
-    dependsOn: component.dependsOn,
-    deploy: component.deploy,
-  }));
+  // #3951: the pipeline holds the jobs `chant run --components all` would
+  // run, so a disabled component has no job and no other job needs it.
+  const discovered = [...result.components.values()].map(({ component }) => component);
+  const driverComponents = withoutDisabled(
+    discovered,
+    discovered.map((component) => ({ name: component.name, dependsOn: component.dependsOn, deploy: component.deploy })),
+  );
 
   try {
     const { yaml, stages, jobs, env } = plugin.generateComponentPipeline(driverComponents, options);
@@ -512,19 +535,7 @@ export async function resolveComponentTargets(
   const discovered = [...result.components.values()].map(({ component }) => component);
   const all = discovered.map((component) => toDriverComponent(component));
 
-  if (selector === "all") {
-    // chant #1522 — a seam-gated component (`enabled: false`, computed from
-    // this run's own params) sits out of "all": the run deploys the estate
-    // the parameters describe, not the units the seams turned off. A disabled
-    // dependency is satisfied vacuously — ordering is dependsOn's only
-    // semantics — so it is also stripped from the survivors' dependsOn,
-    // rather than failing wave resolution as an unknown name.
-    const disabled = new Set(discovered.filter((c) => c.enabled === false).map((c) => c.name));
-    const targets = all
-      .filter((c) => !disabled.has(c.name))
-      .map((c) => (c.dependsOn?.some((d) => disabled.has(d)) ? { ...c, dependsOn: c.dependsOn.filter((d) => !disabled.has(d)) } : c));
-    return { success: true, targets };
-  }
+  if (selector === "all") return { success: true, targets: withoutDisabled(discovered, all) };
 
   const found = all.find((c) => c.name === selector);
   const disabledByName = discovered.find((c) => c.name === selector && c.enabled === false);
