@@ -22,13 +22,44 @@ Warns when a `Service.image` prop is a literal string ending in `:latest` or has
 
 ```typescript
 // ✗ triggers DKRS001
-export const api = new Service({ image: "myapp" });
-export const api = new Service({ image: "myapp:latest" });
+export const untagged = new Service({ image: "myapp" });
+export const latest = new Service({ image: "myapp:latest" });
 
 // ✓ ok
-export const api = new Service({ image: "myapp:1.0" });
-export const api = new Service({ image: env("APP_IMAGE") });
+export const pinned = new Service({ image: "myapp:1.0" });
+export const fromEnv = new Service({ image: env("APP_IMAGE") });
 ```
+
+### DKRS002 — Per-kind fields in a different order than written
+**Severity:** warning | **Category:** correctness | **Fix:** `chant lint --fix`
+
+Warns when a Dockerfile stage's per-kind fields (`run`, `copy`, `user`, ...) are declared in an order that the fixed per-kind order changes. Those fields are always written as `ARG`, `ENV`, `WORKDIR`, `USER`, `RUN`, `COPY`, `ADD`, `EXPOSE`, `VOLUME`, `LABEL`, `ENTRYPOINT`, `CMD`, `HEALTHCHECK`, so below the `npm ci` runs before `package.json` is copied in:
+
+```typescript
+// ✗ triggers DKRS002: declared as copy, run; written as RUN, COPY
+export const app = new Dockerfile({
+  from: "node:20-alpine",
+  workdir: "/app",
+  copy: ["package.json package-lock.json ./"],
+  run: ["npm ci"],
+});
+```
+
+The fix rewrites the fields as `steps` in the fixed order, so the output does not change, with a comment asking you to reorder them. Then put the steps in the order the build needs:
+
+```typescript
+// ✓ ok
+export const app = new Dockerfile({
+  from: "node:20-alpine",
+  steps: [
+    { workdir: "/app" },
+    { copy: "package.json package-lock.json ./" },
+    { run: "npm ci" },
+  ],
+});
+```
+
+See [Per-kind fields](/chant/lexicons/docker/dockerfiles/#per-kind-fields).
 
 ## Post-synth checks
 
@@ -75,15 +106,100 @@ RUN apt-get install -y --no-install-recommends curl
 
 `ADD` has implicit behaviours (URL fetching, tar extraction). Use `COPY` for plain file copies; use `ADD` only when its extra features are intentionally needed.
 
-### DKRD012 — No USER instruction
+### DKRD012 — Container runs as root
 **Severity:** warning | **Applies to:** Dockerfiles
 
-A Dockerfile has no `USER` instruction, meaning the container runs as root. Set an unprivileged user.
+The final stage has no `USER` instruction, or its last `USER` is `root` (or `0`), so the container runs as root. A `USER` in an earlier stage does not carry into the final image. Put an unprivileged `USER` in the final stage, after any steps that need root.
 
 ```typescript
 export const app = new Dockerfile({
   from: "node:20-alpine",
-  user: "node",  // ✓
-  cmd: `["node", "index.js"]`,
+  steps: [
+    { workdir: "/app" },
+    { copy: ". ." },
+    { user: "node" },  // ✓
+    { cmd: ["node", "index.js"] },
+  ],
 });
+```
+
+### DKRD013 — Whole build context copied before a dependency install
+**Severity:** warning | **Applies to:** Dockerfiles
+
+A stage copies the whole build context (`COPY . .`) and then runs a dependency install (`npm ci`, `yarn install`, `pip install -r`, `poetry install`, `go mod download`, `bundle install`, `composer install`, ...). Any source change then reruns the install. Copy the manifests, install, then copy the rest.
+
+```dockerfile
+# ✗
+COPY . .
+RUN npm ci
+
+# ✓
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+```
+
+### DKRD014 — Root-only command after a non-root USER
+**Severity:** warning | **Applies to:** Dockerfiles
+
+A `RUN` that installs packages or manages users and ownership (`apt-get install`, `apk add`, `dnf install`, `useradd`, `chown`, ...) comes after `USER` switched to an unprivileged user in the same stage. It fails or does something else as that user. Move it before the `USER` step. A command run through `sudo` is not flagged.
+
+```dockerfile
+# ✗
+USER app
+RUN apt-get update && apt-get install -y --no-install-recommends curl
+
+# ✓
+RUN apt-get update && apt-get install -y --no-install-recommends curl
+USER app
+```
+
+### DKRD015 — More than one CMD or ENTRYPOINT in a stage
+**Severity:** warning | **Applies to:** Dockerfiles
+
+Only the last `CMD` and the last `ENTRYPOINT` of a stage take effect. Shared steps spread into a stage that adds its own `cmd` are a common way to end up with two.
+
+### DKRD016 — COPY --from names no earlier stage
+**Severity:** warning | **Applies to:** Dockerfiles
+
+`COPY --from=<name>` names a stage that is only defined later in the file, or a name no stage has. Docker then pulls an image of that name instead. Stage indexes (`--from=0`) and image references with a tag, digest or registry path are not flagged.
+
+### DKRD017 — ARG before FROM is never used
+**Severity:** warning | **Applies to:** Dockerfiles
+
+An `ARG` declared before the first `FROM` (`globalArgs`) is only visible to `FROM` lines, and inside a stage that declares it again with `ARG NAME`. One that neither uses has no effect.
+
+```dockerfile
+# ✓ used by FROM, and declared again to use inside the stage
+ARG NODE_VERSION=20
+FROM node:${NODE_VERSION}-alpine
+ARG NODE_VERSION
+```
+
+### DKRD018 — Relative WORKDIR
+**Severity:** warning | **Applies to:** Dockerfiles
+
+The first `WORKDIR` in a stage is a relative path, so it depends on the working directory the base image left. Use an absolute path.
+
+### DKRD019 — ADD of a remote URL without --checksum
+**Severity:** warning | **Applies to:** Dockerfiles
+
+`ADD https://...` fetches the file at build time and accepts whatever the server returns. Pin it with `--checksum`:
+
+```dockerfile
+ADD --checksum=sha256:<digest> https://example.com/tool.tar.gz /tmp/
+```
+
+### DKRD020 — apt-get update in its own RUN
+**Severity:** warning | **Applies to:** Dockerfiles
+
+`apt-get update` runs in one `RUN` and `apt-get install` in a later one. The update layer is cached, so the install can use a stale package index. Run both in one `RUN`.
+
+```dockerfile
+# ✗
+RUN apt-get update
+RUN apt-get install -y --no-install-recommends curl
+
+# ✓
+RUN apt-get update && apt-get install -y --no-install-recommends curl
 ```

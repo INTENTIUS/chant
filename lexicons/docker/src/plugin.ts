@@ -16,6 +16,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { dockerSerializer } from "./serializer";
 import { noLatestTagRule } from "./lint/rules/no-latest-tag";
+import { perKindOrderRule } from "./lint/rules/per-kind-order";
 import { dockerCompletions } from "./lsp/completions";
 import { dockerHover } from "./lsp/hover";
 import { DockerTemplateParser, DockerTemplateGenerator } from "./import/adapter";
@@ -33,7 +34,7 @@ export const dockerPlugin: LexiconPlugin = {
   serializer: dockerSerializer,
 
   lintRules(): LintRule[] {
-    return [noLatestTagRule];
+    return [noLatestTagRule, perKindOrderRule];
   },
 
   postSynthChecks() {

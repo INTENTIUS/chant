@@ -15,7 +15,11 @@
  * that parameter give way to the declared one, which is how an inferred edge
  * is promoted.
  *
- * Every row says how it was found (`declared` or `inferred:joinKey`), where it
+ * A member whose kind has a link reader (#3932, `./kind-link-readers.ts`) also
+ * states links in its own files, such as a dbt project's sources. Those rows
+ * have origin `kind-reader` and carry the file and line that state them.
+ *
+ * Every row says how it was found (`declared`, `kind-reader` or `inferred:joinKey`), where it
  * resolved (`source`, or `live` for the rows of `check --live`, #2549) and its status. A link that
  * can't be resolved is kept, with the reason.
  *
@@ -30,6 +34,7 @@ import { joinKey, joinLabel, type JoinLabel } from "../join-key";
 import type { Declaration, LinkDeclaration, Member } from "./declaration";
 import type { KindRegistry, MemberKind } from "./kinds";
 import type { MemberCollector } from "./compose-graph";
+import type { KindLinkRead, KindReadLink } from "./kind-link-readers";
 
 /**
  * The link kinds chant knows. Closed: a link of any other kind fails closed.
@@ -46,14 +51,20 @@ export const TELEMETRY_LINK_KIND = "telemetry";
 /** The OTLP protocols a telemetry link may state, as `OTEL_EXPORTER_OTLP_PROTOCOL` names them. */
 export const TELEMETRY_PROTOCOLS = ["grpc", "http/protobuf", "http/json"] as const;
 
-/** How a row was found: written down, or inferred by the named rule. */
-export type LinkOrigin = "declared" | "inferred:joinKey";
+/**
+ * How a row was found: written down in the declaration, read from the
+ * member's own files by its kind's link reader (#3932), or inferred by the
+ * named rule.
+ */
+export type LinkOrigin = "declared" | "kind-reader" | "inferred:joinKey";
 
 /** One output or parameter of a member, as a join sees it. */
 export interface JoinHandle {
   name: string;
   /** The node that holds it, when the reader knows one (a graph IR id). */
   node?: string;
+  /** Names it had before, from a rename hint in the producer's source (#3931). */
+  previously?: readonly string[];
 }
 
 /** What a member offers links, and what it reads. */
@@ -80,6 +91,10 @@ interface RowBase {
   resolves: "source" | "live";
   /** Why the row is not `resolved`, or null. */
   reason: string | null;
+  /** A `kind-reader` row (#3932): the reader, and the file (from the workspace root) and line that state the link. */
+  reader?: string;
+  file?: string;
+  line?: number;
 }
 
 /** A declared link, or an inferred join with one producer. */
@@ -113,7 +128,11 @@ export interface TelemetryTargets {
   composed: ReadonlySet<string>;
 }
 
-/** A parameter that joins outputs of two or more producers (or two outputs of one). */
+/**
+ * A parameter that joins outputs of two or more producers (or two outputs of
+ * one). For a `kind-reader` row whose file names no producer, `input` is the
+ * output it reads, and the candidates are the members that could produce it.
+ */
 export interface AmbiguousRow extends RowBase {
   status: "ambiguous";
   input: string;
@@ -170,9 +189,16 @@ function nearNames(name: string, outputs: JoinHandle[]): string[] {
  * Resolve every declared link and infer the joins nobody wrote down.
  * `handles` holds one entry per member whose handles were read; a member
  * missing from it is unresolved. Declared rows come first, in declaration
- * order; inferred and ambiguous rows follow, sorted by consumer and parameter.
+ * order; then the rows each member's kind reader found (`readLinks`, #3932),
+ * in member and file order; inferred and ambiguous rows follow, sorted by
+ * consumer and parameter.
  */
-export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<string, MemberHandles>, telemetry?: TelemetryTargets): LinkTableRow[] {
+export function resolveLinks(
+  declaration: Declaration,
+  handles: ReadonlyMap<string, MemberHandles>,
+  telemetry?: TelemetryTargets,
+  readLinks?: ReadonlyMap<string, KindLinkRead>,
+): LinkTableRow[] {
   const rows: LinkTableRow[] = [];
   const declaredTargets = new Map<string, Set<string>>();
 
@@ -215,30 +241,18 @@ export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<stri
         row.reason = `protocol applies to telemetry links; this link has kind ${kind}`;
         continue;
       }
-      const producer = handles.get(link.member);
-      const found = producer?.outputs.find((o) => o.name === link.output);
-      if (found) {
-        if (found.node) row.to = found.node;
-        continue;
-      }
-      if (!producer) {
-        row.status = "unresolved";
-        row.reason = `the outputs of ${link.member} were not read`;
-      } else if (producer.exposesNone) {
-        row.status = "missing";
-        row.reason = producer.why ?? `${link.member} exposes no outputs`;
-      } else if (!producer.complete) {
-        row.status = "unresolved";
-        row.reason = `${link.output} was not found in ${link.member}, whose outputs could not all be read in source${producer.why ? ` (${producer.why})` : ""}`;
-      } else {
-        const near = nearNames(link.output, producer.outputs);
-        const known = producer.outputs.map((o) => o.name);
-        row.status = "missing";
-        row.reason =
-          `${link.member} has no output ${link.output}` +
-          (near.length ? `; did you mean ${near.join(" or ")}? Links match exactly` : "") +
-          (known.length ? `; its outputs: ${[...new Set(known)].sort(cmp).join(", ")}` : "; it exposes no outputs");
-      }
+      resolveOutput(row, handles);
+    }
+  }
+
+  // Links a kind's reader found in the member's own files (#3932).
+  for (const consumer of declaration.members) {
+    const read = readLinks?.get(consumer.name);
+    if (!read) continue;
+    for (const link of read.links) {
+      const row = readerRow(declaration, consumer, read, link, handles);
+      rows.push(row);
+      if (row.status !== "ambiguous") (declaredTargets.get(consumer.name) ?? declaredTargets.set(consumer.name, new Set()).get(consumer.name)!).add(`${row.producer}\0${row.output}`);
     }
   }
 
@@ -295,6 +309,85 @@ export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<stri
   }
   inferred.sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.input ?? "", b.input ?? ""));
   return [...rows, ...inferred];
+}
+
+/** Match a declared or reader's output row against its producer's handles, setting its status and reason. */
+function resolveOutput(row: LinkRow, handles: ReadonlyMap<string, MemberHandles>): void {
+  const producer = handles.get(row.producer);
+  const found = producer?.outputs.find((o) => o.name === row.output);
+  if (found) {
+    if (found.node) row.to = found.node;
+    return;
+  }
+  if (!producer) {
+    row.status = "unresolved";
+    row.reason = `the outputs of ${row.producer} were not read`;
+  } else if (producer.exposesNone) {
+    row.status = "missing";
+    row.reason = producer.why ?? `${row.producer} exposes no outputs`;
+  } else if (!producer.complete) {
+    row.status = "unresolved";
+    row.reason = `${row.output} was not found in ${row.producer}, whose outputs could not all be read in source${producer.why ? ` (${producer.why})` : ""}`;
+  } else {
+    const renamed = [...new Set(producer.outputs.filter((o) => o.previously?.includes(row.output)).map((o) => o.name))].sort(cmp);
+    const near = renamed.length ? [] : nearNames(row.output, producer.outputs);
+    const known = producer.outputs.map((o) => o.name);
+    row.status = "missing";
+    row.reason =
+      `${row.producer} has no output ${row.output}` +
+      (renamed.length ? `; it was renamed to ${renamed.join(" or ")}, so link to that instead` : "") +
+      (near.length ? `; did you mean ${near.join(" or ")}? Links match exactly` : "") +
+      (known.length ? `; its outputs: ${[...new Set(known)].sort(cmp).join(", ")}` : "; it exposes no outputs");
+  }
+}
+
+/**
+ * The row for one link a kind's reader found (#3932). A link whose file names
+ * its producer resolves like a declared one. One that doesn't is given the
+ * producer that exposes its anchor (a dbt column's table); when none does,
+ * and exactly one other member exposes outputs at all, that member, so a
+ * dropped table is missing from the only place it could be. Otherwise the
+ * row is ambiguous, and the message names the field that settles it.
+ */
+function readerRow(declaration: Declaration, consumer: Member, read: KindLinkRead, link: KindReadLink, handles: ReadonlyMap<string, MemberHandles>): LinkTableRow {
+  const base = { consumer: consumer.name, kind: DEFAULT_LINK_KIND, origin: "kind-reader" as const, resolves: "source" as const, reader: read.reader, file: link.file, line: link.line };
+  let producer = link.member;
+  if (producer === null) {
+    const anchor = link.anchor ?? link.output;
+    const others = declaration.members.filter((m) => m.name !== consumer.name);
+    const exposing = others.filter((m) => handles.get(m.name)?.outputs.some((o) => o.name === anchor));
+    const possible = others.filter((m) => {
+      const h = handles.get(m.name);
+      return h !== undefined && !h.exposesNone;
+    });
+    if (exposing.length === 1) producer = exposing[0].name;
+    else if (exposing.length === 0 && possible.length === 1) producer = possible[0].name;
+    else {
+      const candidates = (exposing.length > 0 ? exposing : possible).map((m) => ({ producer: m.name, output: link.output, label: "exact" as const }));
+      const field = read.producerField ? `; set fields.${read.producerField} on ${consumer.name} to name it` : "";
+      return {
+        ...base,
+        status: "ambiguous",
+        input: link.output,
+        candidates,
+        reason:
+          exposing.length > 1
+            ? `${link.file}:${link.line} reads ${anchor}, which ${exposing.map((m) => m.name).join(" and ")} all expose${field}`
+            : candidates.length > 0
+              ? `${link.file}:${link.line} reads ${anchor}, which no member exposes, and ${consumer.name} does not say which of ${candidates.map((c) => c.producer).join(", ")} produces it${field}`
+              : `${link.file}:${link.line} reads ${anchor}, and no other member exposes outputs`,
+      };
+    }
+  }
+  const row: LinkRow = { ...base, producer, output: link.output, label: "exact", input: null, status: "resolved", reason: null };
+  const problem = linkTargetProblem(declaration, consumer, { member: producer } as LinkDeclaration);
+  if (problem) {
+    row.status = "invalid";
+    row.reason = read.producerField ? `fields.${read.producerField}: ${problem}` : problem;
+    return row;
+  }
+  resolveOutput(row, handles);
+  return row;
 }
 
 /**
@@ -369,7 +462,7 @@ export interface ComposedHandles {
   composed: readonly string[];
   /** The collectors those members report (#2558); a telemetry link resolves against them. */
   collectors?: readonly MemberCollector[];
-  exports: readonly { member: string; name: string; node?: string }[];
+  exports: readonly { member: string; name: string; node?: string; previously?: readonly string[] }[];
   imports: readonly { member: string; name: string; node: string }[];
 }
 
@@ -384,7 +477,9 @@ export function irMemberHandles(graph: ComposedHandles): Map<string, MemberHandl
   for (const member of graph.composed) {
     out.set(member, {
       member,
-      outputs: graph.exports.filter((e) => e.member === member).map((e) => ({ name: e.name, ...(e.node ? { node: e.node } : {}) })),
+      outputs: graph.exports
+        .filter((e) => e.member === member)
+        .map((e) => ({ name: e.name, ...(e.node ? { node: e.node } : {}), ...(e.previously?.length ? { previously: e.previously } : {}) })),
       inputs: graph.imports.filter((i) => i.member === member).map((i) => ({ name: i.name, node: i.node })),
       complete: true,
       why: null,
@@ -401,7 +496,7 @@ export function irMemberHandles(graph: ComposedHandles): Map<string, MemberHandl
  * With `kinds`, a member that isn't composed but whose kind lists its outputs
  * (`other`, kinds from a package) is a link target too.
  */
-export function graphLinks(declaration: Declaration, graph: ComposedHandles, kinds?: KindRegistry): LinkTableRow[] {
+export function graphLinks(declaration: Declaration, graph: ComposedHandles, kinds?: KindRegistry, readLinks?: ReadonlyMap<string, KindLinkRead>): LinkTableRow[] {
   const handles = irMemberHandles(graph);
   for (const m of declaration.members) {
     const kind = kinds?.get(m.kind);
@@ -413,7 +508,7 @@ export function graphLinks(declaration: Declaration, graph: ComposedHandles, kin
     collectors: new Map((graph.collectors ?? []).map((c) => [c.member, c])),
     composed: new Set(graph.composed),
   };
-  return resolveLinks(declaration, handles, telemetry).map((row) => {
+  return resolveLinks(declaration, handles, telemetry, readLinks).map((row) => {
     if (row.status === "ambiguous" || row.origin !== "declared") return row;
     // The declaration's pointer means nothing to a graph reader.
     const { pointer: _pointer, ...rest } = row;

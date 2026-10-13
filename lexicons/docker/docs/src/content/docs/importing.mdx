@@ -13,7 +13,7 @@ The Docker lexicon can parse existing `docker-compose.yml` files and `Dockerfile
 ## Import docker-compose.yml
 
 ```bash
-chant import --lexicon docker docker-compose.yml -o src/compose.ts
+chant import --lexicon docker docker-compose.yml -o src/compose/
 ```
 
 Given:
@@ -30,7 +30,7 @@ volumes:
   pgdata: null
 ```
 
-Produces `src/compose.ts`:
+`-o` names a directory; the import writes `main.ts` in it. This produces `src/compose/main.ts`:
 
 ```typescript
 import { Service, Volume } from "@intentius/chant-lexicon-docker";
@@ -46,11 +46,80 @@ export const api = new Service({
 export const pgdata = new Volume({});
 ```
 
-## Import Dockerfile
+## Import a Dockerfile
 
 ```bash
-chant import --lexicon docker Dockerfile -o src/dockerfile.ts
+chant import --lexicon docker Dockerfile -o src/web/
 ```
+
+A Dockerfile imports as `steps`, one per instruction, in the order the file has them, so building the import writes the same instructions in the same order. `ARG` lines before the first `FROM` become `globalArgs`. Line continuations and heredocs are kept as written. Comments are dropped.
+
+Given:
+
+```dockerfile title="Dockerfile"
+# Build stage
+ARG NODE_VERSION=20
+FROM node:${NODE_VERSION}-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build \
+    && npm prune --omit=dev
+FROM node:${NODE_VERSION}-alpine
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
+EXPOSE 3000
+CMD ["node", "dist/server.js"]
+```
+
+Produces:
+
+```typescript title="src/web/main.ts"
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const app = new Dockerfile({
+  globalArgs: ["NODE_VERSION=20"],
+  stages: [
+    {
+      from: "node:${NODE_VERSION}-alpine",
+      as: "build",
+      steps: [
+        { workdir: "/app" },
+        { copy: "package.json package-lock.json ./" },
+        { run: "npm ci" },
+        { copy: ". ." },
+        { run: "npm run build \\\n    && npm prune --omit=dev" },
+      ],
+    },
+    {
+      from: "node:${NODE_VERSION}-alpine",
+      steps: [
+        { workdir: "/app" },
+        { copy: "--from=build /app/node_modules ./node_modules" },
+        { copy: "--from=build /app/dist ./dist" },
+        { user: "node" },
+        { expose: "3000" },
+        { cmd: '["node", "dist/server.js"]' },
+      ],
+    },
+  ],
+});
+```
+
+The export is named `app`, so it builds `Dockerfile.app`. Rename the export to choose the file name, and point the Compose service at it by reference, which builds as the file name:
+
+```typescript
+import { app } from "../web/main";
+
+export const web = new Service({
+  build: { context: ".", dockerfile: app },  // dockerfile: Dockerfile.app
+});
+```
+
+Exec-form values such as `CMD` stay strings; you can change them to lists (`{ cmd: ["node", "dist/server.js"] }`). See [Dockerfiles](/chant/lexicons/docker/dockerfiles/) for the step format.
 
 ## Workflow
 
@@ -58,11 +127,13 @@ Import is a one-time migration step, not an ongoing sync. After importing:
 
 1. Review the generated TypeScript — complex fields may need manual adjustment
 2. Run `chant lint src/` to catch issues
-3. Run `chant build src --lexicon docker -o docker-compose.yml` and diff against the original
+3. Run `chant build src --lexicon docker -o build/docker-compose.yml` and diff the output (and the `Dockerfile.*` files beside it) against the originals
 4. Delete the original file and commit the TypeScript source
 
 ## Limitations
 
 - `extends:` (Compose file inheritance) is not supported
+- Dockerfile comments and parser directives (`# syntax=...`, `# escape=...`) are dropped
+- `MAINTAINER`, which has no step, is left as a comment with a warning; use a `label` step instead
 - Build args with complex shell expressions may require manual cleanup
 - Environment variable syntax (`${VAR}`) is preserved as-is; replace with `env()` manually if desired

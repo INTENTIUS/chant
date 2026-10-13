@@ -51,6 +51,7 @@ describe("the point-decision bundle", () => {
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/gate-ledger-select.ts",
       "packages/core/src/lifecycle/gate-pending.ts",
+      "packages/core/src/lifecycle/no-record.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/op/duration.ts",
       "packages/core/src/op/gate-point.ts",

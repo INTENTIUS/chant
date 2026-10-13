@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-sql",
-  "version": "0.124.19",
+  "version": "0.124.23",
   "description": "SQL lexicon for chant — database schema as typed declarations, one dialect at a time; ClickHouse first, with types read from a pinned server's catalog",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -24,7 +24,8 @@
   "type": "module",
   "files": [
     "src/",
-    "dist/"
+    "dist/",
+    "workspace-kinds.json"
   ],
   "exports": {
     ".": {
@@ -32,6 +33,7 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./workspace-kinds": "./workspace-kinds.json",
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
@@ -70,6 +72,6 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.19"
+    "@intentius/chant": "^0.124.23"
   }
 }

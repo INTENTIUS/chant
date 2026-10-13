@@ -8,6 +8,13 @@ import { escapeMdx } from "./docs-file-markers";
 import { intrinsicFolds } from "../lexicon";
 import type { DocsConfig, ManifestJSON, MetaEntry, RuleMeta } from "./docs-types";
 
+/** A `prompt: |` block scalar for a page's front matter, or nothing. */
+export function promptFrontmatter(prompt: string | undefined): string[] {
+  const text = prompt?.trim();
+  if (!text) return [];
+  return ["prompt: |", ...text.split("\n").map((line) => (line ? `  ${line}` : ""))];
+}
+
 export function generateOverview(
   config: DocsConfig,
   manifest: ManifestJSON,
@@ -20,6 +27,7 @@ export function generateOverview(
     "---",
     `title: "${config.displayName}"`,
     `description: "${config.description}"`,
+    ...promptFrontmatter(config.prompt),
     "---",
     "",
     config.overview ?? `Reference documentation for the **${config.displayName}** lexicon.`,

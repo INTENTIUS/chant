@@ -48,6 +48,19 @@ export default Op({
 });
 ```
 
+`flociUp` starts the pinned `floci/floci:1.5.34` image unless `image` names
+another one. Pass `network` to join the container to a Docker network, and
+`loopback: true` to publish its port on `127.0.0.1` only. Extra Floci
+variables go in `settings` and reach the container as `-e KEY=VALUE`; a key
+that does not start with `FLOCI_` is refused.
+
+```typescript
+flociUp({ image: "floci/floci:<tag>", network: "loom-local", loopback: true })
+```
+
+The same options exist on [`chant emulator up`](/chant/cli/emulator/) as
+`--image`, `--network`, `--setting` and `--loopback`.
+
 ## How awsApply works
 
 CloudFormation is a control plane: you submit a template to a named stack and it reconciles. `awsApply` drives that plane through its API, no CLI in between:

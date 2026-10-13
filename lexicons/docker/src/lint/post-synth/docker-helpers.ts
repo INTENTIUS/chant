@@ -3,6 +3,7 @@
  */
 
 export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
+import { splitDockerfileInstructions } from "../../import/parser";
 
 export interface ParsedService {
   name: string;
@@ -111,4 +112,83 @@ export function extractDockerfiles(output: unknown): Map<string, string> {
     }
   }
   return files;
+}
+
+// ── Dockerfile structure ──────────────────────────────────────────
+
+export interface DockerfileInstr {
+  /** Upper-case keyword, e.g. "RUN". */
+  instruction: string;
+  /** The rest of the instruction as written. */
+  value: string;
+}
+
+export interface ParsedStage {
+  /** 0-based position among the stages. */
+  index: number;
+  /** The FROM image (or earlier stage) without `--platform` and `AS`. */
+  from: string;
+  as?: string;
+  instructions: DockerfileInstr[];
+}
+
+export interface ParsedDockerfile {
+  /** ARG instructions before the first FROM. */
+  globalArgs: DockerfileInstr[];
+  stages: ParsedStage[];
+}
+
+/** A Dockerfile's global ARGs and stages, each stage's instructions in order. */
+export function parseDockerfileStages(content: string): ParsedDockerfile {
+  const out: ParsedDockerfile = { globalArgs: [], stages: [] };
+  for (const instr of splitDockerfileInstructions(content)) {
+    if (instr.instruction === "FROM") {
+      const words = instr.value.split(/\s+/).filter((w) => !w.startsWith("--"));
+      const asAt = words.findIndex((w) => w.toLowerCase() === "as");
+      out.stages.push({
+        index: out.stages.length,
+        from: words[0] ?? "",
+        ...(asAt > 0 && words[asAt + 1] ? { as: words[asAt + 1] } : {}),
+        instructions: [],
+      });
+    } else if (out.stages.length > 0) {
+      out.stages[out.stages.length - 1]!.instructions.push(instr);
+    } else if (instr.instruction === "ARG") {
+      out.globalArgs.push(instr);
+    }
+  }
+  return out;
+}
+
+/** How a stage is named in a message: `stage "build"` or `stage 2`. */
+export function stageLabel(stage: ParsedStage): string {
+  return stage.as ? `stage "${stage.as}"` : `stage ${stage.index + 1}`;
+}
+
+/** The first line of an instruction, for a message. */
+export function instrText(instr: DockerfileInstr): string {
+  const first = instr.value.split("\n")[0]!.replace(/\s*\\$/, "");
+  return `${instr.instruction} ${first}`;
+}
+
+/** Whether a USER value is root (by name or uid 0, with or without a group). */
+export function isRootUser(value: string): boolean {
+  const user = value.trim().split(":")[0]!;
+  return user === "root" || user === "0";
+}
+
+/** Every generated Dockerfile in a build's outputs, parsed. */
+export function eachDockerfile(outputs: Map<string, unknown>): Array<{ fileName: string; content: string; parsed: ParsedDockerfile }> {
+  const out: Array<{ fileName: string; content: string; parsed: ParsedDockerfile }> = [];
+  for (const [, output] of outputs) {
+    for (const [fileName, content] of extractDockerfiles(output)) {
+      out.push({ fileName, content, parsed: parseDockerfileStages(content) });
+    }
+  }
+  return out;
+}
+
+/** A RUN value with its line continuations joined, for matching commands. */
+export function commandText(instr: DockerfileInstr): string {
+  return instr.value.replace(/\\[ \t]*\n/g, " ");
 }

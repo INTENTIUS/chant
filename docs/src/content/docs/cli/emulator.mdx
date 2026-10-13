@@ -9,7 +9,8 @@ import { Aside } from '@astrojs/starlight/components';
 ## Synopsis
 
 ```
-chant emulator up     [--lexicon <name>] [--port <container-port>=<host-port>] [--json]
+chant emulator up     [--lexicon <name>] [--port <container-port>=<host-port>] [--image <ref>]
+                      [--network <name>] [--setting <KEY>=<VALUE>] [--loopback] [--json]
 chant emulator down   [--lexicon <name>] [--json]
 chant emulator status [--lexicon <name>] [--json]
 chant emulator --help
@@ -91,6 +92,26 @@ emulator "chant-postgres": localhost:5432 reaches another Postgres (PostgreSQL 1
 `up` fails when no published address reaches the emulator. It also fails when
 the container publishes no host port. Both errors say how to republish it.
 
+Four more flags change the container `up` starts (chant #3952). The command
+below starts another Floci tag on the `loom-local` Docker network with one Floci
+setting. `--loopback` publishes it on `127.0.0.1:4566` only:
+
+```bash
+chant emulator up --lexicon aws --image floci/floci:<tag> --network loom-local \
+  --setting FLOCI_<NAME>=<value> --loopback
+```
+
+`--setting` passes `-e KEY=VALUE` to `docker run`. The key has to start with
+the emulator's settings prefix, `FLOCI_` for aws. Any other key is refused
+before a container starts, so the flag can't put arbitrary environment into
+the container. A lexicon's emulator that declares no prefix takes no settings.
+With several emulators selected, each setting goes to the emulators whose
+prefix it matches.
+
+These four flags take effect when a container starts. `up` on a running
+container reuses it as it is and prints a note saying so; run `down` first to
+restart it with them.
+
 ### `emulator down`
 
 Stops and removes the containers.
@@ -131,6 +152,10 @@ aws: chant-floci — up on http://localhost:4566
 |------|-------------|
 | `--lexicon <name>` | Act on one lexicon's emulator instead of all of them. A lexicon with no emulator, or one this project does not configure, warns and exits 0. |
 | `--port <container-port>=<host-port>` | `up` only. Publish that container port on another host port. Repeatable; a bare `<host-port>` works when one emulator is selected. |
+| `--image <ref>` | `up` only. Start this image instead of the pinned default. Needs exactly one emulator selected (use `--lexicon`). |
+| `--network <name>` | `up` only. Join each started container to this Docker network (`docker run --network`). |
+| `--setting <KEY>=<VALUE>` | `up` only. Pass an emulator setting as `-e KEY=VALUE`. Repeatable. The key must start with the emulator's prefix (`FLOCI_` for aws); other keys are refused. |
+| `--loopback` | `up` only. Publish ports on `127.0.0.1` only, instead of on every host interface. |
 | `--json` | Emit the machine-readable report on stdout instead of the human summary. |
 
 ## `--json`
@@ -215,7 +240,7 @@ that does not answer is reported the same way.
 | Code | Meaning |
 |------|---------|
 | 0 | The action completed, including the case where no configured lexicon has an emulator |
-| 1 | No subcommand, or one that is not `up`, `down`, or `status`; a bad `--port`; `up` failed (for example, the host port is held by another process); or `status` could not ask Docker, or found an endpoint that reaches another server |
+| 1 | No subcommand, or one that is not `up`, `down`, or `status`; a bad `--port`, `--image` or `--setting`, or an `up`-only flag on another subcommand; `up` failed (for example, the host port is held by another process); or `status` could not ask Docker, or found an endpoint that reaches another server |
 
 ## See Also
 

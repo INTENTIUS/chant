@@ -166,7 +166,7 @@ A CI lexicon writes its dependencies as strings: `needs: ["build"]`, `uses: ./.g
 | `includes` | pipeline | file | GitLab `include:` |
 | `extends` | job | job it inherits from | GitLab `extends:` |
 
-Every edge points from the entity that wrote the reference. Edges that leave their pipeline (a reusable-workflow call, `workflow_run`, a GitLab trigger, include or cross-project `needs`) carry `crossPipeline: true`, and Mermaid and DOT draw them dashed. Other edges render labelled with their kind, plus the attribute when it adds something (`needs (stage)`).
+Every edge points from the entity that wrote the reference. Some edges leave their pipeline. A reusable-workflow call or `workflow_run` does, as does a GitLab trigger or include or a cross-project `needs`. They carry `crossPipeline: true`, and Mermaid and DOT draw them dashed. The rest render labelled with their kind, plus the attribute when it adds something (`needs (stage)`).
 
 A string that names nothing declared in the project is never dropped and never matched to a near name. It goes on `dangling`, as written:
 
@@ -177,7 +177,7 @@ A string that names nothing declared in the project is never dropped and never m
 ]
 ```
 
-Another repository's workflow, a GitLab child pipeline or included file (chant generates one `.gitlab-ci.yml` per project), a hidden `extends` template from an included file, a composite action (chant does not declare them) and a typo'd job name all land here. Mermaid and DOT draw each as a dashed edge to a stub labelled `(not declared)`.
+Another repository's workflow lands here, and so does a GitLab child pipeline or included file (chant generates one `.gitlab-ci.yml` per project). A hidden `extends` template from an included file lands here too. The same holds for a composite action, which chant does not declare, and for a typo'd job name. Mermaid and DOT draw each as a dashed edge to a stub labelled `(not declared)`.
 
 A lexicon reports these through the plugin's `graphEdges(entities)` hook; see the [lexicon authoring overview](/chant/lexicon-authoring/overview/).
 
@@ -185,7 +185,7 @@ A lexicon reports these through the plugin's `graphEdges(entities)` hook; see th
 
 The layout step exists for **custom painters** (the [pinhole](https://github.com/INTENTIUS/pinhole) diagrammer is one): chant computes positions, the painter draws. By default it uses **dagre** — a pure-JS engine, so `--format layout` needs **no native dependency**.
 
-A painter draws nodes at a real size (cards, icons, labels), so it can pass those footprints in and get spacing that fits them — no node overlap:
+A painter draws its nodes (cards, icons and labels) at a real size. It can pass those footprints in and get spacing that fits them, so no two nodes overlap.
 
 ```bash
 # {id: {w, h}} in layout units (≈ px). Inline, or '-' for stdin, or '@file.json'.

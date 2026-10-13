@@ -253,6 +253,8 @@ Ops:
                         with a work lease runs under, and who holds it
                         --fail-on-drift: exit 2 when the run completes and
                         its Drift outcome is true (WatchOp failOn: "drift")
+                        --no-record: a test run that records nothing on
+                        chant/lifecycle and pushes nothing (local runtime)
   run list              List all Ops with the runtime's state for each
   run status <name>     Show the runtime's state for one Op's latest run
   run approve <op> <gate>  Record a gate's resolution and wake the runtime
@@ -279,8 +281,11 @@ Ops:
                         declares a schedule or from --spec <file.json>.
                         Files go to the forge's own directory unless
                         --output <dir>; --format json prints them instead
-  run --components <name|all>  Run discovered Component(s) through the interpret
-                        driver on the local executor (--env <env>; #585).
+  run --components <name|all|a,b,c>  Run discovered Component(s) through the
+                        interpret driver on the local executor (--env <env>;
+                        #585). A comma list also runs what the named
+                        components depend on, in dependency order, in one
+                        run, and prints that order first (#3950).
                         On success, auto-emits a release-ledger record per
                         component that published a digest (default: on;
                         --no-release-record to opt out; #597)
@@ -808,7 +813,8 @@ Lexicon development:
 Local:
   emulator <up|down|status>  Boot/stop/inspect configured lexicons' local
                            emulators (Floci etc.); --lexicon <name>, --json,
-                           --port; \`chant emulator --help\` lists ports and logins
+                           --port, --image, --network, --setting, --loopback;
+                           \`chant emulator --help\` lists ports and logins
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -881,6 +887,12 @@ Options:
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's
                         release.autoRecord: false; #597)
+  --no-record           (run <op>, run --components) Run every step but record
+                        nothing on chant/lifecycle and push nothing: no
+                        release, run record, receipt or gate fact. A gate
+                        step fails. The run says so at its start and end.
+                        CHANT_NO_RECORD=1 does the same for a whole CI job
+                        (#3955)
   --fold                (build) Fold source modules statically instead of
                         running them; folds resource constructors and
                         composite factory calls (#1022/#1023), falling back

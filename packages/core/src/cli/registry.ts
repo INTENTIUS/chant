@@ -167,6 +167,14 @@ export interface ParsedArgs {
   env?: string;
   /** `chant emulator up --port <container-port>=<host-port>`, repeatable (#3673); a bare `<host-port>` when one emulator is selected. */
   port?: string[];
+  /** `chant emulator up --image <ref>` (#3952): the image to start, when one emulator is selected. */
+  image?: string;
+  /** `chant emulator up --network <name>` (#3952): the Docker network each started container joins. */
+  network?: string;
+  /** `chant emulator up --setting <KEY>=<VALUE>`, repeatable (#3952): an emulator setting such as `FLOCI_<NAME>`, passed as `-e`. */
+  setting?: string[];
+  /** `chant emulator up --loopback` (#3952): publish ports on 127.0.0.1 only. */
+  loopback?: boolean;
   /** `chant build --components --generate <lexicon> --promote-to <env>` (#2575) — add a promote job to the generated pipeline. */
   promoteTo?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
@@ -549,6 +557,8 @@ export interface ParsedArgs {
   compareTo?: string;
   /** `chant run --components <name> --env <env> --no-release-record` (#597) — opt out of auto-emitting a release-ledger record after a successful component deploy. Default (flag omitted): recording is ON. Also settable project-wide via `chant.config.ts`'s `release.autoRecord: false`. */
   noReleaseRecord?: boolean;
+  /** `chant run <op>` / `chant run --components <name>` `--no-record` (#3955) — run every step but record nothing on `chant/lifecycle` and push nothing; a gate step fails. `CHANT_NO_RECORD=1` does the same for every chant process that inherits it (../../lifecycle/no-record.ts). */
+  noRecord?: boolean;
   /** `chant run --components <name> --dump-outputs <file>` — after the run, write the accumulated cross-component/cross-stack outputs (JSON, keyed by component name) to `<file>`, for a downstream job to `--seed-outputs`. */
   dumpOutputs?: string;
   /** `chant run --components <name> --digest-file <file>` (#2602) — after a successful run, write one `<component>=<digest>` line per release the run recorded to `<file>`, the form `chant components promote --digest` takes, so a generated promote job promotes exactly the release its pipeline run built. Written empty when nothing was recorded. */

@@ -26,7 +26,7 @@ Properties listed after the preset reference override the preset values.
 
 ## Rules
 
-- The spread source must be a `const` binding. Spreading from `let`, `var`, or function calls triggers lint rule EVL004.
+- The spread source must be a `const` binding, declared in the file or imported from another module. Spreading from `let`, `var`, or function calls triggers lint rule EVL004.
 - Preset objects are plain data — they are not resource instances.
 - Properties in the spread are merged shallowly. Nested objects are replaced entirely, not deep-merged.
 

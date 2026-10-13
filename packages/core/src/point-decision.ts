@@ -37,6 +37,7 @@ import type { GateLedgerPort } from "./op/gate";
 import { DEFAULT_GATE_POINT_PASS, defaultGatePointStore, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts, type GatePointStore } from "./op/gate-point";
 import type { WaitingPoint } from "./op/steward-points";
 import { resolveGateRunLocator, type GateRunLocator } from "./op/gate-run-locator";
+import { refuseGateWithoutRecording } from "./lifecycle/no-record";
 
 export {
   DEFAULT_GATE_POINT_PASS,
@@ -170,6 +171,8 @@ function resolvedByOf(q: GatePointQuestion): string {
 
 /** Decide a gate that asks a point: ask it, then record the pending fact or the resolution that cites the answer. */
 export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePointAsker, input: PointGateInput): Promise<PointGateCheck> {
+  // #3955: refused before the point is asked, which would itself write to the ledger.
+  refuseGateWithoutRecording(input.op, input.gate);
   const now = input.now ?? new Date().toISOString();
   const facts: GatePointFacts = { component: input.op, name: input.gate, env: input.env ?? null, planDigest: input.planDigest ?? null };
   const q = await asker.ask({ point: input.point.name, inputs: input.inputs ?? {}, facts, subject: gateSubject(input.op, input.gate, input.env), ...(input.point.store ? { store: input.point.store } : {}) });

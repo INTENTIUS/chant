@@ -43,6 +43,9 @@ beforeEach(() => {
   // A CI job's locator would land on every pending fact.
   vi.stubEnv("GITHUB_ACTIONS", "");
   vi.stubEnv("GITLAB_CI", "");
+  // A pull request's address would land on every pending fact too.
+  vi.stubEnv("GITHUB_REF_NAME", "");
+  vi.stubEnv("CI_MERGE_REQUEST_IID", "");
 });
 afterEach(() => vi.unstubAllEnvs());
 

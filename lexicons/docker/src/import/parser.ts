@@ -38,12 +38,19 @@ export interface SecretIR {
 export interface DockerfileStage {
   from: string;
   as?: string;
+  /**
+   * The stage's instructions after FROM, in source order. `instruction` is
+   * the upper-case keyword; `value` is the rest of the instruction as
+   * written, line continuations and heredoc bodies included.
+   */
   instructions: Array<{ instruction: string; value: string }>;
 }
 
 export interface DockerfileIR {
   kind: "dockerfile";
   name: string;
+  /** ARG values declared before the first FROM. */
+  globalArgs?: string[];
   stages: DockerfileStage[];
 }
 
@@ -154,37 +161,99 @@ export class DockerParser {
   }
 }
 
+/** One logical Dockerfile instruction: its upper-case keyword and the rest as written. */
+export interface DockerfileInstruction {
+  instruction: string;
+  value: string;
+}
+
+/**
+ * Split Dockerfile content into logical instructions, in order. Comment
+ * and blank lines are dropped (also inside a continued instruction, as
+ * Docker does). A line ending in a backslash continues onto the next line,
+ * and a heredoc (`RUN <<EOF` ... `EOF`) runs to its terminator; both are
+ * kept in the value exactly as written, so writing the value back gives
+ * the same instruction.
+ */
+export function splitDockerfileInstructions(content: string): DockerfileInstruction[] {
+  const out: DockerfileInstruction[] = [];
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const first = lines[i]!;
+    i++;
+    const trimmed = first.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const parts = [first.trimStart()];
+    let last = first;
+    while (/\\\s*$/.test(last) && i < lines.length) {
+      const next = lines[i]!;
+      i++;
+      // Docker skips comment and empty lines inside a continued instruction.
+      if (!next.trim() || next.trim().startsWith("#")) continue;
+      parts.push(next);
+      last = next;
+    }
+
+    // Heredocs: <<EOF, <<-EOF, <<"EOF", <<'EOF' (possibly several).
+    const joined = parts.join("\n");
+    const terminators = [...joined.matchAll(/<<(-?)(["']?)([A-Za-z_][A-Za-z0-9_]*)\2/g)].map((m) => ({ dash: m[1] === "-", word: m[3]! }));
+    for (const t of terminators) {
+      while (i < lines.length) {
+        const body = lines[i]!;
+        i++;
+        parts.push(body);
+        if ((t.dash ? body.replace(/^\t+/, "") : body) === t.word) break;
+      }
+    }
+
+    const text = parts.join("\n").trimEnd();
+    const match = text.match(/^([A-Za-z]+)(?:\s+([\s\S]*))?$/);
+    if (!match) continue;
+    out.push({ instruction: match[1]!.toUpperCase(), value: (match[2] ?? "").trimStart() });
+  }
+  return out;
+}
+
 /**
  * Parser for Dockerfile content.
  */
 export class DockerfileParser {
   parse(name: string, content: string): DockerfileIR {
     const stages: DockerfileStage[] = [];
+    const globalArgs: string[] = [];
     let current: DockerfileStage | null = null;
 
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-
-      const match = trimmed.match(/^([A-Z]+)\s+([\s\S]+)$/);
-      if (!match) continue;
-
-      const [, instruction, value] = match;
-
+    for (const { instruction, value } of splitDockerfileInstructions(content)) {
       if (instruction === "FROM") {
-        // Parse "FROM image AS stagename"
+        // Parse "FROM [--platform=...] image AS stagename"
         const asMatch = value.match(/^(.+?)\s+[Aa][Ss]\s+(\S+)$/);
         if (asMatch) {
-          current = { from: asMatch[1].trim(), as: asMatch[2].trim(), instructions: [] };
+          current = { from: asMatch[1]!.trim(), as: asMatch[2]!.trim(), instructions: [] };
         } else {
           current = { from: value.trim(), instructions: [] };
         }
         stages.push(current);
       } else if (current) {
-        current.instructions.push({ instruction, value: value.trim() });
+        current.instructions.push({ instruction, value });
+      } else if (instruction === "ARG") {
+        globalArgs.push(value);
       }
     }
 
-    return { kind: "dockerfile", name, stages };
+    return { kind: "dockerfile", name, ...(globalArgs.length > 0 ? { globalArgs } : {}), stages };
   }
+}
+
+/** Whether content reads as a Dockerfile: its first instruction is FROM or ARG, or it starts with a parser directive. */
+export function looksLikeDockerfile(content: string): boolean {
+  for (const line of content.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    if (/^#\s*(syntax|escape|check)\s*=/i.test(t)) return true;
+    if (t.startsWith("#")) continue;
+    return /^(FROM|ARG)\s/i.test(t);
+  }
+  return false;
 }

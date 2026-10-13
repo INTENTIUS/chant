@@ -11,7 +11,7 @@ export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, he
          spritesUp, spritesDown } from "./builders";
 export { OpResource } from "./resource";
 export { sleep } from "./activity-runtime";
-export { clientHosts, emulatorLifecycle, emulatorsOf, endpointEnvVars, endpointOnHost, hostPortInUse, parsePublishedAddresses, pickReachableEndpoint } from "./emulator-lifecycle";
+export { checkSettings, clientHosts, emulatorLifecycle, emulatorsOf, endpointEnvVars, endpointOnHost, hostPortInUse, parsePublishedAddresses, pickReachableEndpoint } from "./emulator-lifecycle";
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorIdentity, EmulatorUpArgs, EmulatorLifecycle, PublishedAddress } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";

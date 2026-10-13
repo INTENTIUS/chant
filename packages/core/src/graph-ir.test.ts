@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildGraphIr } from "./graph-ir";
+import { applyLexiconOutputs, buildGraphIr } from "./graph-ir";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
 import { LexiconOutput } from "./lexicon-output";
@@ -368,5 +368,27 @@ describe("whole declarables held in an entity's fields (#3257)", () => {
 
     const ir = buildGraphIr(entities);
     expect(ir.edges).toEqual([{ from: "lb", to: "vpc", kind: "ref", viaAttr: "actions" }]);
+  });
+});
+
+describe("applyLexiconOutputs (#3931)", () => {
+  test("adds each reported output to exports on the node that declares it, keeping a hand-written export", () => {
+    const orders = decl({ lexicon: "sql", entityType: "Postgres::Table", props: {} });
+    const ir = buildGraphIr(new Map<string, Declarable>([["orders", orders]]));
+    const withOutputs = applyLexiconOutputs({ ...ir, exports: [{ name: "public.orders", node: "orders", attr: "name" }] }, [
+      {
+        outputs: [
+          { name: "public.orders", entity: "orders" },
+          { name: "public.orders.buyer_id", entity: "orders", previously: ["public.orders.customer_id"] },
+          { name: "other.thing", entity: "notANode" },
+        ],
+      },
+    ]);
+    expect(withOutputs.exports).toEqual([
+      { name: "other.thing" },
+      { name: "public.orders", node: "orders", attr: "name" },
+      { name: "public.orders.buyer_id", node: "orders", previously: ["public.orders.customer_id"] },
+    ]);
+    expect(applyLexiconOutputs(ir, [{ outputs: [] }])).toBe(ir);
   });
 });

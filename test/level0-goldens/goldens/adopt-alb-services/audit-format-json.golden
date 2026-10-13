@@ -46,8 +46,8 @@ exit: 0
       "tier": "merge-worthy",
       "fixKind": "guidance",
       "category": "security",
-      "title": "No USER instruction — container runs as root",
-      "remediation": "Add a non-root USER instruction.",
+      "title": "Container runs as root: the final stage has no USER, or ends on USER root",
+      "remediation": "Add a non-root USER instruction to the final stage, after the root setup steps.",
       "authority": [
         {
           "name": "Docker — Security best practices",
@@ -72,6 +72,12 @@ exit: 0
           "rule": "CIS-DI-0001",
           "url": "https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0001",
           "relation": "overlaps"
+        },
+        {
+          "tool": "hadolint",
+          "rule": "DL3002",
+          "url": "https://github.com/hadolint/hadolint/wiki/DL3002",
+          "relation": "overlaps"
         }
       ],
       "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#dkrd012"
@@ -85,8 +91,8 @@ exit: 0
       "tier": "merge-worthy",
       "fixKind": "guidance",
       "category": "security",
-      "title": "No USER instruction — container runs as root",
-      "remediation": "Add a non-root USER instruction.",
+      "title": "Container runs as root: the final stage has no USER, or ends on USER root",
+      "remediation": "Add a non-root USER instruction to the final stage, after the root setup steps.",
       "authority": [
         {
           "name": "Docker — Security best practices",
@@ -110,6 +116,12 @@ exit: 0
           "tool": "dockle",
           "rule": "CIS-DI-0001",
           "url": "https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0001",
+          "relation": "overlaps"
+        },
+        {
+          "tool": "hadolint",
+          "rule": "DL3002",
+          "url": "https://github.com/hadolint/hadolint/wiki/DL3002",
           "relation": "overlaps"
         }
       ],

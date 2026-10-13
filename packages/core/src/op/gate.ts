@@ -54,6 +54,7 @@ import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from 
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 import { resolveGateRunLocator } from "./gate-run-locator";
+import { refuseGateWithoutRecording } from "../lifecycle/no-record";
 
 /**
  * What appending a pending fact learned about reaching the remote.
@@ -531,6 +532,8 @@ const EPOCH = new Date(0).toISOString();
  *   recorded" from "still standing".
  */
 export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput): Promise<GateCheck> {
+  // #3955: a run that records nothing cannot be approved or spend an approval.
+  refuseGateWithoutRecording(input.op, input.gate);
   const now = input.now ?? new Date().toISOString();
   const ledger = await port.read(input.op);
   // #2574: a component's ledger holds every environment's facts. This run

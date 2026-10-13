@@ -1,0 +1,8 @@
+---
+// Starlight's page title, then the page's agent prompt when it has a `prompt:`.
+// AgentPrompt.astro lives in chant core so lexicon docs sites render the same card.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import AgentPrompt from '../../../packages/core/src/codegen/docs-site/AgentPrompt.astro';
+---
+<Default />
+<AgentPrompt />

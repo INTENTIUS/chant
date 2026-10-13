@@ -1,9 +1,9 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { emulatorLifecycle, emulatorsOf, type EmulatorCapability } from "../../op";
+import { checkSettings, emulatorLifecycle, emulatorsOf, type EmulatorCapability, type EmulatorUpArgs } from "../../op";
 import type { LexiconPlugin } from "../../lexicon";
 import { formatError, formatWarning, formatSuccess } from "../format";
-import type { CommandContext } from "../registry";
+import type { CommandContext, ParsedArgs } from "../registry";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -116,13 +116,60 @@ export function parsePortMappings(values: readonly string[], targets: readonly E
   return ports;
 }
 
+/** The `up` options other than the port (#3952), per selected emulator. */
+type UpOptions = Pick<EmulatorUpArgs, "image" | "network" | "settings" | "loopback">;
+
+/**
+ * `--image`, `--network`, `--setting` and `--loopback` as each selected
+ * emulator's `up` options (#3952). `--image` needs exactly one emulator
+ * selected, the way a bare `--port` does. A `--setting` goes to each emulator
+ * whose settings prefix its key starts with, and a key that no selected
+ * emulator takes is refused rather than passed to a container as plain env.
+ */
+export function parseUpOptions(
+  args: Pick<ParsedArgs, "image" | "network" | "setting" | "loopback">,
+  targets: readonly EmulatorCapability[],
+): Map<EmulatorCapability, UpOptions> {
+  if (args.image !== undefined && targets.length !== 1) {
+    throw new Error(`--image ${args.image} is ambiguous with ${targets.length} emulators selected; pick one with --lexicon <name>`);
+  }
+  const settings = new Map<EmulatorCapability, Record<string, string>>();
+  for (const value of args.setting ?? []) {
+    const match = /^([^=]+)=(.*)$/s.exec(value);
+    if (!match) throw new Error(`--setting ${value}: expected <KEY>=<VALUE>, e.g. --setting FLOCI_<NAME>=<value>`);
+    const [, key, val] = match as unknown as [string, string, string];
+    const takers = targets.filter((t) => t.spec.settingsPrefix && key.startsWith(t.spec.settingsPrefix));
+    if (takers.length === 0) {
+      const prefixes = targets.filter((t) => t.spec.settingsPrefix).map((t) => `${t.spec.settingsPrefix}* (${t.spec.name})`);
+      throw new Error(`--setting ${key}: no selected emulator takes it; ${prefixes.length ? `the selected ones take ${prefixes.join(", ")}` : "the selected ones take no settings"}`);
+    }
+    for (const t of takers) {
+      const own = { ...settings.get(t), [key]: val };
+      checkSettings(t.spec, own);
+      settings.set(t, own);
+    }
+  }
+  const out = new Map<EmulatorCapability, UpOptions>();
+  for (const t of targets) {
+    const opts: UpOptions = {};
+    if (args.image !== undefined) opts.image = args.image;
+    if (args.network !== undefined) opts.network = args.network;
+    if (args.loopback) opts.loopback = true;
+    const own = settings.get(t);
+    if (own) opts.settings = own;
+    out.set(t, opts);
+  }
+  return out;
+}
+
 /**
  * `chant emulator --help` (#3673): the subcommands and flags, and for each
  * configured lexicon's emulator the port, endpoint and sign-in a client uses.
  */
 export function formatEmulatorHelp(plugins: readonly LexiconPlugin[]): string {
   const lines = [
-    "Usage: chant emulator <up|down|status> [--lexicon <name>] [--port <container-port>=<host-port>] [--json]",
+    "Usage: chant emulator <up|down|status> [--lexicon <name>] [--port <container-port>=<host-port>] [--image <ref>]",
+    "       [--network <name>] [--setting <KEY>=<VALUE>] [--loopback] [--json]",
     "",
     "Boot, stop or inspect the local emulators of the project's configured lexicons.",
     "",
@@ -137,6 +184,11 @@ export function formatEmulatorHelp(plugins: readonly LexiconPlugin[]): string {
     "  --lexicon <name>     Act on one lexicon's emulators only.",
     "  --port <c>=<h>       up: publish container port <c> on host port <h>; repeatable.",
     "                       A bare <h> works when one emulator is selected.",
+    "  --image <ref>        up: start this image instead of the pinned default; one emulator only.",
+    "  --network <name>     up: join each started container to this Docker network.",
+    "  --setting <K>=<V>    up: pass an emulator setting as -e K=V; repeatable. The key must",
+    "                       start with the emulator's prefix (FLOCI_ for aws).",
+    "  --loopback           up: publish ports on 127.0.0.1 only, not on every interface.",
     "  --json               Print the machine-readable report on stdout.",
     "",
   ];
@@ -195,9 +247,18 @@ export async function runEmulator(ctx: CommandContext): Promise<number> {
   }
 
   let ports: Map<number, number>;
+  let upOptions: Map<EmulatorCapability, UpOptions>;
   try {
     if (args.port?.length && action !== "up") throw new Error("--port applies to `chant emulator up` only");
+    const upOnly = [
+      args.image !== undefined && "--image",
+      args.network !== undefined && "--network",
+      args.setting?.length && "--setting",
+      args.loopback && "--loopback",
+    ].filter(Boolean);
+    if (upOnly.length && action !== "up") throw new Error(`${upOnly.join(", ")} applies to \`chant emulator up\` only`);
     ports = parsePortMappings(args.port ?? [], targets.map((t) => t.cap));
+    upOptions = parseUpOptions(args, targets.map((t) => t.cap));
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
@@ -209,7 +270,7 @@ export async function runEmulator(ctx: CommandContext): Promise<number> {
     if (action === "up") {
       const port = ports.get(cap.spec.containerPort);
       try {
-        const { endpoint } = await lc.up(port === undefined ? {} : { port });
+        const { endpoint } = await lc.up({ ...upOptions.get(cap), ...(port === undefined ? {} : { port }) });
         reports.push({ lexicon, name: cap.spec.name, endpoint, env: cap.env(endpoint) });
       } catch (err) {
         console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
