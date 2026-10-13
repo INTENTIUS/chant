@@ -13,7 +13,7 @@ This command is the first slice of workspace records ([#2546](https://github.com
 ```
 chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
 chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
-chant workspace records pin <path>
+chant workspace records pin <path> [--kind <kind file>]
 chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]
 chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--expect <digest>] [--sign [<key file>]] [--dry-run]
 chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--expect <digest>] [--sign [<key file>]] [--dry-run]
@@ -443,6 +443,8 @@ $ chant workspace records pin design/screens/home.json
 ```
 
 `sha256sum design/screens/home.json` (or `shasum -a 256` on macOS), run from the workspace root, gives the same hash.
+
+`pin` prints from the root that records use. Given `--kind <kind file>`, that root comes from the kind file as above. Without it, the root is the workspace nearest above the current directory, so a nested workspace the file sits in (a `template/` with its own `chant.workspace.json`) does not shorten the path: `pin template/box/builder.mjs` run from the outer workspace's root prints `template/box/builder.mjs`. Only when no workspace is above the current directory does `pin` take the one nearest above the file.
 
 Every read checks each pin against the tree it reads: the working tree, or the commit under `--at`. The result is on the record in `assets`, one entry per pin with its `state`:
 
