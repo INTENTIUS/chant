@@ -24,6 +24,7 @@ import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "..
 import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
+import { ledgerRecordingOff, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { formatError, formatWarning, formatSuccess, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -267,6 +268,14 @@ export async function recordGateApproval(
   gate: string,
   opts: GateApprovalOptions,
 ): Promise<GateApprovalOutcome> {
+  // #3955: with recording off the approval would be dropped with the process.
+  if (ledgerRecordingOff()) {
+    console.error(formatError({
+      message: `Cannot record the approval of "${gate}": ${NO_RECORD_ENV} is set, so nothing is written to chant/lifecycle`,
+      hint: `Unset ${NO_RECORD_ENV} to approve the gate.`,
+    }));
+    return { ok: false };
+  }
   const { ops } = await discoverOps();
   // `fan-out` is the op name every `chant components fan-out` gate is recorded
   // under (../handlers/fan-out.ts). It is a command rather than a declaration,

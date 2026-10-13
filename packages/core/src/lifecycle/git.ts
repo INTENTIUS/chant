@@ -7,6 +7,7 @@
 import { getRuntime } from "../runtime-adapter";
 import { memberLedgerPrefix, resolveMemberLedger } from "./member-ledger";
 import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
+import { ledgerRecordingOff, NO_RECORD_PUSH_NOTE, overlayTip, setOverlayTip } from "./no-record";
 import type { LedgerReadPort } from "./ledger-port";
 
 const STATE_BRANCH = "chant/lifecycle";
@@ -346,6 +347,23 @@ export async function writeLedgerFiles(
     // local race two concurrent writers used to hit silently (whoever called
     // update-ref last simply overwrote the other's tree, no error). A
     // conflict here throws RefCASConflictError instead of clobbering.
+    // #3955: a run that records nothing moves its in-memory tip instead of
+    // the branch, under the same compare-and-swap: nothing awaits between the
+    // read of the tip and the move, so two writes in this process cannot both
+    // parent on the same commit.
+    if (ledgerRecordingOff()) {
+      const key = await overlayKey(cwd);
+      const branch = overlayTip(key) === undefined ? await readRefSha(`refs/heads/${STATE_BRANCH}`, { cwd }) : null;
+      // Read again after the await: another write may have moved the tip meanwhile.
+      const moved = overlayTip(key);
+      const current = moved !== undefined ? moved : branch;
+      if (current === parentRef) {
+        setOverlayTip(key, commitSha, files.map((f) => f.path), commitMessage);
+        return commitSha;
+      }
+      lastErr = new RefCASConflictError(`refs/heads/${STATE_BRANCH}`, parentRef, `the run's unrecorded tip is ${current ?? "(none)"}`);
+      continue;
+    }
     try {
       await updateRefCAS(`refs/heads/${STATE_BRANCH}`, commitSha, parentRef, { cwd });
       return commitSha;
@@ -374,7 +392,7 @@ export async function readBlobFromPath(
   const rt = getRuntime();
   const dir = await ledgerDir(environment, opts);
   const result = await rt.spawn(
-    ["git", "show", `${STATE_BRANCH}:${dir}/${filename}`],
+    ["git", "show", `${await ledgerRevision(opts?.cwd)}:${dir}/${filename}`],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return null;
@@ -396,7 +414,7 @@ export async function readPathSha(
   const rt = getRuntime();
   const dir = await ledgerDir(environment, opts);
   const result = await rt.spawn(
-    ["git", "rev-parse", "--verify", `${STATE_BRANCH}:${dir}/${filename}`],
+    ["git", "rev-parse", "--verify", `${await ledgerRevision(opts?.cwd)}:${dir}/${filename}`],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return null;
@@ -566,7 +584,7 @@ export async function listLedgerTrees(opts?: LedgerLocation): Promise<string[]> 
   // `--full-tree`: from a subdirectory, a bare `ls-tree` lists only that
   // subdirectory's part of the tree (#2550).
   const rootResult = await rt.spawn(
-    ["git", "ls-tree", "--full-tree", base === "" ? STATE_BRANCH : `${STATE_BRANCH}:${base}`],
+    ["git", "ls-tree", "--full-tree", base === "" ? tip : `${tip}:${base}`],
     { cwd: opts?.cwd },
   );
   if (rootResult.exitCode !== 0) return [];
@@ -592,7 +610,7 @@ export async function listFilesInDir(dir: string, opts?: LedgerLocation): Promis
   const rt = getRuntime();
   const path = await ledgerDir(dir, opts);
   const lsResult = await rt.spawn(
-    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${path}/`],
+    ["git", "ls-tree", "--full-tree", "--name-only", `${tip}:${path}/`],
     { cwd: opts?.cwd },
   );
   if (lsResult.exitCode !== 0) return [];
@@ -612,7 +630,7 @@ export async function readEnvironmentSnapshots(
   // List files in the environment directory
   const dir = await ledgerDir(environment, opts);
   const lsResult = await rt.spawn(
-    ["git", "ls-tree", "--full-tree", "--name-only", `${STATE_BRANCH}:${dir}/`],
+    ["git", "ls-tree", "--full-tree", "--name-only", `${await ledgerRevision(opts?.cwd)}:${dir}/`],
     { cwd: opts?.cwd },
   );
   if (lsResult.exitCode !== 0) return snapshots;
@@ -641,7 +659,7 @@ export async function listSnapshots(
   const base = await ledgerDir("", opts);
   const result = await rt.spawn(
     // `:(top)`: a pathspec is otherwise relative to the directory git runs in.
-    ["git", "log", "--format=%H %aI %s", STATE_BRANCH, ...(base === "" ? [] : ["--", `:(top)${base}`])],
+    ["git", "log", "--format=%H %aI %s", await ledgerRevision(opts?.cwd), ...(base === "" ? [] : ["--", `:(top)${base}`])],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return [];
@@ -702,6 +720,8 @@ export async function getRemoteLifecycleBranchSha(
 export type LifecyclePushStatus =
   | { status: "pushed"; remote: string; commit: string }
   | { status: "no-remote" }
+  /** Recording is off for this process (#3955, ./no-record.ts): nothing was written to the branch, so nothing was pushed. */
+  | { status: "not-recorded" }
   | { status: "stale"; remote: string; expected: string | null; stderr: string }
   | { status: "failed"; remote: string; stderr: string };
 
@@ -733,6 +753,7 @@ async function trackRemoteLifecycle(remote: string, sha: string, cwd?: string): 
  * is the throwing form most callers use.
  */
 export async function pushLifecycleStatus(opts?: { cwd?: string }): Promise<LifecyclePushStatus> {
+  if (ledgerRecordingOff()) return { status: "not-recorded" };
   const rt = getRuntime();
   const cwd = opts?.cwd;
   const found = await ledgerRemote(cwd);
@@ -799,6 +820,8 @@ export function describeLifecyclePush(result: LifecyclePushStatus): string | nul
       return null;
     case "no-remote":
       return `this repository has no remote, so ${STATE_BRANCH} stays local`;
+    case "not-recorded":
+      return NO_RECORD_PUSH_NOTE;
     case "stale":
       return `"${result.remote}" holds ${STATE_BRANCH} commits this checkout has not fetched, so the push was refused; fetch ${STATE_BRANCH} and write again${said(result.stderr)}`;
     case "failed":
@@ -820,6 +843,8 @@ export async function pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pu
         return { pushed: true };
       case "no-remote":
         return { pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE };
+      case "not-recorded":
+        return { pushed: false, pushWarning: NO_RECORD_PUSH_NOTE };
       case "stale":
         return { pushed: false, pushWarning: new StaleLifecycleBranchError(result.expected, result.stderr).message };
       case "failed":
@@ -1276,6 +1301,9 @@ export type PushRefStatus = "pushed" | "no-remote" | "rejected";
  * `pushed`.
  */
 export async function pushRefStatus(ref: string, opts?: { cwd?: string; expect?: string | null }): Promise<PushRefStatus> {
+  // #3955: a run that records nothing pushes nothing, a lease ref included.
+  // The lease still holds in this checkout, the way it does in one with no remote.
+  if (ledgerRecordingOff()) return "no-remote";
   const rt = getRuntime();
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
   if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return "no-remote";
@@ -1382,6 +1410,10 @@ interface TreeLine {
 }
 
 async function getStateBranchTip(cwd?: string): Promise<string | null> {
+  if (ledgerRecordingOff()) {
+    const tip = overlayTip(await overlayKey(cwd));
+    if (tip !== undefined) return tip;
+  }
   const rt = getRuntime();
   const result = await rt.spawn(
     ["git", "rev-parse", "--verify", `refs/heads/${STATE_BRANCH}`],
@@ -1389,6 +1421,29 @@ async function getStateBranchTip(cwd?: string): Promise<string | null> {
   );
   if (result.exitCode !== 0) return null;
   return result.stdout.trim();
+}
+
+/**
+ * What a read names to see the ledger: `chant/lifecycle`, or, in a run that
+ * records nothing (#3955), the in-memory tip its own writes built, once it
+ * has written. Reads outside this module that name the branch themselves go
+ * through here so they see the run's writes too.
+ */
+export async function ledgerRevision(cwd?: string): Promise<string> {
+  if (!ledgerRecordingOff()) return STATE_BRANCH;
+  return overlayTip(await overlayKey(cwd)) ?? STATE_BRANCH;
+}
+
+/** The repository a run's in-memory ledger tip belongs to (#3955): its common git directory, so worktrees and members share one. */
+const overlayKeys = new Map<string, string>();
+async function overlayKey(cwd?: string): Promise<string> {
+  const from = cwd ?? process.cwd();
+  const cached = overlayKeys.get(from);
+  if (cached !== undefined) return cached;
+  const result = await getRuntime().spawn(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: from, env: C_LOCALE_ENV });
+  const key = result.exitCode === 0 && result.stdout.trim() !== "" ? result.stdout.trim() : from;
+  overlayKeys.set(from, key);
+  return key;
 }
 
 /**
