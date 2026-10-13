@@ -338,6 +338,10 @@ const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, strin
     "an ambient `process` read, which wants a build-time parameter instead",
   ],
   [
+    "lexicons/docker/examples/dockerfile-sharing",
+    "`NodeImage`, a `Composite` that takes props, is a function used as a value; the files that import `shared/node.ts` alongside it then run with it. Parameterized sharing is what the Dockerfiles page teaches, so this entry stays until #1023 folds composites",
+  ],
+  [
     "lexicons/github/examples/docs-snippets",
     "`Checkout(...)` as a value, and one file with no foldable resource exports",
   ],
