@@ -566,6 +566,11 @@ Workspace (level 1, #2524):
   workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Take an answer back: the question is open for people
                         again, and the answer stays in its retractions
+  workspace points withdraw <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+                        Close an open question that no longer applies, such as
+                        one about a work item its author changed: points --open
+                        leaves it out, nobody answers it, and asking it again
+                        opens it again (#2888)
   workspace pin <path> [--json]
                         Print the integrity value that pins the plugin at
                         <path>, to put in a path pin of chant.workspace.json.

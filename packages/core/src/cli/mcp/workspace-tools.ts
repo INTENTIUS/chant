@@ -15,9 +15,9 @@
  *   read to the workspace root's pinned chant included (ws-021), and keeps
  *   anything a command prints away from the protocol on stdout.
  * - The writes (`records-new`, `records-amend`, `records-review`,
- *   `records-close`, `points-answer`, `points-retract`) call the functions
- *   `chant workspace records new|amend|review|close` and `points
- *   answer|retract` call, and return the
+ *   `records-close`, `points-answer`, `points-retract`, `points-withdraw`)
+ *   call the functions `chant workspace records new|amend|review|close` and
+ *   `points answer|retract|withdraw` call, and return the
  *   same JSON result. They keep every rule
  *   the CLI keeps: the kind's schema, a closed record never changing, an
  *   approved one changing only as its approval rule allows, a dissent needing
@@ -165,7 +165,7 @@ export const workspaceReadTools: ToolDefinition[] = [
   {
     name: "workspace-points",
     description:
-      "The workspace's decision points and the questions asked of them: chant workspace points --json (points.schema.json, ws-058). A question is open while it is escalated to people, or proposed by a model and not yet confirmed; each lists any model's answer with its confidence and threshold. Returns the document unchanged. chant calls no model to answer this.",
+      "The workspace's decision points and the questions asked of them: chant workspace points --json (points.schema.json, ws-058). A question is open while it is escalated to people, or proposed by a model and not yet confirmed, and not withdrawn; each lists any model's answer with its confidence and threshold. Returns the document unchanged. chant calls no model to answer this.",
     inputSchema: {
       type: "object",
       properties: {
@@ -320,6 +320,23 @@ export const workspaceWriteTools: ToolDefinition[] = [
         id: { type: "string", description: "The question's id, as workspace-points lists it." },
         by: { type: "array", items: { type: "string" }, description: "Each person who takes the answer back (--by)." },
         note: { type: "string", description: "Why, kept on the retraction (--note)." },
+        kind: { type: "string", description: "The answer kind file. Without it, the declared answer kinds." },
+        dryRun: dryRunProp,
+      },
+      required: ["id", "by"],
+    },
+  },
+  {
+    name: "points-withdraw",
+    description:
+      "Close an open decision point question that no longer applies, such as one about a work item its author changed, which a run asks about anew: chant workspace points withdraw (#2888). The question keeps its state, with who withdrew it, when and why; workspace-points open leaves it out, and points-answer refuses it. Asking it again opens it again. Withdrawing answers nothing, so it needs no quorum. An answered question is not withdrawn: points-retract takes the answer back. " +
+      PROTOCOL,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The question's id, as workspace-points lists it." },
+        by: { type: "array", items: { type: "string" }, description: "Who withdraws the question (--by)." },
+        note: { type: "string", description: "Why, such as the question that asks about the subject now (--note)." },
         kind: { type: "string", description: "The answer kind file. Without it, the declared answer kinds." },
         dryRun: dryRunProp,
       },
@@ -580,6 +597,12 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
       const by = params.by;
       if (!Array.isArray(by) || by.length === 0 || !by.every((b) => typeof b === "string" && b.trim() !== "")) throw new ToolInputError("by must list each person who takes the answer back");
       return retractAnswer({ cwd, id: str(params, "id", true)!, by: by as string[], note: str(params, "note"), kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
+    },
+    "points-withdraw": async (params) => {
+      const { withdrawQuestion } = await import("../../workspace/decide");
+      const by = params.by;
+      if (!Array.isArray(by) || by.length === 0 || !by.every((b) => typeof b === "string" && b.trim() !== "")) throw new ToolInputError("by must name who withdraws the question");
+      return withdrawQuestion({ cwd, id: str(params, "id", true)!, by: by as string[], note: str(params, "note"), kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
     },
     "records-close": async (params) => {
       const w = await write();
