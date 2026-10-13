@@ -167,7 +167,12 @@ Commands:
                         okf emits an OKF v0.2 knowledge bundle — one markdown
                         concept per entity + index.md; -o <dir> writes the
                         bundle tree, otherwise JSON path→content on stdout)
-  generate              Generate typed code from sources chant.config declares
+  search "<query>"      Answer an estate question with a few matching rows
+                        instead of a graph dump (kind:, tag:, attr:, ->/<- edge
+                        terms; --live or --at <ref> with --env <name> reads the
+                        estate or a recorded snapshot; --show <attr>,
+                        --check-live, --check-snapshot, --fail-on-drift)
+  generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
                         output no longer matches its sources, as build does
