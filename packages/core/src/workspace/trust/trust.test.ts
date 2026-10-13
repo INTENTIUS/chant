@@ -8,6 +8,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
 import schema from "../records.schema.json";
 import { afterEach, describe, expect, test } from "vitest";
@@ -354,6 +355,110 @@ describe.skipIf(!hasSshKeygen)("the ssh-commit attestor, against the policy at b
     r.commit("start signing", alice);
     const rs = await records(r, kind);
     expect(level(rs, "n1")).toBe("adopted");
+  });
+});
+
+describe.skipIf(!hasSshKeygen)("writeScope and agents in the declaration are protected (#3079)", () => {
+  const scoped = (over: Record<string, unknown> = {}) =>
+    JSON.stringify(
+      {
+        name: "ws",
+        schema: 1,
+        members: [{ name: "app", dir: "app", kind: "other", because: "plain files" }],
+        writeScope: { agent: { records: {} } },
+        agents: [{ name: "app-agent", member: "app" }],
+        ...over,
+      },
+      null,
+      2,
+    );
+
+  /** main: alice and bob sign, alice is admin when `admin`; the declaration at base restricts agents. */
+  function baseline(label: string, opts: { admin?: boolean; declaration?: string; dir?: string } = {}) {
+    const r = repo(label);
+    const alice = r.key("alice");
+    const bob = r.key("bob");
+    r.write(".chant/allowed_signers", signers(["alice@example.test", alice], ["bob@example.test", bob]));
+    if (opts.admin) r.write(".chant/trust.json", JSON.stringify({ schema: 1, roles: { admin: ["alice@example.test"] } }));
+    r.commit("policy", alice);
+    r.write(`${opts.dir ? `${opts.dir}/` : ""}chant.workspace.json`, opts.declaration ?? scoped());
+    r.commit("declaration", alice);
+    r.git(["checkout", "-q", "-b", "change"]);
+    return { r, alice, bob };
+  }
+
+  test("an unsigned commit that widens writeScope is a refused protected write", async () => {
+    const { r } = baseline("scope-unsigned");
+    r.write("chant.workspace.json", scoped({ writeScope: { agent: { records: { decision: ["new", "amend"] } } } }));
+    const c = r.commit("let agents amend");
+    const report = await verify(r);
+    expect(report.ok).toBe(false);
+    expect(report.protectedWrites).toEqual([expect.objectContaining({ commit: c, paths: ["chant.workspace.json"], allowed: false })]);
+    expect(report.failures.join("\n")).toMatch(/chant\.workspace\.json \(writeScope\) is protected/);
+  });
+
+  test("a change to agents is a protected write, allowed when a signer at base signs it", async () => {
+    const { r, alice } = baseline("agents-signed");
+    r.write("chant.workspace.json", scoped({ agents: [{ name: "app-agent", member: "app" }, { name: "other", member: "app" }] }));
+    r.commit("add a session", alice);
+    const report = await verify(r);
+    expect(report.protectedWrites).toEqual([expect.objectContaining({ allowed: true, principal: "alice@example.test", blocks: ["agents"] })]);
+    expect(report.ok).toBe(true);
+  });
+
+  test("with an admin role granted, a signer who is not an admin may not change writeScope", async () => {
+    const { r, bob } = baseline("scope-admin", { admin: true });
+    r.write("chant.workspace.json", scoped({ writeScope: {} }));
+    r.commit("drop the scope", bob);
+    const report = await verify(r);
+    expect(report.protectedWrites[0]).toMatchObject({ allowed: false, principal: "bob@example.test", blocks: ["writeScope"] });
+    expect(report.ok).toBe(false);
+  });
+
+  test("deleting the declaration drops the scope, and is a protected write", async () => {
+    const { r } = baseline("scope-deleted");
+    r.git(["rm", "-q", "chant.workspace.json"]);
+    r.commit("no more workspace");
+    const report = await verify(r);
+    expect(report.protectedWrites[0]).toMatchObject({ allowed: false, blocks: ["writeScope", "agents"] });
+    expect(report.ok).toBe(false);
+  });
+
+  test("other edits to the declaration are not protected", async () => {
+    const { r } = baseline("scope-other");
+    r.write("chant.workspace.json", scoped({ name: "renamed" }));
+    r.commit("rename");
+    const report = await verify(r);
+    expect(report.protectedWrites).toEqual([]);
+    expect(report.declaration).toEqual({ path: "chant.workspace.json", blocks: ["writeScope", "agents"], changed: [] });
+    expect(report.ok).toBe(true);
+  });
+
+  test("a scope the change adds, where the declaration at base has none, is not protected", async () => {
+    const { r } = baseline("scope-none", { declaration: JSON.stringify({ name: "ws", schema: 1, members: [] }) });
+    r.write("chant.workspace.json", scoped());
+    r.commit("restrict agents");
+    const report = await verify(r);
+    expect(report.protectedWrites).toEqual([]);
+    expect(report.declaration).toBeNull();
+  });
+
+  test("a change and its revert inside the range leave nothing to protect", async () => {
+    const { r } = baseline("scope-revert");
+    r.write("chant.workspace.json", scoped({ writeScope: {} }));
+    r.commit("drop");
+    r.write("chant.workspace.json", scoped());
+    r.commit("restore");
+    const report = await verify(r);
+    expect(report.protectedWrites).toEqual([]);
+  });
+
+  test("the declaration is found from cwd, as check --changes finds it", async () => {
+    const { r } = baseline("scope-nested", { dir: "ws" });
+    r.write("ws/chant.workspace.json", scoped({ writeScope: {} }));
+    r.commit("drop");
+    const report = await verifyChange({ repo: r.dir, cwd: join(r.dir, "ws"), base: "main", attestors: await activeAttestors() });
+    expect(report.protectedWrites).toEqual([expect.objectContaining({ paths: ["ws/chant.workspace.json"], allowed: false })]);
   });
 });
 
