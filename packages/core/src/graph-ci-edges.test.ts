@@ -95,3 +95,53 @@ describe("detail and lens keep CI edges (#3910)", () => {
     expect(focused.groups.byPipeline).toEqual({ ci: ["test"], shared: ["shared"] });
   });
 });
+
+describe("detail tiers carry groups.byPipeline (#3921)", () => {
+  // `build` and `test` sit inside one composite instance; `lint` in another
+  // that also holds a job of the `shared` pipeline.
+  const composed: GraphIR = {
+    nodes: [
+      { id: "ci", kind: "GitHub::Actions::Workflow", lexicon: "github", attrs: {} },
+      { id: "build", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {}, compositeInstance: "pair", compositeParent: "Pair" },
+      { id: "test", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {}, compositeInstance: "pair", compositeParent: "Pair" },
+      { id: "lint", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {}, compositeInstance: "mixed", compositeParent: "Mixed" },
+      { id: "publish", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {}, compositeInstance: "mixed", compositeParent: "Mixed" },
+      { id: "shared", kind: "GitHub::Actions::Workflow", lexicon: "github", attrs: {} },
+    ],
+    edges: [],
+    groups: {
+      byLexicon: { github: ["build", "ci", "lint", "publish", "shared", "test"] },
+      byPipeline: { ci: ["build", "ci", "lint", "test"], shared: ["publish", "shared"], gone: ["ghost"] },
+    },
+  };
+
+  test("the composite tier maps members to the composites that hold them, deduped", () => {
+    expect(applyDetail(composed, 1).groups.byPipeline).toEqual({
+      ci: ["ci", "mixed", "pair"],
+      shared: ["mixed", "shared"],
+    });
+  });
+
+  test("the composite tier keeps plain members as they are", () => {
+    expect(applyDetail(merged, 1).groups.byPipeline).toEqual({ ci: ["build", "ci", "test"], shared: ["shared"] });
+  });
+
+  test("a pipeline with no kept member is dropped, and no pipelines means no byPipeline", () => {
+    const none = applyDetail({ ...composed, groups: { byPipeline: { gone: ["ghost"] } } }, 1);
+    expect(none.groups.byPipeline).toBeUndefined();
+  });
+
+  test("the stacks tier has no pipelines: each would hold only its lexicon's node", () => {
+    expect(applyDetail(composed, 0).groups.byPipeline).toBeUndefined();
+  });
+
+  test("a lens then the composite tier keeps the pipelines of what survives", () => {
+    const t1 = applyDetail(applyLens(composed, parseLens("blast:shared")), 1);
+    expect(t1.groups.byPipeline).toEqual({ shared: ["shared"] });
+  });
+
+  test("declarable and attribute tiers pass byPipeline through", () => {
+    expect(applyDetail(composed, 2).groups.byPipeline).toEqual(composed.groups.byPipeline);
+    expect(applyDetail(composed, 3).groups.byPipeline).toEqual(composed.groups.byPipeline);
+  });
+});
