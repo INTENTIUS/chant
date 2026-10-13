@@ -1,0 +1,49 @@
+{
+  "uid": "chant-fx-burn",
+  "name": "Burn rate",
+  "kind": 1,
+  "model": {
+    "type": "timeseries",
+    "title": "Burn rate",
+    "datasource": {
+      "type": "prometheus",
+      "uid": "prom"
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "expr": "sum(rate(http_requests_total{code=~\"5..\"}[1h])) / sum(rate(http_requests_total[1h])) / 0.001",
+        "legendFormat": "1h"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "short",
+        "links": [
+          {
+            "title": "SLO doc",
+            "url": "https://example.com/slo",
+            "targetBlank": true
+          }
+        ]
+      },
+      "overrides": []
+    },
+    "options": {
+      "legend": {
+        "showLegend": true,
+        "displayMode": "list",
+        "placement": "bottom",
+        "calcs": []
+      },
+      "tooltip": {
+        "mode": "single",
+        "sort": "none"
+      }
+    }
+  }
+}

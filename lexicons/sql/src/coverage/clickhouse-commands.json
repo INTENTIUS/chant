@@ -1,0 +1,24 @@
+{
+  "source": "src/Parsers/ParserCreate*.h and src/Parsers/Access/ParserCreate*.h, at the pinned release's tag",
+  "version": "26.8.15.10",
+  "tag": "v26.8.15.10-lts",
+  "commands": [
+    "CREATE DATABASE",
+    "CREATE DICTIONARY",
+    "CREATE FUNCTION",
+    "CREATE HANDLER",
+    "CREATE INDEX",
+    "CREATE MASKING POLICY",
+    "CREATE NAMED COLLECTION",
+    "CREATE QUOTA",
+    "CREATE RESOURCE",
+    "CREATE ROLE",
+    "CREATE ROW POLICY",
+    "CREATE SETTINGS PROFILE",
+    "CREATE TABLE",
+    "CREATE USER",
+    "CREATE VIEW",
+    "CREATE WINDOW VIEW",
+    "CREATE WORKLOAD"
+  ]
+}

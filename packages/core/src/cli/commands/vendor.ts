@@ -76,7 +76,7 @@ export function contentHash(files: Map<string, Buffer>): string {
 // ── Source resolution → a { relpath → bytes } file set ──────────────────────
 
 /** Walk a local directory into a relpath→bytes map (or a single file). */
-function readLocal(absPath: string): Map<string, Buffer> {
+export function readLocal(absPath: string): Map<string, Buffer> {
   const files = new Map<string, Buffer>();
   const stat = statSync(absPath);
   if (stat.isFile()) {
@@ -135,12 +135,17 @@ export function scopeArchiveFiles(
 }
 
 async function resolveSource(entry: VendorEntry, manifestDir: string): Promise<Map<string, Buffer>> {
-  if (entry.source.type === "local") {
-    const abs = resolve(manifestDir, entry.source.path);
-    if (!existsSync(abs)) throw new Error(`local source not found: ${entry.source.path}`);
+  return resolveVendorSource(entry.source, manifestDir);
+}
+
+/** Resolve a vendor source (a local path, or an archive URL) to its file set. */
+export async function resolveVendorSource(source: VendorEntry["source"], manifestDir: string): Promise<Map<string, Buffer>> {
+  if (source.type === "local") {
+    const abs = resolve(manifestDir, source.path);
+    if (!existsSync(abs)) throw new Error(`local source not found: ${source.path}`);
     return readLocal(abs);
   }
-  return readArchive(entry.source.url, entry.source.subpath);
+  return readArchive(source.url, source.subpath);
 }
 
 // ── File I/O ────────────────────────────────────────────────────────────────
@@ -154,7 +159,7 @@ function writeFiles(targetDir: string, files: Map<string, Buffer>): void {
   }
 }
 
-function readTarget(targetDir: string): Map<string, Buffer> {
+export function readTarget(targetDir: string): Map<string, Buffer> {
   if (!existsSync(targetDir)) return new Map();
   return readLocal(targetDir);
 }

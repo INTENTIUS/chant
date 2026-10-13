@@ -162,3 +162,56 @@ build:
     expect(diags[1].message).toContain("ghost2");
   });
 });
+
+describe("WGL013: needs: forms the old line parser misread (#3256)", () => {
+  test("a dangling need after an artifacts: line is reported", () => {
+    const yaml = `build:
+  script: make
+
+deploy:
+  needs:
+    - job: build
+      artifacts: true
+    - job: missing
+  script: ./deploy.sh
+`;
+    const diags = checkInvalidNeeds(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('"missing"');
+  });
+
+  test("a need on a job whose id starts with a capital is not dangling", () => {
+    const yaml = `Build_Docs:
+  script: make docs
+
+deploy:
+  needs: [Build_Docs]
+  script: ./deploy.sh
+`;
+    expect(checkInvalidNeeds(makeCtx(yaml))).toHaveLength(0);
+  });
+
+  test("an optional need on an absent job is not reported", () => {
+    const yaml = `deploy:
+  needs:
+    - job: maybe-build
+      optional: true
+  script: ./deploy.sh
+`;
+    expect(checkInvalidNeeds(makeCtx(yaml))).toHaveLength(0);
+  });
+
+  test("cross-pipeline needs are not checked against this pipeline", () => {
+    const yaml = `deploy:
+  needs:
+    - pipeline: $PARENT_PIPELINE_ID
+      job: generate
+    - project: group/other
+      job: build
+      ref: main
+      artifacts: true
+  script: ./deploy.sh
+`;
+    expect(checkInvalidNeeds(makeCtx(yaml))).toHaveLength(0);
+  });
+});

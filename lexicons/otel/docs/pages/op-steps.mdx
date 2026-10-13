@@ -1,0 +1,70 @@
+---
+title: "Op Steps"
+description: "otelcol validate and components checks, collector health observation and the pin audit as chant Op steps"
+diataxis: how-to
+order: 8
+---
+
+The lexicon ships Op steps that run the collector binary over a built config, observe running collectors, and audit the lexicon's own pins. List `otel` in `chant.config.ts` and `chant run` loads the activities behind them. Every step has an activity contract, so `chant build` and `chant lint` check its arguments (OPS012) and any step-output reference to its result (OPS013).
+
+## Checking a config with the collector binary
+
+```ts title="ops/checks.op.ts"
+import { Op, phase } from "@intentius/chant/op";
+import { otelcolComponents, otelcolValidate } from "@intentius/chant-lexicon-otel";
+
+export const checks = Op({
+  name: "collector-checks",
+  overview: "Check the built collector config with otelcol",
+  phases: [phase("Check", [otelcolValidate({ config: "dist/collector.yaml" }), otelcolComponents({ config: "dist/collector.yaml" })])],
+});
+```
+
+`otelcolValidate` runs `otelcol validate --config=<file>`. First it reads the binary's version, and refuses a binary that is not at `COLLECTOR_PIN`'s version: chant's config types follow that release, and another release accepts and rejects other fields. Pass `version` to validate with a different collector on purpose; the binary must then be that version.
+
+`otelcolComponents` reads `otelcol components` and fails when the config declares a receiver, processor, exporter, connector or extension the binary was not built with, the error a core or custom distribution gives at start. A renamed component counts under its old and new names. Upstream marks the `components` output format unstable; the step reads lists of objects, lists of names and mappings.
+
+The binary is `bin`, else `$OTELCOL_BIN`, else `otelcol-contrib` on `PATH`.
+
+## Observing running collectors
+
+`collectorHealthObserve` is an observer for `ConvergeOp({ observe })`, with one resource per collector. It reads each collector's config on every tick and probes the endpoints it declares:
+
+- the `health_check` extension enabled in `service.extensions`, at its `endpoint` and `path` (at v0.130.0, `localhost:13133` and `/` by default; it answers 200 while the collector runs and reports no per-component status);
+- `zpages`, when enabled: `/debug/servicez`;
+- the collector's own metrics, when `service.telemetry.metrics` says where they are served: `/metrics`.
+
+A collector is `in-sync` when every declared endpoint answers 200 and `drifted` otherwise, with each failing endpoint in the detail. A collector whose service enables no `health_check` is `unknown`, never `drifted`: nothing it declares says whether it is healthy.
+
+```ts title="ops/collector-health.op.ts"
+import { ConvergeOp, eq, report, when, type ResourceSymptom } from "@intentius/chant/op";
+import { collectorHealthObserve } from "@intentius/chant-lexicon-otel";
+
+export const { op } = ConvergeOp({
+  name: "collector-health",
+  env: "prod",
+  schedule: "*/5 * * * *",
+  observe: collectorHealthObserve({ collectors: [{ name: "gateway", config: "dist/gateway.yaml", host: "otel-gateway.observability" }] }),
+  rules: [
+    when<ResourceSymptom>(eq("status", "drifted"), report("the collector is not answering"), { id: "collector-down", why: "Telemetry sent to it is lost." }),
+  ],
+});
+```
+
+A config's hosts are where the collector listens, often `0.0.0.0`, which the observer reads as `localhost`. `host` replaces every endpoint's host (a Service name, a port-forward), and `endpoints` replaces whole URLs.
+
+## Auditing the lexicon's pins
+
+`CollectorAuditOp` runs one `collectorAudit` step against upstream releases:
+
+- the opentelemetry-collector-contrib release list against `COLLECTOR_PIN`;
+- each built-in component's stability, from its `metadata.yaml` at the pin and at the newest release: a changed level, and any signal `deprecated` or `unmaintained`;
+- `GENAI_SEMCONV_PIN` against the semantic-conventions releases.
+
+```ts
+import { CollectorAuditOp } from "@intentius/chant-lexicon-otel";
+
+export const { op } = CollectorAuditOp({ name: "collector-audit", schedule: "0 6 * * 1", onFinding: "pull-request" });
+```
+
+`onFinding` is `report` (the default), `issue` (one GitHub issue kept current), or `pull-request`, which moves the pins in `lexicons/otel/src/define.ts` on the branch `chant/otel-pins` and opens or edits a pull request with the findings. Only the pin values change; the config types written against the old release are for the reviewer to check against the release notes. It runs in a chant checkout, and reaches GitHub through `git` and `gh`.

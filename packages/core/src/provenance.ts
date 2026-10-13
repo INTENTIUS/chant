@@ -33,6 +33,13 @@ export interface EntityProvenance {
    */
   compositeInstance?: string;
   /**
+   * Where the composite call that expanded this entity was written (chant
+   * #3597): the `WebApp({...})` expression, not the factory body. Recorded
+   * only when the fold interpreted the factory at a call it could see; the
+   * run path and a nested call made from already-folded values leave it unset.
+   */
+  compositeCall?: SourceLocation;
+  /**
    * Per-path origins within the entity's `props` (chant #1443). Read with
    * {@link originOfPath}, which does the prefix resolution these keys are
    * written for.
@@ -80,6 +87,12 @@ export interface EntityProvenance {
  *   expression for this path reads no parameter at all. The composite fixes
  *   this field, and no argument at the call site moves it.
  *
+ * - `host` — the authored expression for this path reads a value host code
+ *   produced (INTENTIUS/typescript-as-data#248): a method called on a real
+ *   receiver or an eager lexicon helper (`host-call`), or a value a lexicon
+ *   package exports (`host-value`). The author wrote the call, not the value,
+ *   so ./fold-provenance.ts answers `unknown` rather than `direct`.
+ *
  * The coarse `composite` and the two fine kinds are not alternatives. A build
  * records `composite` when it expanded a composite without interpreting its
  * body (the run path, an inadmissible factory), and that is why
@@ -90,8 +103,49 @@ export type PathOrigin =
   | { kind: "authored" }
   | { kind: "composite"; composite: string; instance: string }
   | { kind: "build-param"; params: string[] }
-  | { kind: "composite-parameter"; composite: string; parameters: string[] }
-  | { kind: "composite-literal"; composite: string };
+  | {
+      kind: "composite-parameter";
+      composite: string;
+      parameters: string[];
+      /**
+       * Where each parameter's argument was written at the composite call
+       * (chant #3597), in `parameters` order. Absent when the build did not
+       * see the call; see {@link ArgumentLocation} for the fallback.
+       */
+      arguments?: ArgumentLocation[];
+    }
+  | { kind: "composite-literal"; composite: string }
+  | { kind: "host"; reason: HostOriginReason };
+
+/** Which host code produced a value: a call it ran, or a value its package exports. */
+export type HostOriginReason = "host-call" | "host-value";
+
+/**
+ * A place in a source file. `file` is absolute, as
+ * {@link EntityProvenance.sourceFile} is; `line` and `column` are 1-based, the
+ * way an editor and `file:line:column` print them.
+ */
+export interface SourceLocation {
+  file: string;
+  line: number;
+  column: number;
+}
+
+/**
+ * Where one composite parameter's argument was written at the call (chant
+ * #3597). When the call's argument object has a property at the parameter's
+ * path, the location is that property and `text` is the property as written
+ * (`replicas: 3`). When it does not (the parameter was left out, or arrived
+ * through a spread or a non-literal argument), the location is the call's own
+ * and `text` is absent: the call is the nearest place that governs it, and
+ * nothing claims a property that is not there.
+ */
+export interface ArgumentLocation extends SourceLocation {
+  /** The factory parameter path, as in `parameters` (`replicas`, `iam.path`). */
+  parameter: string;
+  /** The innermost property as written at the call, when one is. */
+  text?: string;
+}
 
 /** True when `prefix` addresses `path` or an ancestor of it, on a segment boundary. */
 function isPathPrefix(prefix: string, path: string): boolean {
@@ -114,6 +168,7 @@ export function setProvenance(entity: object, prov: EntityProvenance): void {
     existing.sourceFile ??= prov.sourceFile;
     existing.composite ??= prov.composite;
     existing.compositeInstance ??= prov.compositeInstance;
+    existing.compositeCall ??= prov.compositeCall;
     if (prov.paths) {
       existing.paths ??= {};
       for (const [path, origin] of Object.entries(prov.paths)) {
@@ -177,6 +232,41 @@ export function originOfPath(
   return best === undefined ? undefined : paths[best];
 }
 
+const INTERPOLATION_FIELDS = Symbol.for("chant.interpolationFields");
+
+/**
+ * For an entity a tagged template built: which of its `props` paths each
+ * interpolation fed, by interpolation index (chant #3212). Element `i` lists
+ * the paths the `i`-th `${...}` landed in, in {@link EntityProvenance.paths}'
+ * grammar (dotted names, no array segments). An interpolation that fed no
+ * field the author typed, such as a reference to another entity, lists none.
+ *
+ * Only the tag can say this. It is the tag that parsed the text, so a
+ * `${props.ttlDays}` inside `TTL ts + INTERVAL ${props.ttlDays} DAY` is known
+ * to have fed `ttl` only there. When a composite factory interpreted at fold
+ * time writes the template, `discovery/fold-import.ts` joins these paths with
+ * the factory parameters each interpolation reads, which is what lets drift on
+ * such a field be reported against the parameter. A tag that never calls this
+ * leaves its fields `unknown`, the honest answer, rather than claiming either.
+ *
+ * Stored like provenance itself: non-enumerable and symbol-keyed, so no
+ * serializer, spread or comparison of the output ever sees it.
+ */
+export function setInterpolationFields(entity: object, fields: ReadonlyArray<readonly string[]>): void {
+  if (!Object.isExtensible(entity)) return;
+  Object.defineProperty(entity, INTERPOLATION_FIELDS, {
+    value: Object.freeze(fields.map((paths) => Object.freeze([...paths]))),
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/** What {@link setInterpolationFields} recorded on an entity, if anything. */
+export function getInterpolationFields(entity: object): ReadonlyArray<readonly string[]> | undefined {
+  return (entity as Record<symbol, unknown>)[INTERPOLATION_FIELDS] as ReadonlyArray<readonly string[]> | undefined;
+}
+
 /** One-line rendering of an origin, for diff output. */
 export function describePathOrigin(origin: PathOrigin): string {
   switch (origin.kind) {
@@ -190,6 +280,8 @@ export function describePathOrigin(origin: PathOrigin): string {
       return `composite ${origin.composite} parameter ${origin.parameters.join(", ")}`;
     case "composite-literal":
       return `composite ${origin.composite} literal`;
+    case "host":
+      return origin.reason;
   }
 }
 

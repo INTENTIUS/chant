@@ -16,6 +16,8 @@
  * pairing `cfn-deploy` has with its stack.
  */
 import type { Capability, DeployContext } from "@intentius/chant/components/capability";
+import { releaseAttributesSuffix } from "@intentius/chant/telemetry-attribution";
+import { annotateRelease } from "../telemetry-release";
 
 /**
  * Structural mirrors of the activity module's argument/result shapes.
@@ -51,6 +53,8 @@ export interface KubectlApplyOutcome {
 
 interface ApplierArgs {
   manifest: string;
+  /** The parsed documents to apply instead of reading `manifest`, when the step changed them in memory. */
+  documents?: Record<string, unknown>[];
   environment?: string;
   stack?: string;
   context?: string;
@@ -58,6 +62,7 @@ interface ApplierArgs {
 }
 
 type Applier = (args: ApplierArgs) => Promise<KubectlApplyOutcome>;
+type ManifestReader = (path: string) => Record<string, unknown>[];
 
 export interface KubectlApplyInput {
   /** Path to a manifest file, or a directory of them. */
@@ -86,6 +91,7 @@ export interface KubectlApplyInput {
  * chain off the build path (#1074). */
 export function createKubectlApplyCapability(
   apply?: Applier,
+  read?: ManifestReader,
 ): Capability<KubectlApplyInput, KubectlApplyOutcome> {
   return {
     kind: "kubectl-apply",
@@ -94,9 +100,19 @@ export function createKubectlApplyCapability(
     // the compensation gap — the same posture as s3-sync/run-migration.
     rollbackPolicy: "needs-opt-out",
     async run(ctx: DeployContext, input: KubectlApplyInput): Promise<KubectlApplyOutcome> {
-      const applier: Applier = apply ?? (await import("../op/activities/kubectl")).applyManifest;
+      const activities = apply && read ? undefined : await import("../op/activities/kubectl");
+      const applier: Applier = apply ?? activities!.applyManifest;
+      // A release run (#3061, ws-081) sets the release attributes on the pod template of each
+      // workload the build stamped, in what it applies; the committed manifest is not touched.
+      const suffix = releaseAttributesSuffix(ctx.release);
+      let documents: Record<string, unknown>[] | undefined;
+      if (suffix !== "") {
+        documents = (read ?? activities!.readManifestDocuments)(input.manifest);
+        if (annotateRelease(documents, suffix) === 0) documents = undefined;
+      }
       return applier({
         manifest: input.manifest,
+        ...(documents ? { documents } : {}),
         environment: ctx.env,
         ...(input.stack !== undefined ? { stack: input.stack } : {}),
         ...(input.context !== undefined ? { context: input.context } : {}),

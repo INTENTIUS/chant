@@ -3,6 +3,7 @@ import type { OpRunResult } from "./local-executor";
 import { buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
 import { renderHuman, renderJson } from "./local-output";
+import { LIFECYCLE_LOCAL_NOTE } from "../lifecycle/local-note";
 
 /**
  * Attach the ledger record the executor would have built (#2118), so a fixture
@@ -75,6 +76,23 @@ const GATED: OpRunResult = withRecord({
   ],
 });
 
+/** A gate bound to a plan (#2300), for the --plan tests (#2832). */
+const GATED_WITH_PLAN: OpRunResult = withRecord({
+  op: "prod-apply",
+  totalMs: 300,
+  status: "gated",
+  startedAt: "2026-09-05T12:00:00.000Z",
+  gate: {
+    version: 1, kind: "pending", op: "prod-apply", gate: "rollout-gate",
+    timestamp: "2026-09-05T12:00:00.000Z",
+    expiresAt: "2026-09-07T12:00:00.000Z",
+    planDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  },
+  records: [
+    { phase: "Apply", fn: "gate:rollout-gate", args: {}, status: "skipped", durationMs: 0 },
+  ],
+});
+
 describe("renderHuman — gated (#2119)", () => {
   test("names the gate, the approve line and the expiry, and points at no other runtime", () => {
     const lines: string[] = [];
@@ -86,6 +104,14 @@ describe("renderHuman — gated (#2119)", () => {
     expect(out).toContain("https://github.com/org/repo/pull/7");
     expect(out).toContain("expires : 2026-09-07T12:00:00.000Z");
     expect(out).not.toContain("--on");
+  });
+
+  test("a gate bound to a plan (#2300) carries --plan on the approve line (#2832)", () => {
+    const lines: string[] = [];
+    renderHuman(GATED_WITH_PLAN, (l) => lines.push(l));
+    const out = lines.join("\n");
+    expect(out).toContain(`plan    : ${GATED_WITH_PLAN.gate!.planDigest}`);
+    expect(out).toContain(`approve : chant approve prod-apply rollout-gate --plan ${GATED_WITH_PLAN.gate!.planDigest}`);
   });
 
   test("shows the approver on a gate that passed", () => {
@@ -119,6 +145,17 @@ describe("renderHuman — a gated run whose own push never reached the remote (#
     const lines: string[] = [];
     renderHuman({ ...GATED, gatePushed: true }, (l) => lines.push(l));
     expect(lines.join("\n")).not.toContain("was not pushed");
+  });
+
+  // #3677: with no remote at all, the person who approves is the one at this
+  // machine; one quiet line, no warning on every local run.
+  test("prints one quiet note, not a warning, when chant/lifecycle has no remote", () => {
+    const lines: string[] = [];
+    renderHuman({ ...GATED, gatePushed: false, gatePushWarning: LIFECYCLE_LOCAL_NOTE }, (l) => lines.push(l));
+    const out = lines.join("\n");
+    expect(out).toContain("  note    : recorded locally (no remote for chant/lifecycle)");
+    expect(out).not.toContain("warning");
+    expect(out).not.toContain("was not pushed");
   });
 });
 
@@ -157,6 +194,14 @@ describe("renderJson", () => {
     expect(parsed.approve).toBe("chant approve prod-apply rollout-gate");
   });
 
+  test("a gate bound to a plan (#2300) carries --plan on the approve line (#2832)", () => {
+    const lines: string[] = [];
+    renderJson(GATED_WITH_PLAN, (l) => lines.push(l));
+    const parsed = JSON.parse(lines[0]) as OpRunRecord & { approve: string };
+    expect(parsed.status).toBe("gated");
+    expect(parsed.approve).toBe(`chant approve prod-apply rollout-gate --plan ${GATED_WITH_PLAN.gate!.planDigest}`);
+  });
+
   // #2310: a JSON consumer (CI tooling reading `chant run --json`) needs the
   // same fact the human render shows — not just a silent success.
   test("a gated record whose push failed carries pushed:false and why", () => {
@@ -172,5 +217,25 @@ describe("renderJson", () => {
     renderJson({ ...GATED, gatePushed: true }, (l) => lines.push(l));
     const parsed = JSON.parse(lines[0]) as { pushed?: boolean };
     expect(parsed.pushed).toBeUndefined();
+  });
+});
+
+describe("a sealed gate's approve line carries --sign (#3521)", () => {
+  test("renderHuman prints --sign when sealed, and not when unsealed", () => {
+    const sealed: string[] = [];
+    renderHuman(GATED_WITH_PLAN, (l) => sealed.push(l), true);
+    expect(sealed.join("\n")).toContain(`approve : chant approve prod-apply rollout-gate --plan ${GATED_WITH_PLAN.gate!.planDigest} --sign`);
+    const unsealed: string[] = [];
+    renderHuman(GATED_WITH_PLAN, (l) => unsealed.push(l), false);
+    expect(unsealed.join("\n")).not.toContain("--sign");
+  });
+
+  test("renderJson's approve field carries --sign when sealed, and not when unsealed", () => {
+    const sealed: string[] = [];
+    renderJson(GATED, (l) => sealed.push(l), true);
+    expect(JSON.parse(sealed[0]).approve).toBe("chant approve prod-apply rollout-gate --sign");
+    const unsealed: string[] = [];
+    renderJson(GATED, (l) => unsealed.push(l), false);
+    expect(JSON.parse(unsealed[0]).approve).toBe("chant approve prod-apply rollout-gate");
   });
 });

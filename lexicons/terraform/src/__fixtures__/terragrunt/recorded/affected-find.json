@@ -1,0 +1,50 @@
+[
+  {
+    "type": "unit",
+    "path": "live/dev/app",
+    "include": {
+      "root": "root.hcl"
+    },
+    "reading": [
+      "modules/app/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "unit",
+    "path": "live/dev/vpc",
+    "include": {
+      "root": "root.hcl"
+    },
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "unit",
+    "path": "live/prod/app",
+    "include": {
+      "root": "root.hcl"
+    },
+    "reading": [
+      "modules/app/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "stack",
+    "path": "live/stg"
+  },
+  {
+    "type": "unit",
+    "path": "live/stg/.terragrunt-stack/web",
+    "include": {
+      "root": "root.hcl"
+    },
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  }
+]

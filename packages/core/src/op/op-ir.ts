@@ -86,6 +86,7 @@ import type {
   OutcomeAttribute,
   OpConfig,
   OpSchedule,
+  OpWorkLease,
   PhaseDefinition,
   StepDefinition,
   ActivityStep,
@@ -117,6 +118,8 @@ export interface OpIRActivityStep {
   args: Record<string, unknown>;
   /** Resolved to its effective value — `ActivityStep.profile ?? "fastIdempotent"`. */
   profile: string;
+  /** The step's own timeout, replacing its profile's (#2787). Absent when the profile's applies. */
+  timeout?: string;
   /**
    * What this step's effect touches in the estate (#2022): the string values
    * of the args its contract declares as entity-identifying
@@ -144,6 +147,10 @@ export interface OpIRGateStep {
    * Absent on a gate that binds no plan.
    */
   plan?: GateStep["plan"];
+  /** Quorum, roles and policy (#2508), carried as authored. Absent on a gate that passes on one approval. */
+  approval?: GateStep["approval"];
+  /** The decision point the gate asks (#3170), carried as authored. Absent on a gate that `chant approve` passes. */
+  point?: GateStep["point"];
 }
 
 export interface OpIREffectStep {
@@ -185,6 +192,19 @@ export interface OpIR {
    * additive optional key, so it needs no `formatVersion` bump.
    */
   schedule?: OpSchedule;
+  /**
+   * The work item the Op runs under (#2748) — `OpConfig.workLease` verbatim,
+   * a step-output reference in `item` or `outcome` in the same
+   * `{ kind: "step-output-ref", step, path }` shape as in args. Absent when it
+   * declares none. A runtime that can't take the lease must not run the Op.
+   */
+  workLease?: OpWorkLease;
+  /** `OpConfig.changesCheckout` (#2748), present only when true. */
+  changesCheckout?: true;
+  /** `OpConfig.neverOverMcp`, present only when true. */
+  neverOverMcp?: true;
+  /** `OpConfig.failOn` (#3675), present only when set. */
+  failOn?: "drift";
   phases: OpIRPhase[];
   onFailure: OpIRPhase[];
   /** Every activity profile referenced by a step in this Op, keyed by profile name — from the registry passed to {@link buildOpIR}, empty when none was. */
@@ -228,6 +248,7 @@ function irActivityStep(step: ActivityStep, contracts: ReadonlyMap<string, Activ
     fn: step.fn,
     args: step.args ?? {},
     profile: effectiveProfile(step),
+    ...(step.timeout !== undefined ? { timeout: step.timeout } : {}),
     ...(entities ? { entities } : {}),
     ...(step.outcomeAttribute ? { outcomeAttribute: step.outcomeAttribute } : {}),
   };
@@ -240,6 +261,8 @@ function irGateStep(step: GateStep): OpIRGateStep {
     timeout: step.timeout ?? "48h",
     ...(step.description ? { description: step.description } : {}),
     ...(step.plan !== undefined ? { plan: step.plan } : {}),
+    ...(step.approval !== undefined ? { approval: step.approval } : {}),
+    ...(step.point !== undefined ? { point: step.point } : {}),
   };
 }
 
@@ -347,6 +370,10 @@ export function buildOpIR(
     depends: config.depends ?? [],
     labels: config.labels ?? {},
     ...(config.schedule ? { schedule: config.schedule } : {}),
+    ...(config.workLease ? { workLease: config.workLease } : {}),
+    ...(config.changesCheckout ? { changesCheckout: true as const } : {}),
+    ...(config.neverOverMcp ? { neverOverMcp: true as const } : {}),
+    ...(config.failOn ? { failOn: config.failOn } : {}),
     phases: config.phases.map((p) => irPhase(p, contractRegistry)),
     onFailure: (config.onFailure ?? []).map((p) => irPhase(p, contractRegistry)),
     activityProfiles: sortedEntries(profiles),
@@ -379,6 +406,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       fn: step.fn,
       args: step.args,
       profile: step.profile as ActivityStep["profile"],
+      ...(step.timeout !== undefined ? { timeout: step.timeout } : {}),
       ...(step.outcomeAttribute ? { outcomeAttribute: step.outcomeAttribute } : {}),
     };
   }
@@ -389,6 +417,8 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       timeout: step.timeout,
       ...(step.description ? { description: step.description } : {}),
       ...(step.plan !== undefined ? { plan: step.plan } : {}),
+      ...(step.approval !== undefined ? { approval: step.approval } : {}),
+      ...(step.point !== undefined ? { point: step.point } : {}),
     };
   }
   return {
@@ -424,5 +454,9 @@ export function opConfigFromIR(ir: OpIR): OpConfig {
     ...(ir.onFailure.length > 0 ? { onFailure: ir.onFailure.map(opPhaseFromIR) } : {}),
     ...(Object.keys(ir.labels).length > 0 ? { labels: ir.labels } : {}),
     ...(ir.schedule ? { schedule: ir.schedule } : {}),
+    ...(ir.workLease ? { workLease: ir.workLease } : {}),
+    ...(ir.changesCheckout ? { changesCheckout: true } : {}),
+    ...(ir.neverOverMcp ? { neverOverMcp: true } : {}),
+    ...(ir.failOn ? { failOn: ir.failOn } : {}),
   };
 }

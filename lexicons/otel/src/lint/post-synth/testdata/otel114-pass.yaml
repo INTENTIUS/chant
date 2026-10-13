@@ -1,0 +1,23 @@
+# OTEL114 passing fixture: the connector is renamed datadog/connector.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+  datadog:
+    endpoint: 127.0.0.1:8126
+
+exporters:
+  debug: {}
+
+connectors:
+  datadog/connector: {}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp, datadog]
+      exporters: [datadog/connector]
+    metrics:
+      receivers: [datadog/connector]
+      exporters: [debug]

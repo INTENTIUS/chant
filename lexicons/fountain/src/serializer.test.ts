@@ -253,8 +253,8 @@ describe("fountain serializer", () => {
     const [runnable, seat, cadence] = documents(out);
     expect(seat.spec.agent).toBe("steward");
     expect(cadence.spec.teammate).toBe("steward-seat");
-    // The ACP extension survives the round trip — an instance with
-    // BinaryBourbon/fountain#1634 gets both halves or neither.
+    // The acp pair survives the round trip, so the instance gets both
+    // halves or neither.
     expect(runnable.spec.runtime_command).toBe("chant acp");
   });
 

@@ -96,6 +96,14 @@ export interface LiveDiffResult {
    * namespace, and only this field makes that visible.
    */
   queried?: Record<string, string>;
+  /**
+   * The declared definition of each `missing` entity, fingerprinted (#3652):
+   * what applying the diff would create, not only its name. A plan digest is
+   * taken over the diff, and a create listed by name alone let an approval for
+   * "create events" stand after `events` was edited. Present only when the
+   * caller supplied {@link DiffLiveInput.definitions} and something is missing.
+   */
+  definitions?: Record<string, string>;
 }
 
 export interface DiffLiveInput {
@@ -117,6 +125,13 @@ export interface DiffLiveInput {
    * never consulted for classification.
    */
   queried?: Record<string, string>;
+  /**
+   * Each declared entity's definition fingerprint (#3652), from
+   * `declaredDefinitions` in ./digest.ts. Carried onto the result for the
+   * entities that are missing, so a diff that proposes a create names what it
+   * would create. Never consulted for classification.
+   */
+  definitions?: Record<string, string>;
 }
 
 const TRACKED_FIELDS: Array<keyof ResourceMetadata> = [
@@ -351,7 +366,33 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
     unchanged: unchanged.sort(),
     unobserved: unobserved.sort((a, b) => a.name.localeCompare(b.name)),
     ...(input.queried && Object.keys(input.queried).length > 0 ? { queried: input.queried } : {}),
+    ...missingDefinitions(missing, input.definitions),
   };
+}
+
+/**
+ * One row of a live diff's MISSING section, as `chant lifecycle diff --live`
+ * prints it. The address the read went to (#1620) is the line between "not
+ * there" and "looked in the wrong place". The definition's fingerprint
+ * (#3652) is what the create would create: `ApplyOp` digests these rows, and
+ * a row naming the entity alone left an approval standing after the
+ * declaration changed.
+ */
+export function missingRow(diff: Pick<LiveDiffResult, "queried" | "definitions">, name: string): string {
+  const queried = diff.queried?.[name];
+  const definition = diff.definitions?.[name];
+  return `  - ${name}${queried ? ` [queried ${queried}]` : ""}${definition ? ` [definition ${definition}]` : ""}`;
+}
+
+/** `{ definitions }` for the missing entities that have one, or nothing at all. */
+function missingDefinitions(missing: readonly string[], definitions: Record<string, string> | undefined): { definitions?: Record<string, string> } {
+  if (!definitions) return {};
+  const out: Record<string, string> = {};
+  for (const name of [...missing].sort()) {
+    const d = definitions[name];
+    if (d !== undefined) out[name] = d;
+  }
+  return Object.keys(out).length > 0 ? { definitions: out } : {};
 }
 
 // ── Artifact diff (no `declared` axis) ──────────────────────────────────────

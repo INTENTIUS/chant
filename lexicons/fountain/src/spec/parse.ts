@@ -20,9 +20,11 @@
  *     add one that reaches the API only as a path parameter (a schedule's
  *     teammate), into a by-name reference the serializer resolves and FTN021
  *     proves resolvable — the same shape an Agent's `environment` has.
- *   - Extensions. A prop chant accepts ahead of upstream, declared here so the
- *     generated type documents it instead of leaving authors to smuggle it
- *     through `metadata`. Today that is the ACP runtime.
+ *   - Extensions. A prop chant accepts that the request schema does not
+ *     describe, declared here so the generated type documents it instead of
+ *     leaving authors to smuggle it through `metadata` or a cast. Today that is
+ *     the inline `secrets` on Environment and Vault, which upstream documents
+ *     on its manifest format rather than on either request schema.
  */
 
 import {
@@ -96,7 +98,7 @@ interface RefSpec {
   description: string;
 }
 
-/** A prop chant accepts that the pinned spec does not describe yet. */
+/** A prop chant accepts that the kind's request schema does not describe. */
 interface ExtensionSpec {
   name: string;
   tsType: string;
@@ -109,23 +111,29 @@ interface ResourceSpec {
   request: string;
   response: string;
   refs?: RefSpec[];
-  /** Extra accepted values, per enum-valued request property. */
-  enumExtensions?: Record<string, string[]>;
   extensions?: ExtensionSpec[];
 }
 
 /**
- * The ACP runtime (BinaryBourbon/fountain#1634).
+ * The inline secrets a manifest document carries (Environment and Vault).
  *
- * `runtime: "acp"` and `runtime_command` are not in the pinned spec; the
- * upstream PR that adds them is open. chant models them anyway, because
- * `chant acp` is what a steward's agent runs, and an author who cannot name
- * the runtime has nowhere to put it but `metadata`. An instance without #1634
- * rejects them at apply — a 422 with an obvious cause, which is better than a
- * generated type that cannot express the deployment this lexicon is for.
+ * Neither request schema has the field: secrets are a write-only
+ * sub-resource with routes of their own. Upstream's `ManifestResource` says a
+ * manifest spec is the create schema "plus an inline `secrets` map
+ * (Environment and Vault)", and `fountainApply` turns the authored list into
+ * that map. Without the extension the generated types have no field for what
+ * the chant-fountain-secrets skill tells an author to write.
  */
-const ACP_NOTE =
-  "chant extension, pending BinaryBourbon/fountain#1634 — an instance without that PR rejects it at apply.";
+const SECRETS_EXTENSION: ExtensionSpec = {
+  name: "secrets",
+  tsType: "{ key: string; value: string }[]",
+  required: false,
+  description:
+    "Secrets upserted with the resource at apply, as key/value pairs; fountainApply sends them as the manifest's " +
+    "inline `secrets` map. Values are write-only upstream and can never be read back or diffed. Write a reference " +
+    "that resolves at build (an env var, a secret-manager lookup), never a literal: FTN001 flags a literal here " +
+    "as it does anywhere else in a declaration.",
+};
 
 const REF_TARGET = {
   agent: `Fountain::${SERVICE}::Agent`,
@@ -135,22 +143,19 @@ const REF_TARGET = {
 };
 
 const RESOURCES: ResourceSpec[] = [
-  { typeName: `Fountain::${SERVICE}::Environment`, request: "EnvironmentRequest", response: "Environment" },
-  { typeName: `Fountain::${SERVICE}::Vault`, request: "VaultRequest", response: "Vault" },
   {
-    typeName: `Fountain::${SERVICE}::Agent`,
-    request: "AgentRequest",
-    response: "Agent",
-    enumExtensions: { runtime: ["acp"] },
-    extensions: [
-      {
-        name: "runtime_command",
-        tsType: "string",
-        required: false,
-        description: `The command line an "acp" agent speaks the Agent Client Protocol over, e.g. "chant acp". ${ACP_NOTE}`,
-      },
-    ],
+    typeName: `Fountain::${SERVICE}::Environment`,
+    request: "EnvironmentRequest",
+    response: "Environment",
+    extensions: [SECRETS_EXTENSION],
   },
+  {
+    typeName: `Fountain::${SERVICE}::Vault`,
+    request: "VaultRequest",
+    response: "Vault",
+    extensions: [SECRETS_EXTENSION],
+  },
+  { typeName: `Fountain::${SERVICE}::Agent`, request: "AgentRequest", response: "Agent" },
   {
     typeName: `Fountain::${SERVICE}::Teammate`,
     request: "TeamAddRequest",
@@ -254,20 +259,12 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
         properties.push(refProperty(ref));
         continue;
       }
-      const extraEnum = rspec.enumExtensions?.[name];
-      const constraints = coreExtractConstraints(prop as JsonSchemaProperty);
-      let tsType = resolve(prop);
-      if (extraEnum && extraEnum.length > 0) {
-        const values = [...(prop.enum ?? []), ...extraEnum];
-        constraints.enum = values;
-        tsType = [...values].sort().map((v) => JSON.stringify(v)).join(" | ");
-      }
       properties.push({
         name,
-        tsType,
+        tsType: resolve(prop),
         required: requiredSet.has(name),
         description: prop.description,
-        constraints,
+        constraints: coreExtractConstraints(prop as JsonSchemaProperty),
       });
     }
 
@@ -278,6 +275,15 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
     }
 
     for (const ext of rspec.extensions ?? []) {
+      // An extension exists because the spec lacks the prop. Once upstream
+      // describes it, the extension would emit a second copy with chant's
+      // type in place of upstream's, so the build stops and says so.
+      if (ext.name in reqProps) {
+        throw new Error(
+          `fountain parse: ${rspec.request} now declares "${ext.name}", which ${fountainShortName(rspec.typeName)} ` +
+            `carries as a chant extension. Remove the extension from RESOURCES in src/spec/parse.ts.`,
+        );
+      }
       properties.push({
         name: ext.name,
         tsType: ext.tsType,
@@ -386,9 +392,33 @@ function collectRefs(node: unknown, acc: Set<string> = new Set()): Set<string> {
   return acc;
 }
 
-/** An object schema with properties (not a pure enum). */
+/**
+ * An object schema with properties (not a pure enum, and not an open map).
+ *
+ * A schema with named properties and a typed `additionalProperties` is a map
+ * that reserves a few keys, like v0.21.0's `PermissionPolicy`: tool names to
+ * verdicts, plus `ask_timeout`. Emitting it as a class would keep the reserved
+ * keys and drop the map, so it resolves to a `Record` instead.
+ */
 function isObjectSchema(def: OpenAPISchema): boolean {
-  return !!def.properties && Object.keys(def.properties).length > 0 && !isEnumDefinition(def);
+  return (
+    !!def.properties &&
+    Object.keys(def.properties).length > 0 &&
+    !isEnumDefinition(def) &&
+    !isOpenMap(def)
+  );
+}
+
+/** An object whose `additionalProperties` is a schema, not `true` or absent. */
+function isOpenMap(def: OpenAPISchema): boolean {
+  return !!def.additionalProperties && typeof def.additionalProperties === "object";
+}
+
+/** The TypeScript union of a set of member types, deduplicated and sorted. */
+function unionOf(types: string[]): string {
+  const parts = new Set(types.flatMap((t) => t.split(" | ")));
+  if (parts.has("any")) return "any";
+  return [...parts].sort().join(" | ");
 }
 
 // ── Type resolution ────────────────────────────────────────────────
@@ -409,6 +439,12 @@ function resolveType(
 
   if (prop.enum && prop.enum.length > 0) {
     return [...prop.enum].sort().map((v) => JSON.stringify(v)).join(" | ");
+  }
+
+  const members = (prop as { oneOf?: OpenAPISchema[]; anyOf?: OpenAPISchema[] }).oneOf ??
+    (prop as { anyOf?: OpenAPISchema[] }).anyOf;
+  if (members && members.length > 0) {
+    return unionOf(members.map((m) => resolveType(m, schemas, emitted)));
   }
 
   const pt = primaryType(prop.type);
@@ -448,6 +484,13 @@ function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, emi
 
   if (isEnumDefinition(def)) {
     return [...(def.enum ?? [])].sort().map((v) => JSON.stringify(v)).join(" | ");
+  }
+
+  if (isOpenMap(def)) {
+    const value = resolveType(def.additionalProperties as OpenAPISchema, schemas, emitted);
+    // Reserved keys ride in the same map, so their types join the value union.
+    const reserved = Object.values(def.properties ?? {}).map((p) => resolveType(p, schemas, emitted));
+    return `Record<string, ${unionOf([value, ...reserved])}>`;
   }
 
   if (def.properties) return "Record<string, any>";

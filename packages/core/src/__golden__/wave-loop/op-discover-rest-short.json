@@ -1,0 +1,92 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "rest",
+          "op": "tf-apply",
+          "gate": "wave-2",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:1fa77cc2ae4f64b25382f00ebcf74210c66068d22785dbd5192eac122050ab1e",
+          "members": [],
+          "status": "not-required",
+          "digestOver": "changing",
+          "discovered": {
+            "waves": 1
+          }
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 1,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "rest",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "rest",
+          "number": 2,
+          "discover": true,
+          "runs": []
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 2 (rest): the plan found 0 runs of 1 waves",
+    "wave 2 (rest): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:1fa77cc2ae4f64b25382f00ebcf74210c66068d22785dbd5192eac122050ab1e: not-required"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-2/plans.json": {
+      "runs": [],
+      "waves": 1
+    },
+    ".chant/op-waves/tf-apply/wave-2/runs.json": {
+      "wave": "rest",
+      "number": 2,
+      "discover": true,
+      "runs": []
+    },
+    ".chant/op-waves/tf-apply/wave-2.json": {
+      "wave": 2,
+      "name": "rest",
+      "op": "tf-apply",
+      "gate": "wave-2",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:1fa77cc2ae4f64b25382f00ebcf74210c66068d22785dbd5192eac122050ab1e",
+      "members": [],
+      "status": "not-required",
+      "digestOver": "changing",
+      "discovered": {
+        "waves": 1
+      }
+    }
+  }
+}

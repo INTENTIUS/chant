@@ -5,6 +5,7 @@
  * for GitHub Actions workflows.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -13,6 +14,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { githubSerializer } from "./serializer";
+import { githubGraphEdges } from "./graph-edges";
 import { useTypedActionsRule } from "./lint/rules/use-typed-actions";
 import { useConditionBuildersRule } from "./lint/rules/use-condition-builders";
 import { noHardcodedSecretsRule } from "./lint/rules/no-hardcoded-secrets";
@@ -33,6 +35,7 @@ import { GitHubActionsGenerator } from "./import/generator";
 import { githubContextTools } from "./mcp/context-tools";
 import { generateGithubPipeline } from "./components/generate-pipeline";
 import { generateGithubOpPipeline } from "./components/generate-op-pipeline";
+import { generateGithubOpWavesPipeline } from "./components/generate-op-waves-pipeline";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
@@ -41,7 +44,11 @@ export const githubPlugin: LexiconPlugin = {
   generateComponentPipeline: (components, options) => generateGithubPipeline(components, options),
   // Generate mode, Op counterpart (#927): synthesize one cron-triggered workflow per scheduled Op.
   generateOpPipeline: (ops, options) => generateGithubOpPipeline(ops, options),
+  // Ordered waves of Op runs, each behind one gate (#3679).
+  generateOpWavesPipeline: (spec, options) => generateGithubOpWavesPipeline(spec, options),
   serializer: githubSerializer,
+  // `needs`, reusable-workflow `uses:` and `workflow_run` as graph edges (#3910).
+  graphEdges: (entities) => githubGraphEdges(entities),
 
   lintRules(): LintRule[] {
     return [
@@ -254,6 +261,10 @@ export const build = new Job({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

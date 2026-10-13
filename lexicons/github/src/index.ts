@@ -1,5 +1,6 @@
 // Serializer
 export { githubSerializer } from "./serializer";
+export { githubGraphEdges } from "./graph-edges";
 
 // Plugin
 export { githubPlugin } from "./plugin";
@@ -19,6 +20,10 @@ export { GitHub, Runner } from "./variables";
 // Generated entities — export everything from generated index
 // After running `chant generate`, this re-exports all entity classes
 export * from "./generated/index";
+
+// Action versions the composites emit, and their pinned commits
+export { ACTION_PINS, actionRef, actionPin } from "./action-pins";
+export type { ActionPin, ActionPinMode, PinnedAction } from "./action-pins";
 
 // Composites
 export {

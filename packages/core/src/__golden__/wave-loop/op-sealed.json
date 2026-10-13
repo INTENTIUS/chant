@@ -1,0 +1,125 @@
+{
+  "jobs": [
+    {
+      "label": "an unsealed approval does not count",
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "staging",
+          "op": "migrations",
+          "gate": "migrations-wave-2",
+          "policy": "on-destructive",
+          "approval": "sealed",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "members": [
+            {
+              "member": "staging",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "migrate",
+              "destructive": true
+            }
+          ],
+          "status": "waiting",
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "sealed",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval sealed",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d --sign"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "sealed",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval sealed",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 1,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "staging",
+        "--out",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ]
+    }
+  ],
+  "logs": [
+    "wave 2 (staging): the approval by alice at 2026-10-10T00:00:00Z does not count: the approval of gate migrations-wave-2 by alice carries no seal",
+    "Nothing in wave 2 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d --sign (with --resume, the approval also starts this job again)"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-2/staging.plan.json": {
+      "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "destructive": true
+    },
+    ".chant/op-waves/migrations/wave-2.json": {
+      "wave": 2,
+      "name": "staging",
+      "op": "migrations",
+      "gate": "migrations-wave-2",
+      "policy": "on-destructive",
+      "approval": "sealed",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+      "members": [
+        {
+          "member": "staging",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "op": "migrate",
+          "destructive": true
+        }
+      ],
+      "status": "waiting",
+      "pendingFact": {
+        "version": 1,
+        "kind": "pending",
+        "approvalMode": "sealed",
+        "op": "migrations",
+        "gate": "migrations-wave-2",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 2 (staging): 1 run, gate on-destructive, approval sealed",
+        "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+      },
+      "recorded": true,
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "approve": "chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d --sign"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { ensureTypeScriptLoader } from "./ts-loader";
 
 /**
  * The single place chant evaluates a project's `chant.config.ts` **in the CLI's
@@ -9,7 +10,7 @@ import { join } from "node:path";
  * — one narrow module whose only job is "execute project-authored code here",
  * so that the question "did any project code run in this process?" has one
  * place to look and one place to instrument (see
- * `examples/sandbox-execution-boundary.test.ts`, which spies on both).
+ * `examples/sandbox-execution-boundary.e2e.test.ts`, which spies on both).
  *
  * Callers must not `import()` a config file directly. `./config-sandbox.ts`
  * decides whether a given load is allowed to come through here at all: under
@@ -29,6 +30,7 @@ export type ConfigModuleNamespace = Record<string, unknown>;
  * evaluate the file once — the behavior `loadChantConfig` has always had.
  */
 export async function importConfigModule(configPath: string): Promise<ConfigModuleNamespace> {
+  ensureTypeScriptLoader();
   return (await import(configPath)) as ConfigModuleNamespace;
 }
 
@@ -39,5 +41,6 @@ export async function importConfigModule(configPath: string): Promise<ConfigModu
  */
 export function requireConfigModule(configPath: string, dir: string): ConfigModuleNamespace {
   const req = createRequire(join(dir, "package.json"));
+  ensureTypeScriptLoader();
   return req(configPath) as ConfigModuleNamespace;
 }

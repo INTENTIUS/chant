@@ -69,6 +69,8 @@ export const dataBucket = new _.Bucket({
 Resources that are imported and referenced from other files are tracked through the module graph. If a resource is only used via cross-file imports, it may still appear as referenced.
 :::
 
+Property-kind declarables are the classes a lexicon lists in its plugin's `propertyClassNames()`. COR004 never flags one, since it only means something inside a resource and is often exported so that another file can assemble it. A resource that holds one, inline or through a `const` in the same file, is the root that emits it. Nothing is expected to reference that root, so COR004 does not flag it either. A Grafana dashboard holding its panels is the usual case. A resource whose property-kind children are all imported from other files has nothing in its own file that marks it as a root, so it is still flagged. Export it through an `export { … }` list or add a `chant-disable-next-line COR004` comment.
+
 ---
 
 ## COR008: Export Required
@@ -335,6 +337,32 @@ when(eq("status", "drifted"), report("staging has drifted resources to prune"), 
   id: "drift-prune",
   why: "Destructive remediation stays a manual, gated ApplyOp/ReconcileOp run.",
 });
+```
+
+## OPS015: Gate Approval Block
+
+`chant build` refuses a gate whose `approval` block ([#2508](https://github.com/INTENTIUS/chant/issues/2508)) it cannot honour. The build fails on any of these:
+
+- `quorum.count` below 1, or not an integer
+- `quorum.roles` present but empty
+- a `mode` other than `log-only` or `enforce`
+- `mode: "enforce"` with no `policy`
+- a `policy` that is not a gate policy set built by a lexicon helper such as `gatePolicy()`
+- a `policy` whose `version` no longer matches the digest of its text
+- a `context` value that is not a string, number, boolean, list of strings or step output reference, or a `context` on a gate with no policy
+
+`gate()` throws on the first of these. This rule reports all of them, including on a step written without the builder. The guide explains the block itself in [its approval policy section](/chant/guide/ops/#quorum-roles-and-an-approval-policy).
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers OPS015: a path is not a gate policy set
+gate("ship", { approval: { policy: "dist/ship.cedar" as never, mode: "enforce" } });
+```
+
+```typescript
+// ✅ Fixed: render the policy set with the lexicon's helper
+gate("ship", { approval: { policy: gatePolicy("ship", shipPolicies), mode: "enforce" } });
 ```
 
 ---

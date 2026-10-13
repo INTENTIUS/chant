@@ -1,0 +1,23 @@
+# Vendored from github.com/prometheus/alertmanager v0.34.1, config/testdata/conf.victorops-default-apikey-file.yml
+# (https://github.com/prometheus/alertmanager/blob/v0.34.1/config/testdata/conf.victorops-default-apikey-file.yml). Apache-2.0.
+# Unchanged below this header.
+global:
+  victorops_api_key_file: '/global_file'
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 3h
+  receiver: team-Y-victorops
+  routes:
+    - match:
+        service: foo
+      receiver: team-X-victorops
+receivers:
+  - name: 'team-X-victorops'
+    victorops_configs:
+      - routing_key: 'team-X'
+  - name: 'team-Y-victorops'
+    victorops_configs:
+      - routing_key: 'team-Y'
+        api_key_file: /override_file

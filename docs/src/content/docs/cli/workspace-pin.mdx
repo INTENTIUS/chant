@@ -1,0 +1,38 @@
+---
+title: "chant workspace pin"
+description: Print the integrity value that pins a plugin loaded by path
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace pin <path> [--json]
+```
+
+## Description
+
+`chant workspace pin` prints the `integrity` value for the plugin at `<path>`, a directory or a file inside the workspace, in the form a [path pin](/chant/reference/workspace-declaration/#integrity-of-a-plugin-pinned-by-path) takes:
+
+```
+$ chant workspace pin plugins/kinds
+sha256-w5E1vOdPWKDabvO+1oN5gtQlwxkAzWu3jvnZgHL/nMs=
+2 files hashed. plugins/kinds is a path pin with no integrity; add "integrity": "sha256-w5E1vOdPWKDabvO+1oN5gtQlwxkAzWu3jvnZgHL/nMs=" to it
+```
+
+The value goes to stdout and the note to stderr, so `chant workspace pin plugins/kinds` can be captured. What the hash covers, and what it leaves out, is in [Integrity of a plugin pinned by path](/chant/reference/workspace-declaration/#integrity-of-a-plugin-pinned-by-path). The command reads files and writes none, so the declaration is edited by hand.
+
+The note says whether the declaration already has a path pin for `<path>`, and whether its `integrity` matches. When a pin's `integrity` doesn't match, the command exits 1, which makes it usable as a check in a script.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--json` | Print `{ "path", "integrity", "files", "pin" }`, where `pin` is `undeclared`, `declared-unpinned`, `matches` or `differs`. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The value was printed, and no declared pin disagrees with it. |
+| 1 | The path is missing, outside the workspace or holds a symbolic link, the declaration can't be read, or the declared pin for it differs. |

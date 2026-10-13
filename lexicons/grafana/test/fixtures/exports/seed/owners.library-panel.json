@@ -1,0 +1,45 @@
+{
+  "uid": "chant-fx-owners",
+  "name": "Service owners",
+  "kind": 1,
+  "model": {
+    "type": "table",
+    "title": "Service owners",
+    "datasource": {
+      "type": "prometheus",
+      "uid": "prom"
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "expr": "count by (owner, runbook) (up{job=\"checkout\"})",
+        "format": "table",
+        "instant": true
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "color": {
+          "mode": "continuous-cividis"
+        },
+        "custom": {
+          "align": "left",
+          "cellOptions": {
+            "type": "markdown",
+            "dynamicHeight": true
+          },
+          "inspect": false
+        }
+      },
+      "overrides": []
+    },
+    "options": {
+      "showHeader": true,
+      "cellHeight": "auto"
+    }
+  }
+}

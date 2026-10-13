@@ -16,9 +16,8 @@
  *    (default `docker`, the label a fresh `act_runner` exposes);
  *  - `uses:` refs (`actions/checkout@v4`, `actions/upload-artifact@v4`, …)
  *    rewritten to a Forgejo-resolvable form;
- *  - keys the Forgejo runner ignores (`permissions`, `continue-on-error`)
- *    dropped — the github generator emits none today, but the transform keeps
- *    the two dialects in lock-step if that changes.
+ *  - keys the Forgejo runner ignores (`continue-on-error`, and `permissions` bar `id-token`)
+ *    dropped (`permissions` keeps only `id-token`, which OIDC needs).
  *
  * The output path convention is `.forgejo/workflows/` (vs github's
  * `.github/workflows/`), set by the caller's `-o` flag — this module emits the
@@ -35,12 +34,8 @@ import type {
   ComponentPipelineOptions,
   ComponentPipelineResult,
 } from "@intentius/chant/lexicon";
-import { transformWorkflowObject, type ForgejoDialectOptions } from "../dialect";
-
-/** Apply the Forgejo dialect to one section of the pipeline doc. */
-function forgejoize(value: Record<string, unknown>, dialect: ForgejoDialectOptions): Record<string, unknown> {
-  return transformWorkflowObject(value, dialect).value as Record<string, unknown>;
-}
+import type { ForgejoDialectOptions } from "../dialect";
+import { forgejoize } from "./ci-jobs";
 
 /**
  * Synthesize a `.forgejo/workflows/*.yml` pipeline from a set of components.
@@ -53,7 +48,11 @@ export function generateForgejoPipeline(
   options: ComponentPipelineOptions = {},
   dialectOptions: ForgejoDialectOptions = {},
 ): ComponentPipelineResult {
-  const doc = buildGithubPipelineDoc(components, options);
+  // The pull-request loop (#3183) talks to the forge, so its commands name Forgejo.
+  const doc = buildGithubPipelineDoc(
+    components,
+    options.prLoop ? { ...options, prLoop: { ...options.prLoop, forge: "forgejo" } } : options,
+  );
 
   const forgejoDoc: GithubPipelineDoc = {
     // The environment identity (#2046) is dialect-neutral: name, environment,
@@ -62,6 +61,8 @@ export function generateForgejoPipeline(
     environment: doc.environment,
     on: forgejoize(doc.on, dialectOptions),
     ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
+    // A workspace member's working directory (#2542) reads the same on Forgejo.
+    ...(doc.defaults ? { defaults: doc.defaults } : {}),
     jobsDoc: forgejoize(doc.jobsDoc, dialectOptions),
     stages: doc.stages,
     jobs: doc.jobs,

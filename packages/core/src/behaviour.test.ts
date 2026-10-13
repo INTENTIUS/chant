@@ -123,6 +123,7 @@ const REQUEST: PredictBehaviourOptions = {
   buildOutput: "/tmp/build",
   entityNames: [...DECLARED.keys()],
   entities: DECLARED,
+  from: "live",
   edges: EDGES,
   edgeCoverage: { verdict: "complete" },
   region: "us-east-1",

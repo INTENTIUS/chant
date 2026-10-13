@@ -12,7 +12,7 @@ Composites are pre-built abstractions that produce typed GitHub Actions resource
 
 ## Checkout
 
-Wraps `actions/checkout@v4`. Clones the repository.
+Wraps `actions/checkout@v7`. Clones the repository.
 
 ```typescript
 import { Checkout } from "@intentius/chant-lexicon-github";
@@ -21,13 +21,16 @@ Checkout({}).step                              // Default checkout
 Checkout({ fetchDepth: 0 }).step               // Full history
 Checkout({ ref: "develop" }).step              // Specific branch
 Checkout({ submodules: "recursive" }).step     // With submodules
+Checkout({ pin: "sha" }).step                  // Pinned to a commit SHA
 ```
 
-**Props:** `ref?`, `repository?`, `fetchDepth?`, `token?`, `submodules?`, `sshKey?`
+**Props:** `ref?`, `repository?`, `fetchDepth?`, `token?`, `submodules?`, `sshKey?`, `pin?`
+
+`pin: "sha"` emits `actions/checkout@<sha> # v7.0.1`, the commit the lexicon's pin table records for the release, with the version as a YAML comment. GHA021, GHA029 and GHA059 accept that form. The table is `ACTION_PINS`, exported from the package, and the same `pin` prop is on `SetupNode`.
 
 ## SetupNode
 
-Wraps `actions/setup-node@v4`. Installs Node.js with optional dependency caching.
+Wraps `actions/setup-node@v7`. Installs Node.js with optional dependency caching.
 
 ```typescript
 import { SetupNode } from "@intentius/chant-lexicon-github";
@@ -35,9 +38,10 @@ import { SetupNode } from "@intentius/chant-lexicon-github";
 SetupNode({ nodeVersion: "22" }).step              // Node 22
 SetupNode({ nodeVersion: "22", cache: "npm" }).step // With npm cache
 SetupNode({ nodeVersion: "20", cache: "pnpm" }).step // pnpm cache
+SetupNode({ nodeVersion: "22", pin: "sha" }).step  // Pinned to a commit SHA
 ```
 
-**Props:** `nodeVersion?`, `cache?` (`"npm"` | `"pnpm"` | `"yarn"`), `registryUrl?`
+**Props:** `nodeVersion?`, `cache?` (`"npm"` | `"pnpm"` | `"yarn"`), `registryUrl?`, `pin?`
 
 ## SetupGo
 

@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { LexiconPlugin, ExportedTemplate, ResourceSelector } from "../../lexicon";
 import type { TypeScriptGenerator } from "../../import/generator";
-import type { TemplateIR } from "../../import/parser";
+import type { TemplateIR, ParseContext } from "../../import/parser";
+import type { EmbeddedContentImporter } from "../../import/embedded";
 
 const generator: TypeScriptGenerator = {
   generate(ir: TemplateIR) {
@@ -105,6 +106,24 @@ describe("liveImportFromPlugins (#114)", () => {
     expect(result.error).toContain("live export");
   });
 
+  test("warnings an exporter returns reach the result (#3336)", async () => {
+    const withWarnings: ExportedTemplate = { ...sampleIR, warnings: ["bucket is kept by Terraform; left out"] };
+    const result = await liveImportFromPlugins([fakeExporter("fake", withWarnings)], {
+      environment: "prod",
+      output: outputDir,
+      force: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings).toContain("bucket is kept by Terraform; left out");
+  });
+
+  test("warnings from an export with no resources are kept on the error result (#3336)", async () => {
+    const empty = fakeExporter("fake", { resources: [], parameters: [], warnings: ["everything is kept by Prisma"] });
+    const result = await liveImportFromPlugins([empty], { environment: "prod", output: outputDir });
+    expect(result.success).toBe(false);
+    expect(result.warnings).toContain("everything is kept by Prisma");
+  });
+
   test("--lexicon narrows to the named exporter", async () => {
     const result = await liveImportFromPlugins(
       [fakeExporter("a", sampleIR), fakeExporter("b", sampleIR)],
@@ -122,6 +141,30 @@ describe("liveImportFromPlugins (#114)", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("No resources exported");
+  });
+
+  // #3911 — an exporter that refuses (the sql lexicon naming objects it cannot
+  // declare) is the import's error, not a warning behind "No resources exported".
+  test("an exporter's failure is the error when nothing else exported, and --skip-undeclarable reaches it", async () => {
+    let seen: unknown;
+    const refusing: LexiconPlugin = {
+      ...fakeExporter("sql", sampleIR),
+      async exportResources(opts: { skipUndeclarable?: boolean }) {
+        seen = opts.skipUndeclarable;
+        if (!opts.skipUndeclarable) throw new Error("the server has an object of a kind chant cannot declare:\n  - aggregate app.total(integer)");
+        return { ...sampleIR, warnings: ["aggregate app.total(integer) is left out (--skip-undeclarable)"] };
+      },
+    };
+    const failed = await liveImportFromPlugins([refusing], { environment: "prod", output: outputDir, force: true });
+    expect(failed.success).toBe(false);
+    expect(failed.error).toContain("sql: live export failed");
+    expect(failed.error).toContain("  - aggregate app.total(integer)");
+    expect(seen).toBeUndefined();
+
+    const skipped = await liveImportFromPlugins([refusing], { environment: "prod", output: outputDir, force: true, skipUndeclarable: true });
+    expect(skipped.success).toBe(true);
+    expect(seen).toBe(true);
+    expect(skipped.warnings).toContain("aggregate app.total(integer) is left out (--skip-undeclarable)");
   });
 
   // #932 — a multi-stack reconcile imports each stack from its own live
@@ -150,5 +193,72 @@ describe("liveImportFromPlugins (#114)", () => {
     });
     expect(result.success).toBe(true);
     expect(seenStack).toBe("loom-backend");
+  });
+
+  // #2995: an export with `reparse` goes through the same embedded-content
+  // delegation as file import.
+  describe("embedded content (#2995)", () => {
+    const configText = "service:\n  pipelines: {}\n";
+
+    function hostExporter(): LexiconPlugin {
+      const parse = (context?: ParseContext): TemplateIR => {
+        const ref = context?.embedded?.resolve({
+          host: "fake",
+          hostType: "Fake::ConfigMap",
+          location: "ConfigMap cfg data[\"config.yaml\"]",
+          directory: "cfg",
+          text: configText,
+          expectedOwner: { lexicon: "owner", what: "an owner config" },
+        });
+        return {
+          resources: [{ logicalId: "cfg", type: "Fake::ConfigMap", properties: { data: ref ?? configText } }],
+          parameters: [],
+        };
+      };
+      return {
+        ...fakeExporter("fake", { resources: [], parameters: [] }),
+        async exportResources(): Promise<ExportedTemplate> {
+          return { ...parse(), reparse: (context) => parse(context) };
+        },
+      };
+    }
+
+    const importer: EmbeddedContentImporter = {
+      what: "an owner config",
+      matches: (c) => typeof c.document === "object" && c.document !== null && "service" in c.document,
+      import: () => ({
+        files: [{ path: "config.ts", content: "export const config = {};\n" }],
+        value: { bindings: [{ from: "config.ts", name: "config" }], shape: "single" },
+      }),
+    };
+    const owner: LexiconPlugin = {
+      name: "owner",
+      serializer: {} as never,
+      generate: async () => {},
+      validate: async () => {},
+      coverage: async () => {},
+      package: async () => {},
+      embeddedImporters: () => [importer],
+    };
+
+    test("a loaded owner imports the content and its modules are written beside the host's", async () => {
+      const result = await liveImportFromPlugins([hostExporter(), owner], { environment: "prod", output: outputDir, force: true });
+      expect(result.success).toBe(true);
+      expect(result.warnings).toEqual([]);
+      expect(result.generatedFiles).toEqual(["main.ts", "cfg/config.ts"]);
+      const main = await readFile(join(outputDir, "main.ts"), "utf-8");
+      expect(main).toContain('"$embedded"');
+      expect(main).toContain('"from":"cfg/config.ts"');
+      expect(await readFile(join(outputDir, "cfg/config.ts"), "utf-8")).toContain("export const config");
+    });
+
+    test("with no owner the content is kept as read, with a warning", async () => {
+      const result = await liveImportFromPlugins([hostExporter()], { environment: "prod", output: outputDir, force: true });
+      expect(result.success).toBe(true);
+      expect(result.generatedFiles).toEqual(["main.ts"]);
+      expect(result.warnings.join("\n")).toContain("no installed lexicon imports it");
+      const main = await readFile(join(outputDir, "main.ts"), "utf-8");
+      expect(main).toContain(JSON.stringify(configText));
+    });
   });
 });

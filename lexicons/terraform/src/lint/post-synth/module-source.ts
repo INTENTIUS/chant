@@ -18,14 +18,27 @@
  * recognize, scp-style `git@host:path` addresses, and any source ending in
  * `.git`. `local` is `./` or `../` (checkov's `UNKNOWN` case for module
  * pinning: a local path cannot be pinned to anything and is never flagged).
+ * `oci` is an OpenTofu `oci://host/repo` source (#3190). OpenTofu selects a
+ * version with `?tag=` or `?digest=` (https://opentofu.org/docs/language/modules/sources/),
+ * and a source naming neither resolves the `latest` tag. The container-image
+ * shapes `repo:tag` and `repo@sha256:...` are read too, so a source written
+ * the way `docker pull` spells it is not misread as unpinned. A `:` inside the
+ * host (a registry port) is never a tag: only a colon in the last path
+ * segment is. The tag and digest rules were checked against the docs page
+ * above; the suffix forms are not documented there and are not verified
+ * against OpenTofu's parser.
  */
 
-export type ModuleSourceKind = "local" | "registry" | "git" | "other";
+export type ModuleSourceKind = "local" | "registry" | "git" | "oci" | "other";
 
 export interface ModuleSourceClassification {
   kind: ModuleSourceKind;
   /** The `?ref=`/`&ref=` value (falling back to `rev`), when `kind` is `"git"`. */
   ref?: string;
+  /** The tag an `oci://` source names, from `?tag=` or a `:tag` suffix on the repository. */
+  tag?: string;
+  /** The digest an `oci://` source names, from `?digest=` or an `@sha256:...` suffix. */
+  digest?: string;
 }
 
 const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
@@ -77,6 +90,25 @@ function isGitShaped(rest: string): boolean {
   return false;
 }
 
+function classifyOci(base: string, query: string): ModuleSourceClassification {
+  const params = parseQuery(query);
+  let path = stripSubdir(base).replace(/^oci:\/\//i, "");
+  let tag = params.get("tag") || undefined;
+  let digest = params.get("digest") || undefined;
+
+  const at = path.indexOf("@");
+  if (at !== -1) {
+    digest = digest ?? (path.slice(at + 1) || undefined);
+    path = path.slice(0, at);
+  }
+  const lastSlash = path.lastIndexOf("/");
+  const colon = path.indexOf(":", lastSlash + 1); // a port sits before the first slash
+  if (colon !== -1) {
+    tag = tag ?? (path.slice(colon + 1) || undefined);
+  }
+  return { kind: "oci", ...(tag !== undefined ? { tag } : {}), ...(digest !== undefined ? { digest } : {}) };
+}
+
 export function classifyModuleSource(source: string): ModuleSourceClassification {
   const trimmed = source.trim();
   if (trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith(".\\") || trimmed.startsWith("..\\")) {
@@ -86,6 +118,8 @@ export function classifyModuleSource(source: string): ModuleSourceClassification
   const queryIdx = trimmed.indexOf("?");
   const base = queryIdx === -1 ? trimmed : trimmed.slice(0, queryIdx);
   const query = queryIdx === -1 ? "" : trimmed.slice(queryIdx + 1);
+
+  if (/^oci:\/\//i.test(base)) return classifyOci(base, query);
 
   const forced = /^(git|hg)::/i.exec(base);
   const rest = forced ? base.slice(forced[0].length) : base;
@@ -118,4 +152,25 @@ export function isPinnedRef(ref: string): boolean {
 /** Is `ref` one of the well-known mutable branch names tflint's `flexible` style rejects, plus `trunk`. */
 export function isDefaultBranch(ref: string): boolean {
   return DEFAULT_BRANCHES.has(ref);
+}
+
+const MUTABLE_TAGS = new Set(["latest", "main", "master", "develop", "dev", "stable", "edge", "nightly"]);
+
+/**
+ * Is `tag` a name that conventionally moves (`latest`, a branch-like name)
+ * rather than an exact version. Used by TF038. A tag is a mutable pointer in
+ * most registries whatever it looks like, so the rule is a warning and this
+ * only decides what reads as obviously floating.
+ */
+export function isMutableOciTag(tag: string): boolean {
+  return MUTABLE_TAGS.has(tag.toLowerCase());
+}
+
+/**
+ * Is a registry `version` constraint an exact version (`1.4.0`, `= 1.4.0`,
+ * `=1.4.0`) rather than a range (`~> 1.4`, `>= 1.4`, `>= 1.0, < 2.0`). Used
+ * by TF039. A bare version is an exact constraint in Terraform.
+ */
+export function isExactVersionConstraint(version: string): boolean {
+  return /^(?:=\s*)?v?\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version.trim()) && !version.includes(",");
 }

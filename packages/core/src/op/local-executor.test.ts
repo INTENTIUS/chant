@@ -9,6 +9,14 @@ import {
 import { memoryGateLedgerPort, type GateLedgerPort } from "./gate";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { renderHuman } from "./local-output";
+
+// #3521: whether the workspace seals a gate is read from identity.gates in the
+// working directory; a test says which gates are sealed instead.
+const sealedGates = new Set<string>();
+vi.mock("./gate", async () => {
+  const actual = await vi.importActual<typeof import("./gate")>("./gate");
+  return { ...actual, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
+});
 import type { GateResolutionRecord, PendingGateRecord, PendingGateInput } from "../lifecycle/gate-ledger";
 import { stepOutput } from "./step-output-ref";
 
@@ -230,6 +238,21 @@ describe("runOpLocally — outcomeAttribute", () => {
       { name: "Adoptable", value: 2 },
     ]);
     expect(result.records[0].outcome).toEqual({ name: "Drift", value: true });
+  });
+
+  test("an attribute whose path the result does not hold is left off, not recorded as undefined", async () => {
+    const done: ActivityFn = async () => ({ state: "done", switched: false });
+    const config = op({
+      phases: [{ name: "Switch", steps: [
+        { kind: "activity", fn: "migrationSwitch", outcomeAttribute: [{ name: "OldColumn", from: "oldColumn" }, { name: "State", from: "state" }] },
+        { kind: "activity", fn: "migrationRetain", outcomeAttribute: { name: "RetainUntil", from: "retainUntil" } },
+      ] }],
+    });
+    const result = await runOpLocally(config, new Map([["migrationSwitch", done], ["migrationRetain", done]]), PROFILES);
+    expect(result.records[0].outcomes).toEqual([{ name: "State", value: "done" }]);
+    expect(result.records[0].outcome).toEqual({ name: "State", value: "done" });
+    expect(result.records[1].outcomes).toBeUndefined();
+    expect(result.records[1].outcome).toBeUndefined();
   });
 
   test("a step with no attribute leaves both fields absent", async () => {
@@ -763,6 +786,33 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
     expect(lines.some((l) => l.includes("[refused]") && l.includes("not for this plan"))).toBe(true);
   });
 
+  describe("the refusal's approve command (#3521)", () => {
+    async function refusalOnRename(): Promise<string | undefined> {
+      const { root, activities, config, digestOf } = harness();
+      const gates = approvableLedger();
+      await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW });
+      gates.approve("approve-live-apply", digestOf("aws_s3_bucket.original"), "2026-09-09T12:05:00.000Z");
+      root.address = "aws_s3_bucket.renamed";
+      const second = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: "2026-09-09T12:10:00.000Z" });
+      return second.records.find((r) => r.fn === "gate:approve-live-apply")?.refusal;
+    }
+
+    test("unsealed gate: the refusal's approve command has no --sign", async () => {
+      const refusal = await refusalOnRename();
+      expect(refusal).toContain("chant approve live-apply approve-live-apply");
+      expect(refusal).not.toContain("--sign");
+    });
+
+    test("sealed gate: the refusal's approve command ends in --sign", async () => {
+      sealedGates.add("approve-live-apply");
+      try {
+        expect(await refusalOnRename()).toContain("chant approve live-apply approve-live-apply --sign");
+      } finally {
+        sealedGates.clear();
+      }
+    });
+  });
+
   test("approve, re-run with the root unchanged — it applies", async () => {
     const { applied, activities, config, digestOf } = harness();
     const gates = approvableLedger();
@@ -833,5 +883,71 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
       gates, now: "2026-09-09T12:10:00.000Z",
     });
     expect(second.status).toBe("ok");
+  });
+});
+
+/**
+ * #2508: a gate with an approval block. The run resolves the block's context
+ * from the Plan phase, the pending fact carries it for `chant approve`, and the
+ * gate passes only once the quorum is met.
+ */
+describe("runOpLocally — a gate with a quorum and a policy context (#2508)", () => {
+  const NOW = "2026-09-20T12:00:00.000Z";
+
+  test("records the resolved context on the pending fact, then passes on the second approver", async () => {
+    const resolutions: GateResolutionRecord[] = [];
+    const pending: PendingGateRecord[] = [];
+    const gates: GateLedgerPort = {
+      async read() {
+        return { resolutions: [...resolutions], pending: [...pending] };
+      },
+      async appendPending(input) {
+        const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
+        pending.push(record);
+        return { record, pushed: true };
+      },
+    };
+    const applied: string[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["assess", async () => ({ risk: "low", paths: ["src/a.ts"] })],
+      ["ship", async () => { applied.push("ship"); return {}; }],
+    ]);
+    const config = op({
+      name: "release",
+      phases: [
+        { name: "Plan", steps: [{ kind: "activity", fn: "assess", id: "assess", args: {} }] },
+        {
+          name: "Gate",
+          steps: [{
+            kind: "gate",
+            gate: "ship",
+            approval: {
+              quorum: { count: 2 },
+              context: { risk: stepOutput("assess", "risk"), paths: stepOutput("assess", "paths"), missing: stepOutput("assess", "nope") },
+            },
+          }],
+        },
+        { name: "Apply", steps: [{ kind: "activity", fn: "ship", args: {} }] },
+      ],
+    });
+    const approve = (resolvedBy: string, at: string) =>
+      resolutions.push({ version: 1, op: "release", gate: "ship", resolvedBy, timestamp: at, approver: { kind: "human" } });
+
+    const first = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW });
+    expect(first.status).toBe("gated");
+    expect(first.gate?.approval).toEqual({ quorum: { count: 2 }, mode: "log-only", context: { risk: "low", paths: ["src/a.ts"] } });
+
+    approve("alex", "2026-09-20T12:05:00.000Z");
+    const second = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: "2026-09-20T12:06:00.000Z" });
+    expect(second.status).toBe("gated");
+    expect(pending).toHaveLength(1);
+
+    approve("sam", "2026-09-20T12:07:00.000Z");
+    const third = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: "2026-09-20T12:08:00.000Z" });
+    expect(third.status).toBe("ok");
+    expect(applied).toEqual(["ship"]);
+    expect(third.records.find((r) => r.fn === "gate:ship")?.approval).toMatchObject({
+      resolvedBy: "sam", via: "quorum", approvers: ["alex", "sam"],
+    });
   });
 });

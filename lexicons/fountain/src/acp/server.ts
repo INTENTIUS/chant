@@ -46,6 +46,8 @@ import {
   type PromptParams,
   type PromptResult,
   type RequestPermissionParams,
+  type ResumeSessionParams,
+  type ResumeSessionResult,
   type RequestPermissionResult,
   type SessionNotification,
   type SessionUpdate,
@@ -70,6 +72,14 @@ export interface AcpServerOptions {
   createHost?: (cwd: string) => ChantHost;
   /** Mints permission request ids. Injected so a test can pin them. */
   newRequestId?: () => string;
+  /**
+   * The id every Op run in this process is named by (#3539). On fountain it
+   * is the conversation id the sandbox's environment carries
+   * (`FOUNTAIN_CONVERSATION_ID`), so the run record the sandbox writes and
+   * the run `chant run status --on fountain` reports have the same id.
+   * Omitted, the local runtime mints one per run.
+   */
+  runId?: string;
 }
 
 /** One open session: a working directory, the turn in flight, and any gate awaiting an answer. */
@@ -93,6 +103,7 @@ export class AcpServer implements JsonRpcHandler {
   private readonly version: string;
   private readonly createHost: (cwd: string) => ChantHost;
   private readonly newRequestId: () => string;
+  private readonly runId: string | undefined;
   /** Serializes turns — see the module doc. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -101,6 +112,7 @@ export class AcpServer implements JsonRpcHandler {
     this.version = opts.version ?? "dev";
     this.createHost = opts.createHost ?? createChantHost;
     this.newRequestId = opts.newRequestId ?? (() => randomUUID());
+    this.runId = opts.runId !== undefined && opts.runId !== "" ? opts.runId : undefined;
   }
 
   /** Serve one connection until it closes. */
@@ -115,6 +127,8 @@ export class AcpServer implements JsonRpcHandler {
         return this.initialize((params ?? {}) as InitializeParams);
       case "session/new":
         return this.newSession((params ?? {}) as NewSessionParams);
+      case "session/resume":
+        return this.resumeSession((params ?? {}) as ResumeSessionParams);
       case "session/prompt":
         return this.enqueue(() => this.prompt((params ?? {}) as PromptParams));
       default:
@@ -151,6 +165,11 @@ export class AcpServer implements JsonRpcHandler {
         // directory and nothing else, so there is no transcript to replay
         // that the run ledger does not already hold.
         loadSession: false,
+        // `session/resume` is: fountain spawns `chant acp` afresh for every
+        // turn and resumes the conversation's session from the second turn
+        // on, and an agent that offers no way back in fails that turn
+        // before its prompt is sent.
+        sessionCapabilities: { resume: {} },
         // A chant command line is text. Claiming otherwise would invite a
         // client to send bytes this agent would have to drop.
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
@@ -162,15 +181,34 @@ export class AcpServer implements JsonRpcHandler {
   }
 
   private newSession(params: NewSessionParams): NewSessionResult {
-    const cwd = params.cwd && params.cwd.length > 0 ? params.cwd : process.cwd();
     const id = randomUUID();
+    this.openSession(id, params.cwd);
+    return { sessionId: id };
+  }
+
+  /**
+   * Take up a session by the id a client already holds. A chant session is a
+   * working directory and nothing else, so one this process never opened —
+   * the usual case, since a client spawns a new process per turn — is opened
+   * again under the same id with the cwd the client sends. A gate a previous
+   * process asked about under `--durable-requests` is not carried over: its
+   * answer finds no request waiting and says to prompt the line again.
+   */
+  private resumeSession(params: ResumeSessionParams): ResumeSessionResult {
+    if (typeof params.sessionId !== "string" || params.sessionId.length === 0) {
+      throw new JsonRpcError(JSONRPC_INVALID_PARAMS, "session/resume needs a sessionId");
+    }
+    if (!this.sessions.has(params.sessionId)) this.openSession(params.sessionId, params.cwd);
+    return {};
+  }
+
+  private openSession(id: string, cwd: string | undefined): void {
     this.sessions.set(id, {
       id,
-      host: this.createHost(cwd),
+      host: this.createHost(cwd && cwd.length > 0 ? cwd : process.cwd()),
       permissions: new Map(),
       earlyAnswers: new Map(),
     });
-    return { sessionId: id };
   }
 
   private async prompt(params: PromptParams): Promise<PromptResult> {
@@ -256,6 +294,7 @@ export class AcpServer implements JsonRpcHandler {
         signal: controller.signal,
         durableRequests: this.durableRequests,
         newRequestId: this.newRequestId,
+        ...(this.runId ? { runId: this.runId } : {}),
       });
       if (outcome.permission) {
         session.permissions.set(outcome.permission.requestId, { ...outcome.permission });

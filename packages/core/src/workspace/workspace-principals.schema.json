@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/principals/v1/workspace-principals.schema.json",
+  "title": "workspace-principals.json",
+  "description": "Principal classes a plugin supplies (#2524 D5, #3080, ws-079). A package publishes this file as data at its ./workspace-principals subpath, beside ./workspace-kinds. chant reads it with the file system and never imports the package. A class is a name for the principals holding one role in the trust policy at base; the declaration's writeScope may then give it an entry.",
+  "type": "object",
+  "required": ["schema", "classes"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "An editor hint. chant ignores it."
+    },
+    "$comment": {
+      "type": "string",
+      "description": "A note for people. chant ignores it."
+    },
+    "schema": {
+      "const": 1,
+      "description": "The principal classes format version."
+    },
+    "classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/class"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "class": {
+      "type": "object",
+      "required": ["name", "description", "role"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!x-)[a-z][a-z0-9-]{0,39}$",
+          "description": "The class's name, as a key of the declaration's writeScope names it. human, agent, runner and service are the core classes and can't be supplied."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One line saying who is in the class, for listings and error messages."
+        },
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "The role whose grant in the trust policy at base (.chant/trust.json roles) puts a principal in this class. The agent, runner and service roles belong to the core classes and can't be named here. One role puts a principal in one class."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    }
+  }
+}

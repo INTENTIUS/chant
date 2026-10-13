@@ -58,7 +58,7 @@ What it validates:
 - Head + 1 CPU worker join the cluster
 - `ray.cluster_resources()` shows ≥ 2 CPUs available
 
-What it does **not** validate: NetworkPolicy enforcement (k3s/flannel does not enforce it), GPU scheduling, ReadWriteMany shared storage, GCS spillover, Workload Identity. These are covered by the production GKE deploy and the unit tests in `examples/examples.test.ts`.
+What it does **not** validate: NetworkPolicy enforcement (k3s/flannel does not enforce it), GPU scheduling, ReadWriteMany shared storage, GCS spillover, Workload Identity. These are covered by the production GKE deploy and the unit tests in `examples/examples.e2e.test.ts`.
 
 For iterative development without running the full smoke test each time:
 

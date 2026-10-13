@@ -135,6 +135,25 @@ const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } 
 });
 ```
 
+## Per-member defaults
+
+Most composites accept a `defaults` object keyed by member name, merged over what the composite builds. Each entry is typed as the props of the generated class that builds that member, so a misspelled field or a wrong value type is a compile error, and the editor completes fields such as `revisionHistoryLimit` or a `grpc` probe. Objects merge at every depth, and arrays are appended.
+
+```typescript
+const { statefulSet, service } = StatefulApp({
+  name: "db",
+  image: "postgres:16",
+  defaults: {
+    statefulSet: {
+      spec: {
+        revisionHistoryLimit: 3,
+        template: { spec: { enableServiceLinks: false } },
+      },
+    },
+  },
+});
+```
+
 ## Other composites
 
 Not yet documented on this page or its vendor-specific neighbors (chant #1723's audit of

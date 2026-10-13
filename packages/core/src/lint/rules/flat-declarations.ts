@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
+import { isPropertyKindNew } from "./property-kind";
 
 /**
  * COR001: No inline objects in Declarable constructors
@@ -12,11 +13,15 @@ import type { LintRule, LintContext, LintDiagnostic } from "../rule";
  * Triggers on: new Bucket({ tags: [{ key: "env", value: "prod" }] })
  * OK: new Bucket({ bucketName: "my-bucket", accessControl: "Private" })
  * OK: new Bucket({ encryption: dataEncryption })
+ * OK: new TimeSeriesPanel({ fieldConfig: { defaults: { unit: "ms" } } }) when
+ *     the lexicon declares TimeSeriesPanel property-kind (chant #2957). A
+ *     property-kind declarable is itself a nested value inside a resource, so
+ *     the object literals it holds are already at the depth this rule asks for.
  */
 
 function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnostic[]): void {
   // Check for NewExpression nodes (constructor calls)
-  if (ts.isNewExpression(node)) {
+  if (ts.isNewExpression(node) && !isPropertyKindNew(node, context)) {
     // Check if the first argument is an object literal
     if (node.arguments && node.arguments.length > 0) {
       const firstArg = node.arguments[0];

@@ -25,6 +25,11 @@ function getEntityType(entity: unknown): string {
 // ── WatchOp ──────────────────────────────────────────────────────────
 
 describe("WatchOp: shape", () => {
+  test("failOn: \"drift\" rides on the op; omitted, the op has none (#3675)", () => {
+    expect(getProps(WatchOp({ name: "w", env: "prod", failOn: "drift" }).op).failOn).toBe("drift");
+    expect(getProps(WatchOp({ name: "w", env: "prod" }).op)).not.toHaveProperty("failOn");
+  });
+
   test("returns { op } — the cadence is on the op, not a second resource (#2120)", () => {
     const result = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
     expect(result.op).toBeDefined();
@@ -157,6 +162,33 @@ describe("ApplyOp: shape", () => {
     expect(applyStep.fn).toBe("nativeApply");
     expect(applyStep.args).toEqual({ target: "kubectl", env: "prod", output: "dist", deleteMode: "never" });
   });
+
+  test("target clickhouse applies the sql build output, dist/schema.json by default (#3208)", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", target: "clickhouse", delete: "owned-only" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(applyStep.fn).toBe("nativeApply");
+    expect(applyStep.args).toEqual({ target: "clickhouse", env: "prod", output: "dist/schema.json", deleteMode: "owned-only" });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
+
+  test("target postgres applies the sql build output, dist/schema.json by default (#3280)", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", target: "postgres", delete: "owned-only" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(applyStep.fn).toBe("nativeApply");
+    expect(applyStep.args).toEqual({ target: "postgres", env: "prod", output: "dist/schema.json", deleteMode: "owned-only" });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
+
+  test("target grafana applies the build index, dist/grafana.json by default (#3011)", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", target: "grafana", delete: "owned-only" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(applyStep.fn).toBe("nativeApply");
+    expect(applyStep.args).toEqual({ target: "grafana", env: "prod", output: "dist/grafana.json", deleteMode: "owned-only" });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
 });
 
 describe("ApplyOp: gating + deletes", () => {
@@ -274,7 +306,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("compensate: true is refused at build time for every rollback-less target (#1449)", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres"] as const) {
       expect(() => ApplyOp({ name: "p", env: "prod", target, compensate: true })).toThrow(
         new RegExp(`ApplyOp "p": compensate is enabled, but target "${target}" has no automatic rollback`),
       );
@@ -296,7 +328,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("an object without a command is refused the same way as true", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres"] as const) {
       expect(() => ApplyOp({ name: "p", env: "prod", target, compensate: {} })).toThrow(
         /has no automatic rollback/,
       );
@@ -304,7 +336,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("a command lifts the refusal on every target", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "cloudformation"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres", "cloudformation"] as const) {
       const { op } = ApplyOp({
         name: "p",
         env: "prod",

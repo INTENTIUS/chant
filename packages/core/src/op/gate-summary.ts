@@ -20,7 +20,9 @@
 
 import { appendFileSync } from "node:fs";
 import { gateLedgerPath } from "../lifecycle/gate-ledger";
+import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { approveCommand } from "./gate";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 
 /** What a gated run knows about the gate it stopped on. */
 export interface GatedRunSummary {
@@ -50,6 +52,30 @@ export interface GatedRunSummary {
    * to see that the digest has moved on.
    */
   planDigest?: string;
+  /**
+   * The project's ledger prefix, `_members/<member>/` for a workspace member
+   * (#2538), so the ledger path shown is the one the fact was written to.
+   * Absent at level 0 and for the root member.
+   */
+  ledgerPrefix?: string;
+  /** Whether the workspace seals this gate, so the `chant approve` line carries `--sign`. */
+  sealed?: boolean;
+  /** The environment a component gate's pending fact was recorded in (#2574). The `chant approve` line names it. */
+  environment?: string;
+}
+
+/**
+ * `{ ledgerPrefix }` for the project at `cwd` when it is a workspace member,
+ * else `{}`. A summary is a report, so a declaration that cannot be read
+ * leaves the path as it is rather than failing the report.
+ */
+export async function summaryLedgerPrefix(cwd: string = process.cwd()): Promise<{ ledgerPrefix?: string }> {
+  try {
+    const { prefix } = await resolveMemberLedger(cwd);
+    return prefix ? { ledgerPrefix: prefix } : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -78,14 +104,16 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
     "Approve it, then re-run this workflow:",
     "",
     "```",
-    `${approveCommand(summary.op, summary.gate)} --approver <you>`,
+    `${approveCommand(summary.op, summary.gate, summary.environment, undefined, summary.sealed === true)} --approver <you>`,
     "```",
     "",
-    `Ledger: \`${gateLedgerPath(summary.op)}\` on the \`chant/lifecycle\` branch.`,
+    `Ledger: \`${gateLedgerPath(summary.op, summary.ledgerPrefix)}\` on the \`chant/lifecycle\` branch.`,
   );
   if (summary.expiresAt) lines.push(`Expires: ${summary.expiresAt}`);
   if (summary.url) lines.push(`Approve at: ${summary.url}`);
-  if (summary.pushed === false) {
+  if (summary.pushed === false && isLifecycleLocalNote(summary.pushWarning)) {
+    lines.push("", `The pending fact was ${LIFECYCLE_LOCAL_NOTE}.`);
+  } else if (summary.pushed === false) {
     lines.push(
       "",
       `**This pending fact was not pushed to the remote** (${summary.pushWarning ?? "no reason given"}). ` +

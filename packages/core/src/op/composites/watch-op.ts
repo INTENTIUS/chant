@@ -55,6 +55,14 @@ export interface WatchOpConfig {
    * a receipt — the `effect()` step is the sole writer.
    */
   receipts?: EffectReceiptDeclaration[];
+  /**
+   * `"drift"` makes `chant run <name>` exit 2 when the watch finds drift
+   * (#3675), so a scheduled drift job fails without a wrapper that reads the
+   * run ledger. Omitted, a run that finds drift still exits 0 and records
+   * `Drift=true`; `chant run <name> --fail-on-drift` asks for the same exit
+   * code on one invocation.
+   */
+  failOn?: "drift";
 }
 
 export interface WatchOpResources {
@@ -73,6 +81,7 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
       Env: config.env,
     },
     ...(config.schedule ? { schedule: { cron: config.schedule, overlap: "skip" as const } } : {}),
+    ...(config.failOn ? { failOn: config.failOn } : {}),
     phases: [
       phase("Snapshot", [activity("lifecycleSnapshot", { env: config.env })]),
       phase("Diff", [

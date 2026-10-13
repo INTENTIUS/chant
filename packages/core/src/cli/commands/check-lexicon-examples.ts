@@ -33,6 +33,7 @@
  * validates against its own schemas.
  */
 
+import { lexiconNames as declaredLexiconNames } from "../../lexicon-module";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { build, type BuildResult } from "../../build";
@@ -141,7 +142,7 @@ export async function checkExamplesBuild(lexiconDir: string): Promise<ExampleBui
       const { config: exampleConfig } = await loadChantConfig(join(examplesDir, entry.name));
       const lexiconNames =
         exampleConfig.lexicons && exampleConfig.lexicons.length > 0
-          ? exampleConfig.lexicons
+          ? declaredLexiconNames(exampleConfig.lexicons)
           : await detectLexicons(files);
       if (lexiconNames.length === 0) {
         results.push({

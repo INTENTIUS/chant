@@ -127,3 +127,34 @@ describe("serializer Conditions section (#2068)", () => {
     expect(template.Outputs.RuleNameByName.Condition).toBe("DoCutover");
   });
 });
+
+describe("a name that is not the export name (#3604)", () => {
+  test("a Condition's name option is its key in Conditions and in every reference to it", () => {
+    const param = new Parameter("String");
+    const cond = new Condition(Equals(Ref(param), "true"), { name: "EnableReadReplica" });
+    const group = new LogGroup({ LogGroupName: If(cond, "a", "b") }, { Condition: cond });
+    const out = stackOutput(Ref(group), { condition: cond, lexicon: "aws" });
+    const template = serialize(
+      new Map<string, Declarable>([
+        ["EnableReadReplica", param],
+        ["EnableReadReplicaCondition", cond],
+        ["Group", group],
+        ["Out", out],
+      ]),
+    );
+    expect(template.Parameters.EnableReadReplica).toEqual({ Type: "String" });
+    expect(template.Conditions).toEqual({ EnableReadReplica: { "Fn::Equals": [{ Ref: "EnableReadReplica" }, "true"] } });
+    expect(template.Resources.Group.Condition).toBe("EnableReadReplica");
+    expect(template.Resources.Group.Properties.LogGroupName).toEqual({ "Fn::If": ["EnableReadReplica", "a", "b"] });
+    expect(template.Outputs.Out.Condition).toBe("EnableReadReplica");
+    expect(JSON.parse(JSON.stringify(Not(cond)))).toEqual({ "Fn::Not": [{ Condition: "EnableReadReplica" }] });
+  });
+
+  test("a stackOutput's name option is its key in Outputs", () => {
+    const group = new LogGroup({});
+    const out = stackOutput(Ref(group), { name: "QueueName", lexicon: "aws" });
+    const template = serialize(new Map<string, Declarable>([["QueueName", group], ["QueueNameOutput", out]]));
+    expect(Object.keys(template.Resources)).toEqual(["QueueName"]);
+    expect(template.Outputs).toEqual({ QueueName: { Value: { Ref: "QueueName" } } });
+  });
+});

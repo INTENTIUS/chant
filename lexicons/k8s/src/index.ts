@@ -61,6 +61,23 @@ export { microTime, isMicroTimeFormatted } from "./micro-time";
 export { k8sManifest } from "./manifest-entity";
 export type { RenderedManifestEntity } from "./manifest-entity";
 
+// Plain YAML included as it is, local or pinned URL (#3566). The factory is
+// pure; the bytes are read at buildRoots() (./include/resolve.ts).
+export { k8sInclude, isK8sInclude, INCLUDE_SOURCE_ANNOTATION } from "./include/entity";
+export type { K8sIncludeProps, K8sIncludeDeclaration } from "./include/entity";
+
+// Patches on rendered documents: k8sInclude, kustomize roots, HelmRender (#3566).
+export { renderedPatch, applyRenderedPatches, applyJsonPatch, applyMergePatch } from "./patch/rendered-patch";
+export type {
+  RenderedPatch,
+  RenderedJsonPatch,
+  RenderedMergePatch,
+  RenderedSelector,
+  JsonPatchOperation,
+  MergePatchOf,
+  KindProps,
+} from "./patch/rendered-patch";
+
 // Generated entities — export everything from generated index
 // After running `chant generate`, this re-exports all K8s resource classes
 export * from "./generated/index";
@@ -69,7 +86,8 @@ export * from "./generated/index";
 export {
   WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent,
   BatchJob, SecureIngress, ConfiguredApp, SidecarApp, MonitoredService, NetworkIsolatedApp,
-  IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector,
+  IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector, OtelCollector,
+  OtelCollectorGateway, gatewayExporter, OTEL_COLLECTOR_ANNOTATIONS, OtelOperatorCollector,
   MetricsServer, WorkloadIdentityServiceAccount, GcePdStorageClass, FilestoreStorageClass, GkeGateway, ConfigConnectorContext,
   GceIngress, CockroachDbCluster, CockroachDbRegionStack,
   RayCluster, RayJob, RayService,
@@ -92,6 +110,9 @@ export type {
   EbsStorageClassProps, EbsStorageClassResult, EfsStorageClassProps, EfsStorageClassResult,
   FluentBitAgentProps, FluentBitAgentResult, ExternalDnsAgentProps, ExternalDnsAgentResult,
   AdotCollectorProps, AdotCollectorResult,
+  OtelCollectorProps, OtelCollectorResult, OtelOperatorCollectorProps, OtelOperatorCollectorResult, OtelOperatorMode,
+  OtelCollectorGatewayProps, OtelCollectorGatewayResult, GatewayExporterOptions, CollectorPolicyRule,
+  CollectorRole, GatewayRouting,
   MetricsServerProps, MetricsServerResult,
   WorkloadIdentityServiceAccountProps, WorkloadIdentityServiceAccountResult,
   GcePdStorageClassProps, GcePdStorageClassResult,
@@ -140,6 +161,12 @@ export type { PackageOptions, PackageResult } from "./codegen/package";
 export type { CRDSource, CRDSpec } from "./crd/types";
 export { parseCRD, parseCRDSpec } from "./crd/parser";
 export { loadCRDs, loadMultipleCRDs } from "./crd/loader";
+
+// Project-local CRD classes (`k8s.crds`, `chant generate`): the generated
+// module registers its kinds through this.
+export { registerProjectKinds } from "./project-kinds";
+export type { ProjectKind } from "./project-kinds";
+export type { K8sProjectCrdSource } from "./config";
 
 // Environment → cluster binding config shape (chant #1100)
 export type { K8sChantConfig, K8sClusterProfile } from "./config";

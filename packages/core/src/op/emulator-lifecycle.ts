@@ -1,8 +1,10 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
+import { connect } from "node:net";
 import { promisify } from "node:util";
 import { sleep } from "./activity-runtime";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * A local emulator's fixed identity — everything that differs between the
@@ -16,12 +18,36 @@ export interface EmulatorSpec {
   image: string;
   /** Port the emulator listens on inside the container (e.g. 4566, 4280). */
   containerPort: number;
-  /** Health path on the host port (e.g. `/_localstack/health`, `/_mudflaps/health`). */
-  healthPath: string;
+  /**
+   * Health path on the host port (e.g. `/_localstack/health`, `/_mudflaps/health`).
+   * Required unless {@link readyCommand} is set: an emulator is reached over
+   * HTTP or checks itself inside its container, one or the other.
+   */
+  healthPath?: string;
+  /**
+   * A command run inside the container (`docker exec <name> ...`) whose exit
+   * status 0 means ready, for an emulator with no HTTP health endpoint: a
+   * database server answers its own client (`pg_isready`), not a URL. When
+   * set, it replaces the HTTP poll of {@link healthPath}.
+   */
+  readyCommand?: readonly string[];
+  /**
+   * The endpoint a tool connects to, for an emulator that is not reached over
+   * HTTP, e.g. a `postgres://` URL for a database server.
+   * Default: `http://localhost:<port>`.
+   */
+  endpoint?: (port: number) => string;
   /** Readiness predicate over the health body. Default: any 200 response is ready. */
   ready?: (healthBody: string) => boolean;
   /** Extra `docker run` args inserted before the image (e.g. a socket mount). */
   runArgs?: readonly string[];
+  /**
+   * The prefix every key of {@link EmulatorUpArgs.settings} must start with,
+   * e.g. `FLOCI_` (#3952). Settings reach the container as `-e KEY=VALUE`, and
+   * the prefix keeps them to the emulator's own configuration instead of
+   * arbitrary env. An emulator without one takes no settings.
+   */
+  settingsPrefix?: string;
   /**
    * Where {@link image} is published, so how far behind the pin is can be
    * answered (#1345).
@@ -36,6 +62,138 @@ export interface EmulatorSpec {
     /** `owner/repo` whose latest GitHub release names the current version. */
     repo: string;
   };
+  /**
+   * How to tell this emulator's server from another one answering on the
+   * same host port (#3673).
+   *
+   * On macOS, Docker publishes `0.0.0.0:<port>` even while a native server
+   * holds `127.0.0.1:<port>`, and `localhost` then reaches the native one.
+   * `chant emulator status` runs {@link EmulatorIdentity.command} in the
+   * container and {@link EmulatorIdentity.probe} through the printed endpoint,
+   * and reports a mismatch instead of an endpoint that reaches the wrong server.
+   */
+  identity?: EmulatorIdentity;
+  /** How a client signs in, for `chant emulator --help` (e.g. `user postgres, password chant`). */
+  credentials?: string;
+}
+
+/** A server identity check: one value read inside the container and through the endpoint (#3673). */
+export interface EmulatorIdentity {
+  /** What kind of server it is, for messages: `Postgres`, `ClickHouse`. */
+  server: string;
+  /** Run as `docker exec <name> <command...>`; its trimmed stdout is the server's identity. */
+  command: readonly string[];
+  /** The identity of the server answering at `endpoint`, and a label for it (e.g. `PostgreSQL 16.14`). */
+  probe(endpoint: string): Promise<{ id: string; label: string }>;
+}
+
+/**
+ * True when something accepts TCP connections on 127.0.0.1:`port` (#3673).
+ * `up` asks before `docker run`: a native server there would take every
+ * `localhost` connection meant for the emulator.
+ */
+export function hostPortInUse(port: number, timeoutMs = 1_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    const done = (inUse: boolean): void => {
+      socket.destroy();
+      resolve(inUse);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+/** One host address Docker publishes a container port on, as `docker port` prints it. */
+export interface PublishedAddress {
+  /** The bound host IP: `0.0.0.0`, `::`, `127.0.0.1`, ... */
+  ip: string;
+  port: number;
+}
+
+/**
+ * Parse `docker port <name> <port>/tcp` output (`0.0.0.0:5432`, `[::]:5432`,
+ * one per line). Lines that do not parse are dropped.
+ */
+export function parsePublishedAddresses(stdout: string): PublishedAddress[] {
+  const out: PublishedAddress[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(?:\[([^\]]+)\]|([^\s:]+)):(\d+)\s*$/.exec(line);
+    if (match) out.push({ ip: (match[1] ?? match[2])!, port: Number(match[3]) });
+  }
+  return out;
+}
+
+/**
+ * The hosts a client on this machine dials to reach a published address,
+ * `localhost` first: a wildcard bind (`0.0.0.0`, `::`) answers on the
+ * loopback of its family, and a specific IP only on itself.
+ */
+export function clientHosts(addresses: readonly PublishedAddress[]): { host: string; port: number }[] {
+  const seen = new Set<string>();
+  const hosts: { host: string; port: number }[] = [];
+  const add = (host: string, port: number): void => {
+    const key = `${host}:${port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    hosts.push({ host, port });
+  };
+  for (const { ip, port } of addresses) {
+    if (ip === "0.0.0.0" || ip === "127.0.0.1") add("localhost", port);
+  }
+  for (const { ip, port } of addresses) {
+    if (ip === "::" || ip === "::1") add("[::1]", port);
+    else if (ip !== "0.0.0.0" && ip !== "127.0.0.1") add(ip.includes(":") ? `[${ip}]` : ip, port);
+  }
+  return hosts;
+}
+
+/** `endpoint` with its host replaced by `host` (`localhost` stays as written). */
+export function endpointOnHost(endpoint: string, host: string): string {
+  if (host === "localhost") return endpoint;
+  const url = new URL(endpoint);
+  url.hostname = host;
+  return url.toString().replace(/\/$/, endpoint.endsWith("/") ? "/" : "");
+}
+
+/**
+ * Pick the endpoint of a reused container that reaches it (the identity read
+ * inside the container matches the one read through the endpoint), trying
+ * {@link clientHosts} in order. `notes` says when `localhost` reaches another
+ * server and a different address had to be used; `error` says when none of
+ * them reaches the emulator.
+ */
+export async function pickReachableEndpoint(opts: {
+  name: string;
+  hosts: readonly { host: string; port: number }[];
+  endpoint: (port: number) => string;
+  identity: EmulatorIdentity;
+  /** The identity read inside the container. */
+  inside: string;
+  /** A hint appended to an `error`, e.g. how to republish on a free port. */
+  hint: string;
+}): Promise<{ endpoint: string; notes: string[] } | { error: string }> {
+  const { name, hosts, identity, inside } = opts;
+  const misses: string[] = [];
+  for (const { host, port } of hosts) {
+    const ep = endpointOnHost(opts.endpoint(port), host);
+    try {
+      const answered = await identity.probe(ep);
+      if (answered.id.trim() === inside) {
+        const notes = misses.length
+          ? [`emulator "${name}": ${misses.join("; ")}. The emulator answers on ${ep}; use that address.`]
+          : [];
+        return { endpoint: ep, notes };
+      }
+      misses.push(`${host}:${port} reaches another ${identity.server} (${answered.label}), not the emulator`);
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      misses.push(`${host}:${port} does not answer as the emulator (${why})`);
+    }
+  }
+  const tried = misses.length ? `: ${misses.join("; ")}` : "";
+  return { error: `emulator "${name}" runs, but no address it publishes reaches it${tried}. ${opts.hint}` };
 }
 
 /**
@@ -94,6 +252,43 @@ export interface EmulatorUpArgs {
   intervalMs?: number;
   /** Additional `docker run` args for this call (after `spec.runArgs`, before the image). */
   extraArgs?: readonly string[];
+  /** Docker network the container joins (`--network <name>`) (#3952). */
+  network?: string;
+  /**
+   * Emulator settings passed as `-e KEY=VALUE` (#3952). Every key must start
+   * with the spec's {@link EmulatorSpec.settingsPrefix}; see {@link checkSettings}.
+   */
+  settings?: Record<string, string>;
+  /** Publish the port on 127.0.0.1 only, instead of every host interface (#3952). */
+  loopback?: boolean;
+}
+
+/**
+ * Refuse settings an emulator does not take (#3952): a key outside the spec's
+ * {@link EmulatorSpec.settingsPrefix}, a key that is not an env-var name, or
+ * any setting at all for an emulator that declares no prefix. Throws with the
+ * first problem found.
+ */
+export function checkSettings(spec: EmulatorSpec, settings: Record<string, string> | undefined): void {
+  const keys = Object.keys(settings ?? {});
+  if (keys.length === 0) return;
+  const prefix = spec.settingsPrefix;
+  if (!prefix) {
+    throw new Error(`emulator "${spec.name}" takes no settings; got ${keys.join(", ")}`);
+  }
+  for (const key of keys) {
+    if (!key.startsWith(prefix) || key.length === prefix.length || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`emulator "${spec.name}": setting ${key} is not a ${prefix}* variable; only ${prefix}<NAME> keys reach the container`);
+    }
+  }
+}
+
+/**
+ * Quote one `docker run` word for the shell `up` runs it through: a setting's
+ * value or a network name can hold spaces or shell syntax.
+ */
+function shellWord(word: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The shared lifecycle a per-cloud wrapper adapts. */
@@ -102,6 +297,8 @@ export interface EmulatorLifecycle {
   existsCommand(name: string): string;
   rmCommand(name: string): string;
   healthUrl(port: number): string;
+  /** `docker exec <name> <readyCommand...>`, or undefined for an emulator polled over HTTP. */
+  readyExecCommand(name: string): string | undefined;
   endpoint(port: number): string;
   up(args?: EmulatorUpArgs, signal?: AbortSignal): Promise<{ endpoint: string }>;
   down(args?: { name?: string }, signal?: AbortSignal): Promise<void>;
@@ -116,26 +313,57 @@ export interface EmulatorLifecycle {
  */
 export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
   const ready = spec.ready ?? (() => true);
+  if (spec.healthPath === undefined && !spec.readyCommand?.length) {
+    throw new Error(`emulator "${spec.name}" declares neither a healthPath nor a readyCommand, so nothing can tell when it is ready`);
+  }
 
   const runCommand = (args: EmulatorUpArgs = {}): string => {
     const name = args.name ?? spec.name;
     const port = args.port ?? spec.containerPort;
     const image = args.image ?? spec.image;
+    checkSettings(spec, args.settings);
+    const bind = args.loopback ? `127.0.0.1:${port}:${spec.containerPort}` : `${port}:${spec.containerPort}`;
     return [
-      "docker", "run", "-d", "--rm", "--name", name, "-p", `${port}:${spec.containerPort}`,
+      "docker", "run", "-d", "--rm", "--name", name, "-p", bind,
+      ...(args.network ? ["--network", args.network] : []),
+      ...Object.entries(args.settings ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
       ...(spec.runArgs ?? []), ...(args.extraArgs ?? []), image,
-    ].join(" ");
+    ].map(shellWord).join(" ");
   };
   const existsCommand = (name: string): string => `docker ps -q -f name=${name}`;
   const rmCommand = (name: string): string => `docker rm -f ${name}`;
-  const healthUrl = (port: number): string => `http://localhost:${port}${spec.healthPath}`;
-  const endpoint = (port: number): string => `http://localhost:${port}`;
+  const healthUrl = (port: number): string => `http://localhost:${port}${spec.healthPath ?? ""}`;
+  const endpoint = (port: number): string => (spec.endpoint ? spec.endpoint(port) : `http://localhost:${port}`);
+  const readyExecCommand = (name: string): string | undefined =>
+    spec.readyCommand?.length ? ["docker", "exec", name, ...spec.readyCommand].join(" ") : undefined;
+
+  /** One readiness probe: the in-container command when declared, else the HTTP health path. */
+  async function probe(name: string, port: number, signal?: AbortSignal, host = "localhost"): Promise<boolean> {
+    const command = readyExecCommand(name);
+    if (command) {
+      try {
+        await execAsync(command, { signal });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    try {
+      const res = await fetch(endpointOnHost(healthUrl(port), host), { signal });
+      return res.ok && ready(await res.text());
+    } catch {
+      // Not up yet (connection refused / non-2xx) — retry.
+      return false;
+    }
+  }
 
   async function up(args: EmulatorUpArgs = {}, signal?: AbortSignal): Promise<{ endpoint: string }> {
     const name = args.name ?? spec.name;
     const port = args.port ?? spec.containerPort;
     const timeoutMs = args.timeoutMs ?? 60_000;
     const intervalMs = args.intervalMs ?? 2_000;
+    // Before the reuse check, so a bad key is refused whether or not a container runs.
+    checkSettings(spec, args.settings);
 
     let running = false;
     try {
@@ -145,35 +373,84 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
       // `docker ps` failed — assume not running and try to start it.
     }
 
+    // A reused container publishes what it was started with, which need not
+    // be `port` on localhost: read it from Docker rather than assume it.
+    let hosts: { host: string; port: number }[] = [{ host: "localhost", port }];
     if (running) {
       // Progress → stderr, so a `--json` consumer (chant emulator, behold) reads
       // clean JSON on stdout. runOp/Op activities capture both streams regardless.
       console.error(`emulator container "${name}" already running — reusing`);
+      if (args.image || args.network || args.loopback || Object.keys(args.settings ?? {}).length) {
+        console.error(
+          `emulator "${name}": the image, network, settings and loopback options apply when a container starts, not to this running one. ` +
+            `Run \`chant emulator down\` first to start it with them.`,
+        );
+      }
+      let published: PublishedAddress[] = [];
+      try {
+        const { stdout } = await execFileAsync("docker", ["port", name, `${spec.containerPort}/tcp`], { signal });
+        published = parsePublishedAddresses(stdout);
+      } catch {
+        // `docker port` fails when nothing is published.
+      }
+      if (published.length === 0) {
+        throw new Error(
+          `emulator "${name}" runs, but publishes no host port for ${spec.containerPort}, so nothing on this machine reaches it. ` +
+            `Run \`chant emulator down\`, then \`chant emulator up\`.`,
+        );
+      }
+      hosts = clientHosts(published);
+      if (args.port !== undefined && !hosts.some((h) => h.port === args.port)) {
+        console.error(
+          `emulator "${name}" was started on host port ${hosts[0]!.port}, not ${args.port}; reusing it there. ` +
+            `Run \`chant emulator down\` first to move it.`,
+        );
+      }
     } else {
+      if (await hostPortInUse(port)) {
+        throw new Error(
+          `emulator "${name}": 127.0.0.1:${port} is already held by another process, so localhost:${port} would not reach the emulator. ` +
+            `Stop that process, or publish the emulator on another port (chant emulator up --port ${spec.containerPort}=<free port>).`,
+        );
+      }
       await execAsync(runCommand({ ...args, name, port }), { signal });
     }
 
-    const url = healthUrl(port);
     const deadline = Date.now() + timeoutMs;
     let ok = false;
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error(`emulator "${name}" wait aborted`);
-      try {
-        const res = await fetch(url, { signal });
-        if (res.ok && ready(await res.text())) {
+      for (const h of hosts) {
+        if (await probe(name, h.port, signal, h.host)) {
           ok = true;
           break;
         }
-      } catch {
-        // Not up yet (connection refused / non-2xx) — retry.
       }
+      if (ok) break;
       await sleep(intervalMs, signal);
     }
     if (!ok) {
       throw new Error(`emulator "${name}" did not become ready within ${timeoutMs}ms`);
     }
 
-    const ep = endpoint(port);
+    let ep = endpointOnHost(endpoint(hosts[0]!.port), hosts[0]!.host);
+    if (running && spec.identity) {
+      let inside: string | undefined;
+      try {
+        inside = (await execFileAsync("docker", ["exec", name, ...spec.identity.command], { signal })).stdout.trim();
+      } catch {
+        // The container cannot answer for itself; nothing to compare against.
+      }
+      if (inside) {
+        const picked = await pickReachableEndpoint({
+          name, hosts, endpoint, identity: spec.identity, inside,
+          hint: `Stop the other server, or run \`chant emulator down\`, then \`chant emulator up --port ${spec.containerPort}=<free port>\`.`,
+        });
+        if ("error" in picked) throw new Error(picked.error);
+        for (const note of picked.notes) console.error(note);
+        ep = picked.endpoint;
+      }
+    }
     console.error(`emulator "${name}" ready on ${ep}`);
     return { endpoint: ep };
   }
@@ -187,5 +464,5 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     }
   }
 
-  return { runCommand, existsCommand, rmCommand, healthUrl, endpoint, up, down };
+  return { runCommand, existsCommand, rmCommand, healthUrl, readyExecCommand, endpoint, up, down };
 }

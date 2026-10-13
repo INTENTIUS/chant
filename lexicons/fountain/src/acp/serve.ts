@@ -11,13 +11,14 @@
 
 import { readFileSync } from "node:fs";
 import { setGateOrigin } from "@intentius/chant/lifecycle/gate-origin";
+import { setStewardTurn } from "@intentius/chant/op/steward-turn";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AcpServer } from "./server";
 import { streamTransport } from "./jsonrpc";
 
 /** Serve until the client closes stdin, which is how it says the connection is over. */
-export async function serveAcpOverStdio(opts: { durableRequests?: boolean } = {}): Promise<void> {
+export async function serveAcpOverStdio(opts: { durableRequests?: boolean; steward?: string } = {}): Promise<void> {
   // chant#2384 — every prompt this session carries is authored by the model,
   // and `approve` is a verb in chant's registry like any other, so nothing in
   // the transport stops `chant run <op>` being followed by
@@ -26,9 +27,23 @@ export async function serveAcpOverStdio(opts: { durableRequests?: boolean } = {}
   // shell; the same-origin rule then refuses it.
   setGateOrigin("acp");
 
+  // chant#2749 — the session is a steward's. A decision point an Op asks during
+  // a turn names the steward, makes its model call through the steward's
+  // brokered capability, and is left open for a person; `points answer` from
+  // this session is refused, as the gate's resolution is above.
+  if (opts.steward) setStewardTurn({ steward: opts.steward });
+
+  // chant#3539 — fountain gives the command it spawns the conversation's id
+  // in `FOUNTAIN_CONVERSATION_ID` (process env only, never on disk), and
+  // `chant run <op> --on fountain` names the run by that same id. Naming the
+  // sandbox's runs by it joins the two: the run record written here carries
+  // the id the caller's `chant run status` reports.
+  const conversationId = process.env.FOUNTAIN_CONVERSATION_ID?.trim();
+
   const server = new AcpServer({
     durableRequests: opts.durableRequests ?? false,
     version: lexiconVersion(),
+    ...(conversationId ? { runId: conversationId } : {}),
   });
 
   const transport = streamTransport(process.stdin, process.stdout);

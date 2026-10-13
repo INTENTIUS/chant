@@ -7,7 +7,7 @@
  * source (the emit/boundary/apply phases stay in #197, gated on demand).
  *
  * The graph layer here is intentionally pure: it consumes the JSON shape
- * `@cdktf/hcl2json` produces (see `parse.ts`), so the graph and scoring can
+ * `@cdktn/hcl2json` produces (see `parse.ts`), so the graph and scoring can
  * be tested without loading the wasm parser.
  */
 
@@ -86,7 +86,7 @@ export interface TfGraph {
 }
 
 /**
- * The subset of `@cdktf/hcl2json`'s `parse()` output the advisor reads. A
+ * The subset of `@cdktn/hcl2json`'s `parse()` output the advisor reads. A
  * merged tree across every `.tf` file in the estate. Values are left as the
  * raw hcl2json encoding (interpolations survive as `"${...}"` strings), which
  * is what edge extraction scans.

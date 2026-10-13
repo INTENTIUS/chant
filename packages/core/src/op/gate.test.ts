@@ -16,7 +16,7 @@ import { writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "./gate";
+import { approveCommand, describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "./gate";
 import { appendGateResolution, readGateLedger } from "../lifecycle/gate-ledger";
 import {
   requireLifecycleLedger,
@@ -610,5 +610,19 @@ describe("op/gate — a rejected ledger push is reported, not swallowed (#2310)"
     // The pending fact is still the one that was recorded — gating is still
     // correct, only silent about reaching the remote.
     expect(check.pending.gate).toBe("approve-live-apply");
+  });
+});
+
+describe("op/gate — the approve hint on a sealed gate (#3521)", () => {
+  test("approveCommand adds --sign last, only when sealed", () => {
+    expect(approveCommand("app", "ship")).toBe("chant approve app ship");
+    expect(approveCommand("app", "ship", "prod", "sha256:abc", true)).toBe("chant approve app ship --env prod --plan sha256:abc --sign");
+    expect(approveCommand("app", "ship", undefined, undefined, false)).toBe("chant approve app ship");
+  });
+
+  test("describeGateMismatch names --sign when sealed, and not when unsealed", () => {
+    const mismatch = { approved: "sha256:old", planned: "sha256:new", resolvedBy: "alex", timestamp: "2026-09-08T00:00:00Z" } as GateDigestMismatch;
+    expect(describeGateMismatch("app", "ship", mismatch, true)).toMatch(/chant approve app ship --sign$/);
+    expect(describeGateMismatch("app", "ship", mismatch)).not.toContain("--sign");
   });
 });

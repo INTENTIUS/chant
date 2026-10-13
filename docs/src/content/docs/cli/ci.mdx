@@ -1,0 +1,83 @@
+---
+title: "chant ci"
+description: Tag each commit that passed its required CI phases, revoke the tag when it later fails, and read the newest green commit from git
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant ci last-green [--json]
+chant ci tick [--dry-run] [--forge github]
+chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
+                  [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
+```
+
+`chant ci` records which commits of a branch passed CI as git tags, from the [`ci.green`](/chant/reference/workspace-declaration/#ci) block of the workspace declaration ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). A commit that passes every required phase gets `ci/green/<sha>`. A green commit that later fails one gets `ci/revoked/<sha>`. Anyone with a clone can then find the newest commit that passed, for example to freeze it and release from it.
+
+## ci last-green
+
+Prints the full id of the newest first-parent commit of the branch that has a green tag and no revoked tag. The walk follows `refs/remotes/origin/<branch>` when the checkout has it, else the local branch. Only local tags are read, so fetch them first:
+
+```bash
+git fetch origin --tags
+git checkout "$(chant ci last-green)"
+```
+
+When no commit qualifies, a message goes to stderr and the exit code is 1.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
+
+## ci tick
+
+One pass over the branch. It fetches the branch and the `ci/*` tags from `origin`, and the fetch prunes a `ci/*` tag deleted there by hand. It reads the check runs of each first-parent commit within `window`, then makes the tags that are due and pushes them, never forced:
+
+| A commit with | that now | gets |
+|---|---|---|
+| no green tag | passes every required phase | `ci/green/<sha>` |
+| a green tag and no revoked tag | fails a required phase | `ci/revoked/<sha>` |
+| a revoked tag | anything | nothing, and its check runs are not read |
+
+Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag.
+
+The check runs come from the forge. GitHub is the only one so far: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused until a client maps their jobs and statuses to check runs. Pushing the tags needs `contents: write` on the remote.
+
+## ci workflow
+
+Writes `.github/workflows/chant-ci-green.yml` (or `--output`), the root CI file that runs the tick. A tick starts when a workflow holding a required check run completes on the branch, so a result or a re-run is acted on within seconds. A cron every 15 minutes covers an event that was dropped or late. All ticks share one concurrency group that never cancels, so they run one at a time.
+
+It finds the workflows to listen to by reading the other files in `.github/workflows/`. A job reports its `name` or its id as its check run, followed by ` (<matrix values>)` for a matrix job, and a workflow is kept when one of its jobs can report a check run that a required phase's pattern matches. It warns about each required pattern no job matches. `--workflow <name>` adds a workflow the scan can't see, such as one whose job names are built from expressions, and it is repeatable.
+
+The tick runs in the workspace root as `npx --yes @intentius/chant@<version> ci tick`, at the version that wrote the file. `--chant <command>` runs chant with another command instead, and `ci tick` is put after it. `--install <command>` adds a step before the tick that installs what that command needs, in the same directory. When the workspace root has a `package-lock.json`, the install step also gets setup-node's npm cache. Both flags go into the regenerate command in the header. The file's first line is the generated-file header naming the command. When the command runs in a member's directory, that member records the file as one it generates ([ws-042](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-042-root-ci-files.md)). Regenerate it after changing `ci.green` or the workflows it listens to.
+
+## Pushing tags to commits that change workflows
+
+By default the tick pushes its tags with the Actions token, `GITHUB_TOKEN`, which actions/checkout leaves in the clone. GitHub treats a new ref to a commit whose files under `.github/workflows/` differ from the default branch's as an update to those workflows. That needs the `workflows` permission, and the Actions token can never have it. So on a branch where a commit changes a workflow file, every push of that commit's tag fails with `refusing to allow a GitHub App to create or update workflow ... without workflows permission`, and `chant ci tick` says so in its error.
+
+Give the push a token that may update workflows, kept in a repository secret, and regenerate the workflow with it:
+
+```bash
+chant ci workflow --token-secret CI_GREEN_TOKEN
+```
+
+The checkout then uses `${{ secrets.CI_GREEN_TOKEN || github.token }}`, so the push does too. Where the secret is unset, as in a fork or a fresh repository, the checkout falls back to the Actions token: the tick still runs, and only the tags for commits that change `.github/workflows/` fail to push, which `ci tick` reports. A fine-grained personal access token for the repository needs Contents read and write and Workflows read and write. The tick still reads check runs with the Actions token and the job's `checks: read`, because a fine-grained token can't call the Checks API.
+
+A GitHub App with Contents and Workflows write works too. Put its id in an Actions variable and its private key in a secret, and the workflow mints an installation token with actions/create-github-app-token before the checkout:
+
+```bash
+chant ci workflow --app-id-var CI_GREEN_APP_ID --app-key-secret CI_GREEN_APP_KEY
+```
+
+Regenerating keeps the token flags you passed, since the header records them. Leave them out and the file comes out byte for byte as 0.108.0 wrote it.
+
+## chant's own repository
+
+chant declares `ci.green` for its own `main` in its `chant.workspace.json`. The phases are `check`, `test`, `validate` and `suites`. The first three are the checks branch protection requires, each one check run of the same name from the `chant` workflow, where `test` is the job that passes only when the unit shards passed. That workflow holds the fast checks, and it is all that runs on a push or a pull request. Those checks are the unit tests and typechecks, plus lint and some small guards. `suites` is the job of the same name in `release-suites.yml`. It runs the end-to-end project on `main` every three hours and when a person starts it. That project is every `*.e2e.test.ts`, which covers the CLI goldens and the corpus differentials as well as the reference workspace. A commit is green only when all four passed, so a release never tags a commit the long suites have not passed, and a commit `release-suites.yml` never ran on stays undecided. The other large suites live in `large-suites.yml` and `helm-survey.yml`, which run only when a person dispatches them; no phase and no release waits on those. Other workflows can run on main's commits too, so none of their jobs is named `check`, `test`, `validate` or `suites`, which keeps their runs out of those phases.
+
+Its tick runs the source at the commit it checks out, so a change to `chant ci` is tested on main before it ships:
+
+```bash
+chant ci workflow --chant 'npx tsx packages/core/src/cli/main.ts' --install 'npm install --ignore-scripts'
+```
+
+The install skips the lexicon builds, and the tick needs none of them. `just release` picks the commit it tags from these tags: `scripts/release-preflight.sh` reads them whenever the declaration on `origin/main` sets `ci.green` for `main`. When no commit has a green tag, it refuses to release. It doesn't fall back to asking GitHub, and `CHANT_RELEASE_SKIP_PREFLIGHT=1` skips the check. The publish workflow has a second gate, `release-gate`, that waits for a green run on the released commit. A tag push skips that gate and publishes. To get it, start `publish.yml` by hand with `verify_ci` checked. The repository variable `CHANT_RELEASE_SKIP_CI_GATE` that used to skip it is no longer read.

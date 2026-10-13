@@ -1,0 +1,364 @@
+---
+title: Work Items
+description: Keep a queue of work as records in the workspace, with needs and implements links, and read which ones are ready with chant workspace records and chant workspace graph --intent.
+diataxis: how-to
+---
+
+A work item is a gap between what the workspace decided and what it holds, given an id, an owner and a lifecycle.
+
+The intent graph already reports those gaps as findings: a decision nobody has carried out, a commit no decision covers, an artifact that drifted from the decision that pinned it. Writing one of them down as a file in the workspace, tracked in git like a decision, makes it work someone can take. People and agents read the same files, so the queue needs no server ([#2683](https://github.com/INTENTIUS/chant/issues/2683)).
+
+## Write one
+
+They live in `work/` beside the kind file `work/work.kind.mjs` and its schema `work/work.schema.json`. The reference workspace names that kind file in the top-level `records` of its `chant.workspace.json`, so `records` and `graph --intent` read it without `--kind`. Each is a Markdown file named `W-NNN-<slug>.md`, with front matter and a description in the body. This is `W-001` in the reference workspace:
+
+```markdown
+---
+schema: 1
+id: "W-001"
+title: "The app renders the home screen from its spec"
+state: "in-progress"
+implements:
+  - "ref-002"
+needs: []
+constrains:
+  - "path:design/screens/home.json"
+  - "member:app"
+evidence: []
+owner: "lex00"
+opened_on: "2026-09-24"
+source:
+  finding: "intent-decision-unimplemented"
+  region: "design/screens/home.json"
+  decision: "ref-002"
+supersedes: []
+---
+
+# The app renders the home screen from its spec
+
+ref-002 puts the home screen's spec in the design member, and the app is to implement it. ...
+```
+
+| Field | What it holds |
+|---|---|
+| `id` | `W-` and three or more digits. Never reused. |
+| `title` | What the work is, in a few words. |
+| `state` | `proposed`, `open`, `in-progress`, `done` or `dropped`. `done` and `dropped` are closed. |
+| `proposed_by` | Who proposed a work item that opened `proposed`, as `records new --by` wrote it. Optional. |
+| `implements` | The decisions the work carries out, by id. May be empty. |
+| `needs` | The work that must be done first, by id. May be empty. |
+| `constrains` | What the work touches, in the grammar decisions use: `path:<path>`, `member:<name>`, `owner/repo#n` or a decision id. At least one entry. |
+| `out_of_scope` | Optional. Workspace files or directories the change doing the work must not touch. [`chant workspace check --changes --work <id>`](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). |
+| `evidence` | The proof of done: links, or workspace files pinned by hash. Empty while the work is open. |
+| `owner` | Who has taken the work, a forge login or an agent's name. Optional. |
+| `opened_on`, `closed_on` | Dates as `YYYY-MM-DD`. `closed_on` is set on `done` or `dropped`. |
+| `contract` | Optional. The contract record the work builds, by id. See [Contract, tier and attempts](#contract-tier-and-attempts). |
+| `tier` | Optional. The builder tier the work is built at, one of the tiers the kind declares. |
+| `max_attempts` | Optional. How many failed attempts the item gets before a runner leaves it to people, in place of the kind's default. |
+| `result` | Optional. `{ lease: <token> }`, the lease the last build ran under. Nothing else about the build goes on the item. |
+| `source` | Where the work came from: a gap, an issue (`issue`), the workspace (`kind: workspace` with a `member`), a person's ask (`ask`), or the box's decided intent (`intent`). A gap may name the `finding-triage` answer that made it work as `answer`. |
+| `supersedes` | Earlier work this one replaces, as `{ work: <id> }`. |
+
+To write one without an editor, pass its fields as JSON to `records new` and leave out `id`. The command picks the next id (`W-003` after `W-002`) and writes the file once the schema accepts it:
+
+```bash
+chant workspace records new work --from fields.json
+chant workspace records amend W-003 --kind work --set - <<< '{"state": "in-progress", "owner": "lex00"}'
+```
+
+A work kind declares no reviews, so `records review` on W-003 is refused with `review-unsupported`.
+
+### Proposed work
+
+An item an agent or a decision point's model suggests opens `proposed`, the work kind's first state ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). `records new work --by <name>` writes the proposer to `proposed_by`, and the MCP `records-new` tool opens every new work item `proposed`. A proposed item is never `ready`. A person keeps it by amending its state to `open`, or drops it. [Decision Points](/chant/guide/decision-points/#from-a-finding-to-a-work-item) shows the flow from a finding's triage answer to a kept work item.
+
+Fields that start with `x-` are free for your own use. The fields above replace the `x-factory` fields studio kept on work items, and studio's `x-studio` block on work is retired. W-001 keeps its id while its state changes, so the file is edited in place rather than written once under a content hash. A kind may read JSON files since [ws-053](https://github.com/INTENTIUS/chant/issues/2664), but `records new` and `records amend` write Markdown only, so the work kind stays Markdown until they write JSON.
+
+## Start from a gap
+
+`source` names the gap the work closes:
+
+```yaml
+source:
+  finding: "intent-decision-unimplemented"
+  region: "design/screens/home.json"
+  decision: "ref-002"
+```
+
+`finding` is one of the intent graph's finding codes, or a plugin's `plugin:<name>:<code>`. `region` is the path, or `path:start-end`, the finding fired on. `decision` and `artifact` name what the finding concerned, when it concerned one. To find gaps worth taking on, walk a region and read its findings:
+
+```bash
+chant workspace graph --intent design/screens/home.json
+```
+
+A finding somebody has taken ends with `addressed by W-001 (in-progress)`, and the rest are the queue nobody has picked from yet. Work that didn't come from a finding uses the `issue` or `workspace` source that decisions use, or an ask, when what started it was a person's own words.
+
+## Start from an ask
+
+A person's ask can become work with no gap or issue behind it, the way hud's sidebar and the kit's ask flow take one up (chaff#39, [#2851](https://github.com/INTENTIUS/chant/issues/2851)). `source.ask` names what they said and who said it:
+
+```yaml
+source:
+  ask:
+    said: "Can the home screen remember the last tab I had open?"
+    by: "morgan"
+    at: "2026-09-25T16:04:00Z"
+    via: "hud"
+```
+
+`said` and `by` are required; the schema rejects an ask with neither. `at`, `via` (`hud`, `shell` or `mcp`) and `session` are optional, and name when the ask came in, where from, and the session it came up in. An item built from an ask opens `proposed` too, the [same first state](#proposed-work) any other suggestion does.
+
+```bash
+chant workspace records new work --from - <<'JSON'
+{
+  "schema": 1,
+  "title": "Remember the last open tab on the home screen",
+  "state": "proposed",
+  "implements": [],
+  "needs": [],
+  "constrains": ["path:design/screens/home.json"],
+  "evidence": [],
+  "opened_on": "2026-09-25",
+  "source": {
+    "ask": {
+      "said": "Can the home screen remember the last tab I had open?",
+      "by": "morgan",
+      "at": "2026-09-25T16:04:00Z",
+      "via": "hud"
+    }
+  },
+  "supersedes": []
+}
+JSON
+```
+
+## Start from the box's intent
+
+The first build of a box comes from its intent: the decision its `box` block names, once a person decides it ([#2850](https://github.com/INTENTIUS/chant/issues/2850), [#3147](https://github.com/INTENTIUS/chant/issues/3147)). `source.intent` records the decision and the person's answer to it:
+
+```yaml
+implements:
+  - "intent-001"
+source:
+  intent:
+    decision: "intent-001"
+    question: "What should this box build?"
+    answer: "A notes app with tags"
+    by: "morgan"
+    at: "2026-10-03T09:00:00Z"
+```
+
+`decision`, `answer` and `by` are required. A runner treats the item like an ask, and builds it once.
+
+## Ready and blocked
+
+`chant workspace records` reads the work kind, and the decision kind it names in `work.decisions`, at the same revision:
+
+```bash
+cd reference-workspace
+chant workspace records --kind work/work.kind.mjs
+```
+
+```
+W-001  in-progress  The app renders the home screen from its spec
+       implements ref-002 (decided)
+W-002  open         The app's test checks the home page against the spec
+       blocked by W-001 (in-progress)
+2 records: 2 valid, 0 invalid, 0 superseded
+```
+
+With `--json`, each record has three more fields:
+
+- `ready` is true when the record is valid, not superseded, `open`, and every id in its `needs` is `done`.
+- `blockedBy` lists each need that is not done, with its state.
+- `implements` lists each decision the record carries out, with the decision's state.
+
+The document also lists every decision as `decisions[]`, each with `implementedBy`. A decided decision with an empty `implementedBy` has nobody working on it.
+
+The read warns about links it can't follow. The warnings leave the record valid:
+
+| Warning | The record |
+|---|---|
+| `work-needs-unknown` | needs an id no record has, so it stays blocked |
+| `work-implements-unknown` | implements an id no decision has |
+| `work-needs-cycle` | needs itself through its `needs` links, so it can never be ready |
+| `work-implements-undecided` | implements a decision that is still `proposed` or was `withdrawn` |
+| `work-done-unpinned` | is done with an empty evidence list |
+| `work-closed-without-date` | is done or dropped with no `closed_on` |
+| `work-done-gap-open` | is done, and the finding its `source` names still fires on its region |
+| `work-acceptance-unmet` | is done, and an [acceptance criterion](#acceptance-criteria) has no passing evidence of the verification it expects |
+| `work-acceptance-self-verified` | has a passing `manual` verdict by its own `owner`, which does not count |
+| `work-contract-unknown` | names a contract no record of the kind's contract kind has |
+| `work-contract-undecided` | names a contract that is not approved, such as a draft |
+| `work-tier-unknown` | names a `tier` the kind's `work.tier.tiers` doesn't list |
+
+## Contract, tier and attempts
+
+The work kind's `work` block declares four more links ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). Each is optional, and the reference kind declares the last three:
+
+```js
+work: {
+  // ...
+  tier: { field: "tier", tiers: ["small", "medium", "large"] },
+  attempts: { field: "max_attempts", max: 3 },
+  answers: "../answers/answer.kind.mjs",
+  contract: { field: "contract", kind: "../contracts/contract.kind.mjs" },
+},
+```
+
+| Entry | What the read does with it |
+|---|---|
+| `contract` | Takes the field holding the contract record the item builds, and that contract's kind file. `records --json` gives each item `contract: { id, state }`, or `null` when it names none. An unknown contract is warned `work-contract-unknown`, and one the contract kind doesn't rank as approved `work-contract-undecided`. The factory builds only items that name a contract, asks and intent builds, so in a kind without this entry it builds only asks and intent builds. The reference workspace's work kind leaves this entry out. |
+| `tier` | Takes the field holding the item's builder tier and the tiers the workspace allows, listed once. A tier outside them is warned `work-tier-unknown`. Without a tier, the slice-tier decision point picks one. An optional `limits` gives what each tier may hold, such as `{ small: { criteria: 10, files: 5, words: 150 } }`, for that point's `fits_<tier>` inputs ([sizing a work item](/chant/guide/decision-points/#sizing-a-work-item), [#3150](https://github.com/INTENTIUS/chant/issues/3150)). |
+| `attempts` | Takes the field holding an item's own attempt limit and the default `max`. [`chant workspace work history`](/chant/cli/workspace-work/#history) counts failed attempts from the lease history against it and says when the item is exhausted. |
+| `answers` | Takes the answer kind file. `records --json` gives each item `answers`, every decision-point answer whose `constrains` holds the item's id, with its `point`, `state`, `answer` and `answeredBy`. In the working tree this includes the answers a steward keeps on the lifecycle ledger. The understand point's answer about an item is read here, never stored on the item. |
+
+`result` keeps only the lease token of the last build. What ran it, the agent, model, harness and session, belongs to the run record.
+
+## Pick ready work as an agent
+
+An agent asks for the ready records and takes one by writing its name into `owner` and moving `state` to `in-progress` in a pull request:
+
+```bash
+chant workspace records --kind work/work.kind.mjs --json \
+  | jq '.records[] | select(.ready) | {id, title: .data.title, implements}'
+```
+
+The decisions nobody has started are one query away too:
+
+```bash
+chant workspace records --kind work/work.kind.mjs --json \
+  | jq '.decisions[] | select(.state == "decided" and (.implementedBy | length) == 0) | .id'
+```
+
+Two agents that take the same record change the same lines of the same file, so the second pull request conflicts and one of them picks again.
+
+A runner that dispatches agents doesn't have to wait for that conflict. It claims the item first with [`chant workspace work claim`](/chant/cli/workspace-work/), which takes a lease with an expiry that only one worker can hold. It renews the lease while the agent works and releases it at the end. `records --json` then shows the holder in each record's `lease`.
+
+## Run the factory reference Op
+
+A factory is a runner that picks the next buildable item, builds it with an agent and records the outcome. The rules every factory must agree on are chant's, so two orchestrators build the same item the same way ([#3406](https://github.com/INTENTIUS/chant/issues/3406), [ws-087](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-087-the-factory-s-rules-ship-as-a-chant-reference-op.md)). An orchestrator such as studio supplies only execution, as hooks:
+
+```ts
+// ops/factory.op.ts in a chant member
+import { factoryOp } from "@intentius/chant/op";
+
+export const factory = factoryOp({
+  builder: "node box/ops/factory/builder.mjs", // runs a builder agent in the worktree
+  check: "npm test --silent",                   // the verdict; the box's factory.check when left out
+});
+```
+
+`chant run factory` is one build of one item, under the item's [work lease](/chant/cli/workspace-work/), in a worktree on `chant/work/<item>`:
+
+| Phase | What chant does |
+|---|---|
+| Pick | Lists the buildable items: those that name a contract, a person's ask and the box's first build from its intent. Any other item, such as one a person wrote by hand or a finding's triage item, stays with its author ([#3503](https://github.com/INTENTIUS/chant/issues/3503)). On top of `ready`, the box's intent must be decided and a contract the item builds approved. The item must be under its attempt limit, not built and waiting to be applied on its branch, and not dropped there. A slice-tier or understand question already asked about it must be answered, and an understand answer of `redraft` or `ask` holds it. The lease claims the first one nobody holds. |
+| Ask | Takes the item's own `tier`, or asks [`slice-tier`](/chant/guide/decision-points/#sizing-a-work-item). For a person's ask it asks `understand`. A question left open stops the run `waiting` until a person answers it. |
+| Build | Runs the `builder` hook in the worktree with `FACTORY_ITEM`, `FACTORY_TIER`, `FACTORY_TOKEN`, `FACTORY_HOLDER`, `FACTORY_WORKTREE` and `FACTORY_CONTEXT`. A kept ask opens first. Nothing is built when `understand` answered anything but `proceed`. |
+| Check | Runs the `check` hook and attaches its result as evidence to each criterion the factory may tick. |
+| Record | Amends the item `done` and commits the worktree with `Chant-Record` and `Chant-Lease` trailers when the build finished, the check passed and every criterion has passing evidence. It adds the decisions in force that constrain a changed path by path to `implements`, and lists them in `implements_proposed`. A refused ask is dropped on its branch. Anything else is `not_done`, and the run keeps the attempt under `refs/chant/kept/`. |
+
+The hooks talk to the Op through their environment and their last line of output ([studio#382](https://github.com/arugula-salad/studio/issues/382)):
+
+| Hook | Runs | Gets | May print as its last line |
+|---|---|---|---|
+| `prepare` | in the workspace, before Pick | nothing | nothing read |
+| `builder` | in the worktree | `FACTORY_ITEM`, `FACTORY_TIER`, `FACTORY_TOKEN`, `FACTORY_HOLDER`, `FACTORY_WORKTREE`, `FACTORY_CONTEXT` | its report: `ok: false` when it did not finish, `reverted` for what its guard put back, `run` naming its [run record](/chant/cli/workspace-runs/) for the `Chant-Run` trailer, `chantAgent` for `Chant-Agent`, `records` for more `Chant-Record` trailers, and anything else the later hooks read |
+| `check` | in the worktree | the same, and `FACTORY_BUILD`, the builder's report | `{ "criteria": { "<id>": "pass" or "fail" } }`, so each criterion is ticked by its own result, and `records` such as the evidence it wrote |
+| `after` | in the worktree, after Record | `FACTORY_OUTCOME`, `FACTORY_COMMIT`, `FACTORY_REASON`, `FACTORY_BUILD`, `FACTORY_CHECK` | nothing read |
+
+Before the builder runs, the worktree starts from the checkout's `HEAD`. Commits the branch held that `HEAD` doesn't are kept under `refs/chant/kept/<item>/earlier-<commit>` first. An item the checkout holds uncommitted, or has changed since `HEAD`, is copied into the worktree, because that copy is the one the points were asked about. A steward runs the Op beside its turns with `factoryReady`, whose keys name each buildable item in the state it was read in:
+
+```ts
+declareSteward({ name: "box-steward", ops: [converge], beside: [{ op: factory, ready: factoryReady({ cwd: member }) }] });
+```
+
+A criterion verified `manual` or `runtime` is never the factory's to tick, so an item with one is not done by the factory. A failed build is never retried on its own: a person asks for one more by amending the item's `retry` to `{ after: <the failed build's lease token>, by, at }`, so one request starts one run. Publishing a done item is a separate call, [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work). The reference workspace declares the Op in `delivery/src/factory.op.ts` with stub hooks.
+
+## The window and the three findings
+
+The window of W-001 runs from the commit that added its record to the commit that moved it to `done` or `dropped`. While it is open, the window runs to the revision the walk reads. A commit that changes the region inside the window has a `within` edge to W-001 with the state `worked`. The commit's own state still comes from the decisions, because a work record says who is doing something, and a decision says what was chosen.
+
+The work kind adds three findings to `graph --intent`:
+
+| Finding | What to ask |
+|---|---|
+| `intent-decision-unimplemented` | A decided decision constrains the region, and no work record and no commit carries it out. Should someone open one for it? |
+| `intent-work-blocked` | Commits landed under a work record while work it needs was not done. Was the need wrong, or did the work start too early? |
+| `intent-work-open-decided-code` | Commits in the region are a decision's own work, and the work record implementing that decision is still open. Is the work done, or is part of it still missing? |
+
+## Close one
+
+Work that came from a gap is done when the finding stops firing on its region. Walk the region again before you close it. If the finding still fires on a record marked `done`, the walk warns `work-done-gap-open` on that record. `records` raises the same warning ([#2686](https://github.com/INTENTIUS/chant/issues/2686)). For each done item whose `source` names a finding and a region, it walks that region at the revision it reads, so the queue shows a closed item whose gap is still open. That walk needs git and a workspace declaration. Where either is missing or the region is gone, `records` stays silent and only `graph --intent` can tell.
+
+Some gaps can't be walked again, such as one that came from an issue. For those, the evidence is the proof. Pin the file the work produced by its hash:
+
+```bash
+chant workspace records pin design/screens/home.json
+```
+
+Copy the `path` and `sha256` it prints into `evidence` with a `title`, set `state: "done"` and `closed_on`, and open the pull request. `records` then reports drift if the file changes after the work was closed, as it does for a decision's pins.
+
+## Acceptance criteria
+
+A work item can say up front what done means ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). The reference kind's `work` block names the list and the implementer's field:
+
+```js
+acceptance: { field: "acceptance", implementer: "owner" },
+```
+
+A criterion pairs its `id` and `text` with the kind of check that proves it, in `verification`: one of `unit`, `integration`, `e2e`, `runtime` and `manual`. The home screen item has two:
+
+```yaml
+acceptance:
+  - id: "AC-1"
+    text: "The app builds each region of its home page from the region design/screens/home.json lists"
+    verification: "unit"
+  - id: "AC-2"
+    text: "Someone other than the implementer compares the rendered home page with the spec and finds them the same"
+    verification: "manual"
+```
+
+An evidence entry meets a criterion when it names it in `criterion`, carries `result: "pass"`, and has the criterion's `verification`. A `manual` verdict also names who gave it in `by`, and it counts only when that is not the `owner`:
+
+```yaml
+evidence:
+  - title: "Home page unit test"
+    url: "https://github.com/INTENTIUS/chant/actions/runs/1"
+    criterion: "AC-1"
+    verification: "unit"
+    result: "pass"
+  - title: "Design review"
+    url: "https://github.com/INTENTIUS/chant/pull/2"
+    criterion: "AC-2"
+    verification: "manual"
+    result: "pass"
+    by: "a-designer"
+```
+
+`records --json` gives each record `acceptance: { met, total, criteria }`, or `null` when it lists none. `ls --json` counts each item's criteria under its kind, and `status --json` lists them for the whole workspace in `acceptance`. A done item with a criterion unmet is warned `work-acceptance-unmet`, and [`chant workspace check`](/chant/cli/workspace-check/#declaration-checks) fails on it as `WSP117`. An item without the list reads as before, and so does a kind without the `acceptance` entry.
+
+A kind of your own opts in the same way. Its schema needs the `acceptance` list and the evidence fields `criterion`, `verification`, `result` and `by`; the reference `work.schema.json` has them.
+
+### From a steward's Op
+
+An Op that runs under a work item's [lease](/chant/cli/workspace-work/) can attach evidence with the `workEvidence` step. The step passes the run's lease, and the write goes through only while that lease is still the run's:
+
+```ts
+import { Op, phase, shell, workEvidence } from "@intentius/chant/op";
+
+export default Op({
+  name: "verify-home",
+  overview: "Run the home page test and record it against AC-1",
+  workLease: { item: "W-001", kind: "work/work.kind.mjs" },
+  phases: [
+    phase("Verify", [
+      shell("npm test --prefix app"),
+      workEvidence("AC-1", { result: "pass", title: "Home page unit test", url: "https://github.com/INTENTIUS/chant/actions/runs/1" }),
+    ]),
+  ],
+});
+```
+
+`workEvidence` takes a `url`, or a workspace `path` that it pins by hash. It writes the run's lease holder as `by`. It refuses a criterion the record doesn't list (`work-criterion-unknown`), a lease the run no longer holds, and any `manual` criterion (`work-acceptance-self-verified`): the run holding the lease is the implementer. A person records a manual verdict with `chant workspace records amend`. Add the evidence before the item moves to `done`, since a closed record never changes.

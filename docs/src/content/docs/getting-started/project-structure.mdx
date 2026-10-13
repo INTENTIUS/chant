@@ -21,7 +21,7 @@ my-infra/
 │   └── rules/           # Lexicon lint rules (gitignored)
 ├── skills/              # Lexicon skill files (gitignored)
 ├── chant.config.ts      # Project configuration
-├── tsconfig.json        # TypeScript config with chant path mappings
+├── tsconfig.json        # TypeScript config for your editor and tsc
 ├── package.json
 └── .gitignore
 ```
@@ -44,7 +44,28 @@ See [Config File Reference](/chant/configuration/config-file/) for all fields.
 
 ### `tsconfig.json`
 
-Standard TypeScript configuration. You generally don't need to edit this file. See [TypeScript Configuration](/chant/configuration/tsconfig/) for details.
+Standard TypeScript configuration for your editor and `tsc`. This is the file `chant init` writes.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+`bundler` resolution lets `./config` stay extensionless, which is how chant resolves it. See [TypeScript Configuration](/chant/configuration/tsconfig/) for details.
 
 ## Examples to learn from
 

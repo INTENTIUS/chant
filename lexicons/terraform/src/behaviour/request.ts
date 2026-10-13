@@ -129,7 +129,7 @@ export interface LiveResourceFacts {
 }
 
 export interface TerraformBehaviourRequestOptions
-  extends Pick<PredictBehaviourOptions, "environment" | "buildOutput" | "traffic" | "region" | "stack" | "owned"> {
+  extends Pick<PredictBehaviourOptions, "environment" | "buildOutput" | "traffic" | "from" | "region" | "stack" | "owned"> {
   entityNames: readonly string[];
   entities: ReadonlyMap<string, TerraformBehaviourEntity>;
   /**
@@ -613,6 +613,7 @@ export function terraformBehaviourRequest(options: TerraformBehaviourRequestOpti
     ...(options.stack !== undefined ? { stack: options.stack } : {}),
     ...(options.region !== undefined ? { region: options.region } : {}),
     ...(options.owned !== undefined ? { owned: options.owned } : {}),
+    from: options.from,
     traffic: options.traffic,
     edges: reconstructed.edges,
     edgeCoverage: edgeCoverageOf(reconstructed, [...unresolved]),

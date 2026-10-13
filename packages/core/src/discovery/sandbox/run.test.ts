@@ -14,7 +14,7 @@ const runtimePath = resolve(thisDir, "../../runtime");
 
 /**
  * chant #1045 Phase 2 — proves the actual isolation properties (not just
- * byte-identical output, which `examples/sandbox-differential.test.ts`
+ * byte-identical output, which `examples/sandbox-differential.e2e.test.ts`
  * already covers): a run-fallback file cannot read outside the project
  * directory, write anywhere, spawn a process, or read the ambient
  * environment, and a permission denial names the file and the operation

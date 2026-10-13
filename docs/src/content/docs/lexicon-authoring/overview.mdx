@@ -80,8 +80,10 @@ best-known readers.
 |--------|---------|-------------|
 | `lintRules()` | `LintRule[]` | Imperative lint rules |
 | `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`). No shipped lexicon uses this — see [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) |
+| `propertyClassNames()` | `string[]` | Class names whose instances are property-kind declarables (`createProperty`). The core COR001, COR004 and COR009 heuristics leave them out, since they live inside the resource that holds them ([#2957](https://github.com/INTENTIUS/chant/issues/2957)). Grafana implements it for its panels, rows, queries and variables |
 | `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
 | `activityContracts()` | `ActivityContract[]` | Args and return schemas for the Op activities this lexicon implements, so another lexicon's post-synth check can validate a step that calls one ([#2101](https://github.com/INTENTIUS/chant/issues/2101)). Rarely needed: the ordinary route is exporting them from `@intentius/chant-lexicon-<name>/op/activity-contracts`, which `loadActivityContracts` resolves by convention, the same way `loadActivities` resolves the implementations. This member is for a lexicon whose contracts are not reachable at that subpath |
+| `activities()` | `Record<string, ActivityFn>` | The Op activity implementations, keyed by the name a step's `fn` uses ([#2520](https://github.com/INTENTIUS/chant/issues/2520)). Read only for a lexicon declared by module path in `chant.config.ts`, which has no `op/activities` subpath. A package-backed lexicon leaves it out |
 | `coverageReport()` | `Promise<{ unaccountedKinds?: string[] }>` | Offline kind accounting from committed snapshots. `chant dev check-lexicon` fails when a lexicon that declares it leaves any upstream kind unaccounted (chant #1330) |
 | `auditCatalog()` | `Record<string, RuleMeta>` | Title, tier, fix kind and authority for this lexicon's checks, for `chant audit` — see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) |
 | `auditEntities(content)` | `Map<string, Declarable> \| Promise<Map<string, Declarable>>` | Parse standalone manifest content into the entity graph so entity-reading checks fire on `chant audit` (parse-to-graph). May be async for a lexicon whose parser inherently is (e.g. a wasm-backed HCL parser). Must tolerate malformed input |
@@ -96,6 +98,7 @@ best-known readers.
 | `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
 | `hoverProvider()` | `HoverInfo \| undefined` | LSP hover information for resource types |
 | `codeActionProvider()` | `CodeAction[]` | LSP code actions. No shipped lexicon uses this |
+| `symbolResolvers()` | `SymbolResolver[]` | Resolve `path#symbol` in this lexicon's languages for `chant workspace graph --intent`, such as a table in a `.sql` file, for a file in a member that configures the lexicon ([#3313](https://github.com/INTENTIUS/chant/issues/3313)). See [Symbol resolvers](/chant/lexicon-authoring/lsp-mcp/#symbol-resolvers) |
 
 **Import and migration**
 
@@ -103,7 +106,9 @@ best-known readers.
 |--------|---------|-------------|
 | `detectTemplate(data)` | `boolean` | Detect whether a parsed template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
+| `parserOptions()` | `ParserOptionSpec[]` | Options `templateParser` takes, set with `chant import --parser-option` |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
+| `embeddedImporters()` | `EmbeddedContentImporter[]` | Import this lexicon's content where another lexicon's resource holds it: otel collector configs in a k8s ConfigMap, prometheus rule groups in a `PrometheusRule` and `alertmanager.yml` in a ConfigMap, grafana dashboards in a ConfigMap. Core finds the owner at run time, so the host needs no dependency on it ([#2962](https://github.com/INTENTIUS/chant/issues/2962)). See [Implementing Import](/chant/lexicon-authoring/importing/#embedded-content) |
 | `agentConfigImporter()` | `AgentConfigImporter` | Re-express local agent configuration (skills, MCP servers, instruction files) discovered by `chant audit --agents` as this lexicon's resources — fountain implements it for `Agent`/`Environment` |
 | `migrationSource(from)` | `MigrationSource \| undefined` | Translate another lexicon's format into this one — gitlab and forgejo implement `migrationSource("github")` |
 
@@ -140,14 +145,22 @@ best-known readers.
 | `docs()` | `Promise<void>` | Generate documentation pages |
 | `mcpTools()` | `McpToolContribution[]` | MCP tool contributions — see [LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/) |
 | `mcpResources()` | `McpResourceContribution[]` | MCP resource contributions |
-| `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside |
+| `composites()` | `CompositeEntry[]` | The composites the lexicon exports, as static data: name, description, the resource kinds each bundles, and its parameters. The MCP `composites` tool, the `chant://composites` resource and `search` read it. `npm run generate:composite-catalogs` writes it to `src/composites/catalog.ts` |
+| `commands()` | `CommandGroup` | A CLI verb group mounted under `chant <name> <verb>` — core dispatches to it wholesale and knows nothing about what's inside. `<name>` cannot be one of core's own command words or `workspace`, which core reserves; a plugin that tries fails to load with an error naming the word |
+| `changedUnits(ctx)` | `Promise<string[]>` | The units a change touched, from the changed file paths, for a lexicon whose units are not chant source. The terraform lexicon answers with the `terraform.roots` whose directory, local modules or var files changed. `chant components fan-out --base` and the pull-request loop read it (#3183) |
 | `emulator` | `EmulatorCapability` or a list of them | Local emulator(s) `chant emulator` boots — see [Declaring a Local Emulator](/chant/lexicon-authoring/emulator/) |
 | `generateComponentPipeline()` | `ComponentPipelineResult` | Turn the component graph into CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
+| `generateOpWavesPipeline()` | `OpWavesPipelineResult` | Render an op waves spec (ordered waves of Op runs, each behind one gate) as CI YAML. CI-provider lexicons only (gitlab, github, forgejo) |
 | `generateOpPipeline()` | `OpPipelineResult` | Turn a set of scheduled Ops into cron-triggered CI YAML, one file per Op. CI-provider lexicons only (gitlab, github, forgejo) |
 | `opRuntime` | `OpRuntimeProvider` | Host Op runs: `chant run <op> --on <this lexicon>` starts, watches, cancels and wakes runs through it. Core ships the built-in `local` runtime and selects it when no `--on` is passed |
-| `buildRoots()` | `Promise<BuildRootContribution>` | Render config-declared build roots that are not typed chant source into entities, merged into the build before partitioning — k8s implements it for `k8s.kustomize.roots` |
+| `buildRoots()` | `Promise<BuildRootContribution>` | Render config-declared build roots that are not typed chant source into entities, merged into the build before partitioning — k8s implements it for `k8s.kustomize.roots`, and sql reads the `.sql` files in the build's source directory (`ctx.sourceDir`, listed with `findSourceFiles` from `@intentius/chant/discovery/files`) |
+| `projectCodegen()` | `ProjectCodegen` | Generate typed code into the project from sources its config declares, written by `chant generate` and checked for drift by every build. k8s implements it for `k8s.crds`, helm for `helm.charts` |
+| `graphMeta(entities)` | `Record<string, unknown> \| undefined` | Whole-read facts for `chant graph --format ir` to put under `meta`. The otel lexicon answers `{ collector }`, the topology of the project's collector config, which `chant workspace graph` lists as `collectors` |
+| `graphEdges(entities)` | `{ references, pipelines? } \| undefined` | Edges the lexicon's entities write as strings, resolved to entity keys: each `{ from, to, kind }`, or `dangling` with the string as written when nothing declared matches. `pipelines` maps a workflow or pipeline name to its entities. The github, forgejo and gitlab lexicons report CI `needs`, `uses:`, `trigger:`, `include:` and `extends` this way. See [`chant graph`](/chant/cli/graph/#ci-edges) |
+| `workspaceOutputs(entities, unread?)` | `{ outputs, gaps? } \| undefined` | The names this lexicon's declarations expose as workspace outputs, so another member's link can target them without an `output(...)`. The sql lexicon reports each table as `<schema>.<table>` and each column as `<schema>.<table>.<column>`. `chant workspace check` calls it offline on the folded source, and a file that did not fold makes the list a gap, so a link to a name outside it is unresolved rather than missing. See [Workspace outputs](/chant/lexicons/sql/workspace-outputs/) ([#3931](https://github.com/INTENTIUS/chant/issues/3931)) |
 | `configSchema` | `LexiconConfigSchema` (a `ZodObject`) | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |
+| `upstreamPins` | `(UpstreamPin & { label: string })[]` | More pins, for a lexicon that pins several upstreams (sql: one Postgres server per major). Each needs a unique `label` |
 | `init()` | `void \| Promise<void>` | Called once when the plugin loads. No shipped lexicon uses this |
 
 ## Owning a config namespace

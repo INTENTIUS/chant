@@ -1,6 +1,17 @@
 import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import {
+  detectForge,
+  FORGE_TOKEN_ORDER,
+  ForgeApiError,
+  forgejoForge,
+  githubForge,
+  type ForgeFetch,
+  type GithubShapedForge,
+} from "../../pr-forge";
+import { ghHostEnv } from "./gh-host";
+import { restPullRequestForge } from "./forge-pull-request";
 
 const execAsync = promisify(exec);
 
@@ -21,14 +32,11 @@ const execAsync = promisify(exec);
  * {@link mergeRequestContextFrom}.
  *
  * On Forgejo the same mode posts the same GitHub-shaped comment (chant
- * #2291): no forge split at all, because a Forgejo Actions job already sets
- * `GITHUB_REPOSITORY`, `GITHUB_API_URL` and `github.token` the same way a
- * GitHub Actions job does, and Forgejo's own `/api/v1` takes the identical
- * GET/POST/PATCH triple. The one thing that needed fixing was the URL: `gh
- * api` resolves a *relative* path against `/api/v3` for any host other than
- * `github.com`, and Forgejo does not serve `/api/v3` — verified on a real
- * Forgejo 12.0.4+gitea-1.22.0 instance during INTENTIUS/choudoufu#1027. See
- * {@link postOrUpdateComment} and {@link githubApiBaseFrom}.
+ * #2291): a Forgejo Actions job sets `GITHUB_REPOSITORY`, `GITHUB_API_URL`
+ * and `github.token` the way a GitHub Actions job does, and Forgejo's own
+ * `/api/v1` takes the same GET/POST/PATCH calls. The calls go through the
+ * forge client in `../../pr-forge.ts` over `fetch` (chant #3757), the client
+ * the pull-request loop uses. See {@link githubShapedForgeFrom}.
  *
  * `issue` needs no merge/pull request — its whole point is a cron trigger
  * that has none — so its forge split reads off a wider signal: any GitLab CI
@@ -39,48 +47,31 @@ const execAsync = promisify(exec);
  * recipe `comment` mode's note uses, and opens a new one only when it finds
  * none. Which is why that marker has to name the Op (chant #2319) and why
  * this mode refuses a step that supplies neither an `op` nor a `marker` — see
- * {@link issueMarker} and {@link noIssueIdentityMessage}.
+ * {@link issueMarker} and {@link noIssueIdentityMessage}. See {@link
+ * postOrUpdateGithubIssue} for why the GitHub/GHES/Forgejo lookup pages
+ * rather than using GitHub's Search API, and for the decision that this mode
+ * never closes the issue itself. Only a run outside any known CI job — no
+ * `CI_PROJECT_ID`, no `GITHUB_REPOSITORY` — falls back to `gh issue create`'s
+ * own ambient repo detection and the operator's `gh auth login`, still
+ * marker-prefixed so a later CI run of the same Op finds and edits it instead
+ * of opening a second one.
  *
- * none. See {@link postOrUpdateGithubIssue} for the GitHub/GHES/Forgejo half
- * — including why it does not use GitHub's Search API, and the decision that
- * this mode never closes the issue itself. Only a run outside any known CI
- * job — no `CI_PROJECT_ID`, no `GITHUB_REPOSITORY` — falls back to `gh issue
- * create`'s own ambient repo detection, still marker-prefixed so a later CI
- * run of the same Op finds and edits it instead of opening a second one.
+ * Both modes resolve the GitHub/Forgejo credential the same way, through
+ * {@link commentTokenFrom}, in pr-forge's `FORGE_TOKEN_ORDER` for the forge the
+ * run is on (chant #2320, #3807): `CHANT_GITHUB_TOKEN`, `GH_TOKEN`,
+ * `GITHUB_TOKEN` on GitHub; `CHANT_FORGEJO_TOKEN`, `FORGEJO_TOKEN`,
+ * `GH_TOKEN`, `GITHUB_TOKEN` on Forgejo. It refuses by name before any call
+ * when none is set ({@link noCommentTokenMessage}, {@link noIssueTokenMessage}).
  *
- * The credential did not always travel (chant #2320). The URL and the
- * GET/PATCH/POST triple matched `postOrUpdateComment`'s, but that function
- * resolved a token through {@link commentTokenFrom} and forwarded it as
- * `GH_TOKEN` while the issue path forwarded no environment at all, so
- * `CHANT_FORGEJO_TOKEN` never reached `gh`. Both paths now resolve the same
- * way, in the same order, and forward the same variable, with the two
- * refusals differing only in what they name ({@link noCommentTokenMessage},
- * {@link noIssueTokenMessage}). The one deliberate exception is the `gh issue
- * create` fallback above, which runs outside every CI job and so leaves the
- * credential to `gh auth login` — see the comment on that branch. Parity with
- * `comment` mode is not a working Forgejo write, as the next paragraph says.
- *
- * Settled against a real Forgejo 12.0.4+gitea-1.22.0 instance under chant
- * #2315, the way `comment` mode's endpoints were under #2291: the *read*
- * half works — plain paginated listing (no `/search/issues`, confirmed
- * absent from Forgejo's own OpenAPI spec) and the `.pull_request == null`
- * filter both behave exactly as they do against github.com. The *write*
- * half did not, for a reason no mock could have caught: `gh`'s own
- * `GH_TOKEN`/`GITHUB_TOKEN` only authenticate a request to github.com or a
- * ghe.com subdomain (`gh help environment`), never a self-hosted Forgejo,
- * and both this function's POST/PATCH calls and `postOrUpdateComment`'s
- * carried only `GH_TOKEN`. Every write either made on a real Forgejo
- * instance failed with `{"message":"token is required"}` (HTTP 401), with
- * `GH_DEBUG=api` showing no `Authorization` header at all — which is what
- * shipped in 0.62.0 and 0.63.0, `comment` mode included.
- *
- * Both paths now forward that credential as `GH_ENTERPRISE_TOKEN` as well as
- * `GH_TOKEN`, which is the variable `gh` reads for a host in neither of those
- * two classes (chant #2333). Re-run against the same live instance from a
- * shell with no stored `gh auth login`, the identical POST now sends
- * `Authorization: token …` and returns HTTP 201. See {@link ghCredentialEnv}
- * for the whole probe, for why `GH_HOST` turned out not to be needed
- * alongside it, and for why github.com's own behavior is untouched.
+ * Until #3757 these two modes shelled to `gh api`. That reached Forgejo only
+ * after two fixes: a full URL, because `gh` resolves a relative path against
+ * `/api/v3` (#2291), and the token under `GH_ENTERPRISE_TOKEN`, because `gh`
+ * sends `GH_TOKEN` only to github.com and `ghe.com` hosts and a Forgejo write
+ * arrived with no `Authorization` header (#2315, #2333, verified against a
+ * real Forgejo 12.0.4+gitea-1.22.0 instance). The client sends the header
+ * itself, so neither depends on how `gh` classifies a host. {@link
+ * ghCredentialEnv} keeps that fix for the `gh` calls `lexiconUpgrade` still
+ * makes.
  */
 export type ReconcileMode = "pull-request" | "issue" | "report" | "comment";
 
@@ -471,23 +462,37 @@ export interface CommentToken {
 }
 
 /**
- * Resolve the token `postOrUpdateComment` sends with, most specific first
- * (chant #2291). `gh` itself already resolves `GH_TOKEN`/`GITHUB_TOKEN`
- * ambiently from the process environment, and the generated workflow sets
- * both to `${{ github.token }}` for every non-`report` finding mode — on
- * Forgejo the same way as on GitHub, and the real-instance read confirmed
- * `github.token` is populated there and good for a 200 read and a 201 write,
- * authored as `forgejo-actions`. So the common case needs nothing set beyond
- * what the generator already emits.
+ * Which GitHub-shaped forge a run is on: Forgejo when `detectForge` says so
+ * (`FORGEJO_ACTIONS`/`GITEA_ACTIONS`, or a `GITHUB_API_URL` ending in
+ * `/api/v1`), or when the API base ends in `/api/v1`, which is how a step
+ * posting to some other Forgejo instance names it. GitHub serves `/api/v3`
+ * or `api.github.com`, never `/api/v1`. Anything else is GitHub.
+ */
+export function githubShapedKindFrom(env: Record<string, string | undefined>): "github" | "forgejo" {
+  if (detectForge(env) === "forgejo") return "forgejo";
+  return /\/api\/v1$/.test(githubApiBaseFrom(env)) ? "forgejo" : "github";
+}
+
+/**
+ * Resolve the token the `comment` and `issue` modes post with on GitHub and
+ * Forgejo (chant #2291), in pr-forge's `FORGE_TOKEN_ORDER` for the forge the
+ * run is on (#3807), so this and `forgeTargetFromEnv` cannot drift apart.
+ * GitHub reads `CHANT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`; Forgejo reads
+ * `CHANT_FORGEJO_TOKEN`, `FORGEJO_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`. The
+ * generated workflow sets `GH_TOKEN` and `GITHUB_TOKEN` to
+ * `${{ github.token }}` for every non-`report` finding mode, on Forgejo the
+ * same way as on GitHub, so the common case needs nothing set beyond what the
+ * generator already emits.
  *
- * `CHANT_FORGEJO_TOKEN` is checked first for the case that ambient token
- * cannot cover: a run posting to a Forgejo instance other than the one the
- * job executes on, where `github.token`'s scope stops at its own instance.
- * Resolving explicitly (rather than leaving it entirely to `gh`) also buys a
- * named failure before the shell-out, in place of `gh`'s own opaque 401.
+ * The chant-specific variable comes first for the case that ambient token
+ * cannot cover: a run posting to an instance other than the one the job
+ * executes on, where `github.token`'s scope stops at its own instance.
+ * `CHANT_FORGEJO_TOKEN` is no longer read on a GitHub run. A run with none of
+ * the names is refused by name before any call, in place of the forge's own
+ * opaque 401.
  */
 export function commentTokenFrom(env: Record<string, string | undefined>): CommentToken | undefined {
-  for (const source of ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
+  for (const source of FORGE_TOKEN_ORDER[githubShapedKindFrom(env)]) {
     const value = env[source]?.trim();
     if (value) return { value, source };
   }
@@ -562,8 +567,8 @@ export function noCommentTokenMessage(repo: string, number: number): string {
   return (
     `reconcilePr mode "comment" has pull request ${repo}#${number} to post its finding on and no token to ` +
     "post it with. GH_TOKEN or GITHUB_TOKEN, set from github.token, already covers this on a GitHub Actions " +
-    "or Forgejo Actions run — set CHANT_FORGEJO_TOKEN to post against a different instance than the one the " +
-    "job runs on. CHANT_FORGEJO_TOKEN is read first where the two must differ."
+    "or Forgejo Actions run — set CHANT_GITHUB_TOKEN (GitHub) or CHANT_FORGEJO_TOKEN (Forgejo) to post " +
+    "against a different instance than the one the job runs on. It is read first where the two must differ."
   );
 }
 
@@ -572,84 +577,91 @@ export function noIssueTokenMessage(repo: string): string {
   return (
     `reconcilePr mode "issue" has repository ${repo} to open or edit its finding in and no token to do it ` +
     "with. GH_TOKEN or GITHUB_TOKEN, set from github.token, already covers this on a GitHub Actions or " +
-    "Forgejo Actions run — set CHANT_FORGEJO_TOKEN to post against a different instance than the one the " +
-    "job runs on. CHANT_FORGEJO_TOKEN is read first where the two must differ."
+    "Forgejo Actions run — set CHANT_GITHUB_TOKEN (GitHub) or CHANT_FORGEJO_TOKEN (Forgejo) to post " +
+    "against a different instance than the one the job runs on. It is read first where the two must differ."
   );
 }
 
 /**
- * Post `body` as one comment on `ctx`'s pull request, or edit the comment this
- * Op already owns there. The sticky-comment recipe the github lexicon's
- * `PrPlanReport` uses, run from the activity instead of from generated YAML:
- * find the comment whose body starts with `marker`, PATCH it when there is
- * one, POST otherwise. `gh` ships on GitHub's hosted runners and is already
- * this activity's dependency for the issue and pull-request modes, so the
- * mode needs nothing new on the runner — Forgejo's `act_runner` ships `gh`
- * too, and Forgejo's `/api/v1` takes the same calls (chant #2291).
+ * The GitHub or Forgejo client a `comment` or `issue` finding posts through
+ * (#3757): `../../pr-forge.ts`, the one the pull-request loop already uses,
+ * over `fetch`. These two modes used to shell to `gh`, which needed `gh` on
+ * the runner and needed it to attach a credential to a host it did not
+ * recognise (#2333). The token is the one {@link commentTokenFrom} resolved
+ * and the base is {@link githubApiBaseFrom}'s, so nothing about what a step
+ * sets has changed.
  *
- * Every call targets a full URL built from {@link githubApiBaseFrom} rather
- * than the bare relative path this used before #2291 — see that function for
- * why a bare path broke Forgejo specifically. The token is resolved
- * explicitly via {@link commentTokenFrom} and forwarded through {@link
- * ghCredentialEnv}, which is a strict superset of `gh`'s own ambient
- * resolution: same value in the common case, a named refusal instead of
- * `gh`'s opaque 401 when neither is set, and — since chant #2333 — the same
- * value under `GH_ENTERPRISE_TOKEN` too, without which the full URL #2291
- * built reached Forgejo carrying no credential.
+ * The two forges share every call these modes make and differ on two things
+ * the client needs to know: the page parameter (`per_page` against `limit`)
+ * and the authorization scheme. A Forgejo run is told apart the way
+ * `../gate-resume.ts` tells it apart, by `FORGEJO_ACTIONS` or
+ * `GITEA_ACTIONS`, and also by an API base ending in `/api/v1`, which is how
+ * a step posting to some other Forgejo instance (`CHANT_FORGEJO_TOKEN`) names
+ * it. GitHub serves `/api/v3` or `api.github.com`, never `/api/v1`.
+ */
+export function githubShapedForgeFrom(
+  env: Record<string, string | undefined>,
+  repo: string,
+  token: CommentToken,
+  signal?: AbortSignal,
+): GithubShapedForge {
+  const apiBase = githubApiBaseFrom(env);
+  const forgejo = githubShapedKindFrom(env) === "forgejo";
+  // Read at call time, so a test that stubs the global sees its stub.
+  const fetchImpl: ForgeFetch = (url, init) => globalThis.fetch(url, { ...init, ...(signal ? { signal } : {}) });
+  const opts = { apiBase, repo, token: token.value, fetch: fetchImpl };
+  if (!forgejo) return githubForge(opts);
+  let host: string;
+  try {
+    host = new URL(apiBase).host;
+  } catch {
+    host = apiBase;
+  }
+  return forgejoForge({ ...opts, host });
+}
+
+/** A forge's refusal, carrying which variable the token came from, the way the GitLab half's errors do. */
+async function withTokenSource<T>(token: CommentToken, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (err instanceof ForgeApiError) throw new Error(`${err.message} (token from ${token.source}).`);
+    throw err;
+  }
+}
+
+/**
+ * Post `body` as one comment on `ctx`'s pull request, or edit the comment this
+ * Op already owns there: the comment whose body starts with `marker`, found
+ * by paging every comment on the pull request, PATCHed when there is one and
+ * POSTed when there is not. The same note recipe `PrPlanReport` and the
+ * pull-request loop use. A missing token is refused by name before any call.
  */
 async function postOrUpdateComment(
   ctx: PullRequestContext,
   marker: string,
   body: string,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<string | undefined> {
   const token = commentTokenFrom(process.env);
   if (!token) throw new Error(noCommentTokenMessage(ctx.repo, ctx.number));
-  const env = ghCredentialEnv(process.env, token);
-
-  const base = githubApiBaseFrom(process.env);
-  const listUrl = `${base}/repos/${ctx.repo}/issues/${ctx.number}/comments`;
-  const jq = `map(select(.body | startswith("${marker}"))) | .[0].id // empty`;
-  const { stdout: found } = await execAsync(
-    `gh api ${shellQuote(listUrl)} --paginate --jq ${shellQuote(jq)}`,
-    { signal, env },
-  );
-  // `--paginate` prints one `--jq` result per page, so take the first line
-  // that is an id and ignore the empty ones the other pages produce.
-  const existing = found.split("\n").map((l) => l.trim()).find((l) => /^\d+$/.test(l));
-  const field = `body=${marker}\n\n${body}`;
-
-  if (existing) {
-    const { stdout } = await execAsync(
-      `gh api --method PATCH ${shellQuote(`${base}/repos/${ctx.repo}/issues/comments/${existing}`)} ` +
-        `-f ${shellQuote(field)} --jq .html_url`,
-      { signal, env },
-    );
-    return stdout.trim();
-  }
-  const { stdout } = await execAsync(
-    `gh api --method POST ${shellQuote(listUrl)} -f ${shellQuote(field)} --jq .html_url`,
-    { signal, env },
-  );
-  return stdout.trim();
+  const forge = githubShapedForgeFrom(process.env, ctx.repo, token, signal);
+  return withTokenSource(token, () => forge.upsertNote(ctx.number, marker, `${marker}\n\n${body}`));
 }
 
 // ── The GitHub/GHES/Forgejo sticky issue (#2297) ────────────────────────────
 
 /**
  * Minimal `gh` invocation shape {@link postOrUpdateGithubIssue} threads its
- * calls through. `reconcilePr` wraps `execAsync` (carrying its own `signal`)
- * to this shape; `lexiconUpgrade` passes its injectable `GhRunner` straight
- * through, since the two already share this signature. One function, not two
- * copies, because the recipe below — search, then PATCH or POST — is
- * identical for both callers; only the issue's title/body and the marker that
- * owns it differ.
+ * calls through. `lexiconUpgrade` passes its injectable `GhRunner` straight
+ * through, since the two share this signature. `reconcilePr` used to wrap
+ * `execAsync` to it too, before its `issue` mode moved onto the forge client
+ * (#3757).
  *
  * The `opts` argument exists so `postOrUpdateGithubIssue` can hand `gh` the
  * token it resolved (chant #2320) rather than leaving `gh` to find one
  * ambiently. A caller that adds nothing of its own can ignore it and pass it
- * straight to `exec`; `reconcilePr` merges it with the `signal` it already
- * carries. It is deliberately not a whole `ExecOptions`: an implementation
+ * straight to `exec`. It is deliberately not a whole `ExecOptions`: an implementation
  * that had to honour `cwd` or `shell` too would be a second exec wrapper, and
  * the point of this type is that there is only one.
  */
@@ -660,16 +672,17 @@ export type GhExec = (
 
 /**
  * Open `title`/`body` as one GitHub-shaped issue in `repo`, or edit the issue
- * this caller already owns there (#2297) — `postOrUpdateComment`'s issue
- * counterpart, and the GitHub/GHES/Forgejo sibling of GitLab's
- * `postOrUpdateIssue` (#2292): find by marker, PATCH when found, POST when
- * not, so a nightly finding carries one issue holding the current state
- * instead of stacking a new one every run. Shared by `reconcilePr`'s own
- * `issue` mode and `lexiconUpgrade`'s per-lexicon upgrade-status issue.
+ * this caller already owns there (#2297), over `gh api`: find by marker,
+ * PATCH when found, POST when not, so a nightly finding carries one issue
+ * holding the current state instead of stacking a new one every run.
+ * `lexiconUpgrade`'s per-lexicon upgrade-status issue uses it. `reconcilePr`'s
+ * `issue` mode used it until #3757 and now keeps the same issue by the same
+ * recipe through the forge client's `upsertIssue` (`../../pr-forge.ts`), so
+ * the reasoning below covers both.
  *
- * Every call targets a full URL built from {@link githubApiBaseFrom}, the
- * same as `postOrUpdateComment` (#2291) — so this reaches GitHub Enterprise
- * Server the same way it reaches github.com.
+ * Every call targets a full URL built from {@link githubApiBaseFrom} (#2291),
+ * so this reaches GitHub Enterprise Server and Forgejo the same way it
+ * reaches github.com.
  *
  * The credential is resolved and forwarded the same way too (chant #2320),
  * through {@link commentTokenFrom} and out through {@link ghCredentialEnv} on
@@ -721,7 +734,7 @@ export type GhExec = (
  *    #2333 gave them a credential `gh` would apply to that host — see the
  *    module doc's `issue` bullet and {@link ghCredentialEnv}.
  *
- * So this reuses the recipe `postOrUpdateComment` already proved for PR
+ * So this reuses the recipe `comment` mode already proved for PR
  * comments: list, `--paginate`, filter with `--jq` by an exact `startswith`
  * prefix match, which is correct no matter how many pages it takes. The cost
  * is real — a repository with many thousands of issues pays for every page
@@ -771,7 +784,8 @@ export async function postOrUpdateGithubIssue(
     `gh api ${shellQuote(listUrl)} --paginate --jq ${shellQuote(jq)}`,
     { env },
   );
-  // `--paginate` prints one `--jq` result per page, same as postOrUpdateComment.
+  // `--paginate` prints one `--jq` result per page, so take the first line
+  // that is an id and ignore the empty ones the other pages produce.
   const existing = found.split("\n").map((l) => l.trim()).find((l) => /^\d+$/.test(l));
   const titleField = shellQuote(`title=${title}`);
   const bodyField = shellQuote(`body=${marker}\n\n${body}`);
@@ -999,7 +1013,7 @@ async function gitlabRequest(
 
 /**
  * Find the note this Op already owns on `ctx`'s merge request, by the same
- * hidden marker `postOrUpdateComment` looks a GitHub comment up by: the
+ * hidden marker `comment` mode looks a GitHub comment up by: the
  * marker is the body's first line and the match is a prefix.
  *
  * Pages the way GitLab pages, following the `x-next-page` response header
@@ -1040,11 +1054,10 @@ async function findOwnedNote(
  * so a merge request pushed to five times carries one note holding the
  * current finding rather than five stale ones.
  *
- * Over `fetch` rather than a CLI. `gh` is on GitHub's hosted runners and is
- * already this activity's dependency for the issue and pull-request modes;
- * `glab` is on no GitLab runner by default, and a job whose finding step
- * depended on it would fail on the ordinary `node:22-slim` image the
- * generator emits.
+ * Over `fetch` rather than a CLI: `glab` is on no GitLab runner by default,
+ * and a job whose finding step depended on it would fail on the ordinary
+ * `node:22` image the generator emits. The GitHub and Forgejo half
+ * follows the same rule since #3757.
  */
 async function postOrUpdateNote(
   ctx: MergeRequestContext,
@@ -1247,7 +1260,10 @@ function resolveMarker(mode: ReconcileMode, args: ReconcilePrArgs): string | und
  * supplies one, in which case that text is used verbatim and no plan is
  * derived (chant #2087).
  *
- * Requires `chant` and (for non-report modes) `gh`/`git` in the environment.
+ * Requires `chant` in the environment. `comment` and `issue` reach the forge
+ * over `fetch` and need nothing else in CI (#3757); `pull-request` needs `git`
+ * and `gh`, and so does an `issue` run outside any CI job, which leaves the
+ * credential to `gh auth login`.
  */
 export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): Promise<ReconcileResult> {
   const mode = args.mode ?? "pull-request";
@@ -1291,13 +1307,17 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
     }
 
     // GitHub, GHES, or Forgejo next: any job that ran under GitHub Actions or
-    // Forgejo Actions carries GITHUB_REPOSITORY (#2297) — see
-    // postOrUpdateGithubIssue's own doc comment for the search mechanism and
-    // the close decision.
+    // Forgejo Actions carries GITHUB_REPOSITORY (#2297). The issue is kept
+    // through the forge client (#3757) — see postOrUpdateGithubIssue's doc
+    // comment for why the lookup pages rather than searches, and for the
+    // close decision.
     const repo = process.env.GITHUB_REPOSITORY;
     if (repo) {
-      const issueUrl = await postOrUpdateGithubIssue(repo, marker, title, summary, (cmd, opts) =>
-        execAsync(cmd, { signal, ...opts }),
+      const token = commentTokenFrom(process.env);
+      if (!token) throw new Error(noIssueTokenMessage(repo));
+      const forge = githubShapedForgeFrom(process.env, repo, token, signal);
+      const issueUrl = await withTokenSource(token, () =>
+        forge.upsertIssue(marker, title, `${marker}\n\n${summary}`),
       );
       return { mode, summary, entries, issueUrl };
     }
@@ -1368,9 +1388,18 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
   await execAsync(`git add ${shellQuote(output)}`, { signal });
   await execAsync(`git commit -m ${shellQuote(title)}`, { signal });
   await execAsync(`git push -u origin ${shellQuote(branch)}`, { signal });
+  // `gh pr` speaks GraphQL, which Forgejo does not serve, and GitLab has no
+  // `gh`: a Forgejo or GitLab job opens the pull request over REST (#3798).
+  const forge = await restPullRequestForge(process.env, { fetch: (url, init) => globalThis.fetch(url, { ...init, ...(signal ? { signal } : {}) }) });
+  if (forge) {
+    const pr = await forge.openPullRequest({ head: branch, title, body: summary });
+    return { mode, branch, summary, entries, prUrl: pr.url ?? "" };
+  }
+  // `gh pr create` names no host, so on GitHub Enterprise Server it is told
+  // the job's own (#3780). See `./gh-host.ts`.
   const { stdout } = await execAsync(
     `gh pr create --title ${shellQuote(title)} --body ${shellQuote(summary)} --head ${shellQuote(branch)}`,
-    { signal },
+    { signal, env: await ghHostEnv(process.env) },
   );
 
   return { mode, branch, summary, entries, prUrl: stdout.trim() };

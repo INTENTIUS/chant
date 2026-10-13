@@ -1,6 +1,6 @@
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { findResourceLiterals, getNestedObject, getNestedString, getProp, lineCol } from "./argo-ast";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * FLUX001: GitRepository must pin spec.ref

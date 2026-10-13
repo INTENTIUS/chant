@@ -5,7 +5,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import { recommendedInputs } from "./data/recommended-inputs";
 
 const SETUP_ACTIONS = new Set(Object.keys(recommendedInputs));

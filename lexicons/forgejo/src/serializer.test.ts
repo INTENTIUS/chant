@@ -47,12 +47,12 @@ describe("forgejoSerializer — github-style source roundtrip", () => {
     expect(primary).toContain("npm run build");
   });
 
-  test("drops permissions and continue-on-error, warning on each", () => {
+  test("drops permissions silently, drops continue-on-error with a warning on each", () => {
     const result = asResult(forgejoSerializer.serialize(buildSource()));
     expect(result.primary).not.toContain("permissions");
     expect(result.primary).not.toContain("continue-on-error");
-    // workflow permissions + job continue-on-error + step continue-on-error
-    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(1);
+    // job continue-on-error + step continue-on-error
+    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(0);
     expect((result.warnings ?? []).filter((w) => w.includes("continue-on-error"))).toHaveLength(2);
   });
 
@@ -88,15 +88,15 @@ describe("forgejoSerializer — uses: action resolution", () => {
     const { primary } = asResult(
       forgejoSerializer.serialize(withSteps(Checkout({}).step, SetupNode({ nodeVersion: "22" }).step)),
     );
-    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/checkout@v4`);
-    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/setup-node@v4`);
+    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/checkout@v7`);
+    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/setup-node@v7`);
   });
 
   test("forgejo.actionsRoot override changes the rewritten base", () => {
     const out = forgejoSerializer.serialize(withSteps(Checkout({}).step), undefined, {
       config: { forgejo: { actionsRoot: "https://codeberg.org" } },
     });
-    expect(asResult(out).primary).toContain("uses: https://codeberg.org/actions/checkout@v4");
+    expect(asResult(out).primary).toContain("uses: https://codeberg.org/actions/checkout@v7");
   });
 
   test("an unmapped action ref is passed through (WFJ010 reports it post-synth)", () => {
@@ -128,7 +128,7 @@ describe("forgejoSerializer — multi-workflow output", () => {
 // "@intentius/chant-lexicon-github"`); nothing forgejo-specific is written for
 // it. This is the functional check that inheritance actually holds, not just
 // that the type is importable: the dialect still drops the job's
-// `permissions` and remaps its runner label, and the sticky-comment step — a
+// `permissions` (but for `id-token`) and remaps its runner label, and the sticky-comment step — a
 // plain `gh api` script with no `uses:` at all — passes through the dialect
 // transform untouched, because the dialect only ever rewrites job-level
 // `permissions:`/`environment:`/action refs and never looks at step content.
@@ -162,9 +162,9 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     const result = asResult(out);
     expect(result.primary).toContain("runs-on: docker");
     expect(result.primary).not.toContain("ubuntu-latest");
-    // The job carries `permissions` — dropped by the dialect, warned once.
+    // The job carries `permissions` with no `id-token`, which the dialect drops.
     expect(result.primary).not.toContain("permissions:");
-    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(1);
+    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(0);
     // The sticky-comment mechanism is a raw script, nothing to remap or drop.
     expect(result.primary).toContain("Post or update PR comment");
     expect(result.primary).toContain("gh api");
@@ -176,5 +176,27 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     expect(result.primary).toContain('api_base="${GITHUB_API_URL%/}"');
     expect(result.primary).not.toMatch(/gh api[^\n]*"repos\//);
     expect(result.primary).not.toContain("-f body=@");
+  });
+});
+
+describe("forgejoSerializer — comments from the github declarations (#3667)", () => {
+  test("the workflow, job and step comments survive the dialect", () => {
+    const workflow = new Workflow({
+      comment: "Rendered from ci.ts.",
+      name: "CI",
+      on: { push: { branches: ["main"] } },
+      jobs: {
+        build: new Job({
+          comment: "One job.",
+          "runs-on": "ubuntu-latest",
+          steps: [new Step({ uses: "actions/checkout@v4" }), new Step({ comment: "Why it runs.", run: "npm test" })],
+        }),
+      },
+    }) as unknown as Declarable;
+    const { primary } = asResult(forgejoSerializer.serialize(new Map([["workflow", workflow]])));
+    expect(primary.startsWith("# Rendered from ci.ts.\n\nname: CI\n")).toBe(true);
+    expect(primary).toContain("  # One job.\n  build:\n    runs-on: docker\n");
+    expect(primary).toContain("      # Why it runs.\n      - run: npm test\n");
+    expect(primary).not.toContain("comment:");
   });
 });

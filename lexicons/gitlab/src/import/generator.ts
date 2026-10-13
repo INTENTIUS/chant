@@ -15,6 +15,7 @@ const TYPE_TO_CLASS: Record<string, string> = {
   "GitLab::CI::Job": "Job",
   "GitLab::CI::Default": "Default",
   "GitLab::CI::Workflow": "Workflow",
+  "GitLab::CI::Pipeline": "Pipeline",
 };
 
 /**
@@ -44,6 +45,9 @@ const PROPERTY_CONSTRUCTORS: Record<string, string> = {
   inherit: "Inherit",
 };
 
+/** An object key as TypeScript accepts it: bare when it is an identifier, quoted otherwise. */
+const tsKey = (key: string): string => (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key));
+
 /**
  * Generate TypeScript source code from a GitLab CI IR.
  */
@@ -68,14 +72,18 @@ export class GitLabGenerator implements TypeScriptGenerator {
     lines.push(`import { ${imports} } from "@intentius/chant-lexicon-gitlab";`);
     lines.push("");
 
+    // A Pipeline resource declares the stages and includes (#3742); without
+    // one, the metadata is written as comments.
+    const hasPipeline = ir.resources.some((r) => r.type === "GitLab::CI::Pipeline");
+
     // Emit stages if present in metadata
-    if (ir.metadata?.stages && Array.isArray(ir.metadata.stages)) {
+    if (!hasPipeline && ir.metadata?.stages && Array.isArray(ir.metadata.stages)) {
       lines.push(`// Pipeline stages: ${(ir.metadata.stages as string[]).join(", ")}`);
       lines.push("");
     }
 
     // Emit includes as comments
-    if (ir.metadata?.include) {
+    if (!hasPipeline && ir.metadata?.include) {
       lines.push("// Imported includes (not converted):");
       const includes = Array.isArray(ir.metadata.include) ? ir.metadata.include : [ir.metadata.include];
       for (const inc of includes) {
@@ -117,6 +125,9 @@ export class GitLabGenerator implements TypeScriptGenerator {
       if (key === "rules" && Array.isArray(value)) {
         used.add("Rule");
       }
+      if (key === "include" && (Array.isArray(value) ? value : [value]).some((i) => typeof i === "object" && i !== null)) {
+        used.add("Include");
+      }
     }
   }
 
@@ -128,7 +139,7 @@ export class GitLabGenerator implements TypeScriptGenerator {
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined || value === null) continue;
       const emitted = this.emitValue(key, value, depth + 1);
-      entries.push(`${innerIndent}${key}: ${emitted},`);
+      entries.push(`${innerIndent}${tsKey(key)}: ${emitted},`);
     }
 
     if (entries.length === 0) return "{}";
@@ -143,6 +154,16 @@ export class GitLabGenerator implements TypeScriptGenerator {
     if (constructor && typeof value === "object" && !Array.isArray(value)) {
       const propsStr = this.emitProps(value as Record<string, unknown>, depth);
       return `new ${constructor}(${propsStr})`;
+    }
+
+    // A Pipeline's include: each object is an Include, a string stays a string.
+    if (key === "include") {
+      const item = (i: unknown, d: number) =>
+        typeof i === "object" && i !== null && !Array.isArray(i) ? `new Include(${this.emitProps(i as Record<string, unknown>, d)})` : this.emitLiteral(i, d);
+      if (!Array.isArray(value)) return item(value, depth);
+      const indent = "  ".repeat(depth);
+      const innerIndent = "  ".repeat(depth + 1);
+      return `[\n${value.map((i) => `${innerIndent}${item(i, depth + 1)},`).join("\n")}\n${indent}]`;
     }
 
     // Rules array — wrap each item in Rule constructor
@@ -183,7 +204,7 @@ export class GitLabGenerator implements TypeScriptGenerator {
       if (entries.length === 0) return "{}";
       const indent = "  ".repeat(depth);
       const innerIndent = "  ".repeat(depth + 1);
-      const items = entries.map(([k, v]) => `${innerIndent}${k}: ${this.emitLiteral(v, depth + 1)},`);
+      const items = entries.map(([k, v]) => `${innerIndent}${tsKey(k)}: ${this.emitLiteral(v, depth + 1)},`);
       return `{\n${items.join("\n")}\n${indent}}`;
     }
 

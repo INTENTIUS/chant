@@ -8,7 +8,7 @@ import type { PostSynthContext } from "../../post-synth";
 import { DECLARABLE_MARKER } from "../../../declarable";
 import { when, eq, gt, allOf, run, report } from "../../../op";
 import type { ConvergeRule } from "../../../op";
-import type { ConvergeSymptom } from "../../../lifecycle/symptoms";
+import type { ConvergeSymptom, ResourceSymptom } from "../../../lifecycle/symptoms";
 import { ops014 } from "./ops014-converge-rule-refusals";
 
 function makeEntity(entityType: string, props: Record<string, unknown>) {
@@ -259,5 +259,27 @@ describe("OPS014: converge-rule-refusals", () => {
       ["converge", convergeOpEntity("converge", [rule], { dial: "apply", entityType: "Legacy::Op" })],
     ]));
     expect(ops014.check(ctx)).toHaveLength(0);
+  });
+});
+
+describe("OPS014 over a ConvergeOp with an observer step (#2778)", () => {
+  test("its rules are checked against ResourceSymptom's fields", () => {
+    const observed = (rules: unknown[]) =>
+      makeEntity("Chant::Op", {
+        name: "box-converge",
+        overview: "test",
+        labels: { Converge: "true", Env: "box", Dial: "apply", Observe: "step" },
+        phases: [
+          { name: "Observe", steps: [{ kind: "activity", fn: "spriteServicesObserve", args: {}, id: "observe" }] },
+          { name: "Converge", steps: [{ kind: "activity", fn: "convergeTick", args: { rules, observed: { kind: "step-output-ref", step: "observe" } } }] },
+        ],
+      });
+    const restartOp = opEntity("restart-service", [{ kind: "activity", fn: "spriteServiceRestart", args: {} }]);
+    const good = when<ResourceSymptom>(eq("status", "drifted"), run("restart-service"), { id: "restart", why: "x" });
+    const wrongField = { ...good, id: "adopt", when: { kind: "field-comparison", field: "adoptCount", op: "gt", value: 0 } };
+    const ok = ops014.check(makeCtxFromEntities(new Map<string, unknown>([["c", observed([good])], ["r", restartOp]])));
+    expect(ok).toEqual([]);
+    const bad = ops014.check(makeCtxFromEntities(new Map<string, unknown>([["c", observed([wrongField])], ["r", restartOp]])));
+    expect(bad.map((d) => d.message)).toEqual([expect.stringMatching(/rule "adopt": predicate is outside the evaluable subset/)]);
   });
 });

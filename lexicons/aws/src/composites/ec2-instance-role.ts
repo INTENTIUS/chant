@@ -22,6 +22,7 @@ const EC2_ASSUME_ROLE = {
   ],
 };
 
+/** An IAM role that EC2 can assume, with the instance profile that attaches it to an instance. */
 export const Ec2InstanceRole = Composite((props: Ec2InstanceRoleProps) => {
   const { defaults } = props;
 

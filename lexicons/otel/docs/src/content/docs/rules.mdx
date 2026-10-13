@@ -1,0 +1,48 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the OpenTelemetry Collector lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The OpenTelemetry Collector lexicon provides **27** rules: 2 lint rules and 25 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `OTEL001` | error | correctness | a component id or instance name the collector can't parse. |
+| `OTEL002` | error | security | a credential written as a literal in a component's config. |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `OTEL101` | A pipeline uses a receiver, processor or exporter that is not declared |
+| `OTEL102` | A pipeline has no receivers or no exporters |
+| `OTEL103` | A declared component is never used |
+| `OTEL104` | service.extensions enables an extension that is not declared |
+| `OTEL105` | memory_limiter is not the first processor in a pipeline |
+| `OTEL106` | A pipeline id or component reference is not valid collector syntax |
+| `OTEL107` | A component's config breaks its definition's rules |
+| `OTEL108` | Two components or two pipelines declare the same id |
+| `OTEL109` | A custom component has no schema pin |
+| `OTEL112` | A connector joins pipelines whose signals it does not convert |
+| `OTEL113` | Pipelines form a cycle through connectors |
+| `OTEL114` | A connector id is also declared as a receiver or exporter |
+| `OTEL115` | A routing connector routes to a pipeline that does not receive from it |
+| `OTEL116` | A connector splits metrics by a high-cardinality GenAI attribute |
+| `OTEL117` | Two components the collector starts listen on the same address |
+| `OTEL118` | A pipeline processor can remove or replace a resource attribute chant's telemetry attribution stamps |
+| `OTEL119` | A collector config sets a field deprecated at or before the pinned release |
+| `OTEL120` | A component in the collector config holds a literal credential |
+| `OTEL121` | An exporter sends a credential over plaintext |
+| `OTEL122` | zpages or pprof listens on a non-loopback address |
+| `OTEL123` | A debug exporter at verbosity detailed shares a pipeline with a real exporter |
+| `OTEL124` | A remote exporter has its sending queue or retries turned off |
+| `OTEL125` | A pipeline sends to a remote otlp or otlphttp exporter without batching |
+| `OTEL126` | k8sattributes extracts a metadata field it does not support |
+| `OTEL127` | resourcedetection lists a detector that does not exist |

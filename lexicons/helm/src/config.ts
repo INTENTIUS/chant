@@ -86,7 +86,37 @@ export type HelmCapabilityProfileRef = string | HelmCapabilityProfile;
 export interface HelmChantConfig {
   /** Per-cluster capability profiles, keyed by profile (cluster/environment) name. */
   capabilityProfiles?: Record<string, HelmCapabilityProfileConfig>;
+  /**
+   * Charts to generate typed render factories for, with `chant generate`,
+   * keyed by a name the factory is called after (`traefik` gives
+   * `TraefikRender` and `TraefikValues`).
+   *
+   * Each factory wraps `HelmRender` with the chart's repo, name and version
+   * fixed here and its `values` typed from the chart's `values.schema.json`,
+   * or inferred from its `values.yaml` when it ships no schema. The code is
+   * written to `src/generated/helm/` (see `codegen.outDir`) and committed.
+   *
+   * ```ts
+   * helm: {
+   *   charts: {
+   *     traefik: { repo: "https://traefik.github.io/charts", chart: "traefik", version: "34.4.1" },
+   *     operator: { chart: "oci://ghcr.io/acme/charts/operator", version: "1.2.0" },
+   *     app: { path: "charts/app" },
+   *   },
+   * }
+   * ```
+   */
+  charts?: Record<string, HelmProjectChart>;
 }
+
+/**
+ * One `helm.charts` entry: a chart in a classic repository (`repo` + `chart`),
+ * an `oci://` chart reference (no `repo`), each pinned by `version`, or a
+ * chart directory in the project (`path`, relative to the project root).
+ */
+export type HelmProjectChart =
+  | { repo?: string; chart: string; version: string; digest?: string }
+  | { path: string };
 
 export const helmCapabilityProfileSchema = z.strictObject({
   kubeVersion: z
@@ -95,8 +125,24 @@ export const helmCapabilityProfileSchema = z.strictObject({
   apiVersions: z.array(z.string().min(1, "apiVersions entries must be non-empty strings")).optional(),
 });
 
+/** What a `helm.charts` key may be: it names the generated factory. */
+export const CHART_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+export const helmProjectChartSchema = z.union([
+  z.strictObject({
+    repo: z.string().url().optional(),
+    chart: z.string().min(1),
+    version: z.string().min(1),
+    digest: z.string().optional(),
+  }),
+  z.strictObject({ path: z.string().min(1) }),
+]);
+
 export const helmConfigSchema = z.strictObject({
   capabilityProfiles: z.record(z.string(), helmCapabilityProfileSchema).optional(),
+  charts: z
+    .record(z.string().regex(CHART_KEY_PATTERN, "must start with a letter and hold only letters, digits, - and _"), helmProjectChartSchema)
+    .optional(),
 });
 
 declare module "@intentius/chant/config" {

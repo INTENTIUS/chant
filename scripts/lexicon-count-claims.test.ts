@@ -42,7 +42,16 @@ interface Claim {
  * this from also matching unrelated counts (skills, docs sites, corpus size)
  * that happen to sit near the word "lexicon" elsewhere in the docs.
  */
-const CLAIM_PATTERN = /\b([A-Za-z]+)\s+(?:lexicons\s+)?ship\s+today\b/gi;
+const CLAIM_PATTERN = /\b([A-Za-z]+(?:-[A-Za-z]+)?)\s+(?:lexicons\s+)?ship\s+today\b/gi;
+
+/** "twenty-one" -> 21; a single number word as itself; anything else -1. */
+function numberWordValue(word: string): number {
+  const [tens, ones] = word.split("-");
+  const t = NUMBER_WORDS.indexOf(tens!);
+  if (ones === undefined) return t;
+  const o = NUMBER_WORDS.indexOf(ones);
+  return t >= 20 && t % 10 === 0 && o >= 1 && o <= 9 ? t + o : -1;
+}
 
 function findClaims(): Claim[] {
   const claims: Claim[] = [];
@@ -51,7 +60,7 @@ function findClaims(): Claim[] {
     lines.forEach((text, i) => {
       for (const m of text.matchAll(CLAIM_PATTERN)) {
         const word = m[1].toLowerCase();
-        const count = NUMBER_WORDS.indexOf(word);
+        const count = numberWordValue(word);
         if (count < 0) continue; // not a number word (e.g. "they ship today")
         claims.push({ file, line: i + 1, word, count, text: text.trim() });
       }

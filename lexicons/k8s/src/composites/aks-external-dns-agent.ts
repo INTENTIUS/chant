@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface AksExternalDnsAgentProps {
   /** Azure managed identity client ID for Workload Identity. */
@@ -33,10 +34,10 @@ export interface AksExternalDnsAgentProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
   };
 }
 

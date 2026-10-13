@@ -1,0 +1,113 @@
+---
+title: "chant workspace wip"
+description: Snapshot, restore and replicate work in progress, the uncommitted records, work branches and kept attempts on a box's disk, so a lost box loses none of it
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace wip [--branch <branch>] [--json]
+chant workspace wip save [--label <text>] [--by <principal>] [--json]
+chant workspace wip restore [<snapshot>] [--by <principal>] [--json]
+chant workspace wip push [--json]
+chant workspace wip fetch [--json]
+```
+
+## Description
+
+Under [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md), work in progress is uncommitted files in a work branch's working tree. An unfinished attempt is kept under `refs/chant/kept/` ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). Until someone commits and pushes, all of it sits on the box's own disk. `chant workspace wip` keeps that work in one ref namespace and replicates it to a remote, so a box that is lost, reclaimed or corrupted costs only the time to provision a new one ([#3172](https://github.com/INTENTIUS/chant/issues/3172), [ws-085](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-085-work-in-progress-refs-and-replication.md)).
+
+| Ref | Holds |
+|---|---|
+| `refs/chant/wip/<branch>` | the snapshots of the checkout on `<branch>`, newest at the tip |
+| `refs/heads/chant/work/...` | the work branches a lease's run works on |
+| `refs/chant/kept/[<member>/]<item>/<token>` | an attempt that ended `not_done` |
+| `refs/heads/chant/lifecycle` | the ledger branch |
+| `refs/chant/replica/<remote>/...` | what chant last saw on the remote of each of the above, so reads need no fetch |
+
+A snapshot is a commit whose tree is the whole working tree: staged, unstaged and untracked files, and every uncommitted record with them. Ignored files are left out. chant writes it through a temporary index, so the checkout's index, `HEAD` and branch never move, and `git log` on the branch never shows it. Its first parent is the snapshot before it, and its last parent is the commit `HEAD` named, so pushing the ref carries the branch's commits too. Its `Chant-Wip-*` trailers name the branch and head, say whether it was a save or a pre-restore checkpoint, and carry the label and principal when given. The branch already separates worktrees and tabs, since git checks a branch out in one worktree at a time, so the ref has no identity segment. Who took a snapshot is its `Chant-Wip-By` trailer.
+
+hud takes a snapshot after each agent turn, with `--label` holding the turn ([arugula-salad/hud#137](https://github.com/arugula-salad/hud/issues/137)). Studio takes its checkpoints the same way ([arugula-salad/studio#53](https://github.com/arugula-salad/studio/issues/53)), and plants a replacement box from what was replicated ([arugula-salad/studio#289](https://github.com/arugula-salad/studio/issues/289)). Neither keeps a ref namespace of its own.
+
+## Reading work in progress
+
+`chant workspace wip --json` prints every branch's snapshots, newest first, and where replication stands. `--branch <branch>` limits it to one branch. The document follows `https://intentius.io/chant/schemas/workspace/wip/v1/wip.schema.json`. It reads local refs and never fetches, so a panel can read it after every turn.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/wip/v1/wip.schema.json",
+  "contract": 1,
+  "chant": "0.103.0",
+  "checkout": { "branch": "chant/work/W-001", "head": "ceef33b5..." },
+  "branches": [
+    {
+      "branch": "chant/work/W-001",
+      "ref": "refs/chant/wip/chant/work/W-001",
+      "tip": "4b76a2ec...",
+      "snapshots": [
+        { "commit": "4b76a2ec...", "tree": "fb2fae30...", "branch": "chant/work/W-001", "head": "ceef33b5...", "kind": "save", "label": "turn:7", "by": "github:alex", "at": "2026-10-03T23:04:24.000Z" }
+      ]
+    }
+  ],
+  "replication": {
+    "policy": { "box": "app", "remote": "origin", "refs": ["work", "kept", "wip", "ledger"], "on": ["save", "release"], "every": "10m" },
+    "remoteConfigured": true,
+    "replicated": false,
+    "refs": [
+      { "ref": "refs/chant/wip/chant/work/W-001", "class": "wip", "commit": "4b76a2ec...", "replica": null, "replicated": false, "ahead": 1 }
+    ]
+  }
+}
+```
+
+`replication` is `null` when no box declares `replicate`. [`chant workspace status --json`](/chant/cli/workspace-status/) prints the same `replication`, and the policy under the member's `box` as `replicate`.
+
+## Saving
+
+`wip save` takes a snapshot of the checkout's working tree onto `refs/chant/wip/<branch>`. When the ref's tip already holds the same tree on the same head, with the same label and principal, it takes none and reports `created: false`. `--label` names the snapshot, such as `turn:7`. `--by` names who took it and is held to the identity rule at base ([ws-080](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-080-person-identity-forge-or-signer.md)). Each is one line of at most 200 characters. When the policy's `on` includes `save`, the command then pushes, and `replication` reports what went.
+
+A detached `HEAD`, or a branch with no commit yet, is refused with `wip-no-branch`.
+
+## Restoring
+
+`wip restore [<snapshot>]` puts the working tree back as the snapshot holds it: the branch's latest when none is named, or any snapshot on the same branch by its commit. First it takes a snapshot of the working tree as it is, of kind `pre-restore`, so restoring that one undoes the restore. Then it writes and removes files until the working tree matches and resets the index to `HEAD`, leaving the branch where it was. Everything restored reads as uncommitted, which `records --uncommitted` lists. When `HEAD` has moved on since the snapshot, the files go back over the current `HEAD` and `headMoved` is `true`. Files git ignores stay as they are.
+
+A snapshot of another branch is refused with `wip-branch-other`, one chant didn't take with `wip-snapshot-unknown`, and no snapshot at all with `wip-none`.
+
+## Replicating
+
+The [box block's `replicate`](/chant/reference/workspace-declaration/#replicate) names the remote, which refs go, and when chant pushes on its own: after a `wip save`, and after a work lease is released, by `chant workspace work release` or at the end of an Op's run under a work lease, when a kept attempt is written. chant's record writes never run git, so a record write never pushes. A host that wants a checkpoint per write calls `wip save` after its writes.
+
+`wip push` pushes every ref the policy names that the remote doesn't hold as it is locally. The host runs it on the schedule `every` states. Each ref goes under its own name and is never forced, so a ref that would rewrite the remote is listed in `rejected` with git's reason. No pre-push hook runs, and git is told never to prompt. A remote that wants a password is a refused push.
+
+`wip fetch` runs on a replacement box. It mirrors what the remote holds of the policy's refs into `refs/chant/replica/<remote>/`, creates each local ref that is missing, and fast-forwards each that is behind. A branch checked out in any worktree is reported `checked-out` and left alone, and so is a local ref that has moved on (`ahead`) or forked (`diverged`).
+
+Both need a policy (`wip-policy-none`) and a git remote of its name in the checkout (`wip-remote-unknown`). A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)), so the host adds the remote, such as a bare mirror on the machine or the repository's own origin, with whatever credential it brokers.
+
+## A lost box
+
+```bash
+# On the box, after each turn:
+chant workspace wip save --label turn:7 --by github:alex --json
+
+# The box is gone. On its replacement, a clone of the remote on its default branch:
+chant workspace wip fetch --json
+git checkout chant/work/W-001
+chant workspace wip restore --json
+chant workspace records --uncommitted --json   # the uncommitted records are back
+chant workspace work history W-001 --json      # and the kept attempts
+```
+
+## Output
+
+Every verb prints a document following `https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json`, with or without `--json`. `action` names the verb.
+
+| `action` | Holds |
+|---|---|
+| `save` | `branch`, `ref`, `created`, `snapshot`, and `replication`: `{ remote, pushed, rejected, upToDate }`, or `null` when the policy doesn't push on save |
+| `restore` | `branch`, `ref`, `head`, `snapshot` (the one restored), `checkpoint` (`{ created, snapshot }`, taken first), `headMoved`, and `paths`, every file written or removed, from the repository root |
+| `push` | `policy` and `replication` |
+| `fetch` | `policy`, `refs`, each `{ ref, class, remote, local, result }` with `result` one of `created`, `fast-forward`, `up-to-date`, `ahead`, `diverged` and `checked-out`, and `failed`, why the remote couldn't be fetched from, or `null` |
+
+A refusal prints `error: { code, message }`, writes nothing and exits 1. The codes are in the [read contract's list](/chant/reference/workspace-read-contract/#reason-codes). `save` and `restore` are in the [writer conformance](/chant/reference/workspace-writer-conformance/) script, so a tool that checkpoints shows it does so through chant.

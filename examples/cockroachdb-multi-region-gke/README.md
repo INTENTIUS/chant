@@ -98,7 +98,7 @@ CockroachDB's `--join` references those names. When a pod restarts with a new IP
 
 **Advertise address.** Each node has to advertise a name the *other two clusters* can resolve. `$(hostname -f)` returns `cockroachdb-0.cockroachdb.crdb-east.svc.cluster.local`, which resolves in east and nowhere else, so gossip never converges — nodes come up healthy, never find each other, and sit there. `CockroachDbRegionStack`'s `advertiseHostDomain` sets the per-pod advertise address to `${HOSTNAME}.${advertiseHostDomain}`, e.g. `cockroachdb-0.east.crdb.internal`.
 
-This is asserted, not just documented: see the `every node advertises a name the other two regions can resolve` test in `examples/examples.test.ts`.
+This is asserted, not just documented: see the `every node advertises a name the other two regions can resolve` test in `examples/examples.e2e.test.ts`.
 
 **Workload Identity chain** for ExternalDNS — no long-lived keys:
 

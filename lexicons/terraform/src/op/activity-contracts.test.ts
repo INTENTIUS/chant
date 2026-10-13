@@ -23,6 +23,7 @@ const ACTIVITY_NAMES = [
   "choudoufuLiveLs",
   "choudoufuLiveCheck",
   "choudoufuAdopt",
+  "terraformPinRollout",
 ];
 
 describe("terraform activity contracts (#2101)", () => {
@@ -51,9 +52,11 @@ describe("terraform activity contracts (#2101)", () => {
   });
 
   test("`root` is declared as the entity every step touches (#2022)", () => {
-    for (const name of ACTIVITY_NAMES) {
+    for (const name of ACTIVITY_NAMES.filter((n) => n !== "terraformPinRollout")) {
       expect(CONTRACTS.get(name)?.entities).toEqual(["root"]);
     }
+    // A pin rollout names no `terraform.roots` key: it moves a module across roots found by directory.
+    expect(CONTRACTS.get("terraformPinRollout")?.entities).toBeUndefined();
   });
 
   // ── The failure classes the contracts exist to catch ───────────────────

@@ -162,6 +162,54 @@ describe("cross-lexicon activity contracts (#2101)", () => {
   });
 });
 
+describe("telemetry attribution (#3375)", () => {
+  const readsTelemetry: PostSynthCheck = {
+    id: "TELEMETRY",
+    description: "reports the attribution the context carries",
+    check(ctx) {
+      return [{ checkId: "TELEMETRY", severity: "warning", message: JSON.stringify(ctx.telemetry ?? null) }];
+    },
+  };
+
+  test("the build's attribution is threaded into the context", () => {
+    const diags = runPostSynthChecks([readsTelemetry], createBuildResult(), undefined, { telemetry: { workspace: "acme" } });
+    expect(diags[0].message).toBe('{"workspace":"acme"}');
+  });
+
+  test("a level-0 run leaves the field undefined", () => {
+    expect(runPostSynthChecks([readsTelemetry], createBuildResult())[0].message).toBe("null");
+  });
+});
+
+describe("project directory (#3751)", () => {
+  const readsDir: PostSynthCheck = {
+    id: "PROJECT_DIR",
+    description: "reports the project directory the context carries",
+    check(ctx) {
+      return [{ checkId: "PROJECT_DIR", severity: "warning", message: JSON.stringify(ctx.projectDir ?? null) }];
+    },
+  };
+
+  test("the build's config directory is threaded into the context", () => {
+    const diags = runPostSynthChecks([readsDir], createBuildResult(), undefined, { projectDir: "/work/app" });
+    expect(diags[0].message).toBe('"/work/app"');
+  });
+
+  test("the loaded config is threaded too", () => {
+    const readsConfig: PostSynthCheck = {
+      id: "PROJECT_CONFIG",
+      description: "reports the config the context carries",
+      check: (ctx) => [{ checkId: "PROJECT_CONFIG", severity: "warning", message: JSON.stringify(ctx.projectConfig ?? null) }],
+    };
+    expect(runPostSynthChecks([readsConfig], createBuildResult(), undefined, { projectConfig: { sourceDir: "src" } })[0].message).toBe('{"sourceDir":"src"}');
+    expect(runPostSynthChecks([readsConfig], createBuildResult())[0].message).toBe("null");
+  });
+
+  test("a hand-built run leaves the field undefined", () => {
+    expect(runPostSynthChecks([readsDir], createBuildResult())[0].message).toBe("null");
+  });
+});
+
 describe("isPostSynthCheck", () => {
   test("accepts a well-formed check and rejects others", async () => {
     const { isPostSynthCheck } = await import("./post-synth");

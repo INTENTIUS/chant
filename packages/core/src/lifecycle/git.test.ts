@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   listSnapshots,
   getHeadCommit,
   pushLifecycle,
+  pushLifecycleReport,
   StaleLifecycleBranchError,
   appendReleaseRecordLine,
   readReleaseLedgerLines,
@@ -30,6 +31,7 @@ import {
   RefCASConflictError,
   StaleLockError,
 } from "./git";
+import { LIFECYCLE_LOCAL_NOTE } from "./local-note";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -127,6 +129,18 @@ describe("lifecycle/git", () => {
 
         const out = await readBlobFromPath("_builds", "sha256_abc.json", { cwd: dir });
         expect(JSON.parse(out!)).toEqual({ a: 1 });
+      });
+    });
+
+    test("a write from a subdirectory of the repository keeps the rest of the branch (#2550)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeBlobToPath("_builds", "a.json", "{}", "m", { cwd: dir });
+        const sub = join(dir, "project");
+        mkdirSync(sub);
+        await writeBlobToPath("_gates", "op.jsonl", "{}", "m", { cwd: sub });
+        expect(await listFilesInDir("_builds", { cwd: sub })).toEqual(["a.json"]);
+        expect(await readBlobFromPath("_gates", "op.jsonl", { cwd: dir })).toBe("{}");
       });
     });
 
@@ -400,6 +414,22 @@ describe("lifecycle/git", () => {
       await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: clonePath });
       const ok = await pushLifecycle({ cwd: clonePath });
       expect(ok).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  // #3677: no remote is a note, not a failure; a push that lands has no warning.
+  test("pushLifecycleReport: no remote reads as the local note, a landed push as pushed", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: dir });
+      expect(await pushLifecycleReport({ cwd: dir })).toEqual({ pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE });
+    });
+    const { clonePath, cleanup } = await setupClonePair();
+    try {
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: clonePath });
+      expect(await pushLifecycleReport({ cwd: clonePath })).toEqual({ pushed: true });
     } finally {
       await cleanup();
     }

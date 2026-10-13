@@ -13,7 +13,7 @@
 
 import type { TemplateIR, TemplateParser, ResourceIR } from "@intentius/chant/import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import/generator";
-import { DockerParser } from "./parser";
+import { DockerParser, DockerfileParser, looksLikeDockerfile } from "./parser";
 import type { DockerIR, DockerfileStage } from "./parser";
 import { DockerGenerator } from "./generator";
 
@@ -23,7 +23,7 @@ function dockerIrToResource(entity: DockerIR): ResourceIR {
     return {
       logicalId: entity.name,
       type: entity.kind,
-      properties: { stages: entity.stages },
+      properties: { ...(entity.globalArgs ? { globalArgs: entity.globalArgs } : {}), stages: entity.stages },
     };
   }
   return {
@@ -41,6 +41,7 @@ function resourceToDockerIr(resource: ResourceIR): DockerIR {
       return {
         kind: "dockerfile",
         name,
+        ...(Array.isArray(resource.properties.globalArgs) ? { globalArgs: resource.properties.globalArgs as string[] } : {}),
         stages: (resource.properties.stages as DockerfileStage[] | undefined) ?? [],
       };
     case "service":
@@ -66,6 +67,11 @@ function resourceToDockerIr(resource: ResourceIR): DockerIR {
  */
 export class DockerTemplateParser implements TemplateParser {
   parse(content: string): TemplateIR {
+    // A Dockerfile has no name of its own; it imports as `app`
+    // (Dockerfile.app). Rename the export to choose the file name.
+    if (looksLikeDockerfile(content)) {
+      return { resources: [dockerIrToResource(new DockerfileParser().parse("app", content))], parameters: [] };
+    }
     const { entities } = new DockerParser().parse(content);
     return {
       resources: entities.map(dockerIrToResource),

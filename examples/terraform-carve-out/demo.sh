@@ -10,7 +10,7 @@ set -euo pipefail
 # → apply (graduation plan). The real live steps (terraform state rm / apply)
 # are printed, not executed.
 #
-# Requires: chant on PATH, @cdktf/hcl2json (npm install -D @cdktf/hcl2json).
+# Requires: chant on PATH, @cdktn/hcl2json (npm install -D @cdktn/hcl2json).
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF="$HERE/terraform"

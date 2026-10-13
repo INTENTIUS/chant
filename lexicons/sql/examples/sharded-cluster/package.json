@@ -1,0 +1,17 @@
+{
+  "name": "sql-sharded-cluster-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon sql -o dist/schema.json",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-sql": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

@@ -1,5 +1,6 @@
 import { Composite, withDefaults, mergeDefaults } from "@intentius/chant";
 import { Job, Step, Workflow } from "../generated/index";
+import { actionRef } from "../action-pins";
 
 export interface NodePipelineProps {
   /** Node.js version. Default: "22" */
@@ -32,19 +33,19 @@ const cacheConfig = {
     cache: "npm",
     installCmd: "npm ci",
     runPrefix: "npm run",
-    setupAction: "actions/setup-node@v4",
+    setupAction: actionRef("actions/setup-node"),
   },
   pnpm: {
     cache: "pnpm",
     installCmd: "pnpm install --frozen-lockfile",
     runPrefix: "pnpm run",
-    setupAction: "actions/setup-node@v4",
+    setupAction: actionRef("actions/setup-node"),
   },
   yarn: {
     cache: "yarn",
     installCmd: "yarn install --frozen-lockfile",
     runPrefix: "yarn",
-    setupAction: "actions/setup-node@v4",
+    setupAction: actionRef("actions/setup-node"),
   },
   bun: {
     cache: undefined,
@@ -75,13 +76,13 @@ export const NodePipeline = Composite((props: NodePipelineProps) => {
   const isBun = packageManager === "bun";
 
   // ── Build job steps ────────────────────────────────────────────────
-  const buildCheckout = new Step({ name: "Checkout", uses: "actions/checkout@v4" });
+  const buildCheckout = new Step({ name: "Checkout", uses: actionRef("actions/checkout") });
 
   const buildSetup = isBun
     ? new Step({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
     : new Step({
         name: "Setup Node.js",
-        uses: "actions/setup-node@v4",
+        uses: actionRef("actions/setup-node"),
         with: { "node-version": nodeVersion, cache: pm.cache },
       });
 
@@ -105,13 +106,13 @@ export const NodePipeline = Composite((props: NodePipelineProps) => {
   }, defaults?.buildJob));
 
   // ── Test job steps ─────────────────────────────────────────────────
-  const testCheckout = new Step({ name: "Checkout", uses: "actions/checkout@v4" });
+  const testCheckout = new Step({ name: "Checkout", uses: actionRef("actions/checkout") });
 
   const testSetup = isBun
     ? new Step({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
     : new Step({
         name: "Setup Node.js",
-        uses: "actions/setup-node@v4",
+        uses: actionRef("actions/setup-node"),
         with: { "node-version": nodeVersion, cache: pm.cache },
       });
 

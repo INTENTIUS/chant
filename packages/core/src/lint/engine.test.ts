@@ -6,6 +6,61 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe("runLint", () => {
+  // #2511
+  test("a rule that throws is an error for that file, and the other rules still run", async () => {
+    await withTestDir(async (testDir) => {
+      const testFile = join(testDir, "test.ts");
+      await writeFile(testFile, "const x = 1;");
+
+      const throwing: LintRule = {
+        id: "throws",
+        severity: "warning",
+        category: "correctness",
+        check: () => {
+          throw new Error("bad input");
+        },
+      };
+      const after: LintRule = {
+        id: "after",
+        severity: "warning",
+        category: "correctness",
+        check: (context: LintContext): LintDiagnostic[] => [
+          { file: context.filePath, line: 1, column: 1, ruleId: "after", severity: "warning", message: "ran" },
+        ],
+      };
+
+      const { diagnostics } = await runLint([testFile], [throwing, after]);
+
+      expect(diagnostics.map((d) => d.ruleId).sort()).toEqual(["after", "throws"]);
+      const threw = diagnostics.find((d) => d.ruleId === "throws")!;
+      expect(threw.severity).toBe("error");
+      expect(threw.file).toBe(testFile);
+      expect(threw.message).toBe(`Rule throws threw while checking ${testFile}: bad input`);
+    });
+  });
+
+  test("a disable comment does not suppress a rule's failure", async () => {
+    await withTestDir(async (testDir) => {
+      const testFile = join(testDir, "test.ts");
+      await writeFile(testFile, "// chant-disable\nconst x = 1;");
+
+      const throwing: LintRule = {
+        id: "throws",
+        severity: "warning",
+        category: "correctness",
+        check: () => {
+          throw "not an Error";
+        },
+      };
+
+      const { diagnostics, suppressed } = await runLint([testFile], [throwing]);
+
+      expect(suppressed).toHaveLength(0);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0].message).toContain("not an Error");
+    });
+  });
+
   test("executes rules and returns diagnostics", async () => {
     await withTestDir(async (testDir) => {
       const testFile = join(testDir, "test.ts");

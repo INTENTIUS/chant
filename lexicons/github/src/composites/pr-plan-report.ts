@@ -73,6 +73,16 @@ export interface PrPlanReportProps {
  * does not serve `/api/v3` and answered 404 for GET and POST alike. On
  * github.com and GHES the resolved URL is byte-identical to `gh`'s own
  * guess, so this changes nothing there.
+ *
+ * The step that runs it sets the token twice, as `GH_TOKEN` and as
+ * `GH_ENTERPRISE_TOKEN` (chant #2352). `gh` sends `GH_TOKEN` only to
+ * github.com and `ghe.com` hosts and reads `GH_ENTERPRISE_TOKEN` for every
+ * other host, Forgejo and GitHub Enterprise Server included. With `GH_TOKEN`
+ * alone, this script's POST to a real Forgejo 16.0.5 instance went out with
+ * no `Authorization` header and answered 401 `token is required`; with both
+ * set it answered 201, and a second run PATCHed the same comment. On
+ * github.com `GH_TOKEN` still wins, so nothing changes there. The same fix
+ * `ghCredentialEnv` made for `reconcilePr` at runtime (#2333).
  */
 const stickyCommentScript = [
   'api_base="${GITHUB_API_URL%/}"',
@@ -151,7 +161,10 @@ export const PrPlanReport = Composite((props: PrPlanReportProps) => {
       ? [
           new Step({
             name: "Post or update PR comment",
-            env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" },
+            env: {
+              GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
+              GH_ENTERPRISE_TOKEN: "${{ secrets.GITHUB_TOKEN }}",
+            },
             run: stickyCommentScript,
           }),
         ]

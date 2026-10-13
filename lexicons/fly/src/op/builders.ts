@@ -28,11 +28,30 @@
 
 import { activity, type NamedActivityStep, type WithStepRefs } from "@intentius/chant/op";
 import type { ActivityStep } from "@intentius/chant/op";
-import type { SpriteCreateArgs, SpriteExecArgs, SpriteCheckpointArgs, SpriteRestoreArgs, ListCheckpointsArgs, SpriteDestroyArgs } from "./activities/sprites";
+import type { SpriteCreateArgs, SpriteExecArgs, SpriteCheckpointArgs, SpriteRestoreArgs, ListCheckpointsArgs, SpriteDestroyArgs, SpriteDeleteArgs, SpriteUrlArgs } from "./activities/sprites";
 import type { SpriteWriteFileArgs, SpriteReadFileArgs, SpriteListDirArgs, SpriteRemoveArgs } from "./activities/sprite-fs";
 import type { SpriteApplyNetworkPolicyArgs, SpriteApplyServicesArgs } from "./activities/sprite-config";
+import type {
+  SpriteServiceCreateArgs,
+  SpriteServiceGetArgs,
+  SpriteServiceListArgs,
+  SpriteServiceStartArgs,
+  SpriteServiceStopArgs,
+  SpriteServiceDeleteArgs,
+  SpriteServiceLogsArgs,
+} from "./activities/sprite-services";
+import type { SpriteServicesObserveArgs, SpriteServiceRestartArgs } from "./activities/sprite-service-converge";
 import type { SpriteTaskCreateArgs, SpriteTaskRefreshArgs, SpriteTaskReleaseArgs } from "./activities/sprite-tasks";
 import type { SpritesUpArgs, SpritesDownArgs } from "./activities/sprites-emulator";
+import type {
+  FlyMachineReleaseArgs,
+  FlyMachineExecArgs,
+  FlyMachineStateArgs,
+  FlyMachineVerifyArgs,
+  FlyMachineRestoreArgs,
+} from "./activities/machine-release";
+import type { FlyReleaseArgs } from "./activities/fly-release-step";
+import type { FlyRollbackArgs } from "./activities/fly-rollback-step";
 
 type StepOpts = { profile?: ActivityStep["profile"] };
 
@@ -75,6 +94,10 @@ export const spriteRestore = spriteStep<SpriteRestoreArgs>("spriteRestore", "lon
 export const listCheckpoints = spriteStep<ListCheckpointsArgs>("listCheckpoints", "fastIdempotent");
 /** Destroy a sprite — the fully typed twin of core's `spriteDestroy`. Defaults to the `fastIdempotent` profile. */
 export const spriteDestroy = spriteStep<SpriteDestroyArgs>("spriteDestroy", "fastIdempotent");
+/** Delete a sprite (#2711; alias of `spriteDestroy`). Defaults to the `fastIdempotent` profile. */
+export const spriteDelete = spriteStep<SpriteDeleteArgs>("spriteDelete", "fastIdempotent");
+/** Resolve a sprite's URL, optionally waiting until a path on it answers (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteUrl = spriteStep<SpriteUrlArgs>("spriteUrl", "fastIdempotent");
 /** Write a file into a sprite — the fully typed twin of core's `spriteWriteFile`. Defaults to the `fastIdempotent` profile. */
 export const spriteWriteFile = spriteStep<SpriteWriteFileArgs>("spriteWriteFile", "fastIdempotent");
 /** Read a file from a sprite — the fully typed twin of core's `spriteReadFile`. Defaults to the `fastIdempotent` profile. */
@@ -85,8 +108,41 @@ export const spriteListDir = spriteStep<SpriteListDirArgs>("spriteListDir", "fas
 export const spriteRemove = spriteStep<SpriteRemoveArgs>("spriteRemove", "fastIdempotent");
 /** Reconcile a sprite's outbound network policy — the fully typed twin of core's `spriteApplyNetworkPolicy`. Defaults to the `fastIdempotent` profile. */
 export const spriteApplyNetworkPolicy = spriteStep<SpriteApplyNetworkPolicyArgs>("spriteApplyNetworkPolicy", "fastIdempotent");
-/** Reconcile a sprite's background services — the fully typed twin of core's `spriteApplyServices`. Defaults to the `fastIdempotent` profile. */
+/**
+ * Reconcile a sprite's background services — the fully typed twin of core's
+ * `spriteApplyServices`. With an `id`, through the Sprites API; without one,
+ * inside the sprite through sprite-env, applying the box block's services
+ * (`box: true`, with `only`, `start` and `restart`, #2880). Defaults to the
+ * `fastIdempotent` profile.
+ */
 export const spriteApplyServices = spriteStep<SpriteApplyServicesArgs>("spriteApplyServices", "fastIdempotent");
+/** Create-and-start one background service (#2711) — the single-service primitive underneath `spriteApplyServices`. Defaults to the `longInfra` profile (the create+start NDJSON round trip). */
+export const spriteServiceCreate = spriteStep<SpriteServiceCreateArgs>("spriteServiceCreate", "longInfra");
+/** Get one background service's definition and live state (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceGet = spriteStep<SpriteServiceGetArgs>("spriteServiceGet", "fastIdempotent");
+/** List a sprite's background services (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceList = spriteStep<SpriteServiceListArgs>("spriteServiceList", "fastIdempotent");
+/** Start a stopped background service (#2711). Defaults to the `longInfra` profile (the NDJSON round trip). */
+export const spriteServiceStart = spriteStep<SpriteServiceStartArgs>("spriteServiceStart", "longInfra");
+/** Stop a running background service (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceStop = spriteStep<SpriteServiceStopArgs>("spriteServiceStop", "fastIdempotent");
+/** Delete a background service, idempotent (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceDelete = spriteStep<SpriteServiceDeleteArgs>("spriteServiceDelete", "fastIdempotent");
+/** Read a background service's log tail (#2711). Defaults to the `fastIdempotent` profile. */
+export const spriteServiceLogs = spriteStep<SpriteServiceLogsArgs>("spriteServiceLogs", "fastIdempotent");
+/**
+ * Observe a box's declared services for a ConvergeOp (#2778): one verdict per
+ * service, `in-sync`, `drifted` or `unknown`, from the supervisor's list and
+ * each service's health URL. Pass it as `ConvergeOp({ observe })`. Defaults
+ * to the `fastIdempotent` profile.
+ */
+export const spriteServicesObserve = spriteStep<SpriteServicesObserveArgs>("spriteServicesObserve", "fastIdempotent");
+/**
+ * Restart one service through its supervisor and wait for its health URL
+ * (#2778). Without `name`, the service is the one a ConvergeOp rule
+ * dispatched the run for. Defaults to the `longInfra` profile.
+ */
+export const spriteServiceRestart = spriteStep<SpriteServiceRestartArgs>("spriteServiceRestart", "longInfra");
 /** Create a keep-alive task — the fully typed twin of core's `spriteTaskCreate`. Defaults to the `fastIdempotent` profile. */
 export const spriteTaskCreate = spriteStep<SpriteTaskCreateArgs>("spriteTaskCreate", "fastIdempotent");
 /** Refresh a keep-alive task's expiry — the fully typed twin of core's `spriteTaskRefresh`. Defaults to the `fastIdempotent` profile. */
@@ -100,3 +156,37 @@ export const spritesUp = (args: WithStepRefs<SpritesUpArgs> & StepOpts = {}): Na
 /** Stop and remove the local spritzer container — the fully typed twin of core's `spritesDown`. Defaults to the `fastIdempotent` profile. */
 export const spritesDown = (args: WithStepRefs<SpritesDownArgs> & StepOpts = {}): NamedActivityStep =>
   spriteStep<SpritesDownArgs>("spritesDown", "fastIdempotent")(args);
+
+// ── Machines release activities (#2736, ws-056) ──────────────────────────────
+// The site steps as Op steps: upload and start, a migration inside the
+// Machine, restart, stop, verify and restore. Wrap a migration's
+// `flyMachineExec` in `effect()` so it fires once per environment.
+
+/** Apply the plan with the Machine serving a release (its digest in the Machine's metadata). Defaults to the `longInfra` profile. */
+export const flyMachineRelease = spriteStep<FlyMachineReleaseArgs>("flyMachineRelease", "longInfra");
+/** Run a command inside a Machine (a migration). Defaults to the `atMostOnce` profile: chant cannot know the command is safe to repeat. */
+export const flyMachineExec = spriteStep<FlyMachineExecArgs>("flyMachineExec", "atMostOnce");
+/** Restart a Machine under a lease and wait for it to be started. Defaults to the `longInfra` profile. */
+export const flyMachineRestart = spriteStep<FlyMachineStateArgs>("flyMachineRestart", "longInfra");
+/** Stop a Machine under a lease. Defaults to the `longInfra` profile. */
+export const flyMachineStop = spriteStep<FlyMachineStateArgs>("flyMachineStop", "longInfra");
+/** Check a Machine is started with a release, and its health endpoint answers. Defaults to the `longInfra` profile. */
+export const flyMachineVerify = spriteStep<FlyMachineVerifyArgs>("flyMachineVerify", "longInfra");
+/** Put a recorded Machine config back (restore, rollback). Defaults to the `longInfra` profile. */
+export const flyMachineRestore = spriteStep<FlyMachineRestoreArgs>("flyMachineRestore", "longInfra");
+/**
+ * Ship a release to a Fly Machine from an Op (#2782): the `fly-release`
+ * capability's steps (upload and start, each migration once per environment,
+ * verify, restore on failure), for the environment `environment` names. With `source`
+ * it puts an approved source tree on the Machine. Defaults to the `longInfra`
+ * profile.
+ */
+export const flyRelease = spriteStep<FlyReleaseArgs>("flyRelease", "longInfra");
+/**
+ * Put an earlier release back on a Fly Machine from an Op (#2800): the
+ * `fly-rollback` capability's restore of the Machine config recorded for `to`
+ * in `environment`, then its verify. With `source` the archive is checked
+ * against its digest, and the recorded config against the archive's tree,
+ * before the Machine changes. Defaults to the `longInfra` profile.
+ */
+export const flyRollback = spriteStep<FlyRollbackArgs>("flyRollback", "longInfra");

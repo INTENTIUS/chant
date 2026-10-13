@@ -1,0 +1,66 @@
+---
+title: "prometheus.yml"
+description: "PrometheusConfig and ScrapeConfig: the scrape jobs, service discovery, relabelling, Alertmanager targets and remote storage of prometheus.yml"
+diataxis: reference
+order: 5
+---
+
+`ScrapeConfig` declares one scrape job and `PrometheusConfig` declares the rest of `prometheus.yml`. The types follow Prometheus `v3.15.0` (`PROMETHEUS_PIN.prometheus`), and field names are the file's own, so the [Prometheus configuration docs](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) apply as written.
+
+A project that declares neither writes no `prometheus.yml`, so a project that builds only rule files sees no change.
+
+```ts
+import { PrometheusConfig, ScrapeConfig } from "@intentius/chant-lexicon-prometheus";
+
+export const settings = new PrometheusConfig({
+  global: { scrape_interval: "15s", evaluation_interval: "30s", external_labels: { cluster: "prod-eu" } },
+  alerting: { alertmanagers: [{ static_configs: [{ targets: ["alertmanager:9093"] }] }] },
+  rule_files: ["rules.yml"],
+  remote_write: [{ url: "https://mimir.example.com/api/v1/push", queue_config: { capacity: 10000 } }],
+});
+
+export const api = new ScrapeConfig({
+  job_name: "api",
+  metrics_path: "/metrics",
+  static_configs: [{ targets: ["api:8080"], labels: { tier: "web" } }],
+  metric_relabel_configs: [{ source_labels: ["__name__"], regex: "go_.*", action: "drop" }],
+});
+
+export const pods = new ScrapeConfig({
+  job_name: "kubernetes-pods",
+  kubernetes_sd_configs: [{ role: "pod", namespaces: { names: ["default"] } }],
+  relabel_configs: [
+    { source_labels: ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"], regex: "true", action: "keep" },
+  ],
+});
+```
+
+## `PrometheusConfig`
+
+Declare at most one; a second is a build warning and the first is used. Its fields are the top-level sections of the file, written in the order Prometheus documents them: `global`, `alerting`, `rule_files`, `scrape_config_files`, `scrape_configs`, `remote_write`, `remote_read`, `otlp`, `storage`, `tracing` and `runtime`.
+
+`PrometheusConfig` is optional. A build that declares only `ScrapeConfig`s still writes a `prometheus.yml`. `scrape_configs` on `PrometheusConfig` takes jobs written inline as plain objects, merged with the declared `ScrapeConfig`s.
+
+## `ScrapeConfig`
+
+One scrape job. `job_name` is required and unique: a repeated name is a build warning, since Prometheus rejects the file. The job's own fields are the ones the file takes: `scrape_interval`, `scrape_timeout`, `metrics_path`, `scheme`, `params`, `honor_labels`, `honor_timestamps`, the HTTP client settings (`basic_auth`, `authorization`, `oauth2`, `tls_config`, `proxy_url`, `follow_redirects`), the sample and label limits, `static_configs`, `relabel_configs`, `metric_relabel_configs` and the service discovery lists. Jobs are written sorted by name, since their order carries no meaning.
+
+### Service discovery
+
+Six discovery kinds are typed: `kubernetes_sd_configs`, `file_sd_configs`, `http_sd_configs`, `dns_sd_configs`, `ec2_sd_configs` and `consul_sd_configs`. Any other `<kind>_sd_configs` key (`azure_sd_configs`, `gce_sd_configs`, `docker_sd_configs` and the rest) is accepted and written as given, untyped.
+
+### Relabelling
+
+`relabel_configs`, `metric_relabel_configs`, `alert_relabel_configs` and `write_relabel_configs` take `RelabelConfig` steps. [PROM225](../lint-rules/) rejects a `labeldrop` or `labelkeep` step that sets fields it does not read.
+
+## Checking the file
+
+`promtoolCheckConfig(yaml, files?)` runs `promtool check config` over the text. `promtool` also reads the rule files, certificates and credentials files a config names, so pass them as `files` (path relative to the config, to contents). The lexicon's `validate()` runs the same check over a sample config when `promtool` is installed. See [Checking with promtool and amtool](../upstream-tools/).
+
+## Against SchemaStore's `prometheus.json`
+
+The types are written by hand, not generated from SchemaStore's schema: the schema rejects unknown keys and is behind Prometheus `v3.15.0`. It lacks `otlp`, `tracing` and `runtime`, 11 of about 20 `global` keys, 18 of the 24 discovery kinds the lexicon does not type and some fields such as `attach_metadata` under `kubernetes_sd_configs`. The lexicon's tests check its fixtures against the schema and list those differences, so a field the schema has and the lexicon lacks fails them.
+
+## Importing
+
+`chant import prometheus.yml` writes `scrape-configs.ts` (a `ScrapeConfig` per job) and `prometheus.ts` (a `PrometheusConfig` for the other sections). A `prometheus.yml` held as text in a ConfigMap is imported the same way through the k8s lexicon and becomes `prometheusConfigYaml([...])`. See [Importing](../importing/).

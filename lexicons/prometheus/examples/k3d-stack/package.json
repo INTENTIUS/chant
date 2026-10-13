@@ -1,0 +1,18 @@
+{
+  "name": "prometheus-k3d-stack-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o dist/k8s.yaml && chant build src --lexicon prometheus -o dist/rules.yml",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-prometheus": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

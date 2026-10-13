@@ -124,6 +124,17 @@ In `--json`, the addresses arrive as `resources.queried` per lexicon — a `name
 
 The field is optional and purely diagnostic: verdicts are unchanged, and a lexicon that reports no addresses simply omits it. `lifecycle plan --json` carries the same address per entry as `queried` on the change set (a `create`'s address is the one the provider confirmed absent). The k8s lexicon is the first implementer.
 
+#### The declared definition of a missing entity
+
+Each missing entity's row also carries `[definition <sha256 hex>]`, a fingerprint of its declared type and build props (#3652). A missing entity is what applying the diff would create, and `ApplyOp`'s gate binds the digest of this output: with the name alone, an approval for "create events" stood after `events` was edited, as long as `events` did not exist yet. With the fingerprint, editing what would be created changes the plan digest, and the next run stops at the gate and names both the approved digest and the new one.
+
+```
+MISSING (declared, provider reports not in cloud):
+  - events [queried http://127.0.0.1:8123 yodel.events] [definition 3f9c…]
+```
+
+In `--json` the fingerprints arrive as `resources.definitions`, a `name → fingerprint` map over the missing entities. `lifecycle plan --json` carries the same fingerprint as `definition` on each `create` entry, so a change-set part's plan digest covers it too.
+
 #### `--namespace <ns>` — where to read scope-less entities
 
 The address above is also the fix's starting point. When an object's namespace is stamped by a controller rather than declared — a GitOps estate where one project declares the `Kustomization` with `spec.targetNamespace` and another declares the bare objects — the read falls through to `default` and reports a running estate as absent. `--namespace <ns>` replaces that fallback:
@@ -357,6 +368,7 @@ The AWS lexicon is the first implementer, reading the CloudFormation Registry sc
 | `action`, `evidence`, `ownership` | The classification and the three-way evidence behind it, as in the table above. |
 | `deltas` | Attribute-level changes, on `update`. |
 | `queried` | The resolved read address, when the lexicon reported one (#1620). |
+| `definition` | On a `create`, the fingerprint of the declared type and build props (#3652), so the plan's digest moves when what it would create does. |
 | `runtimeOwner` | The declared entity a `runtime` entry's owner chain resolves to. |
 | `unobservedReason`, `unobservedDetail` | Why an `unobserved` entry could not be read. |
 | `disruption` | How much applying an `update` costs, from the lexicon that owns the spec. Present on every `update` and on nothing else. `unknown` means nobody could say. |
@@ -436,6 +448,8 @@ The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-obse
 Lexicons that implement neither method are warn-skipped — `--live` doesn't fail the whole command for them.
 
 The fountain lexicon resolves its connection via the chant config: `lifecycle snapshot <env>` (or `--live` against `<env>`) looks up `fountain.profiles.<env>` in your `chant.config.ts` and falls back to `fountain.defaultProfile`. The same profile model is used by `chant run <op> --on fountain`. Every declared fountain resource is mapped back to its chant entity name when the declared `props.name` matches the server-side identifier.
+
+Grafana is bound the same way, through `grafana.profiles.<env>` (a URL, and a token or basic-auth pair named by environment variable), and falls back to `GRAFANA_URL` when no profile is declared. See [Drift and Live Export](/chant/lexicons/grafana/observing/).
 
 The K8s lexicon reads through a typed API client (chant #1074, [details](/chant/lexicons/k8s/api-client/)) rather than a `kubectl` subprocess. Every generated resource type is addressable — the 165 core kinds plus every bundled CRD — because the entity-type->address table comes out of the same codegen pass as the declarable classes, and is confirmed against the cluster's own API discovery before anything is read. Reads run concurrently, so a hundred declared entities are not a hundred serial round trips, and failures carry the API server's own `code` and `reason` rather than a parsed stderr line.
 
@@ -528,7 +542,11 @@ Read-only and never a gate. It builds nothing, mutates nothing, and exits 0 what
 
 **What each lexicon answers with today:**
 
-- **aws** — `sts:GetCallerIdentity`. The principal ARN, scoped to the account and the region the read transport actually resolves. That region comes from `stacks[].region` and otherwise defaults to `us-east-1`; the native transport does not consult `AWS_REGION`, and the `SOURCE` column says so when your shell sets one that is not being used. Credentials resolve from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` only — `AWS_PROFILE` alone signs nothing, and is reported as `no identity is configured` naming the profile.
+- **aws** — `sts:GetCallerIdentity`. The principal ARN, scoped to the account and the region the read transport actually resolves. That region comes from `stacks[].region` and otherwise defaults to `us-east-1`; the native transport does not consult `AWS_REGION`, and the `SOURCE` column says so when your shell sets one that is not being used. Credentials resolve the way the AWS CLI resolves them. Environment keys (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN`) come first and win over `AWS_PROFILE`, as they do in the CLI. Otherwise chant reads the `AWS_PROFILE` profile (`default` when unset) from the files `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` name, by default `~/.aws/config` and `~/.aws/credentials`. Static keys and `credential_process` sign directly. A `role_arn` is assumed with the keys of its `source_profile` or, for `credential_source = Environment`, the environment's. SSO sessions (`sso_session` or the older `sso_start_url`) go through the IAM Identity Center portal. The `SOURCE` column names what answered, for example `profile loom (sso session acme), role Deployer in 491500000000`.
+
+  An SSO profile reads the token `aws sso login` cached under `~/.aws/sso/cache/`. An expired token is refreshed when the cache holds a refresh token, and the refreshed token is not written back. When no usable token is cached or the portal refuses it, the row is `no identity is configured` with `run aws sso login --profile <p>` in its detail. A profile chant cannot resolve is also `no identity is configured`, with the reason in the detail. `mfa_serial` and `web_identity_token_file` are not supported, and `credential_source` works only as `Environment`. Instance metadata and container credentials are not consulted. Against an endpoint override the profile is not read at all, since the emulator call is unsigned.
+
+  The read transport behind `diff --live` still signs with environment keys only ([#3958](https://github.com/INTENTIUS/chant/issues/3958)). When only a profile is set, the whoami row is what the AWS CLI would act as. The `SOURCE` column names the profile, which shows the difference.
 - **k8s** — `SelfSubjectReview` against the bound cluster. The subject the API server authenticated, scoped to the resolved context and its default namespace, sourced from `k8s.profiles.<env>.context` or, when the environment is unbound, from the ambient current-context with the missing binding named. A cluster too old to serve the review API (pre-1.26) reports `could not determine` rather than falling back to the kubeconfig's local user alias, which is a name you chose, not the subject the cluster resolves it to.
 
 Every other lexicon reports `not reported` until it implements the capability — see [Implementing Observation](/chant/lexicon-authoring/observation/#describeidentity--who-chant-would-act-as).

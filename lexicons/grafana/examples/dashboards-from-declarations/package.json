@@ -1,0 +1,19 @@
+{
+  "name": "grafana-dashboards-from-declarations-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon otel -o dist/collector.yaml && chant build src --lexicon prometheus -o dist/rules.yml && chant build src --lexicon grafana -o dist/grafana/index.json",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-grafana": "*",
+    "@intentius/chant-lexicon-otel": "*",
+    "@intentius/chant-lexicon-prometheus": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

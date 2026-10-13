@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-helm",
-  "version": "0.73.0",
+  "version": "0.124.23",
   "description": "Helm chart lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -74,10 +74,10 @@
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-k8s": "^0.124.23",
     "js-yaml": "^4.3.1"
   },
   "devDependencies": {
@@ -86,8 +86,7 @@
     "@types/js-yaml": "^4.0.9"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.73.0",
-    "typescript": "^5.9.3",
+    "@intentius/chant": "^0.124.23",
     "zod": "^4.3.6"
   }
 }

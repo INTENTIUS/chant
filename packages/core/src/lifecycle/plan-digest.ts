@@ -36,14 +36,25 @@
  * The identity is therefore a claim about consequence, not about provenance.
  * That is the claim an approver is actually making.
  */
-import { sortedJsonReplacer } from "../utils";
-import { getRuntime } from "../runtime-adapter";
+import { canonicalJson } from "../effect-receipt";
+import { contentDigest } from "../content-digest";
 
-/** The hash a plan digest is taken with, and the prefix every digest carries. */
+/** The hash a plan digest is taken with. */
 export const PLAN_DIGEST_ALGORITHM = "sha256";
 
-/** Shape of a well-formed digest: `sha256:` and 64 lowercase hex characters. */
-const PLAN_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+/**
+ * The version prefix a plan digest is written with since #2547: `jcs1` names
+ * the input form (the RFC 8785 canonical JSON of `{ kind, subject }`, see
+ * `canonicalJson` in ../effect-receipt.ts) and `sha256` the hash. A later
+ * input form gets a new prefix, so a digest always says how it was made.
+ */
+export const PLAN_DIGEST_PREFIX = "jcs1-sha256:";
+
+/** The bare prefix every digest written before #2547 carries. Still read, never written for a plan. */
+export const LEGACY_PLAN_DIGEST_PREFIX = "sha256:";
+
+/** Shape of a well-formed digest: either prefix, then 64 lowercase hex characters. */
+const PLAN_DIGEST_PATTERN = /^(?:jcs1-)?sha256:([0-9a-f]{64})$/;
 
 /**
  * Hash a plan's change set into a stable identity.
@@ -54,25 +65,44 @@ const PLAN_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
  * to a terraform plan must not be satisfiable by a lifecycle diff that
  * happened to serialize identically.
  *
- * `subject` is canonicalised by {@link sortedJsonReplacer}, so object key
- * order — which neither terraform's JSON writer nor `JSON.parse` guarantees
- * across versions — does not change the answer. It is the caller's job to
+ * `subject` is put in canonical form by `canonicalJson` (../effect-receipt.ts)
+ * and hashed by `contentDigest` (../content-digest.ts), so object key order,
+ * which neither terraform's JSON writer nor `JSON.parse` guarantees across
+ * versions, does not change the answer. It is the caller's job to
  * hand in a projection that already excludes the volatile fields this
  * module's doc comment lists.
+ *
+ * The result is `jcs1-sha256:<hex>` (#2547). Before that it was
+ * `sha256:<hex>` over the same bytes, so the hex is unchanged and
+ * {@link samePlanDigest} treats the two spellings as one digest: a gate
+ * recorded under the old prefix still matches the plan it was approved for.
  */
 export function computePlanDigest(kind: string, subject: unknown): string {
-  const canonical = JSON.stringify({ kind, subject }, sortedJsonReplacer);
-  return `${PLAN_DIGEST_ALGORITHM}:${getRuntime().hash(canonical)}`;
+  return PLAN_DIGEST_PREFIX + contentDigest(canonicalJson({ kind, subject })).slice(LEGACY_PLAN_DIGEST_PREFIX.length);
 }
 
 /**
- * Whether `raw` is a digest this code produced. Used at the `chant approve
- * --plan` boundary, so a typo, a truncated copy-paste or a plan *file* path
- * is refused before it is written into an immutable resolution that would
- * then never match anything.
+ * Whether `raw` is a digest this code produced, in either prefix. Used at the
+ * `chant approve --plan` boundary, so a typo, a truncated copy-paste or a plan
+ * *file* path is refused before it is written into an immutable resolution
+ * that would then never match anything.
  */
 export function isPlanDigest(raw: unknown): raw is string {
   return typeof raw === "string" && PLAN_DIGEST_PATTERN.test(raw);
+}
+
+/**
+ * Whether two recorded or computed plan digests name the same plan. Two
+ * well-formed plan digests are the same when their hex is, whichever prefix
+ * each carries (read both, write new, #2547). Anything else, such as a
+ * release plan's own digest, is the same only when the strings are equal.
+ */
+export function samePlanDigest(a: string | undefined, b: string | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  const x = PLAN_DIGEST_PATTERN.exec(a);
+  const y = PLAN_DIGEST_PATTERN.exec(b);
+  return x !== null && y !== null && x[1] === y[1];
 }
 
 /**

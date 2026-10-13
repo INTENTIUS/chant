@@ -7,6 +7,72 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Postgres schemas in the sql lexicon
+
+The sql lexicon has a second dialect, Postgres, at `@intentius/chant-lexicon-sql/postgres`. Each schema object is written as its own `CREATE` statement in a tagged template, with `COMMENT ON` statements after it, and `nextval(${seq})` keeps a sequence a reference. The types come from one pinned `postgres` release per supported major, 14 to 18. `sql.postgresMajor` picks the major a project targets, and four lint rules and eighteen post-synth checks hold a schema to it.
+
+`chant sql diff` and `chant sql plan` classify every change by the lock it takes and cite the Postgres 18 page for each rule. `postgresApply`, the `postgres` target of `ApplyOp`, groups its statements into transactions by that class and runs `CONCURRENTLY` builds outside them, each statement under a lock timeout. A column rename or a type change across kinds is refused in place and runs as `PostgresMigrationOp`, which fills the new column in batches with a receipt committed in each batch's transaction and waits at a gate before the switch and again before the old column is dropped. Import reads canonical text from the catalog's printers and leaves out what an ORM, an extension or a managed provider owns. The [overview](/chant/lexicons/sql/) explains why the two dialects share a way of working and little else; like the ClickHouse dialect, it runs from a checkout until the package is published.
+
+| # | Capability |
+|---|---|
+| [#3277](https://github.com/INTENTIUS/chant/issues/3277), [#3278](https://github.com/INTENTIUS/chant/issues/3278) | The spikes: types from `pg_catalog` at one pin per major, and a hand-written Postgres DDL parser |
+| [#3279](https://github.com/INTENTIUS/chant/issues/3279) | A dialect-neutral core, the tags and entities, import and observation, and the lock classifier |
+| [#3280](https://github.com/INTENTIUS/chant/issues/3280) | `postgresApply`: transactions, `CONCURRENTLY`, timeouts, the comment ownership marker, prune, and `chant emulator up` for Postgres |
+| [#3281](https://github.com/INTENTIUS/chant/issues/3281) | `PostgresMigrationOp`, the expand-and-contract migration of a column |
+| [#3282](https://github.com/INTENTIUS/chant/issues/3282) | Managed providers as configuration, and SQLPG004 |
+| [#3283](https://github.com/INTENTIUS/chant/issues/3283) | Completions, hover and MCP tools for Postgres templates |
+| [#3284](https://github.com/INTENTIUS/chant/issues/3284) | The Postgres declaring, plan and migration skills, and three init templates |
+| [#3285](https://github.com/INTENTIUS/chant/issues/3285) | Post-synth checks SQLPG101 to SQLPG118 |
+| [#3286](https://github.com/INTENTIUS/chant/issues/3286) | The `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` composites, and five examples |
+| [#3297](https://github.com/INTENTIUS/chant/pull/3297) | A lexicon can declare several upstream pins; `chant dev pinned-upgrade` reports each Postgres major |
+
+## ClickHouse schemas in the sql lexicon
+
+`@intentius/chant-lexicon-sql` declares database schema in TypeScript, one dialect at a time, and ClickHouse is the first, at `@intentius/chant-lexicon-sql/clickhouse`. Every schema object is written as its own `CREATE` statement inside a tagged template named for its kind. `chant build` parses each template while it folds the file, so an interpolated table or column stays a reference: references order the build and give each view column-level lineage. The ClickHouse types are generated from the `system.*` tables of a pinned `clickhouse-server` release, and three lint rules and twenty post-synth checks hold a schema to what that server accepts.
+
+`chant import --from <env>` writes a running server's schema as declarations. `chant sql diff` and `chant sql plan` classify every change as metadata only, a background rewrite or a rebuild, each with the ClickHouse `ALTER` restriction behind it. `clickhouseApply`, the `clickhouse` target of `ApplyOp`, makes the first two kinds of change and refuses a rebuild, which runs instead as `ClickHouseRebuildOp`: a gated Op that fills a new table partition by partition with a receipt for each, verifies it, and swaps it in. chant's ownership marker is a trailer on each object's comment. The lexicon is spec-true per dialect rather than database-agnostic, and its [overview](/chant/lexicons/sql/) explains why. The package is not on npm yet.
+
+| # | Capability |
+|---|---|
+| [#3195](https://github.com/INTENTIUS/chant/issues/3195), [#3196](https://github.com/INTENTIUS/chant/issues/3196) | The spikes: types read from a pinned server's catalog, and a lossless ClickHouse DDL parser behind the tags |
+| [#3197](https://github.com/INTENTIUS/chant/issues/3197) | Tables and views as tagged templates, import from a live server, observation, and the classified plan |
+| [#3208](https://github.com/INTENTIUS/chant/issues/3208) | `clickhouseApply`, the comment ownership marker, and `chant emulator up --lexicon sql` |
+| [#3210](https://github.com/INTENTIUS/chant/issues/3210) | Completions and hover inside the templates, and MCP tools and resources |
+| [#3211](https://github.com/INTENTIUS/chant/issues/3211) | Skills, init templates and template detection |
+| [#3213](https://github.com/INTENTIUS/chant/issues/3213) | Post-synth checks SQLCH102 to SQLCH120 |
+| [#3198](https://github.com/INTENTIUS/chant/issues/3198) | `ClickHouseRebuildOp`: dual write, a backfill with receipts, verification, a plan-bound swap gate, and retention of the old table |
+| [#3248](https://github.com/INTENTIUS/chant/pull/3248) | The `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror` and `ShardedTable` composites |
+
+## A component gate approval is bound to its environment and plan
+
+A component gate approval used to be recorded under the component and the gate name only. An approval given for a deploy to staging could pass the same gate on a later deploy to prod, and so could a promote or a rollback. Each approval now records the environment and the plan digest it was given for, and `chant run --components`, `chant components promote`, `chant components rollback` and `chant components redeploy` accept only an approval for their own. The plan covers the composition as the run executes it, the environment and, for a promote, rollback or redeploy, the digest being deployed. `chant approve --env <env>` picks which environment's pending fact to approve.
+
+This is a listed [level-0 exception](/chant/reference/level-0-exceptions/). Approvals recorded before it are refused, and the refusal prints the `chant approve` command that replaces them. `v0.80.0` warned whenever a component gate passed on such an approval.
+
+| # | Capability |
+|---|---|
+| [#2574](https://github.com/INTENTIUS/chant/issues/2574) | Component gate approvals bound to environment and plan digest, and `chant approve --env` |
+
+## Digests chant computes are real SHA-256
+
+`contentDigest` labelled its output `sha256:` but computed a 32-bit string hash repeated to 64 hex characters. It now returns `"sha256:" + sha256(utf8(content))`, so every `manifestDigest` and every digest of a synthesized template or BOM changes once for the same content. Image digests from `docker build` and other tools were already real and are unchanged. chant 0.80.0 warned about this a release ahead, as the [level-0 exceptions](/chant/reference/level-0-exceptions/) require.
+
+Old values in a release ledger or in persisted build manifests are never rewritten. They read back flagged `legacy-digest`, still resolve by their old digest, and are accepted through the `0.89.x` releases. [Digests made before real SHA-256](/chant/components/observability/#digests-made-before-real-sha-256) has the details.
+
+Everything else core hashes now goes through the same `contentDigest` over `canonicalJson`. Two values can move once as a result, because the old code sorted object keys by locale rather than by code unit. A plan digest can change for a plan whose keys mix upper and lower case, or digits and punctuation. An Op gate approved for such a plan before the upgrade stops and asks for `chant approve` again. Nothing is applied on a stale approval. The props hashes in a lifecycle snapshot can change the same way, so the first `chant lifecycle diff <env>` against a snapshot taken before the upgrade may list a few resources as changed.
+
+| # | Capability |
+|---|---|
+| [#2514](https://github.com/INTENTIUS/chant/issues/2514) | Real SHA-256 in `contentDigest`, manifest and SBOM digests, with old ledger entries flagged `legacy-digest` |
+
+## Level-0 output is pinned by golden tests
+
+Workspaces are coming in levels, and a project with no `chant.workspace.json` stays at level 0, where nothing changes. On every pull request, golden tests now run the five level-0 commands over copies of five example projects and compare each output with a committed file. A git fixture pins the ledger paths and ownership markers next to them. The few changes allowed to alter level-0 output are listed, with their issues and warning releases, on [Level-0 Exceptions](/chant/reference/level-0-exceptions/). None has shipped a warning yet.
+
+| # | Capability |
+|---|---|
+| [#2526](https://github.com/INTENTIUS/chant/issues/2526) | CLI goldens for level 0, the ledger and marker fixture, and a check that no workspace module loads |
+
 ## Ops run on the local runtime and on a fountain steward
 
 Temporal is gone. An Op no longer compiles to workflow code for an engine you have to run: `chant run <op>` executes the phases in this process, and `chant run <op> --on fountain` hands the same declaration to a [steward](/chant/lexicons/fountain/steward/), one teammate on a persistent sandbox whose thread becomes that environment's operational history. The `temporal` lexicon, the `--temporal` flag and the generated worker are all removed. The bridge that caught `--temporal` ahead of the parser and exited **2** with a line pointing at `--on fountain` shipped in 0.58.0 only, and [#2204](https://github.com/INTENTIUS/chant/issues/2204) took it back out for 0.59.0, so the flag now fails as an unknown flag like any other.

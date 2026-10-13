@@ -18,23 +18,27 @@
 
 import type { OpConfig } from "./types";
 import type { StepRecord, OpRunResult } from "./local-executor";
+import type { WaitingPoint } from "./steward-points";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import type { RunComponentsOptions, RunComponentsResult } from "../components/cli-support";
 
 /**
  * How a run ended, or that it has not. `gated` is the state a run reaches when
- * a gate has no recorded resolution — a fact, not a wait (#2119).
+ * a gate has no recorded resolution — a fact, not a wait (#2119). `waiting` is
+ * the state it reaches when an activity asked a decision point that is still
+ * open (#2749), a fact of the same kind: a person answers the question, and
+ * the next run reads the answer.
  *
  * This is the coarse state a *runtime* reports. The ledger records the
  * executor's own three-state outcome instead ({@link OpRunRecord.status}),
  * which has no `running` or `cancelled`: a record is only written once a run
  * has settled.
  */
-export type OpRunState = "running" | "completed" | "failed" | "gated" | "cancelled";
+export type OpRunState = "running" | "completed" | "failed" | "gated" | "waiting" | "cancelled";
 
 /** Map a settled run's ledger status onto the coarser runtime state. */
 export function runStateOf(status: OpRunRecord["status"]): OpRunState {
-  return status === "ok" ? "completed" : status === "gated" ? "gated" : "failed";
+  return status === "ok" ? "completed" : status === "gated" ? "gated" : status === "waiting" ? "waiting" : "failed";
 }
 
 /** One step's outcome as the run ledger keeps it — `StepRecord` minus the fields only a live renderer needs. */
@@ -51,6 +55,10 @@ export interface OpRunStepRecord {
   error?: string;
   /** Why a gate declined a standing approval that was for another plan (#2300) — see {@link StepRecord.refusal}. */
   refusal?: string;
+  /** The open decision point this step asked (#2749), for a step skipped because it is waiting on one. */
+  point?: WaitingPoint;
+  /** The gate this step's command stopped at (#2779), for a step skipped because of it. */
+  gate?: { op: string; gate: string };
 }
 
 /** One phase's steps and the verdict they add up to. */
@@ -58,6 +66,8 @@ export interface OpRunPhaseRecord {
   name: string;
   /** `fail` if any step failed, `skipped` if every step was skipped, else `ok`. */
   status: "ok" | "fail" | "skipped";
+  /** The phase's wall-clock time, for a phase that ran. Absent on records written before it was kept, and for a phase skipped whole. */
+  durationMs?: number;
   steps: OpRunStepRecord[];
 }
 
@@ -81,8 +91,10 @@ export interface OpRunStatus {
   records?: StepRecord[];
   /** The executor's own result, when the runtime is executing in this process. */
   result?: OpRunResult;
-  /** The gate this run is waiting on, when `state` is `gated`. */
-  gate?: { name: string; since: string };
+  /** The gate this run is waiting on, when `state` is `gated`; `op` names the op it is recorded under when that isn't the run's own (#2779). */
+  gate?: { name: string; since: string; op?: string };
+  /** The open decision point this run is waiting on, when `state` is `waiting` (#2749). */
+  point?: WaitingPoint & { since: string };
   /** Free-text detail for a failed run. */
   error?: string;
 }
@@ -117,15 +129,28 @@ export interface OpRunRecord {
    * failure: the run reached a gate nobody has approved, recorded the fact,
    * and stopped (#2119).
    */
-  status: "ok" | "fail" | "gated";
+  status: "ok" | "fail" | "gated" | "waiting";
   /** The Op's own `labels`, copied at run time. */
   labels: Record<string, string>;
   /** Every `outcomeAttribute` the run captured, name → value. */
   outcomes: Record<string, unknown>;
   /** Per-phase, per-step status, in execution order. */
   phases: OpRunPhaseRecord[];
-  /** The gate the run stopped on, for `status: "gated"`. */
-  gate?: { name: string; since: string };
+  /**
+   * The gate the run stopped on, for `status: "gated"`. `op` is set when the
+   * gate is recorded under another op than the run's (#2779): a step whose
+   * command stopped at its own gate, such as `chant workspace upgrade`'s
+   * `workspace-upgrade` / `<scope>`.
+   */
+  gate?: { name: string; since: string; op?: string };
+  /**
+   * The open decision point the run stopped on, for `status: "waiting"`
+   * (#2749): the answer record's id, the point, its state then, and when the
+   * run stopped. `points --open` and hud read the question itself.
+   */
+  point?: WaitingPoint & { since: string };
+  /** The steward whose turn the run was, when a steward ran it (#2749). */
+  steward?: string;
 }
 
 /** An {@link OpRunRecord} before the ledger stamps its version and mints an id. */
@@ -156,6 +181,31 @@ export interface OpRunStartOptions {
   progress?: (record: StepRecord) => void;
   /** Aborts in-flight work (Ctrl-C). */
   signal?: AbortSignal;
+  /**
+   * For an Op that declares `workLease` (#2748): the work item this run is
+   * for (`--work <id>`) and who holds its lease (`--holder`). The local
+   * runtime takes the lease itself; a runtime that declares
+   * {@link OpRuntimeProvider.carriesWork} hands both to where the run
+   * executes, which takes it there.
+   */
+  work?: { item?: string; holder?: string };
+  /**
+   * The id to name this run by, in place of one the runtime mints (#3539).
+   * The local runtime uses it as the run record's id, the gate ledger's
+   * `runId` and `currentOpRun().runId`. `chant acp` passes fountain's
+   * conversation id here, so the record a hosted run writes in the sandbox
+   * and the run `chant run status --on fountain` reports carry the same id.
+   */
+  runId?: string;
+}
+
+/** What a caller hands {@link OpRuntimeProvider.resolveGate} besides the resolution. */
+export interface OpGateResolveOptions {
+  /**
+   * `--env` on `chant run approve` (#3539): the environment the woken run
+   * runs in. Omitted, a runtime keeps the environment the gated run had.
+   */
+  env?: string;
 }
 
 /**
@@ -170,6 +220,13 @@ export interface OpRunStartOptions {
 export interface OpRuntimeProvider {
   /** How the CLI names this runtime in messages, and what `--on` matches. */
   readonly name: string;
+
+  /**
+   * Whether `start` carries `opts.work` to where the run executes (#3555),
+   * so `chant run <op> --work <id> --on <name>` is allowed. Omitted, a
+   * non-local runtime is refused `--work` and `--holder` by name.
+   */
+  readonly carriesWork?: boolean;
 
   /** Start a run. Rejects with an actionable Error when it cannot. */
   start(op: OpConfig, opts: OpRunStartOptions): Promise<OpRunHandle>;
@@ -189,9 +246,10 @@ export interface OpRuntimeProvider {
   /**
    * Wake a run whose gate has just been resolved. The ledger write is the
    * fact and `chant approve` owns it; this is the runtime's chance to act on
-   * it. Omit when a run re-reads the ledger on its own.
+   * it. Omit when a run re-reads the ledger on its own. `opts.env` is the
+   * `--env` the approver named, when they named one.
    */
-  resolveGate?(op: string, gate: string, resolution: GateResolutionRecord): Promise<void>;
+  resolveGate?(op: string, gate: string, resolution: GateResolutionRecord, opts?: OpGateResolveOptions): Promise<void>;
 
   /**
    * Host `chant run --components`. Optional: a runtime without it refuses the

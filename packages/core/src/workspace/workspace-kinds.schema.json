@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json",
+  "title": "workspace-kinds.json",
+  "description": "Member kinds a plugin supplies (#2524 D3, #2535, ws-031). A package publishes this file as data at its ./workspace-kinds subpath. chant reads it with the file system and never imports the package, so reading kinds never loads a lexicon.",
+  "type": "object",
+  "required": [
+    "schema",
+    "kinds"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "An editor hint. chant ignores it."
+    },
+    "$comment": {
+      "type": "string",
+      "description": "A note for people. chant ignores it."
+    },
+    "schema": {
+      "const": 1,
+      "description": "The kinds format version."
+    },
+    "kinds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/kind"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "kind": {
+      "type": "object",
+      "required": [
+        "name",
+        "description",
+        "precedence",
+        "probe"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "The kind's name, as a member's kind field names it. chant, workspace, other and examples are built in and can't be supplied."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One line saying what the member's directory holds, for listings and error messages."
+        },
+        "precedence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999,
+          "description": "When the probes of several kinds claim one directory, the highest precedence decides. Two claiming kinds with the same highest precedence are a tie, and a tie fails. The built-in chant kind has 500 and workspace has 1000."
+        },
+        "probe": {
+          "$ref": "#/$defs/probe"
+        },
+        "outputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The outputs every member of this kind exposes as link targets (#2524 D6, #2539). A member entry of the kind may list more in its own outputs field. Without this field the kind exposes only what each entry lists.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": "^[^\\u0000-\\u001f]+$"
+          }
+        },
+        "graph": {
+          "$ref": "#/$defs/graph"
+        },
+        "fields": {
+          "$ref": "#/$defs/fields"
+        },
+        "reader": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "A link reader chant ships, by name, that derives a member's links from the member's own files (#3932): dbt-project reads a dbt project's sources. The reader is chant's code and runs offline, parsing files as data; the package supplies only the name. A name this chant doesn't have keeps the kind without a reader, and the load reports it. A chant older than this field fails a kinds file that uses it."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "probe": {
+      "type": "object",
+      "description": "What the probe checks in a member's directory. It runs no code. It passes when any of its clauses does, and it needs at least one.",
+      "minProperties": 1,
+      "properties": {
+        "anyFile": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The directory passes when a file matching one of these names sits directly in it. A * in a name matches any run of characters, so *.tf matches every Terraform file.",
+          "items": {
+            "$ref": "#/$defs/fileName"
+          }
+        },
+        "anyBlock": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, has a line opening an unlabelled block named in blocks: leading space, the name, optional space, then {. No file is parsed.",
+          "required": [
+            "in",
+            "blocks"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "blocks": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "anyJsonKey": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, parses as JSON and has a value at one of pointers, each a JSON Pointer such as /scripts/start (#3151). A file that is not JSON is no evidence either way. Added by chant 0.103.0.",
+          "required": [
+            "in",
+            "pointers"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "pointers": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^(/[^/]+)+$"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "fileName": {
+      "type": "string",
+      "description": "A file name, with no directory part. A * matches any run of characters.",
+      "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
+    },
+    "graph": {
+      "type": "object",
+      "description": "How chant workspace graph reads a member of this kind (#2874). chant writes a reader project of its own outside the workspace, with a chant.config.json that declares lexicon and puts config under that lexicon's key, and runs the member's chant graph there. In every string key and value of config, {member} becomes the member's name, {dir} its absolute directory and {workspace} the absolute workspace root. Without this field a member of the kind is listed with kind-not-run.",
+      "required": [
+        "lexicon",
+        "config"
+      ],
+      "properties": {
+        "lexicon": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "The lexicon that reads the member, by name. The package that supplies the kind must be @intentius/chant-lexicon-<lexicon>, so the lexicon chant loads is the one the declaration pins."
+        },
+        "config": {
+          "type": "object",
+          "description": "The lexicon's config namespace for the reader project, such as terraform's roots. Placeholders are substituted; nothing else is interpreted."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "fields": {
+      "type": "object",
+      "description": "The fields a member entry of this kind may set under its own fields block, each with a type and, optionally, a default (#3151). chant workspace check fails a member whose fields name one the kind doesn't declare or give a value of the wrong type (WSP005), and chant workspace status --json prints every declared field with the defaults filled in. Added by chant 0.103.0; an older chant can't read a kinds file that uses it.",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/fieldName"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/scalarField"
+          },
+          {
+            "$ref": "#/$defs/objectField"
+          }
+        ]
+      }
+    },
+    "fieldName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,39}$"
+    },
+    "scalarField": {
+      "type": "object",
+      "required": [
+        "type",
+        "description"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "boolean"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "description": "The value a member that doesn't set the field gets. Its type is the field's. Without it the field reads as null when unset."
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For a string field: a regular expression the value must match."
+        }
+      },
+      "additionalProperties": false
+    },
+    "objectField": {
+      "type": "object",
+      "required": [
+        "type",
+        "description",
+        "properties"
+      ],
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "properties": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/scalarField"
+          },
+          "description": "The object's own fields, each a string, integer or boolean field. A member sets any of them; the rest take their defaults."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

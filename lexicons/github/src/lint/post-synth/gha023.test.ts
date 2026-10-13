@@ -49,4 +49,23 @@ jobs:
     const diags = gha023.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
+
+  test("flags ::set-output in a later name:-first step's block script (#3201)", () => {
+    const yaml = `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Version
+        run: |
+          v=$(cat VERSION)
+          echo "::set-output name=version::$v"
+`;
+    const diags = gha023.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('step "Version"');
+  });
 });

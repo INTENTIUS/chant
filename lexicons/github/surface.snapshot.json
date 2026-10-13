@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-01T23:01:14.865Z",
+  "generatedAt": "2026-10-12T16:28:06.999Z",
   "entries": {
     "Concurrency": {
       "kind": "property",
@@ -22,6 +22,8 @@
       "kind": "resource",
       "resourceType": "GitHub::Actions::Job",
       "props": [
+        "cache-mode:false",
+        "comment:false",
         "concurrency:false",
         "container:false",
         "continue-on-error:false",
@@ -65,6 +67,8 @@
       "kind": "resource",
       "resourceType": "GitHub::Actions::ReusableWorkflowCallJob",
       "props": [
+        "cache-mode:false",
+        "comment:false",
         "concurrency:false",
         "if:false",
         "name:false",
@@ -96,6 +100,8 @@
       "kind": "resource",
       "resourceType": "GitHub::Actions::Workflow",
       "props": [
+        "cache-mode:false",
+        "comment:false",
         "concurrency:false",
         "defaults:false",
         "env:false",

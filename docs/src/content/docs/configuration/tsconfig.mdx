@@ -4,25 +4,30 @@ description: Configuring tsconfig.json for chant projects
 diataxis: reference
 ---
 
-chant projects use a standard `tsconfig.json` for TypeScript configuration.
+chant projects use a standard `tsconfig.json`. Nothing in it is chant-specific. chant reads your source with its own TypeScript, so this file serves your editor and `tsc`.
 
-## Basic tsconfig.json
+## What `chant init` writes
 
 ```json
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
+    "module": "esnext",
     "moduleResolution": "bundler",
+    "types": ["node"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
   },
-  "include": ["src/**/*"]
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
 }
 ```
+
+The scaffolded `package.json` lists `typescript` as `^5.9.3 || ^7.0.0` and `@types/node` as `^24.0.0`. `npx tsc --noEmit` passes on a fresh project under either TypeScript version.
 
 ## Recommended Settings
 
@@ -36,7 +41,11 @@ Enables all strict type-checking options. chant resource definitions benefit fro
 
 ### `moduleResolution: "bundler"`
 
-The `bundler` resolution mode (TypeScript 5.0+) works well with chant because it supports package.json `exports` fields and extensionless imports.
+chant resolves imports the way `bundler` does, so `import { config } from "./config"` needs no file extension. `NodeNext` rejects that import with TS2835 and suggests `./config.js`. Don't take the suggestion, because chant does not map `./config.js` back to `./config.ts`, and the file is then run instead of folded.
+
+### `types: ["node"]`
+
+TypeScript 6 and later no longer load every `@types` package by default. Naming `node` keeps `process.env` and the `node:` modules typed.
 
 ## Editor Integration
 

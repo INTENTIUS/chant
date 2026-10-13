@@ -10,5 +10,29 @@ while [ -L "$SELF" ]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 MAIN_TS="$SCRIPT_DIR/../src/cli/main.ts"
+MAIN_JS="$SCRIPT_DIR/../dist/cli/main.js"
+
+# An installed package runs the compiled CLI with plain node (#3878): no
+# loader, so nothing of chant's own is transpiled on the way in. tsx loads
+# later, only when the command imports TypeScript (a chant.config.ts, project
+# source, a lexicon). A source checkout (tsconfig.build.json is not published)
+# always runs src/, so a dist/ left over from an earlier build never goes
+# stale under it.
+if [ -f "$MAIN_JS" ] && [ ! -f "$SCRIPT_DIR/../tsconfig.build.json" ]; then
+  exec node "$MAIN_JS" "$@"
+fi
+
+# tsx is our own dependency, so register its hooks in this node process rather
+# than shelling `npx tsx`, which resolves a bin and then spawns a second node.
+# Worth ~30% of startup (#2481). Nested install first, then hoisted; npx stays
+# as the fallback for any layout neither guess covers.
+for CANDIDATE in \
+  "$SCRIPT_DIR/../node_modules/tsx/dist/loader.mjs" \
+  "$SCRIPT_DIR/../../../tsx/dist/loader.mjs"
+do
+  if [ -f "$CANDIDATE" ]; then
+    exec node --import "file://$CANDIDATE" "$MAIN_TS" "$@"
+  fi
+done
 
 exec npx tsx "$MAIN_TS" "$@"

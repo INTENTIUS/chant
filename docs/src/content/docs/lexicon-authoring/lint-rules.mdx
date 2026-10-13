@@ -30,6 +30,10 @@ export const myRule: LintRule = {
 
 `LintContext` (`packages/core/src/lint/rule.ts`) carries `sourceFile`, `entities`, `filePath`, and the optional `lexicon`, `intrinsics` and `projectConfig`. Each `LintDiagnostic` you return needs `file`, `line`, `column`, `ruleId`, `severity` and `message`, plus an optional `fix`.
 
+Take the compiler API from `@intentius/chant/lint/typescript`, not from `typescript`: `import { ts } from "@intentius/chant/lint/typescript";`. That is the copy chant parsed `sourceFile` with. A bare `typescript` import resolves to the project's own copy, which on TypeScript 7 has no compiler API, so every `ts.is*` call throws.
+
+If `check` throws, the lint engine reports an error-severity diagnostic for that file under the rule's id, naming the rule, the file and the thrown message, and `chant lint` exits non-zero. The other rules still run on the file, and a `chant-disable` comment does not hide the failure. Return an empty array for input your rule does not handle instead of throwing.
+
 Wire imperative and declarative rules by importing them into the `lintRules()` array in your `plugin.ts`. They are not auto-discovered, unlike post-synth checks (see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin)).
 
 ```typescript
@@ -62,8 +66,8 @@ const spec: RuleSpec = {
 Return these from your plugin's `declarativeRules()` method.
 
 :::caution[Untrodden]
-No shipped lexicon uses `declarativeRules()`. All seventeen write imperative
-rules and return them from `lintRules()`. The seam is live (`chant lint`
+No shipped lexicon uses `declarativeRules()`. Every one writes imperative
+rules and returns them from `lintRules()`. The seam is live (`chant lint`
 compiles whatever `declarativeRules()` returns through `rule()`, and it is
 covered by contract tests, chant #1349), but you would be the first real
 adopter. Prefer `lintRules()` unless the declarative form is a clear fit for
@@ -133,7 +137,7 @@ cedar declares `"CED"` plus `["DWD"]`. Core's own cross-cutting ids (`COR*`,
 The number is three digits. Most lexicons group families by the hundreds digit
 rather than by a letter: k3s uses `K3S001` for its source-level rule and
 `K3S101`-`K3S107` for its post-synth checks, gcp uses `WGC001`-`WGC003` then
-`WGC1xx` through `WGC5xx`, and github runs a flat `GHA001`-`GHA068`.
+`WGC1xx` through `WGC5xx`, and github runs a flat `GHA001`-`GHA069`.
 
 A category letter after the prefix is a local convention in two lexicons, not a
 rule the tooling enforces. cedar splits `CEDC` (correctness), `CEDE`
@@ -179,7 +183,7 @@ asserting on the diagnostics. `lexicons/k3s/src/lint/rules/token-literal.test.ts
 is the smallest worked example:
 
 ```typescript
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 import type { LintContext } from "@intentius/chant/lint/rule";
 
 function createContext(code: string, fileName = "cluster.ts"): LintContext {

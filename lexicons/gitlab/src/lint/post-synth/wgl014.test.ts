@@ -95,3 +95,26 @@ deploy:
     expect(diags[0].message).toContain(".missing");
   });
 });
+
+describe("WGL014: templates the old line parser skipped (#3256)", () => {
+  test("extends of a hidden template whose name has a capital is resolved", () => {
+    const yaml = `.Base:
+  image: node:20
+
+lint:
+  extends: .Base
+  script: npm run lint
+`;
+    expect(checkInvalidExtends(makeCtx(yaml))).toHaveLength(0);
+  });
+
+  test("a job whose id starts with a capital is checked", () => {
+    const yaml = `Lint:
+  extends: .missing
+  script: npm run lint
+`;
+    const diags = checkInvalidExtends(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Lint");
+  });
+});

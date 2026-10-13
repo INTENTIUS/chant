@@ -1,0 +1,735 @@
+/**
+ * Member kinds (#2524 D3, #2535; ws-031 for the plugin shape, ws-051 for
+ * `examples`).
+ *
+ * A kind is data: a name, a precedence and a probe that says what its
+ * directory holds. Probes run no code (K3). Five kinds are built in: the
+ * member kinds `chant`, `workspace`, `design` and `other`, and the group kind
+ * `examples`. Every other kind comes from a pinned package, which publishes
+ * its kinds as a JSON file at a `./workspace-kinds` subpath, the way a
+ * lexicon publishes a slim `./detect` entry (#426). chant finds that file
+ * through the package's `package.json` and reads it with the file system, so
+ * reading kinds never imports the package and never loads a lexicon.
+ *
+ * The vocabulary is closed: a member whose kind no registry knows fails
+ * closed, and the message lists the known kinds. When the probes of several
+ * kinds claim one directory, the highest precedence decides, and a tie
+ * fails ({@link resolveKind}).
+ */
+
+import { readFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import schema from "./workspace-kinds.schema.json" with { type: "json" };
+import type { WorkspaceTree } from "./tree";
+import { joinPath, skippedDir } from "./tree";
+import { checkPinIntegrity } from "./pin-integrity";
+import { dataExportTarget, findInstalledPackage } from "./class-data";
+import { loadAjv2020 } from "./ajv2020";
+
+export const KINDS_SCHEMA_ID = schema.$id;
+
+/** The subpath a package publishes its kinds at. */
+export const KINDS_SUBPATH = "./workspace-kinds";
+
+/**
+ * The probe a package's kind carries (#2535, #2545). It passes when any of
+ * its clauses does. A name in either clause may use `*`, which matches any
+ * run of characters in one file name, so `*.tf` is every Terraform file.
+ */
+export interface FileProbe {
+  /** A file matching one of these names sits directly in the directory. */
+  anyFile?: string[];
+  /**
+   * A file directly in the directory whose name matches one of `in` has a
+   * line that opens an unlabelled block named in `blocks`: leading space,
+   * the name, optional space, then `{`. This is how a choudoufu root's
+   * `live {` block is found without parsing HCL (#2545).
+   */
+  anyBlock?: { in: string[]; blocks: string[] };
+  /**
+   * A file directly in the directory whose name matches one of `in` parses
+   * as JSON and has a value at one of `pointers`, each a JSON Pointer. This
+   * is how an app member's `package.json` with a `start` script is found
+   * without claiming every Node package (#3151).
+   */
+  anyJsonKey?: { in: string[]; pointers: string[] };
+}
+
+/** A string, integer or boolean field a kind declares for its members (#3151). */
+export interface ScalarKindField {
+  type: "string" | "integer" | "boolean";
+  description: string;
+  /** The value a member that doesn't set the field gets; null when the kind gives none. */
+  default?: string | number | boolean;
+  /** For a string field, a regular expression the value must match. */
+  pattern?: string;
+}
+
+/** An object field: named scalar fields, each with its own default (#3151). */
+export interface ObjectKindField {
+  type: "object";
+  description: string;
+  properties: Record<string, ScalarKindField>;
+}
+
+export type KindField = ScalarKindField | ObjectKindField;
+
+/** What a kind's probe checks in a directory. */
+export type KindProbe =
+  /** Files, or blocks in files, sit directly in the directory. */
+  | FileProbe
+  /** The directory exists; nothing else is checked (`other`). */
+  | { directory: true }
+  /** The directory holds a chant project, as {@link holdsChantProject} says (`examples`). */
+  | { chantProject: true };
+
+/**
+ * Which outputs a member of a kind exposes as link targets (#2524 D6,
+ * #2539). A member link may only name an output its producer exposes.
+ */
+export type KindOutputs =
+  /** The chant project's own outputs, read from its source without running it (`chant`). */
+  | { from: "chant-source" }
+  /** None: the member is opaque to links (`workspace`, and the group kind `examples`). */
+  | { from: "none" }
+  /** The names listed here, plus any the member entry lists in `outputs` (`other`, and kinds from a package). */
+  | { from: "declared"; names: string[] };
+
+/**
+ * How `chant workspace graph` reads a member of a package's kind (#2874): a
+ * lexicon, by name, and that lexicon's config namespace for a reader project
+ * chant writes itself. See {@link substituteGraphConfig} for the placeholders.
+ */
+export interface KindGraph {
+  lexicon: string;
+  config: Record<string, unknown>;
+}
+
+export interface MemberKind {
+  name: string;
+  /** One line for listings and error messages. */
+  description: string;
+  probe: KindProbe;
+  /**
+   * When several kinds' probes claim one directory, the highest precedence
+   * decides; equal highest precedences are a tie, and a tie fails. `other`
+   * and `examples` are never claimants.
+   */
+  precedence: number;
+  /** A member kind, or the kind of an example group (ws-051). */
+  shape: "member" | "group";
+  /** The outputs a member of this kind exposes as link targets (#2539). */
+  outputs: KindOutputs;
+  /** Where the kind comes from: `builtin`, or the package that supplies it. */
+  source: string;
+  /** The supplying package's directory, absolute; unset for a built-in kind. */
+  packageDir?: string;
+  /** How `workspace graph` reads a member of this kind (#2874); unset, the member is `kind-not-run`. */
+  graph?: KindGraph;
+  /** The fields a member entry of this kind may set, with their defaults (#3151); unset, the kind declares none. */
+  fields?: Record<string, KindField>;
+  /**
+   * The link reader chant runs over a member's own files (#3932), by name, from
+   * {@link KIND_LINK_READERS}. It derives the member's links offline, from
+   * files it parses as data; unset, the member's links are only those its
+   * entry states.
+   */
+  reader?: KindLinkReaderName;
+}
+
+/**
+ * The link readers chant ships (#3932). A kind names one in its kinds file as
+ * `reader`. The readers are chant's own code, not the package's: a kinds file
+ * stays data, and chant never imports the package that supplies it. Closed:
+ * a kind naming another reader is kept without one, and the load reports it.
+ */
+export const KIND_LINK_READERS = ["dbt-project"] as const;
+export type KindLinkReaderName = (typeof KIND_LINK_READERS)[number];
+
+export interface KindRegistry {
+  get(name: string): MemberKind | undefined;
+  /** Every member kind's name, sorted, for "unknown kind" messages. */
+  names(): string[];
+  /** Every kind, group kinds included, in registration order. */
+  all(): MemberKind[];
+}
+
+/** The group kind (ws-051). An entry of this kind is a group, not a member. */
+export const EXAMPLES_KIND = "examples";
+
+/** The data member kind that holds design artifacts (#2549, ws-062). */
+export const DESIGN_KIND = "design";
+
+export const BUILTIN_KINDS: readonly MemberKind[] = [
+  {
+    name: "chant",
+    description: "a chant project, with a chant.config.ts or chant.config.json in its directory",
+    probe: { anyFile: ["chant.config.ts", "chant.config.json"] },
+    precedence: 500,
+    shape: "member",
+    outputs: { from: "chant-source" },
+    source: "builtin",
+  },
+  {
+    name: "workspace",
+    description: "a nested workspace, with its own chant.workspace.json; the outer one reads it through its own chant workspace graph and never writes inside it",
+    probe: { anyFile: ["chant.workspace.json", "chant.workspace.jsonc"] },
+    precedence: 1000,
+    shape: "member",
+    outputs: { from: "none" },
+    source: "builtin",
+  },
+  {
+    name: "other",
+    description: "a directory chant does not read; the entry says why in `because`",
+    probe: { directory: true },
+    precedence: 0,
+    shape: "member",
+    outputs: { from: "declared", names: [] },
+    source: "builtin",
+  },
+  {
+    name: DESIGN_KIND,
+    description: "a data member holding the design artifacts the workspace owns; chant reads its files for record pins and builds nothing",
+    probe: { directory: true },
+    precedence: 0,
+    shape: "member",
+    outputs: { from: "declared", names: [] },
+    source: "builtin",
+  },
+  {
+    name: EXAMPLES_KIND,
+    description: "an example group: every directory its glob matches that holds a chant project is built and linted",
+    probe: { chantProject: true },
+    precedence: 0,
+    shape: "group",
+    outputs: { from: "none" },
+    source: "builtin",
+  },
+];
+
+export const BUILTIN_KIND_NAMES: readonly string[] = BUILTIN_KINDS.map((k) => k.name);
+
+/** A registry holding the built-in kinds and then `extra`, which must not repeat a name. */
+export function createKindRegistry(extra: readonly MemberKind[] = []): KindRegistry {
+  const byName = new Map<string, MemberKind>();
+  for (const k of [...BUILTIN_KINDS, ...extra]) {
+    if (byName.has(k.name)) throw new Error(`kind ${k.name} is registered twice`);
+    byName.set(k.name, k);
+  }
+  return {
+    get: (name) => byName.get(name),
+    names: () => [...byName.values()].filter((k) => k.shape === "member").map((k) => k.name).sort(),
+    all: () => [...byName.values()],
+  };
+}
+
+export function builtinKindRegistry(): KindRegistry {
+  return createKindRegistry();
+}
+
+/** Whether `dir` (tree-relative) passes `kind`'s probe. The directory is known to exist. */
+export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): boolean {
+  if ("directory" in kind.probe) return true;
+  if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
+  const { anyFile, anyBlock, anyJsonKey } = kind.probe;
+  if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
+  if (anyJsonKey) {
+    for (const file of filesMatching(tree, dir, anyJsonKey.in)) {
+      try {
+        const json = JSON.parse(tree.read(file)) as unknown;
+        if (anyJsonKey.pointers.some((p) => atPointer(json, p) !== undefined)) return true;
+      } catch {
+        // A file that isn't JSON is no evidence either way.
+      }
+    }
+  }
+  if (anyBlock) {
+    const opener = new RegExp(`^\\s*(?:${anyBlock.blocks.map(escapeRegExp).join("|")})\\s*\\{`, "m");
+    for (const file of filesMatching(tree, dir, anyBlock.in)) {
+      try {
+        if (opener.test(tree.read(file))) return true;
+      } catch {
+        // An unreadable file is no evidence either way.
+      }
+    }
+  }
+  return false;
+}
+
+/** Whether a probe looks at the directory's files, and so can claim it. */
+function isFileProbe(probe: KindProbe): probe is FileProbe {
+  return !("directory" in probe) && !("chantProject" in probe);
+}
+
+/**
+ * The files directly in `dir` (tree-relative paths) whose names match one of
+ * `names`. A name without `*` is looked up directly, so the common case needs
+ * no listing.
+ */
+function filesMatching(tree: WorkspaceTree, dir: string, names: readonly string[]): string[] {
+  const out: string[] = [];
+  const globs = names.filter((n) => n.includes("*"));
+  for (const name of names) {
+    if (!name.includes("*") && tree.stat(joinPath(dir, name)) === "file") out.push(joinPath(dir, name));
+  }
+  if (globs.length > 0) {
+    const patterns = globs.map((g) => new RegExp(`^${g.split("*").map(escapeRegExp).join("[^/]*")}$`));
+    for (const e of tree.list(dir) ?? []) {
+      if (e.type === "file" && patterns.some((p) => p.test(e.name))) out.push(joinPath(dir, e.name));
+    }
+  }
+  return out.sort();
+}
+
+/** The value at JSON Pointer `pointer` in `json`, or undefined when there is none. */
+function atPointer(json: unknown, pointer: string): unknown {
+  let at: unknown = json;
+  for (const raw of pointer.split("/").slice(1)) {
+    const token = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (at === null || typeof at !== "object" || !Object.prototype.hasOwnProperty.call(at, token)) return undefined;
+    at = (at as Record<string, unknown>)[token];
+  }
+  return at;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export interface KindResolution {
+  /** Every member kind whose probe claims the directory, highest precedence first. */
+  claims: MemberKind[];
+  /** The kind the precedence order picks, when exactly one has the highest precedence. */
+  winner: MemberKind | undefined;
+  /** The kinds sharing the highest precedence, when there are two or more. A tie fails. */
+  tie: MemberKind[];
+}
+
+/**
+ * Which kind's probe claims `dir` (tree-relative). Only member kinds whose
+ * probe looks at the directory take part: `other` claims every directory and
+ * so claims none, and `examples` is a group kind. `exclude` leaves kinds out,
+ * such as `workspace` for the root member, whose directory holds the
+ * workspace's own declaration.
+ */
+export function resolveKind(kinds: KindRegistry, tree: WorkspaceTree, dir: string, exclude: readonly string[] = []): KindResolution {
+  const claims = kinds
+    .all()
+    .filter((k) => k.shape === "member" && isFileProbe(k.probe) && !exclude.includes(k.name) && probeKind(k, tree, dir))
+    .sort((a, b) => b.precedence - a.precedence || (a.name < b.name ? -1 : 1));
+  const top = claims.filter((k) => k.precedence === claims[0]?.precedence);
+  return { claims, winner: top.length === 1 ? top[0] : undefined, tie: top.length > 1 ? top : [] };
+}
+
+const CONFIG_FILES = ["chant.config.ts", "chant.config.json"];
+const PROJECT_SEARCH_DEPTH = 4;
+
+/**
+ * Whether directory `dir` holds a chant project, for an example group's
+ * matches (ws-051). That is true when a chant config sits in it or up to four
+ * levels below it (many examples keep theirs in `src/`), or when its own
+ * `package.json` depends on `@intentius/chant` or a chant lexicon, which is
+ * how an example with no config names its lexicon.
+ */
+export function holdsChantProject(tree: WorkspaceTree, dir: string): boolean {
+  const pkg = joinPath(dir, "package.json");
+  if (tree.stat(pkg) === "file") {
+    try {
+      const json = JSON.parse(tree.read(pkg)) as Record<string, unknown>;
+      for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+        const deps = json[field];
+        if (deps && typeof deps === "object" && Object.keys(deps).some(isChantPackage)) return true;
+      }
+    } catch {
+      // An unreadable package.json names no lexicon; fall through to the config search.
+    }
+  }
+  const search = (at: string, depth: number): boolean => {
+    const entries = tree.list(at) ?? [];
+    if (entries.some((e) => e.type === "file" && CONFIG_FILES.includes(e.name))) return true;
+    if (depth === PROJECT_SEARCH_DEPTH) return false;
+    return entries.some((e) => e.type === "dir" && !skippedDir(e.name) && search(joinPath(at, e.name), depth + 1));
+  };
+  return search(dir, 0);
+}
+
+function isChantPackage(name: string): boolean {
+  return name === "@intentius/chant" || name.startsWith("@intentius/chant-lexicon-");
+}
+
+// ── Kinds as data ────────────────────────────────────────────────────────────
+
+interface AjvError {
+  instancePath: string;
+  message?: string;
+}
+type Validate = ((data: unknown) => boolean) & { errors?: AjvError[] | null };
+
+let compiled: Validate | undefined;
+function validator(): Validate {
+  if (compiled) return compiled;
+  const Ajv = loadAjv2020() as new (opts: object) => { compile(s: object): Validate };
+  compiled = new Ajv({ allErrors: true, strict: true }).compile(schema);
+  return compiled;
+}
+
+export interface KindData {
+  kinds: MemberKind[];
+  /** Why the data can't be used, one line each. Empty when it can. */
+  problems: string[];
+}
+
+/**
+ * Check the text of a kinds file against `workspace-kinds.schema.json` and
+ * the rules the schema can't say: no built-in name, and no name twice.
+ * `source` names the package in the kinds and in the messages.
+ */
+export function parseKindData(text: string, source: string): KindData {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    return { kinds: [], problems: [`${source}: the kinds file is not JSON (${(err as Error).message})`] };
+  }
+  const validate = validator();
+  if (!validate(raw)) {
+    const problems = (validate.errors ?? []).map((e) => `${source}: ${e.instancePath || "the kinds file"} ${e.message ?? "is invalid"}`);
+    return { kinds: [], problems: [...new Set(problems)] };
+  }
+  const problems: string[] = [];
+  const kinds: MemberKind[] = [];
+  const seen = new Set<string>();
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField>; reader?: string }[] }).kinds) {
+    if (BUILTIN_KIND_NAMES.includes(k.name)) {
+      problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
+      continue;
+    }
+    if (seen.has(k.name)) {
+      problems.push(`${source}: kind ${k.name} is listed twice`);
+      continue;
+    }
+    seen.add(k.name);
+    kinds.push({
+      name: k.name,
+      description: k.description,
+      probe: {
+        ...(k.probe.anyFile ? { anyFile: [...k.probe.anyFile] } : {}),
+        ...(k.probe.anyBlock ? { anyBlock: { in: [...k.probe.anyBlock.in], blocks: [...k.probe.anyBlock.blocks] } } : {}),
+        ...(k.probe.anyJsonKey ? { anyJsonKey: { in: [...k.probe.anyJsonKey.in], pointers: [...k.probe.anyJsonKey.pointers] } } : {}),
+      },
+      precedence: k.precedence,
+      shape: "member",
+      outputs: { from: "declared", names: [...(k.outputs ?? [])] },
+      source,
+      ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
+      ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
+      ...(k.reader && (KIND_LINK_READERS as readonly string[]).includes(k.reader) ? { reader: k.reader as KindLinkReaderName } : {}),
+    });
+    if (k.reader && !(KIND_LINK_READERS as readonly string[]).includes(k.reader)) {
+      problems.push(`${source}: kind ${k.name} names link reader ${k.reader}, which this chant does not have (it has ${KIND_LINK_READERS.join(", ")}); the kind is kept, and its members' links are only those their entries state`);
+    }
+    for (const problem of fieldDefaultProblems(k.fields ?? {})) problems.push(`${source}: kind ${k.name} ${problem}`);
+  }
+  return { kinds, problems };
+}
+
+export interface PackageKinds extends KindData {
+  /** The kinds file, absolute, or undefined when the package publishes none. */
+  file: string | undefined;
+}
+
+/**
+ * Where a package's `exports` send `./workspace-kinds` (or another data
+ * subpath, such as `./workspace-principals`), or undefined when the package
+ * doesn't export it. Only the literal key counts: a `./*` pattern maps the
+ * subpath to code, which chant never runs for plugin data.
+ */
+export function kindsExportTarget(pkg: Record<string, unknown>, subpath: string = KINDS_SUBPATH): string | undefined | { problem: string } {
+  return dataExportTarget(pkg, subpath);
+}
+
+/** Read the kinds a package directory publishes. Reads files only; imports nothing. */
+export function readPackageKinds(packageDir: string, source?: string): PackageKinds {
+  const manifest = join(packageDir, "package.json");
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(readFileSync(manifest, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return { kinds: [], problems: [`${source ?? packageDir}: no readable package.json in ${packageDir}`], file: undefined };
+  }
+  const name = source ?? (typeof pkg.name === "string" ? pkg.name : packageDir);
+  const target = kindsExportTarget(pkg);
+  if (target === undefined) return { kinds: [], problems: [], file: undefined };
+  if (typeof target !== "string") return { kinds: [], problems: [`${name}: ${target.problem}`], file: undefined };
+  const file = resolve(packageDir, target);
+  const inside = relative(packageDir, file);
+  if (inside.startsWith("..") || isAbsolute(inside)) {
+    return { kinds: [], problems: [`${name}: exports["${KINDS_SUBPATH}"] points outside the package`], file: undefined };
+  }
+  let text: string;
+  try {
+    text = readFileSync(file, "utf-8");
+  } catch {
+    return { kinds: [], problems: [`${name}: exports["${KINDS_SUBPATH}"] names ${target}, which does not exist`], file };
+  }
+  const data = parseKindData(text, name);
+  const packageName = typeof pkg.name === "string" ? pkg.name : undefined;
+  for (const k of data.kinds) {
+    k.packageDir = packageDir;
+    if (k.graph && packageName !== lexiconPackageName(k.graph.lexicon)) {
+      data.problems.push(
+        `${name}: kind ${k.name} reads its members with lexicon ${k.graph.lexicon}, which is ${lexiconPackageName(k.graph.lexicon)}, ` +
+          `and this package is ${packageName ?? "unnamed"}; the kind is kept, and workspace graph lists its members with kind-not-run`,
+      );
+      delete k.graph;
+    }
+  }
+  return { ...data, file };
+}
+
+/** The package a lexicon name resolves to. */
+export function lexiconPackageName(lexicon: string): string {
+  return `@intentius/chant-lexicon-${lexicon}`;
+}
+
+/** Where each placeholder in a kind's graph config points (#2874). */
+export interface GraphPlaceholders {
+  /** The member's name. */
+  member: string;
+  /** The member's directory, absolute. */
+  dir: string;
+  /** The workspace root, absolute. */
+  workspace: string;
+}
+
+/**
+ * A kind's graph config with `{member}`, `{dir}` and `{workspace}` replaced
+ * in every string key and value. Other braces are left as they are.
+ */
+export function substituteGraphConfig(config: Record<string, unknown>, at: GraphPlaceholders): Record<string, unknown> {
+  const text = (v: string) => v.replace(/\{(member|dir|workspace)\}/g, (_, key: keyof GraphPlaceholders) => at[key]);
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return text(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v !== null && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), walk(x)]));
+    return v;
+  };
+  return walk(config) as Record<string, unknown>;
+}
+
+/** Where an installed package is, as Node finds a bare import (`./class-data.ts`, so the gate-decision bundle shares it). */
+export { findInstalledPackage };
+
+export interface PinLike {
+  package: string | null;
+  version: string | null;
+  path: string | null;
+  /** A path pin's content hash (#2547). Checked before anything is read from the directory. */
+  integrity?: string | null;
+}
+
+export interface KindLoadProblem {
+  /** The pin's index in the declaration's `pins`. */
+  pin: number;
+  message: string;
+}
+
+export interface LoadedKinds {
+  registry: KindRegistry;
+  problems: KindLoadProblem[];
+}
+
+/**
+ * The directory a pin's plugin data is read from: an installed package at
+ * the pinned version, looked up from `workspaceRoot`, or a path pin's
+ * directory, checked against its integrity digest when it has one. Null for
+ * a pin that names neither. Shared by the kinds and the principal classes
+ * (#3080), so both read a pin the same way.
+ */
+export function pinnedPackageDir(pin: PinLike, workspaceRoot: string): { dir: string; source: string } | { problem: string } | null {
+  if (pin.package) {
+    const dir = findInstalledPackage(pin.package, workspaceRoot);
+    if (!dir) return { problem: `pinned package ${pin.package} is not installed; install it to read the kinds it supplies` };
+    let installed: unknown;
+    try {
+      installed = (JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as { version?: unknown }).version;
+    } catch {
+      installed = undefined;
+    }
+    if (pin.version && installed !== pin.version) return { problem: `${pin.package} is pinned at ${pin.version}, and ${String(installed ?? "an unknown version")} is installed` };
+    return { dir, source: pin.package };
+  }
+  if (pin.path) {
+    const dir = join(workspaceRoot, ...pin.path.split("/"));
+    if (pin.integrity) {
+      const checked = checkPinIntegrity(dir, pin.integrity, pin.path);
+      if (!checked.ok) return { problem: checked.message };
+    }
+    return { dir, source: pin.path };
+  }
+  return null;
+}
+
+/**
+ * Build the registry for a workspace: the built-in kinds plus the kinds
+ * every pin publishes. `workspaceRoot` is the absolute workspace root; a
+ * package pin is looked up from there, and a path pin is relative to it.
+ * An installed version that differs from the pin, a kinds file that doesn't
+ * validate, and a kind name two packages both supply are problems; the kinds
+ * involved are left out, so members of those kinds read as unknown.
+ * Never throws.
+ */
+export function loadKindRegistry(pins: readonly PinLike[], workspaceRoot: string): LoadedKinds {
+  const problems: KindLoadProblem[] = [];
+  const extra: MemberKind[] = [];
+  const owner = new Map<string, string>();
+  const clashing = new Set<string>();
+  pins.forEach((pin, i) => {
+    const found = pinnedPackageDir(pin, workspaceRoot);
+    if (found === null) return;
+    if ("problem" in found) {
+      problems.push({ pin: i, message: found.problem });
+      return;
+    }
+    const { dir, source } = found;
+    const read = readPackageKinds(dir, source);
+    for (const p of read.problems) problems.push({ pin: i, message: p });
+    for (const k of read.kinds) {
+      const first = owner.get(k.name);
+      if (first) {
+        clashing.add(k.name);
+        problems.push({ pin: i, message: `kind ${k.name} is supplied by both ${first} and ${source}; a kind name has one source` });
+        continue;
+      }
+      owner.set(k.name, source);
+      extra.push(k);
+    }
+  });
+  // A name two packages both supply is left out altogether: neither reading is safe.
+  return { registry: createKindRegistry(extra.filter((k) => !clashing.has(k.name))), problems };
+}
+
+/**
+ * Whether `file` (absolute, inside `packageDir`) is published, as far as the
+ * package's `files` list says. A package with no `files` list publishes
+ * everything npm doesn't ignore by default.
+ */
+export function kindsFileShips(packageDir: string, file: string): boolean {
+  let pkg: { files?: unknown };
+  try {
+    pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf-8")) as { files?: unknown };
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(pkg.files)) return true;
+  const rel = relative(packageDir, file).split("\\").join("/");
+  return pkg.files.some((entry) => {
+    if (typeof entry !== "string") return false;
+    const e = entry.replace(/^\.\//, "").replace(/\/+$/, "");
+    return rel === e || rel.startsWith(`${e}/`);
+  });
+}
+
+// ── Member fields (#3151) ────────────────────────────────────────────────────
+
+/** A value a member sets, or a kind's default: what a scalar field holds. */
+export type FieldValue = string | number | boolean;
+
+/** Why a value doesn't fit `field`, phrased to follow "the value", or undefined when it fits. */
+function scalarProblem(field: ScalarKindField, value: unknown): string | undefined {
+  const ok = field.type === "integer" ? typeof value === "number" && Number.isInteger(value) : typeof value === field.type;
+  if (!ok) return `is ${JSON.stringify(value)}, and the field is ${field.type === "integer" ? "an integer" : `a ${field.type}`}`;
+  if (field.pattern !== undefined && typeof value === "string") {
+    let re: RegExp;
+    try {
+      re = new RegExp(field.pattern, "u");
+    } catch {
+      return undefined; // Reported once, against the kind, by fieldDefaultProblems.
+    }
+    if (!re.test(value)) return `is ${JSON.stringify(value)}, which does not match ${field.pattern}`;
+  }
+  return undefined;
+}
+
+/** What is wrong with a kind's own field declarations: a pattern that isn't a regular expression, or a default of the wrong type. */
+function fieldDefaultProblems(fields: Record<string, KindField>): string[] {
+  const out: string[] = [];
+  const scalar = (name: string, f: ScalarKindField) => {
+    if (f.pattern !== undefined) {
+      try {
+        new RegExp(f.pattern, "u");
+      } catch {
+        out.push(`declares field ${name} with pattern ${f.pattern}, which is not a regular expression`);
+        return;
+      }
+    }
+    if (f.default === undefined) return;
+    const problem = scalarProblem(f, f.default);
+    if (problem) out.push(`declares field ${name} whose default ${problem}`);
+  };
+  for (const [name, f] of Object.entries(fields)) {
+    if (f.type === "object") for (const [inner, g] of Object.entries(f.properties)) scalar(`${name}.${inner}`, g);
+    else scalar(name, f);
+  }
+  return out;
+}
+
+/** One problem with a member's fields: the field's path under `fields` (`scripts/start`), and why. */
+export interface MemberFieldProblem {
+  path: string;
+  message: string;
+}
+
+export interface MemberFields {
+  /** Every field the kind declares, set from the entry or its default (null when it has none); null when the kind declares no fields. */
+  fields: Record<string, FieldValue | null | Record<string, FieldValue | null>> | null;
+  problems: MemberFieldProblem[];
+}
+
+/**
+ * A member's fields (#3151): the ones its entry sets, checked against what
+ * its kind declares, with every other declared field at its default. A field
+ * the kind doesn't declare, or a value of the wrong type, is a problem, and
+ * the field reads as its default. A kind no registry knows has no fields to
+ * check against, so it reads as null with no problem (WSP003 reports it).
+ */
+export function resolveMemberFields(kind: MemberKind | undefined, given: Record<string, unknown> | null): MemberFields {
+  if (kind === undefined) return { fields: null, problems: [] };
+  const declared = kind.fields;
+  const problems: MemberFieldProblem[] = [];
+  if (declared === undefined) {
+    if (given !== null) problems.push({ path: "", message: `kind ${kind.name} declares no fields, and the entry sets ${Object.keys(given).join(", ") || "an empty fields block"}` });
+    return { fields: null, problems };
+  }
+  const set = given ?? {};
+  for (const name of Object.keys(set)) {
+    if (!(name in declared)) problems.push({ path: name, message: `kind ${kind.name} declares no field ${name}; its fields are ${Object.keys(declared).join(", ")}` });
+  }
+  const scalar = (path: string, field: ScalarKindField, value: unknown): FieldValue | null => {
+    if (value !== undefined) {
+      const problem = scalarProblem(field, value);
+      if (!problem) return value as FieldValue;
+      problems.push({ path, message: `field ${path.replace("/", ".")} ${problem}` });
+    }
+    return field.default ?? null;
+  };
+  const fields: NonNullable<MemberFields["fields"]> = {};
+  for (const [name, field] of Object.entries(declared)) {
+    if (field.type !== "object") {
+      fields[name] = scalar(name, field, set[name]);
+      continue;
+    }
+    const raw = set[name];
+    let inner: Record<string, unknown> = {};
+    if (raw !== undefined) {
+      if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) inner = raw as Record<string, unknown>;
+      else problems.push({ path: name, message: `field ${name} is ${JSON.stringify(raw)}, and the field is an object` });
+    }
+    for (const key of Object.keys(inner)) {
+      if (!(key in field.properties)) problems.push({ path: `${name}/${key}`, message: `kind ${kind.name} declares no field ${name}.${key}; ${name} has ${Object.keys(field.properties).join(", ")}` });
+    }
+    fields[name] = Object.fromEntries(Object.entries(field.properties).map(([key, f]) => [key, scalar(`${name}/${key}`, f, inner[key])]));
+  }
+  return { fields, problems };
+}

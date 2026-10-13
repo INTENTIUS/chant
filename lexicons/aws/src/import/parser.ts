@@ -27,7 +27,12 @@ const cfnYamlTypes = [
   }),
   new yaml.Type("!GetAtt", {
     kind: "scalar",
-    construct: (data: string) => ({ "Fn::GetAtt": data.split(".") }),
+    // `!GetAtt Db.Endpoint.Address` names the attribute `Endpoint.Address`:
+    // the logical id ends at the first dot.
+    construct: (data: string) => {
+      const dot = data.indexOf(".");
+      return { "Fn::GetAtt": dot < 0 ? [data] : [data.slice(0, dot), data.slice(dot + 1)] };
+    },
   }),
   new yaml.Type("!GetAtt", {
     kind: "sequence",
@@ -115,6 +120,8 @@ const CF_SCHEMA = yaml.DEFAULT_SCHEMA.extend(cfnYamlTypes);
 interface CFTemplate {
   AWSTemplateFormatVersion?: string;
   Description?: string;
+  Metadata?: Record<string, unknown>;
+  Mappings?: Record<string, Record<string, Record<string, unknown>>>;
   Parameters?: Record<string, CFParameter>;
   Conditions?: Record<string, unknown>;
   Resources?: Record<string, CFResource>;
@@ -138,7 +145,23 @@ interface CFParameter {
   Type: string;
   Description?: string;
   Default?: unknown;
+  [constraint: string]: unknown;
 }
+
+/** Parameter keys import carries besides Type, Description and Default. */
+const PARAMETER_CONSTRAINT_KEYS = [
+  "AllowedValues",
+  "AllowedPattern",
+  "ConstraintDescription",
+  "MinLength",
+  "MaxLength",
+  "MinValue",
+  "MaxValue",
+  "NoEcho",
+] as const;
+
+/** Resource attributes import carries besides Type, Properties, Metadata and Condition. */
+const RESOURCE_ATTRIBUTE_KEYS = ["DependsOn", "DeletionPolicy", "UpdateReplacePolicy", "UpdatePolicy", "CreationPolicy"] as const;
 
 /**
  * CloudFormation resource
@@ -149,6 +172,10 @@ interface CFResource {
   Metadata?: Record<string, unknown>;
   DependsOn?: string | string[];
   Condition?: string;
+  DeletionPolicy?: string;
+  UpdateReplacePolicy?: string;
+  UpdatePolicy?: unknown;
+  CreationPolicy?: unknown;
 }
 
 /**
@@ -184,6 +211,8 @@ export class CFParser extends BaseValueParser implements TemplateParser {
       metadata: {
         version: template.AWSTemplateFormatVersion ?? "2010-09-09",
         description: template.Description,
+        ...(template.Metadata !== undefined ? { templateMetadata: this.parseValue(template.Metadata) } : {}),
+        ...(template.Mappings !== undefined ? { mappings: template.Mappings } : {}),
       },
     };
   }
@@ -195,6 +224,8 @@ export class CFParser extends BaseValueParser implements TemplateParser {
   private static readonly CARRIED_SECTIONS = new Set([
     "AWSTemplateFormatVersion",
     "Description",
+    "Metadata",
+    "Mappings",
     "Parameters",
     "Conditions",
     "Resources",
@@ -250,13 +281,19 @@ export class CFParser extends BaseValueParser implements TemplateParser {
    * Parse parameters section
    */
   private parseParameters(params: Record<string, CFParameter>): ParameterIR[] {
-    return Object.entries(params).map(([name, param]) => ({
-      name,
-      type: param.Type,
-      description: param.Description,
-      defaultValue: param.Default,
-      required: param.Default === undefined,
-    }));
+    return Object.entries(params).map(([name, param]) => {
+      const constraints = Object.fromEntries(
+        PARAMETER_CONSTRAINT_KEYS.filter((k) => param[k] !== undefined).map((k) => [k, param[k]]),
+      );
+      return {
+        name,
+        type: param.Type,
+        description: param.Description,
+        defaultValue: param.Default,
+        required: param.Default === undefined,
+        ...(Object.keys(constraints).length > 0 ? { constraints } : {}),
+      };
+    });
   }
 
   /**
@@ -265,13 +302,19 @@ export class CFParser extends BaseValueParser implements TemplateParser {
   private parseResources(resources: Record<string, CFResource>): ResourceIR[] {
     return Object.entries(resources)
       .filter(([_, resource]) => typeof resource?.Type === "string")
-      .map(([logicalId, resource]) => ({
-        logicalId,
-        type: resource.Type,
-        properties: this.parseProperties(resource.Properties ?? {}),
-        metadata: resource.Metadata,
-        condition: typeof resource.Condition === "string" ? resource.Condition : undefined,
-      }));
+      .map(([logicalId, resource]) => {
+        const attributes = Object.fromEntries(
+          RESOURCE_ATTRIBUTE_KEYS.filter((k) => resource[k] !== undefined).map((k) => [k, this.parseValue(resource[k])]),
+        );
+        return {
+          logicalId,
+          type: resource.Type,
+          properties: this.parseProperties(resource.Properties ?? {}),
+          metadata: resource.Metadata !== undefined ? (this.parseValue(resource.Metadata) as Record<string, unknown>) : undefined,
+          condition: typeof resource.Condition === "string" ? resource.Condition : undefined,
+          ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
+        };
+      });
   }
 
   /**
@@ -305,9 +348,9 @@ export class CFParser extends BaseValueParser implements TemplateParser {
       if (Array.isArray(value) && value.length === 2) {
         return { __intrinsic: "GetAtt", logicalId: value[0], attribute: value[1] };
       }
-      if (typeof value === "string") {
-        const [logicalId, attribute] = value.split(".", 2);
-        return { __intrinsic: "GetAtt", logicalId, attribute };
+      if (typeof value === "string" && value.indexOf(".") > 0) {
+        const dot = value.indexOf(".");
+        return { __intrinsic: "GetAtt", logicalId: value.slice(0, dot), attribute: value.slice(dot + 1) };
       }
     }
 
@@ -344,8 +387,12 @@ export class CFParser extends BaseValueParser implements TemplateParser {
     }
 
     if (key === "Fn::Select") {
+      // The index is kept as written (0 or "0"). A list source is `values`;
+      // anything else (a Ref to a list parameter, Fn::GetAZs, Fn::Split) is
+      // `source`, the list itself. Wrapping it in a list would select the
+      // list rather than an item of it.
       const selectValue = value as [string | number, unknown];
-      const index = Number(selectValue[0]);
+      const index = selectValue[0];
       const source = selectValue[1];
       if (Array.isArray(source)) {
         return {
@@ -357,7 +404,7 @@ export class CFParser extends BaseValueParser implements TemplateParser {
       return {
         __intrinsic: "Select",
         index,
-        values: [this.parseValue(source)],
+        source: this.parseValue(source),
       };
     }
 
@@ -376,9 +423,15 @@ export class CFParser extends BaseValueParser implements TemplateParser {
 
     if (key === "Fn::FindInMap") {
       const mapValue = value as unknown[];
+      if (!Array.isArray(mapValue) || mapValue.length !== 3) {
+        throw new Error(
+          `Fn::FindInMap takes [MapName, TopLevelKey, SecondLevelKey]; this one has ${JSON.stringify(value)} ` +
+            "(a fourth DefaultValue argument needs AWS::LanguageExtensions, which import does not carry)",
+        );
+      }
       return {
         __intrinsic: "FindInMap",
-        mapName: mapValue[0],
+        mapName: this.parseValue(mapValue[0]),
         firstKey: this.parseValue(mapValue[1]),
         secondKey: this.parseValue(mapValue[2]),
       };

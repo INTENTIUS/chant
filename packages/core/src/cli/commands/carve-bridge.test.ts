@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { execFileSync } from "child_process";
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, dirname, join } from "path";
 import { carveBridge, formatCarveBridge } from "./carve-bridge";
 import { loadHcl2json } from "../../terraform/parse";
 import { registerCarveProvider } from "../../terraform/carve-provider";
@@ -336,9 +336,13 @@ describe("carveBridge — kubernetes_manifest (#2034)", () => {
       expect(ds.kind).toBe("ConfigMap");
       expect(ds.metadata).toEqual([{ name: "app-config", namespace: "apps" }]);
 
-      // And Terraform's own formatter accepts it byte for byte.
+      // And Terraform's own formatter accepts it byte for byte. It runs in the
+      // file's directory on the bare file name: terraform rewrites an absolute
+      // path relative to the working directory, and when that directory was
+      // reached through a symlink (macOS /var is /private/var) the rewritten
+      // path points nowhere (chant#2866).
       try {
-        execFileSync("terraform", ["fmt", "-check", "-diff", dsPath], { stdio: "pipe" });
+        execFileSync("terraform", ["fmt", "-check", "-diff", basename(dsPath)], { cwd: dirname(dsPath), stdio: "pipe" });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // no terraform on this machine
         throw err;

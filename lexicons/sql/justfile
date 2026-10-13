@@ -1,0 +1,30 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate the ClickHouse types from the committed catalog snapshot (a pin move reads the pinned server)
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Re-read the pinned ClickHouse server even when the snapshot matches the pin (needs Docker)
+refresh-catalog:
+    npx tsx src/codegen/generate-cli.ts --force
+
+# Validate generated artifacts
+validate:
+    npx tsx src/validate-cli.ts
+
+# Generate the docs site, install deps, and start the dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
+
+# Build the docs site for production
+docs-build:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
+
+# Package the lexicon (generate + validate)
+package: generate validate

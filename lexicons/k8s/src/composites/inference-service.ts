@@ -19,6 +19,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { InferenceService as InferenceServiceResource } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 /** Knative concurrency, or a raw HPA metric (cpu/memory/rps). */
 export type ScaleMetric = "concurrency" | "cpu" | "memory" | "rps";
@@ -56,7 +57,7 @@ export interface InferenceServiceProps {
   canaryTrafficPercent?: number;
   labels?: Record<string, string>;
   defaults?: {
-    inferenceService?: Partial<Record<string, unknown>>;
+    inferenceService?: MemberDefaults<"InferenceService">;
   };
 }
 

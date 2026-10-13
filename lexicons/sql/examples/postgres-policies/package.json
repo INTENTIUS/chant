@@ -1,0 +1,19 @@
+{
+  "name": "sql-postgres-policies-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon sql -o dist/schema.json",
+    "build:prod": "chant build src --lexicon sql --env prod -o dist/schema.json",
+    "lint": "chant lint src",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-sql": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

@@ -5,7 +5,7 @@
  *
  * One render function, called from the two places that must never disagree:
  *
- *  - `examples/fold-differential.test.ts`'s own guard test compares this
+ *  - `examples/fold-differential.e2e.test.ts`'s own guard test compares this
  *    function's output — built from THAT RUN's already-computed `report`,
  *    no second corpus build — against what's committed in the doc, and
  *    fails with a "run `npm run generate:fold-coverage`" message on drift.

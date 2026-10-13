@@ -1,10 +1,6 @@
 {
   "note": "Files that fail tsconfig.typecheck.json today (#1388). Only ever remove lines from this list \u2014 scripts/typecheck.ts fails on a file that is not here, and on a file here that now passes.",
   "files": [
-    "examples/k8s-aks-microservice/src/k8s/app.ts",
-    "examples/k8s-eks-microservice/src/k8s/app.ts",
-    "examples/k8s-eks-microservice/src/k8s/storage.ts",
-    "examples/k8s-gke-microservice/src/k8s/app.ts",
     "lexicons/aws/scripts/roundtrip-helper.ts",
     "lexicons/aws/src/components/config-bom.test.ts",
     "lexicons/aws/src/integration.test.ts",
@@ -19,7 +15,6 @@
     "lexicons/docker/src/serializer.test.ts",
     "lexicons/fly/src/lint/post-synth/fly010-machine-requires-image.test.ts",
     "lexicons/gcp/src/lint/rules/rules.test.ts",
-    "lexicons/github/src/composites/composites.test.ts",
     "lexicons/gitlab/scripts/full-roundtrip-helper.ts",
     "lexicons/gitlab/scripts/roundtrip-helper.ts",
     "lexicons/helm/src/intrinsics.test.ts",

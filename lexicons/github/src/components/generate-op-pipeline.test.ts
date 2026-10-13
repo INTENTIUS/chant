@@ -11,6 +11,7 @@
  *     is a single edit reflected in every generated file.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, test, expect } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { generateGithubOpPipeline } from "./generate-op-pipeline";
@@ -72,7 +73,7 @@ describe("generateGithubOpPipeline: one file per scheduled Op", () => {
     const job = doc.jobs!["actions-audit"];
 
     expect(job["runs-on"]).toBe("ubuntu-latest");
-    expect(job.steps[0].uses).toBe("actions/checkout@v4");
+    expect(job.steps[0].uses).toBe("actions/checkout@v7");
     const runStep = job.steps.find((s) => typeof s.run === "string")!;
     expect(runStep.run).toBe("chant run actions-audit");
   });
@@ -327,7 +328,7 @@ describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)
     const steps = doc.jobs!["app-apply"].steps;
 
     expect(steps.slice(0, 3).map((s) => s.uses ?? s.run)).toEqual([
-      "actions/checkout@v4",
+      "actions/checkout@v7",
       "aws-actions/configure-aws-credentials@v6",
       "install terraform",
     ]);
@@ -385,7 +386,7 @@ describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)
     ];
     const steps = parseFile(generateGithubOpPipeline(specs).files[0].yaml).jobs!["app-apply"].steps;
     expect(steps.map((s) => s.uses).filter(Boolean)).toEqual([
-      "actions/checkout@v4",
+      "actions/checkout@v7",
       "github/codeql-action/upload-sarif@v4",
       "aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83",
     ]);
@@ -492,33 +493,38 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
     const notice = pushDoc().jobs!["app-apply-gate-notice"];
     expect(notice.needs).toBe("app-apply");
     expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
-    // It shells to `gh`, which a hosted runner carries and the Op's own
-    // container image does not.
-    expect(notice.container).toBeUndefined();
+    // The Op's own image, which has node and npm, rather than gh on a hosted
+    // runner image (#3773).
+    expect(notice.container).toBe("node:22");
     const script = notice.steps[0].run ?? "";
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
-    expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');
-    expect(script).toContain("gh issue create");
+    expect(script).toContain('import { forgeClient, forgeTargetFromEnv } from "@intentius/chant/pr-forge";');
+    expect(script).toContain('const marker = "<!-- chant-gate:" + op + " -->";');
+    expect(script).toContain("forge.pullRequestFor(target.sha)");
+    expect(script).toContain("forge.upsertNote(pr, marker, body)");
+    expect(script).toContain('forge.upsertIssue(marker, op + " is waiting on gate " + gate, body)');
+    expect(script).toContain("node --import tsx notice.mjs");
   });
 
-  // chant #2305 — same anti-pattern `stickyCommentScript`
-  // (`lexicons/github/src/composites/pr-plan-report.ts`) and `reconcilePr`'s
-  // `postOrUpdateComment` (#2291) had: a bare relative path, which `gh`
-  // resolves against `/api/v3` for any host but github.com. This job never
-  // reaches Forgejo today (the forgejo generator never carries
-  // `gatedNoticeDoc` across the dialect, #2294), so the fix changes nothing
-  // observable on github.com or GHES — it only stops a future Forgejo notice
-  // job from inheriting the same bug.
-  test("the notice job's gh api calls resolve their base from $GITHUB_API_URL, not a bare path (#2305)", () => {
+  // #3773 (and #3780 for its `gh issue create`): no `gh` call is left to
+  // default to github.com on a GHES or Forgejo host. The forge, the REST base
+  // and the host come from the job's environment through pr-forge.
+  test("the notice job runs no gh at all", () => {
+    const notice = pushDoc().jobs!["app-apply-gate-notice"];
+    expect(notice.steps[0].run ?? "").not.toMatch(/(^|\s)gh\s/m);
+    const env = notice.steps[0].env ?? {};
+    expect(env.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(env).not.toHaveProperty("GH_REPO");
+  });
+
+  test("the notice job installs the chant release this lexicon was generated with", () => {
+    const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
     const script = pushDoc().jobs!["app-apply-gate-notice"].steps[0].run ?? "";
-    expect(script).toContain('api_base="${GITHUB_API_URL%/}"');
-    expect(script).toContain('api_base="${api_base:-https://api.github.com}"');
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments"');
-    expect(script).toContain('gh api --method PATCH "$api_base/repos/$GITHUB_REPOSITORY/issues/comments/$id"');
-    expect(script).toContain('gh api --method POST "$api_base/repos/$GITHUB_REPOSITORY/issues/$pr/comments"');
-    // No bare-path call survives.
-    expect(script).not.toMatch(/gh api[^\n]*"repos\//);
+    expect(script).toContain(`npm install --omit=peer --no-audit --no-fund --loglevel=error @intentius/chant@${version}`);
+  });
+
+  test("the notice job runs in options.image when one is given", () => {
+    const doc = parseFile(generateGithubOpPipeline([pushSpec], { image: "registry.example/node:22" }).files[0].yaml);
+    expect(doc.jobs!["app-apply-gate-notice"].container).toBe("registry.example/node:22");
   });
 
   test("the notice job's permissions are its two posting paths and the lookup", () => {
@@ -544,7 +550,7 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
 
   /**
    * chant #2299 — every Op job carries `container:` (this generator sets one
-   * unconditionally, default `node:22-slim`), and a container job's default
+   * unconditionally, default `node:22`), and a container job's default
    * shell on GitHub Actions is `sh`, not bash. `sh` rejects `set -o pipefail`
    * outright (`Illegal option -o pipefail`) and fails the step before `chant`
    * is ever reached, which is exactly what happened on a real run (choudoufu
@@ -555,7 +561,7 @@ describe("generateGithubOpPipeline: the gated apply on push (#2243)", () => {
   test("the run step needs no shell override — its script is POSIX sh, not bash (#2299)", () => {
     const doc = pushDoc();
     const job = doc.jobs!["app-apply"];
-    expect(job.container).toBe("node:22-slim");
+    expect(job.container).toBe("node:22");
     const step = job.steps.find((s) => s.id === "chant-run");
     expect(step?.shell).toBeUndefined();
     expect(step?.run).not.toContain("pipefail");
@@ -597,10 +603,13 @@ describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2
    * The exact document a spec with no `environment` emitted before the option
    * existed, produced by the generator at the commit this change branched
    * from. The claim the option makes is that it is additive; this is what
-   * makes that claim falsifiable rather than a sentence in a PR body.
+   * makes that claim falsifiable rather than a sentence in a PR body. The
+   * `name:` line came later, from #2580, for every spec alike.
    */
   const AUDIT_YAML_BEFORE_2257 =
     [
+      "name: actions-audit",
+      "",
       "on:",
       "  schedule:",
       "    - cron: '0 6 * * *'",
@@ -617,9 +626,9 @@ describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2
       "jobs:",
       "  actions-audit:",
       "    runs-on: ubuntu-latest",
-      "    container: node:22-slim",
+      "    container: node:22",
       "    steps:",
-      "      - uses: actions/checkout@v4",
+      "      - uses: actions/checkout@v7",
       "      - run: chant run actions-audit",
       "        env:",
       "          GITHUB_TOKEN: '${{ github.token }}'",
@@ -768,5 +777,14 @@ describe("generateGithubOpPipeline: per-Op variables on the job (#2290)", () => 
     expect(
       after.replace("    env:\n      AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'\n", ""),
     ).toBe(before);
+  });
+});
+
+describe("an empty branch list means the default, as on GitLab (#3765)", () => {
+  test("push with branches: [] filters on main, and pull_request with branches: [] runs on every pull request", () => {
+    const push = parseYAML(generateGithubOpPipeline([{ name: "apply", trigger: { kind: "push", branches: [] } }]).files[0]!.yaml);
+    expect(push.on).toEqual({ push: { branches: ["main"] } });
+    const pr = parseYAML(generateGithubOpPipeline([{ name: "plan", trigger: { kind: "pull_request", branches: [] } }]).files[0]!.yaml);
+    expect(pr.on).toEqual({ pull_request: {} });
   });
 });

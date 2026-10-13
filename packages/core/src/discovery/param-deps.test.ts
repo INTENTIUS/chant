@@ -1,14 +1,21 @@
 import * as ts from "typescript";
 import { describe, expect, test } from "vitest";
 import { collectConsts } from "../fold/fold";
-import { collectCompositeOrigins, collectParamDependencies } from "./param-deps";
+import {
+  argumentLocation,
+  collectCompositeOrigins,
+  collectParamDependencies,
+  collectTagOrigins,
+  type CompositeCallSite,
+  type HostBindings,
+} from "./param-deps";
 import type { PathOrigin } from "../provenance";
 
 /**
  * Collect dependencies for the props of the file's single
  * `export const x = new Type({...})`, which is the shape every case here uses.
  */
-function depsOf(source: string, paramLocals = ["params"]): Record<string, PathOrigin> {
+function depsOf(source: string, paramLocals = ["params"], host?: HostBindings): Record<string, PathOrigin> {
   const file = ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, true);
   const consts = collectConsts(file);
   let props: ts.ObjectLiteralExpression | undefined;
@@ -26,7 +33,7 @@ function depsOf(source: string, paramLocals = ["params"]): Record<string, PathOr
     }
   }
   if (!props) throw new Error("fixture has no `const x = new Type({...})`");
-  return collectParamDependencies(props, consts, new Set(paramLocals));
+  return collectParamDependencies(props, consts, new Set(paramLocals), host);
 }
 
 const param = (...names: string[]): PathOrigin => ({ kind: "build-param", params: names });
@@ -225,5 +232,223 @@ describe("collectCompositeOrigins", () => {
     expect(compositeOriginsOf(`return new Thing({ [props.key]: 1, name: props.name });`)).toEqual({
       name: fromParam("name"),
     });
+  });
+});
+
+/**
+ * chant #3212 — the same join for a registered tag. The fixture body ends in
+ * `return table\`...\``; `fields` stands in for what the tag reports per
+ * interpolation, and `props` for the entity it built.
+ */
+function tagOriginsOf(body: string, fields: string[][], props: Record<string, unknown>): Record<string, PathOrigin> {
+  const file = ts.createSourceFile("factory.ts", `const f = (props) => { ${body} };`, ts.ScriptTarget.Latest, true);
+  const consts = new Map<string, ts.Expression>();
+  let tagged: ts.TaggedTemplateExpression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      consts.set(node.name.text, node.initializer);
+    }
+    if (ts.isReturnStatement(node) && node.expression && ts.isTaggedTemplateExpression(node.expression)) {
+      tagged = node.expression;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (!tagged || !ts.isTemplateExpression(tagged.template)) throw new Error("fixture returns no interpolated tag");
+  return collectTagOrigins(
+    tagged.template.templateSpans.map((span) => span.expression),
+    fields,
+    props,
+    consts,
+    { whole: new Set(["props"]), destructured: new Map() },
+    "WebService",
+  );
+}
+
+describe("collectTagOrigins", () => {
+  test("a field an interpolation fed is that interpolation's parameters; every other key is fixed", () => {
+    expect(
+      tagOriginsOf(
+        "return table`CREATE TABLE ${props.name} ENGINE = MergeTree TTL ts + INTERVAL ${props.ttl.days} DAY`;",
+        [["name", "ddl"], ["ttl", "ddl"]],
+        { name: "t", engine: "MergeTree", ttl: "ts + INTERVAL 30 DAY", ddl: "...", absent: undefined },
+      ),
+    ).toEqual({
+      name: fromParam("name"),
+      ttl: fromParam("ttl.days"),
+      ddl: fromParam("name", "ttl.days"),
+      engine: fixed,
+    });
+  });
+
+  test("a body const is followed, a sibling entity is not, and an interpolation reading no parameter adds nothing", () => {
+    expect(
+      tagOriginsOf(
+        "const base = `${props.name}_daily`; const events = new Thing({}); return table`CREATE TABLE ${base} ENGINE = ${\"Summing\"} COMMENT ${events}`;",
+        [["name"], ["engine"], ["comment"]],
+        { name: "t_daily", engine: "Summing", comment: "events" },
+      ),
+    ).toEqual({ name: fromParam("name"), engine: fixed, comment: fixed });
+  });
+
+  test("a parameter recorded under a key outranks the key's fixed record", () => {
+    expect(
+      tagOriginsOf("return table`ENGINE = Replacing(${props.version})`;", [["engine.args"]], {
+        engine: { name: "Replacing", args: ["v"] },
+      }),
+    ).toEqual({ "engine.args": fromParam("version"), engine: fixed });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// chant #3597 — where the argument behind a parameter was written.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The first call expression in `source`, as a call site in `/p/src/app.ts`. */
+function callSiteOf(source: string): CompositeCallSite {
+  const file = ts.createSourceFile("/p/src/app.ts", source, ts.ScriptTarget.Latest, true);
+  let node: ts.CallExpression | undefined;
+  const visit = (n: ts.Node): void => {
+    if (!node && ts.isCallExpression(n)) node = n;
+    ts.forEachChild(n, visit);
+  };
+  visit(file);
+  if (!node) throw new Error("fixture has no call");
+  return { file: "/p/src/app.ts", node };
+}
+
+describe("argumentLocation (#3597)", () => {
+  const source = [
+    'import { WebApp } from "./web-app";',
+    "",
+    "export const web = WebApp({",
+    '  name: "web-app",',
+    "  replicas: 3,",
+    '  iam: { path: "/service/" },',
+    "  port,",
+    "});",
+  ].join("\n");
+
+  test("a top-level argument is the property as written, on its own line", () => {
+    expect(argumentLocation(callSiteOf(source), "replicas")).toEqual({
+      parameter: "replicas",
+      file: "/p/src/app.ts",
+      line: 5,
+      column: 3,
+      text: "replicas: 3",
+    });
+  });
+
+  test("a nested parameter path descends the argument's object literals", () => {
+    expect(argumentLocation(callSiteOf(source), "iam.path")).toEqual({
+      parameter: "iam.path",
+      file: "/p/src/app.ts",
+      line: 6,
+      column: 10,
+      text: 'path: "/service/"',
+    });
+  });
+
+  test("a shorthand property is written as its name", () => {
+    expect(argumentLocation(callSiteOf(source), "port")).toMatchObject({ line: 7, column: 3, text: "port" });
+  });
+
+  test("a parameter the call leaves out falls back to the call, and claims no text", () => {
+    expect(argumentLocation(callSiteOf(source), "image")).toEqual({
+      parameter: "image",
+      file: "/p/src/app.ts",
+      line: 3,
+      column: 20,
+    });
+    expect(argumentLocation(callSiteOf(source), "iam.role")).not.toHaveProperty("text");
+  });
+
+  test("an argument that is not an object literal falls back to the call", () => {
+    const location = argumentLocation(callSiteOf("export const web = WebApp(shared);"), "replicas");
+    expect(location).toEqual({ parameter: "replicas", file: "/p/src/app.ts", line: 1, column: 20 });
+  });
+
+  test("collectCompositeOrigins records the locations in the same pass, in parameter order", () => {
+    const call = callSiteOf(source);
+    const body = ts.createSourceFile(
+      "factory.ts",
+      "const f = (props) => new Thing({ spec: { replicas: props.replicas }, label: `${props.name}-${props.iam.path}`, kind: \"web\" });",
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    let props: ts.ObjectLiteralExpression | undefined;
+    const visit = (n: ts.Node): void => {
+      if (!props && ts.isNewExpression(n)) props = n.arguments?.find(ts.isObjectLiteralExpression);
+      ts.forEachChild(n, visit);
+    };
+    visit(body);
+    const origins = collectCompositeOrigins(
+      props as ts.ObjectLiteralExpression,
+      new Map(),
+      { whole: new Set(["props"]), destructured: new Map() },
+      "WebApp",
+      call,
+    );
+    expect(origins["spec.replicas"]).toEqual({
+      kind: "composite-parameter",
+      composite: "WebApp",
+      parameters: ["replicas"],
+      arguments: [{ parameter: "replicas", file: "/p/src/app.ts", line: 5, column: 3, text: "replicas: 3" }],
+    });
+    expect(origins.label).toMatchObject({
+      parameters: ["iam.path", "name"],
+      arguments: [
+        { parameter: "iam.path", line: 6, text: 'path: "/service/"' },
+        { parameter: "name", line: 4, text: 'name: "web-app"' },
+      ],
+    });
+    // A literal carries no location: nothing at the call moves it.
+    expect(origins.kind).toEqual({ kind: "composite-literal", composite: "WebApp" });
+  });
+
+  test("without a call site the origins are what they were", () => {
+    expect(compositeOriginsOf("return new Thing({ replicas: props.replicas });")).toEqual({
+      replicas: { kind: "composite-parameter", composite: "WebService", parameters: ["replicas"] },
+    });
+  });
+});
+
+describe("collectParamDependencies with host bindings (typescript-as-data#248)", () => {
+  const host: HostBindings = { values: new Set(["AWS"]), eagerCalls: new Set(["matrix"]) };
+  const hostCall: PathOrigin = { kind: "host", reason: "host-call" };
+  const hostValue: PathOrigin = { kind: "host", reason: "host-value" };
+
+  test("a method call on a receiver is a host call, at its own path", () => {
+    const source = `export const x = new Thing({ name: "x".toUpperCase(), spec: { tag: [1, 2].join("-") }, fixed: "k" });`;
+    expect(depsOf(source, [], host)).toEqual({ name: hostCall, "spec.tag": hostCall });
+  });
+
+  test("an eager lexicon helper is a host call, and a project function is not", () => {
+    const source = `export const x = new Thing({ a: matrix("os"), b: helper("os") });`;
+    expect(depsOf(source, [], host)).toEqual({ a: hostCall });
+  });
+
+  test("a lexicon export is a host value, through a const and an operator", () => {
+    const source = [`const region = AWS.Region;`, "export const x = new Thing({ a: `${region}-x`, b: AWS });"].join("\n");
+    expect(depsOf(source, [], host)).toEqual({ a: hostValue, b: hostValue });
+  });
+
+  test("a host read outranks a build parameter the same expression reads", () => {
+    const source = `export const x = new Thing({ name: params.name.toUpperCase(), size: params.size });`;
+    expect(depsOf(source, ["params"], host)).toEqual({ name: hostCall, size: param("size") });
+  });
+
+  test("a sibling resource, a member name and a property key are not host reads", () => {
+    const source = [
+      `const logs = new Bucket({ name: "x".toUpperCase() });`,
+      `const AWS2 = 1;`,
+      `export const x = new Thing({ a: logs.Arn, b: { AWS: 1 }, c: thing.AWS });`,
+    ].join("\n");
+    expect(depsOf(source, [], host)).toEqual({});
+  });
+
+  test("a tag is not read, its interpolations are", () => {
+    const source = "export const x = new Thing({ a: Sub`${AWS.Region}`, b: Sub`plain` });";
+    expect(depsOf(source, [], { values: new Set(["AWS", "Sub"]), eagerCalls: new Set() })).toEqual({ a: hostValue });
   });
 });

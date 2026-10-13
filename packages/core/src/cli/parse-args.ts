@@ -1,0 +1,801 @@
+/**
+ * The command-line parser every chant entry shares: the full CLI (`./main.ts`)
+ * and the slim wave-job runtime (`../wave-runtime.ts`, #3896). It lives on its own
+ * so the runtime bundles the same parser without the command registry.
+ */
+import { splitJoinedFlags } from "./command-group";
+import type { ParsedArgs } from "./registry";
+
+/**
+ * Long-form flags that are pure booleans in {@link parseArgs} — their branch
+ * below sets a field to `true` and never consumes a following array element.
+ * Used only to reject a joined `--flag=value` form for these (chant #1127):
+ * a boolean has no value to assign, and silently reinterpreting the joined
+ * value as the next positional argument (path, component name, ...) would be
+ * exactly the kind of silent misparse this issue exists to close. `--report`
+ * is deliberately excluded — it's context-sensitive (bare boolean vs a SARIF
+ * path, decided by lookahead), so a joined value for it is legitimate and
+ * already handled correctly once split.
+ */
+const BOOLEAN_FLAGS = new Set([
+  "--help",
+  "--open",
+  "--version",
+  "--agents",
+  "--agent",
+  "--all-projects",
+  "--force",
+  "--fix",
+  "--watch",
+  "--verbose",
+  "--live",
+  "--overlay",
+  "--explain",
+  "--owned",
+  "--verbatim",
+  "--skip-undeclarable",
+  "--apply-rewrites",
+  "--write",
+  "--strict",
+  "--validate",
+  "--use-composites",
+  "--composites",
+  "--stacks",
+  "--components",
+  "--up",
+  "--down",
+  "--include-dependents",
+  "--local",
+  "--json",
+  "--progress-json",
+  "--update-snapshot",
+  "--update-baseline",
+  "--run-examples",
+  "--check",
+  "--bump",
+  "--no-release-record",
+  "--no-record",
+  "--fold",
+  "--no-fold",
+  "--no-cache",
+  "--sandbox",
+  "--yes",
+  "--confirm-prod",
+  "--once",
+  "--expire",
+  "--check-live",
+  "--check-snapshot",
+  "--fail-on-drift",
+  "--durable-requests",
+  "--skip-mcp",
+  "--current",
+  "--uncommitted",
+  "--allow-code",
+  "--root-only",
+  "--generated",
+  "--decide",
+  "--record-plans",
+  "--loopback",
+]);
+
+/**
+ * Parse command line arguments
+ */
+export function parseArgs(args: string[]): ParsedArgs {
+  // Local mutable copy — chant #1127's joined-`--flag=value` splitting below
+  // rewrites the array in place (one token becomes two), so this must not
+  // mutate whatever array the caller passed in (e.g. `process.argv.slice(2)`
+  // is already a fresh copy, but callers shouldn't have to know that).
+  args = args.slice();
+
+  const result: ParsedArgs = {
+    command: "",
+    path: ".",
+    extraPositional: undefined,
+    extraPositional2: undefined,
+    output: undefined,
+    format: "",
+    force: undefined,
+    fix: false,
+    lexicon: undefined,
+    template: undefined,
+    watch: false,
+    verbose: false,
+    help: false,
+    param: undefined,
+    paramsFile: undefined,
+    report: undefined,
+    local: undefined,
+    profile: undefined,
+    json: undefined,
+    live: false,
+    migrateFrom: undefined,
+    migrateTo: undefined,
+    emit: undefined,
+    strict: false,
+    validate: false,
+    useComposites: false,
+    reportFile: undefined,
+    skill: undefined,
+    skipMcp: undefined,
+    src: undefined,
+    env: undefined,
+  };
+
+  // chant #1127 — generic joined `--flag=value` support, factored out to
+  // ./command-group.ts (chant #1078) so a lexicon's own mounted command can
+  // apply the identical splitting discipline to its own flag vocabulary.
+  // Every value-taking flag below is matched by an exact `arg === "--flag"`
+  // check and then consumes the *next* array element (`args[++i]`) as its
+  // value; a joined token like `--env=prod` never matches any of those,
+  // doesn't match the trailing positional branch either (it starts with
+  // `-`), and used to vanish with no error. Splitting the token at its FIRST
+  // `=` and re-dispatching as two array elements makes every flag below see
+  // the exact shape it already handles — including a flag like `--param`
+  // whose own value legitimately contains `=` (`--param=tier=production`
+  // splits to flag `--param`, value `tier=production`, not further split on
+  // the second `=`).
+  args = splitJoinedFlags(args, BOOLEAN_FLAGS);
+
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+
+    if (arg === "--help" || arg === "-h") {
+      result.help = true;
+    } else if (arg === "--version" || arg === "-V") {
+      result.version = true;
+    } else if (arg === "--output" || arg === "-o") {
+      result.output = args[++i];
+    } else if (arg === "--format" || arg === "-f") {
+      result.format = args[++i];
+    } else if (arg === "--lexicon" || arg === "-d") {
+      result.lexicon = args[++i];
+    } else if (arg === "--template" || arg === "-t") {
+      result.template = args[++i];
+    } else if (arg === "--force") {
+      result.force = true;
+    } else if (arg === "--fix") {
+      result.fix = true;
+    } else if (arg === "--watch" || arg === "-w") {
+      result.watch = true;
+    } else if (arg === "--verbose" || arg === "-v") {
+      result.verbose = true;
+    } else if (arg === "--profile" || arg === "-p") {
+      result.profile = args[++i];
+    } else if (arg === "--report") {
+      // --report alone is the boolean (used by `run`); --report <path> is
+      // the migrate-command file path. Look ahead for a non-flag.
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        result.reportFile = next;
+        i++;
+      } else {
+        result.report = true;
+      }
+    } else if (arg === "--live") {
+      result.live = true;
+    } else if (arg === "--overlay") {
+      result.overlay = true;
+    } else if (arg === "--between") {
+      result.betweenA = args[++i];
+      result.betweenB = args[++i];
+      if (!result.betweenA || !result.betweenB) throw new Error("--between needs two snapshot refs: --between <refA> <refB>");
+    } else if (arg === "--traffic") {
+      const v = args[++i];
+      if (!v) throw new Error('--traffic needs a level, passed to the engine verbatim: --traffic "100 rps, p50"');
+      result.traffic = v;
+    } else if (arg === "--overlay-anchor") {
+      const v = args[++i];
+      if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);
+      result.overlayAnchor = v;
+    } else if (arg === "--from") {
+      // Shared by `migrate --from <lexicon>`, `import --from <env>`,
+      // `components promote --from <env>` and `init --from <repo>@<ref>`;
+      // the commands never run together, so one field carries all four.
+      result.migrateFrom = args[++i];
+    } else if (arg === "--kustomize") {
+      // `chant import --kustomize <dir>` (#1548): render the overlay, import
+      // the output through the k8s template parser.
+      result.kustomize = args[++i];
+    } else if (arg === "--parser-option") {
+      // `chant import --parser-option key[=value]` (#2994), repeatable: checked
+      // against the lexicon's parserOptions() by the import command.
+      const v = args[++i];
+      if (!v || v.startsWith("-")) throw new Error("--parser-option needs key or key=value: --parser-option acceptLossyV1");
+      (result.parserOption ??= []).push(v);
+    } else if (arg === "--type") {
+      result.selectType = args[++i];
+    } else if (arg === "--name") {
+      result.selectName = args[++i];
+    } else if (arg === "--owned") {
+      result.owned = true;
+    } else if (arg === "--namespace") {
+      // The live read's namespace default (#1629), not a kubectl `-n`: it fills
+      // in for entities that declare no namespace and leaves the ones that do
+      // alone. No `-n` short form — that spelling belongs to `chant kube`,
+      // where it means kubectl's scope selector.
+      result.namespace = args[++i];
+      if (!result.namespace || result.namespace.startsWith("-")) throw new Error("--namespace needs a namespace: --namespace <ns>");
+    } else if (arg === "--verbatim") {
+      result.verbatim = true;
+    } else if (arg === "--skip-undeclarable") {
+      result.skipUndeclarable = true;
+    } else if (arg === "--state") {
+      result.statePath = args[++i];
+    } else if (arg === "--select") {
+      result.selectAddress = args[++i];
+    } else if (arg === "--live-name") {
+      result.liveName = args[++i];
+    } else if (arg === "--apply-rewrites") {
+      result.applyRewrites = true;
+    } else if (arg === "--stack") {
+      result.carveStack = args[++i];
+    } else if (arg === "--write") {
+      result.write = true;
+    } else if (arg === "--write-source") {
+      result.writeSource = true;
+    } else if (arg === "--to") {
+      result.migrateTo = args[++i];
+    } else if (arg === "--emit") {
+      result.emit = args[++i];
+    } else if (arg === "--dry-run") {
+      result.dryRun = true;
+    } else if (arg === "--yes") {
+      result.yes = true;
+    } else if (arg === "--confirm-prod") {
+      result.confirmProd = true;
+    } else if (arg === "--strict") {
+      result.strict = true;
+    } else if (arg === "--validate") {
+      result.validate = true;
+    } else if (arg === "--use-composites") {
+      result.useComposites = true;
+    } else if (arg === "--skill") {
+      result.skill = args[++i];
+    } else if (arg === "--skip-mcp") {
+      result.skipMcp = true;
+    } else if (arg === "--src") {
+      result.src = args[++i];
+    } else if (arg === "--env") {
+      result.env = args[++i];
+    } else if (arg === "--port") {
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--port needs a port: --port <container-port>=<host-port>");
+      (result.port ??= []).push(value);
+    } else if (arg === "--image") {
+      result.image = args[++i];
+      if (!result.image || result.image.startsWith("-")) throw new Error("--image needs an image reference: --image <name>:<tag>");
+    } else if (arg === "--network") {
+      result.network = args[++i];
+      if (!result.network || result.network.startsWith("-")) throw new Error("--network needs a Docker network name: --network <name>");
+    } else if (arg === "--setting") {
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--setting needs a value: --setting <KEY>=<VALUE>");
+      (result.setting ??= []).push(value);
+    } else if (arg === "--loopback") {
+      result.loopback = true;
+    } else if (arg === "--promote-to") {
+      result.promoteTo = args[++i];
+      if (!result.promoteTo || result.promoteTo.startsWith("-")) throw new Error("--promote-to needs an environment: --promote-to <env>");
+    } else if (arg === "--tier") {
+      result.tier = args[++i];
+    } else if (arg === "--agents") {
+      result.agents = true;
+    } else if (arg === "--scope") {
+      result.scope = args[++i];
+    } else if (arg === "--all-projects") {
+      result.allProjects = true;
+    } else if (arg === "--runtime") {
+      result.runtime = args[++i];
+    } else if (arg === "--fail-on") {
+      result.failOn = args[++i];
+    } else if (arg === "--max-files") {
+      // Validated by the audit handler, like `--limit` below.
+      result.maxFiles = Number(args[++i]);
+    } else if (arg === "--theme") {
+      result.theme = args[++i];
+    } else if (arg === "--stacks") {
+      result.stacks = true;
+    } else if (arg === "--components") {
+      result.components = true;
+    } else if (arg === "--generate") {
+      result.generate = args[++i];
+    } else if (arg === "--spec") {
+      result.opsSpec = args[++i];
+    } else if (arg === "--dump-outputs") {
+      result.dumpOutputs = args[++i];
+    } else if (arg === "--digest-file") {
+      result.digestFile = args[++i];
+    } else if (arg === "--seed-outputs") {
+      (result.seedOutputs ??= []).push(args[++i]);
+    } else if (arg === "--detail") {
+      result.detail = Number(args[++i]);
+    } else if (arg === "--lens") {
+      result.lens = args[++i];
+    } else if (arg === "--explain") {
+      result.explain = true;
+    } else if (arg === "--show") {
+      result.show = args[++i];
+    } else if (arg === "--up") {
+      result.up = true;
+    } else if (arg === "--down") {
+      result.down = true;
+    } else if (arg === "--node-sizes") {
+      result.nodeSizes = args[++i];
+    } else if (arg === "--layout-engine") {
+      result.layoutEngine = args[++i];
+    } else if (arg === "--base") {
+      result.base = args[++i];
+    } else if (arg === "--head") {
+      result.head = args[++i];
+    } else if (arg === "--include-dependents") {
+      result.includeDependents = true;
+    } else if (arg === "--from-affected") {
+      result.fromAffected = args[++i];
+    } else if (arg === "--gate") {
+      result.gate = args[++i];
+    } else if (arg === "--wave-gate") {
+      result.waveGate = args[++i];
+      if (!result.waveGate || result.waveGate.startsWith("-")) throw new Error("--wave-gate needs a gate name: --wave-gate <name>");
+    } else if (arg === "--wave") {
+      const raw = args[++i];
+      const wave = Number(raw);
+      if (!Number.isInteger(wave) || wave < 1) throw new Error(`--wave needs a wave number from 1: got "${raw ?? ""}"`);
+      result.wave = wave;
+    } else if (arg === "--decide") {
+      result.decide = true;
+    } else if (arg === "--record-plans") {
+      result.recordPlans = true;
+    } else if (arg === "--share") {
+      const raw = args[++i];
+      const share = Number(raw);
+      if (!Number.isInteger(share) || share < 1) throw new Error(`--share needs a share number from 1: got "${raw ?? ""}"`);
+      result.share = share;
+    } else if (arg === "--canary") {
+      const raw = args[++i];
+      if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
+      (result.canary ??= []).push(...raw.split(",").map((n) => n.trim()).filter(Boolean));
+    } else if (arg === "--pr") {
+      const raw = args[++i];
+      const pr = Number(raw);
+      if (!Number.isInteger(pr) || pr < 1) throw new Error(`--pr needs a pull or merge request number: got "${raw ?? ""}"`);
+      result.pr = pr;
+    } else if (arg === "--forge") {
+      result.forge = args[++i];
+      if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
+    } else if (arg === "--require-review") {
+      result.requireReview = true;
+    } else if (arg === "--pr-loop") {
+      result.prLoop = true;
+    } else if (arg === "--resume") {
+      // `chant approve <op> <gate> --resume` (#3683) takes no value; the
+      // fan-out and pull-request apply take the attempt file they resume.
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith("-")) result.resumeRun = true;
+      else result.resume = args[++i];
+    } else if (arg === "--local") {
+      result.local = true;
+    } else if (arg === "--json") {
+      result.json = true;
+    } else if (arg === "--progress-json") {
+      result.progressJson = true;
+    } else if (arg === "--gated-exit") {
+      // `chant run <op> --gated-exit <code>` (#2243) — remap only the gated
+      // outcome's exit code. Parsed as a number here and range-checked in the
+      // handler, where the refusal can name the flag alongside the run.
+      result.gatedExit = Number(args[++i]);
+    } else if (arg === "--durable-requests") {
+      // `chant run approve ... --on <lexicon> --durable-requests` (#2126) —
+      // resolve the gate on the hosting runtime's own request path rather
+      // than by posting a follow-up prompt. Core only carries the flag; the
+      // runtime decides whether it has such a path.
+      result.durableRequests = true;
+    } else if (arg === "--update-snapshot") {
+      result.updateSnapshot = true;
+    } else if (arg === "--update-baseline") {
+      result.updateBaseline = true;
+    } else if (arg === "--deep") {
+      result.deep = true;
+    } else if (arg === "--at") {
+      result.at = args[++i];
+    } else if (arg === "--kind") {
+      // `chant workspace records|graph|check --kind <kind file>` (#2546, #2549)
+      result.kind = args[++i];
+      if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
+      // Repeatable for `workspace graph --intent` (#2651); the others read the last one.
+      (result.kinds ??= []).push(result.kind);
+    } else if (arg === "--composites") {
+      // `chant workspace graph --composites` (#2662)
+      result.composites = true;
+    } else if (arg === "--intent") {
+      // `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651), or `--intent --record <id>` with no region.
+      const value = args[i + 1];
+      if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
+      else if (args.includes("--record")) result.intent = "";
+      else throw new Error("--intent needs a region: --intent <path[:start-end]|path#symbol>, or --intent --record <id>");
+    } else if (arg === "--follow-squash") {
+      // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
+      result.followSquash = true;
+    } else if (arg === "--record") {
+      // `chant workspace graph --intent --record <id>`
+      result.record = args[++i];
+      if (!result.record || result.record.startsWith("-")) throw new Error("--record needs a record id: --record <id>");
+    } else if (arg === "--path") {
+      // `chant workspace patch <range> --path <p>`, repeatable
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--path needs a path: --path <path>");
+      (result.paths ??= []).push(value);
+    } else if (arg === "--worktree") {
+      // `chant workspace patch [<commit>] --worktree`
+      result.worktree = true;
+    } else if (arg === "--max-bytes") {
+      // `chant workspace patch <range> --max-bytes <n>`
+      const value = Number(args[++i]);
+      if (!Number.isInteger(value) || value < 1) throw new Error("--max-bytes needs a whole number of bytes above 0");
+      result.maxBytes = value;
+    } else if (arg === "--changes") {
+      // `chant workspace check --changes <base>..<head>` (#2773)
+      result.changes = args[++i];
+      if (!result.changes || result.changes.startsWith("-")) throw new Error("--changes needs a range: --changes <base>..<head>");
+    } else if (arg === "--severity") {
+      // `chant workspace check --changes <range> --severity off|warn|fail` (#2773)
+      result.severity = args[++i];
+      if (!result.severity || result.severity.startsWith("-")) throw new Error("--severity needs off, warn or fail");
+    } else if (arg === "--current") {
+      result.current = true;
+    } else if (arg === "--uncommitted") {
+      // `chant workspace records --uncommitted` (#3160)
+      result.uncommitted = true;
+    } else if (arg === "--set") {
+      // `chant workspace records amend <id> --set <file|->` (#2670)
+      result.set = args[++i];
+      if (!result.set || (result.set.startsWith("-") && result.set !== "-")) throw new Error("--set needs a JSON file, or - for standard input: --set <file|->");
+    } else if (arg === "--cover") {
+      // `chant workspace box listing set <member> --cover <image>` (#3308)
+      result.cover = args[++i];
+      if (!result.cover || result.cover.startsWith("-")) throw new Error("--cover needs a PNG, JPEG or WebP file: --cover <image>");
+    } else if (arg === "--cover-path") {
+      // `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308)
+      result.coverPath = args[++i];
+      if (!result.coverPath || result.coverPath.startsWith("-")) throw new Error("--cover-path needs a path from the workspace root: --cover-path <path>");
+    } else if (arg === "--records") {
+      // `chant workspace box publish <member> --records` (#3165): the records kept uncommitted, not a work item.
+      result.records = true;
+    } else if (arg === "--expect") {
+      // `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read.
+      result.expect = args[++i];
+      if (!result.expect || result.expect.startsWith("-")) throw new Error("--expect needs the record's digest, as records --json prints it: --expect <digest>");
+    } else if (arg === "--label") {
+      // `chant workspace wip save --label <text>` (#3172)
+      result.label = args[++i];
+      if (!result.label || result.label.startsWith("-")) throw new Error("--label needs the snapshot's name, such as a turn id: --label <text>");
+    } else if (arg === "--branch") {
+      // `chant workspace wip --branch <branch>` (#3172)
+      result.branch = args[++i];
+      if (!result.branch || result.branch.startsWith("-")) throw new Error("--branch needs a branch name: --branch <branch>");
+    } else if (arg === "--workflow") {
+      // `chant ci workflow --workflow <name>`, repeatable (#3573)
+      const name = args[++i];
+      if (!name || name.startsWith("-")) throw new Error("--workflow needs a workflow's name: --workflow <name>");
+      result.ciWorkflows = [...(result.ciWorkflows ?? []), name];
+    } else if (arg === "--chant") {
+      // `chant ci workflow --chant <command>` (#3573): what the tick step runs chant with.
+      result.ciChant = args[++i];
+      if (!result.ciChant || result.ciChant.startsWith("-")) throw new Error("--chant needs the command that runs chant, such as \"npx tsx packages/core/src/cli/main.ts\": --chant <command>");
+    } else if (arg === "--install") {
+      // `chant ci workflow --install <command>` (#3573): a step before the tick that installs what --chant runs.
+      result.ciInstall = args[++i];
+      if (!result.ciInstall || result.ciInstall.startsWith("-")) throw new Error("--install needs the install command, such as \"npm install\": --install <command>");
+    } else if (arg === "--token-secret") {
+      // `chant ci workflow --token-secret <NAME>` (#3573): the secret the tick's tag push authenticates with.
+      result.ciTokenSecret = args[++i];
+      if (!result.ciTokenSecret || result.ciTokenSecret.startsWith("-")) throw new Error("--token-secret needs a repository secret's name, such as CI_GREEN_TOKEN: --token-secret <NAME>");
+    } else if (arg === "--app-id-var") {
+      // `chant ci workflow --app-id-var <VAR> --app-key-secret <NAME>` (#3573): a GitHub App token pushes the tags.
+      result.ciAppIdVar = args[++i];
+      if (!result.ciAppIdVar || result.ciAppIdVar.startsWith("-")) throw new Error("--app-id-var needs the Actions variable holding the App's id: --app-id-var <VAR>");
+    } else if (arg === "--app-key-secret") {
+      result.ciAppKeySecret = args[++i];
+      if (!result.ciAppKeySecret || result.ciAppKeySecret.startsWith("-")) throw new Error("--app-key-secret needs the secret holding the App's private key: --app-key-secret <NAME>");
+    } else if (arg === "--verdict") {
+      // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
+      result.verdict = args[++i];
+      if (!result.verdict || result.verdict.startsWith("-")) throw new Error("--verdict needs agree, dissent or abstain");
+    } else if (arg === "--by") {
+      // `chant workspace records review <id> --by <principal>` (#2670): whoever the caller says.
+      result.by = args[++i];
+      if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
+      // Repeatable for `workspace points answer` (#2739): each person who answered.
+      (result.bys ??= []).push(result.by);
+    } else if (arg === "--open") {
+      // `chant workspace points --open` (#2739): only the questions still open.
+      result.open = true;
+    } else if (arg === "--inputs") {
+      // `chant workspace points ask <point> --inputs <file|-|json>` (#2739; JSON itself, #3403)
+      result.inputs = args[++i];
+      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, - for standard input, or the JSON itself: --inputs <file|-|json>");
+    } else if (arg === "--candidates") {
+      // `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates.
+      result.candidates = args[++i];
+      if (!result.candidates || (result.candidates.startsWith("-") && result.candidates !== "-")) throw new Error("--candidates needs a JSON file, - for standard input, or the JSON itself: --candidates <file|-|json>");
+    } else if (arg === "--response") {
+      // `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got.
+      result.response = args[++i];
+      if (!result.response || result.response.startsWith("-")) throw new Error("--response needs a JSON file: --response <file>");
+    } else if (arg === "--subject") {
+      // `chant workspace points ask <point> --subject <id>` (#2739): what the question is about.
+      result.subject = args[++i];
+      if (!result.subject || result.subject.startsWith("-")) throw new Error("--subject needs what the question is about, such as a work item id: --subject <id>");
+    } else if (arg === "--store") {
+      // `chant workspace points ask <point> --store ledger` (#3815): where a new question goes.
+      const store = args[++i];
+      if (store !== "tree" && store !== "ledger") throw new Error("--store is tree (the answer kind's directory in the working tree) or ledger (chant/lifecycle): --store <tree|ledger>");
+      result.store = store;
+    } else if (arg === "--answer") {
+      // `chant workspace points answer <id> --answer <value>` (#2739)
+      result.answer = args[++i];
+      if (result.answer === undefined || result.answer === "") throw new Error("--answer needs one of the question's candidates: --answer <value>");
+    } else if (arg === "--sign") {
+      // `chant workspace records review <id> --sign [<key file>]` (#2687): seal the verdict.
+      // `records new` and `records amend` take it too, to seal the record's author (#2688).
+      // `chant approve <op> <gate> --sign [<key file>]` seals a gate approval (#3163).
+      // With no key file, git's user.signingkey, as `git commit -S` reads it.
+      const next = args[i + 1];
+      result.sign = next !== undefined && !next.startsWith("-") ? args[++i] : true;
+    } else if (arg === "--session") {
+      // `chant workspace records review <id> --session <id>` (#2670)
+      result.session = args[++i];
+      if (!result.session || result.session.startsWith("-")) throw new Error("--session needs a session id: --session <id>");
+    } else if (arg === "--prefix") {
+      // `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under.
+      result.prefix = args[++i];
+      if (!result.prefix || result.prefix.startsWith("-")) throw new Error("--prefix needs an id prefix: --prefix <prefix>");
+    } else if (arg === "--key" || arg === "--check-id" || arg === "--claim" || arg === "--environment" || arg === "--envelope" || arg === "--threshold") {
+      // `chant workspace evidence sign|verify` and `chant workspace signers` (#2553)
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value`);
+      const field = ({ "--key": "key", "--check-id": "checkId", "--claim": "claim", "--environment": "environment", "--envelope": "envelope", "--threshold": "threshold" } as const)[arg];
+      result[field] = value;
+    } else if (arg === "--require") {
+      // `chant workspace records|verify --require attested` (#2547)
+      result.require = args[++i];
+      if (!result.require || result.require.startsWith("-")) throw new Error("--require needs a provenance level: --require attested");
+    } else if (arg === "--ambient") {
+      result.ambient = true;
+    } else if (arg === "--check-live") {
+      result.checkLive = true;
+    } else if (arg === "--check-snapshot") {
+      result.checkSnapshot = true;
+    } else if (arg === "--fail-on-drift") {
+      result.failOnDrift = true;
+    } else if (arg === "--run-examples") {
+      result.runExamples = true;
+    } else if (arg === "--pinned-digest") {
+      result.pinnedDigest = args[++i];
+    } else if (arg === "--check") {
+      result.check = true;
+    } else if (arg === "--bump") {
+      result.bump = true;
+    } else if (arg === "--component") {
+      result.component = args[++i];
+    } else if (arg === "--digest") {
+      result.digest = args[++i];
+      if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
+    } else if (arg === "--release-plan") {
+      result.releasePlanFile = args[++i];
+    } else if (arg === "--git-sha") {
+      result.gitSha = args[++i];
+    } else if (arg === "--run-id") {
+      result.runId = args[++i];
+    } else if (arg === "--actor") {
+      result.actor = args[++i];
+    } else if (arg === "--approver") {
+      result.approver = args[++i];
+    } else if (arg === "--relayed-by") {
+      // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
+      // who carried the approval or answer to chant for the person it names.
+      result.relayedBy = args[++i];
+      if (!result.relayedBy || result.relayedBy.startsWith("-")) throw new Error("--relayed-by needs the principal that relayed it: --relayed-by <principal>");
+    } else if (arg === "--on") {
+      // `chant run ... --on <lexicon>` (#2121) — which runtime hosts the run.
+      result.on = args[++i];
+      if (!result.on || result.on.startsWith("-")) throw new Error("--on needs a runtime name: --on <lexicon>");
+    } else if (arg === "--compare-to") {
+      result.compareTo = args[++i];
+    } else if (arg === "--no-release-record") {
+      result.noReleaseRecord = true;
+    } else if (arg === "--no-record") {
+      // `chant run <op|--components> --no-record` (#3955): write nothing to chant/lifecycle and push nothing.
+      result.noRecord = true;
+    } else if (arg === "--fold") {
+      result.fold = true;
+    } else if (arg === "--no-cache") {
+      // `chant workspace graph --no-cache` (#2876): read every member.
+      result.noCache = true;
+    } else if (arg === "--no-fold") {
+      // chant #1134 — fold is the default build path; this is the explicit
+      // opt-out, and like --fold it beats chant.config.ts's build.fold.
+      result.fold = false;
+    } else if (arg === "--sandbox") {
+      result.sandbox = true;
+    } else if (arg === "--fold-rank") {
+      // chant #1083 — same context-sensitive shape as --report above:
+      // `--fold-rank` alone prints the ranked-blocker report; `--fold-rank
+      // <path>` ALSO writes the Brendan Gregg collapsed-format export there.
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        result.foldRankCollapsedFile = next;
+        i++;
+      } else {
+        result.foldRank = true;
+      }
+    } else if (arg === "--param") {
+      // chant #1118/#1127 — `--param name=value` (space-separated) and
+      // `--param=name=value` (joined, split above at its first `=` into flag
+      // `--param` + value `name=value`) both land here and behave
+      // identically; there is no separate joined-form error anymore (the
+      // #1118 hard error this superseded only existed because the parser
+      // didn't support joined forms at all — now that it does, the joined
+      // form is just as valid as the space-separated one).
+      (result.param ??= []).push(args[++i]);
+    } else if (arg === "--lexicon-output") {
+      // `--lexicon-output <lexicon>=<path>` (repeatable); the joined form
+      // `--lexicon-output=otel=a.yml` arrives here already split at the first `=`.
+      (result.lexiconOutput ??= []).push(args[++i]);
+    } else if (arg === "--params-file") {
+      result.paramsFile = args[++i];
+    } else if (arg === "--projection") {
+      result.projection = args[++i];
+    } else if (arg === "--interval") {
+      result.interval = args[++i];
+    } else if (arg === "--lease-ttl") {
+      result.leaseTtl = args[++i];
+    } else if (arg === "--steward") {
+      // #2731 — the name is optional: a project with one steward runs it
+      // with a bare `--steward`.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        result.steward = next;
+        i++;
+      } else {
+        result.steward = "";
+      }
+    } else if (arg === "--once") {
+      result.once = true;
+    } else if (arg === "--work") {
+      // `chant run <op> --work <id>` (#2748)
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--work needs a work item id: --work <id>");
+      result.work = value;
+    } else if (arg === "--holder" || arg === "--ttl" || arg === "--token" || arg === "--outcome") {
+      // `chant workspace work claim|renew|release <id>` (#2732)
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
+      result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
+    } else if (arg === "--signer") {
+      // `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--signer needs a principal: --signer <principal>");
+      result.signer = value;
+    } else if (arg === "--unit" || arg === "--decision") {
+      // `chant workspace runs --unit <id> | --decision <id>` (#3033): the runs on one work item, or for one decision.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} needs an id: ${arg} <id>`);
+      result[arg.slice(2) as "unit" | "decision"] = value;
+    } else if (arg === "--note") {
+      result.note = args[++i];
+    } else if (arg === "--reason") {
+      // `chant approve policy-override <subject> --reason <text>` (#3760): why the denied plan goes out anyway.
+      result.reason = args[++i];
+      if (result.reason === undefined || result.reason.startsWith("-")) throw new Error("--reason needs the text of the reason: --reason <text>");
+    } else if (arg === "--rule") {
+      // `chant approve policy-override <subject> --rule <id>` (#3760), once per rule that denied the plan.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--rule needs a rule id: --rule <id>");
+      (result.rules ??= []).push(value);
+    } else if (arg === "--expire") {
+      result.expire = true;
+    } else if (arg === "--role") {
+      // #2508 — a role the approver holds, for a gate whose quorum names
+      // roles. Repeatable, and a comma list works too.
+      const value = args[++i] ?? "";
+      result.roles = [...(result.roles ?? []), ...value.split(",").map((r) => r.trim()).filter(Boolean)];
+    } else if (arg === "--agent") {
+      // #2508 — record the approval as an agent's rather than a person's.
+      result.agent = true;
+    } else if (arg === "--allow-code") {
+      // #2550 — `chant workspace upgrade` runs a template's code migrations
+      // only when asked to.
+      result.allowCode = true;
+    } else if (arg === "--source") {
+      // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
+      result.source = args[++i];
+      if (!result.source || result.source.startsWith("-")) throw new Error("--source needs a template: --source <repo>[#<member>]");
+    } else if (arg === "--tags") {
+      // #2551 — `chant workspace adopt-lineage --tags <glob>`, also hash-index and versions.
+      result.tags = args[++i];
+      if (!result.tags || result.tags.startsWith("-")) throw new Error("--tags needs a tag glob: --tags 'v*'");
+    } else if (arg === "--index") {
+      // #2551 — `chant workspace adopt-lineage --index <file>`.
+      result.index = args[++i];
+      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a hash index file: --index <file>");
+    } else if (arg === "--remove") {
+      // #2552 — `chant workspace import --remove` removes the export member instead of writing it again.
+      result.remove = true;
+    } else if (arg === "--available") {
+      // #2551 — `chant workspace versions --available` lists the template's version tags.
+      result.available = true;
+    } else if (arg === "--root-only") {
+      // #2537 — `chant build` and `chant lint` at a declared workspace root
+      // run on the root project alone instead of refusing with WSP000.
+      result.rootOnly = true;
+    } else if (arg === "--generated") {
+      // #2641 — `chant workspace check --generated` runs each declared
+      // generator and compares its output with the file in the tree.
+      result.generated = true;
+    } else if (arg === "--member") {
+      // #2537 — `chant workspace build|lint|audit|graph --member <name>`.
+      // Repeatable, and a comma list works too.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--member needs a member or group name: --member <name>");
+      result.members = [...(result.members ?? []), ...value.split(",").map((m) => m.trim()).filter(Boolean)];
+    } else if (arg === "--allow-same-origin") {
+      // chant#2384 — record a resolution the same-origin rule would refuse,
+      // deliberately. Flagged on the record, not just accepted quietly.
+      result.allowSameOrigin = true;
+    } else if (arg === "--plan") {
+      result.plan = args[++i];
+    } else if (arg === "--url") {
+      result.url = args[++i];
+    } else if (arg === "--op") {
+      result.op = args[++i];
+    } else if (arg === "--since") {
+      result.since = args[++i];
+    } else if (arg === "--limit") {
+      // Parsed here, validated by the handler — `parseArgs` reports shape, not
+      // policy, the same split every other value flag here uses.
+      result.limit = Number(args[++i]);
+    } else if (arg.startsWith("--")) {
+      // chant #1127 — every recognized flag is matched above; anything left
+      // starting with `--` is unrecognized, whether it arrived bare
+      // (`--bogus`) or joined (`--bogus=value`, already split into
+      // `--bogus` + `value` above). This used to fall through silently (the
+      // "ignores unknown flags" case) — a typo'd or misremembered flag would
+      // vanish with no diagnostic, exactly like the silent-drop this issue
+      // closes for joined values. Point at --help rather than enumerating
+      // every flag here: this parser's flag set is one flat list shared by
+      // every command, not scoped per-command, so "the command's known
+      // flags" isn't something this loop can name in isolation.
+      throw new Error(`Unknown flag: ${arg}\nRun "chant --help" to see supported flags.`);
+    } else if (!arg.startsWith("-")) {
+      if (result.command) (result.positionals ??= []).push(arg);
+      if (!result.command) {
+        result.command = arg;
+      } else if (result.path === ".") {
+        result.path = arg;
+      } else if (!result.extraPositional) {
+        result.extraPositional = arg;
+      } else {
+        result.extraPositional2 = arg;
+      }
+    }
+
+    i++;
+  }
+
+  // #2603 — `--promote-to` (#2575) adds a job to the pipeline that generate
+  // mode synthesizes; no other command or mode reads it. Checked here, once
+  // the whole command line is known, rather than in the build handler, so
+  // `chant build --promote-to prod` and `chant run --promote-to prod` both
+  // fail instead of running as if the flag were absent. A lexicon-mounted
+  // command that takes its own `--promote-to` still gets it: `main` tries the
+  // plugin commands before rethrowing a parse error.
+  if (result.promoteTo && !(result.command === "build" && result.components && result.generate)) {
+    throw new Error(
+      "--promote-to needs build --components --generate <lexicon>: it adds a promote job to the generated CI pipeline, and only generate mode emits one.",
+    );
+  }
+
+  return result;
+}

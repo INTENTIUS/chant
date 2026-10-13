@@ -8,6 +8,7 @@ import {
   resolveKnowledgeDir,
 } from "../../config";
 import { resolveBuildModes, resolveProjectBuildOptions } from "../build-options";
+import { resolveTelemetryAttribution } from "../../telemetry-attribution";
 import { loadOkfBundle } from "../../okf-read";
 import { unknownEnvError } from "../../env";
 import type { OwnershipMarker } from "../../ownership";
@@ -109,6 +110,14 @@ export interface BuildOptions {
    * any flame/icicle viewer with no chant-specific tooling.
    */
   foldRankCollapsedFile?: string;
+
+  /**
+   * `--lexicon-output` runs `buildCommand` once per output file. The first call
+   * runs the build with `serializers` (every serializer the project lists) and
+   * keeps the promise here; the later calls reuse it and each takes only the
+   * outputs of its own `serializers`, so the sources are evaluated once.
+   */
+  sharedBuild?: { serializers: Serializer[]; result?: ReturnType<typeof build> };
 }
 
 /**
@@ -160,6 +169,42 @@ export interface BuildResult {
   warnings: string[];
   /** This build's resolved build-time parameters (#1064) — see `BuildResult.buildParams` (../../build.ts). Empty when the project declares/supplies none. */
   buildParams?: import("../../provenance").BuildParamProvenance[];
+}
+
+/**
+ * Run each lexicon plugin's own post-synth checks over a build result, each
+ * plugin seeing only its own lexicon's output. Shared by `chant build` and
+ * `chant lint` (#3750), so the two run the same checks over the same scoping;
+ * each caller then applies `lint.presets`, `lint.rules` and inline
+ * suppressions its own way. A plugin with no checks yields no entry.
+ */
+export function runLexiconPostSynthChecks(
+  plugins: readonly LexiconPlugin[],
+  result: Parameters<typeof runPostSynthChecks>[1],
+  env: string | undefined,
+  opts?: Parameters<typeof runPostSynthChecks>[3],
+): Array<{ plugin: LexiconPlugin; diagnostics: PostSynthDiagnostic[] }> {
+  const batches: Array<{ plugin: LexiconPlugin; diagnostics: PostSynthDiagnostic[] }> = [];
+  for (const plugin of plugins) {
+    if (!plugin.postSynthChecks) continue;
+    const checks = plugin.postSynthChecks();
+    if (checks.length === 0) continue;
+
+    // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't
+    // interfere. Outputs are keyed by the serializer's lexicon name (the
+    // build partition key), which differs from plugin.name for a dialect like
+    // forgejo (plugin "forgejo", serializer "github").
+    const outputKey = plugin.serializer.name;
+    const scopedOutputs = new Map<string, string | SerializerResult>();
+    const pluginOutput = result.outputs.get(outputKey);
+    if (pluginOutput !== undefined) {
+      scopedOutputs.set(outputKey, pluginOutput);
+    }
+
+    const scopedResult = { ...result, outputs: scopedOutputs };
+    batches.push({ plugin, diagnostics: runPostSynthChecks(checks, scopedResult, env, opts) });
+  }
+  return batches;
 }
 
 /**
@@ -310,19 +355,32 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Run the build. #2002 — every option comes from the shared assembler
   // (../build-options.ts), which `evaluateProjectPolicies` calls too, so the
   // `policyGate` step decides on the same project this command builds.
-  const result = await build(
-    infraPath,
-    options.serializers,
-    undefined,
-    resolveProjectBuildOptions({
-      config,
-      configDir,
-      plugins: options.plugins,
-      modes,
-      ownership,
-      buildParams: paramsResolution.provenance,
-    }),
-  );
+  const telemetry = await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env);
+  const runBuild = (serializers: Serializer[]) =>
+    build(
+      infraPath,
+      serializers,
+      undefined,
+      resolveProjectBuildOptions({
+        config,
+        configDir,
+        plugins: options.plugins,
+        modes,
+        ownership,
+        buildParams: paramsResolution.provenance,
+        telemetry,
+      }),
+    );
+  let result;
+  if (options.sharedBuild) {
+    const shared = options.sharedBuild;
+    shared.result ??= runBuild(shared.serializers);
+    const full = await shared.result;
+    const own = new Set(options.serializers.map((x) => x.name));
+    result = { ...full, outputs: new Map([...full.outputs].filter(([name]) => own.has(name))) };
+  } else {
+    result = await runBuild(options.serializers);
+  }
 
   // #1022 — report per-file fold vs run so it's visible what still runs.
   // #1424 — one line by default; the per-file lines and their reasons are
@@ -524,12 +582,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
   // Core-owned post-synth checks over the Op model (#2122, epic #2114
   // sub-issue 6) — OPS012/OPS013/OPS014, ported from a hosting lexicon's
-  // own TMP012/TMP013/TMP014. An Op is recognized by entity type
+  // own TMP012/TMP013/TMP014, and SYS010 over the decide steps and the
+  // backends in `decide.backends` (#2828). An Op is recognized by entity type
   // (`OpResource`), not by which lexicon declared it, so this runs over the
   // FULL build result regardless of which plugins loaded — same as the
   // receipt/output/knowledge checks above.
   if (result.errors.length === 0) {
-    const opDiags = runPostSynthChecks(coreOpChecks(), result, env, { activityContracts });
+    const opDiags = runPostSynthChecks(coreOpChecks({ decideBackends: config.decide?.backends }), result, env, { activityContracts });
     const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(opDiags, config.lint?.rules);
     suppressedPostSynthCount += suppressed.length;
     for (const diag of activeDiags) {
@@ -544,24 +603,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   if (result.errors.length === 0 && options.plugins) {
-    for (const plugin of options.plugins) {
-      if (!plugin.postSynthChecks) continue;
-      const checks = plugin.postSynthChecks();
-      if (checks.length === 0) continue;
-
-      // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't
-      // interfere. Outputs are keyed by the serializer's lexicon name (the
-      // build partition key), which differs from plugin.name for a dialect like
-      // forgejo (plugin "forgejo", serializer "github").
-      const outputKey = plugin.serializer.name;
-      const scopedOutputs = new Map<string, string | SerializerResult>();
-      const pluginOutput = result.outputs.get(outputKey);
-      if (pluginOutput !== undefined) {
-        scopedOutputs.set(outputKey, pluginOutput);
-      }
-
-      const scopedResult = { ...result, outputs: scopedOutputs };
-      const postDiags = runPostSynthChecks(checks, scopedResult, env, { activityContracts });
+    for (const { plugin, diagnostics: postDiags } of runLexiconPostSynthChecks(options.plugins, result, env, { activityContracts, telemetry, projectDir: configDir, projectConfig: config as unknown as Record<string, unknown> })) {
       // `lint.presets` (chant #2113) filters WHICH check ids are reported at
       // all, before `lint.rules`/inline suppression act on the reported
       // ones. It's a no-op for a lexicon that ships no `lintPresets()` (the
@@ -701,6 +743,10 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     // out of that round trip structurally, via `SerializerResult.verbatimFiles`
     // (chant#1937) — "the parse happens to fail" is not a safety guarantee.
     const verbatimFiles = new Set<string>();
+    // Basenames that hold a secret (`SerializerResult.secretFiles`): a build
+    // with no --output refuses rather than echo them (chant#3738). Verbatim
+    // alone does not mean secret, so this is its own set.
+    const secretFiles = new Set<string>();
 
     // A same basename emitted by two sources with different content would
     // otherwise silently overwrite (last-writer-wins, since `additionalFiles`
@@ -736,6 +782,11 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       if (raw.verbatimFiles) {
         for (const filename of raw.verbatimFiles) {
           verbatimFiles.add(filename);
+        }
+      }
+      if (raw.secretFiles) {
+        for (const filename of raw.secretFiles) {
+          secretFiles.add(filename);
         }
       }
       return raw.primary;
@@ -888,13 +939,13 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
           })
         );
       }
-    } else if (verbatimFiles.size > 0) {
+    } else if (secretFiles.size > 0) {
       // A build carrying committed ciphertext and no --output has nowhere to
       // put the sidecar. Echoing it to a terminal is not useful and dropping
       // it silently is worse: the primary output would reference a Secret
       // whose file never got written, and the miss would surface as a pod
       // failing to start, far from its cause. Refuse, naming the flag.
-      const names = [...verbatimFiles].sort().join(", ");
+      const names = [...secretFiles].sort().join(", ");
       errors.push(
         formatError({
           message:
@@ -917,7 +968,8 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   const resourceCount = result.entities.size;
   const fileCount = result.sourceFileCount;
 
-  if (fileCount === 0 && errors.length === 0) {
+  // A build root (a lexicon's own source files, a rendered overlay) can declare everything without one .ts file.
+  if (fileCount === 0 && resourceCount === 0 && errors.length === 0) {
     console.error(formatInfo("No source files found — create .ts files in the target directory"));
   }
 

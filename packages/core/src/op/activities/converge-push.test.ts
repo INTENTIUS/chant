@@ -20,11 +20,13 @@ vi.mock("node:child_process", () => ({
     cb(null, { stdout: execMock(cmd) as string, stderr: "" }),
 }));
 
-const pushLifecycle = vi.fn();
+// The outcomes `pushLifecycleReport` maps git's push status to (#3677).
+const pushLifecycleReport = vi.fn();
 vi.mock("../../lifecycle/git", () => ({
   fetchLifecycle: vi.fn(async () => undefined),
-  pushLifecycle: (...args: unknown[]) => pushLifecycle(...args) as Promise<boolean>,
+  pushLifecycleReport: (...args: unknown[]) => pushLifecycleReport(...args),
 }));
+const { LIFECYCLE_LOCAL_NOTE } = await import("../../lifecycle/local-note");
 
 vi.mock("../../lifecycle/converge-ledger", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
@@ -55,7 +57,7 @@ describe("a converge tick reports its push outcome (chant#2337)", () => {
   });
 
   test("a push that lands reports pushed, with no warning", async () => {
-    pushLifecycle.mockResolvedValue(true);
+    pushLifecycleReport.mockResolvedValue({ pushed: true });
 
     const result = await tick();
 
@@ -66,7 +68,7 @@ describe("a converge tick reports its push outcome (chant#2337)", () => {
   test("a REJECTED push is reported, not swallowed", async () => {
     // Red before chant#2337: `.catch(() => undefined)` meant the tick returned
     // the same shape whether or not the record left the machine.
-    pushLifecycle.mockRejectedValue(new Error("remote rejected: chant/lifecycle has moved"));
+    pushLifecycleReport.mockResolvedValue({ pushed: false, pushWarning: "remote rejected: chant/lifecycle has moved" });
 
     const result = await tick();
 
@@ -78,7 +80,7 @@ describe("a converge tick reports its push outcome (chant#2337)", () => {
     // `pushLifecycle` returns false rather than throwing when there is no
     // remote. That is not an error, but it is not a push either, and the two
     // reasons are worth telling apart in the warning.
-    pushLifecycle.mockResolvedValue(false);
+    pushLifecycleReport.mockResolvedValue({ pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE });
 
     const result = await tick();
 
@@ -90,7 +92,7 @@ describe("a converge tick reports its push outcome (chant#2337)", () => {
     // The append is local-first and always lands. A push failure must not make
     // the tick misreport what it observed, or the fix would have traded one
     // wrong answer for another.
-    pushLifecycle.mockRejectedValue(new Error("nope"));
+    pushLifecycleReport.mockResolvedValue({ pushed: false, pushWarning: "nope" });
 
     const result = await tick();
 

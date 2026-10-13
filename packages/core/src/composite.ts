@@ -72,6 +72,15 @@ export function isCompositeInstance(value: unknown): value is CompositeInstance 
 }
 
 /**
+ * Type guard: is this value a composite definition, what `Composite()` and
+ * `withDefaults()` return? A lexicon's composite catalog test uses it to find
+ * the composites a module exports (#2662).
+ */
+export function isCompositeDefinition(value: unknown): value is CompositeDefinition<unknown> {
+  return typeof value === "function" && typeof (value as { compositeName?: unknown }).compositeName === "string";
+}
+
+/**
  * Global registry of composite definitions.
  */
 export class CompositeRegistry {
@@ -106,11 +115,23 @@ export class CompositeRegistry {
  * });
  * export const storage = SecureStorage({ name: "data" });
  * ```
+ *
+ * `D` (chant#3787) lets a lexicon give the definition a more precise call
+ * signature than `(props: P) => M`, such as a generic one whose members' types
+ * depend on the literal props it is called with. It is a type only: the value
+ * is the same definition, and `D` must still be a `CompositeDefinition<P, M>`,
+ * so an intersection with the precise signature first is the usual form. It
+ * is passed as a type argument rather than by casting the result, because the
+ * fold recognizes a composite by its `export const X = Composite(...)` shape.
  */
-export function Composite<P, M extends CompositeFactoryMembers = CompositeMembers>(
+export function Composite<
+  P,
+  M extends CompositeFactoryMembers = CompositeMembers,
+  D extends CompositeDefinition<P, M> = CompositeDefinition<P, M>,
+>(
   factory: (props: P) => M,
   name?: string,
-): CompositeDefinition<P, M> {
+): D {
   const id = Symbol();
   const compositeName = name ?? "anonymous";
 
@@ -124,6 +145,16 @@ export function Composite<P, M extends CompositeFactoryMembers = CompositeMember
         );
       }
     }
+
+    // chant#3608 — every member records the composite that built it, here,
+    // when the instance is made. A member destructured from the call
+    // (`export const { vpc } = VpcDefault({})`) is never expanded, so this is
+    // the only trace that a composite wrote it; `collectEntities` reads it
+    // through {@link compositeOfMember}. A nested instance recorded its own
+    // members first and the first record is kept, so a member keeps its
+    // innermost composite. Kept off the provenance record so the composite
+    // `expandComposite` records for an instance exported whole is unchanged.
+    markCompositeMembers(members, compositeName);
 
     // Define `members` and `_definition` as non-enumerable so spreading a
     // composite instance (`...someComposite`) only exposes the actual member
@@ -144,7 +175,34 @@ export function Composite<P, M extends CompositeFactoryMembers = CompositeMember
 
   CompositeRegistry.register(definition as CompositeDefinition<unknown>);
 
-  return definition;
+  return definition as D;
+}
+
+/** Non-enumerable, symbol-keyed: invisible to serializers, spreads and comparisons, like provenance. */
+const COMPOSITE_MEMBER_OF = Symbol.for("chant.composite.memberOf");
+
+/** Record `compositeName` on each declarable member, descending into nested instances. First record wins. */
+function markCompositeMembers(members: object, compositeName: string): void {
+  for (const member of Object.values(members)) {
+    if (isCompositeInstance(member)) {
+      markCompositeMembers(member.members, compositeName);
+    } else if (
+      isDeclarable(member) &&
+      Object.isExtensible(member) &&
+      !Object.prototype.hasOwnProperty.call(member, COMPOSITE_MEMBER_OF)
+    ) {
+      Object.defineProperty(member, COMPOSITE_MEMBER_OF, { value: compositeName, enumerable: false, configurable: true });
+    }
+  }
+}
+
+/**
+ * chant#3608 — the composite whose call built `entity`, or `undefined` for an
+ * entity no chant composite built.
+ */
+export function compositeOfMember(entity: object): string | undefined {
+  const name = (entity as Record<symbol, unknown>)[COMPOSITE_MEMBER_OF];
+  return typeof name === "string" ? name : undefined;
 }
 
 /**
@@ -343,10 +401,14 @@ export function resource<T extends Declarable, P>(
  *
  * No deep merge — too dangerous with IaC props where nested objects
  * (e.g. policy documents) should be replaced wholesale.
+ *
+ * `overrides` may be any object type, not only `Partial<T>`: a composite
+ * types each member's override against that member's own props, and `T`
+ * here is the shape of the literal the composite builds, which is narrower.
  */
 export function mergeDefaults<T extends Record<string, unknown>>(
   base: T,
-  overrides?: Partial<T>,
+  overrides?: Partial<T> | object,
 ): T {
   if (!overrides) return base;
   const result = { ...base };

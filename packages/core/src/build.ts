@@ -1,6 +1,7 @@
 import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
+import type { TelemetryAttribution } from "./telemetry-attribution";
 import type { BuildError, DiscoveryErrorType } from "./errors";
 import type { IntrinsicDef, BuildRootContribution, BuildRootContributor } from "./lexicon";
 import { getProvenance, type BuildParamProvenance } from "./provenance";
@@ -18,6 +19,7 @@ import { discover, type DiscoveryResult, type FoldDecision } from "./discovery/i
 import { decodeEntitySet, type DiscoveredEntitiesJson } from "./discovery/entity-wire";
 import { buildDependencyGraph } from "./discovery/graph";
 import { topologicalSort } from "./sort";
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -65,6 +67,30 @@ export interface StackGraph {
  * referencing an attribute of a resource in lexicon B ⇒ A depends on B). Returns
  * the edge set plus a topological order, parallel-safe waves, and any cycles.
  */
+/**
+ * Is this entity a member of a lexicon stack?
+ *
+ * Four kinds are not, and every one of them is serializer-neutral: a
+ * `LexiconOutput` is collected separately, a secret provenance declaration
+ * (#1828) and a plan scenario (#1292) are data lint and the CLI read off the
+ * entity map, and an Op (#2118) builds to its own `op.json` rather than
+ * through a lexicon serializer.
+ *
+ * {@link partitionByLexicon} has skipped all four since each landed, and
+ * {@link computeStackGraph}'s walk did not — so an entity with no `lexicon`
+ * (a `LexiconOutput`) entered `edges`, `order` and `waves` as `undefined`
+ * while `nodes`, built from the partition, could never contain it (#2480).
+ * One predicate for both sites, so they cannot drift apart again.
+ */
+export function isStackMember(entity: Declarable): boolean {
+  return (
+    !isLexiconOutput(entity) &&
+    !isSecretDeclaration(entity) &&
+    !isScenario(entity) &&
+    !isOpEntity(entity)
+  );
+}
+
 export function computeStackGraph(
   entities: Map<string, Declarable>,
   lexiconNames: string[],
@@ -72,6 +98,10 @@ export function computeStackGraph(
   const edges: Array<{ from: string; to: string }> = [];
   const edgeSet = new Set<string>();
   const addEdge = (from: string, to: string): void => {
+    // A structural guard, not a defensive one: `nodes` comes from the
+    // partition, so an endpoint the partition would have dropped can never be
+    // a legitimate member of this graph (#2480).
+    if (typeof from !== "string" || typeof to !== "string") return;
     if (from === to) return;
     const key = `${from}\0${to}`;
     if (edgeSet.has(key)) return;
@@ -104,6 +134,9 @@ export function computeStackGraph(
   };
 
   for (const [, entity] of entities) {
+    // #2480: the same four kinds `partitionByLexicon` drops. Walking one as a
+    // consumer takes its absent `lexicon` as the edge's `from`.
+    if (!isStackMember(entity)) continue;
     const consumer = entity.lexicon;
     const visited = new Set<unknown>();
     for (const val of Object.values(entity as unknown as Record<string, unknown>)) {
@@ -117,10 +150,10 @@ export function computeStackGraph(
   // Dependency map: node → producers it depends on.
   const nodes = lexiconNames.length
     ? [...lexiconNames]
-    : // Secret provenance declarations (#1828) and plan scenarios (#1292) never
-      // form a stack — their pseudo-lexicon has no serializer and must not
-      // appear in the manifest.
-      [...new Set([...entities.values()].filter((e) => !isSecretDeclaration(e) && !isScenario(e)).map((e) => e.lexicon))];
+    : // The same predicate, rather than the partial copy of it this branch
+      // carried: it filtered secrets and scenarios but not outputs or Ops, so
+      // it could mint a node the partition would have dropped (#2480).
+      [...new Set([...entities.values()].filter(isStackMember).map((e) => e.lexicon))];
   const deps = new Map<string, Set<string>>();
   for (const n of nodes) deps.set(n, new Set());
   for (const { from, to } of edges) {
@@ -164,6 +197,12 @@ export interface BuildOptions {
   ownership?: OwnershipMarker;
 
   /**
+   * Telemetry attribution facts (#2558), passed to each serializer's
+   * {@link SerializeContext}. Resolved by the build command; unset at level 0.
+   */
+  telemetry?: TelemetryAttribution;
+
+  /**
    * The resolved project configuration, passed through to each serializer's
    * {@link SerializeContext} so a dialect can read its lexicon-scoped settings.
    */
@@ -192,6 +231,13 @@ export interface BuildOptions {
    * `options.plugins.map(p => p.name)`.
    */
   lexicons?: readonly string[];
+
+  /**
+   * chant#3612 — host package specifiers to follow a bare import into. Passed
+   * straight through to {@link DiscoveryOptions.lexiconPackages}; ignored
+   * unless {@link fold} is set. Never needed for a chant project.
+   */
+  lexiconPackages?: readonly string[];
 
   /**
    * chant #1442 — lexicon name → the version of the plugin that served it.
@@ -325,23 +371,13 @@ export function partitionByLexicon(
   const partitions = new Map<string, Map<string, Declarable>>();
 
   for (const [name, entity] of entities) {
-    // LexiconOutput instances are collected separately; skip them here
-    if (isLexiconOutput(entity)) continue;
-    // Secret provenance declarations (#1828) are serializer-neutral: data
-    // that lint and lexicons read from the entity map, never output. Keeping
-    // them out of every partition means no serializer sees them and no
-    // "No serializer found" warning fires for their pseudo-lexicon.
-    if (isSecretDeclaration(entity)) continue;
-    // Plan scenarios (#1292) are serializer-neutral the same way: a checkable
-    // expectation the CLI reads off the entity map, never output.
-    if (isScenario(entity)) continue;
-    // Op declarations (#2118) too. An Op's build output is its `op.json` IR,
-    // and core writes that itself from the entity map (`./cli/commands/build.ts`)
-    // rather than routing it through a lexicon serializer — the Op model, the
-    // executor and the IR are all core's, and no lexicon renders an Op entity
-    // into its own manifest. Keeping them out of every partition means no
-    // "No serializer found" warning fires for core's own `chant` lexicon.
-    if (isOpEntity(entity)) continue;
+    // The four serializer-neutral kinds, each explained on {@link isStackMember}:
+    // a LexiconOutput is collected separately, and a secret declaration
+    // (#1828), a plan scenario (#1292) and an Op (#2118) are read off the
+    // entity map rather than routed through a lexicon serializer. Keeping them
+    // out of every partition is what stops a "No serializer found" warning
+    // firing for a pseudo-lexicon.
+    if (!isStackMember(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());
@@ -613,6 +649,15 @@ function generateManifest(
   };
 }
 
+/** The directory a build discovered from, for build-root contributors; undefined when the build's path is not one (an entity-set JSON's label). */
+function sourceDirOf(path: string): string | undefined {
+  try {
+    return statSync(path).isDirectory() ? resolve(path) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** What merging build-root contributions produced: non-fatal render notes and
  * fatal messages (a failed contributor, a name collision). */
 export interface BuildRootMergeResult {
@@ -639,6 +684,7 @@ export interface BuildRootMergeResult {
 export async function mergeBuildRootEntities(
   entities: Map<string, Declarable>,
   contributors: ReadonlyArray<BuildRootContributor>,
+  sourceDir?: string,
 ): Promise<BuildRootMergeResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -649,7 +695,7 @@ export async function mergeBuildRootEntities(
       // ciphertext file to resolve). Contributors run in order, so this also
       // carries what earlier contributors added; the merge below is still the
       // only writer, which is what keeps the collision refusal meaningful.
-      const contribution = await contribute({ entities });
+      const contribution = await contribute({ entities, ...(sourceDir !== undefined ? { sourceDir } : {}) });
       warnings.push(...(contribution.warnings ?? []));
       for (const [name, entity] of contribution.entities) {
         if (entities.has(name)) {
@@ -684,6 +730,7 @@ export async function build(
     fold: options?.fold,
     intrinsics: options?.intrinsics,
     lexicons: options?.lexicons,
+    lexiconPackages: options?.lexiconPackages,
     sandbox: options?.sandbox,
     executing: options?.executing,
     buildParams: options?.buildParams,
@@ -781,7 +828,7 @@ async function buildFromDiscoveryResult(
   // object, and re-running the contributors there would duplicate every
   // contributed entity once per child.
   if (!parentBuildStack && options?.buildRoots) {
-    const merged = await mergeBuildRootEntities(discoveryResult.entities, options.buildRoots);
+    const merged = await mergeBuildRootEntities(discoveryResult.entities, options.buildRoots, sourceDirOf(resolvedPathForChildStack));
     warnings.push(...merged.warnings);
     for (const message of merged.errors) {
       errors.push(new BuildErrorClass("", message));
@@ -855,6 +902,7 @@ async function buildFromDiscoveryResult(
       const serialized = serializer.serialize(applyBound, lexiconLexiconOutputs, {
         ownership: options?.ownership,
         config: options?.config,
+        ...(options?.telemetry ? { telemetry: options.telemetry } : {}),
         ...(receipts.size > 0 ? { receipts } : {}),
       });
       // Collect any non-fatal serializer diagnostics into the build warnings.
@@ -868,7 +916,7 @@ async function buildFromDiscoveryResult(
       // designed shape until a lexicon materializes the receipt (#1835), not
       // a missing-serializer problem.
     } else {
-      warnings.push(`No serializer found for lexicon "${lexiconName}"`);
+      warnings.push(`No serializer found for lexicon "${lexiconName}". List the lexicon in chant.config.ts.`);
     }
   }
 

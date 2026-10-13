@@ -1,4 +1,5 @@
 import type { GraphIR, IRNode, IREdge } from "./graph-ir";
+import { edgeLabel } from "./graph-mermaid";
 
 /**
  * Render the graph IR as Graphviz DOT. Pure text — no `dot` needed to produce
@@ -14,16 +15,35 @@ export function toDot(ir: GraphIR): string {
 
   // Cluster by wave (component graph) when present, else by lexicon (entity graph).
   const clusters = ir.groups.byWave ?? ir.groups.byLexicon;
+  // CI pipelines (#3910) nest as clusters inside their lexicon's cluster.
+  const pipelineOf = new Map<string, string>();
+  for (const [name, members] of Object.entries(ir.groups.byPipeline ?? {})) {
+    for (const id of members) if (!pipelineOf.has(id)) pipelineOf.set(id, name);
+  }
   const grouped = new Set<string>();
   if (clusters) {
     for (const [name, members] of Object.entries(clusters)) {
       lines.push(`  subgraph ${q(`cluster_${name}`)} {`);
       lines.push(`    label=${q(name)};`);
+      const nested = new Map<string, IRNode[]>();
       for (const id of members) {
         const node = ir.nodes.find((n) => n.id === id);
         if (!node) continue;
         grouped.add(id);
+        const pipeline = pipelineOf.get(id);
+        if (pipeline !== undefined) {
+          const arr = nested.get(pipeline) ?? [];
+          arr.push(node);
+          nested.set(pipeline, arr);
+          continue;
+        }
         lines.push(`    ${nodeLine(node)}`);
+      }
+      for (const [pipeline, nodes] of [...nested].sort(([a], [b]) => a.localeCompare(b))) {
+        lines.push(`    subgraph ${q(`cluster_${name}_pipeline_${pipeline}`)} {`);
+        lines.push(`      label=${q(pipeline)};`);
+        for (const node of nodes) lines.push(`      ${nodeLine(node)}`);
+        lines.push("    }");
       }
       lines.push("  }");
     }
@@ -34,6 +54,17 @@ export function toDot(ir: GraphIR): string {
   }
 
   for (const e of ir.edges) lines.push(`  ${edgeLine(e)}`);
+
+  // Unresolved references (#3910): a dashed edge to a dashed stub node.
+  const stubs = new Set<string>();
+  for (const d of ir.dangling ?? []) {
+    const stub = `dangling:${d.value}`;
+    if (!stubs.has(stub)) {
+      stubs.add(stub);
+      lines.push(`  ${q(stub)} [label=${q(`${d.value}\n(not declared)`)}, shape=box, style="rounded,dashed"];`);
+    }
+    lines.push(`  ${q(d.from)} -> ${q(stub)} [label=${q(d.kind)}, style=dashed];`);
+  }
 
   lines.push("}");
   return lines.join("\n") + "\n";
@@ -47,8 +78,9 @@ function nodeLine(node: IRNode): string {
 function edgeLine(e: IREdge): string {
   const from = q(e.from);
   const to = q(e.to);
-  const label = [e.viaAttr, e.toAttr].filter(Boolean).join(" → ");
-  return label ? `${from} -> ${to} [label=${q(label)}];` : `${from} -> ${to};`;
+  const label = edgeLabel(e);
+  const attrs = [label ? `label=${q(label)}` : "", e.crossPipeline ? "style=dashed" : ""].filter(Boolean);
+  return attrs.length ? `${from} -> ${to} [${attrs.join(", ")}];` : `${from} -> ${to};`;
 }
 
 /** Quote a DOT identifier/label. Graphviz accepts any string in double quotes;

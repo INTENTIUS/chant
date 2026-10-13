@@ -3,10 +3,26 @@
  *
  * @gke Like AdotCollector but targets Cloud Trace + Cloud Monitoring via the
  * googlecloud exporter and uses GKE Workload Identity instead of IRSA.
+ *
+ * The collector config is typed through the otel lexicon
+ * (`@intentius/chant-lexicon-otel`) and rendered with its `collectorYaml`, so
+ * it is checked the way any declared collector config is.
  */
 
-import { Composite, mergeDefaults } from "@intentius/chant";
-import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+import { Composite } from "@intentius/chant";
+import {
+  OtlpReceiver,
+  BatchProcessor,
+  ResourceDetectionProcessor,
+  GoogleCloudExporter,
+  Pipeline,
+  buildCollectorConfig,
+  collectorYaml,
+} from "@intentius/chant-lexicon-otel";
+import { collectorAgentResources, type CollectorAgentResources } from "./otel-collector-agent";
+import { agentClusterRules } from "./otel-collector-rbac";
+import { collectorNodeAccess } from "./otel-collector-node";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface GkeOtelCollectorProps {
   /** GKE cluster name. */
@@ -33,21 +49,15 @@ export interface GkeOtelCollectorProps {
   memoryLimit?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    daemonSet?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
+    daemonSet?: MemberDefaults<"DaemonSet">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    configMap?: MemberDefaults<"ConfigMap">;
   };
 }
 
-export interface GkeOtelCollectorResult {
-  daemonSet: InstanceType<typeof DaemonSet>;
-  serviceAccount: InstanceType<typeof ServiceAccount>;
-  clusterRole: InstanceType<typeof ClusterRole>;
-  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
-  configMap: InstanceType<typeof ConfigMap>;
-}
+export type GkeOtelCollectorResult = CollectorAgentResources;
 
 /**
  * Create a GkeOtelCollector composite — returns prop objects for
@@ -81,161 +91,66 @@ export const GkeOtelCollector = Composite((props: GkeOtelCollectorProps) => {
     defaults: defs,
   } = props;
 
-  const saName = `${name}-sa`;
-  const clusterRoleName = `${name}-role`;
-  const bindingName = `${name}-binding`;
-  const configMapName = `${name}-config`;
-
   const commonLabels: Record<string, string> = {
     "app.kubernetes.io/name": name,
     "app.kubernetes.io/managed-by": "chant",
     ...extraLabels,
   };
 
-  const otelConfig = `receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
+  // The collector config, declared through the otel lexicon and rendered to
+  // the same YAML the ConfigMap has always carried (#2559).
+  const otlp = new OtlpReceiver({
+    protocols: {
+      grpc: { endpoint: "0.0.0.0:4317" },
+      http: { endpoint: "0.0.0.0:4318" },
+    },
+  });
+  const batch = new BatchProcessor({ timeout: "30s", send_batch_size: 8192 });
+  const resourceDetection = new ResourceDetectionProcessor({ detectors: ["gcp"], timeout: "10s" });
+  const googleCloud = new GoogleCloudExporter({
+    project: projectId,
+    metric: { prefix: `custom.googleapis.com/${clusterName}` },
+    trace: {
+      attribute_mappings: [{ key: "service.name", replacement: "g.co/r/service/name" }],
+    },
+  });
+  const entities = [
+    otlp,
+    batch,
+    resourceDetection,
+    googleCloud,
+    new Pipeline({ signal: "metrics", receivers: [otlp], processors: [batch, resourceDetection], exporters: [googleCloud] }),
+    new Pipeline({ signal: "traces", receivers: [otlp], processors: [batch, resourceDetection], exporters: [googleCloud] }),
+  ];
+  const otelConfig = collectorYaml(entities);
+  const built = buildCollectorConfig(entities).config;
 
-processors:
-  batch:
-    timeout: 30s
-    send_batch_size: 8192
-  resourcedetection:
-    detectors: [gcp]
-    timeout: 10s
-
-exporters:
-  googlecloud:
-    project: ${projectId}
-    metric:
-      prefix: custom.googleapis.com/${clusterName}
-    trace:
-      attribute_mappings:
-        - key: service.name
-          replacement: g.co/r/service/name
-
-service:
-  pipelines:
-    metrics:
-      receivers: [otlp]
-      processors: [batch, resourcedetection]
-      exporters: [googlecloud]
-    traces:
-      receivers: [otlp]
-      processors: [batch, resourcedetection]
-      exporters: [googlecloud]
-`;
-
-  const container: Record<string, unknown> = {
+  // The DaemonSet, RBAC and ConfigMap are the ones OtelCollector builds too.
+  return collectorAgentResources({
     name,
+    namespace,
     image,
-    args: ["--config=/etc/otel/config.yaml"],
+    commonLabels,
+    extraLabels,
+    configYaml: otelConfig,
+    configDir: "/etc/otel",
+    // The ClusterRole OtelCollector shares: k8sattributes' rules, and none
+    // for receivers, since the config's only receiver is otlp (#2923).
+    clusterRules: agentClusterRules(built),
+    // Derived like OtelCollector's (#3103). The config reads nothing from the
+    // node, so this adds no variable or mount and the output is unchanged.
+    nodeAccess: collectorNodeAccess(built, "/etc/otel"),
     ports: [
       { containerPort: 4317, name: "otlp-grpc" },
       { containerPort: 4318, name: "otlp-http" },
     ],
-    resources: {
-      requests: { cpu: cpuRequest, memory: memoryRequest },
-      limits: { cpu: cpuLimit, memory: memoryLimit },
-    },
-    volumeMounts: [
-      { name: "config", mountPath: "/etc/otel", readOnly: true },
-    ],
-    securityContext: {
-      runAsNonRoot: true,
-      runAsUser: 10001,
-      readOnlyRootFilesystem: true,
-      allowPrivilegeEscalation: false,
-    },
-  };
-
-  const daemonSet = new DaemonSet(mergeDefaults({
-    metadata: {
-      name,
-      namespace,
-      labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
-    },
-    spec: {
-      selector: { matchLabels: { "app.kubernetes.io/name": name } },
-      template: {
-        metadata: { labels: { "app.kubernetes.io/name": name, ...extraLabels } },
-        spec: {
-          serviceAccountName: saName,
-          containers: [container],
-          volumes: [
-            { name: "config", configMap: { name: configMapName } },
-          ],
-          tolerations: [{ operator: "Exists" }],
-        },
-      },
-    },
-  }, defs?.daemonSet));
-
-  const serviceAccount = new ServiceAccount(mergeDefaults({
-    metadata: {
-      name: saName,
-      namespace,
-      labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
-      ...(gcpServiceAccountEmail
-        ? { annotations: { "iam.gke.io/gcp-service-account": gcpServiceAccountEmail } }
-        : {}),
-    },
-  }, defs?.serviceAccount));
-
-  const clusterRole = new ClusterRole(mergeDefaults({
-    metadata: {
-      name: clusterRoleName,
-      labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
-    },
-    rules: [
-      { apiGroups: [""], resources: ["pods", "nodes", "endpoints"], verbs: ["get", "list", "watch"] },
-      { apiGroups: ["apps"], resources: ["replicasets"], verbs: ["get", "list", "watch"] },
-      { apiGroups: ["batch"], resources: ["jobs"], verbs: ["get", "list", "watch"] },
-      { apiGroups: [""], resources: ["nodes/proxy"], verbs: ["get"] },
-      { apiGroups: [""], resources: ["nodes/stats", "configmaps", "events"], verbs: ["create", "get"] },
-      { apiGroups: [""], resources: ["configmaps"], verbs: ["get", "update", "create"], resourceNames: ["otel-container-insight-clusterleader"] },
-    ],
-  }, defs?.clusterRole));
-
-  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
-    metadata: {
-      name: bindingName,
-      labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
-    },
-    roleRef: {
-      apiGroup: "rbac.authorization.k8s.io",
-      kind: "ClusterRole",
-      name: clusterRoleName,
-    },
-    subjects: [
-      {
-        kind: "ServiceAccount",
-        name: saName,
-        namespace,
-      },
-    ],
-  }, defs?.clusterRoleBinding));
-
-  const configMap = new ConfigMap(mergeDefaults({
-    metadata: {
-      name: configMapName,
-      namespace,
-      labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
-    },
-    data: {
-      "config.yaml": otelConfig,
-    },
-  }, defs?.configMap));
-
-  return {
-    daemonSet,
-    serviceAccount,
-    clusterRole,
-    clusterRoleBinding,
-    configMap,
-  };
+    cpuRequest,
+    memoryRequest,
+    cpuLimit,
+    memoryLimit,
+    ...(gcpServiceAccountEmail
+      ? { serviceAccountAnnotations: { "iam.gke.io/gcp-service-account": gcpServiceAccountEmail } }
+      : {}),
+    defaults: defs,
+  });
 }, "GkeOtelCollector");

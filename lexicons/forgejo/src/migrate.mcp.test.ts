@@ -58,9 +58,7 @@ describe("forgejo MCP compare tool", () => {
 
     expect(result.found).toBe(true);
     const fates = result.properties.map((p) => p.fate);
-    expect(fates).toContain("lost"); // permissions
-    expect(fates).toContain("needs-review"); // unmapped action ref
-    expect(result.summary.lost).toBeGreaterThanOrEqual(1);
+    expect(fates).toContain("needs-review"); // permissions, unmapped action ref
     expect(result.summary["needs-review"]).toBeGreaterThanOrEqual(1);
   });
 

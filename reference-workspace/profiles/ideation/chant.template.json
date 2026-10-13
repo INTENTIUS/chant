@@ -1,0 +1,12 @@
+{
+  "$comment": "Template parameters for chant init --from and chant workspace init --profile (#2627, #3174).",
+  "parameters": {
+    "name": {
+      "type": "string",
+      "default": "Untitled",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$",
+      "description": "The workspace's display name, which the stub app shows"
+    }
+  },
+  "files": ["app/server.mjs"]
+}

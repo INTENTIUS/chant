@@ -389,6 +389,22 @@ export const backup =
     expect(result.composites?.["aws-plane"]).toEqual(["ArtifactBucket", "OperatorRole"]);
     expect(result.composites?.plain).toBeUndefined();
   });
+
+  test("carries each component's archetype, declared or inferred (#2662)", async () => {
+    await writeFile(
+      join(testDir, "lib.component.ts"),
+      `export const lib = { name: "lib", archetype: "service", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "test" }] }] };`,
+    );
+    await writeFile(
+      join(testDir, "plain.component.ts"),
+      `export const plain = { name: "plain", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "shell", reason: "test" }] }] };`,
+    );
+
+    const result = await computeComponentGraph(testDir);
+
+    expect(result.success).toBe(true);
+    expect(result.archetypes).toEqual({ lib: "service", plain: "infra" });
+  });
 });
 
 // ── runComponents (#585) ─────────────────────────────────────────────────────
@@ -583,6 +599,81 @@ describe("runComponents", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/cycle/i);
+  });
+
+  describe("a comma list (#3950)", () => {
+    const comp = (name: string, dependsOn: string[], extra = "") =>
+      `export const c = { name: "${name}", ${extra}dependsOn: ${JSON.stringify(dependsOn)}, deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`;
+
+    beforeEach(async () => {
+      await writeFile(join(testDir, "db.component.ts"), comp("db", []));
+      await writeFile(join(testDir, "cache.component.ts"), comp("cache", []));
+      await writeFile(join(testDir, "api.component.ts"), comp("api", ["db"]));
+      await writeFile(join(testDir, "web.component.ts"), comp("web", ["api", "cache"]));
+      await writeFile(join(testDir, "worker.component.ts"), comp("worker", ["db"]));
+    });
+
+    test("runs the named components and their transitive dependencies in one dependency-ordered run", async () => {
+      const plans: unknown[] = [];
+      const result = await runComponents(testDir, "web", { registry: fakeRegistry() });
+      expect(result.selected).toEqual(["web"]);
+
+      const listed = await runComponents(testDir, "web,worker", { registry: fakeRegistry(), onPlan: (p) => plans.push(p) });
+      expect(listed.success).toBe(true);
+      expect([...listed.selected].sort()).toEqual(["api", "cache", "db", "web", "worker"]);
+      expect(listed.run?.waves).toEqual([["cache", "db"], ["api", "worker"], ["web"]].map((w) => expect.arrayContaining(w)));
+      const order = listed.run?.order ?? [];
+      expect(order.indexOf("db")).toBeLessThan(order.indexOf("api"));
+      expect(order.indexOf("api")).toBeLessThan(order.indexOf("web"));
+      expect(plans).toHaveLength(1);
+      expect(plans[0]).toMatchObject({ order: listed.run?.order, waves: listed.run?.waves });
+      expect([...(plans[0] as { added: string[] }).added].sort()).toEqual(["api", "cache", "db"]);
+    });
+
+    test("leaves out components the list does not reach", async () => {
+      const result = await runComponents(testDir, "api, api ,", { registry: fakeRegistry() });
+      expect(result.success).toBe(true);
+      expect(result.run?.order).toEqual(["db", "api"]);
+    });
+
+    test("refuses unknown names, naming every one, before anything runs", async () => {
+      const onPlan = vi.fn();
+      const result = await runComponents(testDir, "api,nope,also-nope", { registry: fakeRegistry(), onPlan });
+      expect(result.success).toBe(false);
+      expect(result.run).toBeUndefined();
+      expect(result.error).toContain('Components "nope", "also-nope" not found');
+      expect(result.error).toContain("Known components: api, cache, db, web, worker");
+      expect(onPlan).not.toHaveBeenCalled();
+    });
+
+    test("refuses a disabled name; a disabled dependency is dropped as \"all\" drops it", async () => {
+      await writeFile(join(testDir, "cache.component.ts"), comp("cache", [], "enabled: false, "));
+      const refused = await runComponents(testDir, "api,cache", { registry: fakeRegistry() });
+      expect(refused.success).toBe(false);
+      expect(refused.run).toBeUndefined();
+      expect(refused.error).toContain('Component "cache" is disabled');
+
+      const result = await runComponents(testDir, "web", { registry: fakeRegistry() });
+      expect(result.success).toBe(true);
+      const listed = await runComponents(testDir, "web,", { registry: fakeRegistry() });
+      expect(listed.success).toBe(true);
+      expect(listed.run?.order).toEqual(["db", "api", "web"]);
+    });
+
+    test("refuses \"all\" inside a list", async () => {
+      const result = await runComponents(testDir, "all,api", { registry: fakeRegistry() });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('"all" cannot be part of a component list');
+    });
+
+    test("a dependency outside the discovered set fails as it does under \"all\"", async () => {
+      await writeFile(join(testDir, "api.component.ts"), comp("api", ["shared-alb"]));
+      const onPlan = vi.fn();
+      const result = await runComponents(testDir, "api,web", { registry: fakeRegistry(), onPlan });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("shared-alb");
+      expect(onPlan).not.toHaveBeenCalled();
+    });
   });
 
   test("unknown component name → clear error listing known components", async () => {

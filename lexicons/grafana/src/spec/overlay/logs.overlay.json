@@ -1,0 +1,14 @@
+{
+  "$comment": "Corrections to the vendored logs.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "logs",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/unwrappedColumns",
+      "value": { "type": "boolean" },
+      "source": "public/app/plugins/panel/logs/panelcfg.cue:38 (:37 at v12.4.0)",
+      "why": "A logs panel option since 12.4; Grafana writes it into every logs panel it saves."
+    }
+  ]
+}

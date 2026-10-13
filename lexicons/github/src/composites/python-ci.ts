@@ -1,5 +1,6 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Step, Workflow } from "../generated/index";
+import { actionRef } from "../action-pins";
 
 export interface PythonCIProps {
   /** Python version. Default: "3.12" */
@@ -46,7 +47,7 @@ export const PythonCI = Composite((props: PythonCIProps) => {
   const testJob = new Job(mergeDefaults({
     "runs-on": runsOn,
     steps: [
-      new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+      new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
       new Step({
         name: "Setup Python",
         uses: "actions/setup-python@v5",
@@ -63,7 +64,7 @@ export const PythonCI = Composite((props: PythonCIProps) => {
       ? new Job(mergeDefaults({
           "runs-on": runsOn,
           steps: [
-            new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+            new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
             new Step({
               name: "Setup Python",
               uses: "actions/setup-python@v5",

@@ -1,0 +1,82 @@
+---
+title: "Alert Routing and Watchdog"
+description: "The AlertRouting composite (a route tree by team and severity, inhibit rules and receivers) and the Watchdog composite (an always-firing alert routed to a heartbeat receiver)"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/alert-routing.mdx instead; changes here are overwritten. */}
+
+
+Two composites declare the parts of `alertmanager.yml` most projects write by hand: `AlertRouting`, a routing tree with inhibit rules and receivers, and `Watchdog`, an alert that always fires and the route that sends it to a heartbeat service. Both build the [Alertmanager entities](../alertmanager/), so the output and the PROM2xx checks are the same as for a tree declared entity by entity.
+
+```ts
+import { AlertRouting, Watchdog } from "@intentius/chant-lexicon-prometheus";
+
+const pager = { name: "pager", pagerduty_configs: [{ routing_key_file: "/etc/alertmanager/secrets/pagerduty" }] };
+const chat = { name: "chat", slack_configs: [{ api_url_file: "/etc/alertmanager/secrets/slack", channel: "#alerts" }] };
+
+export const watchdog = Watchdog({ urlFile: "/etc/alertmanager/secrets/healthchecks-url" });
+export const routing = AlertRouting({
+  receiver: chat,
+  levels: [
+    { name: "critical", severities: ["critical", "page"], receiver: pager },
+    { name: "warning", severities: ["warning", "ticket"] },
+    { name: "info", severities: ["info"] },
+  ],
+  teams: [{ team: "db", receiver: "db-chat", levels: { critical: "db-pager" } }],
+  routes: [watchdog.route],
+});
+```
+
+## `AlertRouting`
+
+The root route sends to `receiver`, the default for anything no child route takes. Below it, in the order Alertmanager tries them:
+
+1. `routes`: child routes of your own, such as `watchdog.route`.
+2. One route per team, matched on the team label (`team`, or `teamLabel`), sending to the team's receiver. A team's `levels` sends a severity level to another receiver of its own.
+3. One route per severity level, for the alerts no team route took.
+
+The default levels are the severities this lexicon's composites write, most severe first:
+
+| Level | Severities | Written by |
+|---|---|---|
+| `critical` | `critical`, `page` | `Slo`'s page tier |
+| `warning` | `warning`, `ticket` | `Slo`'s ticket tier, `GenAiRules` and `RedAlerts` by default |
+| `info` | `info` | |
+
+A level without a receiver sends to the root receiver, so routing `critical` to a pager and leaving the rest is one line, and PROM202 finds every severity routed.
+
+While an alert of one level fires, the same alert at each lower level is held back: one inhibit rule per pair of levels. Two alerts are the same when they agree on `inhibitEqual`, by default `alertname`, `slo`, `service_name` and the team label, so one SLO's page holds back that SLO's ticket and not another's. `inhibit: false` leaves the rules out.
+
+| Prop | Default | What it does |
+|---|---|---|
+| `receiver` | `default`, with no integrations | The root route's receiver; a receiver with no integrations drops what reaches it |
+| `levels` | `ALERT_ROUTING_LEVELS` | Severity levels, most severe first, each with `name`, `severities` and an optional `receiver` and timing |
+| `teams` | none | Team routes: `team`, `receiver`, optional `levels` and timing |
+| `teamLabel` | `team` | The label team routes match on |
+| `routes` | none | Child routes of your own, tried first |
+| `groupBy` | `["alertname"]` | The root route's `group_by` |
+| `groupWait`, `groupInterval`, `repeatInterval` | `30s`, `5m`, `4h` | The root route's timing; levels and teams take their own |
+| `inhibit` | on | Inhibit lower levels while a higher one fires |
+| `inhibitEqual` | `alertname`, `slo`, `service_name`, the team label | The labels two alerts must share for one to hold back the other |
+
+A receiver can be a declared `Receiver`, plain receiver props (the composite declares the `Receiver` once, however many routes use the same object), or the name of one declared elsewhere, which PROM201 checks.
+
+## `Watchdog`
+
+`Watchdog` builds a rule group with one alert, `Watchdog`, on `vector(1)`: it fires from the first evaluation for as long as Prometheus evaluates rules. Its route sends it to a heartbeat receiver every `repeatInterval`, and the heartbeat service (healthchecks.io, Dead Man's Snitch, a PagerDuty or Opsgenie heartbeat) raises its own alarm when the notifications stop. That covers Prometheus, Alertmanager and the path between them, which no alert evaluated by Prometheus can.
+
+The route matches `alertname="Watchdog"` and `severity="none"` and is a child route: put it first under the root, as `AlertRouting({ routes: [watchdog.route] })` does, or in the `routes` of a root `Route` of your own. Left unnested it is a second root, and the build warns.
+
+| Prop | Default | What it does |
+|---|---|---|
+| `receiver` | `heartbeat`, one webhook reading `urlFile` | Where the heartbeat goes: a `Receiver`, receiver props, or a receiver's name |
+| `urlFile` | `/etc/alertmanager/secrets/heartbeat-url` | The file the default webhook reads its URL from; the URL is a credential, so it is not written into the config |
+| `alert` | `Watchdog` | The alert's name |
+| `severity` | `none` | The alert's severity, which no level routes |
+| `repeatInterval` | `1m` | How often the heartbeat is sent; keep it under the heartbeat service's period. Under a minute, the route's `group_interval` follows it (PROM223) |
+| `group` | `watchdog` | The rule group's name |
+| `labels`, `annotations` | none | More on the alert |
+
+The alert has no `for`, and PROM211 and PROM213 leave an expression that reads no series alone.

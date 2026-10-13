@@ -11,16 +11,8 @@ import { homedir } from "os";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import { createRequire } from "module";
 import { listComponents, describeComponent } from "../../components/cli-support";
-
-const CHANT_VERSION: string = (() => {
-  try {
-    return createRequire(import.meta.url)("../../../package.json").version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { CHANT_VERSION } from "../version";
 
 const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "html"];
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
@@ -114,6 +106,21 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     return result.exitCode;
   }
 
+  // `--max-files` (#2528) only means something to the local walk. A URL audit
+  // fetches through the host's tree API with its own caps, so the flag is
+  // refused there rather than silently ignored.
+  const maxFiles = args.maxFiles;
+  if (maxFiles !== undefined) {
+    if (!Number.isInteger(maxFiles) || maxFiles < 1) {
+      console.error(formatError({ message: `--max-files must be a positive integer (got "${maxFiles}")` }));
+      return 1;
+    }
+    if (/^https?:\/\//.test(args.path)) {
+      console.error(formatError({ message: "--max-files applies to a local path; a repository URL is fetched with its own limits." }));
+      return 1;
+    }
+  }
+
   // HTML report customization: --template <file> (full override) + --theme <file> (JSON knobs).
   let template: string | undefined;
   let theme: ReportTheme | undefined;
@@ -146,6 +153,7 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     template,
     theme,
     toolVersion: CHANT_VERSION,
+    maxFiles,
   });
   printAuditResult(result);
   return result.exitCode;
@@ -316,6 +324,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       lexicon: "k8s",
       output: args.output,
       force: args.force,
+      parserOptions: args.parserOption,
     });
     printImportResult(result);
     return result.success ? 0 : 1;
@@ -340,7 +349,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     const { config } = await loadChantConfig(resolve("."));
     if (config.stacks && config.stacks.length > 0) {
       const perStack = await importFromLiveStacks(
-        { environment: args.migrateFrom, lexicon: args.lexicon, force: args.force, selector, owned: args.owned, verbatim: args.verbatim },
+        { environment: args.migrateFrom, lexicon: args.lexicon, force: args.force, selector, owned: args.owned, verbatim: args.verbatim, skipUndeclarable: args.skipUndeclarable },
         config.stacks,
       );
       let anyFailure = false;
@@ -360,16 +369,21 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       selector,
       owned: args.owned,
       verbatim: args.verbatim,
+      skipUndeclarable: args.skipUndeclarable,
     });
 
     printImportResult(result);
     return result.success ? 0 : 1;
   }
 
+  // A template file: JSON or YAML, detected, unless `--lexicon` names the
+  // plugin (#2935).
   const result = await importCommand({
     templatePath: ctx.args.path,
     output: ctx.args.output,
     force: ctx.args.force,
+    lexicon: ctx.args.lexicon,
+    parserOptions: ctx.args.parserOption,
   });
 
   printImportResult(result);

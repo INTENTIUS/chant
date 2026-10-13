@@ -1,0 +1,259 @@
+{
+  "title": "Pod drilldown",
+  "uid": "chant-fx-drilldown",
+  "tags": [
+    "fixture",
+    "variables"
+  ],
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "datasource",
+        "name": "datasource",
+        "label": "Data source",
+        "query": "prometheus",
+        "current": {},
+        "refresh": 1,
+        "regex": "",
+        "hide": 0,
+        "options": []
+      },
+      {
+        "type": "query",
+        "name": "namespace",
+        "label": "Namespace",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(kube_namespace_created, namespace)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(kube_namespace_created, namespace)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {},
+        "options": [],
+        "regex": ""
+      },
+      {
+        "type": "query",
+        "name": "pod",
+        "label": "Pod",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "kube_pod_info{namespace=~\"$namespace\"}",
+        "query": {
+          "qryType": 4,
+          "query": "kube_pod_info{namespace=~\"$namespace\"}",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "regex": "/pod=\"([^\"]+)\"/",
+        "refresh": 2,
+        "sort": 0,
+        "multi": false,
+        "includeAll": false,
+        "current": {},
+        "options": []
+      },
+      {
+        "type": "adhoc",
+        "name": "filters",
+        "label": "Filters",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "filters": [
+          {
+            "key": "container",
+            "operator": "!=",
+            "value": "POD"
+          },
+          {
+            "key": "node",
+            "operator": "=~",
+            "value": "worker-.*"
+          }
+        ],
+        "baseFilters": [
+          {
+            "key": "cluster",
+            "operator": "=",
+            "value": "prod"
+          }
+        ],
+        "defaultKeys": [
+          {
+            "text": "container",
+            "value": "container"
+          },
+          {
+            "text": "node",
+            "value": "node"
+          }
+        ],
+        "allowCustomValue": false
+      },
+      {
+        "type": "groupby",
+        "name": "groupby",
+        "label": "Group by",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "options": [
+          {
+            "text": "pod",
+            "value": "pod"
+          },
+          {
+            "text": "container",
+            "value": "container"
+          },
+          {
+            "text": "node",
+            "value": "node"
+          }
+        ],
+        "current": {
+          "text": [
+            "pod"
+          ],
+          "value": [
+            "pod"
+          ]
+        },
+        "defaultValue": {
+          "text": [
+            "pod"
+          ],
+          "value": [
+            "pod"
+          ]
+        }
+      },
+      {
+        "type": "switch",
+        "name": "restarts",
+        "label": "Only restarting pods",
+        "current": {
+          "text": "0",
+          "value": "0"
+        },
+        "options": [
+          {
+            "text": "0",
+            "value": "0"
+          },
+          {
+            "text": "-1",
+            "value": "-1"
+          }
+        ]
+      },
+      {
+        "type": "switch",
+        "name": "quantile",
+        "label": "p99",
+        "description": "p99 when on, p50 when off",
+        "current": {
+          "text": "0.5",
+          "value": "0.5"
+        },
+        "options": [
+          {
+            "text": "0.99",
+            "value": "0.99"
+          },
+          {
+            "text": "0.5",
+            "value": "0.5"
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "id": 1,
+      "title": "CPU in $namespace",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "repeat": "namespace",
+      "repeatDirection": "h",
+      "maxPerRow": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: cores"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Restarts of $pod",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(kube_pod_container_status_restarts_total{pod=\"$pod\"}[5m]) > $restarts"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile($quantile, sum by (le) (rate(apiserver_request_duration_seconds_bucket[5m])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    }
+  ]
+}

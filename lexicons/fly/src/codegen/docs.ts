@@ -90,9 +90,40 @@ Each declared resource becomes a single flaps request keyed by its logical name:
 
 Every serialized machine carries the \`managed-by: chant\` ownership marker in \`config.metadata\`, which the owned-only prune reads back.
 
+## Telemetry attribution
+
+Inside a workspace, the fly lexicon adds two variables to each Machine's \`config.env\`, so that its spans name the declaration that produced them ([#3060](https://github.com/INTENTIUS/chant/issues/3060), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)).
+
+\`\`\`json
+"env": {
+  "PORT": "8080",
+  "OTEL_SERVICE_NAME": "notes",
+  "OTEL_RESOURCE_ATTRIBUTES": "chant.workspace=acme,chant.member=svc,chant.decl=web"
+}
+\`\`\`
+
+\`OTEL_SERVICE_NAME\` is the name of the Machine's app on Fly, or the Machine's export name when the build can't tell which app owns it. \`chant.decl\` is the Machine's export name. \`deployment.environment.name\` is added when the build has an environment (\`--env\` or \`ownership.env\`), and an image pinned by digest adds \`service.version\`. A value the Machine already sets is kept, and only the missing attributes are added. An \`App\` has no env, so only Machines are stamped. A project with no \`chant.workspace.json\` builds the same plan as before unless \`telemetry.attribution: true\` opts it in, and \`telemetry.attribution: false\` turns stamping off inside a workspace.
+
+A Machine's env values are literal strings, so the plan carries no reference to \`CHANT_RELEASE_ATTRIBUTES\` ([ws-081](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-081-release-attributes-at-deploy.md)). The \`fly-release\` step writes the release into the Machine it serves instead: on a stamped Machine, \`OTEL_RESOURCE_ATTRIBUTES\` gets \`service.version\` (the release's digest) and \`vcs.ref.head.revision\` (its commit), the same release its metadata names. A plain apply of the plan carries no release.
+
 ## Applying
 
-The output is applied against flaps directly (or the mudflaps emulator offline). Endpoint and auth come from \`FLY_FLAPS_BASE_URL\` and \`FLY_API_TOKEN\`.`;
+The output is applied against flaps directly (or the mudflaps emulator offline). Endpoint and auth come from \`FLY_FLAPS_BASE_URL\` and \`FLY_API_TOKEN\`.
+
+A \`Secret\` with a \`value\` is set on every apply. A \`Secret\` with no value is one you set outside chant, for example with \`fly secrets set\`. Apply never sends it. It checks that the app has the secret, and fails with the secret's name if the app does not. The \`name\` prop sets the secret's name on the app and defaults to the export name.
+
+The applier writes its progress lines to stderr, so an Op step's stdout carries only its output.
+
+## Reading live state
+
+The helpers the applier reads live state with are exported from \`@intentius/chant-lexicon-fly/op/activities\`. \`listMachines\`, \`listVolumes\`, \`listIps\`, \`listCerts\` and \`listSecrets\` each take an \`ApplyCtx\`, an app name and a \`FlyHttp\`, and return what flaps lists for that app. \`listSecrets\` returns names only, never values. Build the context with \`resolveEndpoint\` and the client with \`defaultFlyHttp\`, as apply does:
+
+\`\`\`typescript
+import { defaultFlyHttp, listSecrets, resolveEndpoint } from "@intentius/chant-lexicon-fly/op/activities";
+
+const ctx = { base: resolveEndpoint({}) };
+const secrets = await listSecrets(ctx, "my-app", defaultFlyHttp());
+\`\`\``;
 
 /**
  * Generate documentation for the fly Machines lexicon.

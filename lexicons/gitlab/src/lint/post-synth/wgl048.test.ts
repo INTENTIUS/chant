@@ -54,3 +54,17 @@ build:
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL048: section boundaries (#3256)", () => {
+  test("a name: in the next job is not read as workflow:name", () => {
+    const yaml = `workflow:
+  rules:
+    - when: always
+build:
+  image:
+    name: node:20
+  script: make
+`;
+    expect(wgl048.check(makeCtx(yaml))).toHaveLength(1);
+  });
+});

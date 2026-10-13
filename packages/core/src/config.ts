@@ -10,6 +10,8 @@ import type { BuildParamsConfig } from "./build-params";
 import type { BuildParamProvenance } from "./provenance";
 import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
+import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
+import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
 
 /**
  * One project-declared environment (chant #1166). Historically always a bare
@@ -125,8 +127,17 @@ const EnvironmentEntrySchema = z.union([
   }),
 ]);
 
+const LexiconEntrySchema = z.union([
+  z.string().min(1),
+  z.object({
+    name: z.string().min(1),
+    module: z.string().min(1),
+    root: z.string().min(1).optional(),
+  }).strict(),
+]);
+
 export const ChantConfigSchema = z.object({
-  lexicons: z.array(z.string().min(1)).optional(),
+  lexicons: z.array(LexiconEntrySchema).optional(),
   capabilities: z.array(z.string().min(1)).optional(),
   environments: z.array(EnvironmentEntrySchema).optional(),
   sourceDir: z.string().min(1).optional(),
@@ -153,6 +164,11 @@ export const ChantConfigSchema = z.object({
   release: z.object({
     autoRecord: z.boolean().optional(),
   }).optional(),
+  // Strict: a misspelt key here would leave Ops on the local runtime with
+  // nothing said (#2523).
+  run: z.object({
+    on: z.string().min(1).optional(),
+  }).strict().optional(),
   sbom: z.object({
     format: z.enum(["spdx", "cyclonedx"]).optional(),
     enabled: z.boolean().optional(),
@@ -184,6 +200,13 @@ export const ChantConfigSchema = z.object({
   knowledge: z.object({
     dir: z.string().min(1).optional(),
   }).optional(),
+  codegen: z.object({
+    outDir: z.string().min(1).optional(),
+  }).strict().optional(),
+  decide: decideConfigSchema.optional(),
+  exclude: z.array(z.string().min(1)).optional(),
+  include: z.array(z.string().min(1)).optional(),
+  rootOnly: z.boolean().optional(),
 }).passthrough();
 
 /**
@@ -192,8 +215,25 @@ export const ChantConfigSchema = z.object({
  * Loaded from `chant.config.ts` (preferred) or `chant.config.json`.
  */
 export interface ChantConfig {
-  /** Lexicon package names to load (e.g. ["aws"]) */
-  lexicons?: string[];
+  /**
+   * Lexicons to load. A bare name (`"aws"`) loads the package
+   * `@intentius/chant-lexicon-aws`. `{ name, module }` (#2520) loads a
+   * project-local lexicon from a module path, resolved against the directory
+   * holding this config; see `./lexicon-module.ts`. An optional `root`
+   * (chant#2590) names the directory holding the lexicon's other files.
+   *
+   * Once loaded, this holds names only: the loader replaces each
+   * `{ name, module }` entry with its name and records the path in
+   * {@link ChantConfig.lexiconModules}.
+   */
+  lexicons?: LexiconDeclaration[];
+
+  /**
+   * Set by the config loader, never written by hand: each path-declared
+   * lexicon's name mapped to its absolute module path. Absent when every
+   * `lexicons` entry is a bare name.
+   */
+  lexiconModules?: Record<string, string>;
 
   /**
    * Capability plugin package names to load in addition to the built-in
@@ -250,6 +290,18 @@ export interface ChantConfig {
 
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;
+
+  /**
+   * Telemetry attribution (#2558, D22): lexicons that declare workloads stamp
+   * resource attributes (`chant.workspace`, `chant.member`, `chant.decl`,
+   * `service.name`, `deployment.environment.name`) as `OTEL_*` environment
+   * variables. Inside a workspace this is on; `attribution: false` turns it
+   * off. Outside a workspace it is off, and `attribution: true` turns it on
+   * with the attributes that need no workspace. See `./telemetry-attribution.ts`.
+   */
+  telemetry?: {
+    attribution?: boolean;
+  };
 
   /**
    * Opt-in cloud-side ownership marking. When `stack` is set (and `enabled`
@@ -324,6 +376,16 @@ export interface ChantConfig {
   release?: {
     /** Set false to disable auto-emitting a release record after a successful component deploy project-wide. The `--no-release-record` CLI flag overrides this per-invocation. */
     autoRecord?: boolean;
+  };
+
+  /** Defaults for `chant run` and its subcommands (#2523). */
+  run?: {
+    /**
+     * The runtime that hosts this project's Op runs when `--on` is not
+     * given: a configured lexicon that declares an `opRuntime`, or `"local"`.
+     * `--on` overrides it, and `--on local` selects the built-in runtime.
+     */
+    on?: string;
   };
 
   /**
@@ -418,14 +480,79 @@ export interface ChantConfig {
     /** Bundle directory, relative to the project root. Defaults to `"knowledge"`. */
     dir?: string;
   };
+
+  /**
+   * Project-local code generation (`chant generate`): where lexicons write
+   * the typed code they generate from sources this config declares, such as
+   * the k8s lexicon's `k8s.crds` and helm's `helm.charts`. Each lexicon
+   * writes to its own subdirectory, `<outDir>/<lexicon>/`. The output is
+   * meant to be committed, and `chant build` fails when it no longer matches
+   * the declared sources.
+   */
+  codegen?: {
+    /** Output directory, relative to the project root. Defaults to `"src/generated"`. */
+    outDir?: string;
+  };
+
+  /**
+   * The backends the `decide` Op activity calls (#2828): backend name, as a
+   * decision point's model decider names it, to `{ url, key?, timeoutMs? }`.
+   * A key is `{ env }` or a brokered capability, never a literal (SYS001). A
+   * `decide` step's own `backends` take the place of these. See
+   * `./op/decide-config.ts`.
+   */
+  decide?: DecideConfig;
+
+  /**
+   * Globs, relative to the directory holding this config, naming files that
+   * source discovery must skip (#2519): `build`, `lint`, `list`, `explain`
+   * and every other command that walks the project for declarations never
+   * import or lint a matching file. A pattern matches a file when it matches
+   * the file's path or the path of any directory above it, so `"ops"` and
+   * `"ops/**"` both skip everything under `ops/`. Matched with picomatch,
+   * dot files included. Op discovery and component discovery honour it too
+   * (#2527). See `./discovery/walk.ts`.
+   */
+  exclude?: string[];
+
+  /**
+   * Globs that re-admit files {@link exclude} would skip, and, since #2527,
+   * files the discovery walk skips by default: dot-directories, `dist`,
+   * git-ignored paths and child projects. `include` always wins over
+   * `exclude`, and it never narrows discovery on its own: a file nothing
+   * skips is discovered whether or not it matches an `include`. It never
+   * re-admits `node_modules`, `.git`, test files, workspace members, or
+   * files carrying the generated or skip marker.
+   */
+  include?: string[];
+
+  /**
+   * Lets `chant build` and `chant lint` run on this project when it is the
+   * root of a declared workspace (#2537, #2524 D0). Without it, or the
+   * `--root-only` flag, both commands refuse there with `WSP000` and point to
+   * `chant workspace build` and `lint`. With it they act on the root project
+   * alone. Member directories and example-group matches are left out of
+   * discovery either way, as they are for every walk under a declaration
+   * (#2527, `workspaceMemberDirs` in `./discovery/walk.ts`). It means nothing
+   * in a project with no `chant.workspace.json`.
+   */
+  rootOnly?: boolean;
 }
 
 /**
  * Resolved project configuration with metadata about how it was loaded.
  */
+/**
+ * A configuration as the loader returns it. `lexicons` holds names only: each
+ * `{ name, module }` entry has been replaced by its name and its path moved
+ * to `lexiconModules` (chant #2520), so a reader of a loaded config never
+ * sees the object form.
+ */
+export type LoadedChantConfig = Omit<ChantConfig, "lexicons"> & { lexicons?: string[] };
+
 export interface ResolvedConfig {
   /** The loaded configuration */
-  config: ChantConfig;
+  config: LoadedChantConfig;
 
   /** Path to the config file that was loaded, or undefined if defaults */
   configPath?: string;
@@ -434,7 +561,7 @@ export interface ResolvedConfig {
 /**
  * Default configuration when no config file exists.
  */
-export const DEFAULT_CHANT_CONFIG: ChantConfig = {};
+export const DEFAULT_CHANT_CONFIG: LoadedChantConfig = {};
 
 /**
  * Load project configuration from a directory.
@@ -499,14 +626,56 @@ export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
  * config declaring any project-level key still wins where it stands.
  */
 export async function loadChantConfigUpward(startDir: string): Promise<ResolvedConfig> {
+  const { dir, configPath } = findProjectConfigPastFragments(startDir);
+  if (configPath) warnIfFragmentShadowsProjectConfig(configPath);
+  return loadChantConfig(dir);
+}
+
+/** The walk {@link loadChantConfigUpward} makes, lint-only fragments skipped, without its warning. */
+export function findProjectConfigPastFragments(startDir: string): { dir: string; configPath?: string } {
   let { dir, configPath } = findProjectConfig(startDir);
   while (configPath && isLintOnlyFragment(configPath)) {
     const parent = dirname(dir);
     if (parent === dir) break;
     ({ dir, configPath } = findProjectConfig(parent));
   }
-  if (configPath) warnIfFragmentShadowsProjectConfig(configPath);
-  return loadChantConfig(dir);
+  return { dir, configPath };
+}
+
+/** A project's discovery globs (#2519) and the directory they are relative to. */
+export interface DiscoveryGlobs {
+  /** The directory holding the config that declared the globs. */
+  root: string;
+  exclude: string[];
+  include: string[];
+}
+
+/**
+ * The `exclude`/`include` globs of the project `startDir` belongs to, found by
+ * the same upward walk as {@link loadChantConfigUpward}. `undefined` when the
+ * project declares neither. `include` re-admits what `exclude` skips, and
+ * also what the discovery walk skips by default (#2527), so it means
+ * something on its own.
+ *
+ * A config that fails to load is left to the command's own config load to
+ * report, so discovery keeps working where it did before, unless the failure
+ * is in `exclude` or `include` themselves: ignoring those would discover the
+ * very files the project asked to skip.
+ */
+export async function resolveDiscoveryGlobs(startDir: string): Promise<DiscoveryGlobs | undefined> {
+  const { dir, configPath } = findProjectConfigPastFragments(startDir);
+  if (!configPath) return undefined;
+  let config: ChantConfig;
+  try {
+    ({ config } = await loadChantConfig(dir));
+  } catch (err) {
+    if (err instanceof InvalidChantConfigError && (err.key === "exclude" || err.key === "include")) throw err;
+    return undefined;
+  }
+  const exclude = config.exclude ?? [];
+  const include = config.include ?? [];
+  if (exclude.length === 0 && include.length === 0) return undefined;
+  return { root: dir, exclude, include };
 }
 
 /**
@@ -531,7 +700,7 @@ const LINT_FRAGMENT_KEYS = new Set(["$schema", "extends", "rules", "overrides", 
  */
 const isCommentKey = (k: string): boolean => k.startsWith("_");
 
-function isLintOnlyFragment(configPath: string): boolean {
+export function isLintOnlyFragment(configPath: string): boolean {
   if (!configPath.endsWith("chant.config.json")) return false;
   try {
     const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
@@ -814,9 +983,19 @@ export function resolveKnowledgeDir(config: ChantConfig, projectPath: string): s
 }
 
 /**
+ * A config that failed schema validation. `key` is the top-level key of the
+ * first problem. `name` stays `"Error"`, so the printed error reads as before.
+ */
+export class InvalidChantConfigError extends Error {
+  constructor(message: string, readonly key?: string) {
+    super(message);
+  }
+}
+
+/**
  * Validate and normalize a raw config object into ChantConfig shape.
  */
-function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantConfig {
+function normalizeConfig(raw: Record<string, unknown>, source?: string): LoadedChantConfig {
   if (typeof raw !== "object" || raw === null) {
     return DEFAULT_CHANT_CONFIG;
   }
@@ -826,8 +1005,33 @@ function normalizeConfig(raw: Record<string, unknown>, source?: string): ChantCo
     const issue = result.error.issues[0];
     const path = issue.path.length > 0 ? issue.path.join(".") : undefined;
     const loc = source ? ` in ${source}` : "";
-    throw new Error(`Invalid chant config${loc}: ${path ? `${path}: ` : ""}${issue.message}`);
+    throw new InvalidChantConfigError(
+      `Invalid chant config${loc}: ${path ? `${path}: ` : ""}${issue.message}`,
+      issue.path.length > 0 ? String(issue.path[0]) : undefined,
+    );
   }
 
-  return raw as ChantConfig;
+  // chant #2520 — a lexicon declared by module path. The path is recorded for
+  // the loaders and the entry becomes its name, so every reader of `lexicons`
+  // keeps seeing names. A config of plain names is returned untouched.
+  const lexicons = (raw as ChantConfig).lexicons;
+  const baseDir = source !== undefined ? dirname(source) : process.cwd();
+  const sourceDir = (raw as ChantConfig).sourceDir;
+  // chant#2590 — a declared `root` must stay inside the project and must not
+  // contain its source directory. Refused here rather than narrowed, since
+  // the project asked for it by name.
+  for (const [i, entry] of (lexicons ?? []).entries()) {
+    if (typeof entry === "string" || entry.root === undefined) continue;
+    const { problem } = pathLexiconRoot(entry, baseDir, sourceDir);
+    if (problem !== undefined) {
+      const loc = source ? ` in ${source}` : "";
+      throw new InvalidChantConfigError(`Invalid chant config${loc}: lexicons.${i}.root: ${problem}`, "lexicons");
+    }
+  }
+  const recorded = registerLexiconDeclarations(lexicons, baseDir, sourceDir);
+  if (Object.keys(recorded).length > 0) {
+    return { ...(raw as ChantConfig), lexicons: lexiconNames(lexicons), lexiconModules: recorded };
+  }
+
+  return raw as LoadedChantConfig;
 }

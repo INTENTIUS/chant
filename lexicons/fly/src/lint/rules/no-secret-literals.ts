@@ -1,5 +1,5 @@
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * Property names that carry a credential. Kept conservative on purpose — an
@@ -9,10 +9,12 @@ const SECRET_KEY_PATTERN = /(?:^|[_-])(?:password|passwd|secret|token|api[_-]?ke
 
 /**
  * Values that are references or placeholders, not literal secrets:
- * shell/interpolation references ($FOO, ${FOO}), and secret-manager style
- * references. These are skipped so a `secrets` reference is never flagged.
+ * shell/interpolation references ($FOO, ${FOO}), the OpenTelemetry
+ * Collector's environment substitution (${env:FOO}), and secret-manager
+ * style references. These are skipped so a `secrets` reference is never
+ * flagged.
  */
-const REFERENCE_VALUE_PATTERN = /^(?:\$\{?[A-Za-z0-9_]+\}?|(?:secret|ref|env|vault):\S+)$/;
+const REFERENCE_VALUE_PATTERN = /^(?:\$\{?(?:env:)?[A-Za-z0-9_]+\}?|(?:secret|ref|env|vault):\S+)$/;
 
 /**
  * FLY004: No secret literals in machine config

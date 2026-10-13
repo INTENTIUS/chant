@@ -1,16 +1,30 @@
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * WK8001: Hardcoded Namespace
  *
- * Detects hardcoded namespace strings in Kubernetes resource constructors.
+ * Detects hardcoded namespace strings in a Kubernetes resource's `metadata`.
  * Namespaces should be parameterized or derived from configuration, not
  * hardcoded as string literals.
  *
  * Bad:  new Deployment({ metadata: { namespace: "production" } })
  * Good: new Deployment({ metadata: { namespace: config.namespace } })
  */
+/**
+ * Only `metadata: { namespace }` is a Kubernetes namespace. Other `namespace`
+ * keys are another tool's setting (an OpenTelemetry connector's metric prefix,
+ * for one) and a k8s rule has no business flagging them.
+ */
+function isMetadataEntry(node: ts.PropertyAssignment): boolean {
+  const owner = node.parent.parent;
+  return (
+    ts.isPropertyAssignment(owner) &&
+    ts.isIdentifier(owner.name) &&
+    owner.name.text === "metadata"
+  );
+}
+
 export const hardcodedNamespaceRule: LintRule = {
   id: "WK8001",
   severity: "warning",
@@ -28,7 +42,8 @@ export const hardcodedNamespaceRule: LintRule = {
         ts.isPropertyAssignment(node) &&
         ts.isIdentifier(node.name) &&
         node.name.text === "namespace" &&
-        ts.isStringLiteral(node.initializer)
+        ts.isStringLiteral(node.initializer) &&
+        isMetadataEntry(node)
       ) {
         const value = node.initializer.text;
         // Skip empty strings — those are likely intentional placeholders

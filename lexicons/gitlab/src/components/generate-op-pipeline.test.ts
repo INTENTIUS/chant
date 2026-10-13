@@ -454,7 +454,7 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
    */
   const YAML_BEFORE_2257 =
     [
-      '# chant Ops (#927, #2084, #2293) — one job per Op under stage "ops", each',
+      '# chant Ops — one job per Op under stage "ops", each',
       "# selected by its own rules:. A merge_request_event or push job needs no",
       "# setup; its rule fires on the event itself.",
       "#",
@@ -471,7 +471,7 @@ describe("generateGitlabOpPipeline: a deployment environment (#2257)", () => {
       "",
       "actions-audit:",
       "  stage: ops",
-      "  image: node:22-slim",
+      "  image: node:22",
       "  resource_group: actions-audit",
       "  rules:",
       `    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "actions-audit"'`,

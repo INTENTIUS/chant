@@ -306,6 +306,118 @@ describe("dockerSerializer.serialize — multi-stage Dockerfile", () => {
   });
 });
 
+// ── Dockerfile steps ──────────────────────────────────────────────
+
+describe("dockerSerializer.serialize — Dockerfile steps", () => {
+  const dockerfile = (props: Record<string, unknown>): string => {
+    const result = dockerSerializer.serialize(new Map<string, Declarable>([["app", new MockDockerfile(props)]]));
+    return (result as { files: Record<string, string> }).files["Dockerfile.app"]!;
+  };
+
+  test("steps are written in the order given, interleaving COPY and RUN", () => {
+    expect(dockerfile({
+      from: "node:20-alpine",
+      steps: [
+        { workdir: "/app" },
+        { copy: "package*.json ./" },
+        { run: "npm ci" },
+        { copy: ". ." },
+        { run: "npm run build" },
+        { user: "node" },
+        { cmd: ["node", "dist/index.js"] },
+      ],
+    })).toBe([
+      "FROM node:20-alpine",
+      "WORKDIR /app",
+      "COPY package*.json ./",
+      "RUN npm ci",
+      "COPY . .",
+      "RUN npm run build",
+      "USER node",
+      'CMD ["node","dist/index.js"]',
+      "",
+    ].join("\n"));
+  });
+
+  test("every instruction is available as a step, and ARG before FROM comes from globalArgs", () => {
+    expect(dockerfile({
+      globalArgs: ["NODE_VERSION=20"],
+      stages: [{
+        from: "node:${NODE_VERSION}-alpine",
+        as: "base",
+        steps: [
+          { shell: ["/bin/sh", "-eo", "pipefail", "-c"] },
+          { arg: "APP_ENV=production" },
+          { env: "NODE_ENV=$APP_ENV" },
+          { label: 'org.opencontainers.image.title="app"' },
+          { workdir: "/app" },
+          { add: "https://example.com/a.tgz /tmp/" },
+          { volume: "/data" },
+          { expose: 8080 },
+          { stopsignal: "SIGTERM" },
+          { healthcheck: "CMD wget -qO- http://localhost:8080/health || exit 1" },
+          { onbuild: "COPY . /app" },
+          { entrypoint: ["/sbin/tini", "--"] },
+          { cmd: "node index.js" },
+        ],
+      }],
+    })).toBe([
+      "ARG NODE_VERSION=20",
+      "FROM node:${NODE_VERSION}-alpine AS base",
+      'SHELL ["/bin/sh","-eo","pipefail","-c"]',
+      "ARG APP_ENV=production",
+      "ENV NODE_ENV=$APP_ENV",
+      'LABEL org.opencontainers.image.title="app"',
+      "WORKDIR /app",
+      "ADD https://example.com/a.tgz /tmp/",
+      "VOLUME /data",
+      "EXPOSE 8080",
+      "STOPSIGNAL SIGTERM",
+      "HEALTHCHECK CMD wget -qO- http://localhost:8080/health || exit 1",
+      "ONBUILD COPY . /app",
+      'ENTRYPOINT ["/sbin/tini","--"]',
+      "CMD node index.js",
+      "",
+    ].join("\n"));
+  });
+
+  test("per-kind fields keep their fixed order, byte for byte", () => {
+    expect(dockerfile({
+      from: "node:20-alpine",
+      cmd: "node index.js",
+      copy: [". ."],
+      run: ["npm ci"],
+      user: "node",
+      workdir: "/app",
+    })).toBe("FROM node:20-alpine\nWORKDIR /app\nUSER node\nRUN npm ci\nCOPY . .\nCMD node index.js\n");
+  });
+
+  test("a stage that mixes steps with per-kind fields is an error", () => {
+    expect(() => dockerfile({ from: "alpine:3.20", run: ["true"], steps: [{ user: "nobody" }] }))
+      .toThrow(/Dockerfile\.app: steps can't be combined with the per-kind fields \(run\)/);
+    expect(() => dockerfile({ stages: [{ from: "alpine:3.20", as: "b", copy: ["a b"], steps: [] }] }))
+      .toThrow(/stage "b": steps can't be combined/);
+  });
+
+  test("a step names exactly one known instruction", () => {
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{ run: "a", copy: "b" }] })).toThrow(/exactly one instruction, found run, copy/);
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{}] })).toThrow(/found none/);
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{ from: "x" }] })).toThrow(/"from" is not a Dockerfile instruction a step can name/);
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{ copy: ["a", "b"] }] })).toThrow(/COPY takes a string/);
+  });
+
+  test("steps on the Dockerfile itself with stages is an error", () => {
+    expect(() => dockerfile({ stages: [{ from: "alpine:3.20" }], steps: [{ run: "true" }] })).toThrow(/steps belongs on each stage/);
+  });
+
+  test("stages and step lists are plain values that can be shared and spread", () => {
+    const install = [{ copy: "package*.json ./" }, { run: "npm ci" }];
+    const base = { from: "node:20-alpine", as: "deps", steps: [{ workdir: "/app" }, ...install] };
+    expect(dockerfile({ stages: [base, { from: "node:20-alpine", steps: [{ copy: "--from=deps /app/node_modules ./node_modules" }] }] }))
+      .toBe("FROM node:20-alpine AS deps\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nFROM node:20-alpine\nCOPY --from=deps /app/node_modules ./node_modules\n");
+  });
+});
+
 // ── Name generation ───────────────────────────────────────────────
 
 describe("dockerSerializer.serialize — name gen", () => {
@@ -315,5 +427,65 @@ describe("dockerSerializer.serialize — name gen", () => {
 
     const output = dockerSerializer.serialize(entities) as string;
     expect(output).toContain("myWebServer:");
+  });
+});
+
+// ── Telemetry attribution (#2558, D22) ─────────────────────────────
+
+describe("telemetry attribution", () => {
+  const run = (props: Record<string, unknown>, telemetry?: { workspace?: string; member?: string; environment?: string }) => {
+    const result = dockerSerializer.serialize(new Map([["api", new MockService(props)]]), [], telemetry ? { telemetry } : undefined);
+    return typeof result === "string" ? result : result.primary;
+  };
+  const attrs = { workspace: "acme", member: "delivery", environment: "prod" };
+
+  test("a build with no telemetry context is the same bytes as one that passes an empty context", () => {
+    const props = { image: "nginx:1" };
+    expect(run(props)).toBe(dockerSerializer.serialize(new Map([["api", new MockService(props)]]), [], {}) as string);
+    expect(run(props)).not.toContain("OTEL_");
+  });
+
+  test("stamps the service name and the resource attributes into the environment", () => {
+    const out = run({ image: "nginx:1" }, attrs);
+    expect(out).toContain("OTEL_SERVICE_NAME: api");
+    expect(out).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.workspace=acme,chant.member=delivery,chant.decl=api,deployment.environment.name=prod");
+  });
+
+  test("leaves out an attribute the build does not know", () => {
+    const out = run({ image: "nginx:1" }, { workspace: "acme" });
+    expect(out).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.workspace=acme,chant.decl=api");
+    expect(out).not.toContain("chant.member");
+    expect(out).not.toContain("deployment.environment.name");
+  });
+
+  test("stamps service.version when the image is pinned by digest", () => {
+    const out = run({ image: "ghcr.io/acme/api@sha256:abc123" }, attrs);
+    expect(out).toContain("service.version=sha256%3Aabc123");
+  });
+
+  test("keeps the keys a map environment already sets and appends the missing attributes", () => {
+    const out = run({ image: "x", environment: { OTEL_SERVICE_NAME: "checkout", OTEL_RESOURCE_ATTRIBUTES: "chant.member=mine,team=pay", PORT: "80" } }, attrs);
+    expect(out).toContain("OTEL_SERVICE_NAME: checkout");
+    expect(out).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.member=mine,team=pay,chant.workspace=acme,chant.decl=api,deployment.environment.name=prod");
+    expect(out).toContain("PORT:");
+  });
+
+  test("adds the variables to a list environment, keeping an entry already there", () => {
+    const out = run({ image: "x", environment: ["PORT=80", "OTEL_SERVICE_NAME=checkout"] }, attrs);
+    expect(out).toContain("- PORT=80");
+    expect(out).toContain("- OTEL_SERVICE_NAME=checkout");
+    expect(out).not.toContain("OTEL_SERVICE_NAME=api");
+    expect(out).toContain("- OTEL_RESOURCE_ATTRIBUTES=chant.workspace=acme,chant.member=delivery");
+  });
+
+  test("the resource attributes end with the release reference a deploy fills, once (#3061)", () => {
+    expect(run({ image: "nginx:1" }, attrs)).toContain(
+      "OTEL_RESOURCE_ATTRIBUTES: chant.workspace=acme,chant.member=delivery,chant.decl=api,deployment.environment.name=prod${CHANT_RELEASE_ATTRIBUTES:-}",
+    );
+    const own = run({ image: "x", environment: { OTEL_RESOURCE_ATTRIBUTES: "team=pay${CHANT_RELEASE_ATTRIBUTES:-}" } }, { workspace: "acme" });
+    expect(own.match(/CHANT_RELEASE_ATTRIBUTES/g)).toHaveLength(1);
+    expect(run({ image: "x", environment: ["OTEL_RESOURCE_ATTRIBUTES=team=pay"] }, { workspace: "acme" })).toContain(
+      "- OTEL_RESOURCE_ATTRIBUTES=team=pay,chant.workspace=acme,chant.decl=api${CHANT_RELEASE_ATTRIBUTES:-}",
+    );
   });
 });

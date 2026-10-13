@@ -1,0 +1,62 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "threw": "the plans file of wave 1 (.chant/op-waves/tf-apply/wave-1/plans.json): member cost is also a run's target; a digest member that is no run needs a name of its own"
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 1,
+      "logs": 0
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "layer",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "layer",
+          "number": 1,
+          "discover": true,
+          "runs": []
+        }
+      }
+    }
+  ],
+  "logs": [],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "cost",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "waves": 1,
+      "members": [
+        {
+          "member": "cost",
+          "planDigest": "usd:1"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "layer",
+      "number": 1,
+      "discover": true,
+      "runs": []
+    }
+  }
+}

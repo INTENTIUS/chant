@@ -116,8 +116,17 @@ function subgraph(ir: GraphIR, keep: Set<string>): GraphIR {
   const groups: GraphIR["groups"] = {};
   if (Object.keys(byLexicon).length) groups.byLexicon = sortGroups(byLexicon);
   if (Object.keys(byComposite).length) groups.byComposite = sortGroups(byComposite);
+  if (ir.groups.byPipeline) {
+    const byPipeline: Record<string, string[]> = {};
+    for (const [name, members] of Object.entries(ir.groups.byPipeline)) {
+      const kept = members.filter((m) => keep.has(m));
+      if (kept.length) byPipeline[name] = kept;
+    }
+    if (Object.keys(byPipeline).length) groups.byPipeline = sortGroups(byPipeline);
+  }
+  const dangling = ir.dangling?.filter((d) => keep.has(d.from));
 
-  return { nodes, edges, groups };
+  return { nodes, edges, groups, ...(dangling && dangling.length ? { dangling } : {}) };
 }
 
 function sortGroups(rec: Record<string, string[]>): Record<string, string[]> {

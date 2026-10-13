@@ -1,0 +1,172 @@
+/**
+ * Shared plumbing for the prometheus post-synth checks: find the rule files
+ * and `alertmanager.yml` documents in a build's output, and run the
+ * plain-function checks over them.
+ *
+ * Documents are recognized by shape, not by which lexicon emitted them, so a
+ * rule file that reaches the output some other way (a hand-written YAML
+ * sidecar) is checked too. `PrometheusRule` manifests are not read here:
+ * `chant build` hands each lexicon's checks only that lexicon's output, so the
+ * k8s lexicon's WK8606 runs `prometheusRuleDiagnostics` (below) over them.
+ */
+
+import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import type { SerializerResult } from "@intentius/chant/serializer";
+import { loadAll } from "js-yaml";
+import { buildCollectorConfigs, collectorMetricIssues, collectorMetrics } from "../../collector-metrics";
+import { looksLikePrometheusConfig, type PrometheusConfigFile } from "../../config-model";
+import { validateRelabelFields } from "../../validate-relabel";
+import { looksLikeAlertmanagerConfig, looksLikeRuleFile, type AlertmanagerConfig, type RuleFileConfig } from "../../model";
+import {
+  validateAlertmanagerConfig,
+  validateRuleFile,
+  validateRunbookUrls,
+  validateSeverityRouting,
+  type PrometheusIssue,
+  type PrometheusIssueCode,
+} from "../../validate-config";
+
+export interface FoundDocs {
+  ruleFiles: Array<{ source: string; config: RuleFileConfig }>;
+  alertmanager: Array<{ source: string; config: AlertmanagerConfig }>;
+  prometheus: Array<{ source: string; config: PrometheusConfigFile }>;
+}
+
+/** Every rule file and Alertmanager config in the output. Parsed with js-yaml rather than `ctx.docs`, which keeps block scalars and flow lists as strings. */
+export function prometheusDocs(ctx: PostSynthContext): FoundDocs {
+  const found: FoundDocs = { ruleFiles: [], alertmanager: [], prometheus: [] };
+  for (const [lexicon, output] of ctx.outputs) {
+    const texts: Array<[string, string]> =
+      typeof output === "string"
+        ? [[lexicon, output]]
+        : [[lexicon, (output as SerializerResult).primary], ...Object.entries((output as SerializerResult).files ?? {})];
+    for (const [source, text] of texts) {
+      if (!text) continue;
+      let docs: unknown[];
+      try {
+        docs = loadAll(text);
+      } catch {
+        continue; // not YAML, or not ours
+      }
+      for (const doc of docs) {
+        if (looksLikeRuleFile(doc)) found.ruleFiles.push({ source, config: doc });
+        else if (looksLikeAlertmanagerConfig(doc)) found.alertmanager.push({ source, config: doc });
+        else if (looksLikePrometheusConfig(doc)) found.prometheus.push({ source, config: doc });
+      }
+    }
+  }
+  return found;
+}
+
+function toDiagnostic(issue: PrometheusIssue, source: string): PostSynthDiagnostic {
+  return {
+    checkId: issue.code,
+    severity: issue.severity,
+    message: source && source !== "prometheus" ? `${source}: ${issue.message}` : issue.message,
+    ...(issue.subject ? { entity: issue.subject } : {}),
+    lexicon: "prometheus",
+  };
+}
+
+/** Diagnostics for one rule-file code (PROM101-PROM107, PROM211, PROM213-PROM219) across every rule file in the output. */
+export function ruleFileDiagnostics(ctx: PostSynthContext, code: PrometheusIssueCode): PostSynthDiagnostic[] {
+  return prometheusDocs(ctx).ruleFiles.flatMap(({ source, config }) =>
+    validateRuleFile(config)
+      .filter((i) => i.code === code)
+      .map((i) => toDiagnostic(i, source)),
+  );
+}
+
+/** Diagnostics for one Alertmanager code (PROM201, PROM203-PROM210, PROM220-PROM224) across every `alertmanager.yml` in the output. */
+export function alertmanagerDiagnostics(ctx: PostSynthContext, code: PrometheusIssueCode): PostSynthDiagnostic[] {
+  return prometheusDocs(ctx).alertmanager.flatMap(({ source, config }) =>
+    validateAlertmanagerConfig(config)
+      .filter((i) => i.code === code)
+      .map((i) => toDiagnostic(i, source)),
+  );
+}
+
+/** PROM225 across every `prometheus.yml` in the output. */
+export function relabelDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  return prometheusDocs(ctx).prometheus.flatMap(({ source, config }) => validateRelabelFields(config).map((i) => toDiagnostic(i, source)));
+}
+
+/** PROM212 across every rule file in the output. Opt-in: the lexicon's `recommended` lint preset leaves it out (see ../../plugin.ts). */
+export function runbookDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  return prometheusDocs(ctx).ruleFiles.flatMap(({ source, config }) => validateRunbookUrls(config).map((i) => toDiagnostic(i, source)));
+}
+
+/**
+ * PROM301: every rule expression in the output against the metrics the
+ * build's collector configs emit. Silent when the build has none.
+ */
+export function collectorMetricDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  const { ruleFiles } = prometheusDocs(ctx);
+  if (ruleFiles.length === 0) return [];
+  const emitted = collectorMetrics(buildCollectorConfigs(ctx));
+  if (!emitted) return [];
+  const out: PostSynthDiagnostic[] = [];
+  for (const { source, config } of ruleFiles) {
+    for (const group of Array.isArray(config?.groups) ? config.groups : []) {
+      for (const rule of Array.isArray(group?.rules) ? group.rules : []) {
+        const r = rule as unknown as Record<string, unknown>;
+        if (typeof r.expr !== "string") continue;
+        const subject = `${group.name}/${typeof r.record === "string" ? r.record : String(r.alert ?? "")}`;
+        for (const issue of collectorMetricIssues(r.expr, emitted)) {
+          const message = `rule ${subject} ${issue.message}`;
+          out.push({
+            checkId: "PROM301",
+            severity: "warning",
+            message: source && source !== "prometheus" ? `${source}: ${message}` : message,
+            entity: subject,
+            lexicon: "prometheus",
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** PROM202: joins every rule file in the output against every Alertmanager config in it. Silent when either is absent. */
+export function routingDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  const { ruleFiles, alertmanager } = prometheusDocs(ctx);
+  if (ruleFiles.length === 0) return [];
+  const files = ruleFiles.map((r) => r.config);
+  return alertmanager.flatMap(({ source, config }) => validateSeverityRouting(files, config).map((i) => toDiagnostic(i, source)));
+}
+
+/**
+ * The rule-file checks (PROM101-PROM107, PROM211, PROM213-PROM219) over the
+ * groups of every `PrometheusRule` in the build, whichever lexicon emitted
+ * it. `spec.groups` is a rule file's `groups`, so `validateRuleFile` reads it
+ * as is. Findings keep their PROM ids and name the PrometheusRule's namespace
+ * and name. PROM212 (runbook URLs) stays opt-in and is not run here.
+ */
+export function prometheusRuleDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  const out: PostSynthDiagnostic[] = [];
+  for (const output of ctx.outputs.values()) {
+    const text = typeof output === "string" ? output : (output as SerializerResult).primary;
+    if (!text) continue;
+    let docs: unknown[];
+    try {
+      docs = loadAll(text);
+    } catch {
+      continue;
+    }
+    for (const raw of docs) {
+      const doc = raw as Record<string, any> | null;
+      if (!doc || typeof doc !== "object" || doc.kind !== "PrometheusRule") continue;
+      if (typeof doc.apiVersion !== "string" || !doc.apiVersion.startsWith("monitoring.coreos.com/")) continue;
+      const groups = doc.spec?.groups;
+      if (!Array.isArray(groups)) continue;
+      const name = String(doc.metadata?.name ?? "");
+      const source = `PrometheusRule ${doc.metadata?.namespace ? `${doc.metadata.namespace}/` : ""}${name}`;
+      for (const issue of validateRuleFile({ groups } as RuleFileConfig)) {
+        if (issue.code === "PROM212") continue;
+        out.push({ ...toDiagnostic(issue, source), ...(issue.subject ? {} : { entity: name }) });
+      }
+    }
+  }
+  return out;
+}

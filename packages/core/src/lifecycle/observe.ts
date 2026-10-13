@@ -25,7 +25,7 @@ import {
 } from "../observation";
 import { zeroResourcesWarning } from "../live-endpoint";
 import { unqualifiedKey } from "./identity";
-import { isResourceDeclarable } from "../declarable";
+import { isObservableDeclarable } from "../declarable";
 
 export interface ObserveResult {
   observations: LiveObservation[];
@@ -150,8 +150,10 @@ export async function observeResources(
       // parameters and serializer directives (gcp's `defaultAnnotations`) are
       // build-time inputs — declared, but with nothing in any cloud to compare
       // against, so keeping them in the universe makes every diff report a
-      // hole (or worse, a deletion) for a resource that cannot exist.
-      if (!isResourceDeclarable(entity)) continue;
+      // hole (or worse, a deletion) for a resource that cannot exist. A
+      // property-kind declarable is read as part of the resource holding it,
+      // never on its own (#3001).
+      if (!isObservableDeclarable(entity)) continue;
       entityNames.push(name);
       entities.set(name, {
         entityType: entity.entityType,
@@ -174,7 +176,7 @@ export async function observeResources(
             stackEntityNames = [];
             stackEntities = new Map();
             for (const [name, entity] of sb.entities) {
-              if (entity.lexicon !== plugin.name || !isResourceDeclarable(entity)) continue;
+              if (entity.lexicon !== plugin.name || !isObservableDeclarable(entity)) continue;
               stackEntityNames.push(name);
               stackEntities.set(name, {
                 entityType: entity.entityType,

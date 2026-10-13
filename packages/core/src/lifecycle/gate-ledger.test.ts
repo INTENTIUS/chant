@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
   latestResolutionSince, latestPendingGate, isPendingGateExpired,
-  resolveApprovalUrl, isApprovalUrl, latestResolutionForPlan,
+  resolveApprovalUrl, isApprovalUrl, latestResolutionForPlan, parseGateLedger,
   type PendingGateRecord, type GateResolutionRecord,
 } from "./gate-ledger";
 import { readBlobFromPath, writeBlobToPath } from "./git";
@@ -253,6 +253,26 @@ describe("lifecycle/gate-ledger — pending facts (#2119)", () => {
       expect(resolutions).toEqual([]);
     });
   });
+
+  // #2574: an environment that is present but not a string would read as an
+  // approval bound to no environment, which a component gate treats differently.
+  test("a line whose environment is not a string is malformed", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath(
+        "_gates", "search-service.jsonl",
+        [
+          JSON.stringify({ version: 1, op: "search-service", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", environment: 7 }),
+          JSON.stringify({ version: 1, op: "search-service", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", environment: "prod" }),
+        ].join("\n"),
+        "hand-written",
+        { cwd: dir },
+      );
+      const { resolutions, malformed } = await readGateLedger("search-service", { cwd: dir });
+      expect(malformed).toBe(1);
+      expect(resolutions.map((r) => r.environment)).toEqual(["prod"]);
+    });
+  });
 });
 
 /**
@@ -276,6 +296,20 @@ describe("latestResolutionForPlan (#2300)", () => {
     const found = latestResolutionForPlan([resolution({ planDigest: PLAN_A })], "approve-live-apply", EPOCH, PLAN_A);
     expect(found.resolution?.resolvedBy).toBe("alex");
     expect(found.mismatched).toBeUndefined();
+  });
+
+  // #2547: plan digests carry a version prefix now. An approval written under
+  // the bare prefix is still an approval of the same plan.
+  test("a resolution recorded under the bare sha256: prefix answers the same plan's jcs1 digest", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_A })], "approve-live-apply", EPOCH, `jcs1-${PLAN_A}`);
+    expect(found.resolution?.resolvedBy).toBe("alex");
+    expect(found.mismatched).toBeUndefined();
+  });
+
+  test("the prefix never makes a different plan match", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_B })], "approve-live-apply", EPOCH, `jcs1-${PLAN_A}`);
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched?.planDigest).toBe(PLAN_B);
   });
 
   test("a resolution for another plan does not, and comes back named", () => {
@@ -383,5 +417,89 @@ describe("readGateLedger — a corrupted planDigest is malformed (#2300)", () =>
       expect(pending[0].planDigest).toBe(digest);
       expect(resolutions[0].planDigest).toBe(digest);
     });
+  });
+});
+
+describe("applied approvals on chant/lifecycle (#3784)", () => {
+  test("the git port appends and reads _gates/<op>/applied.jsonl, which the gate ledger reader never sees", async () => {
+    const { gitGateLedgerPort } = await import("../op/gate");
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const port = gitGateLedgerPort({ cwd: dir });
+      await appendGateResolution({ op: "migrations", gate: "migrations-wave-1", resolvedBy: "alice", timestamp: "2026-10-10T00:00:00.000Z", planDigest: "sha256:aa" }, { cwd: dir });
+      const line = {
+        version: 1 as const, kind: "applied" as const, op: "migrations", gate: "migrations-wave-1", planDigest: "sha256:aa",
+        approvedAt: "2026-10-10T00:00:00.000Z", approvedBy: "alice", timestamp: "2026-10-11T00:00:00.000Z",
+      };
+      await port.appendApplied!(line);
+      await port.appendApplied!({ ...line, timestamp: "2026-10-11T01:00:00.000Z" });
+      expect(await port.readApplied!("migrations")).toEqual([line, { ...line, timestamp: "2026-10-11T01:00:00.000Z" }]);
+      expect(await readBlobFromPath("_gates/migrations", "applied.jsonl", { cwd: dir })).toMatch(/^\{.*\}\n\{.*\}\n$/);
+      const ledger = await port.read("migrations");
+      expect(ledger.resolutions).toHaveLength(1);
+      expect(ledger.pending).toHaveLength(0);
+    });
+  });
+});
+
+describe("gate ledger newline termination (#3849)", () => {
+  test("every append ends the file in a newline, with no blank or merged lines", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await appendPendingGate(
+        {
+          op: "nl-op", gate: "g1", planDigest: "sha256:" + "a".repeat(64),
+          timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2026-01-08T00:00:00.000Z",
+        },
+        { cwd: dir },
+      );
+      const one = await readBlobFromPath("_gates", "nl-op.jsonl", { cwd: dir });
+      expect(one!.endsWith("\n")).toBe(true);
+      await appendGateResolution(
+        { op: "nl-op", gate: "g1", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+        { cwd: dir },
+      );
+      const raw = (await readBlobFromPath("_gates", "nl-op.jsonl", { cwd: dir }))!;
+      expect(raw.endsWith("\n")).toBe(true);
+      expect(raw.endsWith("\n\n")).toBe(false);
+      const lines = raw.slice(0, -1).split("\n");
+      expect(lines).toHaveLength(2);
+      for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+      const { malformed } = await readGateLedger("nl-op", { cwd: dir });
+      expect(malformed).toBe(0);
+    });
+  });
+
+  test("a legacy ledger whose last line has no newline still reads and appends cleanly", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath("_gates", "legacy.jsonl", JSON.stringify({ kind: "x" }), "seed", { cwd: dir });
+      await appendGateResolution(
+        { op: "legacy", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+        { cwd: dir },
+      );
+      const raw = (await readBlobFromPath("_gates", "legacy.jsonl", { cwd: dir }))!;
+      expect(raw.endsWith("\n")).toBe(true);
+      expect(raw.split("\n").filter(Boolean)).toHaveLength(2);
+    });
+  });
+});
+
+describe("pending fact wave and heldBy (#3886, #3887)", () => {
+  const line = (o: Record<string, unknown>) =>
+    JSON.stringify({ version: 1, kind: "pending", op: "tg", gate: "g", timestamp: "2026-10-01T00:00:00Z", expiresAt: "2026-10-02T00:00:00Z", ...o });
+  test("the reader types wave, heldBy and approvalMode", () => {
+    const { pending } = parseGateLedger(line({ approvalMode: "pr-review", wave: { number: 2, name: "prod", op: "tg" }, heldBy: { hook: "migrate", moment: "before-apply", target: "vpc" } }));
+    const p: PendingGateRecord = pending[0]!;
+    expect(p.wave).toEqual({ number: 2, name: "prod", op: "tg" });
+    expect(p.heldBy).toEqual({ hook: "migrate", moment: "before-apply", target: "vpc" });
+    expect(p.approvalMode).toBe("pr-review");
+  });
+  test("a wave or heldBy of the wrong shape is dropped, the line is kept", () => {
+    const { pending, malformed } = parseGateLedger(line({ wave: { number: "2" }, heldBy: "migrate" }));
+    expect(malformed).toBe(0);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.wave).toBeUndefined();
+    expect(pending[0]!.heldBy).toBeUndefined();
   });
 });

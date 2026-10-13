@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { lintCommand, isLintRule, loadPluginRules, LEXICON_RESOLUTION_RULE_ID, type LintOptions } from "./lint";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -280,6 +280,43 @@ export const b = new Bucket({ config: { y: 2 } });
     // COR001 fires on inline objects — strict preset sets it to "error"
     expect(result.diagnostics.some(d => d.ruleId === "COR001")).toBe(true);
     expect(result.diagnostics.filter(d => d.ruleId === "COR001")).toHaveLength(2);
+  });
+
+  // #2511: a project-local rule that throws is an error, never a clean pass.
+  test("a project-local rule that throws fails the lint and names the rule, file and message", async () => {
+    await mkdir(join(testDir, ".chant", "rules"), { recursive: true });
+    await writeFile(
+      join(testDir, ".chant", "rules", "local.ts"),
+      `
+export const boom = {
+  id: "LOCAL_BOOM",
+  severity: "warning",
+  category: "correctness",
+  check() { throw new Error("cannot read sibling file"); },
+};
+export const fine = {
+  id: "LOCAL_FINE",
+  severity: "warning",
+  category: "correctness",
+  check(ctx) {
+    return [{ file: ctx.filePath, line: 1, column: 1, ruleId: "LOCAL_FINE", severity: "warning", message: "fine ran" }];
+  },
+};
+      `,
+    );
+    const file = join(testDir, "clean.ts");
+    await writeFile(file, `// chant-disable\nexport const config = { a: 1 };\n`);
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(false);
+    const threw = result.diagnostics.filter((d) => d.ruleId === "LOCAL_BOOM");
+    expect(threw).toHaveLength(1);
+    expect(threw[0].severity).toBe("error");
+    expect(threw[0].file).toBe(file);
+    expect(threw[0].message).toContain("LOCAL_BOOM");
+    expect(threw[0].message).toContain(file);
+    expect(threw[0].message).toContain("cannot read sibling file");
   });
 });
 
@@ -642,6 +679,57 @@ describe("lintCommand — git-ignored files are not linted", () => {
 });
 
 /**
+ * chant#2527: lint walks through the one discovery walk. A child project
+ * inside a project is a boundary, `include` re-admits it, and a scan root
+ * that is itself git-ignored is linted.
+ */
+describe("lintCommand — the converged discovery walk (#2527)", () => {
+  let testDir: string;
+  const EVL003 = `const t = { a: 1 };\nexport function g(k: string) { return t[k]; }\n`;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-2527-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+    process.env.NO_COLOR = "1";
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.NO_COLOR;
+  });
+
+  async function childProject(config: Record<string, unknown>): Promise<void> {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ knowledge: { dir: "knowledge" }, ...config }));
+    await writeFile(join(testDir, "index.ts"), `export const x = 1;\n`);
+    await mkdir(join(testDir, "stacks", "east"), { recursive: true });
+    await writeFile(join(testDir, "stacks", "east", "chant.config.ts"), `export default {};\n`);
+    await writeFile(join(testDir, "stacks", "east", "east.ts"), EVL003);
+  }
+
+  test("a nested child project is not linted from the parent", async () => {
+    await childProject({});
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.some((d) => d.file.includes("east.ts"))).toBe(false);
+  });
+
+  test("include re-admits the child project", async () => {
+    await childProject({ include: ["stacks/east"] });
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.some((d) => d.file.includes("east.ts") && d.ruleId === "EVL003")).toBe(true);
+  });
+
+  test("an ignored scan root is linted: ignore rules apply below the root only", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: testDir });
+    await writeFile(join(testDir, ".gitignore"), "/carveout/\n");
+    await mkdir(join(testDir, "carveout", "src"), { recursive: true });
+    await writeFile(join(testDir, "carveout", "src", "main.ts"), EVL003);
+
+    const result = await lintCommand({ path: join(testDir, "carveout", "src"), format: "stylish" });
+    expect(result.diagnostics.some((d) => d.file.includes("main.ts") && d.ruleId === "EVL003")).toBe(true);
+  });
+});
+
+/**
  * chant #2222 (epic #2215 sub-issue 7) — `chant lint` used to print "No
  * problems found" and exit 0 on a project whose declared lexicon could not be
  * resolved, the state `chant build` refuses outright. These pin both halves:
@@ -797,7 +885,7 @@ describe("lintCommand — a declared lexicon that cannot be resolved (#2222)", (
  * `lintCommand` has no flags to read and passed nothing, so `params` stayed
  * empty and OPS012 reported the activity contract violated for source that
  * lints clean from a shell. That is how the root-examples gate
- * (examples/root-examples-gate.test.ts) went red on github-pr-preview while
+ * (examples/root-examples-gate.e2e.test.ts) went red on github-pr-preview while
  * `chant lint .` in the same directory exited 0, and it applied equally to
  * `handleLint` over MCP and to test-utils' example harness.
  *
@@ -871,3 +959,6 @@ describe("lintCommand build-time parameters (#2249)", () => {
     expect(params).toEqual({});
   });
 });
+
+// The lexicon post-synth pass over a project that imports the sql lexicon (#3750) builds
+// that project and loads the lexicon; it is in lint-post-synth.e2e.test.ts (#3793).

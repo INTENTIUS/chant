@@ -119,6 +119,13 @@ export interface ChangeSetEntry {
    * place" (a defaulted namespace, an endpoint override, the wrong region).
    */
   queried?: string;
+  /**
+   * The declared definition's fingerprint, for `action: "create"` (#3652),
+   * when the caller passed `definitions`. A create carries no deltas, so
+   * without it the plan says what it would create by name only, and the
+   * plan's digest does not move when the declaration does.
+   */
+  definition?: string;
   /** The declared entity this resource's owner chain resolves to, for `action: "runtime"` (#1077). */
   runtimeOwner?: string;
   /**
@@ -265,6 +272,7 @@ export function buildChangeSet(env: string, input: DiffLiveInput, options?: Chan
     // there is one, else the observation's queried map. Diagnostic only; the
     // classification above never reads it.
     const queried = unobservedEntry?.queried ?? input.queried?.[name];
+    const definition = action === "create" ? input.definitions?.[name] : undefined;
 
     // The provider's id for the row (#1674). Live first; the snapshot's only
     // when the resource is no longer live (a snapshot-only noop).
@@ -286,6 +294,7 @@ export function buildChangeSet(env: string, input: DiffLiveInput, options?: Chan
           }
         : {}),
       ...(queried ? { queried } : {}),
+      ...(definition ? { definition } : {}),
       ...(runtimeOwner ? { runtimeOwner } : {}),
     });
   }

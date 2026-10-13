@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:contract:1",
+  "title": "Contract file front matter",
+  "description": "The front matter of one contract file in design/contracts/ (#3148, ws-082): an acceptance criterion made formal, with the criteria a check proves and the check pinned by hash. The Markdown body after the front matter is the story and any detail; the criteria are listed here, so a reader never parses the body. Values stay within what YAML and JSON share.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "required": ["schema", "id", "title", "state", "criteria", "checks", "reviews", "approved_by"],
+  "properties": {
+    "schema": {
+      "description": "Format version of this file. Bumped only by a change to this schema.",
+      "const": 1
+    },
+    "id": {
+      "description": "Stable id: C, a dash and three or more digits, as studio numbers its contracts. Never reused, never renumbered.",
+      "$ref": "#/definitions/contractId"
+    },
+    "title": {
+      "description": "What a person can do once the contract holds, in a few words.",
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "description": "draft: being written. approved: ready to build; only its state, checks and reviews change from here, and a changed contract is a new one that supersedes it. retired: nothing is built against it any more. Sealed once retired.",
+      "enum": ["draft", "approved", "retired"]
+    },
+    "tier": {
+      "description": "The builder tier the contract is built at, when it is fixed rather than asked of the slice-tier decision point: one of the tiers the work kind declares (#3147). Null or absent to leave it to the point.",
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
+    "criteria": {
+      "description": "The acceptance criteria, each with an id the check's tests are named after (a test named \"a1: ...\" checks a1) and the text it states. A work item that builds the contract lists criteria with the same ids in its acceptance, and an evidence record of a check run reports each by id. An approved contract states at least one.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "$ref": "#/definitions/criterionId" },
+          "text": { "type": "string", "pattern": "\\S" }
+        }
+      }
+    },
+    "checks": {
+      "description": "The contract's checks: test files a runner runs against the app (studio runs them with node --test and APP_URL), each pinned by the hash of its bytes, so chant workspace records reports a check edited after it was pinned. Usually one. Empty while none is written; records then warns record-no-evidence, and a factory leaves the contract unchecked.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/checkPin" }
+    },
+    "references": {
+      "description": "Design assets a criterion is checked against besides its tests, such as a section of a driver's design document (design/drivers/D-001/design.html#notes-page). Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "asset"],
+        "properties": {
+          "criterion": { "$ref": "#/definitions/criterionId" },
+          "asset": {
+            "description": "A workspace path, from the workspace root, with an optional #fragment naming a section in it.",
+            "type": "string",
+            "pattern": "^(?!/)(?!(?:[^/#]*/)*\\.{1,2}(?:[/#]|$))(?!.*//)[^\\\\\\u0000-\\u001f#]*[^/\\\\\\u0000-\\u001f#](#[A-Za-z][A-Za-z0-9:._-]*)?$"
+          }
+        }
+      }
+    },
+    "supersedes": {
+      "description": "The contract or contracts this one replaces, by id: a bare id, as studio's contracts write it, or a list. Takes effect once this contract is approved or retired. Optional.",
+      "oneOf": [
+        { "$ref": "#/definitions/contractId" },
+        { "type": "array", "items": { "$ref": "#/definitions/contractId" }, "uniqueItems": true }
+      ]
+    },
+    "proposed_by": {
+      "description": "Who drafted the contract: the name chant workspace records new --by wrote (#2756). Null or absent when nobody named one.",
+      "type": ["string", "null"]
+    },
+    "approved_by": {
+      "description": "Who approved the contract: a forge login. A contract approved in a review session also carries the verdicts that approved it in reviews. Null while it is a draft.",
+      "type": ["string", "null"]
+    },
+    "approved_on": {
+      "description": "When it was approved, as YYYY-MM-DD. Quoted, so YAML reads it as a string. Null or absent while it is a draft.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "reviews": {
+      "description": "Each reviewer's verdict on the contract, in the decision kind's shape: reviewer, verdict, on, and the digest of the text judged. A verdict given in a review session names it in session (chant workspace records review --session). Empty until a review happens.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reviewer", "verdict", "on"],
+        "properties": {
+          "reviewer": { "type": "string", "minLength": 1 },
+          "verdict": { "enum": ["agree", "dissent", "abstain"] },
+          "note": { "type": ["string", "null"] },
+          "on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+          "digest": {
+            "description": "The digest of the contract text the verdict judged: the lowercase hex SHA-256 of the file with LF line endings and without its reviews block (#2672).",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "session": {
+            "description": "The id of the review session the verdict was given in.",
+            "type": "string",
+            "minLength": 1
+          },
+          "seal": {
+            "description": "The reviewer's ssh signature over the verdict (#2687), as chant workspace records review --sign writes it.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signer", "key", "signature"],
+            "properties": {
+              "signer": { "type": "string", "minLength": 1 },
+              "key": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]+=*$" },
+              "signature": { "type": "string", "pattern": "^-----BEGIN SSH SIGNATURE-----\\n" }
+            }
+          }
+        },
+        "dependencies": { "seal": ["digest"] },
+        "if": {
+          "required": ["verdict"],
+          "properties": { "verdict": { "const": "dissent" } }
+        },
+        "then": {
+          "description": "A dissent needs a reason: the dissent by {reviewer} has no note.",
+          "required": ["note"],
+          "properties": { "note": { "type": "string", "pattern": "\\S" } }
+        }
+      }
+    },
+    "seal": {
+      "description": "The author's ssh signature over the contract (#2688), as chant workspace records new --sign and amend --sign write it. Optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signer", "key", "signature"],
+      "properties": {
+        "signer": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]+=*$" },
+        "signature": { "type": "string", "pattern": "^-----BEGIN SSH SIGNATURE-----\\n" }
+      }
+    },
+    "closed_digest": {
+      "description": "The contract's whole-file seal (#2546, ws-063), written when it is retired: sha256: and the lowercase hex SHA-256 of the JCS form of {body, core}, line endings LF. chant workspace records reports record-seal-mismatch if the file changes afterwards.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "enum": ["approved", "retired"] } }
+      },
+      "then": {
+        "description": "An approved or retired contract names who approved it.",
+        "properties": { "approved_by": { "type": "string", "minLength": 1 } }
+      }
+    },
+    {
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "const": "approved" } }
+      },
+      "then": {
+        "description": "An approved contract states at least one criterion.",
+        "properties": { "criteria": { "minItems": 1 } }
+      }
+    }
+  ],
+  "definitions": {
+    "contractId": {
+      "type": "string",
+      "pattern": "^C-[0-9]{3,}$"
+    },
+    "criterionId": {
+      "description": "A criterion's id, such as a1, unique in its contract.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "workspacePath": {
+      "description": "A path from the workspace root, with / separators: no leading /, no . or .. segment, no empty segment, no backslash and no trailing /.",
+      "type": "string",
+      "pattern": "^(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f]$"
+    },
+    "checkPin": {
+      "description": "A check file in the workspace, pinned by the hash of its bytes (#2549).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "path", "sha256"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "path": {
+          "description": "The check, from the workspace root, such as design/contracts/checks/C-001.test.mjs.",
+          "$ref": "#/definitions/workspacePath"
+        },
+        "sha256": {
+          "description": "Hex SHA-256 of the check's bytes when it was pinned. chant workspace records pin <path> prints it.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "as_of": {
+          "description": "When the check was pinned, as an ISO 8601 timestamp.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

@@ -40,15 +40,18 @@
  * `./component.ts`, already proves the plain-JSON round-trip).
  */
 
-import { readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
 import { DiscoveryError } from "../errors";
 import { isComponent, type Component } from "./component";
 import type { BuildParamProvenance } from "../provenance";
 import { buildParamValues } from "../build-params";
 import { setBuildParams } from "../params";
+import { hasDiscoveryMarkerSync } from "../discovery/files";
+import { resolveDiscoveryGlobs } from "../config";
+import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
+import { ensureTypeScriptLoader } from "../ts-loader";
+import { esModuleNamespace } from "../module-interop";
 
 /** One discovered component, paired with the file it was exported from. */
 export interface DiscoveredComponent {
@@ -115,56 +118,24 @@ export interface ImportedComponentModule {
 }
 
 /**
- * Recursively find every `*.component.ts` file under `path`, the same
- * child-project boundary rule `findInfraFiles` (`../discovery/files.ts`)
- * uses: a subdirectory with its own `chant.config.ts` is a separate scope
- * once the outer project's own source root has been established.
+ * Every `*.component.ts` file under `path`, through the one discovery walk
+ * (`../discovery/walk.ts`, #2527): the same dot-directory, `dist`,
+ * git-ignore and child-project rules as source discovery, the project's
+ * `exclude`/`include` globs and the skip marker (#2519). Scanned from outside
+ * any project, every child project is read.
  */
 async function findComponentFiles(path: string): Promise<string[]> {
-  const files: string[] = [];
-  let sourceRoot: string | null = null;
-
-  async function scanDirectory(dir: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        // Skip dependency and tool/VCS directories: component sources never live
-        // in them, and descending in is both wasted work and a correctness bug —
-        // e.g. a CI runner like gitlab-ci-local stages a copy of the project
-        // under `.gitlab-ci-local/`, which discovery would otherwise pick up as
-        // duplicate component names alongside the originals.
-        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-
-        const configPath = join(fullPath, "chant.config.ts");
-        if (existsSync(configPath)) {
-          if (sourceRoot === null) {
-            sourceRoot = fullPath;
-          } else {
-            continue;
-          }
-        }
-        await scanDirectory(fullPath);
-      } else if (
-        entry.isFile() &&
-        entry.name.endsWith(".component.ts") &&
-        !entry.name.endsWith(".test.component.ts") &&
-        !entry.name.endsWith(".spec.component.ts")
-      ) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  await scanDirectory(path);
-  return files;
+  return walkDiscovery({
+    walker: "components",
+    root: path,
+    globs: await resolveDiscoveryGlobs(path),
+    excludeDirs: await workspaceMemberDirs(path),
+    accept: (name, full) =>
+      name.endsWith(".component.ts") &&
+      !name.endsWith(".test.component.ts") &&
+      !name.endsWith(".spec.component.ts") &&
+      !hasDiscoveryMarkerSync(full),
+  });
 }
 
 /**
@@ -243,7 +214,8 @@ async function importAndCollectComponents(
       // `filePath` (e.g. from `chant build --components --generate`, which passes
       // a bare "." path) would otherwise be treated by `import()` as a bare
       // package specifier and fail with "Cannot find package 'x.component.ts'".
-      const exports = await import(pathToFileURL(resolve(filePath)).href);
+      ensureTypeScriptLoader();
+      const exports = esModuleNamespace(await import(pathToFileURL(resolve(filePath)).href));
       modules.push({ file: filePath, exports });
     } catch (err) {
       importErrors.push(new DiscoveryError(filePath, err instanceof Error ? err.message : String(err), "import"));

@@ -1,6 +1,7 @@
 import type { Declarable } from "../declarable";
 import type { ActivityContract } from "../op/activity-contract";
 import type { SerializerResult } from "../serializer";
+import type { TelemetryAttribution } from "../telemetry-attribution";
 import type { Severity } from "./rule";
 import { parseOutputDocs, type OutputDoc } from "./output-docs";
 
@@ -55,6 +56,28 @@ export interface PostSynthContext {
    * when it is `undefined`.
    */
   readonly activityContracts?: ReadonlyMap<string, ActivityContract>;
+  /**
+   * The telemetry attribution the build stamped (#2558), from
+   * `resolveTelemetryAttribution`. Set when the project is inside a workspace
+   * or sets `telemetry.attribution: true`, and absent at level 0 and from a
+   * hand-built context. OTEL118 runs only when it is set.
+   */
+  readonly telemetry?: TelemetryAttribution;
+  /**
+   * The directory of the project config the build loaded (#3751): where a
+   * relative `sourceDir` resolves, and so where a check looks for a file the
+   * project keeps beside its source (the sql lexicon's `sql-types.d.ts`).
+   * Set by `chant build` and `chant lint`; absent from a hand-built context,
+   * where a check that reads the disk stays silent.
+   */
+  readonly projectDir?: string;
+  /**
+   * The project config the build loaded (#3751), as source lint rules get it
+   * in `LintContext.projectConfig`. A check that renders output again, as the
+   * sql lexicon's does for `sql-types.d.ts`, needs the settings the build ran
+   * with. Absent from a hand-built context.
+   */
+  readonly projectConfig?: Record<string, unknown>;
   /** Raw build result object */
   buildResult: {
     outputs: Map<string, string | SerializerResult>;
@@ -183,6 +206,14 @@ export interface PostSynthCheck {
   description: string;
   /** Execute the check and return diagnostics */
   check(ctx: PostSynthContext): PostSynthDiagnostic[];
+  /**
+   * `chant audit` skips this check unless the project enables it with a
+   * `lint.rules` entry for its id (chant #3190). Builds are not affected: they
+   * already filter by the lexicon's `lintPresets()`. It exists because the
+   * audit runs every check a lexicon ships, report-only ones included, so a
+   * new check would otherwise change the audit output of every project.
+   */
+  auditOptIn?: boolean;
 }
 
 /** Structural type guard — used to collect project-authored policy checks. */
@@ -201,12 +232,15 @@ export function isPostSynthCheck(value: unknown): value is PostSynthCheck {
  * into the context so a check can branch on the current environment/stack, and
  * `opts.activityContracts` (chant #2101) carries the build's cross-lexicon
  * activity-contract map to the checks that validate Op steps against it.
+ * `opts.telemetry` is the build's resolved telemetry attribution, and
+ * `opts.projectDir` and `opts.projectConfig` the config the build loaded and
+ * its directory.
  */
 export function runPostSynthChecks(
   checks: PostSynthCheck[],
   buildResult: PostSynthContext["buildResult"],
   env?: string,
-  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract> },
+  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract>; telemetry?: TelemetryAttribution; projectDir?: string; projectConfig?: Record<string, unknown> },
 ): PostSynthDiagnostic[] {
   const getDocs = createDocsAccessor(buildResult.outputs);
   const ctx: PostSynthContext = {
@@ -215,6 +249,9 @@ export function runPostSynthChecks(
     env,
     buildResult,
     ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
+    ...(opts?.telemetry ? { telemetry: opts.telemetry } : {}),
+    ...(opts?.projectDir ? { projectDir: opts.projectDir } : {}),
+    ...(opts?.projectConfig ? { projectConfig: opts.projectConfig } : {}),
     get docs(): OutputDoc[] {
       return getDocs();
     },

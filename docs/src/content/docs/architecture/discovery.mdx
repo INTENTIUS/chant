@@ -21,8 +21,32 @@ const files = await findInfraFiles("./src");
 
 The function:
 - Returns absolute paths to `.ts` files
-- Excludes `node_modules/` directories
 - Excludes test files (`*.test.ts`, `*.spec.ts`)
+- Excludes files whose head carries chant's generated-file marker or the skip marker
+- Walks the tree under the rules every discovery walk shares, below
+
+### One walk for every command
+
+Source discovery (`findInfraFiles`, behind `build`, `graph`, `list` and `explain`), `chant lint`, component discovery, Op discovery and `chant audit` all walk the tree the same way ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). Each keeps its own file filter (`.ts`, `*.component.ts`, `*.op.ts`, or every file for the audit), and the walk decides which directories and files reach that filter:
+
+| Rule | What it does |
+|---|---|
+| `node_modules` and `.git` | never entered |
+| Dot-directories | skipped, such as `.cache/` or a tool's staging copy of the project. `chant audit` still reads `.github/` and `.forgejo/`, and records `.terraform/` for TF023 without entering it |
+| `dist` | skipped |
+| Git-ignored files | skipped, the way git decides: nested `.gitignore` files, `.git/info/exclude` and the global excludes file all count. Only paths below the directory being scanned are asked about, so building or linting a directory that is itself ignored still reads it. `chant audit` leaves Terraform state paths to TF023, which reads `.gitignore` itself |
+| Child projects | when the scanned directory is inside a project, a subdirectory holding a project config is not entered. A `chant.config.json` holding only lint keys is not a project config and does not count; a `chant.config.ts` always does. When the scanned directory is outside every project, every child project is read |
+| Op discovery | the Op root is still found by walking up from the working directory, and the walk down from it always stops at child projects, so a project with no config of its own no longer sees its siblings' Ops |
+| `exclude` and `include` | the project's [globs](/chant/configuration/config-file/#exclude-and-include). `exclude` drops what it names, and `include` re-admits what `exclude` or any rule above would skip, apart from `node_modules` and `.git` |
+| Workspace members and example groups | each member's directory and each directory an example group matches leave the root project's walk, and only when a [workspace declaration](/chant/reference/workspace-declaration/) exists. Without one, discovery loads no workspace code. A declaration that fails to read leaves the walk unchanged, and `chant workspace ls` reports its errors |
+
+Up to `v0.80.0` the walks disagreed about every rule in this table apart from `node_modules`, and each walk decided child projects in its own way. Source and component discovery read the first child project they met as the project's own source and skipped every later one. `v0.80.0` printed a warning on stderr for each file whose status this changed, naming the glob that keeps the old behaviour. To keep reading a directory the walk now skips, add it to `include`:
+
+```json
+{ "include": ["src"] }
+```
+
+The change is on the [level-0 exception list](/chant/reference/level-0-exceptions/).
 
 ### importModule
 

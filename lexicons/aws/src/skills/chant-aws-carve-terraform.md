@@ -21,8 +21,8 @@ graduation.
 ## Preconditions
 
 - `chant --version` succeeds.
-- `@cdktf/hcl2json` is installed (the HCL parser). If a command reports it is
-  missing, run `npm install -D @cdktf/hcl2json` once.
+- `@cdktn/hcl2json` is installed (the HCL parser). If a command reports it is
+  missing, run `npm install -D @cdktn/hcl2json` once.
 
 ## The fastest path: run the bundled demo
 

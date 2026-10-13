@@ -12,6 +12,7 @@ import { scheduleCronSyntaxCheck } from "./ftn020-schedule-cron-syntax";
 import { typedReferencesResolveCheck } from "./ftn021-typed-references-resolve";
 import { webhookUrlPublicHttpsCheck } from "./ftn022-webhook-url-public-https";
 import { acpRuntimeCommandCheck } from "./ftn023-acp-runtime-command";
+import { setupTimeoutRangeCheck } from "./ftn024-setup-timeout-range";
 
 export const postSynthChecks: PostSynthCheck[] = [
   networkingExplicitCheck,
@@ -26,4 +27,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   typedReferencesResolveCheck,
   webhookUrlPublicHttpsCheck,
   acpRuntimeCommandCheck,
+  setupTimeoutRangeCheck,
 ];

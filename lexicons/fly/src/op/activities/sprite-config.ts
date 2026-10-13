@@ -15,9 +15,21 @@
  * construction); services reconcile is additive + update (create-or-update each
  * desired service, optionally start). Owned-only prune of stale services is out
  * of scope — the documented Services REST surface exposes no delete.
+ *
+ * `spriteApplyServices` with no `id` runs inside the sprite instead (#2880):
+ * it applies the box block's services (`box: true`) through `sprite-env
+ * services`, which has no update, so a changed service is deleted and created.
+ * It deletes nothing the box block does not declare.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { serviceCommandArgv, inStartOrder, boxServices, type BoxServiceDeclaration } from "./box-services";
+import { findSpriteEnv } from "./sprite-service-converge";
 import { resolveSpritesEndpoint, defaultSpritesHttp, type SpritesHttp } from "./sprites";
+import { logProgress } from "./progress";
+
+const execFileAsync = promisify(execFile);
 
 function safeJson(text: string): unknown {
   try {
@@ -90,13 +102,13 @@ export async function spriteApplyNetworkPolicy(
   if (cur.status >= 300) throw new Error(`sprite ${args.id} get policy failed (${cur.status}): ${cur.text}`);
   const live = (safeJson(cur.text) as { rules?: NetworkRule[] } | undefined)?.rules ?? [];
   if (networkRulesEqual(live, args.rules)) {
-    console.log(`policy: sprite/${args.id} already converged (${args.rules.length} rules)`);
+    logProgress(`policy: sprite/${args.id} already converged (${args.rules.length} rules)`);
     return { changed: false };
   }
 
   const res = await http("POST", url, { rules: args.rules }, undefined, signal);
   if (res.status >= 300) throw new Error(`sprite ${args.id} set policy failed (${res.status}): ${res.text}`);
-  console.log(`policy: sprite/${args.id} applied ${args.rules.length} rules (${base})`);
+  logProgress(`policy: sprite/${args.id} applied ${args.rules.length} rules (${base})`);
   return { changed: true };
 }
 
@@ -116,19 +128,48 @@ export interface ServiceSpec {
 }
 
 export interface SpriteApplyServicesArgs {
-  id: string;
-  services: ServiceSpec[];
-  /** Start each service after applying (in dependency order). Default: false. */
+  /** The sprite, for the Sprites API. Without it, the step runs inside the sprite and applies the box block's services through `sprite-env` (#2880). */
+  id?: string;
+  /** The services, for the Sprites API. Required with `id`. */
+  services?: ServiceSpec[];
+  /** Without `id`: apply the services of the box block of the workspace member whose directory holds the working directory (#2880). Required without `id`. */
+  box?: boolean;
+  /** Without `id`: apply only these declared services, in dependency order. An `optional` service is applied only when named here. */
+  only?: string[];
+  /**
+   * Start services after applying, in dependency order. With `id`, every
+   * service; without, every applied one that is not running (a created or
+   * replaced one is started by its create). Default: false.
+   */
   start?: boolean;
+  /** Without `id`: restart each applied service that was already converged. Default: false. */
+  restart?: boolean;
+  /**
+   * Without `id` and without `only`: delete each service the supervisor has
+   * that the box block does not declare (an `optional` one is declared), so a
+   * service dropped from the block stops running. Default: true.
+   */
+  prune?: boolean;
+  /** Without `id`: the `sprite-env` binary. Default: the one on PATH, else /.sprite/bin/sprite-env. */
+  spriteEnv?: string;
   endpoint?: string;
   token?: string;
 }
+
+/** What an apply through sprite-env did to one service (#2880). */
+export type ServiceApplyAction = "created" | "replaced" | "restarted" | "started" | "left" | "deleted";
 
 export interface SpriteApplyServicesResult {
   /** Names that were created or updated (converged services are skipped). */
   applied: string[];
   /** Names that were started (empty unless `start`). */
   started: string[];
+  /**
+   * Without `id`: each service applied, in the order it was applied, with
+   * what the apply did to it (#2880). `left` is a converged service that was
+   * not restarted or started, `deleted` one the block does not declare (`prune`).
+   */
+  services?: { name: string; action: ServiceApplyAction }[];
 }
 
 /**
@@ -204,7 +245,20 @@ function serviceBody(s: ServiceSpec): Record<string, unknown> {
 export async function spriteApplyServices(
   args: SpriteApplyServicesArgs,
   signal?: AbortSignal,
-  http: SpritesHttp = defaultSpritesHttp(args.token),
+  http?: SpritesHttp,
+): Promise<SpriteApplyServicesResult> {
+  if (!args.id) return applyThroughSpriteEnv(args, signal);
+  if (args.box || args.only || args.restart) {
+    throw new Error("spriteApplyServices: box, only and restart apply a box's services through sprite-env inside the sprite; drop the id to use them");
+  }
+  if (!args.services) throw new Error("spriteApplyServices: an id needs its services");
+  return applyThroughApi({ ...args, id: args.id, services: args.services }, signal, http ?? defaultSpritesHttp(args.token));
+}
+
+async function applyThroughApi(
+  args: SpriteApplyServicesArgs & { id: string; services: ServiceSpec[] },
+  signal: AbortSignal | undefined,
+  http: SpritesHttp,
 ): Promise<SpriteApplyServicesResult> {
   const startOrder = validateServices(args.services);
   const base = resolveSpritesEndpoint(args);
@@ -229,7 +283,7 @@ export async function spriteApplyServices(
     if (res.status >= 300) throw new Error(`sprite ${args.id} apply service ${s.name} failed (${res.status}): ${res.text}`);
     applied.push(s.name);
   }
-  console.log(`services: sprite/${args.id} applied ${applied.length}/${args.services.length} (${base})`);
+  logProgress(`services: sprite/${args.id} applied ${applied.length}/${args.services.length} (${base})`);
 
   const started: string[] = [];
   if (args.start) {
@@ -239,8 +293,222 @@ export async function spriteApplyServices(
       if (res.status >= 300) throw new Error(`sprite ${args.id} start service ${name} failed (${res.status}): ${res.text}`);
       started.push(name);
     }
-    console.log(`services: sprite/${args.id} started ${started.length} in dependency order`);
+    logProgress(`services: sprite/${args.id} started ${started.length} in dependency order`);
   }
 
   return { applied, started };
+}
+
+// ── Services through sprite-env (#2880) ─────────────────────────────────────
+
+/** A service as `sprite-env services list` reports it. A field the listing does not carry is undefined. */
+export interface ListedService {
+  name: string;
+  status: string | null;
+  cmd?: string;
+  needs?: string[];
+  httpPort?: number | null;
+}
+
+/**
+ * `sprite-env services list` with each service's definition. A sprite's
+ * sprite-env prints JSON (`[{ name, cmd, args, needs, http_port, state: {
+ * status } }]`); the studio kit's stand-in has printed a table of name,
+ * state, needs (`-` for none), http port (`-`) and cmd, tab-separated. A
+ * table with fewer columns gives the name and state only. Pure.
+ */
+export function parseServiceDefinitions(text: string): ListedService[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const list = Array.isArray(parsed) ? parsed : ((parsed as { services?: unknown }).services ?? []);
+    const out: ListedService[] = [];
+    for (const s of list as Record<string, unknown>[]) {
+      if (typeof s?.name !== "string") continue;
+      const state = s.state as { status?: unknown } | undefined;
+      const status = typeof state?.status === "string" ? state.status : typeof s.status === "string" ? s.status : null;
+      const args = Array.isArray(s.args) ? (s.args as unknown[]).map(String) : [];
+      out.push({
+        name: s.name,
+        status,
+        ...(typeof s.cmd === "string" ? { cmd: args.length > 0 ? [s.cmd, ...args].join(" ") : s.cmd } : {}),
+        ...(Array.isArray(s.needs) ? { needs: (s.needs as unknown[]).map(String) } : s.needs === null ? { needs: [] } : {}),
+        ...("http_port" in s ? { httpPort: typeof s.http_port === "number" && s.http_port > 0 ? s.http_port : null } : {}),
+      });
+    }
+    return out;
+  }
+  const out: ListedService[] = [];
+  for (const line of trimmed.split("\n")) {
+    const cols = line.split("\t");
+    const name = cols[0]?.trim();
+    if (!name) continue;
+    const listed: ListedService = { name, status: cols[1]?.trim() || null };
+    if (cols.length >= 5) {
+      const needs = cols[2].trim();
+      const port = cols[3].trim();
+      listed.needs = needs === "-" || needs === "" ? [] : needs.split(",");
+      listed.httpPort = port === "-" || port === "" ? null : Number(port);
+      listed.cmd = cols.slice(4).join("\t");
+    }
+    out.push(listed);
+  }
+  return out;
+}
+
+/** Whether a listed service differs from the declared one in `cmd`, `needs` or `httpPort`. A field the listing does not carry is not compared. Pure. */
+export function listedServiceDiffers(listed: ListedService, declared: BoxServiceDeclaration, cmd: string): string | null {
+  if (listed.cmd !== undefined && listed.cmd !== cmd) return `cmd ${JSON.stringify(listed.cmd)} is now ${JSON.stringify(cmd)}`;
+  if (listed.needs !== undefined) {
+    const a = [...listed.needs].sort().join(",");
+    const b = [...declared.needs].sort().join(",");
+    if (a !== b) return `needs [${a}] is now [${b}]`;
+  }
+  if (listed.httpPort !== undefined && (listed.httpPort ?? null) !== declared.httpPort) return `httpPort ${listed.httpPort ?? "none"} is now ${declared.httpPort ?? "none"}`;
+  return null;
+}
+
+/**
+ * The arguments of `sprite-env services create` for a declared service.
+ * `argv` is the command from {@link serviceCommandArgv}: its first word is
+ * `--cmd`, the rest `--args` (comma-separated), as sprite-env and upstream
+ * Sprites take them; neither runs `--cmd` through a shell. A string is split
+ * on whitespace. With a `duration`, sprite-env streams the service's output
+ * for that long and fails the create if the service exits in it, so
+ * `--no-stream` (which returns as soon as the service is defined) is passed
+ * only without one. Pure.
+ */
+export function spriteEnvCreateArgs(s: BoxServiceDeclaration, argv: string | readonly string[]): string[] {
+  const [cmd, ...rest] = typeof argv === "string" ? argv.trim().split(/\s+/) : argv;
+  return [
+    "services",
+    "create",
+    s.name,
+    "--cmd",
+    cmd,
+    ...(rest.length > 0 ? ["--args", rest.join(",")] : []),
+    ...(s.needs.length > 0 ? ["--needs", s.needs.join(",")] : []),
+    ...(s.httpPort !== null ? ["--http-port", String(s.httpPort)] : []),
+    ...(s.duration !== null ? ["--duration", s.duration] : ["--no-stream"]),
+  ];
+}
+
+/** The states a service is in once started: `start` leaves it be. */
+const UP = new Set(["running", "starting"]);
+
+/**
+ * Apply the box block's services through sprite-env, in dependency order:
+ * create a declared service the supervisor doesn't have, delete and create
+ * one whose `cmd`, `needs` or `httpPort` differ from what the list reports,
+ * and leave a converged one running (restart it with `restart`). Then, with
+ * `start`, start each applied service that is not running.
+ */
+async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: AbortSignal): Promise<SpriteApplyServicesResult> {
+  if (!args.box) throw new Error("spriteApplyServices: without an id it applies the box block's services through sprite-env; pass box: true (or an id and services for the Sprites API)");
+  if (args.services) throw new Error("spriteApplyServices: box: true reads the services from the box block, so it takes no services beside it");
+  const declared = await boxServices();
+  const names = new Set(declared.map((s) => s.name));
+  const unknown = (args.only ?? []).filter((n) => !names.has(n));
+  if (unknown.length > 0) {
+    throw new Error(`spriteApplyServices: only names ${unknown.join(", ")}, which the box block does not declare; declared: ${[...names].join(", ") || "none"}`);
+  }
+  const only = args.only ? new Set(args.only) : null;
+  const targets = inStartOrder(declared).filter((s) => (only ? only.has(s.name) : !s.optional));
+  // Expand every command before changing anything, so a missing variable fails the step with nothing half-applied.
+  const commands = new Map(targets.map((s) => [s.name, serviceCommandArgv(s.name, s.cmd)]));
+
+  const bin = findSpriteEnv(args.spriteEnv);
+  if (!bin) throw new Error("spriteApplyServices: no sprite-env on PATH or in /.sprite/bin, and no sprite id to reach the Sprites API with");
+  const spriteEnv = async (argv: string[]): Promise<string> => {
+    try {
+      return (await execFileAsync(bin, argv, { signal, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 })).stdout;
+    } catch (err) {
+      const e = err as { stderr?: string; message?: string };
+      throw new Error(`sprite-env ${argv.slice(0, 3).join(" ")} failed: ${(e.stderr || e.message || String(err)).trim()}`);
+    }
+  };
+  const live = new Map(parseServiceDefinitions(await spriteEnv(["services", "list"])).map((s) => [s.name, s]));
+
+  // A full apply leaves the supervisor with the declared services only: one
+  // the block no longer declares is deleted, before anything is defined, so
+  // the HTTP port or a name it held is free. Dependants go before what they need.
+  const services: { name: string; action: ServiceApplyAction }[] = [];
+  if (!only && args.prune !== false) {
+    const undeclared = new Set([...live.keys()].filter((n) => !names.has(n)));
+    while (undeclared.size > 0) {
+      const needed = new Set([...undeclared].flatMap((n) => live.get(n)?.needs ?? []));
+      const next = [...undeclared].sort().find((n) => !needed.has(n)) ?? [...undeclared].sort()[0];
+      await spriteEnv(["services", "delete", next]);
+      logProgress(`services: deleted ${next}, which the box block does not declare`);
+      services.push({ name: next, action: "deleted" });
+      undeclared.delete(next);
+      live.delete(next);
+    }
+  }
+
+  // The supervisor gives one service the HTTP port and refuses a second holder
+  // (409) while the first still has it. So a service whose listed port is not
+  // the declared one is replaced first, before any service is defined with a
+  // port: when the port moves from one service to another, the old holder has
+  // let go of it by the time the new one asks. One whose declared needs are not
+  // all defined yet can't be created early and waits for its turn below.
+  const released = new Set<string>();
+  for (const s of targets) {
+    const cur = live.get(s.name);
+    if (!cur || cur.httpPort === undefined || cur.httpPort === null || cur.httpPort === s.httpPort) continue;
+    if (!s.needs.every((n) => live.has(n))) continue;
+    const argv = commands.get(s.name)!;
+    const why = listedServiceDiffers(cur, s, argv.join(" "));
+    await spriteEnv(["services", "delete", s.name]);
+    await spriteEnv(spriteEnvCreateArgs(s, argv));
+    logProgress(`services: replaced ${s.name} (${why}) first, to free the HTTP port`);
+    released.add(s.name);
+  }
+
+  for (const s of targets) {
+    if (released.has(s.name)) {
+      services.push({ name: s.name, action: "replaced" });
+      continue;
+    }
+    const argv = commands.get(s.name)!;
+    const cmd = argv.join(" ");
+    const cur = live.get(s.name);
+    if (!cur) {
+      await spriteEnv(spriteEnvCreateArgs(s, argv));
+      logProgress(`services: created ${s.name}`);
+      services.push({ name: s.name, action: "created" });
+      continue;
+    }
+    const why = listedServiceDiffers(cur, s, cmd);
+    if (why) {
+      await spriteEnv(["services", "delete", s.name]);
+      await spriteEnv(spriteEnvCreateArgs(s, argv));
+      logProgress(`services: replaced ${s.name} (${why})`);
+      services.push({ name: s.name, action: "replaced" });
+      continue;
+    }
+    if (args.restart) {
+      await spriteEnv(["services", "restart", s.name]);
+      logProgress(`services: restarted ${s.name}`);
+      services.push({ name: s.name, action: "restarted" });
+      continue;
+    }
+    services.push({ name: s.name, action: "left" });
+  }
+
+  const started: string[] = [];
+  if (args.start) {
+    for (const entry of services) {
+      if (entry.action !== "left" || UP.has(live.get(entry.name)?.status ?? "")) continue;
+      await spriteEnv(["services", "start", entry.name]);
+      logProgress(`services: started ${entry.name}`);
+      entry.action = "started";
+      started.push(entry.name);
+    }
+  }
+  const applied = services.filter((e) => e.action === "created" || e.action === "replaced").map((e) => e.name);
+  const deleted = services.filter((e) => e.action === "deleted").length;
+  logProgress(`services: applied ${applied.length}/${targets.length} through sprite-env, started ${started.length}${deleted > 0 ? `, deleted ${deleted}` : ""}`);
+  return { applied, started, services };
 }

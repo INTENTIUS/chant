@@ -76,6 +76,7 @@ export interface RdsInstanceProps {
   };
 }
 
+/** An RDS database instance with its subnet group, parameter group and security group, defaulting to PostgreSQL. */
 export const RdsInstance = Composite((props: RdsInstanceProps) => {
   const engine = props.engine ?? "postgres";
   const defaults = ENGINE_DEFAULTS.get(engine)!;

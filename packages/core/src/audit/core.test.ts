@@ -128,6 +128,21 @@ describe("auditFiles", () => {
     expect(findings.map((f) => f.file).sort()).toEqual(["a.yml", "b.yml"]);
   });
 
+  test("skips an auditOptIn check unless enabledRules names it (#3190)", async () => {
+    const optIn: PostSynthCheck = {
+      id: "OPT001",
+      description: "opt-in",
+      auditOptIn: true,
+      check: () => [{ checkId: "OPT001", severity: "warning", message: "hit" }],
+    };
+    const input = [{ path: "a.yml", content: "x", lexicon: "github" }];
+    const run = (enabledRules?: ReadonlySet<string>) =>
+      auditFiles(input, { checksProvider: async () => [optIn], enabledRules });
+    expect(await run()).toEqual([]);
+    expect(await run(new Set(["OTHER"]))).toEqual([]);
+    expect((await run(new Set(["OPT001"]))).map((f) => f.checkId)).toEqual(["OPT001"]);
+  });
+
   test("accepts a lexicon name outside the built-in set (open AuditLexicon)", async () => {
     const fake: PostSynthCheck = {
       id: "CUSTOM001",

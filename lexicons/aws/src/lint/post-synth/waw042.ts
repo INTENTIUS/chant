@@ -26,10 +26,31 @@ function statementDeniesInsecureTransport(stmt: Record<string, unknown>): boolea
   return false;
 }
 
-/** Logical ids of every bucket a BucketPolicy's `Bucket` property resolves to. */
-function bucketPolicyTargets(resource: CFResource): Set<string> {
+/** A value as JSON with its object keys sorted, for comparing two values. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, (v as Record<string, unknown>)[k]]))
+      : v,
+  );
+}
+
+/**
+ * Logical ids of every bucket a BucketPolicy's `Bucket` property resolves to:
+ * a bucket it references (`Ref`, `GetAtt`), or a bucket whose `BucketName`
+ * is the same value (`Fn::Sub: "${AppName}-${AWS::Region}"` on both).
+ */
+function bucketPolicyTargets(resource: CFResource, resources: Record<string, CFResource>): Set<string> {
   const props = resource.Properties ?? {};
-  return findResourceRefs(props.Bucket);
+  const targets = findResourceRefs(props.Bucket);
+  if (props.Bucket === undefined) return targets;
+  const policyBucket = canonical(props.Bucket);
+  for (const [logicalId, other] of Object.entries(resources)) {
+    if (other.Type !== "AWS::S3::Bucket") continue;
+    const name = other.Properties?.BucketName;
+    if (name !== undefined && canonical(name) === policyBucket) targets.add(logicalId);
+  }
+  return targets;
 }
 
 export function checkS3TlsOnlyPolicy(ctx: PostSynthContext): PostSynthDiagnostic[] {
@@ -55,7 +76,7 @@ export function checkS3TlsOnlyPolicy(ctx: PostSynthContext): PostSynthDiagnostic
       );
       if (!hasTlsDeny) continue;
 
-      for (const bucketId of bucketPolicyTargets(resource)) {
+      for (const bucketId of bucketPolicyTargets(resource, template.Resources)) {
         bucketsWithTlsPolicy.add(bucketId);
       }
     }

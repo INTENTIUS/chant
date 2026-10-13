@@ -1,0 +1,172 @@
+{
+  "title": "List and finance panels",
+  "uid": "chant-fx-lists",
+  "tags": [
+    "fixture",
+    "lists"
+  ],
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "candlestick",
+      "id": 1,
+      "title": "Price",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "stock_open",
+          "legendFormat": "open"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 20
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mode": "candles+volume",
+        "candleStyle": "ohlcbars",
+        "colorStrategy": "close-close",
+        "fields": {
+          "open": "o",
+          "high": "h",
+          "low": "l",
+          "close": "c",
+          "volume": "v"
+        },
+        "colors": {
+          "up": "blue",
+          "down": "orange",
+          "flat": "gray"
+        },
+        "includeAllFields": true,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "annolist",
+      "id": 2,
+      "title": "Recent annotations",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "onlyFromThisDashboard": true,
+        "onlyInTimeRange": true,
+        "tags": [
+          "deploy",
+          "incident"
+        ],
+        "limit": 25,
+        "showUser": false,
+        "showTime": true,
+        "showTags": true,
+        "navigateToPanel": false,
+        "navigateBefore": "1h",
+        "navigateAfter": "30m"
+      }
+    },
+    {
+      "type": "dashlist",
+      "id": 3,
+      "title": "Dashboards",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "keepTime": true,
+        "includeVars": true,
+        "showStarred": false,
+        "showRecentlyViewed": true,
+        "showSearch": true,
+        "showHeadings": false,
+        "showFolderNames": true,
+        "maxItems": 20,
+        "query": "slo",
+        "tags": [
+          "prod"
+        ]
+      }
+    },
+    {
+      "type": "news",
+      "id": 4,
+      "title": "News",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "feedUrl": "https://grafana.com/blog/index.xml",
+        "showImage": false
+      }
+    },
+    {
+      "type": "datagrid",
+      "id": 5,
+      "title": "Grid",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "up"
+        }
+      ],
+      "options": {
+        "selectedSeries": 0
+      }
+    }
+  ]
+}

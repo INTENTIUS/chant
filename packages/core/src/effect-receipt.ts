@@ -38,7 +38,7 @@
  * `sha256:<hex>` like the build-ledger digests in ./lifecycle/build-ledger.ts).
  */
 
-import { createHash } from "node:crypto";
+import { contentDigest } from "./content-digest";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { isIntrinsic, type Intrinsic } from "./intrinsic";
 
@@ -293,7 +293,7 @@ function encodeCanonical(value: unknown, path: string, seen: Set<object>): strin
 }
 
 function sha256Digest(canonical: string): string {
-  return `sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
+  return contentDigest(canonical);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import {
   hasAnnotation,
   lineCol,
 } from "./argo-ast";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * ARGO001: Production Application must not enable automated prune

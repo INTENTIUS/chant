@@ -1,0 +1,82 @@
+# The shape `otelcol-contrib components` prints at v0.130.0, cut down to a
+# few entries per section. The format is marked unstable upstream; the
+# components parser is pinned to it by src/op/activities/otelcol.test.ts.
+buildinfo:
+    command: otelcol-contrib
+    description: OpenTelemetry Collector Contrib
+    version: 0.130.0
+receivers:
+    - name: otlp
+      module: go.opentelemetry.io/collector/receiver/otlpreceiver v0.130.0
+      stability:
+        logs: Stable
+        metrics: Stable
+        traces: Stable
+    - name: k8s_cluster
+      module: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver v0.130.0
+      stability:
+        logs: Development
+        metrics: Beta
+    - name: prometheus
+      module: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.130.0
+      stability:
+        metrics: Beta
+processors:
+    - name: batch
+      module: go.opentelemetry.io/collector/processor/batchprocessor v0.130.0
+      stability:
+        logs: Beta
+        metrics: Beta
+        traces: Beta
+    - name: memory_limiter
+      module: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.130.0
+      stability:
+        logs: Beta
+        metrics: Beta
+        traces: Beta
+    - name: tail_sampling
+      module: github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor v0.130.0
+      stability:
+        traces: Beta
+exporters:
+    - name: debug
+      module: go.opentelemetry.io/collector/exporter/debugexporter v0.130.0
+      stability:
+        logs: Development
+        metrics: Development
+        traces: Development
+    - name: otlp
+      module: go.opentelemetry.io/collector/exporter/otlpexporter v0.130.0
+      stability:
+        logs: Stable
+        metrics: Stable
+        traces: Stable
+    - name: prometheus
+      module: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter v0.130.0
+      stability:
+        metrics: Beta
+connectors:
+    - name: forward
+      module: go.opentelemetry.io/collector/connector/forwardconnector v0.130.0
+      stability:
+        logs-to-logs: Beta
+        metrics-to-metrics: Beta
+        traces-to-traces: Beta
+    - name: spanmetrics
+      module: github.com/open-telemetry/opentelemetry-collector-contrib/connector/spanmetricsconnector v0.130.0
+      stability:
+        traces-to-metrics: Alpha
+extensions:
+    - name: health_check
+      module: github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.130.0
+      stability:
+        extension: Beta
+    - name: zpages
+      module: go.opentelemetry.io/collector/extension/zpagesextension v0.130.0
+      stability:
+        extension: Beta
+providers:
+    - scheme: env
+      module: go.opentelemetry.io/collector/confmap/provider/envprovider v1.36.0
+    - scheme: file
+      module: go.opentelemetry.io/collector/confmap/provider/fileprovider v1.36.0

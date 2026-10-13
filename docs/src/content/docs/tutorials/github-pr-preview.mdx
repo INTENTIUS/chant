@@ -161,6 +161,7 @@ place across pushes, keyed on a hidden HTML marker in the body:
 - name: Sticky PR comment
   env:
     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    GH_ENTERPRISE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     PR_NUMBER: ${{ github.event.number }}
     REPO: ${{ github.repository }}
     MARKER: <!-- chant-pr-preview -->
@@ -190,6 +191,11 @@ rather than a bare relative path: `gh` resolves a bare path against
 `/api/v3`, which only guesses right for github.com and GitHub Enterprise
 Server. `PrPlanReport`'s own sticky-comment script fixed the identical bug
 for the same reason ([#2305](https://github.com/INTENTIUS/chant/issues/2305)).
+The token is set twice for a similar reason. `gh` sends `GH_TOKEN` only to
+github.com and `ghe.com` hosts and reads `GH_ENTERPRISE_TOKEN` for any other.
+Without the second variable this step reaches GitHub Enterprise Server or
+Forgejo with no credential and gets a 401
+([#2352](https://github.com/INTENTIUS/chant/issues/2352)).
 
 The job needs `pull-requests: write`, granted at job level, not
 workflow-wide. Note the fork boundary: on `pull_request` from a fork, GitHub

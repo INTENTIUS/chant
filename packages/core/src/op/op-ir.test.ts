@@ -112,6 +112,16 @@ describe("op.json IR", () => {
     expect(serializeOpIR(reconstructed)).toBe(text);
   });
 
+  it("carries a step's own timeout, and round-trips it (#2787)", () => {
+    const original: OpConfig = { name: "dispatch", overview: "o", phases: [phase("Build", [shell("./build.sh", { timeout: "45m" }), shell("echo hi")])] };
+    const ir = buildOpIR(original);
+    const steps = ir.phases[0].steps as { profile: string; timeout?: string }[];
+    expect(steps[0]).toMatchObject({ profile: "atMostOnce", timeout: "45m" });
+    expect(steps[1]).not.toHaveProperty("timeout");
+    const text = serializeOpIR(original);
+    expect(serializeOpIR(opConfigFromIR(JSON.parse(text) as OpIR))).toBe(text);
+  });
+
   it("two serializations of the same config are byte-identical (determinism)", () => {
     const config = representativeOp();
     expect(serializeOpIR(config)).toBe(serializeOpIR(config));
@@ -313,5 +323,23 @@ describe("op.json IR", () => {
     const deployStep = roundTripped.phases[1]!.steps[0] as OpIRActivityStep;
     expect(deployStep.args.context).toEqual({ kind: "step-output-ref", step: "build-step" });
     expect("path" in (deployStep.args.context as object)).toBe(false);
+  });
+});
+
+describe("neverOverMcp (chant#3447)", () => {
+  it("survives the IR round trip, and is absent when not declared", () => {
+    const base = { name: "tf-apply", overview: "apply", phases: [] };
+    expect(buildOpIR({ ...base, neverOverMcp: true }).neverOverMcp).toBe(true);
+    expect(buildOpIR(base)).not.toHaveProperty("neverOverMcp");
+    expect(opConfigFromIR(buildOpIR({ ...base, neverOverMcp: true })).neverOverMcp).toBe(true);
+  });
+});
+
+describe("failOn (chant#3675)", () => {
+  it("survives the IR round trip, and is absent when not declared", () => {
+    const base = { name: "prod-watch", overview: "watch", phases: [] };
+    expect(buildOpIR({ ...base, failOn: "drift" }).failOn).toBe("drift");
+    expect(buildOpIR(base)).not.toHaveProperty("failOn");
+    expect(opConfigFromIR(buildOpIR({ ...base, failOn: "drift" })).failOn).toBe("drift");
   });
 });

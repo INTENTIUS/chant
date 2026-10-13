@@ -1,17 +1,20 @@
 import type { LexiconPlugin } from "../../../lexicon";
+import { collectComposites, compositeMatchScore } from "./composites";
 
 /**
  * Search tool definition for MCP
  */
 export const searchTool = {
   name: "search",
-  description: "Search the resource catalog across loaded lexicons by keyword",
+  description:
+    "Search the resource catalog and the composite catalog across loaded lexicons by keyword; a composite comes back with kind 'composite'",
   inputSchema: {
     type: "object" as const,
     properties: {
       query: {
         type: "string",
-        description: "Search query — matches against resource type, class name, and kind",
+        description:
+          "Search query: matches a resource's type, class name and kind, and a composite's name, description and the resource kinds it bundles",
       },
       lexicon: {
         type: "string",
@@ -32,6 +35,20 @@ interface CatalogEntry {
   kind?: string;
 }
 
+/** A composite in search results (#2662): `kind` is always `"composite"`. */
+interface CompositeResult {
+  kind: "composite";
+  name: string;
+  description: string;
+  bundles: string[];
+}
+
+type SearchResult = (CatalogEntry | CompositeResult) & { lexicon: string; score: number };
+
+function sortKey(result: SearchResult): string {
+  return "resourceType" in result ? result.resourceType ?? "" : result.name;
+}
+
 /**
  * Create a search handler with access to loaded plugins
  */
@@ -44,7 +61,7 @@ export function createSearchHandler(
     const limit = (params.limit as number) ?? 20;
 
     const lowerQuery = query.toLowerCase();
-    const results: Array<CatalogEntry & { lexicon: string; score: number }> = [];
+    const results: SearchResult[] = [];
 
     const candidates = lexiconFilter
       ? plugins.filter((p) => p.name === lexiconFilter)
@@ -86,10 +103,35 @@ export function createSearchHandler(
       }
     }
 
-    // Sort: prefix matches first, then alphabetical by resourceType
+    // Composites (#2662), so one query finds both a resource type and the
+    // composite that bundles it. A name or bundled-kind prefix ranks with the
+    // resource prefix matches. The full entry (params included) is the
+    // `composites` tool's answer; search keeps a result short.
+    for (const entry of collectComposites(candidates)) {
+      const score = compositeMatchScore(entry, lowerQuery);
+      if (score === 0) continue;
+      const isPrefix =
+        entry.name.toLowerCase().startsWith(lowerQuery) ||
+        entry.bundles.some((b) => b.toLowerCase().startsWith(lowerQuery));
+      results.push({
+        kind: "composite",
+        name: entry.name,
+        description: entry.description,
+        bundles: entry.bundles,
+        lexicon: entry.lexicon,
+        score: isPrefix ? 1 : 0,
+      });
+    }
+
+    // Sort: prefix matches first; within a tier composites ahead of resource
+    // types, since a handful of composites would otherwise sort behind every
+    // `AWS::...` type the same word prefixes; then alphabetical.
     results.sort((a, b) => {
       if (a.score !== b.score) return b.score - a.score;
-      return (a.resourceType ?? "").localeCompare(b.resourceType ?? "");
+      const aComposite = a.kind === "composite" ? 0 : 1;
+      const bComposite = b.kind === "composite" ? 0 : 1;
+      if (aComposite !== bComposite) return aComposite - bComposite;
+      return sortKey(a).localeCompare(sortKey(b));
     });
 
     const limited = results.slice(0, limit);

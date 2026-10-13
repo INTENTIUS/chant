@@ -1,0 +1,21 @@
+{
+  "name": "prometheus-observe-converge-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon prometheus -o dist/rules.yml && chant build collector --lexicon otel -o dist/collector.yaml",
+    "lint": "chant lint src && chant lint collector",
+    "check": "chant run observability-checks",
+    "rules-loaded": "chant run rules-loaded",
+    "collector-health": "chant run collector-health"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-otel": "*",
+    "@intentius/chant-lexicon-prometheus": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

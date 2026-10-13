@@ -32,6 +32,7 @@ import type {
   ChoudoufuLiveCheckArgs,
   ChoudoufuAdoptArgs,
 } from "./activities/terraform";
+import type { TerraformPinRolloutArgs } from "./activities/pin-rollout";
 
 /** Extra opts every wrapper below accepts alongside its activity's own fields. */
 type StepOpts = { profile?: ActivityStep["profile"]; id?: string };
@@ -183,4 +184,16 @@ export const terraformShow = (
     { root, ...args },
     { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) },
   );
+};
+
+/**
+ * One run of a pin-bump rollout (#3189). `opts` is
+ * {@link TerraformPinRolloutArgs} itself. It names no root: the rollout finds
+ * the roots that call the module. Defaults to the `fastIdempotent` profile: a
+ * repeated run reads the forge again and finds the PR an earlier attempt
+ * opened.
+ */
+export const terraformPinRollout = (opts: WithStepRefs<TerraformPinRolloutArgs> & StepOpts): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown>);
+  return activity("terraformPinRollout", args, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };

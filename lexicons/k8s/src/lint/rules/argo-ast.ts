@@ -6,7 +6,7 @@
  * helpers walk the object-literal first argument so a rule can read a nested
  * property by path without re-implementing the traversal each time.
  */
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 /**
  * Find the object-literal first argument of every `new <Kind>(...)` expression

@@ -26,7 +26,10 @@ permissions:
   contents: read
 
 jobs:
+  # #3573: named for the workflow. It runs on main's tip, where chant.yml's
+  # required `check` also runs, and ci.green judges a phase by check-run name.
   check:
+    name: dogwood-freshness
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

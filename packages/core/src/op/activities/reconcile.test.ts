@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   reconcilePr,
   reconcileSummary,
@@ -19,7 +19,9 @@ import {
   noIssueTokenMessage,
   postOrUpdateGithubIssue,
   ghCredentialEnv,
+  githubShapedForgeFrom,
 } from "./reconcile";
+import { FORGE_TOKEN_ORDER } from "../../pr-forge";
 
 // ── The `gh` stub (chant #2291) ──────────────────────────────────────────────
 //
@@ -53,9 +55,106 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...(await importOriginal<typeof import("node:child_process")>()), exec };
 });
 
+// ── The fake GitHub-shaped forge (chant #3757) ───────────────────────────────
+//
+// `comment` and `issue` mode reach GitHub and Forgejo through the forge client
+// in `pr-forge.ts`, over the global `fetch`. This stands in for one repository
+// on either forge: it holds the pull request's comments and the repository's
+// issues, pages them the way each forge pages (`per_page` on GitHub, `limit`
+// on Forgejo), and applies each POST and PATCH, so a second run reads what the
+// first one wrote rather than a canned reply.
+
+interface ForgeCall {
+  method: string;
+  url: string;
+  authorization?: string;
+  body?: Record<string, unknown>;
+}
+
+interface FakeComment {
+  id: number;
+  pr: number;
+  body: string;
+}
+
+interface FakeIssue {
+  number: number;
+  title: string;
+  body: string;
+  state: "open" | "closed";
+  /** Set on a pull request, which the issues list returns too. */
+  pull_request?: Record<string, unknown> | null;
+}
+
+const forgeCalls: ForgeCall[] = [];
+let forgeState: { comments: FakeComment[]; issues: FakeIssue[]; failWith?: number };
+
+function forgeJson(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+}
+
+async function fakeForgeFetch(url: string, init?: RequestInit): Promise<Response> {
+  const method = init?.method ?? "GET";
+  const headers = (init?.headers ?? {}) as Record<string, string>;
+  const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
+  forgeCalls.push({ method, url, authorization: headers.Authorization, ...(body ? { body } : {}) });
+  if (forgeState.failWith) return forgeJson({ message: "token is required" }, forgeState.failWith);
+
+  const u = new URL(url);
+  const web = u.origin === "https://api.github.com" ? "https://github.com" : u.origin;
+  const m = /\/repos\/([^/]+\/[^/]+)(\/.*)$/.exec(u.pathname);
+  if (!m) return forgeJson({ message: "Not Found" }, 404);
+  const [, repo, rest] = m;
+  const size = Number(u.searchParams.get("per_page") ?? u.searchParams.get("limit") ?? "30");
+  const page = Number(u.searchParams.get("page") ?? "1");
+  const paged = <T>(items: T[]) => items.slice((page - 1) * size, page * size);
+  const commentJson = (c: FakeComment) => ({ ...c, html_url: `${web}/${repo}/issues/${c.pr}#issuecomment-${c.id}` });
+  const issueJson = (i: FakeIssue) => ({ ...i, html_url: `${web}/${repo}/issues/${i.number}` });
+
+  let hit: RegExpExecArray | null;
+  if ((hit = /^\/issues\/(\d+)\/comments$/.exec(rest))) {
+    const pr = Number(hit[1]);
+    if (method === "GET") return forgeJson(paged(forgeState.comments.filter((c) => c.pr === pr)).map(commentJson));
+    const c = { id: 1000 + forgeState.comments.length, pr, body: String(body?.body) };
+    forgeState.comments.push(c);
+    return forgeJson(commentJson(c), 201);
+  }
+  if ((hit = /^\/issues\/comments\/(\d+)$/.exec(rest)) && method === "PATCH") {
+    const c = forgeState.comments.find((x) => x.id === Number(hit![1]));
+    if (!c) return forgeJson({ message: "Not Found" }, 404);
+    c.body = String(body?.body);
+    return forgeJson(commentJson(c));
+  }
+  if (rest === "/issues" && method === "GET") {
+    const state = u.searchParams.get("state") ?? "open";
+    return forgeJson(paged(forgeState.issues.filter((i) => state === "all" || i.state === state)).map(issueJson));
+  }
+  if (rest === "/issues" && method === "POST") {
+    const i: FakeIssue = {
+      number: forgeState.issues.length + 1,
+      title: String(body?.title),
+      body: String(body?.body),
+      state: "open",
+      pull_request: null,
+    };
+    forgeState.issues.push(i);
+    return forgeJson(issueJson(i), 201);
+  }
+  if ((hit = /^\/issues\/(\d+)$/.exec(rest)) && method === "PATCH") {
+    const i = forgeState.issues.find((x) => x.number === Number(hit![1]));
+    if (!i) return forgeJson({ message: "Not Found" }, 404);
+    Object.assign(i, { title: String(body?.title), body: String(body?.body) });
+    return forgeJson(issueJson(i));
+  }
+  return forgeJson({ message: "Not Found" }, 404);
+}
+
 beforeEach(() => {
   ghCalls.length = 0;
   ghReplies = [];
+  forgeCalls.length = 0;
+  forgeState = { comments: [], issues: [] };
+  vi.stubGlobal("fetch", fakeForgeFetch);
 });
 
 const entries = [
@@ -240,10 +339,44 @@ describe("commentTokenFrom (#2291)", () => {
     expect(commentTokenFrom({ GITHUB_TOKEN: "ghs_y" })).toEqual({ value: "ghs_y", source: "GITHUB_TOKEN" });
   });
 
-  test("CHANT_FORGEJO_TOKEN wins over both, for the cross-instance case", () => {
+  test("on Forgejo CHANT_FORGEJO_TOKEN wins, then FORGEJO_TOKEN, then GH_TOKEN, then GITHUB_TOKEN", () => {
+    const base = { FORGEJO_ACTIONS: "true" };
+    const all = { CHANT_FORGEJO_TOKEN: "a", FORGEJO_TOKEN: "b", GH_TOKEN: "c", GITHUB_TOKEN: "d" };
+    expect(commentTokenFrom({ ...base, ...all })?.source).toBe("CHANT_FORGEJO_TOKEN");
+    expect(commentTokenFrom({ ...base, FORGEJO_TOKEN: "b", GH_TOKEN: "c", GITHUB_TOKEN: "d" })?.source).toBe("FORGEJO_TOKEN");
+    expect(commentTokenFrom({ ...base, GH_TOKEN: "c", GITHUB_TOKEN: "d" })?.source).toBe("GH_TOKEN");
+  });
+
+  test("a /api/v1 API base is Forgejo even without FORGEJO_ACTIONS", () => {
     expect(
-      commentTokenFrom({ CHANT_FORGEJO_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source,
+      commentTokenFrom({ GITHUB_API_URL: "https://f.example/api/v1", CHANT_FORGEJO_TOKEN: "a", GH_TOKEN: "b" })?.source,
     ).toBe("CHANT_FORGEJO_TOKEN");
+  });
+
+  test("on GitHub CHANT_GITHUB_TOKEN wins, then GH_TOKEN, then GITHUB_TOKEN (#3807)", () => {
+    const base = { GITHUB_ACTIONS: "true" };
+    expect(commentTokenFrom({ ...base, CHANT_GITHUB_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source).toBe("CHANT_GITHUB_TOKEN");
+    expect(commentTokenFrom({ ...base, GH_TOKEN: "b", GITHUB_TOKEN: "c" })?.source).toBe("GH_TOKEN");
+  });
+
+  test("on GitHub CHANT_FORGEJO_TOKEN and FORGEJO_TOKEN are not read (#3807)", () => {
+    expect(
+      commentTokenFrom({ GITHUB_ACTIONS: "true", CHANT_FORGEJO_TOKEN: "a", FORGEJO_TOKEN: "b", GH_TOKEN: "c" }),
+    ).toEqual({ value: "c", source: "GH_TOKEN" });
+    expect(commentTokenFrom({ GITHUB_ACTIONS: "true", CHANT_FORGEJO_TOKEN: "a" })).toBeUndefined();
+  });
+
+  test("agrees with FORGE_TOKEN_ORDER for each forge", () => {
+    for (const [kind, env] of [
+      ["github", { GITHUB_ACTIONS: "true" }],
+      ["forgejo", { FORGEJO_ACTIONS: "true" }],
+    ] as const) {
+      for (const name of FORGE_TOKEN_ORDER[kind]) {
+        const rest = FORGE_TOKEN_ORDER[kind].slice(FORGE_TOKEN_ORDER[kind].indexOf(name));
+        const vars = Object.fromEntries(rest.map((n) => [n, `v-${n}`]));
+        expect(commentTokenFrom({ ...env, ...vars })?.source).toBe(name);
+      }
+    }
   });
 
   test("no token at all is undefined rather than an empty value", () => {
@@ -278,8 +411,9 @@ describe("ghCredentialEnv (#2333)", () => {
   });
 });
 
-describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () => {
+describe("reconcilePr comment mode posts through the forge client (#2291, #3757)", () => {
   const repo = "acme/infra";
+  const marker = "<!-- chant-reconcile:app -->";
 
   function stubPrEnv(apiUrl: string): void {
     vi.stubEnv("GITHUB_REPOSITORY", repo);
@@ -289,30 +423,24 @@ describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () =
     vi.stubEnv("GH_TOKEN", "forgejo-actions-token");
     vi.stubEnv("GITHUB_TOKEN", "");
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
+    vi.stubEnv("FORGEJO_ACTIONS", "");
+    vi.stubEnv("GITEA_ACTIONS", "");
     // Never the GitLab path: a GitHub/Forgejo run carries no merge request.
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
   }
 
-  test("POSTs a new comment at the Forgejo instance's own /api/v1 base, not a bare path", async () => {
+  test("POSTs a new comment at the Forgejo instance's own /api/v1 base", async () => {
     stubPrEnv("http://forgejo.example/api/v1");
-    ghReplies = [
-      { match: "--paginate", stdout: "" }, // no owned comment yet
-      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
-    ];
     try {
       const result = await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
-      expect(result.commentUrl).toBe("http://forgejo.example/acme/infra/issues/5#issuecomment-1");
+      expect(result.commentUrl).toBe("http://forgejo.example/acme/infra/issues/5#issuecomment-1000");
       expect(result.pullRequest).toBe("acme/infra#5");
-
-      const [list, post] = ghCalls;
-      // The bug #2291 fixed: this used to be the bare path
-      // `repos/acme/infra/issues/5/comments`, which `gh` resolves against
-      // `/api/v3` for any non-github.com host — 404 on Forgejo. It is now the
-      // full URL built from GITHUB_API_URL.
-      expect(list.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues/5/comments");
-      expect(list.cmd).not.toMatch(/gh api 'repos\//);
-      expect(post.cmd).toContain("--method POST");
-      expect(post.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues/5/comments");
+      expect(forgeCalls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        "GET http://forgejo.example/api/v1/repos/acme/infra/issues/5/comments?limit=50&page=1",
+        "POST http://forgejo.example/api/v1/repos/acme/infra/issues/5/comments",
+      ]);
+      expect(forgeCalls[1].body).toEqual({ body: `${marker}\n\nthe plan` });
+      expect(ghCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -320,20 +448,33 @@ describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () =
 
   test("a re-run PATCHes the comment it already owns instead of posting a second", async () => {
     stubPrEnv("http://forgejo.example/api/v1");
-    ghReplies = [
-      { match: "--paginate", stdout: "42\n" }, // the marker search found comment 42
-      { match: "--method PATCH", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-42\n" },
-    ];
+    forgeState.comments.push({ id: 7, pr: 5, body: "lgtm" }, { id: 42, pr: 5, body: `${marker}\n\nold plan` });
     try {
       const result = await reconcilePr({ env: "app", mode: "comment", body: "a newer plan" });
       expect(result.commentUrl).toBe("http://forgejo.example/acme/infra/issues/5#issuecomment-42");
+      expect(forgeCalls.at(-1)).toMatchObject({
+        method: "PATCH",
+        url: "http://forgejo.example/api/v1/repos/acme/infra/issues/comments/42",
+      });
+      expect(forgeCalls.some((c) => c.method === "POST")).toBe(false);
+      expect(forgeState.comments.find((c) => c.id === 42)?.body).toBe(`${marker}\n\na newer plan`);
+      expect(forgeState.comments.find((c) => c.id === 7)?.body).toBe("lgtm");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
-      const patchCall = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
-      const postCall = ghCalls.find((c) => c.cmd.includes("--method POST"));
-      expect(patchCall?.cmd).toContain(
-        "http://forgejo.example/api/v1/repos/acme/infra/issues/comments/42",
-      );
-      expect(postCall).toBeUndefined();
+  test("finds its comment past the first page", async () => {
+    stubPrEnv("");
+    for (let i = 0; i < 100; i++) forgeState.comments.push({ id: i + 1, pr: 5, body: `chatter ${i}` });
+    forgeState.comments.push({ id: 500, pr: 5, body: `${marker}\n\nold` });
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "new" });
+      expect(forgeCalls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        "GET https://api.github.com/repos/acme/infra/issues/5/comments?per_page=100&page=1",
+        "GET https://api.github.com/repos/acme/infra/issues/5/comments?per_page=100&page=2",
+        "PATCH https://api.github.com/repos/acme/infra/issues/comments/500",
+      ]);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -341,71 +482,78 @@ describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () =
 
   test("defaults to github.com's API base when GITHUB_API_URL is unset (plain GitHub run)", async () => {
     stubPrEnv("");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/5#issuecomment-1\n" },
-    ];
     try {
-      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
-      expect(ghCalls[0].cmd).toContain("https://api.github.com/repos/acme/infra/issues/5/comments");
+      const result = await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(forgeCalls[0].url).toBe("https://api.github.com/repos/acme/infra/issues/5/comments?per_page=100&page=1");
+      expect(forgeCalls[0].authorization).toBe("Bearer forgejo-actions-token");
+      expect(result.commentUrl).toBe("https://github.com/acme/infra/issues/5#issuecomment-1000");
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  test("forwards the resolved token to `gh` as GH_TOKEN, CHANT_FORGEJO_TOKEN taking priority", async () => {
+  test("sends the resolved token itself, Forgejo's way, CHANT_FORGEJO_TOKEN taking priority", async () => {
     stubPrEnv("http://forgejo.example/api/v1");
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "cross-instance-token");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
-    ];
     try {
       await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
-      for (const call of ghCalls) expect(call.opts.env?.GH_TOKEN).toBe("cross-instance-token");
+      expect(forgeCalls.length).toBeGreaterThan(0);
+      for (const call of forgeCalls) expect(call.authorization).toBe("token cross-instance-token");
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  // #2333: the full URL #2291 built reached Forgejo, but `gh` scopes
-  // GH_TOKEN to github.com and ghe.com subdomains, so the POST/PATCH arrived
-  // with no Authorization header and a real instance answered 401.
-  test("every comment-mode `gh` call carries GH_ENTERPRISE_TOKEN, which is what a Forgejo host reads (#2333)", async () => {
+  test("on a GitHub run CHANT_FORGEJO_TOKEN is ignored and GH_TOKEN is sent (#3807)", async () => {
+    stubPrEnv("https://api.github.com");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-token-set-on-github");
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(forgeCalls.length).toBeGreaterThan(0);
+      for (const call of forgeCalls) expect(call.authorization).toBe("Bearer forgejo-actions-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("on a GitHub run CHANT_GITHUB_TOKEN outranks GH_TOKEN (#3807)", async () => {
+    stubPrEnv("https://api.github.com");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("CHANT_GITHUB_TOKEN", "other-github-token");
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      for (const call of forgeCalls) expect(call.authorization).toBe("Bearer other-github-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("FORGEJO_ACTIONS marks a Forgejo run whatever its API base looks like", async () => {
+    stubPrEnv("https://code.example/api/forgejo");
+    vi.stubEnv("FORGEJO_ACTIONS", "true");
+    try {
+      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
+      expect(forgeCalls[0].url).toContain("limit=50");
+      expect(forgeCalls[0].authorization).toBe("token forgejo-actions-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a refused write fails the step with the forge's status and the token's source", async () => {
     stubPrEnv("http://forgejo.example/api/v1");
-    vi.stubEnv("CHANT_FORGEJO_TOKEN", "cross-instance-token");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
-    ];
+    forgeState.failWith = 401;
     try {
-      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
-      expect(ghCalls.length).toBeGreaterThan(0);
-      for (const call of ghCalls) {
-        expect(call.opts.env?.GH_ENTERPRISE_TOKEN).toBe("cross-instance-token");
-      }
+      await expect(reconcilePr({ env: "app", mode: "comment", body: "the plan" })).rejects.toThrow(
+        /answered 401.*token is required.*token from GH_TOKEN/s,
+      );
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  test("the PATCH branch carries it too, not only the POST (#2333)", async () => {
-    stubPrEnv("http://forgejo.example/api/v1");
-    vi.stubEnv("CHANT_FORGEJO_TOKEN", "cross-instance-token");
-    ghReplies = [
-      { match: "--paginate", stdout: "4242\n" },
-      { match: "--method PATCH", stdout: "http://forgejo.example/acme/infra/issues/5#issuecomment-1\n" },
-    ];
-    try {
-      await reconcilePr({ env: "app", mode: "comment", body: "the plan" });
-      const patch = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
-      expect(patch?.opts.env?.GH_ENTERPRISE_TOKEN).toBe("cross-instance-token");
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  test("a pull request with no token at all is refused by name, before any `gh` call", async () => {
+  test("a pull request with no token at all is refused by name, before any call", async () => {
     stubPrEnv("http://forgejo.example/api/v1");
     vi.stubEnv("GH_TOKEN", "");
     vi.stubEnv("GITHUB_TOKEN", "");
@@ -414,10 +562,30 @@ describe("reconcilePr comment mode posts a full-URL `gh api` call (#2291)", () =
       await expect(reconcilePr({ env: "app", mode: "comment", body: "plan" })).rejects.toThrow(
         noCommentTokenMessage(repo, 5),
       );
+      expect(forgeCalls).toHaveLength(0);
       expect(ghCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("githubShapedForgeFrom (#3757)", () => {
+  const token = { value: "t", source: "GH_TOKEN" };
+
+  test("github.com and GHES bases get the GitHub client", () => {
+    expect(githubShapedForgeFrom({}, "acme/infra", token).kind).toBe("github");
+    expect(githubShapedForgeFrom({ GITHUB_API_URL: "https://ghe.example/api/v3" }, "acme/infra", token).kind).toBe("github");
+  });
+
+  test("an /api/v1 base, FORGEJO_ACTIONS or GITEA_ACTIONS gets the Forgejo client", () => {
+    expect(githubShapedForgeFrom({ GITHUB_API_URL: "http://forgejo:3000/api/v1/" }, "a/b", token).kind).toBe("forgejo");
+    expect(githubShapedForgeFrom({ FORGEJO_ACTIONS: "true" }, "a/b", token).kind).toBe("forgejo");
+    expect(githubShapedForgeFrom({ GITEA_ACTIONS: "true" }, "a/b", token).kind).toBe("forgejo");
+  });
+
+  test("a Forgejo client is named by its API host", () => {
+    expect(githubShapedForgeFrom({ GITHUB_API_URL: "http://forgejo:3000/api/v1" }, "a/b", token).host).toBe("forgejo:3000");
   });
 });
 
@@ -724,12 +892,12 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
     }
   });
 
-  test("refuses before the shell-out, so nothing runs on the way to failing", async () => {
+  test("refuses before any call, so nothing runs on the way to failing", async () => {
     stubAnyCi();
-    ghReplies = [{ match: "--paginate", stdout: "57\n" }];
     try {
       await expect(reconcilePr({ env: "app", mode: "issue", body: "plan" })).rejects.toThrow();
       expect(ghCalls).toHaveLength(0);
+      expect(forgeCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -759,15 +927,14 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
   for (const blank of ["", "   ", "\t\n"]) {
     test(`a blank marker (${JSON.stringify(blank)}) is no marker, not an identity`, async () => {
       stubAnyCi();
-      ghReplies = [
-        { match: "--paginate", stdout: "42\n" }, // a human's issue, first in the list
-        { match: "--method PATCH", stdout: "https://github.com/acme/infra/issues/42\n" },
-      ];
+      // A human's issue, first in the list: what `startswith("")` would match.
+      forgeState.issues.push({ number: 42, title: "mine", body: "a human's issue", state: "open" });
       try {
         await expect(
           reconcilePr({ env: "app", marker: blank, mode: "issue", body: "plan" }),
         ).rejects.toThrow(noIssueIdentityMessage("app"));
-        expect(ghCalls).toHaveLength(0);
+        expect(forgeCalls).toHaveLength(0);
+        expect(forgeState.issues[0].body).toBe("a human's issue");
       } finally {
         vi.unstubAllEnvs();
       }
@@ -776,13 +943,11 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
 
   test("a blank marker alongside an op falls back to the op's marker, not to matching everything", async () => {
     stubAnyCi();
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
-    ];
+    forgeState.issues.push({ number: 1, title: "mine", body: "a human's issue", state: "open" });
     try {
       await reconcilePr({ env: "app", op: "nightly", marker: "  ", mode: "issue", body: "plan" });
-      expect(ghCalls[0].cmd).toContain('startswith("<!-- chant-reconcile-issue:nightly/app -->")');
+      expect(forgeState.issues[0].body).toBe("a human's issue");
+      expect(forgeState.issues[1].body).toBe("<!-- chant-reconcile-issue:nightly/app -->\n\nplan");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -795,6 +960,7 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
         reconcilePr({ env: "app", op: "   ", mode: "issue", body: "plan" }),
       ).rejects.toThrow(noIssueIdentityMessage("app"));
       expect(ghCalls).toHaveLength(0);
+      expect(forgeCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -807,27 +973,20 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
     vi.stubEnv("GITHUB_API_URL", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
     vi.stubEnv("GH_TOKEN", "ghs-x");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/pull/7#issuecomment-1\n" },
-    ];
+    forgeState.comments.push({ id: 1, pr: 7, body: "lgtm" });
     try {
       await reconcilePr({ env: "app", marker: "", mode: "comment", body: "plan" });
-      expect(ghCalls[0].cmd).toContain('startswith("<!-- chant-reconcile:app -->")');
-      expect(ghCalls[0].cmd).not.toContain('startswith("")');
+      expect(forgeState.comments[0].body).toBe("lgtm");
+      expect(forgeState.comments[1].body).toBe("<!-- chant-reconcile:app -->\n\nplan");
     } finally {
       vi.unstubAllEnvs();
     }
   });
   test("an explicit marker satisfies the requirement without an op", async () => {
     stubAnyCi();
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
-    ];
     try {
       await reconcilePr({ env: "app", marker: "<!-- mine -->", mode: "issue", body: "plan" });
-      expect(ghCalls[1].cmd).toContain("<!-- mine -->\n\nplan");
+      expect(forgeState.issues[0].body).toBe("<!-- mine -->\n\nplan");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -851,13 +1010,9 @@ describe("reconcilePr issue mode refuses a step with no Op identity (#2319)", ()
     vi.stubEnv("GITHUB_API_URL", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
     vi.stubEnv("GH_TOKEN", "ghs-x");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/pull/7#issuecomment-1\n" },
-    ];
     try {
       const result = await reconcilePr({ env: "app", mode: "comment", body: "plan" });
-      expect(result.commentUrl).toContain("issuecomment-1");
+      expect(result.commentUrl).toBe("https://github.com/acme/infra/issues/7#issuecomment-1000");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -891,6 +1046,7 @@ describe("suppliedMarker rejects what the search filter cannot carry (#2319)", (
         reconcilePr({ env: "app", marker: '<!-- ") | not -->', mode: "issue", body: "plan" }),
       ).rejects.toThrow(/cannot use/);
       expect(ghCalls).toHaveLength(0);
+      expect(forgeCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1069,16 +1225,19 @@ describe("reconcilePr issue mode on GitLab opens/updates one issue (#2292)", () 
 
 // ── The GitHub/GHES/Forgejo sticky issue (#2297) ────────────────────────────
 
-describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue (#2297)", () => {
+describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue (#2297, #3757)", () => {
   const repo = "acme/infra";
+  const marker = "<!-- chant-reconcile-issue:nightly/app -->";
 
   function stubGithubIssueEnv(apiUrl: string): void {
     vi.stubEnv("GITHUB_REPOSITORY", repo);
     vi.stubEnv("GITHUB_API_URL", apiUrl);
-    // What a GitHub Actions or Forgejo Actions job sets from `github.token`,
-    // and what the issue path now actually forwards (#2320).
+    // What a GitHub Actions or Forgejo Actions job sets from `github.token`.
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
     vi.stubEnv("GH_TOKEN", "ghs-ambient");
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("FORGEJO_ACTIONS", "");
+    vi.stubEnv("GITEA_ACTIONS", "");
     // Never the GitLab path or the comment/PR path.
     vi.stubEnv("CI_PROJECT_ID", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
@@ -1086,42 +1245,38 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
     vi.stubEnv("GITHUB_EVENT_PATH", "");
   }
 
-  test("POSTs a new issue carrying the marker as the body's first line, at a full URL", async () => {
+  test("POSTs a new issue carrying the marker as the body's first line", async () => {
     stubGithubIssueEnv("http://forgejo.example/api/v1");
-    ghReplies = [
-      { match: "--paginate", stdout: "" }, // no owned issue yet
-      { match: "--method POST", stdout: "http://forgejo.example/acme/infra/issues/9\n" },
-    ];
     try {
       const result = await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "the plan" });
-      expect(result.issueUrl).toBe("http://forgejo.example/acme/infra/issues/9");
-
-      const [list, post] = ghCalls;
-      expect(list.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues?state=open");
-      expect(list.cmd).toContain("--paginate");
-      expect(post.cmd).toContain("--method POST");
-      expect(post.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues");
-      expect(post.cmd).toContain(`title=Reconcile app`);
-      expect(post.cmd).toContain("<!-- chant-reconcile-issue:nightly/app -->\n\nthe plan");
+      expect(result.issueUrl).toBe("http://forgejo.example/acme/infra/issues/1");
+      expect(forgeCalls.map((c) => `${c.method} ${c.url}`)).toEqual([
+        "GET http://forgejo.example/api/v1/repos/acme/infra/issues?state=open&limit=50&page=1",
+        "POST http://forgejo.example/api/v1/repos/acme/infra/issues",
+      ]);
+      expect(forgeCalls[1].body).toEqual({ title: "Reconcile app: 0 change(s) from live", body: `${marker}\n\nthe plan` });
+      expect(ghCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  test("a re-run PATCHes the issue it already owns instead of opening a second one", async () => {
+  test("a re-run PATCHes the issue it already owns, title and body, instead of opening a second", async () => {
     stubGithubIssueEnv("http://forgejo.example/api/v1");
-    ghReplies = [
-      { match: "--paginate", stdout: "57\n" }, // the marker search found issue 57
-      { match: "--method PATCH", stdout: "http://forgejo.example/acme/infra/issues/57\n" },
-    ];
+    forgeState.issues.push(
+      { number: 1, title: "a human's issue", body: "unrelated", state: "open", pull_request: null },
+      { number: 2, title: "old", body: `${marker}\n\nold plan`, state: "open", pull_request: null },
+    );
     try {
-      const result = await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "a newer plan" });
-      expect(result.issueUrl).toBe("http://forgejo.example/acme/infra/issues/57");
-
-      const patchCall = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
-      const postCall = ghCalls.find((c) => c.cmd.includes("--method POST"));
-      expect(patchCall?.cmd).toContain("http://forgejo.example/api/v1/repos/acme/infra/issues/57");
-      expect(postCall).toBeUndefined();
+      const result = await reconcilePr({ env: "app", op: "nightly", mode: "issue", title: "Drift: 3", body: "a newer plan" });
+      expect(result.issueUrl).toBe("http://forgejo.example/acme/infra/issues/2");
+      expect(forgeCalls.at(-1)).toMatchObject({
+        method: "PATCH",
+        url: "http://forgejo.example/api/v1/repos/acme/infra/issues/2",
+        body: { title: "Drift: 3", body: `${marker}\n\na newer plan` },
+      });
+      expect(forgeCalls.some((c) => c.method === "POST")).toBe(false);
+      expect(forgeState.issues[0].body).toBe("unrelated");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1129,29 +1284,16 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
 
   test("searches only OPEN issues, and never mistakes a pull request for one it owns", async () => {
     stubGithubIssueEnv("");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
-    ];
+    forgeState.issues.push(
+      { number: 1, title: "closed by hand", body: `${marker}\n\nfixed`, state: "closed", pull_request: null },
+      { number: 2, title: "a PR quoting it", body: `${marker}\n\nquoted`, state: "open", pull_request: { url: "x" } },
+    );
     try {
-      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
-      const [list] = ghCalls;
-      expect(list.cmd).toContain("state=open");
-      expect(list.cmd).toContain(".pull_request == null");
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  test("defaults to github.com's API base when GITHUB_API_URL is unset", async () => {
-    stubGithubIssueEnv("");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
-    ];
-    try {
-      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
-      expect(ghCalls[0].cmd).toContain("https://api.github.com/repos/acme/infra/issues?state=open");
+      const result = await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
+      expect(forgeCalls[0].url).toBe("https://api.github.com/repos/acme/infra/issues?state=open&per_page=100&page=1");
+      expect(result.issueUrl).toBe("https://github.com/acme/infra/issues/3");
+      expect(forgeCalls.some((c) => c.method === "PATCH")).toBe(false);
+      expect(forgeState.issues[0].state).toBe("closed");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1170,7 +1312,8 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
       expect(result.issueUrl).toBe("https://github.com/acme/infra/issues/3");
       expect(ghCalls).toHaveLength(1);
       expect(ghCalls[0].cmd).toContain("gh issue create");
-      expect(ghCalls[0].cmd).toContain("<!-- chant-reconcile-issue:nightly/app -->\n\nplan");
+      expect(ghCalls[0].cmd).toContain(`${marker}\n\nplan`);
+      expect(forgeCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1190,6 +1333,7 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
     try {
       const result = await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
       expect(result.issueUrl).toBe("https://gitlab.com/api/v4/projects/42/issues/5");
+      expect(calls.every((c) => c.url.startsWith("https://gitlab.com/api/v4/"))).toBe(true);
       expect(ghCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
@@ -1201,104 +1345,40 @@ describe("reconcilePr issue mode on GitHub/GHES/Forgejo opens/updates one issue 
 // ── The two-Op proof #2319 asked for ────────────────────────────────────────
 
 describe("two Ops over one env keep two issues, end to end (#2319)", () => {
-  // The stub answers by substring, so it cannot evaluate a jq predicate. This
-  // does it instead, and does it the honest way: both halves are read back out
-  // of the real `gh` commands rather than restated, so the search and the
-  // write are proved to agree rather than assumed to.
-
-  /** The marker a `gh api … --paginate` search is filtering on. */
-  function markerOf(cmd: string): string {
-    const m = /startswith\("(.*?)"\)/.exec(cmd);
-    if (!m) throw new Error(`not a marker search: ${cmd}`);
-    return m[1];
-  }
-
-  /** The body a `-f 'body=…'` write is sending. */
-  function bodyOf(cmd: string): string {
-    const m = /-f 'body=([\s\S]*?)' --jq/.exec(cmd);
-    if (!m) throw new Error(`not a body write: ${cmd}`);
-    return m[1];
-  }
-
-  test("run B does not find run A's issue, and opens its own", async () => {
+  // The fake forge holds what each run wrote, so run B searches the issue run
+  // A actually opened rather than a reply restated for the test.
+  function stubRepo(): void {
     vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
     vi.stubEnv("GITHUB_API_URL", "");
     vi.stubEnv("CI_PROJECT_ID", "");
     vi.stubEnv("CI_MERGE_REQUEST_IID", "");
     vi.stubEnv("GITHUB_REF", "");
     vi.stubEnv("GITHUB_EVENT_PATH", "");
-    // What the issue path now forwards to `gh` (#2320).
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
     vi.stubEnv("GH_TOKEN", "ghs-ambient");
+  }
+
+  test("run B does not find run A's issue and opens its own; A's next run edits A's", async () => {
+    stubRepo();
     try {
-      // ── Run A: the stock drift watch over root "app". Nothing owned yet.
-      ghReplies = [
-        { match: "--paginate", stdout: "" },
-        { match: "--method POST", stdout: "https://github.com/acme/infra/issues/1\n" },
-      ];
+      // Run A: the stock drift watch over root "app". Nothing owned yet.
       const a = await reconcilePr({ env: "app", op: "app-drift", mode: "issue", body: "finding from A" });
       expect(a.issueUrl).toBe("https://github.com/acme/infra/issues/1");
-      const aSearch = ghCalls.find((c) => c.cmd.includes("--paginate"))!.cmd;
-      // What the repository now holds as issue #1.
-      const aBody = bodyOf(ghCalls.find((c) => c.cmd.includes("--method POST"))!.cmd);
-      expect(aBody).toContain("finding from A");
 
-      // ── Run B: the `live: true` watch over the same root. Same `env`, the
-      // pairing #2319 reports. The repository already holds A's issue.
-      ghCalls.length = 0;
-      ghReplies = [
-        { match: "--paginate", stdout: "" }, // justified two assertions down
-        { match: "--method POST", stdout: "https://github.com/acme/infra/issues/2\n" },
-      ];
-      const b = await reconcilePr({
-        env: "app",
-        op: "app-drift-live",
-        mode: "issue",
-        body: "finding from B",
-      });
-      const bSearch = ghCalls.find((c) => c.cmd.includes("--paginate"))!.cmd;
-
-      // The forge's answer to B's search, computed rather than stubbed: B's
-      // own `startswith` predicate, run against the body A actually wrote.
-      // Before #2319 this was true, and B went on to PATCH A's issue.
-      expect(aBody.startsWith(markerOf(bSearch))).toBe(false);
-
-      // So "not found" is the right stub, and B opens its own issue.
-      expect(ghCalls.some((c) => c.cmd.includes("--method PATCH"))).toBe(false);
+      // Run B: the `live: true` watch over the same root. Same `env`, the
+      // pairing #2319 reports. Before #2319 B's marker matched A's issue and
+      // B rewrote it.
+      const b = await reconcilePr({ env: "app", op: "app-drift-live", mode: "issue", body: "finding from B" });
       expect(b.issueUrl).toBe("https://github.com/acme/infra/issues/2");
-      const bBody = bodyOf(ghCalls.find((c) => c.cmd.includes("--method POST"))!.cmd);
-      expect(bBody).toContain("finding from B");
-      expect(bBody).not.toContain("finding from A");
+      expect(forgeState.issues[0].body).toContain("finding from A");
+      expect(forgeState.issues[0].body).not.toContain("finding from B");
 
-      // The converse, so this is stickiness preserved and not just two
-      // strangers: A's own search still matches the issue A wrote.
-      expect(aBody.startsWith(markerOf(aSearch))).toBe(true);
-      expect(markerOf(aSearch)).not.toBe(markerOf(bSearch));
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  test("A's second run still edits A's issue rather than opening another", async () => {
-    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
-    vi.stubEnv("GITHUB_API_URL", "");
-    vi.stubEnv("CI_PROJECT_ID", "");
-    vi.stubEnv("CI_MERGE_REQUEST_IID", "");
-    vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
-    vi.stubEnv("GH_TOKEN", "ghs-ambient");
-    ghReplies = [
-      { match: "--paginate", stdout: "1\n" }, // A's marker found A's issue
-      { match: "--method PATCH", stdout: "https://github.com/acme/infra/issues/1\n" },
-    ];
-    try {
-      const a2 = await reconcilePr({
-        env: "app",
-        op: "app-drift",
-        mode: "issue",
-        body: "finding from A, later",
-      });
+      // A again: stickiness preserved, not just two strangers.
+      const a2 = await reconcilePr({ env: "app", op: "app-drift", mode: "issue", body: "finding from A, later" });
       expect(a2.issueUrl).toBe("https://github.com/acme/infra/issues/1");
-      expect(ghCalls.some((c) => c.cmd.includes("--method POST"))).toBe(false);
+      expect(forgeState.issues).toHaveLength(2);
+      expect(forgeState.issues[0].body).toContain("finding from A, later");
+      expect(forgeState.issues[1].body).toContain("finding from B");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1320,57 +1400,15 @@ describe("reconcilePr issue mode sends the token it resolved (#2320)", () => {
   // The case `noCommentTokenMessage` was written for, on the mode that never
   // sent it: a run posting to a Forgejo instance other than the one the job
   // executes on, where the job's own `github.token` stops at its own host.
-  test("CHANT_FORGEJO_TOKEN reaches gh as GH_TOKEN, outranking the ambient one", async () => {
+  test("CHANT_FORGEJO_TOKEN is the one sent, on every call, outranking the ambient one", async () => {
     stubForgejoIssueEnv();
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
     vi.stubEnv("GH_TOKEN", "ghs-this-instance-only");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://other.forgejo.example/acme/infra/issues/1\n" },
-    ];
+    forgeState.issues.push({ number: 1, title: "t", body: "<!-- chant-reconcile-issue:nightly/app -->\n\nold", state: "open" });
     try {
       await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
-      expect(ghCalls).toHaveLength(2);
-      for (const call of ghCalls) {
-        expect(call.opts.env?.GH_TOKEN).toBe("forgejo-cross-instance");
-      }
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  test("the PATCH branch forwards it too, not only the search and the POST", async () => {
-    stubForgejoIssueEnv();
-    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
-    vi.stubEnv("GH_TOKEN", "");
-    ghReplies = [
-      { match: "--paginate", stdout: "57\n" },
-      { match: "--method PATCH", stdout: "https://other.forgejo.example/acme/infra/issues/57\n" },
-    ];
-    try {
-      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
-      const patch = ghCalls.find((c) => c.cmd.includes("--method PATCH"));
-      expect(patch?.opts.env?.GH_TOKEN).toBe("forgejo-cross-instance");
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  // #2333: the same credential hole comment mode had. Issue mode's writes
-  // were already refused by the forgejo generator for exactly this reason.
-  test("every issue-mode `gh` call carries GH_ENTERPRISE_TOKEN as well (#2333)", async () => {
-    stubForgejoIssueEnv();
-    vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://other.forgejo.example/acme/infra/issues/1\n" },
-    ];
-    try {
-      await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
-      expect(ghCalls).toHaveLength(2);
-      for (const call of ghCalls) {
-        expect(call.opts.env?.GH_ENTERPRISE_TOKEN).toBe("forgejo-cross-instance");
-      }
+      expect(forgeCalls.map((c) => c.method)).toEqual(["GET", "PATCH"]);
+      for (const call of forgeCalls) expect(call.authorization).toBe("token forgejo-cross-instance");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1381,26 +1419,22 @@ describe("reconcilePr issue mode sends the token it resolved (#2320)", () => {
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "");
     vi.stubEnv("GH_TOKEN", "");
     vi.stubEnv("GITHUB_TOKEN", "ghs-workflow");
-    ghReplies = [
-      { match: "--paginate", stdout: "" },
-      { match: "--method POST", stdout: "https://other.forgejo.example/acme/infra/issues/1\n" },
-    ];
     try {
       await reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" });
-      expect(ghCalls[0].opts.env?.GH_TOKEN).toBe("ghs-workflow");
+      expect(forgeCalls[0].authorization).toBe("token ghs-workflow");
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  test("no token at all is chant's named refusal, not gh's opaque one", async () => {
+  test("no token at all is chant's named refusal, before any call", async () => {
     stubForgejoIssueEnv();
     for (const k of ["CHANT_FORGEJO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) vi.stubEnv(k, "");
     try {
       await expect(
         reconcilePr({ env: "app", op: "nightly", mode: "issue", body: "plan" }),
       ).rejects.toThrow(/mode "issue".*acme\/infra.*CHANT_FORGEJO_TOKEN/s);
-      // Refused before the shell-out, so gh is never asked to guess.
+      expect(forgeCalls).toHaveLength(0);
       expect(ghCalls).toHaveLength(0);
     } finally {
       vi.unstubAllEnvs();
@@ -1491,5 +1525,35 @@ describe("postOrUpdateGithubIssue directly (#2297)", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("reconcilePr pull-request mode tells gh the forge's host (#3780)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("on GitHub Enterprise Server, gh pr create runs with GH_HOST and the enterprise token", async () => {
+    vi.stubEnv("GITHUB_SERVER_URL", "https://ghe.acme.internal");
+    vi.stubEnv("GH_TOKEN", "job-token");
+    vi.stubEnv("GH_HOST", "");
+    vi.stubEnv("GH_ENTERPRISE_TOKEN", "");
+    vi.stubEnv("GITHUB_ENTERPRISE_TOKEN", "");
+    ghReplies = [{ match: "gh pr create", stdout: "https://ghe.acme.internal/acme/infra/pull/9\n" }];
+    const result = await reconcilePr({ env: "prod", entries, mode: "pull-request" });
+    expect(result.prUrl).toBe("https://ghe.acme.internal/acme/infra/pull/9");
+    const create = ghCalls.find((c) => c.cmd.startsWith("gh pr create"))!;
+    expect(create.opts.env?.GH_HOST).toBe("ghe.acme.internal");
+    expect(create.opts.env?.GH_ENTERPRISE_TOKEN).toBe("job-token");
+    // git keeps the process environment.
+    expect(ghCalls.find((c) => c.cmd.startsWith("git push"))!.opts.env).toBeUndefined();
+  });
+
+  test("on github.com, gh pr create gets no GH_HOST", async () => {
+    vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
+    vi.stubEnv("GH_HOST", "");
+    await reconcilePr({ env: "prod", entries, mode: "pull-request" });
+    const create = ghCalls.find((c) => c.cmd.startsWith("gh pr create"))!;
+    expect(create.opts.env?.GH_HOST ?? "").toBe("");
   });
 });

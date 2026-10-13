@@ -1,0 +1,81 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.15.8",
+  "resource_changes": [
+    {
+      "address": "terraform_data.a",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "a",
+      "change": {
+        "actions": [
+          "forget"
+        ],
+        "before": {
+          "id": "88357122-d8ac-ec31-eaae-2e2b56b6707a",
+          "input": "x",
+          "output": "x",
+          "triggers_replace": null
+        },
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": false
+      },
+      "action_reason": "delete_because_no_resource_config"
+    },
+    {
+      "address": "terraform_data.b",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "b",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "ignored",
+          "input": null,
+          "output": null,
+          "triggers_replace": null
+        },
+        "after": {
+          "id": "ignored",
+          "input": "y",
+          "triggers_replace": null
+        },
+        "after_unknown": {
+          "output": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "importing": {
+          "id": "ignored"
+        }
+      }
+    },
+    {
+      "address": "terraform_data.c",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "c",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "input": "z",
+          "triggers_replace": null
+        },
+        "after_unknown": {
+          "id": true,
+          "output": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "errored": false
+}

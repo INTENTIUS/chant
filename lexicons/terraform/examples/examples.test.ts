@@ -457,7 +457,7 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
       // gated-apply script (#2243) rather than a bare line — so it is matched
       // on the invocation it carries rather than on its first five characters.
       expect(steps.slice(0, 3).map((step) => step.uses ?? step.run?.slice(0, 5))).toEqual([
-        "actions/checkout@v4",
+        "actions/checkout@v7",
         AWS_CREDENTIALS_ACTION,
         "curl ",
       ]);
@@ -566,9 +566,9 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
     expect(notice, "the push workflow carries the notice job").toBeDefined();
     expect(notice.needs).toBe("app-apply");
     expect(notice.if).toBe("needs.app-apply.outputs.gated == 'true'");
-    // It needs `gh`, which a hosted runner image carries and `node:22-slim`
-    // does not, so it runs outside the Op's container.
-    expect(notice.container).toBeUndefined();
+    // It posts through pr-forge under node, so it runs in the Op's own image
+    // (#3773) and checks nothing out.
+    expect(notice.container).toBe("node:22");
     expect(notice["runs-on"]).toBe("ubuntu-latest");
     expect(parsed.jobs["app-apply-gate-notice"].steps).toHaveLength(1);
   });
@@ -591,22 +591,22 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
   it("finds the merged pull request from the pushed commit, and opens an issue when there is none", async () => {
     const { apply } = await planOnPrWorkflows();
     const script = (parsePush(apply)).jobs["app-apply-gate-notice"].steps[0].run ?? "";
-    // The commit's own associated-pull-request endpoint, not a search: a push
-    // event carries no pull request, and the merge commit's is exact.
-    expect(script).toContain('gh api "$api_base/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"');
-    // The `comment` mode's marker recipe (#2231): find by marker, PATCH when
-    // it is there, POST when it is not, so re-merges edit one comment.
-    expect(script).toContain('marker="<!-- chant-gate:$CHANT_OP -->"');
-    expect(script).toContain("startswith");
-    expect(script).toContain("--method PATCH");
-    expect(script).toContain("--method POST");
-    // No pull request, so the finding goes where a finding without one goes.
-    expect(script).toContain("gh issue create");
+    // pr-forge's commit-to-pull-request lookup (#3773), which is the
+    // commit's own associated-pull-request endpoint on GitHub, not a search.
+    expect(script).toContain('from "@intentius/chant/pr-forge"');
+    expect(script).toContain("forge.pullRequestFor(target.sha)");
+    // The `comment` mode's marker recipe (#2231): one comment per pull
+    // request, found again by its marker and edited, so re-merges do not stack.
+    expect(script).toContain('const marker = "<!-- chant-gate:" + op + " -->";');
+    expect(script).toContain("forge.upsertNote(pr, marker, body)");
+    // No pull request, so the finding goes where a finding without one goes:
+    // a tracking issue on the same marker.
+    expect(script).toContain("forge.upsertIssue(marker,");
     // The body carries the exact command that clears the gate, which the
     // apply job handed over as an output rather than the notice reassembling
     // it from the op and gate names.
-    expect(script).toContain("%s --approver <you>");
-    expect(script).toContain('"$CHANT_APPROVE"');
+    expect(script).toContain('approve + " --approver <you>"');
+    expect(script).toContain("CHANT_APPROVE: approve");
   });
 
   // ── The forge-native gate beside chant's own (#2257) ────────────────────

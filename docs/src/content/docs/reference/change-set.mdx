@@ -1,0 +1,186 @@
+---
+title: Change-Set Document
+description: One typed document for what a run's planners will change, with a summary and the value a gate binds.
+diataxis: reference
+---
+
+A run that plans several members gets one change set ([#3181](https://github.com/INTENTIUS/chant/issues/3181)). Each planner's output becomes the same typed document. That covers chant's `lifecycle plan` and the `terraform`, `tofu` and `choudoufu` plans, along with a warden's reconcile plan. It also covers SQL plans, which are a product's versioned migrations and the sql lexicon's migration Ops. A reader asks one question of all of them, and the run's gate approves the document as a whole.
+
+The document is part of the [workspace read contract](/chant/reference/workspace-read-contract/), version 1. Its schema ships in `@intentius/chant` at `src/workspace/change-set.schema.json`, exported as `@intentius/chant/workspace/change-set.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json`. Within the version, fields are only added.
+
+## The document
+
+| Field | Holds |
+|---|---|
+| `$schema` | the schema's `$id` |
+| `contract` | `1` |
+| `chant` | the chant that composed it, when known |
+| `digest` | what a gate over the whole run binds, described [below](#the-digest) |
+| `members` | one per member, sorted by name |
+| `entries` | one per resource change, sorted by member, address, deposed key and action |
+| `sideEffects` | the Terraform actions an apply runs, `{ member, address, type, trigger, event }`; absent when none |
+| `summary` | counts and the named deletes and replacements |
+
+### Members
+
+| Field | Holds |
+|---|---|
+| `member` | the workspace member, or the root a choudoufu set plan names |
+| `lexicon` | the lexicon its entries belong to |
+| `planner` | `terraform`, `tofu`, `choudoufu`, `chant`, `warden` or `sql` |
+| `scope` | the estate, environment or org it plans into |
+| `status` | `planned`, or `failed` with `error` |
+| `planDigest` | what a gate on this member alone binds, or `null` when it failed |
+| `nativeDigest` | the planner's own hash of the same plan, such as choudoufu's per-root value |
+| `holes` | what the planner could not read, each `{ address, type, reason }` |
+| `provisional` | `true` for a preview planned before what it reads applied, such as a Terragrunt dependent planned on `mock_outputs`; absent otherwise |
+
+A member with holes has an incomplete plan. Its entries say nothing about the addresses listed there.
+
+A provisional member is left out of the document's digest, so approving the document never approves it. A wave's set digest refuses it, and the grouped summary never puts it in a group with real plans.
+
+### Entries
+
+| Field | Holds |
+|---|---|
+| `member`, `lexicon`, `planner` | as on the member |
+| `address` | the planner's address. With `deposed`, it is unique within the member |
+| `type` | the resource type |
+| `name`, `index`, `module` | the parts of a terraform address, so a reader need not parse it |
+| `deposed` | a deposed object's key |
+| `id` | the provider's id, when the planner reports one |
+| `action` | `create`, `update`, `replace`, `delete`, `read`, `no-op` or `forget` |
+| `importing` | `true` when an `import` block also brings the object into state; `action` is what else the plan does to it |
+| `disruption` | on `update`, `replace` and `delete`: `in-place`, `rolling`, `replace`, `destroy` or `unknown` |
+| `region`, `scope` | where the change lands |
+| `attributes` | the top-level attributes the change writes |
+
+Each attribute is `{ path, before, after }`. `unknown: true` replaces `after` when the value is known only after apply. `sensitive: true` replaces both values when the planner marked either side sensitive. `forcesReplacement: true` marks the attributes that force a replace. Redaction follows the planner's marks. A value the planner leaves unmarked is carried as the plan JSON carries it.
+
+### Summary
+
+| Field | Holds |
+|---|---|
+| `members`, `entries` | the counts |
+| `actions` | every action with its count, zero included |
+| `types` | per resource type, the count of each action it has |
+| `byMember` | per member, the count of each action it has |
+| `deletes`, `replacements` | every delete and every replace, each `{ member, address, type, deposed, disruption }` |
+| `failed` | the members that failed to plan |
+| `holes` | the number of holes across members |
+
+A reviewer reads a large document through [`chant change-set summary`](/chant/cli/change-set/), which groups the members that take the same change and names every destroy.
+
+## The digest
+
+Each member carries the value a gate on that member alone binds ([#2300](https://github.com/INTENTIUS/chant/issues/2300)).
+
+| Planner | Member `planDigest` |
+|---|---|
+| `terraform`, `tofu`, `choudoufu` | `terraformPlanDigest` over the `show -json` plan, as `TerraformApplyOp` binds |
+| `chant` | `computePlanDigest("lifecycle-plan", plan)` over the `lifecycle plan --json` document |
+| `warden` | `computePlanDigest("reconcile-plan", …)` over each change set's org and entries, sorted |
+| `sql`, versioned plan | the product's own gate digest when the plan carries `digest` (SQL Yodeler's), else `computePlanDigest("sql-versioned-plan", …)` over the dialect, environment and pending steps |
+| `sql`, migration Op | the Op's plan step `planDigest`, taken before the verification (not the swap or switch gate's value); a swapped or finished Op gets `computePlanDigest("sql-op-plan", …)` over its state |
+
+The set digest is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member that is not provisional, sorted by member. `changeSetDigest(members)` computes it. A wave of [gated waves](https://github.com/INTENTIUS/chant/issues/3049) is a subset of members, and the wave's gate value is the set digest over that subset.
+
+The document's `digest` is `computePlanDigest("change-set-document", { set, members, entries, sideEffects })`. It covers the set digest and the entries and side effects. For each member it also covers the `member` name, `status` and `holes`. Provisional members and their entries are left out. `changeSetDocumentDigest(doc)` computes it. Members are sorted by name, entries and side effects as the document sorts them, so order makes no difference. The digest has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). It changes when any member's `planDigest` changes. A changed entry, hole or side effect changes it too. A set that names a member twice is refused.
+
+An approval of the document therefore binds what the document says about each plan, so a resumed pull-request apply checks a re-planned member against entries the approval covers ([#3555](https://github.com/INTENTIUS/chant/issues/3555)). The summary is computed from the entries and is not hashed. A change to how chant projects a plan into entries moves the digest, so an approval given under one chant release can need giving again under the next. `verifyChangeSetDigest(doc)` recomputes the value from the document.
+
+## Adapters
+
+| Planner | Adapter | Reads |
+|---|---|---|
+| terraform, tofu, choudoufu | `terraformChangeSetPart` in `@intentius/chant-lexicon-terraform/change-set` | `show -json` of a saved plan |
+| choudoufu set plan | `choudoufuSetPlanParts` in the same module | `choudoufu live-plan-set -json`, one part per root |
+| chant | `lifecyclePlanPart` in `@intentius/chant/change-set` | `chant lifecycle plan <env> --json` |
+| warden | `reconcilePlanPart` in the same module | the reconcile `ChangeSet` from `@intentius/chant/reconcile`, or an array of them; `github-warden reconcile --plan-json <file>` writes that array |
+| sql, versioned plan | `sqlVersionedPlanPart` in `@intentius/chant-lexicon-sql/change-set` | a versioned plan, [below](#sql-plans); SQL Yodeler's `VersionedPlan` as it stands |
+| sql, `ClickHouseRebuildOp` | `clickhouseRebuildPart` in the same module | `clickhouseRebuildPlan`'s result; the step also returns the part as `part` |
+| sql, `PostgresMigrationOp` | `postgresMigrationPart` in the same module | `postgresMigrationPlan`'s result; the step also returns the part as `part` |
+| any part written as JSON | `readChangeSetPartFile` in `@intentius/chant/change-set` | a part another process wrote; `readChangeSetPart` with `planner: "sql"` uses it |
+
+Each adapter returns a part: `{ member, entries }`. `composeChangeSet(parts)` joins them. It refuses two parts for one member.
+
+The chant adapter maps `create`, `update`, `delete` and `noop` across. An `update` whose lexicon classifies it `replace` or `destroy` becomes a `replace`. An `effect` entry becomes the receipt write its effect step makes: a `create` when the receipt is absent, else an `update`. An `unobserved` entry becomes a hole. `adopt` and `runtime` entries propose nothing and are left out.
+
+### SQL plans
+
+A versioned plan is the migrations a product would apply to one environment, in order:
+
+| Field | Holds |
+|---|---|
+| `dialect` | `clickhouse` or `postgres` |
+| `environment` | the member's and every entry's `scope` |
+| `migrations` | `{ id, steps }` each, in order; `pending` is read when `migrations` is absent |
+| `digest` | the product's own gate digest, used as the member's `planDigest` |
+| `refusal` | why the product would refuse to apply, a string or `{ message }`: the member is `failed` with no plan digest |
+| `holes` | what the product could not read |
+
+A step is a `MigrationStep` as `chant sql diff --statements --json` writes it (`statement`, `op` or `manual`, each with `object`, `type` and `name`). It may come wrapped as `{ step, done }`, as SQL Yodeler's plan view holds it. A step may also carry `done: true`, when an earlier partial run applied it, which leaves it out. It may name an `action` the product knows better than the classes, and a statement may carry the `changes` it makes.
+
+The adapter writes one entry per object the pending steps touch, however many steps and migrations touch it. The entry sits at the object's server name (`database.name` or `schema.name`). The action and disruption come from the steps' change classes, priced as the dialects' classifiers price them:
+
+| Classes | Action | Disruption |
+|---|---|---|
+| `drop` | `delete` | `destroy` |
+| `create` | `create` | none |
+| `rebuild`, `expand`, or a step an Op makes | `replace` | `replace` |
+| anything else | `update` | the worst of `metadata` (`in-place`) and `validate`, `concurrently` or `rewrite` (`rolling`); `unknown` for a class neither dialect has |
+
+A destructive step such as a column drop makes the disruption `destroy` and leaves the action as it is. A named `action` wins over the classes.
+
+Each change a step names becomes an attribute at its field (`orderBy`, `columns.region`), with `before`, `after`, and `forcesReplacement` for a `rebuild` or `expand` change. Three more attributes say how the change is made: `sql`, the statements in order; `op`, the migration Ops that make it; and `manual`, why a step has neither.
+
+A migration Op's plan part is one `replace` of the table while the Op has work to do (`rebuild` or `migrate`). A Postgres migration's address is the table, `schema.table`. In the part the plan step returns, the member is the ClickHouse table (`database.name`) or the Postgres migration (`schema.table.column`). Once the Op has swapped, switched or finished, the part has no entries.
+
+To hand a part from another process, write the part as JSON and read it with `readChangeSetPart({ member, planner: "sql", file })`. The reader checks that the member and every entry name planner `sql`, renames them to `member`, and recomputes nothing.
+
+```typescript
+import { writeFileSync } from "node:fs";
+import { sqlVersionedPlanPart } from "@intentius/chant-lexicon-sql/change-set";
+
+// plan: `yodel plan prod --json`, parsed
+writeFileSync("warehouse.part.json", JSON.stringify(sqlVersionedPlanPart({ member: "warehouse", plan })));
+```
+
+A terraform plan that stock marks `errored` is a failed member that keeps its entries. A choudoufu set plan root that did not plan is a failed member with no entries and no plan digest.
+
+## In an Op
+
+A combined run plans each member in its own step, composes the parts and gates on the digest.
+
+```typescript
+import { Op, phase, gate, composeChangeSet, lifecyclePlanChangeSet, readChangeSetPart } from "@intentius/chant/op";
+import { terraformPlan, terraformApply } from "@intentius/chant-lexicon-terraform";
+
+const estate = terraformPlan("estate", { id: "estate" });
+const delivery = lifecyclePlanChangeSet({ member: "delivery", env: "prod", cwd: "delivery", id: "delivery" });
+const warden = readChangeSetPart({ member: "warden", planner: "warden", file: "warden.plan.json", id: "warden" });
+const changeSet = composeChangeSet({ parts: [estate.out.changeSet, delivery.out.part, warden.out.part], id: "change-set" });
+
+export default Op({
+  name: "release",
+  overview: "Plan every member, approve one change set, apply.",
+  phases: [
+    phase("Plan", [estate, delivery, warden, changeSet]),
+    phase("Approve", [gate("approve-release", { plan: changeSet.out.digest })]),
+    phase("Apply", [terraformApply("estate", { planFile: estate.out.planFile })]),
+  ],
+});
+```
+
+| Activity | Returns |
+|---|---|
+| `terraformPlan` | `changeSet`, the root's part, beside `planDigest`. The root's name is the member |
+| `lifecyclePlanChangeSet` | `part`, from `chant lifecycle plan <env> --json` in `cwd` |
+| `readChangeSetPart` | `part`, from a plan file a chant or warden run wrote, or a part a sql adapter wrote |
+| `composeChangeSet` | `document`, `digest` and `summary` |
+
+All four only read. Approve with `chant approve release approve-release --plan <digest>`. When a re-run composes a document with another value, the run stops at the gate and names both values.
+
+## Bundling
+
+`@intentius/chant/change-set`, `@intentius/chant-lexicon-terraform/change-set` and `@intentius/chant-lexicon-sql/change-set` import chant's plan hashing code and nothing else. Bundled with esbuild for node, the two come to about 19 KB. `change-set-bundle.test.ts` lists every module in that bundle and fails when TypeScript or chant's lint code joins it. The sql lexicon's `change-set.test.ts` holds its adapter to the same list, about 8 KB bundled. A tool that runs them in CI from one bundled file, such as terragucci, needs no TypeScript toolchain.

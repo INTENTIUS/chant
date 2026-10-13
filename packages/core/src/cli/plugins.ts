@@ -1,10 +1,33 @@
+import { importLexiconModule, importLexiconPackage, lexiconModulePath, lexiconNames, registerLexiconDeclarations, resolveFromProject } from "../lexicon-module";
+import { readLexiconDeclarationsStatically, type StaticLexiconRead } from "../config-static";
+export { unknownPathLexiconsNotice } from "../config-static";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
-import { checkConflicts } from "./conflict-check";
+import { isNoLexiconDetected } from "../detectLexicon";
+import { checkConflicts, describeConflict } from "./conflict-check";
+import { prepareProjectCodegen } from "../project-codegen";
+
+/**
+ * chant#2591 — record the lexicons the chant.config nearest `dir` declares by
+ * path (../lexicon-module.ts), for a command that does not otherwise read the
+ * config: `init --force`, `dev onboard` and `import --agents`.
+ *
+ * The config is read statically (../config-static.ts) and never evaluated,
+ * so these commands run no project code to learn it. When the `lexicons`
+ * value cannot be read that way, nothing is recorded, every lexicon keeps its
+ * package behaviour, and the returned read carries the reason; the caller
+ * prints {@link unknownPathLexiconsNotice} for it.
+ */
+export function recordProjectLexicons(dir: string): StaticLexiconRead {
+  const read = readLexiconDeclarationsStatically(dir);
+  if (read.status === "read") registerLexiconDeclarations(read.entries, dirname(read.configPath));
+  return read;
+}
 
 /**
  * Load a single lexicon plugin by lexicon name.
@@ -13,8 +36,25 @@ import { checkConflicts } from "./conflict-check";
  * LexiconPlugin export. Falls back to wrapping a raw Serializer export.
  */
 export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
+  // chant #2520 — a lexicon declared by module path loads from that module.
+  const modulePath = lexiconModulePath(lexiconName);
+  if (modulePath !== undefined) {
+    const mod = (await importLexiconModule(lexiconName))!;
+    for (const value of Object.values(mod)) {
+      if (isLexiconPlugin(value)) {
+        if (value.name !== lexiconName) {
+          throw new Error(
+            `lexicon "${lexiconName}" is declared with module ${modulePath}, but the plugin it exports is named "${value.name}"`,
+          );
+        }
+        return value;
+      }
+    }
+    throw new Error(`Module ${modulePath} (lexicon "${lexiconName}") does not export a LexiconPlugin`);
+  }
+
   const packageName = `@intentius/chant-lexicon-${lexiconName}`;
-  const mod = await import(packageName);
+  const mod = (await importLexiconPackage(packageName)) as Record<string, any>;
 
   // Look for an explicit LexiconPlugin export
   for (const value of Object.values(mod)) {
@@ -43,6 +83,44 @@ export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
   throw new Error(`Package ${packageName} does not export a LexiconPlugin or Serializer`);
 }
 
+const LEXICON_PACKAGE_PREFIX = "chant-lexicon-";
+
+/**
+ * The names of the lexicon packages installed where {@link loadPlugin} can
+ * load them (#2965), sorted. `loadPlugin` imports
+ * `@intentius/chant-lexicon-<name>` from chant's own install and then from the
+ * project (`importLexiconPackage`), so this lists the `@intentius` scope of
+ * every `node_modules` directory Node would search from either place: each
+ * ancestor of chant's own module and each ancestor of `projectDir`. A name
+ * being listed does not promise it loads; the caller still handles a failure.
+ */
+export function listInstalledLexicons(projectDir: string = process.cwd()): string[] {
+  const names = new Set<string>();
+  const starts = [dirname(fileURLToPath(import.meta.url)), resolve(projectDir)];
+  for (const start of starts) {
+    let dir = start;
+    for (;;) {
+      const scope = join(dir, "node_modules", "@intentius");
+      let entries: Dirent[] = [];
+      try {
+        entries = readdirSync(scope, { withFileTypes: true });
+      } catch {
+        // No @intentius scope here.
+      }
+      for (const entry of entries) {
+        if (!entry.name.startsWith(LEXICON_PACKAGE_PREFIX)) continue;
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const name = entry.name.slice(LEXICON_PACKAGE_PREFIX.length);
+        if (name !== "") names.add(name);
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return [...names].sort();
+}
+
 /**
  * The installed version of each named lexicon package (chant #1442).
  *
@@ -67,9 +145,20 @@ export function resolveLexiconVersions(lexiconNames: readonly string[]): Record<
   const versions: Record<string, string> = {};
 
   for (const name of lexiconNames) {
+    // chant #2520 — a lexicon declared by module path is not an installed
+    // package, so it has no package version to report.
+    if (lexiconModulePath(name) !== undefined) continue;
     const packageName = `@intentius/chant-lexicon-${name}`;
     try {
-      let dir = dirname(require_.resolve(packageName));
+      // chant#2845 — a lexicon chant's own install can't reach is resolved from the project.
+      let entry: string | undefined;
+      try {
+        entry = require_.resolve(packageName);
+      } catch (err) {
+        entry = resolveFromProject(packageName);
+        if (entry === undefined) throw err;
+      }
+      let dir = dirname(entry);
       // Bounded walk — a resolved entry point is never deeply nested inside
       // its own package, and an unbounded loop here would climb to `/`.
       for (let depth = 0; depth < 10; depth++) {
@@ -107,11 +196,24 @@ export function collectBuildRootContributors(
   config: Record<string, unknown>,
   projectRoot: string,
 ): Array<import("../lexicon").BuildRootContributor> {
-  return (plugins ?? [])
+  // Project-local codegen (../project-codegen.ts) rides the same seam: every
+  // build path that renders build roots also has to refuse generated code
+  // that drifted from its declared sources, and to let the lexicon load that
+  // code (the k8s kinds its serializer must know) before serialization. Its
+  // contributor adds no entities; a drift is thrown, which the merge reports
+  // as a build error. Runs first, so a build-root hook sees loaded kinds.
+  const codegen = (plugins ?? [])
+    .filter((plugin) => typeof plugin.projectCodegen === "function")
+    .map((plugin): import("../lexicon").BuildRootContributor => async () => {
+      await prepareProjectCodegen(plugin, projectRoot, config);
+      return { entities: new Map() };
+    });
+  const roots = (plugins ?? [])
     .filter((plugin) => typeof plugin.buildRoots === "function")
     // `entities` is not bindable here — discovery has not run — so the merge
     // hands it in when it calls the closure (#1828 / SOPS provenance).
-    .map((plugin) => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities }));
+    .map((plugin): import("../lexicon").BuildRootContributor => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities, ...(ctx?.sourceDir !== undefined ? { sourceDir: ctx.sourceDir } : {}) }));
+  return [...codegen, ...roots];
 }
 
 /**
@@ -177,9 +279,7 @@ export async function loadPlugins(lexiconNames: string[]): Promise<LexiconPlugin
   }
 
   if (report.conflicts.length > 0) {
-    const details = report.conflicts
-      .map((c) => `  ${c.type} "${c.key}" from: ${c.plugins.join(", ")}`)
-      .join("\n");
+    const details = report.conflicts.map(describeConflict).join("\n");
     throw new Error(
       `Cross-lexicon conflicts detected:\n${details}`,
     );
@@ -218,14 +318,34 @@ export async function loadPlugins(lexiconNames: string[]): Promise<LexiconPlugin
  * loaded but never imported by name in that particular stack's files) would
  * otherwise silently miss it.
  */
-export async function resolveProjectLexicons(projectPath: string): Promise<string[]> {
+export async function resolveProjectLexicons(
+  projectPath: string,
+  options: {
+    /**
+     * chant #3648: the lexicon the command line named (`--lexicon <name>`).
+     * It is always in the result: a project whose config and source name no
+     * lexicon resolves to it alone, instead of failing with "No lexicon
+     * detected", and one that names other lexicons gets it added to them.
+     */
+    lexicon?: string;
+  } = {},
+): Promise<string[]> {
+  const requested = options.lexicon;
   const { config } = await loadChantConfigUpward(projectPath);
 
+  let names: string[];
   if (config.lexicons && config.lexicons.length > 0) {
-    return config.lexicons;
+    names = lexiconNames(config.lexicons);
+  } else {
+    // Fallback: detect from source imports — a pure text scan, no execution.
+    const files = await findInfraFiles(projectPath);
+    try {
+      names = await detectLexicons(files);
+    } catch (error) {
+      if (requested && isNoLexiconDetected(error)) return [requested];
+      throw error;
+    }
   }
 
-  // Fallback: detect from source imports — a pure text scan, no execution.
-  const files = await findInfraFiles(projectPath);
-  return detectLexicons(files);
+  return requested && !names.includes(requested) ? [...names, requested] : names;
 }

@@ -4,8 +4,8 @@
  * github → forgejo YAML is near-identical, so the migration itself is thin. The
  * differentiated value is the **compare**: classifying what survives the move
  * and what Forgejo silently drops. Most properties translate verbatim; the
- * useful findings are the keys the Forgejo runner ignores (`permissions`,
- * `continue-on-error` → `lost`) plus refs/labels that need attention
+ * useful findings are the keys the Forgejo runner ignores (`permissions` →
+ * `needs-review`, `continue-on-error` → `lost`) plus refs/labels that need attention
  * (unresolved `uses:`, unmapped runner labels → `needs-review`).
  *
  * Mirrors the gitlab lexicon's fate model (translated / approximated /
@@ -78,12 +78,12 @@ export function analyzeForgejoSecurity(
         records.push({
           sourceKey: childPath,
           sourceFile: file,
-          category: "skipped",
+          category: "needs-review",
           rule: "MIG-FJ-PERMISSIONS",
-          note: `permissions: is ignored by the Forgejo runner — the least-privilege control is lost. Re-establish it through your Forgejo/runner and repository token settings.`,
-          security: { property: "Least-privilege permissions", fate: "lost", severity: "warning", reestablish: "Forgejo runner/token settings" },
+          note: `permissions: is dropped, except id-token, which a job needs to request an OIDC token. The Forgejo runner does not enforce the scopes, so confirm the token scope in your Forgejo/runner and repository settings.`,
+          security: { property: "Least-privilege permissions", fate: "needs-review", severity: "warning", reestablish: "Forgejo runner/token settings" },
         });
-        continue; // don't descend into a dropped subtree
+        continue;
       }
 
       if (kebab === "continue-on-error") {

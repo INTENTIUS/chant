@@ -6,9 +6,11 @@
  * convention.
  */
 
-import type { TemplateParser, TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
-import { parseYAML } from "@intentius/chant/yaml";
+import type { TemplateParser, TemplateIR, ResourceIR, ParseContext } from "@intentius/chant/import/parser";
+import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
+import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
+import { delegateEmbedded } from "./embedded";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -75,6 +77,22 @@ const GVK_TYPE_MAP: Record<string, string> = {
  * Resolve apiVersion + kind to a K8s type name.
  * Falls back to constructing from the apiVersion group.
  */
+/**
+ * `<apiVersion>/<kind>` keys that map to a type another key maps to first.
+ * The build writes the first key's apiVersion for that type, so a document
+ * written against a later key (`autoscaling/v1` HorizontalPodAutoscaler)
+ * keeps its own apiVersion as a property.
+ */
+const ALIASED_GVKS: ReadonlySet<string> = (() => {
+  const firstForType = new Set<string>();
+  const aliased = new Set<string>();
+  for (const [key, type] of Object.entries(GVK_TYPE_MAP)) {
+    if (firstForType.has(type)) aliased.add(key);
+    else firstForType.add(type);
+  }
+  return aliased;
+})();
+
 function resolveTypeName(apiVersion: string, kind: string): string {
   // Try exact match
   const key = `${apiVersion}/${kind}`;
@@ -130,25 +148,29 @@ function toLogicalId(kind: string, name: string | undefined): string {
 /**
  * Kubernetes YAML parser implementation.
  *
- * Supports multi-document YAML (split on `---`). Each document is expected
+ * Supports multi-document YAML (split on `---`, see `splitYAMLDocuments`). Each document is expected
  * to be a standard Kubernetes object with apiVersion, kind, and metadata.
  */
 export class K8sParser implements TemplateParser {
-  parse(content: string): TemplateIR {
+  /**
+   * With `context.embedded` (`chant import`), content another lexicon owns
+   * is offered to it: every ConfigMap `data` value and a PrometheusRule's
+   * `spec.groups` (see ./embedded.ts). Without it, everything is kept as
+   * written.
+   */
+  parse(content: string, context?: ParseContext): TemplateIR {
     const resources: ResourceIR[] = [];
     const namespaces = new Set<string>();
 
-    // Split on YAML document separator, filter blanks
-    const documents = content
-      .split(/^---\s*$/m)
-      .map((d) => d.trim())
-      .filter((d) => d.length > 0 && !/^[\s#]*$/.test(d.replace(/#[^\n]*/g, "")));
+    // Split into documents on `---` / `...` markers (a trailing `# comment`
+    // allowed); empty and comment-only documents are dropped (#2965).
+    const documents = splitYAMLDocuments(content);
 
     for (const docStr of documents) {
       const doc = parseYAML(docStr);
       if (!doc || typeof doc !== "object") continue;
 
-      const resource = this.parseDocument(doc as Record<string, unknown>);
+      const resource = this.parseDocument(doc as Record<string, unknown>, context?.embedded);
       if (resource) {
         resources.push(resource);
 
@@ -172,7 +194,7 @@ export class K8sParser implements TemplateParser {
     };
   }
 
-  private parseDocument(doc: Record<string, unknown>): ResourceIR | null {
+  private parseDocument(doc: Record<string, unknown>, embedded?: EmbeddedContentResolver): ResourceIR | null {
     const apiVersion = doc.apiVersion as string | undefined;
     const kind = doc.kind as string | undefined;
 
@@ -186,9 +208,12 @@ export class K8sParser implements TemplateParser {
     // Extract the user-configurable properties (skip apiVersion, kind)
     const properties: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(doc)) {
-      if (key === "apiVersion" || key === "kind") continue;
+      if (key === "kind") continue;
+      if (key === "apiVersion" && !ALIASED_GVKS.has(`${apiVersion}/${kind}`)) continue;
       properties[key] = value;
     }
+
+    if (embedded) delegateEmbedded(type, kind, properties, embedded);
 
     return {
       logicalId,

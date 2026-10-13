@@ -1,0 +1,13 @@
+# chant graph --stacks
+# on a copy of examples/fan-out-estate; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+Apply order (waves apply top-to-bottom; a wave's stacks are parallel-safe):
+  1. aws
+
+No cross-stack dependencies — all stacks are independent.
+
+--- stderr (empty)

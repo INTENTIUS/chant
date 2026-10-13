@@ -1,0 +1,49 @@
+---
+title: Level-0 Exceptions
+description: The changes allowed to alter what a project with no workspace file sees from chant, each with its issue and the release that warned about it, and the golden tests that hold everything else fixed.
+diataxis: reference
+---
+
+Workspaces ([#2524](https://github.com/INTENTIUS/chant/issues/2524)) come in levels, and level 0 is a plain project with no `chant.workspace.json`. The rule from [#2525](https://github.com/INTENTIUS/chant/issues/2525) is that level 0 never pays for workspaces. Its output stays the same across releases, apart from the changes listed on this page, and each of those is warned about one release before it ships.
+
+## What is held fixed
+
+| Surface | Held by |
+|---|---|
+| `chant build`, `chant graph` (the Op view, `--stacks` and `--format ir`), `chant lint --format json`, `chant audit --format json` and `chant run list` | CLI goldens in `test/level0-goldens/goldens/`, one file per command and example |
+| Files a command leaves in the project, such as `build` writing `dist/ops/<op>/op.json` | the `wrote` section of each golden |
+| Ledger paths on the `chant/lifecycle` branch: `<env>/runs__<op>.jsonl` and `_gates/<op>.jsonl`, also for a project in a subdirectory of its repository | `test/level0-goldens/level0-ledger.e2e.test.ts` |
+| Ownership markers: `app.kubernetes.io/managed-by`, `chant.intentius.io/stack` and `chant.intentius.io/env` | the same ledger fixture, plus the build goldens |
+| No workspace code loads | every golden run records the modules its process loaded and fails on any file under core's `workspace/` directory, or any chant module whose name starts with `workspace` |
+
+The goldens run the real CLI over copies of `getting-started`, `local-op-quickstart`, `fan-out-estate`, `adopt-alb-services` and `terraform-carve-out` from `examples/`, in a temp directory, on every pull request. Absolute paths, timestamps and chant's own version number are normalised, and so are durations and fold counts on stderr. `test/level0-goldens/harness.ts` lists exactly what is normalised.
+
+## The exceptions
+
+The `version` field has shipped, and `v0.80.0` is the warning release for the other four entries, so each of their changes can land in any release after `v0.80.0`. A new entry gets its warning release when that release goes out, and its change can land from the release after. The last three rows shipped without a warning release, which the maintainer accepted on 2026-09-30.
+
+| Change | Issue | Warning release |
+|---|---|---|
+| Real SHA-256 digests. `contentDigest` output changes, and so does every digest derived from it, such as a `manifestDigest` or the digest of a synthesized template or SBOM. The effect receipt value in a build was already real SHA-256 and does not move | [#2514](https://github.com/INTENTIUS/chant/issues/2514) | `v0.80.0` warns on stderr once per project when a ledger or build manifest holds an old digest. Shipped after `v0.80.0` ([#2606](https://github.com/INTENTIUS/chant/pull/2606)): old entries read back flagged `legacy-digest` and are accepted through `0.89.x`, and no golden moved |
+| One discovery walker for build, lint, Ops and audit, converged at once. Dot-directories, ignored files, `dist`, Op child-project boundaries, `.json` configs and the source-root quirk all change together | [#2527](https://github.com/INTENTIUS/chant/issues/2527), split from [#2519](https://github.com/INTENTIUS/chant/issues/2519) | `v0.80.0` warns on stderr, naming each affected file and the `include` or `exclude` glob that keeps today's behaviour. Shipped after `v0.80.0` ([#2617](https://github.com/INTENTIUS/chant/pull/2617)): every walk follows the rules in [one walk for every command](/chant/architecture/discovery/#one-walk-for-every-command), and `include` re-admits anything they skip. The warning is gone, and the only golden that moved is the stderr section of `adopt-alb-services/audit-format-json.golden`, which loses it |
+| `chant audit` reports a truncated scan, and TF023 reads a nested `.gitignore` | [#2528](https://github.com/INTENTIUS/chant/issues/2528) | `v0.80.0` warns on stderr when the walk stops at its file limit and for each TF023 path a nested `.gitignore` covers, see [chant audit](/chant/cli/audit/#scan-limits) |
+| Component gate approvals are bound to the environment and plan digest they were given for, and older approvals are refused | [#2574](https://github.com/INTENTIUS/chant/issues/2574) | `v0.80.0` warns on stderr when a component gate passes on an approval with no plan. Shipped after `v0.80.0` ([#2594](https://github.com/INTENTIUS/chant/pull/2594)): an approval recorded without an environment and a plan is refused and the refusal names the `chant approve --env` command that replaces it, and no golden moved. See [Gate approvals and environments](/chant/components/orchestration/#gate-approvals-and-environments) |
+| An additive `version` field on `chant graph --format ir` output | [#2529](https://github.com/INTENTIUS/chant/issues/2529) ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D8) | shipped: merged after v0.79.0 with no separate warning release, since the field is additive and consumers ignore fields they do not know. The `graph-format-ir` goldens record it |
+| Ledger reads and writes list the `chant/lifecycle` tree with `git ls-tree --full-tree`. A project in a subdirectory of its repository used to list nothing there, so its second ledger append was refused as a concurrent change; now it appends, and the paths are the same flat ones as at a repository root | [#2550](https://github.com/INTENTIUS/chant/issues/2550) ([#2610](https://github.com/INTENTIUS/chant/pull/2610)) | none: shipped in `v0.81.0` as a bug fix. `level0-ledger.test.ts` holds the subdirectory case |
+| `chant check-lexicon` prints one more tier-1 row, `Any ./workspace-kinds subpath holds valid kind data`, for every lexicon. A lexicon without the subpath passes it. `chant doctor` is unchanged outside a declared workspace | [#2535](https://github.com/INTENTIUS/chant/issues/2535) ([#2631](https://github.com/INTENTIUS/chant/pull/2631)) | none: shipped in `v0.81.0`. `doctor.test.ts` checks that doctor adds nothing outside a workspace |
+| Plan digests are written as `jcs1-sha256:<hex>`. The hex is unchanged, since the digest is still the SHA-256 of the RFC 8785 canonical JSON of the plan, but the prefix is new. It shows in the `plan:` and `approve:` lines of a gated run, in `chant approve --plan`, in the pending facts and resolutions appended to `_gates/<name>.jsonl`, and in `chant workspace upgrade` output. A pending gate or an approval recorded as `sha256:<hex>` still matches the same plan, and `chant approve --plan` takes either prefix | [#2547](https://github.com/INTENTIUS/chant/issues/2547) ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D5, ws-066) | none: the maintainer accepted it on 2026-09-30, since nothing already recorded stops matching. No CLI golden moves; the `workspace-upgrade` e2e test now expects the new prefix |
+| `chant lifecycle diff --live` builds with the project's fold mode, as `chant build` does, and a drifted field a composite produced prints one more line naming the composite call and argument with its file and line, or saying the composite fixes it, or that its origin is unknown. The proposal line gives `<file>:<line>` relative to the project instead of an absolute file. A directly declared field prints as before. `--json` reconcile rows gain `summary`, and composite origins gain `call` and `arguments` | [#3597](https://github.com/INTENTIUS/chant/issues/3597) | none. No CLI golden covers `lifecycle diff`; `lifecycle.test.ts` holds the new lines |
+| `chant graph --format ir` records the composite that built each entity a composite call destructures or exports. Such an entity gains `compositeParent`, and the IR gains a `byComposite` index beside `byStack`. An entity no composite built is unchanged | [#3608](https://github.com/INTENTIUS/chant/issues/3608) | none: accepted without a warning release, as chant's breaking changes are. The `getting-started` IR golden moves with it |
+| `chant lint` includes each loaded lexicon's post-synth findings, the ones `chant build` reports, over an in-memory build of the lint path, at `1:1` in the file that declared the resource or at the config file. A lint path that does not build reports `LEX002`. See [chant lint](/chant/cli/lint/#lexicon-post-synth-checks) | [#3750](https://github.com/INTENTIUS/chant/issues/3750) | none: accepted without a warning release, as chant's breaking changes are. The `getting-started` `lint-format-json` golden gains the k8s warnings `chant build` already printed |
+| `chant audit` reports DKRD012 with a new title and remediation, which name the final stage, since a multi-stage Dockerfile can set `USER` in an earlier stage and still run as root. The rule's catalogue entry also lists hadolint `DL3002` as an overlapping rule | [#3926](https://github.com/INTENTIUS/chant/issues/3926) ([#3929](https://github.com/INTENTIUS/chant/pull/3929)) | none: accepted without a warning release, as chant's breaking changes are. The `adopt-alb-services` `audit-format-json` golden moves with it |
+
+## Landing a listed change
+
+A pull request that makes one of these changes regenerates the goldens in the same commit:
+
+```bash
+UPDATE_GOLDENS=1 npx vitest run test/level0-goldens
+git diff test/level0-goldens/goldens
+```
+
+The diff shows reviewers exactly what moved, and anything in it beyond the listed change is a level-0 regression. A golden that fails names the command, the example and the file, and points back to this page.

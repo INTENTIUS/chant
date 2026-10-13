@@ -60,6 +60,10 @@ For the example above, the `prod` build fails:
 error: [policy:ORG-PROD-TLS] [storefront] Ingress "storefront" must terminate TLS in prod
 ```
 
+`chant lint` runs the same policies over the same in-memory build, after
+each lexicon's own post-synth checks, and reports a finding under the policy's
+id (`ORG-PROD-TLS`) at the file that declared the entity it names.
+
 Policy evaluates the **synthesized artifact**, offline — it never touches the
 cloud. Live checks are [`chant lifecycle`](/chant/cli/lifecycle/), not this.
 
@@ -181,6 +185,16 @@ Register both the same way — add the file to `lint.policies` in
 ENCRYPTION` runs in every environment; `ORG-NO-PUBLIC-BUCKETS-PROD` only fires
 in `prod` — the same environment-aware branch `ORG-PROD-TLS` uses above.
 
+## Cookbook: column rules over a SQL schema
+
+The sql lexicon exports a typed read API over the parsed schema,
+`@intentius/chant-lexicon-sql/read`. A policy can use it to check columns, keys
+and engines rather than SQL text. Two such rules are "every table has
+`created_at timestamptz NOT NULL`" and "no Nullable column in a ClickHouse sort
+key". See the sql lexicon's
+[Your Own Schema Rules](/chant/lexicons/sql/project-policies/) for both
+dialects.
+
 ## Why not a separate engine
 
 chant already has the machinery: a [post-synth phase](/chant/lexicon-authoring/post-synth-checks/)
@@ -230,10 +244,14 @@ which is what `--sandbox` promises does not happen. Run the Op without
 `chant.config.ts` sets `build.sandbox: true` still gets a gate that builds
 in-process, and the gate says so on stderr.
 
-> **Signed override (deferred).** Pausing for a human, signed, audited override
-> to proceed *despite* a violation requires conditional gating in the generated
-> workflow — it is tracked as a follow-on, not in this version. Today `policyGate`
-> blocks; loosen the policy or fix the violation to proceed.
+When the gated apply runs as an [Op waves](/chant/guide/op-waves/) job whose
+spec has `notify`, a blocked wave fails its job, and the job posts a `failed`
+event to Slack, Teams or a signed webhook ([Notify](/chant/guide/notify/)).
+
+`policyGate` blocks until the policy is loosened or the violation is fixed. A
+tool that lets a person apply a denied plan anyway records the decision on the
+[override gate](/chant/guide/ops/#overriding-a-denied-plan). The override is
+bound to the plan digest and the rules that denied it, and it counts once.
 
 ## Try it
 

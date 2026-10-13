@@ -3,7 +3,8 @@
  *
  * `chant run <op> --on fountain` hands the run to a fountain teammate instead
  * of executing it here. This module is the client for that: it posts the
- * command line `chant run <op>` as a prompt on the steward's thread, tails the
+ * command line `chant run <op> [--env <env>] [--param k=v ...] [--work <id>] [--holder <name>] --on local` ({@link hostedRunPrompt})
+ * as a prompt on the steward's thread, tails the
  * conversation's SSE stream, and reports what comes back through the
  * {@link OpRuntimeProvider} contract core defines in
  * `packages/core/src/op/runtime.ts`.
@@ -61,7 +62,7 @@
  */
 
 import { loadChantConfig, type ChantConfig } from "@intentius/chant/config";
-import type { OpConfig, OpRunHandle, OpRunRecord, OpRunStartOptions, OpRunState, OpRunStatus, OpRuntimeProvider, StepRecord } from "@intentius/chant/op";
+import type { OpConfig, OpGateResolveOptions, OpRunHandle, OpRunRecord, OpRunStartOptions, OpRunState, OpRunStatus, OpRuntimeProvider, StepRecord } from "@intentius/chant/op";
 import { runStateOf } from "@intentius/chant/op";
 import type { GateResolutionRecord } from "@intentius/chant/lifecycle/gate-ledger";
 import { resolveProfile, type FountainProfile } from "../config";
@@ -72,9 +73,10 @@ import {
 } from "./activities/fountain-apply";
 import { resolveAgentId } from "./activities/fountain-run";
 import { stewardForOp } from "../composites/steward";
-import { runPrompt } from "./run-prompt";
+import { runPrompt, hostedRunPrompt, quoteArg } from "./run-prompt";
+import { tokenize } from "../acp/command-line";
 
-export { runPrompt };
+export { runPrompt, hostedRunPrompt, quoteArg };
 
 // ── The SSE seam ──────────────────────────────────────────────────────────
 
@@ -302,7 +304,7 @@ const MAX_RECONNECTS = 1000;
 
 // ── Pure helpers ──────────────────────────────────────────────────────────
 
-/** Does this turn's prompt name `op`? The prompt is `chant run <op>`, exactly. */
+/** Does this turn's prompt name `op`? The prompt is `chant run <op>`, alone or followed by flags. */
 export function turnRunsOp(turn: Turn, op: string): boolean {
   const prompt = (turn.prompt ?? "").trim();
   return prompt === runPrompt(op) || prompt.startsWith(`${runPrompt(op)} `);
@@ -687,6 +689,25 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
     return conversations.find((c) => c.channel_id === "fountain:team") ?? conversations[0];
   };
 
+  /**
+   * The steward thread's turn ids as they stand before a post. Best effort: a
+   * lookup that fails leaves the set empty, which is the old behaviour.
+   */
+  const turnsBeforePost = async (
+    http: FountainHttp,
+    steward: Steward,
+  ): Promise<{ conversationId: string; turnIds: Set<string> } | undefined> => {
+    try {
+      const conversation = await stewardConversation(http, steward);
+      if (!conversation?.id) return undefined;
+      const turnIds = new Set<string>();
+      for (const turn of await turnsOf(http, conversation.id)) if (turn.id) turnIds.add(turn.id);
+      return { conversationId: conversation.id, turnIds };
+    } catch {
+      return undefined;
+    }
+  };
+
   const turnsOf = async (http: FountainHttp, conversationId: string): Promise<Turn[]> => {
     const { status, json } = await http("GET", `/api/conversations/${conversationId}/turns`);
     if (status !== 200) {
@@ -724,16 +745,33 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 
   return {
     name: "fountain",
+    // `--work` and `--holder` ride on the posted line (#3555), so an Op whose
+    // work lease leaves the item to the run can run here; the sandbox's run
+    // takes the lease.
+    carriesWork: true,
 
     async start(op: OpConfig, startOpts: OpRunStartOptions): Promise<OpRunHandle> {
       known.set(op.name, op);
       // Before the first `rest()`, so the endpoint and token this run uses are
       // the named profile's (#2192). Omitted, `defaultProfile` still answers.
       selectProfile(startOpts.profile);
+      // Before any request: an `--env` the command line cannot carry is
+      // refused here, by name, rather than dropped (#3232). `--param` rides
+      // on the line (#3539), and so do `--work` and `--holder` (#3555): the
+      // run in the sandbox takes the work lease the caller named.
+      const prompt = hostedRunPrompt(op.name, {
+        env: startOpts.env,
+        ...(startOpts.params ? { params: startOpts.params } : {}),
+        ...(startOpts.work ? { work: startOpts.work } : {}),
+      });
       const http = await rest();
       const steward = await resolveSteward(op, startOpts.params);
       const agentId = await resolveAgentId(http, steward.agent);
-      const prompt = runPrompt(op.name);
+
+      // A teammate's thread already holds earlier turns, and the stream's first
+      // connection replays the whole log from the start. Note which turns are
+      // there before the post, so the tail can skip them (#3524).
+      const before = steward.team ? await turnsBeforePost(http, steward) : undefined;
 
       const conversationId = steward.team
         ? await postTeamMessage(http, agentId, steward, prompt, conversationUrl)
@@ -749,6 +787,7 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
         startedAt,
         idleTimeoutMs,
         now,
+        ...(before && before.conversationId === conversationId ? { ignoreTurns: before.turnIds } : {}),
         // The same REST client, so a stream that goes quiet can ask what
         // became of the conversation instead of waiting out the idle
         // timeout on one fountain has already failed (#2167).
@@ -854,7 +893,12 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       }
     },
 
-    async resolveGate(op: string, gate: string, resolution: GateResolutionRecord): Promise<void> {
+    async resolveGate(
+      op: string,
+      gate: string,
+      resolution: GateResolutionRecord,
+      resolveOpts?: OpGateResolveOptions,
+    ): Promise<void> {
       const http = await rest();
       const found = await opTurns(http, op);
       const conversationId = found?.conversation.id;
@@ -884,12 +928,24 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       // never re-apply anything (#2192). `--approver` and `--url` ride along
       // so the thread's own transcript names who resolved the gate and where;
       // the run itself decides the gate from the ledger (`evaluateGate` in
-      // core's `op/gate.ts`), not from these.
-      const parts = [`chant run ${op}`];
-      if (resolution.resolvedBy) parts.push(`--approver ${resolution.resolvedBy}`);
-      if (resolution.url) parts.push(`--url ${resolution.url}`);
+      // core's `op/gate.ts`), not from these, and are quoted so a name with
+      // a space stays one value (#3539). The re-run runs in the environment
+      // the approver named (`chant run approve ... --env`, #3539), or else the
+      // one the gated run did: the `--env` on the op's latest turn (#3232).
+      // The gated turn's `--param`s, `--work` and `--holder` ride along too
+      // (#3555), and `--on local` as on every posted run (#3225).
+      const flags: Array<[string, string]> = [];
+      if (resolution.resolvedBy) flags.push(["--approver", resolution.resolvedBy]);
+      if (resolution.url) flags.push(["--url", resolution.url]);
+      const gated = flagsOfPrompt(found?.turns[0]?.prompt);
+      const env = resolveOpts?.env !== undefined && resolveOpts.env !== "" ? resolveOpts.env : gated.env;
       const { status, json } = await http("POST", `/api/conversations/${conversationId}/prompts`, {
-        prompt: parts.join(" "),
+        prompt: hostedRunPrompt(op, {
+          env,
+          ...(gated.params ? { params: gated.params } : {}),
+          ...(gated.work ? { work: gated.work } : {}),
+          flags,
+        }),
       });
 
       if (status === 400 && errorCode(json) === "conversation_busy") {
@@ -902,6 +958,56 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
         throw new Error(`fountain runtime: posting the re-run prompt failed (${status})`);
       }
     },
+  };
+}
+
+/**
+ * The `--env`, `--param`s, `--work` and `--holder` a posted prompt carries,
+ * read with the same quote-aware split `chant acp` uses. A prompt that does
+ * not split (an unterminated quote) carries none of them.
+ */
+export function flagsOfPrompt(prompt: string | undefined): {
+  env?: string;
+  params?: Record<string, string>;
+  work?: { item?: string; holder?: string };
+} {
+  let words: string[];
+  try {
+    words = tokenize(prompt ?? "");
+  } catch {
+    return {};
+  }
+  let env: string | undefined;
+  const work: { item?: string; holder?: string } = {};
+  const params: Record<string, string> = {};
+  let any = false;
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    let value: string | undefined;
+    let flag = word;
+    const eq = word.startsWith("--") ? word.indexOf("=") : -1;
+    if (eq > 0) {
+      flag = word.slice(0, eq);
+      value = word.slice(eq + 1);
+    } else if (word === "--env" || word === "--param" || word === "--work" || word === "--holder") {
+      value = words[i + 1];
+      if (value === undefined || value.startsWith("-")) continue;
+      i++;
+    }
+    if (value === undefined) continue;
+    if (flag === "--env") env = value;
+    else if (flag === "--work") work.item = value;
+    else if (flag === "--holder") work.holder = value;
+    else if (flag === "--param") {
+      const at = value.indexOf("=");
+      params[at === -1 ? value : value.slice(0, at)] = at === -1 ? "" : value.slice(at + 1);
+      any = true;
+    }
+  }
+  return {
+    ...(env ? { env } : {}),
+    ...(any ? { params } : {}),
+    ...(work.item !== undefined || work.holder !== undefined ? { work } : {}),
   };
 }
 
@@ -979,6 +1085,12 @@ interface TailOptions {
   http?: FountainHttp;
   /** How much silence asks fountain about the conversation. Default 2s. */
   pollIntervalMs?: number;
+  /**
+   * Turn ids that existed before this run's prompt was posted. The stream
+   * replays the whole log on a first connection, so events of these turns are
+   * skipped: an earlier turn's `done` must not settle this run (#3524).
+   */
+  ignoreTurns?: ReadonlySet<string>;
 }
 
 const IDLE = Symbol("idle");
@@ -1165,6 +1277,7 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
         // A heartbeat or a frame this client has no schema for. The stream is
         // still alive, which is the only thing the loop above needed to know.
       }
+      if (payload?.turn_id && opts.ignoreTurns?.has(payload.turn_id)) continue;
       if (payload && consume(payload)) {
         settled = true;
         break;

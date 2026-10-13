@@ -5,7 +5,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 const RESOURCE_NAMES = new Set(["Job", "Workflow", "ReusableWorkflowCallJob"]);
 const MAX_DEPTH = 2;

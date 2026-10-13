@@ -69,7 +69,7 @@ const UNMAPPED: BehaviourKinds["unmapped"] = {
   // ── Meters chant cannot read ─────────────────────────────────────
   "AWS::Logs::LogGroup": "priced by the volume ingested into it, which the declaration does not state and no engine can infer from a graph",
   "AWS::WAFv2::WebACL": "priced by the requests inspected through it, which the declaration does not state",
-  "AWS::EC2::NatGateway": "priced as an hourly rate plus a per-gigabyte meter on everything that crosses it. The declaration states the first and nothing at all about the second, and no engine kind here models a half-known price — a figure covering the hourly half alone would read as the cost of the gateway and be wrong by whatever the traffic did",
+  "AWS::EC2::NatGateway": "priced as an hourly rate plus a per-gigabyte meter on everything that crosses it. The declaration states the first and nothing at all about the second, and no engine kind here models a half-known price. A figure covering the hourly half alone would read as the cost of the gateway and be wrong by whatever the traffic did",
   "AWS::EC2::EIP": "priced only while it is attached to nothing, which is a fact about the running account rather than about the declaration",
   "AWS::ECR::Repository": "priced by the gigabytes stored in it, which the declaration does not state",
   "AWS::KMS::Key": "priced per key per month plus a per-request meter the declaration does not state, and neither half is an hourly rate",

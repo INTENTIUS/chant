@@ -1,85 +1,494 @@
 ---
 title: "Dockerfiles"
-description: "Typed Dockerfile definitions with single-stage and multi-stage support"
+description: "Writing Dockerfiles with ordered steps, sharing stages between modules, and the older per-kind fields"
 diataxis: reference
+prompt: |
+  Read https://intentius.io/chant/lexicons/docker/dockerfiles/ first.
+  Move every Dockerfile in this project's chant source to ordered `steps`, one instruction per step.
+  Run `chant lint src --fix` to rewrite per-kind fields (`run: [...]`, `copy: [...]`, `user`) as steps in the order they were being written, then reorder the steps so manifests are copied and installed before the source, and root setup comes before `USER`.
+  Where Dockerfiles repeat a stage or a run of steps, export it once as a const `DockerfileStage` or `DockerfileStep[]` and import it.
+  Run `chant build src --lexicon docker -o build/docker-compose.yml` and `chant lint src` until both are clean, and report each Dockerfile whose instruction order you changed and why.
+  Never push an image or change files outside this project.
 ---
 
-The `Dockerfile` constructor generates a `Dockerfile.{name}` file alongside `docker-compose.yml`. The export variable name is used as the suffix.
+The `Dockerfile` constructor writes a `Dockerfile.{name}` file next to `docker-compose.yml`. The export name is the suffix: `export const server = new Dockerfile(...)` writes `Dockerfile.server`.
 
-## Single-stage
+## Steps
+
+A stage is a `from` image plus a list of `steps`. Each step is an object with one key, the instruction, and its value. Steps are written in the order you list them, one instruction per step.
 
 ```typescript
 import { Dockerfile } from "@intentius/chant-lexicon-docker";
 
 export const server = new Dockerfile({
   from: "node:20-alpine",
-  workdir: "/app",
-  copy: ["package*.json ./"],
-  run: ["npm ci --only=production"],
-  copy: ["src/ ./src/"],
-  user: "node",
-  expose: [3000],
-  cmd: `["node", "src/index.js"]`,
+  steps: [
+    { workdir: "/app" },
+    { copy: "package.json package-lock.json ./" },
+    { run: "npm ci --omit=dev" },
+    { copy: "src/ ./src/" },
+    { user: "node" },
+    { expose: 3000 },
+    { cmd: ["node", "src/index.js"] },
+  ],
 });
 ```
 
-Produces `Dockerfile.server`.
+`Dockerfile.server`:
 
-## Multi-stage
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY src/ ./src/
+USER node
+EXPOSE 3000
+CMD ["node","src/index.js"]
+```
+
+A value is written as given after the instruction keyword. `run`, `cmd`, `entrypoint` and `shell` also take a list of strings, which is written in JSON exec form, as `cmd` is above.
+
+The props are typed (`DockerfileProps`), so a misspelled step key such as `{ rnu: "npm ci" }`, or a value of the wrong type, is a compile error where you write it, and your editor completes the keys.
+
+## Layer caching
+
+Docker reuses a layer until an input to it changes. Copying the whole build context before installing dependencies means any source change reruns the install. Copy the dependency manifests first, install, then copy the source and build:
 
 ```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
 export const app = new Dockerfile({
+  from: "python:3.12-slim",
+  steps: [
+    { workdir: "/app" },
+    { env: "PYTHONUNBUFFERED=1" },
+    { copy: "requirements.txt ." },
+    { run: "pip install --no-cache-dir -r requirements.txt" },
+    { copy: ". ." },
+    { user: "1000:1000" },
+    { cmd: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] },
+  ],
+});
+```
+
+`Dockerfile.app`:
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+USER 1000:1000
+CMD ["python","-m","uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+```
+
+The post-synth check DKRD013 warns when a stage copies the whole context before a dependency install.
+
+## Where USER goes
+
+`USER` applies to every instruction after it. Do the steps that need root first (installing packages, creating the user, changing ownership), then switch to the unprivileged user:
+
+```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const tool = new Dockerfile({
+  from: "debian:12-slim",
+  steps: [
+    { run: "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*" },
+    { run: "useradd --system --create-home app" },
+    { workdir: "/home/app" },
+    { copy: "--chown=app:app bin/ ./bin/" },
+    { user: "app" },
+    { entrypoint: ["./bin/tool"] },
+  ],
+});
+```
+
+`Dockerfile.tool`:
+
+```dockerfile
+FROM debian:12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN useradd --system --create-home app
+WORKDIR /home/app
+COPY --chown=app:app bin/ ./bin/
+USER app
+ENTRYPOINT ["./bin/tool"]
+```
+
+A `USER` in one stage does not carry into the next. DKRD012 warns when the final stage has no `USER`, or ends on `USER root`, and DKRD014 warns when a step that needs root (`apt-get`, `apk add`, `useradd`, `chown`, ...) comes after a switch to another user.
+
+## Multi-stage builds
+
+`stages` holds one entry per `FROM`. Give a stage a name with `as` and copy from it with `--from`:
+
+```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const site = new Dockerfile({
   stages: [
     {
       from: "node:20-alpine",
       as: "build",
-      workdir: "/app",
-      copy: ["package*.json ./"],
-      run: ["npm ci"],
-      copy: ["src/ ./src/"],
-      run: ["npm run build"],
+      steps: [
+        { workdir: "/src" },
+        { copy: "package.json package-lock.json ./" },
+        { run: "npm ci" },
+        { copy: ". ." },
+        { run: "npm run build" },
+      ],
     },
     {
-      from: "node:20-alpine",
-      workdir: "/app",
-      copy: ["--from=build /app/dist ./dist", "--from=build /app/node_modules ./node_modules"],
-      user: "node",
-      expose: [3000],
-      cmd: `["node", "dist/index.js"]`,
+      from: "nginx:1.27-alpine",
+      steps: [
+        { copy: "--from=build /src/dist /usr/share/nginx/html" },
+        { expose: 80 },
+      ],
     },
   ],
 });
 ```
 
-Produces `Dockerfile.app`.
+`Dockerfile.site`:
 
-## Supported instructions
+```dockerfile
+FROM node:20-alpine AS build
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+FROM nginx:1.27-alpine
+COPY --from=build /src/dist /usr/share/nginx/html
+EXPOSE 80
+```
 
-| Field | Dockerfile instruction |
-|-------|----------------------|
-| `from` | `FROM` |
-| `as` | `FROM … AS` |
-| `workdir` | `WORKDIR` |
-| `run` | `RUN` (one instruction per array entry) |
-| `copy` | `COPY` |
-| `add` | `ADD` |
-| `env` | `ENV` |
-| `arg` | `ARG` |
-| `expose` | `EXPOSE` |
-| `user` | `USER` |
-| `cmd` | `CMD` |
-| `entrypoint` | `ENTRYPOINT` |
-| `label` | `LABEL` |
-| `volume` | `VOLUME` |
-| `healthcheck` | `HEALTHCHECK` |
+DKRD016 warns when `--from` names a stage that is only defined later, or no stage at all.
+
+## Instructions
+
+| Field or step | Instruction | Value |
+|---|---|---|
+| `globalArgs` | `ARG` before the first `FROM` | list of strings |
+| `from`, `as` | `FROM image AS name` | strings, on the stage |
+| `{ arg }` | `ARG` | string |
+| `{ env }` | `ENV` | string |
+| `{ workdir }` | `WORKDIR` | string |
+| `{ user }` | `USER` | string |
+| `{ run }` | `RUN` | string, or list for exec form |
+| `{ copy }` | `COPY` | string |
+| `{ add }` | `ADD` | string |
+| `{ expose }` | `EXPOSE` | string or number |
+| `{ volume }` | `VOLUME` | string |
+| `{ label }` | `LABEL` | string |
+| `{ entrypoint }` | `ENTRYPOINT` | string, or list for exec form |
+| `{ cmd }` | `CMD` | string, or list for exec form |
+| `{ healthcheck }` | `HEALTHCHECK` | string |
+| `{ shell }` | `SHELL` | list (or a JSON array string) |
+| `{ stopsignal }` | `STOPSIGNAL` | string |
+| `{ onbuild }` | `ONBUILD` | string, the instruction to run later |
+
+An `ARG` declared before the first `FROM` can be used in `FROM` lines. To use it inside a stage, declare it again there with `{ arg: "NAME" }`. This example uses the less common instructions:
+
+```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const base = new Dockerfile({
+  globalArgs: ["ALPINE_VERSION=3.20"],
+  from: "alpine:${ALPINE_VERSION}",
+  steps: [
+    { arg: "ALPINE_VERSION" },
+    { label: "org.opencontainers.image.base.name=alpine:${ALPINE_VERSION}" },
+    { shell: ["/bin/ash", "-eo", "pipefail", "-c"] },
+    { run: "apk add --no-cache tini wget" },
+    { onbuild: "COPY . /app" },
+    { workdir: "/app" },
+    { healthcheck: "--interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/health || exit 1" },
+    { stopsignal: "SIGINT" },
+    { user: "nobody" },
+    { entrypoint: ["/sbin/tini", "--"] },
+  ],
+});
+```
+
+`Dockerfile.base`:
+
+```dockerfile
+ARG ALPINE_VERSION=3.20
+FROM alpine:${ALPINE_VERSION}
+ARG ALPINE_VERSION
+LABEL org.opencontainers.image.base.name=alpine:${ALPINE_VERSION}
+SHELL ["/bin/ash","-eo","pipefail","-c"]
+RUN apk add --no-cache tini wget
+ONBUILD COPY . /app
+WORKDIR /app
+HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+STOPSIGNAL SIGINT
+USER nobody
+ENTRYPOINT ["/sbin/tini","--"]
+```
+
+### Build errors
+
+The build stops with an error that names the Dockerfile, the stage and the step when:
+
+- a step has no key, or more than one (`{ run: "a", copy: "b" }` is two steps)
+- a step names something that is not an instruction (`FROM` is the stage's `from`, not a step)
+- a list value is given to an instruction other than `run`, `cmd`, `entrypoint` or `shell`
+- a stage has both `steps` and the per-kind fields described below
+- a Dockerfile has both `stages` and top-level `steps`
+
+## Sharing stages and steps between Dockerfiles
+
+A Dockerfile has no `INCLUDE`. In chant, stages and step lists are TypeScript values, so you share them the way you share any other value: export them from a module and import them where they are needed. Import a stage and list it in `stages`, or import a step list and spread it into `steps` before or after your own steps.
+
+The shared module holds plain data. The `DockerfileStage` and `DockerfileStep` types check the shape:
+
+```typescript title="src/shared/node.ts"
+import type { DockerfileStage, DockerfileStep } from "@intentius/chant-lexicon-docker";
+
+export const NODE_IMAGE = "node:20-alpine";
+
+/** Copy the manifests and install, so the install layer is reused until they change. */
+export const npmInstall: DockerfileStep[] = [
+  { copy: "package.json package-lock.json ./" },
+  { run: "npm ci" },
+];
+
+/** The build stage every Node service uses. Later stages copy from it as "build". */
+export const nodeBuild: DockerfileStage = {
+  from: NODE_IMAGE,
+  as: "build",
+  steps: [
+    { workdir: "/app" },
+    ...npmInstall,
+    { copy: ". ." },
+    { run: "npm run build" },
+    { run: "npm prune --omit=dev" },
+  ],
+};
+
+/** The start of every runtime stage: the built app, run as the node user. */
+export const nodeRuntime: DockerfileStep[] = [
+  { workdir: "/app" },
+  { copy: "--from=build /app/node_modules ./node_modules" },
+  { copy: "--from=build /app/dist ./dist" },
+  { user: "node" },
+];
+```
+
+One service uses the shared build stage as it is, and adds its own steps after the shared runtime steps:
+
+```typescript title="src/web.ts"
+import { Dockerfile, type DockerfileStage } from "@intentius/chant-lexicon-docker";
+import { NODE_IMAGE, nodeBuild, nodeRuntime } from "./shared/node";
+
+const runtime: DockerfileStage = {
+  from: NODE_IMAGE,
+  steps: [
+    ...nodeRuntime,
+    { expose: 3000 },
+    { cmd: ["node", "dist/server.js"] },
+  ],
+};
+
+const web = new Dockerfile({ stages: [nodeBuild, runtime] });
+
+export { web };
+```
+
+```dockerfile title="Dockerfile.web"
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+RUN npm prune --omit=dev
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
+EXPOSE 3000
+CMD ["node","dist/server.js"]
+```
+
+Another extends the shared stage: it spreads `nodeBuild` to keep its image and name, and lists its own steps, reusing `npmInstall`, to run the tests before the dev dependencies are pruned:
+
+```typescript title="src/worker.ts"
+import { Dockerfile, type DockerfileStage } from "@intentius/chant-lexicon-docker";
+import { NODE_IMAGE, nodeBuild, nodeRuntime, npmInstall } from "./shared/node";
+
+/** The shared build stage with the tests added, before the dev dependencies are pruned. */
+const build: DockerfileStage = {
+  ...nodeBuild,
+  steps: [
+    { workdir: "/app" },
+    ...npmInstall,
+    { copy: ". ." },
+    { run: "npm run build" },
+    { run: "npm test" },
+    { run: "npm prune --omit=dev" },
+  ],
+};
+
+const runtime: DockerfileStage = {
+  from: NODE_IMAGE,
+  steps: [
+    ...nodeRuntime,
+    { stopsignal: "SIGINT" },
+    { cmd: ["node", "dist/worker.js"] },
+  ],
+};
+
+const worker = new Dockerfile({ stages: [build, runtime] });
+
+export { worker };
+```
+
+```dockerfile title="Dockerfile.worker"
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+RUN npm test
+RUN npm prune --omit=dev
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
+STOPSIGNAL SIGINT
+CMD ["node","dist/worker.js"]
+```
+
+A shared value has to be a `const` (declared in the module, or imported) to be spread: lint rule EVL004 rejects spreading the result of a function call. When the shared part needs parameters, write it as a `Composite`, which may take props and spread freely inside:
+
+```typescript title="src/shared/node-image.ts"
+import { Composite } from "@intentius/chant";
+import { Dockerfile, type DockerfileStage } from "@intentius/chant-lexicon-docker";
+import { NODE_IMAGE, nodeBuild, nodeRuntime } from "./node";
+
+export interface NodeImageProps {
+  /** The port the service listens on. */
+  port: number;
+  /** The script in dist/ to run. */
+  main: string;
+}
+
+/** A whole Node service Dockerfile from two parameters. Its file is Dockerfile.<export>Image. */
+export const NodeImage = Composite((props: NodeImageProps) => {
+  const runtime: DockerfileStage = {
+    from: NODE_IMAGE,
+    steps: [
+      ...nodeRuntime,
+      { expose: props.port },
+      { cmd: ["node", `dist/${props.main}`] },
+    ],
+  };
+  const image = new Dockerfile({ stages: [nodeBuild, runtime] });
+  return { image };
+}, "NodeImage");
+```
+
+```typescript title="src/api.ts"
+import { NodeImage } from "./shared/node-image";
+
+const api = NodeImage({ port: 8080, main: "api.js" });
+
+export { api };
+```
+
+```dockerfile title="Dockerfile.apiImage"
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+RUN npm prune --omit=dev
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node
+EXPOSE 8080
+CMD ["node","dist/api.js"]
+```
+
+These files are the `dockerfile-sharing` example in the lexicon's `examples/` directory. Each service is built with its own directory as the build context, which is why the shared steps can copy `.` and `package.json` without a path.
+
+## Per-kind fields
+
+Before `steps`, a stage listed its instructions in one field per kind: `run`, `copy`, `user` and so on. These fields still work, and a Dockerfile that uses them builds the same file it always has. They are written in a fixed order, whatever order they are declared in:
+
+`ARG`, `ENV`, `WORKDIR`, `USER`, `RUN`, `COPY`, `ADD`, `EXPOSE`, `VOLUME`, `LABEL`, `ENTRYPOINT`, `CMD`, `HEALTHCHECK`
+
+so every `RUN` comes before every `COPY`, and `USER` comes before every `RUN`. `SHELL`, `STOPSIGNAL`, `ONBUILD` and `ARG` before `FROM` are only available as steps and `globalArgs`. A stage can use `steps` or the per-kind fields, not both.
+
+This stage reads as copy, then install, but the install is written first:
+
+```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const legacy = new Dockerfile({
+  from: "node:20-alpine",
+  workdir: "/app",
+  copy: ["package.json package-lock.json ./"],
+  run: ["npm ci"],
+  user: "node",
+});
+```
+
+`Dockerfile.legacy`:
+
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+USER node
+RUN npm ci
+COPY package.json package-lock.json ./
+```
+
+Lint rule DKRS002 warns when the per-kind fields are declared in an order the fixed order changes. `chant lint --fix` rewrites them as `steps` in the fixed order, so the Dockerfile it builds does not change, and leaves a comment to reorder the steps:
+
+```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const legacy = new Dockerfile({
+  from: "node:20-alpine",
+  // Written by the DKRS002 fix in the fixed order the per-kind fields used, so the output is unchanged. Reorder the steps as the build needs.
+  steps: [
+    { workdir: "/app" },
+    { user: "node" },
+    { run: "npm ci" },
+    { copy: "package.json package-lock.json ./" },
+  ],
+});
+```
+
+Then move the steps into the order the build needs and delete the comment. Here, that is `copy` and `run` as root, then `user`. The fix leaves a field alone when its value isn't a literal list it can split into steps, such as a variable; rewrite those by hand. `chant import` of an existing Dockerfile always produces `steps`. See [Importing](/chant/lexicons/docker/importing/).
 
 ## Using in Compose
 
-Reference a built image from a Dockerfile entity:
+Build a service from a Dockerfile entity by its file name:
 
 ```typescript
-export const api = new Service({
+import { Dockerfile, Service } from "@intentius/chant-lexicon-docker";
+
+export const app = new Dockerfile({
+  from: "nginx:1.27-alpine",
+  steps: [{ copy: "site/ /usr/share/nginx/html/" }],
+});
+
+export const web = new Service({
   build: { context: ".", dockerfile: "Dockerfile.app" },
-  ports: ["3000:3000"],
+  ports: ["8080:80"],
 });
 ```

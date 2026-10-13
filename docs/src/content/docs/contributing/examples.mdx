@@ -31,6 +31,7 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 | `examples/getting-started` | Golden (L1–L4 — synthesis, local Op, gate, lifecycle dial) |
 | `examples/alert-triage` | Golden (L5 — the capstone app) |
 | `examples/local-op-quickstart` | Standalone first taste (smallest one-step Op, no cluster) |
+| `examples/agent-observability` | Reference deployment (agent and gateway collectors, a sampled pipeline with span and GenAI metrics, an SLO with burn-rate alerts, Alertmanager routing and Grafana dashboards, on k3d) |
 | `examples/argo-cd-gke` | Reference deployment |
 | `examples/flux-apps` | Reference deployment |
 | `examples/cockroachdb-multi-region-gke` | Reference deployment |
@@ -40,6 +41,7 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 | `examples/fountain-steward` | Reference deployment (the hosted runtime: a fountain steward, `chant run --on fountain`, a gated apply) |
 | `examples/gitlab-cells-single-region-gke` | Reference deployment |
 | `examples/k8s-aks-microservice` | Reference deployment |
+| `examples/k8s-drift-to-source` | Reference deployment (a drifted replica count reported against the composite argument and source line that set it, on k3d) |
 | `examples/k8s-eks-microservice` | Reference deployment |
 | `examples/k8s-gke-microservice` | Reference deployment |
 | `examples/ray-kuberay-gke` | Reference deployment |
@@ -65,7 +67,7 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 
 Everything under `lexicons/*/examples/` is the feature tier and is not listed individually here.
 
-This table is a gate, not a courtesy: `examples/root-examples-gate.test.ts` fails when a directory
+This table is a gate, not a courtesy: `examples/root-examples-gate.e2e.test.ts` fails when a directory
 under `examples/` holding a `chant.config.*` is missing from it, or when a name here has no
 directory. The same file builds and lints every one of those examples the way its own
 `package.json` scripts do, with an allowlist that carries a reason per entry.

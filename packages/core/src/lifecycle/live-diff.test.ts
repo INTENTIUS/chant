@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { diffLive, diffLiveArtifacts, diffSnapshots } from "./live-diff";
+import { diffLive, diffLiveArtifacts, diffSnapshots, missingRow } from "./live-diff";
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
 const meta = (overrides: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
@@ -407,5 +407,29 @@ describe("attribute comparison is key-order insensitive (#1279)", () => {
       observedThen: { one: inst({ Rules: [{ p: 22 }, { p: 80 }] }) },
     });
     expect(result.driftedSinceSnapshot).toHaveLength(1);
+  });
+});
+
+describe("diffLive definitions (#3652)", () => {
+  test("carries the fingerprint of each missing entity, and of nothing else", () => {
+    const diff = diffLive({
+      declared: new Set(["a", "b"]),
+      observedNow: { b: { type: "T", status: "OK" } },
+      observedThen: undefined,
+      definitions: { a: "aaa", b: "bbb" },
+    });
+    expect(diff.missing).toEqual(["a"]);
+    expect(diff.definitions).toEqual({ a: "aaa" });
+    expect(missingRow(diff, "a")).toBe("  - a [definition aaa]");
+  });
+
+  test("is absent when nothing is missing, so a no-op diff is unchanged", () => {
+    const diff = diffLive({
+      declared: new Set(["b"]),
+      observedNow: { b: { type: "T", status: "OK" } },
+      observedThen: undefined,
+      definitions: { b: "bbb" },
+    });
+    expect("definitions" in diff).toBe(false);
   });
 });

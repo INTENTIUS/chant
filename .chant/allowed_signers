@@ -1,0 +1,3 @@
+# The maintainer's signing key: git config user.signingkey on lex00's machine (~/.ssh/github.pub).
+# A change to this file needs a commit signed by a key listed here (chant workspace verify).
+121451605+lex00@users.noreply.github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBpmVisjoLag/nbd0vvTF2ahV6ftiQ+hVTkYyjIfTRA9

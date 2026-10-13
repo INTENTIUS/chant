@@ -18,6 +18,16 @@ export interface FetchConfig {
   cacheFile: string;
   /** Cache TTL in milliseconds (default: 24 hours). */
   cacheTtlMs?: number;
+  /**
+   * Per-attempt timeout for the download in milliseconds (default: 15 seconds).
+   * A source archive of tens of megabytes needs more than the default, which
+   * is sized for a JSON schema.
+   */
+  attemptTimeoutMs?: number;
+  /** Retries after the first attempt (default: 4). */
+  retries?: number;
+  /** Base back-off between attempts in milliseconds (default: 1 second). */
+  backoffMs?: number;
 }
 
 // ── Transient-aware fetch ──────────────────────────────────────────
@@ -198,7 +208,26 @@ export async function fetchWithCache(config: FetchConfig, force = false): Promis
     }
   }
 
-  const response = await fetchWithRetry(config.url);
+  let response: Response;
+  try {
+    response = await fetchWithRetry(
+      config.url,
+      config.retries ?? DEFAULT_RETRIES,
+      config.backoffMs ?? DEFAULT_BACKOFF_MS,
+      undefined,
+      config.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS,
+    );
+  } catch (e) {
+    // A stale copy beats a failed build. The archives this caches are pinned
+    // by tag or by version in the URL, so a copy past its TTL is the same
+    // bytes; the TTL exists to notice an unpinned URL moving, not to expire
+    // good data. `force` means the caller needs fresh bytes, so it still throws.
+    if (!force && e instanceof TransientFetchError && existsSync(config.cacheFile)) {
+      console.error(`${e.message} Using the cached copy at ${config.cacheFile} from ${new Date(statSync(config.cacheFile).mtimeMs).toISOString()}.`);
+      return readFileSync(config.cacheFile) as unknown as Buffer;
+    }
+    throw e;
+  }
   const arrayBuffer = await response.arrayBuffer();
   const data = Buffer.from(arrayBuffer);
 

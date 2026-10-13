@@ -16,6 +16,8 @@
  *   - choudoufuLiveLs: `live-ls -estate=<estate> -json [-consistent]` (#2103).
  *   - choudoufuLiveCheck: `live-check -json`, no cloud calls (#2103).
  *   - choudoufuAdopt: the tag writes that claim an adoption ledger's matches (#2105).
+ *   - terraformPinRollout: one run of a pin-bump rollout, opening at most one
+ *     wave's pull request (#3189). It loads the HCL parser on first call.
  *
  * The module is dependency-light on purpose: it shells out to the configured
  * binary and reads the `terraform` config namespace, and never touches the
@@ -82,3 +84,5 @@ export type {
 } from "./terraform";
 
 export { detectLiveEstate } from "./live-detect";
+export { terraformPinRollout } from "./pin-rollout";
+export type { TerraformPinRolloutArgs, TerraformPinRolloutResult } from "./pin-rollout";

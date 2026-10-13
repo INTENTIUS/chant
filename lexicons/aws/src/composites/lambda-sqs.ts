@@ -14,6 +14,7 @@ export interface LambdaSqsProps extends LambdaFunctionProps {
   };
 }
 
+/** A Lambda function fed by an SQS queue through an event source mapping. */
 export const LambdaSqs = Composite((props: LambdaSqsProps) => {
   const { defaults } = props;
 

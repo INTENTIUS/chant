@@ -5,7 +5,7 @@
  */
 
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+import { ts } from "@intentius/chant/lint/typescript";
 
 const JOB_NAMES = new Set(["Job", "ReusableWorkflowCallJob"]);
 const MAX_JOBS = 10;

@@ -1,0 +1,17 @@
+{
+  "$comment": "Corrections to the vendored piechart.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "piechart",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/sort",
+      "value": {
+        "$ref": "#/definitions/SortOrder",
+        "description": "How slices are ordered."
+      },
+      "source": "public/app/plugins/panel/piechart/panelcfg.cue:49",
+      "why": "The CUE's Options has `sort: common.SortOrder`; the vendored Options leaves it out, and Grafana writes it into every pie chart it loads."
+    }
+  ]
+}

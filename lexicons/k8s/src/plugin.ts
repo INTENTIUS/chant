@@ -5,6 +5,7 @@
  * lint rules, and LSP/MCP integration for Kubernetes manifests.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 import { k8sBehaviourKinds } from "./behaviour-kinds";
 import type { CommandGroup } from "@intentius/chant/cli/command-group";
@@ -33,6 +34,8 @@ import { k8sConfigSchema } from "./config-schema";
 import type { K8sChantConfig } from "./config";
 import { renderKustomizeRoots } from "./kustomize/root";
 import { encryptedSecretBuildRoot } from "./sops/encrypted-secret-file";
+import { k8sProjectCodegen } from "./crd/project-codegen";
+import { includeBuildRoot } from "./include/resolve";
 import type { Declarable } from "@intentius/chant/declarable";
 
 export const k8sPlugin: LexiconPlugin = {
@@ -77,6 +80,13 @@ export const k8sPlugin: LexiconPlugin = {
     return postSynthCheckList;
   },
 
+  // Typed classes for the project's own CRDs (`k8s.crds`), written by
+  // `chant generate` and checked for drift by every build. See
+  // ./crd/project-codegen.ts.
+  projectCodegen() {
+    return k8sProjectCodegen();
+  },
+
   // #1548 piece 3 — kustomization dirs declared as build roots. Each entry in
   // `k8s.kustomize.roots` renders at build time (same injectable runner as
   // the kustomize-apply capability: `kustomize build`, `kubectl kustomize`
@@ -86,8 +96,10 @@ export const k8sPlugin: LexiconPlugin = {
   //
   // The same hook also resolves committed-encrypted `declareSecret()`
   // declarations: it reads the ciphertext each one names and contributes it
-  // as a verbatim sidecar entity (see ./sops/encrypted-secret-file.ts). Both
-  // halves are one filesystem read at the one sanctioned impure seam.
+  // as a verbatim sidecar entity (see ./sops/encrypted-secret-file.ts), and
+  // `k8sInclude()` declarations: it reads or fetches each declared YAML and
+  // contributes its documents as verbatim manifest entities (see
+  // ./include/resolve.ts). All three read at the one sanctioned impure seam.
   async buildRoots(ctx) {
     const entities = new Map<string, Declarable>();
     const warnings: string[] = [];
@@ -98,6 +110,9 @@ export const k8sPlugin: LexiconPlugin = {
       for (const [name, entity] of rendered.entities) entities.set(name, entity);
       warnings.push(...rendered.warnings);
     }
+
+    const included = await includeBuildRoot(ctx);
+    for (const [name, entity] of included.entities) entities.set(name, entity);
 
     const encrypted = await encryptedSecretBuildRoot(ctx);
     for (const [name, entity] of encrypted.entities) entities.set(name, entity);
@@ -336,6 +351,10 @@ export const service = new Service({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

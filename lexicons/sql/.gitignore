@@ -1,0 +1,7 @@
+dist/
+node_modules/
+.cache/
+src/generated/
+*.tgz
+.roundtrip-tmp-*
+.roundtrip-offline-tmp-*

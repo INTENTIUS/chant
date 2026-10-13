@@ -1,0 +1,17 @@
+{
+  "name": "grafana-getting-started-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon grafana -o dist/grafana/index.json",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-grafana": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

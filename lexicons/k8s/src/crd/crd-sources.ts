@@ -199,17 +199,24 @@ const INFISICAL_OPERATOR_VERSION = "infisical-k8-operator/v0.11.7";
 const INFISICAL_CRD_BASE = `https://raw.githubusercontent.com/Infisical/kubernetes-operator/${INFISICAL_OPERATOR_VERSION}/config/crd/bases`;
 
 /**
- * Prometheus Operator CRDs — monitoring.coreos.com/v1
+ * Prometheus Operator CRDs — monitoring.coreos.com/v1 and v1alpha1
  *
  * Produces (the `monitoring.coreos.com` group maps to the `Monitoring`
  * namespace):
  *   K8s::Monitoring::ServiceMonitor  → apiVersion: monitoring.coreos.com/v1, kind: ServiceMonitor
  *   K8s::Monitoring::PrometheusRule  → apiVersion: monitoring.coreos.com/v1, kind: PrometheusRule
+ *   K8s::Monitoring::Prometheus / Alertmanager / PodMonitor / Probe / ThanosRuler
+ *                                    → apiVersion: monitoring.coreos.com/v1
+ *   K8s::Monitoring::PrometheusAgent / AlertmanagerConfig / ScrapeConfig
+ *                                    → apiVersion: monitoring.coreos.com/v1alpha1
+ *
+ * `Probe` is also the core container probe property type, so the CRD class is
+ * `MonitoringProbe` (priorityNames in codegen/naming.ts).
  *
  * Operator install: kube-prometheus-stack chart, or
  *   https://github.com/prometheus-operator/prometheus-operator
  */
-const PROM_OPERATOR_VERSION = "v0.79.2";
+const PROM_OPERATOR_VERSION = "v0.94.1";
 const PROM_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROM_OPERATOR_VERSION}/example/prometheus-operator-crd`;
 
 /**
@@ -276,6 +283,8 @@ const FLUX_OPERATOR_INSTALL = `https://github.com/controlplaneio-fluxcd/flux-ope
  */
 const KUBEMICROVM_CHART = "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator";
 const KUBEMICROVM_VERSION = "1.0.11";
+// The chart layer of 1.0.11 on ghcr.io, so a re-pushed tag cannot change generated output.
+const KUBEMICROVM_CHART_DIGEST = "sha256:b15570736277f69bc69bc6bd1d6b89470404b8bbd45970b7dcb29ca9ab69170c";
 
 /**
  * k3s bundled-controller CRDs — helm.cattle.io/v1 + k3s.cattle.io/v1
@@ -477,6 +486,49 @@ const ACK_IAM_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/
 const ACK_EKS_VERSION = "v1.20.0";
 const ACK_EKS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/${ACK_EKS_VERSION}/config/crd/bases`;
 
+/**
+ * Grafana Operator CRDs — grafana.integreatly.org/v1beta1
+ *
+ * The delivery path for a Grafana the Grafana Operator runs, used by
+ * `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s`
+ * (#3015). Produces (the `grafana.integreatly.org` group maps to the
+ * `Grafana` namespace via the first-segment rule):
+ *   K8s::Grafana::GrafanaDashboard   → grafana.integreatly.org/v1beta1, kind: GrafanaDashboard
+ *   K8s::Grafana::GrafanaDatasource  → grafana.integreatly.org/v1beta1, kind: GrafanaDatasource
+ *   K8s::Grafana::GrafanaFolder      → grafana.integreatly.org/v1beta1, kind: GrafanaFolder
+ *   K8s::Grafana::GrafanaLibraryPanel → grafana.integreatly.org/v1beta1, kind: GrafanaLibraryPanel
+ *   K8s::Grafana::GrafanaAlertRuleGroup, GrafanaContactPoint, GrafanaNotificationPolicy,
+ *   GrafanaNotificationPolicyRoute, GrafanaMuteTiming, GrafanaNotificationTemplate
+ *     → grafana.integreatly.org/v1beta1, the alerting kinds (#3156)
+ *
+ * The operator's other kinds (Grafana itself, service accounts, manifests)
+ * are left out until something uses them.
+ *
+ * Operator install: kubectl apply --server-side -f
+ *   https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
+ */
+const GRAFANA_OPERATOR_VERSION = "v5.25.0";
+const GRAFANA_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/grafana/grafana-operator/${GRAFANA_OPERATOR_VERSION}/config/crd/bases`;
+
+/**
+ * OpenTelemetry Operator CRDs — opentelemetry.io (#3367)
+ *
+ * The `opentelemetry.io` group is mapped to the `OpenTelemetry` namespace (see
+ * GROUP_NAMESPACE_OVERRIDES in group-namespace.ts). Each CRD is generated at
+ * its storage version:
+ *   K8s::OpenTelemetry::OpenTelemetryCollector → opentelemetry.io/v1beta1 (spec.config is a structured object)
+ *   K8s::OpenTelemetry::Instrumentation        → opentelemetry.io/v1alpha1
+ *   K8s::OpenTelemetry::TargetAllocator        → opentelemetry.io/v1alpha1
+ *   K8s::OpenTelemetry::OpAMPBridge            → opentelemetry.io/v1alpha1
+ *   K8s::OpenTelemetry::ClusterObservability   → opentelemetry.io/v1alpha1 (new in v0.160.0: one CR that
+ *     sets up the operator's collectors and instrumentation cluster-wide)
+ *
+ * Operator install: kubectl apply -f
+ *   https://github.com/open-telemetry/opentelemetry-operator/releases/download/v0.160.0/opentelemetry-operator.yaml
+ */
+const OTEL_OPERATOR_VERSION = "v0.160.0";
+const OTEL_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/open-telemetry/opentelemetry-operator/${OTEL_OPERATOR_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -493,6 +545,14 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: CERT_MANAGER_CRD_BUNDLE },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_servicemonitors.yaml` },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusrules.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheuses.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_alertmanagers.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_podmonitors.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_probes.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_thanosrulers.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusagents.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_alertmanagerconfigs.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_scrapeconfigs.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_clusters.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_scheduledbackups.yaml` },
   { type: "url", url: `${CNPG_CRD_BASE}/postgresql.cnpg.io_backups.yaml` },
@@ -542,6 +602,7 @@ export const CRD_SOURCES: CRDSource[] = [
     type: "helm",
     chart: KUBEMICROVM_CHART,
     version: KUBEMICROVM_VERSION,
+    digest: KUBEMICROVM_CHART_DIGEST,
     kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
   },
   { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_inferenceservices.yaml` },
@@ -561,4 +622,19 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_users.yaml` },
   { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_policies.yaml` },
   { type: "url", url: `${ACK_EKS_CRD_BASE}/eks.services.k8s.aws_podidentityassociations.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanadashboards.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanadatasources.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanafolders.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanalibrarypanels.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanaalertrulegroups.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanacontactpoints.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationpolicies.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationpolicyroutes.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanamutetimings.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationtemplates.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_opentelemetrycollectors.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_instrumentations.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_targetallocators.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_opampbridges.yaml` },
+  { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_clusterobservabilities.yaml` },
 ];

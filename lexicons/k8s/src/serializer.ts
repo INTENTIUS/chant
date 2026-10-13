@@ -9,6 +9,8 @@ import { createRequire } from "module";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
+import { mergeResourceAttributes, RELEASE_ATTRIBUTES_VARIABLE, telemetryEnvironment, type TelemetryAttribution } from "@intentius/chant/telemetry-attribution";
+import { podSpecOf, releaseAttributesEnv } from "./telemetry-release";
 import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import {
   isEffectReceipt,
@@ -30,7 +32,10 @@ import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-w
 import { emitYAML } from "@intentius/chant/yaml";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
 import { isRenderedManifestEntity } from "./manifest-entity";
+import { projectKindForType } from "./project-kinds";
 import { isEncryptedSecretFileEntity } from "./sops/entity";
+import { isK8sInclude } from "./include/entity";
+import { isRuleGroup, ruleGroupConfig } from "@intentius/chant-lexicon-prometheus";
 
 const require = createRequire(import.meta.url);
 
@@ -79,6 +84,11 @@ function getGVKMap(): Record<string, GVKEntry> {
  * Resolve entityType to apiVersion and kind.
  */
 function resolveGVK(entityType: string): { apiVersion: string; kind: string } | null {
+  // A kind the project generated from its own CRDs (`chant generate`) wins
+  // over the packaged map, which knows nothing of it or an older version.
+  const projectKind = projectKindForType(entityType);
+  if (projectKind) return { apiVersion: projectKind.apiVersion, kind: projectKind.kind };
+
   const gvkMap = getGVKMap();
 
   // Search for matching entry by resourceType
@@ -265,8 +275,15 @@ function k8sVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
 
   return {
     attrRef: (name, attr) => resolveK8sAttr(byName.get(name), name, attr),
-    resourceRef: (name) => name,
+    // A prometheus-lexicon RuleGroup (in a PrometheusRule's spec.groups) is
+    // data, not a reference: it renders as the same group the rule file
+    // holds, whether it was exported as its own entity or written inline.
+    resourceRef: (name) => {
+      const entity = byName.get(name);
+      return isRuleGroup(entity) ? ruleGroupConfig(entity) : name;
+    },
     propertyDeclarable: (entity, walk) => {
+      if (isRuleGroup(entity)) return ruleGroupConfig(entity);
       if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }
@@ -292,6 +309,77 @@ function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unkn
 /**
  * Kubernetes YAML serializer implementation.
  */
+// ── Telemetry attribution (#2558, D22, #3059) ──────────────────────
+
+/** The digest of an image reference pinned with `@sha256:...`, or undefined. */
+function imageDigest(image: unknown): string | undefined {
+  if (typeof image !== "string") return undefined;
+  const at = image.lastIndexOf("@");
+  return at === -1 ? undefined : image.slice(at + 1);
+}
+
+/**
+ * Stamp `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` into the `env` of
+ * each container of a workload. `service.name` is the workload's
+ * `metadata.name`, `chant.decl` its declaration id (`decl`), and an image
+ * pinned by digest gives `service.version`. A variable the container already
+ * sets is kept: its own `OTEL_SERVICE_NAME` wins, and its own resource
+ * attributes keep their keys while the missing ones are appended. One set
+ * through `valueFrom` is left alone. Init containers are not stamped.
+ *
+ * `OTEL_RESOURCE_ATTRIBUTES` ends with `$(CHANT_RELEASE_ATTRIBUTES)`, read
+ * from the pod annotation a release deploy sets (#3061, ws-081), so a
+ * release adds `service.version` and `vcs.ref.head.revision` without
+ * changing this output.
+ */
+function stampWorkloadTelemetry(manifest: Record<string, unknown>, decl: string, telemetry: TelemetryAttribution): void {
+  const podSpec = podSpecOf(manifest);
+  const containers = podSpec?.containers;
+  if (!Array.isArray(containers)) return;
+  const service = String((manifest.metadata as Record<string, unknown> | undefined)?.name ?? decl);
+  const releaseRef = `$(${RELEASE_ATTRIBUTES_VARIABLE})`;
+  for (const container of containers) {
+    if (!container || typeof container !== "object") continue;
+    const c = container as Record<string, unknown>;
+    const version = imageDigest(c.image);
+    const vars = telemetryEnvironment(telemetry, { service, decl, ...(version ? { version } : {}) });
+    if (c.env !== undefined && !Array.isArray(c.env) && typeof c.env === "object" && c.env !== null) {
+      // A map, as some composites and hand-written props give it before the API's list form. A map
+      // has no order, so it cannot hold the $(VAR) reference to the release attributes.
+      const map: Record<string, unknown> = { ...(c.env as Record<string, unknown>) };
+      if (!("OTEL_SERVICE_NAME" in map)) map.OTEL_SERVICE_NAME = vars.OTEL_SERVICE_NAME;
+      const own = map.OTEL_RESOURCE_ATTRIBUTES;
+      if (own === undefined) map.OTEL_RESOURCE_ATTRIBUTES = vars.OTEL_RESOURCE_ATTRIBUTES;
+      else if (typeof own === "string") map.OTEL_RESOURCE_ATTRIBUTES = mergeResourceAttributes(own, vars.OTEL_RESOURCE_ATTRIBUTES);
+      c.env = map;
+      continue;
+    }
+    const env = Array.isArray(c.env) ? [...(c.env as Array<Record<string, unknown>>)] : [];
+    const at = (key: string) => env.findIndex((e) => e && typeof e === "object" && e.name === key);
+    if (at("OTEL_SERVICE_NAME") === -1) env.push({ name: "OTEL_SERVICE_NAME", value: vars.OTEL_SERVICE_NAME });
+    let i = at("OTEL_RESOURCE_ATTRIBUTES");
+    if (i === -1) {
+      env.push({ name: "OTEL_RESOURCE_ATTRIBUTES", value: vars.OTEL_RESOURCE_ATTRIBUTES });
+      i = env.length - 1;
+    } else if (typeof env[i]!.value === "string") {
+      env[i] = { ...env[i]!, value: mergeResourceAttributes(env[i]!.value as string, vars.OTEL_RESOURCE_ATTRIBUTES) };
+    }
+    // The release attributes (#3061, ws-081): a $(VAR) reference expands only to a variable defined
+    // earlier in the list, so the downward-API entry goes just before OTEL_RESOURCE_ATTRIBUTES. A
+    // container that defines the variable itself keeps its own, and gets the reference only when
+    // its definition comes first.
+    if (typeof env[i]!.value === "string") {
+      if (at(RELEASE_ATTRIBUTES_VARIABLE) === -1) {
+        env.splice(i, 0, releaseAttributesEnv());
+        i++;
+      }
+      const value = env[i]!.value as string;
+      if (at(RELEASE_ATTRIBUTES_VARIABLE) < i && !value.includes(releaseRef)) env[i] = { ...env[i]!, value: `${value}${releaseRef}` };
+    }
+    c.env = env;
+  }
+}
+
 export const k8sSerializer: Serializer = {
   name: "k8s",
   rulePrefix: "WK8",
@@ -339,6 +427,9 @@ export const k8sSerializer: Serializer = {
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
       if (isDefaultLabels(entity) || isDefaultAnnotations(entity)) continue;
+      // A `k8sInclude` declaration is resolved into its documents at
+      // `buildRoots()`; the declaration itself emits nothing.
+      if (isK8sInclude(entity)) continue;
 
       // Committed SOPS ciphertext (epic lex00/iac-cd-bench#6) leaves as a
       // SIDECAR and never as a document in the primary output. That is the
@@ -481,6 +572,8 @@ export const k8sSerializer: Serializer = {
         }
       }
 
+      if (context?.telemetry) stampWorkloadTelemetry(manifest, name, context.telemetry);
+
       // Emit as YAML — sort Namespaces first so kubectl apply succeeds
       const yamlDoc = emitK8sManifest(manifest);
       if (gvk.kind === "Namespace") {
@@ -514,7 +607,9 @@ export const k8sSerializer: Serializer = {
     return {
       primary,
       files,
-      ...(verbatimFiles.length > 0 ? { verbatimFiles } : {}),
+      // Every verbatim file here is committed ciphertext, so each is also a
+      // secret: a build with no --output refuses rather than echo it (chant#3738).
+      ...(verbatimFiles.length > 0 ? { verbatimFiles, secretFiles: [...verbatimFiles] } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     };
   },

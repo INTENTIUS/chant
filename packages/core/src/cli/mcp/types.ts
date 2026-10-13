@@ -32,7 +32,7 @@ export interface McpResponse {
  */
 export interface McpRequestMeta {
   protocolVersion?: string;
-  "io.modelcontextprotocol/clientInfo"?: { name: string; version?: string };
+  "io.modelcontextprotocol/clientInfo"?: McpClientInfo;
 }
 
 /**
@@ -68,4 +68,17 @@ export interface ResourceDefinition {
   mimeType?: string;
 }
 
-export type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
+/** The MCP client's `clientInfo`, as it gave it on `initialize` or in a request's `_meta`. */
+export interface McpClientInfo {
+  name: string;
+  version?: string;
+  title?: string;
+}
+
+/** What a handler knows about the call beyond its arguments (#2707). */
+export interface ToolContext {
+  /** The client that made the call, when it said. */
+  clientInfo?: McpClientInfo;
+}
+
+export type ToolHandler = (params: Record<string, unknown>, context?: ToolContext) => Promise<unknown>;

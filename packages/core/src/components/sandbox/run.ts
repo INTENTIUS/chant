@@ -3,6 +3,7 @@ import { realpathSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { bundleDriver } from "../../discovery/sandbox/bundle";
 import { classifyChildError } from "../../discovery/sandbox/child-errors";
+import { settleOnExitAfterChannelDrains } from "../../discovery/sandbox/fork";
 import { DiscoveryError, type DiscoveryErrorType } from "../../errors";
 import type { Component } from "../component";
 import type { DiscoveredComponent } from "../discover";
@@ -163,7 +164,9 @@ function runChildProcess(
       reject(err);
     });
 
-    child.on("exit", (code, signal) => {
+    // chant#2461 — a payload can still be in the IPC socket when the exit is
+    // handled; see settleOnExitAfterChannelDrains.
+    settleOnExitAfterChannelDrains(child, (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);

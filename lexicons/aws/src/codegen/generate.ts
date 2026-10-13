@@ -27,6 +27,15 @@ import {
   type EnumOverlayApplication,
   type EnumOverlayEntry,
 } from "./enum-overlay";
+import {
+  applyPropertyOverlay,
+  assertPropertyOverlayCoverage,
+  propertyOverlayByType,
+  propertyOverlayEntries,
+  redundantPropertyOverlayWarnings,
+  type PropertyOverlayApplication,
+  type PropertyOverlayEntry,
+} from "./property-overlay";
 import { samResources } from "./sam";
 import { fallbackResources } from "./fallback";
 import { NamingStrategy, publishedNames, propertyTypeName, extractDefName } from "./naming";
@@ -56,6 +65,9 @@ let awsOverlay: Map<string, EnumOverlayEntry[]> = new Map();
 let awsOverlayApplications: EnumOverlayApplication[] = [];
 let awsOverlaySeenTypes = new Set<string>();
 let awsOverlayStrict = false;
+/** Backfilled properties (chant #3953), reset per `generate()` call; strictness and seen types are shared with the enum overlay. */
+let awsPropertyOverlay: Map<string, PropertyOverlayEntry[]> = new Map();
+let awsPropertyOverlayApplications: PropertyOverlayApplication[] = [];
 
 const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
   fetchSchemas: async (opts) => {
@@ -69,8 +81,11 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
 
   parseSchema: (typeName, data) => {
     awsOverlaySeenTypes.add(typeName);
+    // Properties first, so an enum overlay entry could name a backfilled one.
+    const backfilled = applyPropertyOverlay(data, awsPropertyOverlay.get(typeName) ?? []);
+    awsPropertyOverlayApplications.push(...backfilled.applications);
     const entries = awsOverlay.get(typeName) ?? [];
-    const overlaid = applyEnumOverlay(typeName, data, entries, { strict: awsOverlayStrict });
+    const overlaid = applyEnumOverlay(typeName, backfilled.data, entries, { strict: awsOverlayStrict });
     awsOverlayApplications.push(...overlaid.applications);
     const result = parseCFNSchema(overlaid.data);
     if (!result.resource.typeName) return null;
@@ -142,6 +157,11 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
     log(`Applied ${applied} curated enum overlay entries`);
     warnings.push(...redundantOverlayWarnings(awsOverlayApplications));
 
+    assertPropertyOverlayCoverage(propertyOverlayEntries(), awsOverlaySeenTypes, awsOverlayStrict);
+    const backfilled = awsPropertyOverlayApplications.filter((a) => a.outcome === "applied").length;
+    log(`Backfilled ${backfilled} properties the pinned spec predates`);
+    warnings.push(...redundantPropertyOverlayWarnings(awsPropertyOverlayApplications));
+
     log(`Total: ${results.length} resource schemas`);
     return { results, warnings };
   },
@@ -174,6 +194,8 @@ export async function generate(opts: GenerateOptions = {}): Promise<GenerateResu
   awsOverlay = enumOverlayByType();
   awsOverlayApplications = [];
   awsOverlaySeenTypes = new Set();
+  awsPropertyOverlay = propertyOverlayByType();
+  awsPropertyOverlayApplications = [];
   // A fixture set is a trimmed subset, so an entry it never reaches is
   // expected; a run over the real zip has no such excuse.
   awsOverlayStrict = !opts.schemaSource;

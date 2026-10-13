@@ -3,7 +3,8 @@ import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createInterface } from "readline";
 import { formatSuccess, formatWarning } from "../format";
-import { loadPlugin } from "../plugins";
+import { loadPlugin, recordProjectLexicons, unknownPathLexiconsNotice } from "../plugins";
+import { lexiconModulePath, lexiconSourceLabel } from "../../lexicon-module";
 import { MCP_CONFIG_FILENAME, detectPackageManager, generateMcpConfig, mcpConfigPath } from "../mcp-config";
 
 /** Read the current chant package version from our own package.json. */
@@ -53,16 +54,37 @@ export interface InitResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
+  /**
+   * chant#2578 — where the lexicon loads from when the directory's existing
+   * chant.config declares it by path. There is no package to depend on or
+   * install for it.
+   */
+  lexiconModule?: string;
 }
+
+/**
+ * The devDependencies a scaffolded project gets, from `chant init` and from
+ * `chant carve` (#3233). The project's TypeScript is for its editor and `tsc`
+ * only; chant parses with its own copy, so any 5.9+ or 7 release works (#3089).
+ */
+export const SCAFFOLD_DEV_DEPENDENCIES = {
+  "@types/node": "^24.0.0",
+  typescript: "^5.9.3 || ^7.0.0",
+} as const;
 
 /**
  * Generate package.json content
  */
-function generatePackageJson(lexicon: string, extraScripts?: Record<string, string>): string {
+function generatePackageJson(
+  lexicon: string,
+  extraScripts?: Record<string, string>,
+  lexiconIsPackage = true,
+): string {
   const ver = getChantVersion();
   const dependencies: Record<string, string> = {
     "@intentius/chant": `^${ver}`,
-    [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
+    // chant#2578 — a lexicon declared by path is not a package to depend on.
+    ...(lexiconIsPackage ? { [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}` } : {}),
   };
 
   const pkg = {
@@ -76,23 +98,28 @@ function generatePackageJson(lexicon: string, extraScripts?: Record<string, stri
       ...extraScripts,
     },
     dependencies,
-    devDependencies: {
-      typescript: "^5.0.0",
-    },
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES },
   };
 
   return JSON.stringify(pkg, null, 2);
 }
 
 /**
- * Generate tsconfig.json content with path mappings for .chant/ types
+ * Generate tsconfig.json content.
+ *
+ * `bundler` resolution, because chant resolves a project's imports the way tsx
+ * and fold do: `./config` with no extension. NodeNext rejects that form
+ * (TS2835), and its suggested `./config.js` makes fold fall back to running the
+ * file (#3089). `types` names node because TypeScript 6 and later no longer load
+ * every `@types` package by default.
  */
-function generateTsConfig(lexicon: string): string {
+export function generateTsConfig(): string {
   const config = {
     compilerOptions: {
       target: "ES2022",
-      module: "NodeNext",
-      moduleResolution: "NodeNext",
+      module: "esnext",
+      moduleResolution: "bundler",
+      types: ["node"],
       strict: true,
       esModuleInterop: true,
       skipLibCheck: true,
@@ -252,6 +279,20 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     mkdirSync(targetDir, { recursive: true });
   }
 
+  // chant#2578 — `--force` into an existing project keeps its chant.config.
+  // When that config declares the lexicon by path, it loads from the module
+  // and there is no package to depend on or install. chant#2591 — the config
+  // is read without running it; when that fails, init says so and treats the
+  // lexicon as a package.
+  let lexiconModule: string | undefined;
+  if (existsSync(join(targetDir, "chant.config.ts")) || existsSync(join(targetDir, "chant.config.json"))) {
+    const notice = unknownPathLexiconsNotice(recordProjectLexicons(targetDir));
+    if (notice !== undefined) warnings.push(notice);
+    if (lexiconModulePath(options.lexicon) !== undefined) {
+      lexiconModule = lexiconSourceLabel(options.lexicon, targetDir);
+    }
+  }
+
   // Load plugin early to get template set (used for scripts + source files)
   let templateSet: import("../../lexicon").InitTemplateSet | undefined;
   try {
@@ -272,7 +313,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Generate package.json
   writeIfNotExists(
     join(targetDir, "package.json"),
-    generatePackageJson(options.lexicon, templateSet?.scripts),
+    generatePackageJson(options.lexicon, templateSet?.scripts, lexiconModule === undefined),
     "package.json",
     createdFiles,
     warnings,
@@ -281,7 +322,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Generate tsconfig.json
   writeIfNotExists(
     join(targetDir, "tsconfig.json"),
-    generateTsConfig(options.lexicon),
+    generateTsConfig(),
     "tsconfig.json",
     createdFiles,
     warnings,
@@ -361,29 +402,32 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Scaffold .chant/types/lexicon-{lexicon}/ stub
-  const lexiconTypesDir = join(targetDir, ".chant", "types", `lexicon-${options.lexicon}`);
-  mkdirSync(lexiconTypesDir, { recursive: true });
+  // Scaffold .chant/types/lexicon-{lexicon}/ stub. A lexicon declared by path
+  // is imported by its path, so it has no package name to stub (chant#2578).
+  if (lexiconModule === undefined) {
+    const lexiconTypesDir = join(targetDir, ".chant", "types", `lexicon-${options.lexicon}`);
+    mkdirSync(lexiconTypesDir, { recursive: true });
 
-  writeIfNotExists(
-    join(lexiconTypesDir, "package.json"),
-    JSON.stringify(
-      { name: `@intentius/chant-lexicon-${options.lexicon}`, version: "0.0.0", types: "./index.d.ts" },
-      null,
-      2,
-    ),
-    `.chant/types/lexicon-${options.lexicon}/package.json`,
-    createdFiles,
-    warnings,
-  );
+    writeIfNotExists(
+      join(lexiconTypesDir, "package.json"),
+      JSON.stringify(
+        { name: `@intentius/chant-lexicon-${options.lexicon}`, version: "0.0.0", types: "./index.d.ts" },
+        null,
+        2,
+      ),
+      `.chant/types/lexicon-${options.lexicon}/package.json`,
+      createdFiles,
+      warnings,
+    );
 
-  writeIfNotExists(
-    join(lexiconTypesDir, "index.d.ts"),
-    `// Lexicon type stubs — run "chant update" to sync full types\nexport {};\n`,
-    `.chant/types/lexicon-${options.lexicon}/index.d.ts`,
-    createdFiles,
-    warnings,
-  );
+    writeIfNotExists(
+      join(lexiconTypesDir, "index.d.ts"),
+      `// Lexicon type stubs — run "chant update" to sync full types\nexport {};\n`,
+      `.chant/types/lexicon-${options.lexicon}/index.d.ts`,
+      createdFiles,
+      warnings,
+    );
+  }
 
   // Generate the project's MCP config. It lands in the directory init was
   // pointed at, like everything else init produces, and at the path
@@ -421,10 +465,27 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     // Skills are optional — don't fail init if plugin isn't installed yet
   }
 
+  // `--template` records where the files came from (#2540, ws-047). Plain
+  // init writes no lock and never loads the lineage module.
+  if (options.template && templateSet) {
+    const { writeTemplateLock } = await import("../../workspace/lineage-init");
+    const lock = writeTemplateLock({
+      targetDir,
+      lexicon: options.lexicon,
+      template: options.template,
+      createdFiles,
+      chantVersion: getChantVersion(),
+      lexiconModule,
+    });
+    if (lock) createdFiles.push(lock);
+    else warnings.push(".chant/workspace.lock.json already exists, skipping");
+  }
+
   return {
     success: true,
     createdFiles,
     warnings,
+    ...(lexiconModule !== undefined ? { lexiconModule } : {}),
   };
 }
 
@@ -452,6 +513,11 @@ export async function printInitResult(
   }
 
   console.log("");
+
+  if (result.lexiconModule !== undefined) {
+    console.log(`The lexicon loads from ${result.lexiconModule}, as chant.config.ts declares. It has no package to install.`);
+    console.log("");
+  }
 
   const pm = detectPackageManager(options?.cwd);
 

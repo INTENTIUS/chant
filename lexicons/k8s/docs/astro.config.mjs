@@ -83,6 +83,10 @@ export default defineConfig({
                               "slug": "argo-composites"
                         },
                         {
+                              "label": "Collector Placement Checks",
+                              "slug": "otel-placement-checks"
+                        },
+                        {
                               "label": "CRD-Generated Classes",
                               "slug": "crd-classes"
                         },
@@ -93,6 +97,10 @@ export default defineConfig({
                         {
                               "label": "Lint Rules",
                               "slug": "lint-rules"
+                        },
+                        {
+                              "label": "OpenTelemetry Collector",
+                              "slug": "otel-collector"
                         },
                         {
                               "label": "Vendor Composites",

@@ -23,6 +23,7 @@ import {
   normalizeDeepObservation,
   normalizeDeepProperties,
   type DeepNormalizationHooks,
+  type DeepPendingChange,
   type DeepResourceObservation,
   type NormalizedDeepObservation,
 } from "../deep-observation";
@@ -68,12 +69,14 @@ export function mergeDeepObservations(
 ): NormalizedDeepObservation {
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
+  const pending: DeepPendingChange[] = [];
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
+    pending.push(...(part.pending ?? []));
   }
   for (const name of Object.keys(resources)) delete unobserved[name];
-  return { resources, unobserved };
+  return { resources, unobserved, ...(pending.length > 0 ? { pending } : {}) };
 }
 
 /**
@@ -160,6 +163,8 @@ export function diffDeepObservation(
         // up by the flattened path, so a keyed list element (`[#name]`) has
         // no owner today — its raw index path is what the reader recorded.
         ...(liveEntity.fieldOwners ? { fieldOwners: liveEntity.fieldOwners } : {}),
+        // Which server's copy was read, when the reader read several (#3664).
+        ...(liveEntity.observedOn ? { observedOn: liveEntity.observedOn } : {}),
         // The claimed-field set (#2160), computed from the declaration and
         // carried on the observation so a consumer holding only this envelope
         // can classify a live value three ways rather than two. Same normalized
@@ -187,7 +192,7 @@ export function diffDeepObservation(
 
   return diffDeep({
     declared,
-    live: { resources: normalizedLive, unobserved: live.unobserved },
+    live: { resources: normalizedLive, unobserved: live.unobserved, ...(live.pending ? { pending: live.pending } : {}) },
     baseline,
     hooks,
   });

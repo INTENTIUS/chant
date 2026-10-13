@@ -1,0 +1,110 @@
+---
+title: "Object Coverage"
+description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, refused with a reason, or out of scope, and what import does with each"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/object-coverage.mdx instead; changes here are overwritten. */}
+
+
+{/* Written by src/codegen/coverage-page.ts from src/coverage/postgres.json and src/coverage/clickhouse.json. Edit the tables, then run npm run docs. */}
+
+Each row is a `CREATE` command a pinned server has, or one form of a command where chant treats the forms apart (`CREATE TYPE ... AS ENUM` is declared, `CREATE TYPE ... AS RANGE` is not). The commands come from the servers' own sources at each pinned version (`scripts/sql-create-commands.ts`), and a test fails when a pinned server has a command with no row here, so a new server release cannot add a kind nobody looked at.
+
+- **declared**: a tag declares it, and import writes it as that declaration.
+- **refused**: no declaration holds it yet. `chant import --from <env>` fails when the server has one, naming every such object (kind, schema, name) at once, and `chant import schema.sql` fails on the statement. Nothing is left out without a word.
+- **out of scope**: the environment's, not a schema's: import never reads it.
+
+`--skip-undeclarable` (`--parser-option skipUndeclarable` for a file) imports everything else and lists the refused objects as warnings, for an adopter who keeps those objects by hand for now:
+
+```bash
+chant import --from prod --skip-undeclarable
+chant import schema.sql --parser-option skipUndeclarable
+```
+
+What a managed provider, an extension or the server's configuration files define is never refused: an extension's aggregates and casts are the extension's, declared with it, and a quota from `users.xml` is the server's. An import with `--type`, `--name` or `--owned` asks only for objects chant can hold, and does not look for the rest.
+
+## Postgres
+
+Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out of scope.
+
+| Command | Kind | Status | Declared by, or why not |
+|---|---|---|---|
+| `CREATE ACCESS METHOD` | access method | refused | no tag declares an access method; an extension usually installs one, and the extension is declared instead |
+| `CREATE AGGREGATE` | aggregate | declared | `Postgres::Aggregate` |
+| `CREATE CAST` | cast | declared | `Postgres::Cast`: the database's, named by its two types; read where a type or its function is in scope |
+| `CREATE COLLATION` | collation | declared | `Postgres::Collation` |
+| `CREATE CONVERSION` | conversion | refused | no tag declares an encoding conversion |
+| `CREATE DATABASE` | database | out of scope | a project's schema lives in one database, which the environment provides (sql.profiles.\<env\>) |
+| `CREATE DOMAIN` | domain | declared | `Postgres::Domain` |
+| `CREATE EVENT TRIGGER` | event trigger | declared | `Postgres::EventTrigger`: the database's, not a schema's; creating one takes a superuser |
+| `CREATE EXTENSION` | extension | declared | `Postgres::Extension` |
+| `CREATE FOREIGN DATA WRAPPER` | foreign data wrapper | refused | no tag declares a foreign data wrapper yet; one an extension installs comes with the extension |
+| `CREATE FOREIGN TABLE` | foreign table | refused | no tag declares a foreign table yet |
+| `CREATE FUNCTION` | function | declared | `Postgres::Function` |
+| `CREATE FUNCTION` (RETURN or BEGIN ATOMIC body) | routine with a SQL-standard body | refused | the server stores a SQL-standard body parsed and prints it back rewritten, so a declaration cannot be compared with it; declare the routine with a string body (AS $$ ... $$) |
+| `CREATE GROUP` | group | declared | `Postgres::Role`: an alias of CREATE ROLE |
+| `CREATE INDEX` | index | declared | `Postgres::Index` |
+| `CREATE LANGUAGE` | procedural language | refused | no tag declares a procedural language; an extension installs one, and the extension is declared instead |
+| `CREATE MATERIALIZED VIEW` | materialized view | declared | `Postgres::MaterializedView` |
+| `CREATE OPERATOR` | operator | refused | no tag declares an operator yet |
+| `CREATE OPERATOR CLASS` | operator class | refused | no tag declares an operator class yet |
+| `CREATE OPERATOR FAMILY` | operator family | refused | no tag declares an operator family yet |
+| `CREATE POLICY` | policy | declared | `Postgres::Policy`: read where the profile manages access (sql.profiles.\<env\>.access) |
+| `CREATE PROCEDURE` | procedure | declared | `Postgres::Procedure` |
+| `CREATE PUBLICATION` | publication | refused | no tag declares a publication yet |
+| `CREATE ROLE` | role | declared | `Postgres::Role`: import reads only the roles a build declares, since a role is the cluster's |
+| `CREATE RULE` | rule | refused | no tag declares a rewrite rule; a view's own rule is the view's |
+| `CREATE SCHEMA` | schema | declared | `Postgres::Schema` |
+| `CREATE SEQUENCE` | sequence | declared | `Postgres::Sequence` |
+| `CREATE SERVER` | foreign server | refused | no tag declares a foreign server yet |
+| `CREATE STATISTICS` | extended statistics | refused | no tag declares extended statistics yet |
+| `CREATE SUBSCRIPTION` | subscription | refused | no tag declares a subscription yet |
+| `CREATE TABLE` | table | declared | `Postgres::Table` |
+| `CREATE TABLE AS` | table from a query | declared | `Postgres::Table`: the server keeps no query, so the table it made reads as a CREATE TABLE |
+| `CREATE TABLESPACE` | tablespace | out of scope | a tablespace is the cluster's, a directory on the server; a table's TABLESPACE clause is kept |
+| `CREATE TEXT SEARCH CONFIGURATION` | text search configuration | refused | no tag declares a text search configuration yet |
+| `CREATE TEXT SEARCH DICTIONARY` | text search dictionary | refused | no tag declares a text search dictionary yet |
+| `CREATE TEXT SEARCH PARSER` | text search parser | refused | no tag declares a text search parser; one is C code an extension installs |
+| `CREATE TEXT SEARCH TEMPLATE` | text search template | refused | no tag declares a text search template; one is C code an extension installs |
+| `CREATE TRANSFORM` | transform | refused | no tag declares a transform; an extension installs one |
+| `CREATE TRIGGER` | trigger | declared | `Postgres::Trigger` |
+| `CREATE TYPE` (AS ENUM) | enum type | declared | `Postgres::Enum` |
+| `CREATE TYPE` (AS (...)) | composite type | declared | `Postgres::CompositeType` |
+| `CREATE TYPE` (AS RANGE) | range type | declared | `Postgres::RangeType`: its multirange type comes with it (MULTIRANGE_TYPE_NAME) |
+| `CREATE TYPE` (INPUT, OUTPUT, or a shell type) | base type | refused | no tag declares a base type; its input and output functions are C code an extension installs |
+| `CREATE USER` | user | declared | `Postgres::Role`: an alias of CREATE ROLE ... LOGIN |
+| `CREATE USER MAPPING` | user mapping | refused | no tag declares a user mapping yet |
+| `CREATE VIEW` | view | declared | `Postgres::View` |
+
+## ClickHouse
+
+Pinned release: 26.8.15.10. 12 declared, 7 refused, 1 out of scope.
+
+| Command | Kind | Status | Declared by, or why not |
+|---|---|---|---|
+| `CREATE DATABASE` | database | declared | `ClickHouse::Database` |
+| `CREATE DICTIONARY` | dictionary | declared | `ClickHouse::Dictionary` |
+| `CREATE FUNCTION` | SQL function | declared | `ClickHouse::Function` |
+| `CREATE FUNCTION` (LANGUAGE WASM, or with a driver) | non-SQL function | refused | only a SQL function (CREATE FUNCTION f AS (x) -\> ...) is declared |
+| `CREATE HANDLER` | HTTP handler | refused | an HTTP handler is server-level configuration, not a schema object |
+| `CREATE INDEX` | index | declared | `ClickHouse::Table`: an index is part of its table: SHOW CREATE TABLE prints it, and the table's declaration holds it |
+| `CREATE MASKING POLICY` | masking policy | refused | masking policies are available only in ClickHouse Cloud, not on the pinned server |
+| `CREATE NAMED COLLECTION` | named collection | refused | a named collection holds credentials (a password, a secret key), which are the environment's and never in a build; the server hides its values, so a plan could not compare them either |
+| `CREATE QUOTA` | quota | declared | `ClickHouse::Quota`: import reads only the access objects a build declares |
+| `CREATE RESOURCE` | workload resource | refused | a resource is server-level scheduling (a disk's reads or writes), configured with the server, not a schema object |
+| `CREATE ROLE` | role | declared | `ClickHouse::Role`: import reads only the access objects a build declares |
+| `CREATE ROW POLICY` | row policy | declared | `ClickHouse::RowPolicy`: import reads only the access objects a build declares |
+| `CREATE SETTINGS PROFILE` | settings profile | declared | `ClickHouse::SettingsProfile`: import reads only the access objects a build declares |
+| `CREATE TABLE` | table | declared | `ClickHouse::Table` |
+| `CREATE TABLE` (TEMPORARY) | temporary table | out of scope | a temporary table lives in one session |
+| `CREATE USER` | user | declared | `ClickHouse::User`: import reads only the access objects a build declares |
+| `CREATE VIEW` | view | declared | `ClickHouse::View` |
+| `CREATE VIEW` (MATERIALIZED) | materialized view | declared | `ClickHouse::MaterializedView` |
+| `CREATE WINDOW VIEW` | window view | refused | a window view is experimental, and the pinned server refuses it under its default query analyzer |
+| `CREATE WORKLOAD` | workload | refused | a workload is server-level scheduling, configured with the server, not a schema object |
+
+## Declaring a refused kind
+
+A kind becomes declarable in three steps: a tag that declares it, the catalog reader reading it (`src/postgres/live/catalog.ts`, `src/clickhouse/live/catalog.ts`), and its row flipped to `declared` with the entity type, its reason taken out. The row's flip is what stops import refusing the kind. After moving a pin, run `npx tsx scripts/sql-create-commands.ts` and give each new command a row.

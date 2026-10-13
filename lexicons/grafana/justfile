@@ -1,0 +1,38 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Regenerate the schema types and the registry from the vendored Grafana schemas
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Re-download the vendored schemas at the pinned commit and check their digests
+fetch-schemas:
+    npx tsx src/spec/fetch-cli.ts
+
+# Re-extract the unit ids GRAF115 accepts from Grafana's unit registry at the pinned tag
+fetch-units:
+    npx tsx src/spec/fetch-units-cli.ts
+
+# Rewrite the contact point settings types from a running Grafana's /api/alert-notifiers (starts one under Docker)
+fetch-notifiers:
+    npx tsx src/spec/fetch-notifiers-cli.ts
+
+# Validate generated artifacts
+validate:
+    npx tsx src/validate-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
+
+# Build docs site for production
+docs-build:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
+
+# Package the lexicon (generate + validate)
+package: generate validate

@@ -1,0 +1,397 @@
+{
+  "jobs": [
+    {
+      "label": "approved by the review",
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "staging"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "staging",
+          "op": "migrations",
+          "gate": "migrations-wave-2",
+          "policy": "on-destructive",
+          "approval": "pr-review",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "members": [
+            {
+              "member": "staging",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "migrate",
+              "destructive": true
+            }
+          ],
+          "status": "approved",
+          "review": {
+            "pr": 7,
+            "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+            "url": "https://example.test/pr/7",
+            "approvers": [
+              "github:erin"
+            ]
+          },
+          "via": "pr-review",
+          "approvedBy": "github:erin",
+          "approvedAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "pr-review",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          }
+        ],
+        "resolved": [
+          {
+            "version": 1,
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "resolvedBy": "github:erin",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+            "approver": {
+              "kind": "human"
+            },
+            "note": "approved by the review of #7 at hhhhhhhhhhhh: github:erin",
+            "url": "https://example.test/pr/7",
+            "review": {
+              "pr": 7,
+              "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+              "approvers": [
+                "github:erin"
+              ]
+            }
+          }
+        ],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 1
+    },
+    {
+      "label": "no approver",
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "staging",
+          "op": "migrations",
+          "gate": "migrations-wave-2",
+          "policy": "on-destructive",
+          "approval": "pr-review",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "members": [
+            {
+              "member": "staging",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "migrate",
+              "destructive": true
+            }
+          ],
+          "status": "waiting",
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "pr-review",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "review": {
+            "pr": 7,
+            "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+            "url": "https://example.test/pr/7",
+            "reason": "no writer other than its author approved the head of #7: nobody approved it"
+          },
+          "approve": "chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "pr-review",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 1,
+      "logs": 2
+    },
+    {
+      "label": "spent review",
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "staging",
+          "op": "migrations",
+          "gate": "migrations-wave-2",
+          "policy": "on-destructive",
+          "approval": "pr-review",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "members": [
+            {
+              "member": "staging",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "migrate",
+              "destructive": true
+            }
+          ],
+          "status": "waiting",
+          "spend": "base",
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "pr-review",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "review": {
+            "pr": 7,
+            "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+            "url": "https://example.test/pr/7",
+            "approvers": [
+              "github:erin"
+            ],
+            "reason": "a wave already applied jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d under the review of #7 at hhhhhhhhhhhh, so the review is spent"
+          },
+          "approve": "chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "pr-review",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+          }
+        ],
+        "resolved": [],
+        "applied": [
+          {
+            "version": 1,
+            "kind": "applied",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+            "approvedAt": "2026-10-10T00:00:00Z",
+            "approvedBy": "github:erin",
+            "timestamp": "2026-10-10T00:00:00Z",
+            "review": {
+              "pr": 7,
+              "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
+            }
+          }
+        ]
+      },
+      "calls": 1,
+      "logs": 3
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "staging",
+        "--out",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "staging",
+        "--plan",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/migrations/wave-2/staging.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/migrations/wave-2/staging.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "migrations",
+          "op": "migrate",
+          "wave": "staging",
+          "number": 2,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "staging",
+              "op": "migrate",
+              "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",
+          "hooks": {},
+          "outcomes": []
+        }
+      }
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "staging",
+        "--out",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "staging",
+        "--out",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ]
+    }
+  ],
+  "logs": [
+    "wave 2 (staging): gate on-destructive (read at bbbbbbbbbbbb), digest jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d: approved by github:erin (review of #7)",
+    "The pull request's review does not approve wave 2: no writer other than its author approved the head of #7: nobody approved it",
+    "Nothing in wave 2 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d (with --resume, the approval also starts this job again)",
+    "wave 2 (staging): the approval of jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d by github:erin at 2026-10-10T00:00:00Z is spent: a wave applied under it at 2026-10-10T00:00:00Z. Applying it again needs a new approval",
+    "The pull request's review does not approve wave 2: a wave already applied jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d under the review of #7 at hhhhhhhhhhhh, so the review is spent",
+    "Nothing in wave 2 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d (with --resume, the approval also starts this job again)"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-2/staging.hooks.json": {
+      "version": 1,
+      "opWaves": "migrations",
+      "op": "migrate",
+      "wave": "staging",
+      "number": 2,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "staging",
+          "op": "migrate",
+          "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/migrations/wave-2/staging.plan.json": {
+      "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "destructive": true
+    },
+    ".chant/op-waves/migrations/wave-2.json": {
+      "wave": 2,
+      "name": "staging",
+      "op": "migrations",
+      "gate": "migrations-wave-2",
+      "policy": "on-destructive",
+      "approval": "pr-review",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+      "members": [
+        {
+          "member": "staging",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "op": "migrate",
+          "destructive": true
+        }
+      ],
+      "status": "waiting",
+      "spend": "base",
+      "pendingFact": {
+        "version": 1,
+        "kind": "pending",
+        "approvalMode": "pr-review",
+        "op": "migrations",
+        "gate": "migrations-wave-2",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+        "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+      },
+      "recorded": true,
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "review": {
+        "pr": 7,
+        "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+        "url": "https://example.test/pr/7",
+        "approvers": [
+          "github:erin"
+        ],
+        "reason": "a wave already applied jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d under the review of #7 at hhhhhhhhhhhh, so the review is spent"
+      },
+      "approve": "chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
+    }
+  }
+}

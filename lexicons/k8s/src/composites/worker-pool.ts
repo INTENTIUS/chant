@@ -10,6 +10,7 @@ import {
   Deployment, ServiceAccount, Role, RoleBinding,
   ConfigMap, HorizontalPodAutoscaler, PodDisruptionBudget,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface WorkerPoolProps {
@@ -61,13 +62,13 @@ export interface WorkerPoolProps {
   env?: Array<{ name: string; value: string }>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    serviceAccount?: Partial<Record<string, unknown>>;
-    role?: Partial<Record<string, unknown>>;
-    roleBinding?: Partial<Record<string, unknown>>;
-    configMap?: Partial<Record<string, unknown>>;
-    hpa?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    role?: MemberDefaults<"Role">;
+    roleBinding?: MemberDefaults<"RoleBinding">;
+    configMap?: MemberDefaults<"ConfigMap">;
+    hpa?: MemberDefaults<"HorizontalPodAutoscaler">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
   };
 }
 

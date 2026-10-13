@@ -30,13 +30,31 @@ describe("github → forgejo transform", () => {
     expect(output).toContain("some-org/custom-action@v1");
   });
 
+  test("keeps id-token from a job's permissions, for OIDC", async () => {
+    const { output } = await transform(
+      `on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - run: echo hi
+`,
+      { sourceFile: "deploy.yml" },
+    );
+    expect(output).toContain("id-token: write");
+    expect(output).not.toContain("contents: read");
+  });
+
   test("classifies property fates (provenance + posture)", async () => {
     const { provenance, securityPosture, diagnostics } = await transform(GHA_WORKFLOW, { sourceFile: "ci.yml" });
     const rules = provenance.map((r) => r.rule);
     expect(rules).toContain("MIG-FJ-PERMISSIONS");
     expect(rules).toContain("MIG-FJ-CONTINUE-ON-ERROR");
     expect(rules).toContain("MIG-FJ-ACTION-UNRESOLVED");
-    expect(provenance.find((r) => r.rule === "MIG-FJ-PERMISSIONS")?.security.fate).toBe("lost");
+    expect(provenance.find((r) => r.rule === "MIG-FJ-PERMISSIONS")?.security.fate).toBe("needs-review");
     expect(securityPosture).toContain("## Security posture");
     expect(diagnostics.length).toBe(provenance.length);
   });

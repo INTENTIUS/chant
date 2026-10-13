@@ -60,6 +60,7 @@ export type VpcDefaultResult = {
   privateRta3?: InstanceType<typeof SubnetRouteTableAssociation>;
 };
 
+/** A VPC across two or three availability zones with public and private subnets, an internet gateway, a NAT gateway and their route tables. */
 export const VpcDefault = Composite<VpcDefaultProps, VpcDefaultResult>((props) => {
   const { defaults: defs } = props;
   const cidr = props.cidr ?? "10.0.0.0/16";

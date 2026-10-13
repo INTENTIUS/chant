@@ -7,6 +7,9 @@ import { fetchWithCache, extractFromZip, clearCacheFile } from "@intentius/chant
 import { RELEASE_GATE_ENV } from "@intentius/chant/codegen/validate";
 import { ACCEPT_ENV, AWS_SPEC_PIN, specContentDigest, type SpecPin } from "./pin";
 
+/** Per-attempt download timeout for a multi-megabyte archive. */
+const ARCHIVE_ATTEMPT_TIMEOUT_MS = 120_000;
+
 /**
  * Top-level CloudFormation Registry JSON Schema for a single resource type.
  */
@@ -232,7 +235,7 @@ export async function fetchSchemaZip(
     console.error(`pinned spec asset unavailable (${pinAssetUrl()}); falling back to the live CloudFormation archive`);
   }
   const zipData = await fetchWithCache(
-    { url: SCHEMA_ZIP_URL, cacheFile: CACHE_FILE },
+    { url: SCHEMA_ZIP_URL, cacheFile: CACHE_FILE, attemptTimeoutMs: ARCHIVE_ATTEMPT_TIMEOUT_MS },
     force || accepting,
   );
   const schemas = await extractRawSchemas(zipData);

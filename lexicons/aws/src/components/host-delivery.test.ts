@@ -118,4 +118,24 @@ describe("copy-to-host (#557 — SSM Run Command)", () => {
     const out = await createCopyToHostCapability(mock.executor).run(hostCtx, { from: "s3://b/x", host: "i", to: "/x" });
     expect(out).toEqual({ bytesCopied: 0 });
   });
+
+});
+
+describe("remote-exec with a release (#3061)", () => {
+  it("exports the release attributes before the command, so docker compose up fills the Compose file's reference", async () => {
+    const mock = createMockCloudExecutor();
+    await createRemoteExecCapability(mock.executor).run(
+      { ...hostCtx, release: { version: "sha256:abc", revision: "0123abc" } },
+      { host: "i-1", command: "docker compose -f /srv/app/compose.yaml up -d" },
+    );
+    expect(mock.calls[0]!.args).toMatchObject({
+      command: "export CHANT_RELEASE_ATTRIBUTES=',service.version=sha256%3Aabc,vcs.ref.head.revision=0123abc'; docker compose -f /srv/app/compose.yaml up -d",
+    });
+  });
+
+  it("leaves the command as it is without a release", async () => {
+    const mock = createMockCloudExecutor();
+    await createRemoteExecCapability(mock.executor).run({ ...hostCtx, release: {} }, { host: "i-1", command: "ls" });
+    expect(mock.calls[0]!.args).toMatchObject({ command: "ls" });
+  });
 });

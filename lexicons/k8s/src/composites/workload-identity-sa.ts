@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { ServiceAccount, Role, RoleBinding } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface WorkloadIdentityServiceAccountProps {
   /** ServiceAccount name — used in metadata and labels. */
@@ -25,9 +26,9 @@ export interface WorkloadIdentityServiceAccountProps {
   namespace?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    serviceAccount?: Partial<Record<string, unknown>>;
-    role?: Partial<Record<string, unknown>>;
-    roleBinding?: Partial<Record<string, unknown>>;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    role?: MemberDefaults<"Role">;
+    roleBinding?: MemberDefaults<"RoleBinding">;
   };
 }
 

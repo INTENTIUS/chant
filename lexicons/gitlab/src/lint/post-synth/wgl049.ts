@@ -11,14 +11,14 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractJobs, extractJobSection } from "./yaml-helpers";
+import { getPrimaryOutput, extractJobs, extractJobSection, topLevelSections } from "./yaml-helpers";
 
 const DEP_INSTALL_RE = /\b(npm (install|ci)|yarn install|pnpm install|pip install|pip3 install|bundle install|composer install|go mod download|mvn (install|dependency:resolve))\b/i;
 
 function hasPipelineWideCache(yaml: string): boolean {
-  const sections = yaml.split("\n\n");
-  if (sections.some((s) => /^cache:/.test(s))) return true;
-  const defaultSection = sections.find((s) => /^default:/.test(s));
+  const sections = topLevelSections(yaml);
+  if (sections.some((s) => s.key === "cache")) return true;
+  const defaultSection = sections.find((s) => s.key === "default")?.text;
   return !!defaultSection && /\n\s+cache:/.test(defaultSection);
 }
 

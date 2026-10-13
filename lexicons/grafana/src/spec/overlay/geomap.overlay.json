@@ -1,0 +1,35 @@
+{
+  "$comment": "Corrections to the vendored geomap.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "geomap",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "add",
+      "path": "/definitions/MapViewConfig/properties/noRepeat",
+      "value": {
+        "type": "boolean",
+        "default": false
+      },
+      "source": "public/app/plugins/panel/geomap/panelcfg.cue:48",
+      "why": "In the CUE's MapViewConfig; Grafana writes it into every geomap view it loads."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/MapViewConfig/properties/dashboardVariable",
+      "value": {
+        "type": "boolean"
+      },
+      "source": "public/app/plugins/panel/geomap/panelcfg.cue:49",
+      "why": "In the CUE's MapViewConfig; the vendored one lacks it."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/MapViewConfig/properties/dashboardVariableName",
+      "value": {
+        "type": "string"
+      },
+      "source": "public/app/plugins/panel/geomap/panelcfg.cue:50",
+      "why": "In the CUE's MapViewConfig; the vendored one lacks it."
+    }
+  ]
+}

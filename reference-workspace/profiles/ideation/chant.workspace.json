@@ -1,0 +1,17 @@
+{
+  "name": "ideation",
+  "schema": 1,
+  "members": [
+    {
+      "name": "app",
+      "dir": "app",
+      "kind": "app"
+    }
+  ],
+  "records": [
+    { "kind": "decisions/decision.kind.mjs" },
+    { "kind": "work/work.kind.mjs" },
+    { "kind": "answers/answer.kind.mjs" }
+  ],
+  "pins": [{ "path": "kinds/app" }]
+}

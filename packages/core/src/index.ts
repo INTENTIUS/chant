@@ -149,6 +149,7 @@ export * from "./resource-attributes";
 export * from "./stack-output";
 export * from "./child-project";
 export * from "./lsp/types";
+export type { SymbolDeclaration, SymbolResolver } from "./workspace/symbols";
 export * from "./lsp/lexicon-providers";
 export * from "./mcp/types";
 export * from "./lifecycle/index";

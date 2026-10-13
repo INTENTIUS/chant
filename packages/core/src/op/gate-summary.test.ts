@@ -44,6 +44,12 @@ describe("gatedRunSummaryMarkdown (#2243)", () => {
     expect(md).toContain("cannot see it to approve it");
   });
 
+  test("says it was recorded locally, without the warning, when chant/lifecycle has no remote (#3677)", () => {
+    const md = gatedRunSummaryMarkdown({ ...summary, pushed: false, pushWarning: "recorded locally (no remote for chant/lifecycle)" });
+    expect(md).toContain("The pending fact was recorded locally (no remote for chant/lifecycle).");
+    expect(md).not.toContain("was not pushed");
+  });
+
   test("says nothing extra when the push landed or nothing was pushed this run", () => {
     const md = gatedRunSummaryMarkdown(summary);
     expect(md).not.toContain("was not pushed");
@@ -56,6 +62,20 @@ describe("gatedRunSummaryMarkdown (#2243)", () => {
     const md = gatedRunSummaryMarkdown({ ...summary, planDigest: digest });
     expect(md).toContain(digest);
     expect(md).toContain("and not the next run");
+  });
+
+  // #2574 with #2538: a component gate in a workspace member names both its
+  // environment in the approve line and the member's gate ledger path.
+  test("a member's component gate names its environment and its member ledger path", () => {
+    const md = gatedRunSummaryMarkdown({
+      op: "search-service",
+      gate: "release",
+      expiresAt: "2026-09-08T00:00:00Z",
+      environment: "prod",
+      ledgerPrefix: "_members/services/search/",
+    });
+    expect(md).toContain("chant approve search-service release --env prod --approver <you>");
+    expect(md).toContain("`_members/services/search/_gates/search-service.jsonl`");
   });
 
   test("a gate that binds no plan says nothing about one", () => {
@@ -91,5 +111,17 @@ describe("writeGatedRunSummary surfaces (#2243, #2256)", () => {
 
   test("an unwritable path is swallowed: a decided run does not change outcome over a scratchpad", () => {
     expect(writeGatedRunSummary(summary, { CHANT_GATE_SUMMARY: "/no/such/dir/gate.md" })).toBeUndefined();
+  });
+});
+
+describe("gatedRunSummaryMarkdown on a sealed gate (#3521)", () => {
+  test("the approve line carries --sign when sealed", () => {
+    const md = gatedRunSummaryMarkdown({ ...summary, sealed: true });
+    expect(md).toContain("chant approve app-apply approve-app-apply --sign --approver <you>");
+  });
+
+  test("the approve line has no --sign when unsealed", () => {
+    expect(gatedRunSummaryMarkdown({ ...summary, sealed: false })).not.toContain("--sign");
+    expect(gatedRunSummaryMarkdown(summary)).not.toContain("--sign");
   });
 });

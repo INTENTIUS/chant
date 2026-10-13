@@ -1,5 +1,6 @@
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
 import { hasOwnershipMarker, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
+import type { ParseContext, TemplateIR } from "@intentius/chant/import/parser";
 import { K8sParser } from "./parser";
 
 /**
@@ -52,6 +53,11 @@ export function stripServerFields(obj: Record<string, unknown>): Record<string, 
  * `items` of a `kubectl get -o json` List). Reuses the import K8sParser by
  * feeding it the cleaned objects as JSON documents — JSON is valid YAML, so no
  * separate serializer is needed. Pure: all I/O stays in the caller.
+ *
+ * The result's `reparse(context)` parses the same objects again with a
+ * `ParseContext`, so `chant import --from` hands embedded content (a
+ * collector config in a ConfigMap, a PrometheusRule's groups) to the lexicon
+ * that owns it, as file import does (#2995).
  */
 export function buildExportFromObjects(
   objects: unknown[],
@@ -70,9 +76,11 @@ export function buildExportFromObjects(
     .map((o) => (opts.verbatim ? o : stripServerFields(o)));
 
   const content = cleaned.map((o) => JSON.stringify(o, null, 2)).join("\n---\n");
-  const ir = new K8sParser().parse(content);
+  const parse = (context?: ParseContext): TemplateIR => select(new K8sParser().parse(content, context), opts.selector);
+  return { ...parse(), reparse: (context) => parse(context) };
+}
 
-  const selector = opts.selector;
+function select(ir: TemplateIR, selector: ResourceSelector | undefined): TemplateIR {
   if (!selector || (selector.type === undefined && selector.name === undefined)) {
     return ir;
   }

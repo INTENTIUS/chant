@@ -9,7 +9,7 @@
  * Both funnel through `blocksToEntities`, so an entity the audit path sees is
  * the entity the build path sees.
  *
- * Core owns the parser glue: `loadHcl2json()` lazy-loads `@cdktf/hcl2json`
+ * Core owns the parser glue: `loadHcl2json()` lazy-loads `@cdktn/hcl2json`
  * (a ~1.8 MB wasm blob) and raises a one-line install hint when it is absent.
  * `parseTerraformDir()` next to it is NOT reused: it returns carve's `TfGraph`,
  * a scoring-and-excision shape with no room for the per-block bodies a
@@ -20,14 +20,14 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
+import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
 import type { TerraformDeleteMode } from "../config";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
-/** A parsed HCL block body, as `@cdktf/hcl2json` encodes it. */
+/** A parsed HCL block body, as `@cdktn/hcl2json` encodes it. */
 export type BlockBody = Record<string, unknown>;
 
 /**
@@ -83,6 +83,13 @@ export interface TerraformEntity extends Declarable {
     readonly mode?: TerraformRootMode;
     /** The declared estate name. Present only when `mode` is `"live"`. */
     readonly estate?: string;
+    /**
+     * Whether `.terraform.lock.hcl` sits beside the root's `.tf` files (#3190,
+     * TF040). Stamped on every entity of a root parsed from a directory, and
+     * absent when the parse had no directory to look in (a fetched
+     * repository, inline source), which reads as "not determined".
+     */
+    readonly lockFile?: boolean;
     /** `terraform.roots.<name>.workspace`, recorded so TF025 can flag a non-default one on a live root. */
     readonly workspace?: string;
     /**
@@ -166,6 +173,26 @@ export const LOCALS_TYPE = "Terraform::Locals";
 /** A `live { estate = "..." }` block, or an `estate.chdf.hcl` sidecar's content (#2103). */
 export const LIVE_TYPE = "Terraform::Live";
 
+/**
+ * Terragrunt config entities (#3417). A `terragrunt.hcl` or `root.hcl` is not
+ * a Terraform module, so its blocks are read into these types and never into
+ * `TERRAFORM_TYPE`: TF001's `required_version` check and the rest of the
+ * module rules keep to the `.tf` files.
+ */
+export const TERRAGRUNT_CONFIG_TYPE = "Terraform::TerragruntConfig";
+export const TERRAGRUNT_SOURCE_TYPE = "Terraform::TerragruntSource";
+export const TERRAGRUNT_DEPENDENCY_TYPE = "Terraform::TerragruntDependency";
+export const TERRAGRUNT_REMOTE_STATE_TYPE = "Terraform::TerragruntRemoteState";
+export const TERRAGRUNT_GENERATE_TYPE = "Terraform::TerragruntGenerate";
+
+/** The Terragrunt config files read, by their default names. A `--config` rename is not followed. */
+export const TERRAGRUNT_FILENAMES: readonly string[] = ["root.hcl", "terragrunt.hcl"];
+
+/** Whether `name` (a bare filename) is a Terragrunt config file this lexicon reads. */
+export function isTerragruntFileName(name: string): boolean {
+  return TERRAGRUNT_FILENAMES.includes(name);
+}
+
 /** The sidecar filename choudoufu reads an estate declaration from when no in-block `live { }` is used. */
 export const LIVE_SIDECAR_FILENAME = "estate.chdf.hcl";
 
@@ -190,7 +217,7 @@ export function terraformEntity(
   body: BlockBody,
   file: string,
   root: string,
-  extra?: { mode?: TerraformRootMode; estate?: string; workspace?: string; delete?: TerraformDeleteMode; callers?: readonly string[] },
+  extra?: { mode?: TerraformRootMode; estate?: string; configEstate?: string; workspace?: string; delete?: TerraformDeleteMode; callers?: readonly string[] },
   source: string = "",
   line?: number,
   suppressions?: readonly SuppressionDirective[],
@@ -214,6 +241,7 @@ export function terraformEntity(
       ...(extra?.estate !== undefined ? { estate: extra.estate } : {}),
       ...(extra?.workspace !== undefined ? { workspace: extra.workspace } : {}),
       ...(extra?.delete !== undefined ? { delete: extra.delete } : {}),
+      ...(extra?.configEstate !== undefined ? { configEstate: extra.configEstate } : {}),
       ...(extra?.callers !== undefined && extra.callers.length > 0 ? { callers: extra.callers } : {}),
     },
     suppressions,
@@ -257,6 +285,11 @@ export function listTerraformFiles(dir: string): string[] {
   return readdirSync(dir)
     .filter((f) => f.endsWith(".tf"))
     .sort();
+}
+
+/** The Terragrunt config files directly under `dir` (`root.hcl`, `terragrunt.hcl`), in filename order like the audit's bundle. */
+export function listTerragruntFiles(dir: string): string[] {
+  return TERRAGRUNT_FILENAMES.filter((name) => existsSync(join(dir, name)));
 }
 
 /**
@@ -303,7 +336,21 @@ export interface TerraformRootModeOptions {
   workspace?: string;
   /** `terraform.roots.<name>.delete`, recorded verbatim regardless of mode (#2106). */
   delete?: TerraformDeleteMode;
+  /**
+   * `terraform.roots.<name>.estate`, recorded verbatim (#2479), and kept
+   * separate from the `estate` prop a declaration produces. The two have
+   * different authorities: a declaration is what choudoufu itself reads, and
+   * this is what chant would otherwise pass as `-estate`. TF029 exists
+   * because a root carrying both has written down a setting that the
+   * declaration silently overrides.
+   */
+  configEstate?: string;
+  /** Stamp `props.lockFile` on every entity (#3190). Set by the two directory-backed parses only. */
+  lockFile?: boolean;
 }
+
+/** The lock file `terraform init` writes beside a root's `.tf` files. */
+export const LOCK_FILENAME = ".terraform.lock.hcl";
 
 /**
  * Parse a set of files into entities keyed `<root>/<address>`. Two blocks that
@@ -341,8 +388,15 @@ export async function blocksToEntities(
   const entities = new Map<string, Declarable>();
   const prefix = callers.length > 0 ? `${root}/${callers.join("/")}` : root;
 
-  const add = (entityType: string, address: string, body: unknown, file: TerraformFile, scan: FileScan): void => {
-    const { line, suppressions } = directivesFor(scan, address);
+  const add = (
+    entityType: string,
+    address: string,
+    body: unknown,
+    file: TerraformFile,
+    scan: FileScan,
+    scanAddress: string = address,
+  ): void => {
+    const { line, suppressions } = directivesFor(scan, scanAddress);
     const entity = terraformEntity(
       entityType,
       address,
@@ -352,6 +406,7 @@ export async function blocksToEntities(
       {
         ...(modeOptions?.workspace !== undefined ? { workspace: modeOptions.workspace } : {}),
         ...(modeOptions?.delete !== undefined ? { delete: modeOptions.delete } : {}),
+        ...(modeOptions?.configEstate !== undefined ? { configEstate: modeOptions.configEstate } : {}),
         ...(callers.length > 0 ? { callers } : {}),
       },
       file.source,
@@ -407,6 +462,10 @@ export async function blocksToEntities(
   for (const file of files) {
     const tree = (await parser.parse(file.name, file.source)) as Record<string, unknown>;
     const scan = scanSuppressions(file.name, file.source);
+    if (isTerragruntFileName(file.name)) {
+      terragruntBlocks(tree, file, scan, add);
+      continue;
+    }
     unlabelled(tree, "terraform", TERRAFORM_TYPE, file, scan);
     for (const liveBody of liveBlocksIn(tree)) add(LIVE_TYPE, "live", liveBody, file, scan);
     unlabelled(tree, "locals", LOCALS_TYPE, file, scan);
@@ -439,12 +498,45 @@ export async function blocksToEntities(
     const te = entity as TerraformEntity;
     const stamped: TerraformEntity = {
       ...te,
-      props: { ...te.props, mode, ...(mode === "live" ? { estate } : {}) },
+      props: {
+        ...te.props,
+        mode,
+        ...(mode === "live" ? { estate } : {}),
+        ...(modeOptions?.lockFile !== undefined ? { lockFile: modeOptions.lockFile } : {}),
+      },
     };
     entities.set(key, stamped);
   }
 
   return entities;
+}
+
+/**
+ * One Terragrunt config file's blocks, as entities (#3417): the file's own
+ * settings (`terragrunt_version_constraint` and the `include` labels), the
+ * `terraform` block that names the unit's source, `remote_state`, each
+ * `dependency` and each `generate`. Everything else in the file (`inputs`,
+ * `locals`, `iam_role`) is left unread.
+ */
+function terragruntBlocks(
+  tree: Record<string, unknown>,
+  file: TerraformFile,
+  scan: FileScan,
+  add: (entityType: string, address: string, body: unknown, file: TerraformFile, scan: FileScan, scanAddress?: string) => void,
+): void {
+  const config: BlockBody = { includes: Object.keys(asRecord(tree["include"])) };
+  if (typeof tree["terragrunt_version_constraint"] === "string") {
+    config["terragrunt_version_constraint"] = tree["terragrunt_version_constraint"];
+  }
+  add(TERRAGRUNT_CONFIG_TYPE, "terragrunt", config, file, scan, "");
+  for (const body of asArray(tree["terraform"])) add(TERRAGRUNT_SOURCE_TYPE, "terragrunt.terraform", body, file, scan, "terraform");
+  for (const body of asArray(tree["remote_state"])) add(TERRAGRUNT_REMOTE_STATE_TYPE, "remote_state", body, file, scan);
+  for (const [name, bodies] of Object.entries(asRecord(tree["dependency"]))) {
+    for (const body of asArray(bodies)) add(TERRAGRUNT_DEPENDENCY_TYPE, `dependency.${name}`, body, file, scan);
+  }
+  for (const [name, bodies] of Object.entries(asRecord(tree["generate"]))) {
+    for (const body of asArray(bodies)) add(TERRAGRUNT_GENERATE_TYPE, `generate.${name}`, body, file, scan);
+  }
 }
 
 /**
@@ -460,7 +552,9 @@ export async function parseTerraformRootDir(
   modeOptions?: TerraformRootModeOptions,
   callers: readonly string[] = [],
 ): Promise<Map<string, Declarable>> {
-  const files = listTerraformFiles(dir).map((name) => ({
+  // A child module is a Terraform module, never a Terragrunt unit (#3417).
+  const names = [...listTerraformFiles(dir), ...(callers.length === 0 ? listTerragruntFiles(dir) : [])];
+  const files = names.map((name) => ({
     name,
     source: readFileSync(join(dir, name), "utf-8"),
   }));
@@ -468,7 +562,9 @@ export async function parseTerraformRootDir(
   // estate a ROOT runs against, and choudoufu reads it from the root's own
   // directory only. See `./descend.ts`.
   const sidecar = callers.length === 0 ? readLiveSidecarFile(dir) : undefined;
-  return blocksToEntities(files, root, hcl2json, modeOptions, sidecar, callers);
+  // Only the root's own directory carries a lock file that matters (#3190).
+  const opts = callers.length === 0 ? { ...modeOptions, lockFile: existsSync(join(dir, LOCK_FILENAME)) } : modeOptions;
+  return blocksToEntities(files, root, hcl2json, opts, sidecar, callers);
 }
 
 /**

@@ -17,9 +17,16 @@ export { shellCmd } from "./shell";
 export type { ShellCmdArgs, ShellCmdResult } from "./shell";
 
 export { httpCheck, statusOk } from "./http-check";
+
+export { sourceArchive, releasePlan, releaseRecord } from "./source-release";
+export type { SourceArchiveArgs, SourceArchiveResult, ReleasePlanArgs, ReleasePlanResult, ReleaseRecordArgs, ReleaseRecordResult } from "./source-release";
+export { releaseRollbackPlan, releaseRollbackRecord } from "./source-rollback";
+export type { ReleaseRollbackPlanArgs, ReleaseRollbackPlanResult, ReleaseRollbackRecordArgs, ReleaseRollbackRecordResult } from "./source-rollback";
 export type { HttpCheckArgs, HttpFetch } from "./http-check";
 
 export { lifecycleSnapshot, lifecycleDiff } from "./lifecycle";
+export { composeChangeSet, lifecyclePlanChangeSet, readChangeSetPart } from "./change-set";
+export type { ComposeChangeSetArgs, ComposeChangeSetResult, LifecyclePlanChangeSetArgs, ReadChangeSetPartArgs, ChangeSetPartResult } from "./change-set";
 export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } from "./lifecycle";
 
 export { chantTeardown } from "./teardown";
@@ -65,6 +72,9 @@ export type {
   AzureApplier,
   GcpApplier,
   FlyApplier,
+  GrafanaApplier,
+  ClickHouseApplier,
+  PostgresApplier,
   AwsApplier,
   AwsRollback,
 } from "./apply";
@@ -77,6 +87,9 @@ export type { PolicyGateArgs } from "./policy";
 
 export { guardValidate, parseGuardFindings } from "./guard-validate";
 export type { GuardValidateArgs, GuardValidateResult, GuardFinding } from "./guard-validate";
+
+export { workEvidence } from "./work-evidence";
+export type { WorkEvidenceArgs, WorkEvidenceResult } from "./work-evidence";
 
 export { workflowSupplyChainAudit, collectAuditRefs, defaultActionRefResolver } from "./workflow-audit";
 export type {
@@ -147,3 +160,30 @@ export type {
   BehaviourFindingDeps,
   BaseCheckout,
 } from "./predict-behaviour";
+
+// The propose-only template upgrade (#2550). Loads the workspace code on first
+// call only, so importing this module loads nothing under `workspace/`.
+export { proposeWorkspaceUpgrade } from "./propose-upgrade";
+export type {
+  ProposeWorkspaceUpgradeArgs,
+  ProposeWorkspaceUpgradeResult,
+  ProposeUpgradeMode,
+  CommandRunner,
+} from "./propose-upgrade";
+
+// The forward coverage check over an Op's own diff (#2773). Loads the
+// workspace code on first call only, like proposeWorkspaceUpgrade.
+export { changeCoverage } from "./change-coverage";
+export type { ChangeCoverageArgs, ChangeCoverageResult } from "./change-coverage";
+
+// Ask a decision point and record the answer (ws-058, #2740). Core's since
+// #2828, next to the decision points: the systemone lexicon that held it is
+// gone. Only the activity is re-exported, since the registry collects every
+// exported function; `runDecide` and its seams stay on the module, which
+// loads the workspace code on first call.
+export { decide } from "./decide";
+export type { DecideArgs, DecideResult } from "./decide";
+
+// The factory reference Op's rules and hooks (#3406, ws-087): `factoryOp` in ../factory.ts declares them.
+export { factoryPick, factoryReady, factoryAsk, factoryBuild, factoryCheck, factoryRecord } from "./factory";
+export type { FactoryAskResult, FactoryBuildResult, FactoryCheckResult, FactoryRecordResult, FactoryPickResult, FactoryLease } from "./factory";

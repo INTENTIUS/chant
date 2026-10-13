@@ -23,6 +23,7 @@ const awsEmulatorStub = {
 const getHeadCommitMock = vi.fn();
 const fetchLifecycleMock = vi.fn();
 const pushLifecycleMock = vi.fn();
+const readSnapshotMock = vi.fn();
 
 const appendReleaseRecordMock = vi.fn();
 const readReleaseLedgerMock = vi.fn();
@@ -38,6 +39,8 @@ vi.mock("../../lifecycle/git", () => ({
   getHeadCommit: (...args: unknown[]) => getHeadCommitMock(...args),
   fetchLifecycle: (...args: unknown[]) => fetchLifecycleMock(...args),
   pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
+  readSnapshot: (...args: unknown[]) => readSnapshotMock(...args),
+  snapshotStorageKey: (lexicon: string, stack?: string) => (stack ? `${stack}__${lexicon}` : lexicon),
   StaleLifecycleBranchError: class StaleLifecycleBranchError extends Error {},
 }));
 
@@ -45,6 +48,16 @@ vi.mock("../../lifecycle/build-ledger-store", () => ({
   findBuildManifestByArtifactDigest: (...args: unknown[]) => findBuildManifestByArtifactDigestMock(...args),
   readBuildManifest: (...args: unknown[]) => readBuildManifestMock(...args),
 }));
+
+const persistReleasePlanMock = vi.fn();
+
+vi.mock("../../lifecycle/plan-ledger", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/plan-ledger")>("../../lifecycle/plan-ledger");
+  return {
+    ...actual,
+    persistReleasePlan: (...args: unknown[]) => persistReleasePlanMock(...args),
+  };
+});
 
 vi.mock("../../lifecycle/release-ledger", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/release-ledger")>("../../lifecycle/release-ledger");
@@ -125,6 +138,7 @@ describe("components handlers", () => {
     getHeadCommitMock.mockReset().mockResolvedValue("abc123headsha");
     fetchLifecycleMock.mockReset().mockResolvedValue(true);
     pushLifecycleMock.mockReset().mockResolvedValue(true);
+    readSnapshotMock.mockReset().mockResolvedValue(null);
     appendReleaseRecordMock.mockReset();
     readReleaseLedgerMock.mockReset().mockResolvedValue({ records: [], malformed: 0 });
     listReleaseEnvironmentsMock.mockReset().mockResolvedValue([]);
@@ -133,6 +147,7 @@ describe("components handlers", () => {
     discoverComponentsMock.mockReset().mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
     findBuildManifestByArtifactDigestMock.mockReset().mockResolvedValue(undefined);
     readBuildManifestMock.mockReset().mockResolvedValue(null);
+    persistReleasePlanMock.mockReset().mockResolvedValue({ commit: "a".repeat(40), written: true });
 
     delete process.env.GITHUB_RUN_ID;
     delete process.env.CI_PIPELINE_ID;
@@ -217,6 +232,88 @@ describe("components handlers", () => {
       };
       await runComponentsReleaseRecord(ctx);
       expect(JSON.parse(stdoutBuf.join(""))).toMatchObject(record);
+    });
+
+    describe("--plan (ws-055, #2733)", () => {
+      let planDir: string;
+
+      beforeEach(async () => {
+        planDir = await mkdtemp(join(tmpdir(), "chant-plan-"));
+      });
+
+      afterEach(async () => {
+        await rm(planDir, { recursive: true, force: true });
+      });
+
+      test("persists the plan and records its own digest, when --digest is omitted", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ digest: "sha256:fromplan", release: "r-1", units: [] }));
+        appendReleaseRecordMock.mockResolvedValue({
+          commit: "a".repeat(40),
+          record: { version: 1, component: "svc", env: "prod", digest: "sha256:fromplan", gitSha: "abc123headsha", runId: "local-123", timestamp: "2026-01-01T00:00:00.000Z", actor: "alice" },
+        });
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+
+        expect(exit).toBe(0);
+        expect(persistReleasePlanMock).toHaveBeenCalledTimes(1);
+        expect(persistReleasePlanMock.mock.calls[0][0]).toEqual({ digest: "sha256:fromplan", release: "r-1", units: [] });
+        const [input] = appendReleaseRecordMock.mock.calls[0];
+        expect(input).toMatchObject({ digest: "sha256:fromplan" });
+        // The plan is persisted before the release record is appended, so the
+        // record's digest always names a plan this checkout can resolve.
+        expect(persistReleasePlanMock.mock.invocationCallOrder[0]).toBeLessThan(appendReleaseRecordMock.mock.invocationCallOrder[0]);
+      });
+
+      test("--digest agreeing with the plan's own digest is accepted", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ digest: "sha256:agree", release: "r-1" }));
+        appendReleaseRecordMock.mockResolvedValue({ commit: "a".repeat(40), record: { version: 1, component: "svc", env: "prod", digest: "sha256:agree", gitSha: "x", runId: "y", timestamp: "z", actor: "alice" } });
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", digest: "sha256:agree", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(0);
+      });
+
+      test("--digest disagreeing with the plan's own digest is refused", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ digest: "sha256:plandigest" }));
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", digest: "sha256:other", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("does not match --release-plan");
+        expect(persistReleasePlanMock).not.toHaveBeenCalled();
+        expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+      });
+
+      test("a plan file with no digest field is refused", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, JSON.stringify({ release: "r-1" }));
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("missing its own \"digest\" field");
+      });
+
+      test("a plan file that is not valid JSON is refused", async () => {
+        const planPath = join(planDir, "plan.json");
+        await writeFile(planPath, "{not json");
+
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: planPath, actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("is not valid JSON");
+      });
+
+      test("a --plan path that can't be read is refused", async () => {
+        const ctx = { args: makeArgs({ extraPositional: "prod", component: "svc", releasePlanFile: join(planDir, "missing.json"), actor: "alice" }), plugins: [], serializers: [] };
+        const exit = await runComponentsReleaseRecord(ctx);
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("Could not read --release-plan");
+      });
     });
   });
 
@@ -564,6 +661,129 @@ describe("components handlers", () => {
         totalPackageCount: 7,
         isAssembly: false,
         leaves: [{ path: "image.tar.sbom.json", bomKind: "software", subjectDigest: "sha256:image1", packageCount: 7, generator: "syft" }],
+      });
+    });
+
+    // #2513: `--live` could never report `drifted` — the change set was built
+    // with no prior observation, so a live, declared entity was always `noop`,
+    // and nothing compared the live identity with the recorded release. These
+    // go through the handler end to end with a fake lexicon.
+    describe("drifted (#2513)", () => {
+      const released = {
+        version: 1,
+        component: "svc",
+        env: "prod",
+        digest: "sha256:released",
+        gitSha: "1111111aaaaaaa",
+        runId: "run-1",
+        timestamp: "2026-02-01T00:00:00.000Z",
+        actor: "alice",
+      };
+
+      async function statusRow(
+        resources: Record<string, ResourceMetadata>,
+        opts: { snapshot?: { timestamp: string; resources: Record<string, ResourceMetadata> }; failRead?: boolean } = {},
+      ) {
+        readReleaseLedgerMock.mockResolvedValue({ records: [released], malformed: 0 });
+        buildMock.mockResolvedValue(makeBuildResult({ aws: ["svc"] }));
+        readSnapshotMock.mockImplementation(async (env: string, key: string) =>
+          opts.snapshot && env === "prod" && key === "aws"
+            ? JSON.stringify({ lexicon: "aws", environment: "prod", commit: "c", ...opts.snapshot })
+            : null,
+        );
+        const plugins: LexiconPlugin[] = [
+          createMockPlugin({
+            name: "aws",
+            emulator: awsEmulatorStub,
+            describeResources: opts.failRead
+              ? async () => { throw new Error("credentials expired"); }
+              : staticDescribeResources(resources),
+          }),
+        ];
+        stdoutBuf.length = 0;
+        const exit = await runComponentsStatus({
+          args: makeArgs({ extraPositional: "prod", live: true, json: true }),
+          plugins,
+          serializers: plugins.map((p) => p.serializer),
+        });
+        expect(exit).toBe(0);
+        return JSON.parse(stdoutBuf.join(""))[0];
+      }
+
+      test("reconciled: live identity matches the recorded digest and git sha", async () => {
+        const row = await statusRow({ svc: meta({ attributes: { digest: "sha256:released", gitSha: "1111111" } }) });
+        expect(row).toMatchObject({ component: "svc", reconciliation: "reconciled", live: true });
+      });
+
+      test("drifted: live resource reports a digest other than the recorded one", async () => {
+        const row = await statusRow({ svc: meta({ attributes: { digest: "sha256:foreign" } }) });
+        expect(row).toMatchObject({ component: "svc", reconciliation: "drifted", live: true });
+        expect(row.detail).toContain("sha256:foreign");
+      });
+
+      test("drifted: live resource reports a different git sha", async () => {
+        const row = await statusRow({ svc: meta({ attributes: { gitSha: "2222222bbbbbbb" } }) });
+        expect(row).toMatchObject({ reconciliation: "drifted" });
+        expect(row.detail).toContain("2222222bbbbbbb");
+      });
+
+      test("drifted: live attributes changed since a snapshot taken after the release", async () => {
+        const row = await statusRow(
+          { svc: meta({ attributes: { revision: "7" } }) },
+          { snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta({ attributes: { revision: "6" } }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "drifted" });
+        expect(row.detail).toContain("attributes.revision");
+      });
+
+      test("drifted: chant's ownership marker disappeared since a post-release snapshot", async () => {
+        const row = await statusRow(
+          { svc: meta({ ownership: "foreign" }) },
+          { snapshot: { timestamp: "2026-02-02T00:00:00.000Z", resources: { svc: meta({ ownership: "owned" }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "drifted" });
+        expect(row.detail).toContain("ownership marker");
+      });
+
+      test("reconciled: a snapshot older than the release does not attribute the release's own change to drift", async () => {
+        const row = await statusRow(
+          { svc: meta({ attributes: { revision: "7" } }) },
+          { snapshot: { timestamp: "2026-01-15T00:00:00.000Z", resources: { svc: meta({ attributes: { revision: "6" } }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "reconciled" });
+      });
+
+      test("reconciled: unchanged since the snapshot, and no identity reported (no identity is not drift)", async () => {
+        const row = await statusRow(
+          { svc: meta() },
+          { snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta() } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "reconciled" });
+      });
+
+      test("stale: recorded, and the provider confirmed nothing live", async () => {
+        const row = await statusRow(
+          {},
+          { snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta({ attributes: { digest: "sha256:foreign" } }) } } },
+        );
+        expect(row).toMatchObject({ reconciliation: "stale", live: false });
+      });
+
+      test("unknown: a failed read is never drifted, whatever the snapshot says", async () => {
+        const row = await statusRow(
+          {},
+          {
+            failRead: true,
+            snapshot: { timestamp: "2026-02-01T00:05:00.000Z", resources: { svc: meta({ attributes: { digest: "sha256:foreign" } }) } },
+          },
+        );
+        expect(row).toMatchObject({ reconciliation: "unknown" });
+        expect(row).not.toHaveProperty("live");
+      });
+
+      test("reads the same unstacked snapshot `lifecycle plan` reads", async () => {
+        await statusRow({ svc: meta() });
+        expect(readSnapshotMock).toHaveBeenCalledWith("prod", "aws");
       });
     });
 

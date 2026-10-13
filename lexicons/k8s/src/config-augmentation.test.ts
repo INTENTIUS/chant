@@ -69,4 +69,32 @@ describe("the k8s config namespace (#1455, #1344)", () => {
     };
     expect(k8sConfigSchema.safeParse(value).success).toBe(true);
   });
+
+  test("kustomize roots take a path string or { path, patches } (#3566)", () => {
+    const value: K8sChantConfig = {
+      kustomize: {
+        roots: [
+          "overlays/prod",
+          {
+            path: "overlays/edge",
+            patches: [
+              { kind: "Deployment", name: "web", merge: { spec: { replicas: 2 } } },
+              { kind: "Service", name: "web", namespace: "edge", jsonPatch: [{ op: "remove", path: "/spec/externalIPs" }] },
+            ],
+          },
+        ],
+      },
+    };
+    expect(k8sConfigSchema.safeParse(value).success).toBe(true);
+  });
+
+  test("a malformed patch in a kustomize root is rejected", () => {
+    const bad = (patch: unknown) =>
+      k8sConfigSchema.safeParse({ kustomize: { roots: [{ path: "o", patches: [patch] }] } }).success;
+    // Both bodies, neither body, an unknown op, a missing name.
+    expect(bad({ kind: "Deployment", name: "web", merge: {}, jsonPatch: [] })).toBe(false);
+    expect(bad({ kind: "Deployment", name: "web" })).toBe(false);
+    expect(bad({ kind: "Deployment", name: "web", jsonPatch: [{ op: "upsert", path: "/a" }] })).toBe(false);
+    expect(bad({ kind: "Deployment", merge: {} })).toBe(false);
+  });
 });

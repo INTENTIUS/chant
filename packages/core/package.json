@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant",
-  "version": "0.73.0",
+  "version": "0.124.23",
   "description": "Declarative infrastructure-as-code toolkit — TypeScript on Node.js",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -31,7 +31,8 @@
     "access": "public"
   },
   "bin": {
-    "chant": "./bin/chant"
+    "chant": "./bin/chant",
+    "chant-wave": "./dist/wave-runtime.mjs"
   },
   "exports": {
     ".": {
@@ -48,6 +49,23 @@
       "development": "./src/cli/index.ts",
       "types": "./dist/cli/index.d.ts",
       "default": "./src/cli/index.ts"
+    },
+    "./workspace/*.schema.json": "./src/workspace/*.schema.json",
+    "./notify.schema.json": "./src/notify.schema.json",
+    "./workspace/factory-rules": {
+      "development": "./src/workspace/factory-rules.ts",
+      "types": "./dist/workspace/factory-rules.d.ts",
+      "default": "./src/workspace/factory-rules.ts"
+    },
+    "./workspace/conformance": {
+      "development": "./src/workspace/conformance/index.ts",
+      "types": "./dist/workspace/conformance/index.d.ts",
+      "default": "./src/workspace/conformance/index.mjs"
+    },
+    "./workspace/conformance/vitest": {
+      "development": "./src/workspace/conformance/vitest.ts",
+      "types": "./dist/workspace/conformance/vitest.d.ts",
+      "default": "./src/workspace/conformance/vitest.ts"
     },
     "./cli/*": {
       "development": "./src/cli/*.ts",
@@ -79,6 +97,19 @@
       "types": "./dist/agents/index.d.ts",
       "default": "./src/agents/index.ts"
     },
+    "./notify-verify": {
+      "development": "./src/notify-verify.ts",
+      "types": "./dist/notify-verify.d.ts",
+      "import": "./dist/notify-verify.js",
+      "default": "./src/notify-verify.ts"
+    },
+    "./notify": {
+      "development": "./src/notify.ts",
+      "types": "./dist/notify.d.ts",
+      "import": "./dist/notify.js",
+      "default": "./src/notify.ts"
+    },
+    "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
@@ -86,11 +117,12 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node scripts/copy-assets.mjs && node scripts/build-wave-runtime.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.1",
     "fflate": "^0.8.2",
     "js-yaml": "^4.3.1",
@@ -100,8 +132,15 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cdktf/hcl2json": "^0.21.0",
-    "ajv": "^8.20.0"
+    "@cdktn/hcl2json": "^0.24.0"
+  },
+  "peerDependencies": {
+    "vitest": ">=2"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   },
   "overrides": {
     "esbuild": "^0.28.1"

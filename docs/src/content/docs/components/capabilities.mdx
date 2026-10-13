@@ -14,10 +14,13 @@ interface Capability<In, Out> {
   kind: string;                                              // "publish-image", "cfn-deploy", ...
   run(ctx: DeployContext, input: In): Promise<Out>;
   rollback?(ctx: DeployContext, input: In): Promise<void>;   // paired compensation
+  plan?(ctx: DeployContext, input: In): Promise<CapabilityPlan>; // what run would change
 }
 ```
 
 Typed `In`/`Out` let compositions wire one step's output into the next and let [lint](/chant/components/orchestration/) check the wiring before anything runs.
+
+`plan` is optional. A capability that has it can say what `run` would change before it changes anything. It answers with a member name, that member's plan digest and an artifact for `run`. A [gated-wave fan-out](/chant/cli/components/#one-gate-per-wave) calls it for each wave, binds the wave's gate to the set digest of the answers, and hands the artifact back to `run` as `ctx.plans[member]` so the approved plan is the one applied. The terraform lexicon's `terraform-apply` implements it.
 
 <Diagram name="capability-composition" alt="Many distinct components on the left, one generic orchestrator in the middle, and a small shared set of capabilities on the right that every component draws from." caption="The sprawl fix: unbounded components, one generic orchestrator, a bounded capability set." />
 

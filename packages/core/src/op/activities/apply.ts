@@ -21,6 +21,17 @@
  * per-resource `gcpApply` and the fly lexicon's `flyApply`, which never had a
  * CLI in the path to begin with: gcp maps each CNRM kind to its REST API
  * itself, and fly speaks the Machines API (flaps) directly, no flyctl.
+ * `grafana` joined later (#3011): the grafana lexicon's `grafanaApply`, which
+ * writes folders, library panels and dashboards over Grafana's HTTP API.
+ * `clickhouse` joined after it (#3208): the sql lexicon's `clickhouseApply`,
+ * which sends a ClickHouse server the CREATE and ALTER statements a build's
+ * classified changes need, over its HTTP interface. `postgres` joined after
+ * that (#3280): the sql lexicon's `postgresApply`, which sends a Postgres
+ * server the statements a build's classified changes need, grouped into
+ * transactions, with `CONCURRENTLY` statements outside them. `ruler` joined
+ * last (#3372): the prometheus lexicon's `rulerApply`, which posts rule groups
+ * to a Mimir, Cortex or Loki ruler and uploads a Mimir or Cortex Alertmanager
+ * config, inside the namespaces the project declares.
  * **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
@@ -35,11 +46,12 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { normalizeApply, type ApplyResult } from "../../apply";
+import { importLexiconPackage } from "../../lexicon-module";
 
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana" | "clickhouse" | "postgres" | "ruler";
 
 /**
  * How apply treats resources no longer declared.
@@ -51,7 +63,20 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "
  *   ownership label (via the gcp lexicon's `gcpApply` — only kinds it can
  *   list; the rest are reported not-prunable), `fly` prunes machines by the
  *   metadata marker and the metadata-less types (volumes/ips/certs/secrets)
- *   app-scoped under a managed app (via the fly lexicon's `flyApply`), and
+ *   app-scoped under a managed app (via the fly lexicon's `flyApply`),
+ *   `grafana` prunes dashboards and folders by the ownership labels (via the
+ *   grafana lexicon's `grafanaApply`; library panels, Grafana 11 and a project
+ *   with no ownership stack are reported not-prunable), `clickhouse` drops
+ *   tables, views and databases whose comment carries the project's marker
+ *   (via the sql lexicon's `clickhouseApply`; a project with no ownership
+ *   stack is reported not-prunable), `postgres` drops the objects in the
+ *   declared schemas whose comment carries the project's marker (via the sql
+ *   lexicon's `postgresApply`; never an object another tool keeps, and a
+ *   project with no ownership stack is reported not-prunable), `ruler`
+ *   deletes groups the ruler has and the project does not declare, only inside
+ *   the ruler namespaces the profile declares (via the prometheus lexicon's
+ *   `rulerApply`; a namespace the project does not declare is never listed,
+ *   so never touched, unlike `mimirtool rules sync`), and
  *   `cloudformation` is bounded by the stack — which holds, because a
  *   resource CFN did not create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but an approval gate precedes
@@ -65,7 +90,11 @@ export interface NativeApplyArgs {
   target: ApplyTarget;
   /** Environment. What it means is per target: the CFN stack name on
    * `cloudformation`, the ARM resource group on `arm`, the chant environment
-   * on `kubectl`/`kustomize`. On `gcp` and `fly` it is a log label only — the
+   * on `kubectl`/`kustomize`, and on `grafana` the chant environment whose
+   * `grafana.profiles.<env>` names the Grafana to write to, and on
+   * `clickhouse` and `postgres` the chant environment whose
+   * `sql.profiles.<env>` names the server. On `gcp` and
+   * `fly` it is a log label only — the
    * gcp applier resolves the project (`GOOGLE_CLOUD_PROJECT` env / CNRM
    * annotation) and endpoint (`GCP_ENDPOINT_URL` env) itself, and the fly
    * applier resolves its endpoint (`FLY_FLAPS_BASE_URL` env) and token
@@ -73,7 +102,9 @@ export interface NativeApplyArgs {
   env: string;
   /** Built manifest/template path. Default per target ({@link defaultOutput}):
    * `dist` (a dir) for kubectl, `template.json` (a file) for
-   * CloudFormation/ARM, `dist/gcp.yaml` for gcp, `dist/fly.json` for fly. */
+   * CloudFormation/ARM, `dist/gcp.yaml` for gcp, `dist/fly.json` for fly,
+   * `dist/grafana.json` (the build index) for grafana, `dist/schema.json`
+   * (the sql lexicon's build output) for clickhouse and postgres. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
@@ -182,6 +213,74 @@ export type FlyApplier = (
 ) => Promise<ApplyResult>;
 
 /**
+ * The grafana lexicon's API applier, as this module needs to call it (#3011):
+ * `grafanaApply` composed with the lexicon's own `toApplyResult` projection,
+ * so what crosses this seam is core's versioned apply envelope (#1446).
+ *
+ * `environment` selects `grafana.profiles.<environment>` (else `GRAFANA_URL`
+ * with `GRAFANA_TOKEN`), the binding observe and export use. The ownership
+ * marker is not passed: `grafanaApply` reads `ownership` from the project's
+ * `chant.config.ts` itself, and a prune without a stack declines as
+ * not-prunable rather than delete another project's dashboards.
+ */
+export type GrafanaApplier = (
+  args: {
+    indexPath: string;
+    environment?: string;
+    prune?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<ApplyResult>;
+
+/**
+ * The sql lexicon's ClickHouse applier, as this module needs to call it
+ * (#3208): `clickhouseApply` composed with the lexicon's own `toApplyResult`
+ * projection, so what crosses this seam is core's versioned apply envelope
+ * (#1446). A rebuild-class change rides it as NOT-ATTEMPTED.
+ *
+ * `environment` selects `sql.profiles.<environment>` (else `CLICKHOUSE_URL`),
+ * the binding observe and import use. The ownership marker is not passed:
+ * `clickhouseApply` reads `ownership` from the project's `chant.config.ts`.
+ */
+export type ClickHouseApplier = (
+  args: {
+    buildPath: string;
+    environment?: string;
+    prune?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<ApplyResult>;
+
+/**
+ * The sql lexicon's Postgres applier, as this module needs to call it
+ * (#3280): `postgresApply` composed with the lexicon's own `toApplyResult`,
+ * the same seam as {@link ClickHouseApplier}. An expand-and-contract change
+ * and a rolled-back transaction's objects ride it as NOT-ATTEMPTED.
+ *
+ * `environment` selects `sql.profiles.<environment>` (else `POSTGRES_URL`).
+ * The ownership marker and the timeouts are not passed: `postgresApply`
+ * reads `ownership` and the profile from the project's `chant.config.ts`.
+ */
+export type PostgresApplier = ClickHouseApplier;
+
+/**
+ * The prometheus lexicon's ruler applier, as this module needs to call it
+ * (#3372): `rulerApply` composed with the lexicon's own `toApplyResult`.
+ *
+ * `environment` selects `prometheus.profiles.<environment>` (else the
+ * `PROMETHEUS_RULER_*` variables), which carries the ruler kind and URL, the
+ * `X-Scope-OrgID` tenant and the declared namespaces. The namespaces are the
+ * ownership boundary: nothing outside them is read, written or deleted.
+ */
+export type RulerApplier = ClickHouseApplier;
+
+/** The prometheus lexicon's ruler rollback, as {@link compensateApply} needs to call it. */
+export type RulerRollback = (
+  args: { buildPath: string; environment?: string },
+  signal?: AbortSignal,
+) => Promise<{ restored: number; removed: number; alertmanagerRestored: boolean; hadSnapshot: boolean }>;
+
+/**
  * The aws lexicon's CloudFormation applier, as this module needs to call it
  * (#1449). Structural, like {@link K8sApplier} and {@link AzureApplier}.
  *
@@ -241,7 +340,7 @@ async function loadK8sApplier(): Promise<K8sApplier> {
   const spec = "@intentius/chant-lexicon-k8s/op/activities";
   let mod: { applyManifest?: K8sApplier };
   try {
-    mod = (await import(spec)) as { applyManifest?: K8sApplier };
+    mod = (await importLexiconPackage(spec)) as { applyManifest?: K8sApplier };
   } catch (err) {
     throw new Error(
       `apply target "kubectl" needs @intentius/chant-lexicon-k8s, which could not be loaded ` +
@@ -269,7 +368,7 @@ async function loadAzureApplier(): Promise<AzureApplier> {
   };
   let mod: AzureModule;
   try {
-    mod = (await import(spec)) as AzureModule;
+    mod = (await importLexiconPackage(spec)) as AzureModule;
   } catch (err) {
     throw new Error(
       `apply target "arm" needs @intentius/chant-lexicon-azure, which could not be loaded ` +
@@ -304,7 +403,7 @@ async function loadGcpApplier(): Promise<GcpApplier> {
   };
   let mod: GcpModule;
   try {
-    mod = (await import(spec)) as GcpModule;
+    mod = (await importLexiconPackage(spec)) as GcpModule;
   } catch (err) {
     throw new Error(
       `apply target "gcp" needs @intentius/chant-lexicon-gcp, which could not be loaded ` +
@@ -339,7 +438,7 @@ async function loadFlyApplier(): Promise<FlyApplier> {
   };
   let mod: FlyModule;
   try {
-    mod = (await import(spec)) as FlyModule;
+    mod = (await importLexiconPackage(spec)) as FlyModule;
   } catch (err) {
     throw new Error(
       `apply target "fly" needs @intentius/chant-lexicon-fly, which could not be loaded ` +
@@ -363,6 +462,147 @@ async function loadFlyApplier(): Promise<FlyApplier> {
 }
 
 /**
+ * Load the grafana lexicon's `grafanaApply` (#3011). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason. The activities subpath,
+ * not the package root or `op/builders`: those hold the typed step builder,
+ * while the activity itself (and its `toApplyResult`) lives here.
+ */
+async function loadGrafanaApplier(): Promise<GrafanaApplier> {
+  const spec = "@intentius/chant-lexicon-grafana/op/activities";
+  type GrafanaModule = {
+    grafanaApply?: (args: Parameters<GrafanaApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: GrafanaModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as GrafanaModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "grafana" needs @intentius/chant-lexicon-grafana, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Grafana applies go through the grafana ` +
+        `lexicon's API applier (chant #2948); install the grafana lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { grafanaApply, toApplyResult } = mod;
+  if (typeof grafanaApply !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-grafana exports no grafanaApply — it predates chant #2948",
+    );
+  }
+  if (typeof toApplyResult !== "function") {
+    throw new Error(
+      "the installed @intentius/chant-lexicon-grafana exports no toApplyResult — it predates chant #2948",
+    );
+  }
+  return async (args, signal) => toApplyResult(await grafanaApply(args, signal));
+}
+
+/**
+ * Load the sql lexicon's `clickhouseApply` (#3208). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason.
+ */
+async function loadClickHouseApplier(): Promise<ClickHouseApplier> {
+  const spec = "@intentius/chant-lexicon-sql/op/activities";
+  type SqlModule = {
+    clickhouseApply?: (args: Parameters<ClickHouseApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: SqlModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as SqlModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "clickhouse" needs @intentius/chant-lexicon-sql, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). ClickHouse applies go through the sql ` +
+        `lexicon's applier (chant #3208); install the sql lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { clickhouseApply, toApplyResult } = mod;
+  if (typeof clickhouseApply !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no clickhouseApply — it predates chant #3208");
+  }
+  if (typeof toApplyResult !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no toApplyResult — it predates chant #3208");
+  }
+  return async (args, signal) => toApplyResult(await clickhouseApply(args, signal));
+}
+
+/**
+ * Load the sql lexicon's `postgresApply` (#3280). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason.
+ */
+async function loadPostgresApplier(): Promise<PostgresApplier> {
+  const spec = "@intentius/chant-lexicon-sql/op/activities";
+  type SqlModule = {
+    postgresApply?: (args: Parameters<PostgresApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: SqlModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as SqlModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "postgres" needs @intentius/chant-lexicon-sql, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Postgres applies go through the sql ` +
+        `lexicon's applier (chant #3280); install the sql lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { postgresApply, toApplyResult } = mod;
+  if (typeof postgresApply !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no postgresApply — it predates chant #3280");
+  }
+  if (typeof toApplyResult !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no toApplyResult — it predates chant #3208");
+  }
+  return async (args, signal) => toApplyResult(await postgresApply(args, signal));
+}
+
+/**
+ * Load the prometheus lexicon's `rulerApply` (#3372). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason.
+ */
+async function loadRulerApplier(): Promise<RulerApplier> {
+  const spec = "@intentius/chant-lexicon-prometheus/api/apply";
+  type PromModule = {
+    rulerApply?: (args: { buildPath: string; environment?: string; prune?: boolean }, signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: PromModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as PromModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "ruler" needs @intentius/chant-lexicon-prometheus, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Ruler applies go through the prometheus ` +
+        `lexicon's applier (chant #3372); install the prometheus lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { rulerApply, toApplyResult } = mod;
+  if (typeof rulerApply !== "function" || typeof toApplyResult !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-prometheus exports no rulerApply — it predates chant #3372");
+  }
+  return async (args, signal) => toApplyResult(await rulerApply(args, signal));
+}
+
+/** Load the prometheus lexicon's `rulerRollback` (#3372), the compensation twin of {@link loadRulerApplier}. */
+async function loadRulerRollback(): Promise<RulerRollback> {
+  const spec = "@intentius/chant-lexicon-prometheus/api/apply";
+  let mod: { rulerRollback?: RulerRollback };
+  try {
+    mod = (await importLexiconPackage(spec)) as { rulerRollback?: RulerRollback };
+  } catch (err) {
+    throw new Error(
+      `rollback for target "ruler" needs @intentius/chant-lexicon-prometheus, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Install the prometheus lexicon and list it in chant.config.ts.`,
+    );
+  }
+  if (typeof mod.rulerRollback !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-prometheus exports no rulerRollback — it predates chant #3372");
+  }
+  return mod.rulerRollback;
+}
+
+/**
  * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
  * {@link loadK8sApplier}, for the same reason.
  */
@@ -370,7 +610,7 @@ async function loadAwsApplier(): Promise<AwsApplier> {
   const spec = "@intentius/chant-lexicon-aws/op/activities";
   let mod: { awsApply?: AwsApplier };
   try {
-    mod = (await import(spec)) as { awsApply?: AwsApplier };
+    mod = (await importLexiconPackage(spec)) as { awsApply?: AwsApplier };
   } catch (err) {
     throw new Error(
       `apply target "cloudformation" needs @intentius/chant-lexicon-aws, which could not be loaded ` +
@@ -395,7 +635,7 @@ async function loadAwsRollback(): Promise<AwsRollback> {
   const spec = "@intentius/chant-lexicon-aws/op/activities";
   let mod: { rollbackStack?: AwsRollback };
   try {
-    mod = (await import(spec)) as { rollbackStack?: AwsRollback };
+    mod = (await importLexiconPackage(spec)) as { rollbackStack?: AwsRollback };
   } catch (err) {
     throw new Error(
       `rollback for target "cloudformation" needs @intentius/chant-lexicon-aws, which could not be ` +
@@ -417,8 +657,12 @@ async function loadAwsRollback(): Promise<AwsRollback> {
  * manifests), so `dist`; kustomize's "output" is the kustomization DIRECTORY
  * the render reads. The file targets take the file their lexicon's build
  * conventionally emits: `template.json` for CloudFormation/ARM, `dist/gcp.yaml`
- * (the CNRM manifest) for gcp, `dist/fly.json` (the serialized plan) for fly.
- * Pure — exported for testing.
+ * (the CNRM manifest) for gcp, `dist/fly.json` (the serialized plan) for fly,
+ * `dist/grafana.json` (the index the grafana serializer writes, with the
+ * dashboard files beside it) for grafana, `dist/schema.json` (the sql
+ * lexicon's build output) for clickhouse and postgres, `dist/rules.yml` (the
+ * rule file, with `alertmanager.yml` beside it) for ruler. Pure — exported for
+ * testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
   switch (target) {
@@ -429,6 +673,13 @@ export function defaultOutput(target: ApplyTarget): string {
       return "dist/gcp.yaml";
     case "fly":
       return "dist/fly.json";
+    case "ruler":
+      return "dist/rules.yml";
+    case "grafana":
+      return "dist/grafana.json";
+    case "clickhouse":
+    case "postgres":
+      return "dist/schema.json";
     default:
       return "template.json";
   }
@@ -468,7 +719,9 @@ function collapseEnvelope(envelope: ApplyResult, label: string): NativeApplyResu
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
  * on `kubectl`, tag-scoped on `arm`, label-scoped on `gcp`, marker- and
- * app-scoped on `fly`, and stack-scoped on `cloudformation`, where the deploy
+ * app-scoped on `fly`, label-scoped on `grafana`, comment-marker-scoped on
+ * `clickhouse` and `postgres`, and stack-scoped on
+ * `cloudformation`, where the deploy
  * itself removes resources dropped from the template and `deleteMode` changes
  * nothing: a resource CFN did not create is not in the stack. See
  * {@link DeleteMode}.
@@ -476,7 +729,7 @@ function collapseEnvelope(envelope: ApplyResult, label: string): NativeApplyResu
  * The appliers are injectable so this dispatcher can be tested without the
  * product lexicons present; production resolves them through
  * {@link loadK8sApplier} / {@link loadAzureApplier} / {@link loadAwsApplier} /
- * {@link loadGcpApplier} / {@link loadFlyApplier}.
+ * {@link loadGcpApplier} / {@link loadFlyApplier} / {@link loadGrafanaApplier}.
  */
 export async function nativeApply(
   args: NativeApplyArgs,
@@ -487,6 +740,10 @@ export async function nativeApply(
   awsApplier?: AwsApplier,
   gcpApplier?: GcpApplier,
   flyApplier?: FlyApplier,
+  grafanaApplier?: GrafanaApplier,
+  clickhouseApplier?: ClickHouseApplier,
+  postgresApplier?: PostgresApplier,
+  rulerApplier?: RulerApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -567,6 +824,57 @@ export async function nativeApply(
     return collapseEnvelope(envelope, args.env);
   }
 
+  if (args.target === "grafana") {
+    // grafana (#3011): the grafana lexicon's API applier. Unlike gcp and fly,
+    // env is not just a label here: it selects `grafana.profiles.<env>`, the
+    // Grafana observe and export already read. The ownership marker comes from
+    // the project's chant.config.ts inside grafanaApply.
+    const apply = grafanaApplier ?? (await loadGrafanaApplier());
+    const envelope = await apply(
+      { indexPath: output, environment: args.env, prune: deleteMode !== "never" },
+      signal,
+    );
+    // No binding or a refused token rides the envelope as NOT-ATTEMPTED for
+    // every resource, as do library panels and anything else prune could
+    // not consider.
+    return collapseEnvelope(envelope, args.env);
+  }
+
+  if (args.target === "clickhouse") {
+    // clickhouse (#3208): the sql lexicon's applier. env selects
+    // `sql.profiles.<env>`, the server observe and import read; the marker
+    // comes from the project's chant.config.ts inside clickhouseApply.
+    const apply = clickhouseApplier ?? (await loadClickHouseApplier());
+    const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
+    // A refused rebuild and a column drop an additive apply withholds ride the
+    // envelope as NOT-ATTEMPTED, so an Op can gate on them.
+    return collapseEnvelope(envelope, args.env);
+  }
+
+  if (args.target === "postgres") {
+    // postgres (#3280): the sql lexicon's applier. env selects
+    // `sql.profiles.<env>`; the marker and the lock and statement timeouts
+    // come from the project's chant.config.ts inside postgresApply.
+    const apply = postgresApplier ?? (await loadPostgresApplier());
+    const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
+    // A refused expand-and-contract change, a column drop an additive apply
+    // withholds, and the objects of a rolled-back transaction ride the
+    // envelope as NOT-ATTEMPTED, so an Op can gate on them.
+    return collapseEnvelope(envelope, args.env);
+  }
+
+  if (args.target === "ruler") {
+    // ruler (#3372): the prometheus lexicon's applier. env selects
+    // `prometheus.profiles.<env>`, whose ruler names the tenant and the
+    // namespaces the project owns. A delete stays inside those namespaces.
+    const apply = rulerApplier ?? (await loadRulerApplier());
+    const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
+    // A group with no declared namespace, a plain Prometheus or Alertmanager
+    // with no upload API, and a refused write ride the envelope as
+    // NOT-ATTEMPTED, so an Op can gate on them.
+    return collapseEnvelope(envelope, args.env);
+  }
+
   // cloudformation (#1449): the aws lexicon's native applier. env is the stack
   // name and output the template path; endpoint resolution (#1694) and
   // capability derivation (#980) are awsApply's own, so nothing else is passed.
@@ -588,7 +896,7 @@ export async function nativeApply(
  * with compensation on rather than warn at rollback time.
  */
 export function hasNativeRollback(target: ApplyTarget): boolean {
-  return target === "cloudformation";
+  return target === "cloudformation" || target === "ruler";
 }
 
 export interface CompensateApplyArgs {
@@ -598,6 +906,8 @@ export interface CompensateApplyArgs {
   env: string;
   /** Explicit rollback command, used in preference to the native default. */
   command?: string;
+  /** The build output the apply read — `ruler` finds the previous-group snapshot beside it. */
+  output?: string;
 }
 
 /** What a compensation did. */
@@ -611,6 +921,10 @@ export interface CompensateApplyResult {
   rolledBack?: boolean;
   /** The settled post-rollback stack status — cloudformation. */
   status?: string;
+  /** Groups put back to their previous form — ruler. */
+  restored?: number;
+  /** Groups the apply created, deleted again — ruler. */
+  removed?: number;
 }
 
 /**
@@ -633,6 +947,7 @@ export async function compensateApply(
   args: CompensateApplyArgs,
   signal?: AbortSignal,
   rollback?: AwsRollback,
+  rulerRollback?: RulerRollback,
 ): Promise<CompensateApplyResult> {
   if (args.command) {
     const { stdout, stderr } = await execAsync(args.command, { signal });
@@ -651,12 +966,25 @@ export async function compensateApply(
     };
   }
 
+  if (args.target === "ruler") {
+    // ruler (#3372): re-apply the previous group set the last apply saved.
+    const roll = rulerRollback ?? (await loadRulerRollback());
+    const result = await roll({ buildPath: args.output ?? defaultOutput("ruler"), environment: args.env }, signal);
+    console.log(
+      result.hadSnapshot
+        ? `[${args.env}] ruler rollback: restored ${result.restored} group(s), removed ${result.removed}` +
+            (result.alertmanagerRestored ? ", restored the Alertmanager config" : "")
+        : `[${args.env}] ruler rollback: no apply left a snapshot, nothing to restore`,
+    );
+    return { restored: result.restored, removed: result.removed };
+  }
+
   // Defensive: unreachable from an ApplyOp, which refuses this combination at
   // build time (#1449). Reaching it means the op was assembled without that
   // check, and the honest outcome is a failure that says the state stands.
   throw new Error(
     `no automatic rollback for target "${args.target}" — the partial apply to ${args.env} was NOT ` +
       `reverted and cannot be. ApplyOp refuses compensate for this target at build time; either ` +
-      `supply compensate.command or use a target with a mapped rollback (cloudformation).`,
+      `supply compensate.command or use a target with a mapped rollback (cloudformation, ruler).`,
   );
 }

@@ -1,0 +1,168 @@
+// Prometheus lexicon.
+
+// Plugin and serializer
+export { prometheusPlugin } from "./plugin";
+export { prometheusSerializer, ALERTMANAGER_FILE, PROMETHEUS_FILE } from "./serializer";
+
+// Rule groups
+export {
+  RuleGroup,
+  RULE_GROUP_TYPE,
+  isRuleGroup,
+  ruleGroupConfig,
+  ruleConfig,
+  type RuleGroupProps,
+  type RuleGroupEntity,
+  type Rule,
+  type RecordingRule,
+  type AlertingRule,
+} from "./rules";
+
+// Alertmanager
+export {
+  Route,
+  Receiver,
+  InhibitRule,
+  TimeInterval,
+  AlertmanagerSettings,
+  ROUTE_TYPE,
+  RECEIVER_TYPE,
+  INHIBIT_RULE_TYPE,
+  TIME_INTERVAL_TYPE,
+  SETTINGS_TYPE,
+  isRoute,
+  isReceiver,
+  isInhibitRule,
+  isTimeInterval,
+  isAlertmanagerSettings,
+  isAlertmanagerEntity,
+  type RouteProps,
+  type RouteEntity,
+  type ReceiverProps,
+  type ReceiverEntity,
+  type ReceiverRef,
+  type InhibitRuleProps,
+  type InhibitRuleEntity,
+  type TimeIntervalProps,
+  type TimeIntervalEntity,
+  type TimeIntervalRef,
+  type AlertmanagerSettingsProps,
+  type AlertmanagerSettingsEntity,
+} from "./alertmanager";
+
+// prometheus.yml
+export {
+  PrometheusConfig,
+  ScrapeConfig,
+  PROMETHEUS_CONFIG_TYPE,
+  SCRAPE_CONFIG_TYPE,
+  isPrometheusConfig,
+  isScrapeConfig,
+  isPrometheusConfigEntity,
+  type PrometheusConfigProps,
+  type PrometheusConfigEntity,
+  type ScrapeConfigProps,
+  type ScrapeConfigEntity,
+} from "./prometheus-config";
+
+// The plain-data model, building, YAML and checks
+export * from "./model";
+export {
+  buildRuleFile,
+  buildAlertmanagerConfig,
+  buildPrometheusConfig,
+  ruleFileYaml,
+  alertmanagerYaml,
+  prometheusConfigYaml,
+  emitYaml,
+  type BuiltRuleFile,
+  type BuiltAlertmanager,
+  type BuiltPrometheusConfig,
+} from "./build";
+export { isValidDuration, durationMs, formatDuration } from "./duration";
+export { parseMatchers, matcherMatches, matcher, type Matcher, type MatchOp, type ParsedMatchers } from "./matchers";
+export { checkPromql, PROMQL_GRAMMAR, type PromqlCheck } from "./promql";
+export {
+  validateRuleFile,
+  validateRunbookUrls,
+  validateAlertmanagerConfig,
+  validateSeverityRouting,
+  alertSeverities,
+  type PrometheusIssue,
+  type PrometheusIssueCode,
+} from "./validate-config";
+export { PROMETHEUS_PIN } from "./pin";
+
+// promtool and amtool, when installed
+export { promtoolCheckRules, promtoolCheckConfig, promtoolTestRules, amtoolCheckConfig, hasTool, type ToolResult } from "./tools";
+
+// Composites
+export {
+  Slo,
+  sloMetrics,
+  sloPropsProblem,
+  sliExprProblem,
+  eventCount,
+  DEFAULT_BURN_RATES,
+  SLO_WINDOW_PLACEHOLDER,
+  type SloProps,
+  type SloSli,
+  type SloAlerting,
+  type SloAlertTier,
+  type BurnRateWindow,
+  type SloMembers,
+  type SloInstance,
+  type SloMetrics,
+  type SloBurnRate,
+  GenAiRules,
+  genAiRuleMetrics,
+  type GenAiRulesProps,
+  type GenAiRulesMembers,
+  type GenAiRulesInstance,
+  type GenAiRuleMetrics,
+  type GenAiPrice,
+  type GenAiAlerting,
+  type GenAiAlertOptions,
+  type GenAiRatioAlert,
+  type GenAiLatencyAlert,
+  type GenAiBudget,
+  type GenAiAlertInfo,
+  type GenAiQuantileSeries,
+  RedAlerts,
+  redAlertRules,
+  RED_ALERT_NAMES,
+  type RedAlertsProps,
+  type RedAlertsMembers,
+  type RedAlertsInstance,
+  type RedAlertOptions,
+  type RedErrorRatioAlert,
+  type RedLatencyAlert,
+  Watchdog,
+  WATCHDOG_URL_FILE,
+  type WatchdogProps,
+  type WatchdogMembers,
+  type WatchdogInstance,
+  AlertRouting,
+  ALERT_ROUTING_LEVELS,
+  type AlertRoutingProps,
+  type AlertRoutingMembers,
+  type AlertRoutingInstance,
+  type AlertRoutingLevel,
+  type AlertRoutingTeam,
+  type AlertRoutingTiming,
+  type AlertRoutingReceiver,
+} from "./composites";
+
+// Config namespace (#3371): `prometheus.profiles.<env>` in chant.config.ts, the
+// ruler and Alertmanager each environment observes and imports from. The API
+// clients are `@intentius/chant-lexicon-prometheus/api`.
+export { prometheusConfigSchema, resolveRulerTarget, resolveAlertmanagerTarget, declaredNamespaces, namespaceOfGroup } from "./config";
+export type { PrometheusLexiconConfig, PrometheusProfile, RulerProfile, AlertmanagerProfile, RulerKind, AlertmanagerKind } from "./config";
+
+// Op steps (#3369). The activities resolve from
+// `@intentius/chant-lexicon-prometheus/op/activities`; the promtool and amtool
+// check builders share their names with the functions above, so they are at
+// `@intentius/chant-lexicon-prometheus/op/builders`.
+export { amtoolRoutesTest, alertmanagerSilence, alertmanagerUnsilence, rulesLoadedObserve, ruleAudit } from "./op/builders";
+export { RuleAuditOp, type RuleAuditOpConfig, type RuleAuditOpResources } from "./op/audit-op";
+export { sloRuleTests, type SloTestInput } from "./op/slo-rule-tests";

@@ -18,9 +18,11 @@
  * answers.
  */
 
+import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { loadActivities, loadProfiles } from "../activity-registry";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor";
+import { stepHeartbeatMs } from "../step-console";
 import { runComponents } from "../../components/cli-support";
 import { discoverOps } from "../discover";
 import { readRunLedger, runEnvOf, DEFAULT_RUN_ENV } from "../../lifecycle/run-ledger";
@@ -51,7 +53,8 @@ function statusFrom(
     endedAt: new Date().toISOString(),
     records: result.records,
     result,
-    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp } } : {}),
+    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp, ...(result.gate.op !== op ? { op: result.gate.op } : {}) } } : {}),
+    ...(result.record.point ? { point: result.record.point } : {}),
   };
 }
 
@@ -69,6 +72,7 @@ function statusFromRecord(record: OpRunRecord): OpRunStatus {
     startedAt: record.started,
     endedAt: record.ended,
     ...(record.gate ? { gate: record.gate } : {}),
+    ...(record.point ? { point: record.point } : {}),
   };
 }
 
@@ -129,14 +133,16 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
       // unreadable config just yields the base activities.
       let lexicons: string[] = [];
       try {
-        lexicons = (await loadChantConfig(projectPath)).config.lexicons ?? [];
+        lexicons = lexiconNames((await loadChantConfig(projectPath)).config.lexicons ?? []);
       } catch {
         // No/invalid chant.config — base activities only.
       }
 
       const [activities, profiles] = await Promise.all([loadActivities(lexicons), loadProfiles()]);
 
-      const runId = `local-${Date.now()}`;
+      // A caller that names the run (#3539: `chant acp` on fountain passes the
+      // conversation id) gets its id on the record; otherwise one is minted.
+      const runId = startOpts.runId ?? `local-${Date.now()}`;
       const startedAt = new Date().toISOString();
       noteEnv(op);
 
@@ -149,6 +155,8 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
             startOpts.signal,
             {
               runId,
+              // #2522: `--env` reaches the activities through the run context.
+              ...(startOpts.env !== undefined ? { env: startOpts.env } : {}),
               // The run's outcome is a durable fact (#2118): the executor
               // appends it here, at the one seam every local run passes
               // through, rather than in the CLI handler above it.
@@ -165,6 +173,14 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
                     `appended to the run ledger: ${err instanceof Error ? err.message : String(err)}\n`,
                 ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
+              // #3956: a running step's output, and a still-running line while
+              // it is quiet, on stderr as they happen; stdout stays the
+              // `--json` record's and `--progress-json`'s.
+              stepOutput: (line) => process.stderr.write(`${line}\n`),
+              stepHeartbeatMs: stepHeartbeatMs(process.env, (message) => process.stderr.write(`warning: ${message}\n`)),
+              ...(startOpts.work ? { work: startOpts.work } : {}),
+              onWorkLeaseWarning: (message) =>
+                process.stderr.write(`warning: "${op.name}" could not renew its work lease, retrying at the next beat: ${message}\n`),
             },
           );
           const status = statusFrom(op.name, runId, startedAt, result);

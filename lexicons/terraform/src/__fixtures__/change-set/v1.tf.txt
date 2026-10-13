@@ -1,0 +1,21 @@
+resource "terraform_data" "keep" {
+  input = "unchanged"
+}
+resource "terraform_data" "config" {
+  input = { size = "small", tags = { team = "core" } }
+}
+resource "terraform_data" "worker" {
+  input            = "v1"
+  triggers_replace = ["build-1"]
+}
+resource "terraform_data" "old" {
+  input = "going away"
+}
+variable "secret" {
+  type      = string
+  sensitive = true
+  default   = "s3cr3t-1"
+}
+resource "terraform_data" "secret" {
+  input = var.secret
+}

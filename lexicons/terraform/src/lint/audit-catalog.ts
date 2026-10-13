@@ -2,9 +2,9 @@
  * The terraform lexicon's chant audit catalog: metadata for its post-synth
  * checks, contributed through `terraformPlugin.auditCatalog()` (#687, #1346).
  * Every post-synth check needs an entry or it contributes nothing to
- * `chant audit`, silently, and `packages/core/src/audit/catalog.test.ts` fails.
+ * `chant audit`, silently, and `packages/core/src/audit/catalog.e2e.test.ts` fails.
  *
- * TF001 and TF024 through TF028 all read the chant model (`ctx.entities`),
+ * TF001 and TF024 through TF029 all read the chant model (`ctx.entities`),
  * never emitted output, so `yamlBased` is false for all of them. Prior-art
  * lineage lives in ./audit-lineage.ts.
  */
@@ -17,11 +17,59 @@ const HASHICORP_STYLE_VARIABLES: Authority = {
   url: "https://developer.hashicorp.com/terraform/language/style#variables",
 };
 
+const AWS_IAM_LEAST_PRIVILEGE: Authority = {
+  name: "AWS IAM security best practices (Apply least-privilege permissions)",
+  url: "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege",
+};
+
+// TF032's authority: the ECS developer guide's own instruction for credentials,
+// which is the remediation the rule's message gives.
+const ECS_SENSITIVE_DATA: Authority = {
+  name: "Amazon ECS Developer Guide: Pass sensitive data to an Amazon ECS container",
+  url: "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html",
+};
+
+// TF033-TF037 (#2288) cite the AWS service guide page that states the
+// encryption or immutability control each rule checks.
+const AWS_RDS_ENCRYPTION: Authority = {
+  name: "Amazon RDS User Guide: Encrypting Amazon RDS resources",
+  url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html",
+};
+
+const AWS_SNS_SSE: Authority = {
+  name: "Amazon SNS Developer Guide: Securing Amazon SNS data with server-side encryption",
+  url: "https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html",
+};
+
+const AWS_SQS_SSE: Authority = {
+  name: "Amazon SQS Developer Guide: Encryption at rest in Amazon SQS",
+  url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html",
+};
+
+const AWS_EBS_ENCRYPTION: Authority = {
+  name: "Amazon EBS User Guide: Amazon EBS encryption",
+  url: "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-encryption.html",
+};
+
+const AWS_ECR_TAG_IMMUTABILITY: Authority = {
+  name: "Amazon ECR User Guide: Preventing image tags from being overwritten",
+  url: "https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html",
+};
+
 // The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
 // ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
-// security rules that fail a merge (packages/core/src/audit/catalog.test.ts
+// security rules that fail a merge (packages/core/src/audit/catalog.e2e.test.ts
 // holds both halves of that invariant), and these three are correctness and
 // best-practice rules (#2112).
+
+/**
+ * The document WAW019 cites for the same finding in the aws lexicon, named
+ * without the em-dash its entry there carries (the docs prose lint counts them).
+ */
+const AWS_SECURITY_PILLAR: Authority = {
+  name: "AWS Well-Architected Framework, Security Pillar",
+  url: "https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html",
+};
 
 export const terraformAuditCatalog: Record<string, RuleMeta> = {
   TF001: {
@@ -91,6 +139,19 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       "Set live: true on the TerraformWatchOp that names this root, so the Plan phase runs " +
       "choudoufuLivePlan and reports the unowned and adoptable counts as well as drift. Drop the root's " +
       "estate instead if it is not a live root.",
+    yamlBased: false,
+  },
+  TF029: {
+    id: "TF029",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Live root names its estate both in chant.config and in its own HCL",
+    remediation:
+      "Pick one. A root whose directory is shared across environments declares no estate in HCL and " +
+      "names it per root with terraform.roots.<name>.estate; a root with its own live block already " +
+      "has an estate and needs nothing in chant.config. The declaration wins today, so the config " +
+      "value is written down and never used.",
     yamlBased: false,
   },
   TF002: {
@@ -306,6 +367,188 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     remediation:
       "Replace the constant with a lookup, either an input the caller supplies or a data source " +
       "pointed at whatever vault owns the credential, and rotate what was committed.",
+    yamlBased: false,
+  },
+  TF030: {
+    id: "TF030",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "Security group rule allows unrestricted ingress on a sensitive port",
+    remediation:
+      "Restrict the CIDR on SSH, RDP, MySQL and PostgreSQL ports to the sources that need them, or reach " +
+      "the host through a bastion, a VPN or SSM Session Manager.",
+    authority: [AWS_SECURITY_PILLAR],
+    yamlBased: false,
+  },
+  TF031: {
+    id: "TF031",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "IAM policy allows a wildcard Action or Resource",
+    remediation:
+      "Name the actions the workload calls and the ARNs it touches. For the few actions that accept only " +
+      'Resource "*" (`ecr:GetAuthorizationToken`, `sts:GetCallerIdentity`), keep that statement on its own and ' +
+      "suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from " +
+      "an expression; it is not a finding.",
+    authority: [AWS_IAM_LEAST_PRIVILEGE],
+    yamlBased: false,
+  },
+  TF032: {
+    id: "TF032",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "ECS container definition passes a credential as a plaintext environment value",
+    remediation:
+      "Move the value from the container's `environment` to its `secrets`, with a `valueFrom` naming a " +
+      "Secrets Manager secret or SSM parameter, and rotate the committed value.",
+    authority: [ECS_SENSITIVE_DATA],
+    yamlBased: false,
+  },
+  TF033: {
+    id: "TF033",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "RDS DB instance or cluster storage is not encrypted",
+    remediation:
+      "Set `storage_encrypted = true` (and `kms_key_id` for a customer managed key). An existing database cannot be " +
+      "encrypted in place: restore an encrypted copy of a snapshot. An Aurora cluster, or a database created from a " +
+      "snapshot or replica, is reported as not determined, not as a finding.",
+    authority: [AWS_RDS_ENCRYPTION],
+    yamlBased: false,
+  },
+  TF034: {
+    id: "TF034",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "SNS topic has no server-side encryption",
+    remediation:
+      'Set `kms_master_key_id` to a customer managed KMS key, or to `"alias/aws/sns"` for the AWS managed one. No AWS ' +
+      "default encrypts a topic that names no key.",
+    authority: [AWS_SNS_SSE],
+    yamlBased: false,
+  },
+  TF035: {
+    id: "TF035",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "SQS queue turns server-side encryption off",
+    remediation:
+      "Remove `sqs_managed_sse_enabled = false` (new queues are encrypted with SSE-SQS by default), set it to `true`, " +
+      "or set `kms_master_key_id`. A queue that sets neither attribute is encrypted and is not reported.",
+    authority: [AWS_SQS_SSE],
+    yamlBased: false,
+  },
+  TF036: {
+    id: "TF036",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "EBS volume does not ask for encryption",
+    remediation:
+      "Set `encrypted = true` (and `kms_key_id` for a customer managed key). A volume that leaves `encrypted` unset " +
+      "depends on the Region's EBS encryption by default and is reported as not determined, not as a finding.",
+    authority: [AWS_EBS_ENCRYPTION],
+    yamlBased: false,
+  },
+  TF037: {
+    id: "TF037",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "ECR repository allows mutable image tags",
+    remediation:
+      'Set `image_tag_mutability = "IMMUTABLE"`, or `"IMMUTABLE_WITH_EXCLUSION"` with an ' +
+      "`image_tag_mutability_exclusion_filter` naming the few moving tags (`latest`) that must stay mutable. The " +
+      "provider default is `MUTABLE`.",
+    authority: [AWS_ECR_TAG_IMMUTABILITY],
+    yamlBased: false,
+  },
+  TF038: {
+    id: "TF038",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "OCI module source has no tag or digest, or a mutable tag",
+    remediation:
+      "Pin the `oci://` source with `?digest=sha256:...` (a digest cannot move) or an exact version tag " +
+      "(`?tag=1.4.0`). A source with no tag pulls `latest`.",
+    yamlBased: false,
+  },
+  TF039: {
+    id: "TF039",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "Registry module version is a range, not an exact version",
+    remediation: 'Set an exact `version` (`version = "1.4.0"`) for projects that pin modules. Off by default.',
+    yamlBased: false,
+  },
+  TF040: {
+    id: "TF040",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "Root has no committed .terraform.lock.hcl",
+    remediation:
+      "Run `terraform init` in the root and commit the `.terraform.lock.hcl` it writes. Off by default; " +
+      "checked only where the root's directory is known.",
+    yamlBased: false,
+  },
+  TF041: {
+    id: "TF041",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt dependency lets mock_outputs stand in for apply",
+    remediation:
+      'Set `mock_outputs_allowed_terraform_commands = ["validate", "plan"]` on every `dependency` that sets `mock_outputs`. ' +
+      "Terragrunt reads a missing or empty list as every command, apply included.",
+    yamlBased: false,
+  },
+  TF042: {
+    id: "TF042",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt dependency sets skip_outputs together with mock_outputs",
+    remediation:
+      "Drop `skip_outputs`, or pass the values as `inputs`. With `skip_outputs = true` the upstream outputs are never read, so every run uses the mocks.",
+    yamlBased: false,
+  },
+  TF043: {
+    id: "TF043",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt terraform.source names no version (git ref, tfr version or oci tag)",
+    remediation:
+      "Pin the source: `?ref=` for git, `?version=` for `tfr://`, `?digest=` or `?tag=` for `oci://`.",
+    yamlBased: false,
+  },
+  TF044: {
+    id: "TF044",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt config keeps state in a local backend",
+    remediation:
+      'Use a shared backend (S3, GCS) in `remote_state`. State written by `backend = "local"` stays on the runner and is lost with it.',
+    yamlBased: false,
+  },
+  TF045: {
+    id: "TF045",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "No Terragrunt config sets terragrunt_version_constraint",
+    remediation:
+      'Set `terragrunt_version_constraint = ">= 1.1.0"` in the root config. Off by default; judged only across the configs scanned.',
     yamlBased: false,
   },
 };

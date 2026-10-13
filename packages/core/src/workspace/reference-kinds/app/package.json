@@ -1,0 +1,10 @@
+{
+  "name": "chant-reference-app-kind",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The app member kind (INTENTIUS/chant#3151): a data-only kinds file a workspace pins by path. chant reads it as data and never runs it.",
+  "files": ["workspace-kinds.json"],
+  "exports": {
+    "./workspace-kinds": "./workspace-kinds.json"
+  }
+}

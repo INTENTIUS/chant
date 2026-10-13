@@ -35,6 +35,9 @@ export type OpVerbClass = "read-only" | "mutating" | "destructive";
 const READ_ONLY_ACTIVITY_FNS: ReadonlySet<string> = new Set([
   "lifecycleSnapshot",
   "lifecycleDiff",
+  "composeChangeSet",
+  "lifecyclePlanChangeSet",
+  "readChangeSetPart",
   "httpCheck",
   "policyGate",
   "workflowSupplyChainAudit",
@@ -47,6 +50,11 @@ const READ_ONLY_ACTIVITY_FNS: ReadonlySet<string> = new Set([
   "spriteListDir",
   "listCheckpoints",
   "convergeTick",
+  "spriteUrl",
+  "spriteServiceGet",
+  "spriteServiceList",
+  "spriteServiceLogs",
+  "spriteServicesObserve",
 ]);
 
 /** Activity function names that always delete/destroy, regardless of args. */
@@ -57,6 +65,8 @@ const ALWAYS_DESTRUCTIVE_ACTIVITY_FNS: ReadonlySet<string> = new Set([
   "awsDelete",
   "gcpDelete",
   "spriteDestroy",
+  "spriteDelete",
+  "spriteServiceDelete",
   "k3dDown",
   "k3sUninstall",
 ]);

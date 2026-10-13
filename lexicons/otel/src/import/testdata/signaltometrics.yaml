@@ -1,0 +1,83 @@
+# A signaltometrics connector (collector-contrib v0.130.0) building metrics
+# from spans, logs and data points: explicit and exponential histograms, a
+# sum and a gauge, with attributes, resource attributes and conditions.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+processors:
+  batch: {}
+exporters:
+  debug:
+    verbosity: basic
+  prometheus:
+    endpoint: 0.0.0.0:8889
+connectors:
+  signaltometrics/genai:
+    spans:
+      - name: gen_ai.client.operation.duration
+        description: GenAI operation duration
+        unit: s
+        conditions:
+          - attributes["gen_ai.operation.name"] != nil
+        attributes:
+          - key: gen_ai.operation.name
+          - key: gen_ai.request.model
+            default_value: unknown
+          - key: error.type
+            optional: true
+        include_resource_attributes:
+          - key: service.name
+        histogram:
+          buckets: [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92]
+          value: Double(Microseconds(end_time - start_time)) / 1000000.0
+      - name: gen_ai.client.token.usage
+        description: Input tokens used
+        unit: "{token}"
+        conditions:
+          - attributes["gen_ai.usage.input_tokens"] != nil
+        attributes:
+          - key: gen_ai.request.model
+            default_value: unknown
+          - key: gen_ai.token.type
+            default_value: input
+        histogram:
+          buckets: [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864]
+          value: attributes["gen_ai.usage.input_tokens"]
+      - name: span.count
+        description: Spans, adjusted for sampling
+        sum:
+          value: Int(AdjustedCount())
+      - name: span.duration.exponential
+        unit: us
+        exponential_histogram:
+          max_size: 80
+          value: Microseconds(end_time - start_time)
+    logs:
+      - name: logrecord.count
+        sum:
+          value: "1"
+    datapoints:
+      - name: datapoint.last
+        conditions:
+          - metric.type == 1
+        gauge:
+          value: value_double
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, signaltometrics/genai]
+    logs:
+      receivers: [otlp]
+      exporters: [signaltometrics/genai]
+    metrics:
+      receivers: [otlp]
+      exporters: [signaltometrics/genai]
+    metrics/genai:
+      receivers: [signaltometrics/genai]
+      processors: [batch]
+      exporters: [prometheus]

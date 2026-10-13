@@ -22,6 +22,8 @@
  * walk that decides which paths reach here is `discover.ts`'s
  * `collectCandidates`, which is also where a locally ignored path is dropped:
  * see `isTerraformStatePath` there and `gitignoreCoversTerraformState` below.
+ * The root `.gitignore` and every nested one on the way to the path can drop
+ * it (`nestedGitignoreCovering`, #2528).
  */
 
 import type { AuditFinding } from "./core";
@@ -81,6 +83,29 @@ export function gitignoreCoversTerraformState(gitignore: string, path: string): 
     if (re.test(name) || path.split("/").some((segment) => re.test(segment))) return true;
   }
   return false;
+}
+
+/**
+ * The nearest directory strictly between a TF023 path and the scan root whose
+ * `.gitignore` covers that path, or undefined. Each `.gitignore` is matched
+ * against the path relative to its own directory, the way git scopes it, with
+ * the same narrow matcher as the root one. `readGitignore` takes a directory
+ * relative to the scan root and returns its `.gitignore` body, if any.
+ *
+ * The local walk drops a TF023 path this returns a directory for, as it drops
+ * one the root `.gitignore` covers (#2528).
+ */
+export function nestedGitignoreCovering(
+  path: string,
+  readGitignore: (dir: string) => string | undefined,
+): string | undefined {
+  const parts = path.split("/");
+  for (let depth = parts.length - 1; depth > 0; depth--) {
+    const dir = parts.slice(0, depth).join("/");
+    const body = readGitignore(dir);
+    if (body !== undefined && gitignoreCoversTerraformState(body, parts.slice(depth).join("/"))) return dir;
+  }
+  return undefined;
 }
 
 /**

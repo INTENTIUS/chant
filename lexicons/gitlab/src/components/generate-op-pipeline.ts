@@ -61,7 +61,7 @@
  * option's lines in this same lexicon, and which concatenates identically at
  * run time. An additive `permissions` map has exactly one entry with a GitLab
  * meaning: `id-token: write` becomes an `id_tokens:` declaration ({@link
- * idTokensFor}), the OIDC surface the old refusal already named as the shape
+ * gitlabIdTokens}), the OIDC surface the old refusal already named as the shape
  * to reach for. Every other scope is still refused, because there is no
  * per-job token-scope mapping to put it in and a silently dropped scope emits
  * a job that reads as granted and runs with nothing.
@@ -105,8 +105,19 @@
  * beside it does not also point.
  */
 
-import { emitYAML } from "@intentius/chant/yaml";
-import { resolveOpTrigger } from "@intentius/chant/lexicon";
+import {
+  assertGitlabEnvironment,
+  CI_IMAGE,
+  ciJobName,
+  environmentDoc,
+  fillCommand,
+  gitlabIdTokens,
+  gitlabRules,
+  gitlabSetupScript,
+  nonEmpty,
+  pushBranches,
+} from "@intentius/chant/ci-jobs";
+import { memberGitlabChanges, memberRepoPath, memberShellDir, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGitlabOpOptions,
   OpEnvironment,
@@ -117,14 +128,9 @@ import type {
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
 
+import { emitGitlabFile } from "./ci-jobs";
+
 export type { GenerateGitlabOpOptions, GenerateGitlabOpResult };
-
-/** GitLab CI job names must be safe YAML keys; Op names are already kebab-case in every fixture, but normalize defensively (mirrors `./generate-pipeline.ts`'s `toJobName`). */
-function toJobName(opName: string): string {
-  return opName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-}
-
-const DEFAULT_IMAGE = "node:22-slim";
 
 /**
  * Default stage every generated job runs in, and the default base of the
@@ -146,33 +152,6 @@ const DEFAULT_STAGE = "ops";
 const SELECTOR_VAR = "CHANT_SCHEDULED_OP";
 
 /**
- * Default branch assumed for a `push` trigger with no `branches` override.
- * The same value github's generator documents, for the same reason: this
- * operates on a `ScheduledOpSpec` rather than a git checkout, so it cannot
- * read a downstream project's actual default branch. Set `trigger.branches`
- * explicitly on a project whose default branch is something else.
- */
-const DEFAULT_PUSH_BRANCH = "main";
-
-/** The pipeline source GitLab reports for a merge-request pipeline. */
-const MERGE_REQUEST_SOURCE = '$CI_PIPELINE_SOURCE == "merge_request_event"';
-
-/**
- * The `id_tokens:` entry an `id-token: write` spec gets. The name is the
- * environment variable the JWT lands in, which the job's own setup line reads
- * (`aws sts assume-role-with-web-identity --web-identity-token
- * "$CHANT_ID_TOKEN"`, or the provider's equivalent).
- *
- * `$CI_SERVER_URL` as the audience is GitLab's own documented default: an
- * identity provider federated to a GitLab instance is registered with that
- * instance's URL as its audience, and the variable expands to exactly that on
- * gitlab.com and on a self-managed instance alike. A project whose provider
- * was registered with some other audience edits the generated declaration.
- */
-const ID_TOKEN_NAME = "CHANT_ID_TOKEN";
-const ID_TOKEN_AUDIENCE = "$CI_SERVER_URL";
-
-/**
  * `chant run` returns 3 when a run stops at an unapproved gate; `--gated-exit
  * 0` maps that one outcome to success (#2243). `push` only — a cron watch or
  * a merge-request plan that stops at a gate is a signal, not noise on a merge.
@@ -184,28 +163,6 @@ const GATE_SUMMARY_VAR = "CHANT_GATE_SUMMARY";
 
 /** How long a pending-gate artifact is worth keeping: long enough to outlive the approval it is waiting for. */
 const GATE_ARTIFACT_EXPIRY = "30 days";
-
-/**
- * Refuse a branch name that cannot be interpolated into a `rules:`
- * if-expression. The expression is a string GitLab parses, so a `"` would end
- * it early and a `$` would expand as a variable — either one silently changes
- * which pipelines match the job, which is worse than not generating it.
- */
-function assertBranchName(specName: string, branch: string): void {
-  if (branch.trim() === "") {
-    throw new Error(
-      `Scheduled Op "${specName}" has an empty branch filter. Name a branch, or drop the filter.`,
-    );
-  }
-  if (/["$\\]/.test(branch)) {
-    throw new Error(
-      `Scheduled Op "${specName}" filters on branch "${branch}", which carries a character this generator ` +
-        `cannot put in a GitLab \`rules:\` expression: a quote would end the expression early and a "$" ` +
-        `would expand as a CI/CD variable, either of which silently changes which pipelines run the job. ` +
-        `Name a branch without \`"\`, \`$\` or \`\\\`.`,
-    );
-  }
-}
 
 /** Refuse a blank `opsStage` (#2293): every job's `stage:` and the top-level `stages:` entry would otherwise be an empty string. */
 function assertOpsStage(stage: string): void {
@@ -228,33 +185,6 @@ function assertOpsFileName(fileName: string): void {
 }
 
 /**
- * This trigger's `rules:` entries. Two or more branches are two or more
- * entries: `rules:` is an OR over its list, which is how GitLab spells the
- * alternation github expresses as a `branches:` array.
- */
-function rulesFor(spec: ScheduledOpSpec, trigger: OpTrigger): Array<{ if: string }> {
-  switch (trigger.kind) {
-    case "cron":
-      return [{ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SELECTOR_VAR} == "${spec.name}"` }];
-    case "pull_request": {
-      const branches = trigger.branches ?? [];
-      if (branches.length === 0) return [{ if: MERGE_REQUEST_SOURCE }];
-      return branches.map((branch) => {
-        assertBranchName(spec.name, branch);
-        return { if: `${MERGE_REQUEST_SOURCE} && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "${branch}"` };
-      });
-    }
-    case "push": {
-      const branches = trigger.branches?.length ? trigger.branches : [DEFAULT_PUSH_BRANCH];
-      return branches.map((branch) => {
-        assertBranchName(spec.name, branch);
-        return { if: `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "${branch}"` };
-      });
-    }
-  }
-}
-
-/**
  * Refuse `findingMode: "comment"` on a trigger that has no merge request
  * (#2231, #2256). The mode's activity reads the merge request out of the
  * pipeline's own variables at run time, so a cron- or push-triggered job
@@ -270,99 +200,6 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
       `no merge request to post on. Give it a { kind: "pull_request" } trigger, or use findingMode "issue" ` +
       `or "merge-request".`,
   );
-}
-
-/**
- * Turn a spec's additive `permissions` (#2242) into the one GitLab
- * declaration that carries the same meaning, refusing everything else by name.
- *
- * `id-token: write` is that one: GitLab's OIDC surface is `id_tokens:`, a
- * per-job declaration of a JWT the job exchanges for cloud credentials
- * itself. `id-token: read` is refused rather than mapped, because GitLab
- * either mints the token into the job or does not — there is no read-only
- * half of it, and emitting the declaration for a spec that asked for read
- * would hand the job more than it asked for.
- *
- * Every other scope is refused, unchanged from the pre-#2256 behaviour:
- * GitLab has no per-job token-scope mapping at all, and a scope quietly
- * dropped would emit a job that reads as granted and runs with nothing.
- */
-function idTokensFor(spec: ScheduledOpSpec): Record<string, unknown> | undefined {
-  let wantsIdToken = false;
-  for (const [rawScope, value] of Object.entries(spec.permissions ?? {})) {
-    const scope = rawScope.trim();
-    if (scope === "id-token") {
-      if (value !== "write") {
-        throw new Error(
-          `Scheduled Op "${spec.name}" adds permission "id-token: ${value}", but GitLab either mints an ` +
-            `OIDC token into a job or does not — there is no read-only half of an \`id_tokens:\` ` +
-            `declaration. Ask for { "id-token": "write" }, or drop the option.`,
-        );
-      }
-      wantsIdToken = true;
-      continue;
-    }
-    throw new Error(
-      `Scheduled Op "${spec.name}" adds permission "${scope}: ${value}", but GitLab CI has no per-job ` +
-        `token-scope mapping — there is no \`permissions:\` key to add it to (#2242). The one scope that ` +
-        `does cross over is "id-token": "write", which becomes an \`id_tokens:\` declaration. Drop the ` +
-        `option here, or generate this Op for github.`,
-    );
-  }
-  return wantsIdToken ? { [ID_TOKEN_NAME]: { aud: ID_TOKEN_AUDIENCE } } : undefined;
-}
-
-/**
- * Refuse a `uses` setup step by name and return the `run` lines that do
- * translate. See the module doc for why a marketplace action is a refusal
- * rather than a silent drop.
- */
-function gitlabSetupScript(spec: ScheduledOpSpec): string[] {
-  const lines: string[] = [];
-  (spec.setup ?? []).forEach((step, index) => {
-    if ("uses" in step) {
-      throw new Error(
-        `Scheduled Op "${spec.name}" setup step ${index + 1} is \`uses: "${step.uses}"\`, a GitHub Actions ` +
-          `marketplace action. GitLab CI jobs run \`script\` lines only, so there is nothing to translate it ` +
-          `into (#2242). Express the setup as a \`{ run }\` entry, or generate this Op for github/forgejo.`,
-      );
-    }
-    lines.push(step.run);
-  });
-  return lines;
-}
-
-/**
- * Validate a spec's `environment` (#2257) on GitLab's own terms. A GitLab job
- * naming an environment that does not exist creates an unprotected one on
- * first deploy rather than failing, so — as on github — the only shapes worth
- * refusing at build time are the ones that could never bind: a blank name,
- * and a `url` that is neither absolute nor a variable expression GitLab
- * expands, which would render as a dead "View deployment" link.
- */
-function assertGitlabEnvironment(name: string, environment: OpEnvironment): void {
-  const where = `Scheduled Op "${name}" environment`;
-  if (environment.name.trim() === "") {
-    throw new Error(
-      `${where} has an empty \`name\`. A GitLab environment is a project object, and its approval ` +
-        `rules live on that object rather than in this file, so a blank name resolves to nothing. ` +
-        `Give it the environment's name, or drop the option.`,
-    );
-  }
-  if (environment.url === undefined) return;
-  const url = environment.url.trim();
-  if (url === "") {
-    throw new Error(
-      `${where} "${environment.name}" has an empty \`url\`. Omit the field rather than setting it to "".`,
-    );
-  }
-  if (!/^https?:\/\//.test(url) && !url.includes("$")) {
-    throw new Error(
-      `${where} "${environment.name}" has \`url: "${environment.url}"\`, which is neither an absolute ` +
-        `http(s) URL nor a variable expression GitLab expands. It becomes the environment's own link, ` +
-        `so a relative path is a dead link on the environment page rather than an error anywhere.`,
-    );
-  }
 }
 
 /**
@@ -401,7 +238,7 @@ function headerLineFor(
       return `#   ${jobName}: merge_request_event onto ${onto}, finding-mode ${mode}${tokenNote}`;
     }
     case "push": {
-      const branches = trigger.branches?.length ? trigger.branches : [DEFAULT_PUSH_BRANCH];
+      const branches = pushBranches(trigger.branches);
       return (
         `#   ${jobName}: push to ${branches.join(", ")}, finding-mode ${mode}${tokenNote}` +
         ` — a gated apply stays green, its pending gate in the log and in ${gateSummaryPath(jobName)}`
@@ -419,31 +256,39 @@ export function generateGitlabOpPipeline(
   ops: ScheduledOpSpec[],
   options: GenerateGitlabOpOptions = {},
 ): GenerateGitlabOpResult {
-  const image = options.image ?? DEFAULT_IMAGE;
+  const image = options.image ?? CI_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "{name}"];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
   const stage = options.opsStage ?? DEFAULT_STAGE;
   assertOpsStage(stage);
-  const fileName = options.opsFileName ?? `${stage}.gitlab-ci.yml`;
-  assertOpsFileName(fileName);
+  const baseFileName = options.opsFileName ?? `${stage}.gitlab-ci.yml`;
+  assertOpsFileName(baseFileName);
+  // A workspace member's file, jobs and resource groups carry its name
+  // (#2542): the root .gitlab-ci.yml includes every member's file, and job
+  // names share one namespace across them.
+  const member = options.member;
+  const fileName = member ? `${member.name}-${baseFileName}` : baseFileName;
+  const jobPrefix = member ? `${member.name}-` : "";
+  const changes = member ? memberGitlabChanges(member, member.fileDir ? `${member.fileDir}/${fileName}` : undefined) : undefined;
+  const cdLine = member && member.dir !== "." && member.dir !== "" ? [`cd ${memberShellDir(member)}`] : [];
 
   const jobs: OpPipelineJob[] = [];
-  const doc: Record<string, unknown> = { stages: [stage] };
-  if (options.variables && Object.keys(options.variables).length > 0) doc.variables = options.variables;
+  const doc: Record<string, unknown> = { stages: [stage], ...nonEmpty("variables", options.variables) };
 
   const opLines: string[] = [];
   let anyCron = false;
 
   for (const spec of ops) {
-    const setupScript = gitlabSetupScript(spec);
-    const idTokens = idTokensFor(spec);
+    const subject = `Scheduled Op "${spec.name}"`;
+    const setupScript = gitlabSetupScript(subject, spec.setup);
+    const idTokens = gitlabIdTokens(spec.name, spec.permissions);
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
     if (trigger.kind === "cron") anyCron = true;
 
-    const jobName = toJobName(spec.name);
+    const jobName = jobPrefix + ciJobName(spec.name);
     jobs.push({ jobName, op: spec.name, trigger, findingMode });
     opLines.push(headerLineFor(spec, trigger, jobName, findingMode));
     if (spec.environment) {
@@ -453,8 +298,9 @@ export function generateGitlabOpPipeline(
 
     // A push job is the one a gate would otherwise paint red on every merge
     // (#2243). Every other trigger keeps the plain one-line invocation.
+    const rules = gitlabRules(subject, trigger, { variable: SELECTOR_VAR, value: spec.name });
     const gated = trigger.kind === "push";
-    const runParts = runCommand.map((part) => part.replace("{name}", spec.name));
+    const runParts = fillCommand(runCommand, spec.name);
     const invocation = gated ? [...runParts, ...GATED_EXIT_FLAG] : runParts;
     const gateSummary = gateSummaryPath(jobName);
 
@@ -475,29 +321,22 @@ export function generateGitlabOpPipeline(
       // next run rather than cancel the current one.
       resource_group: jobName,
       ...(idTokens ? { id_tokens: idTokens } : {}),
-      ...(spec.environment
-        ? {
-            environment: {
-              name: spec.environment.name,
-              ...(spec.environment.url === undefined ? {} : { url: spec.environment.url }),
-            },
-          }
-        : {}),
-      ...(Object.keys(jobVariables).length > 0 ? { variables: jobVariables } : {}),
-      rules: rulesFor(spec, trigger),
-      script: [...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
+      ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}),
+      ...nonEmpty("variables", jobVariables),
+      rules: changes && trigger.kind !== "cron" ? rules.map((r) => ({ ...r, changes })) : rules,
+      script: [...cdLine, ...setupScript, ...beforeScript, invocation.join(" "), ...extraScript],
       // `when: always` because the run this publishes for is the green one: a
       // gated apply succeeds, and the block is the only thing that says a
       // human still has to act. A run that walked through its gate writes no
       // block, and GitLab reports the empty upload as a warning, not a failure.
       ...(gated
-        ? { artifacts: { when: "always", paths: [gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
+        ? { artifacts: { when: "always", paths: [member ? memberRepoPath(member, gateSummary) : gateSummary], expire_in: GATE_ARTIFACT_EXPIRY } }
         : {}),
     };
   }
 
   const headerLines = [
-    `# chant Ops (#927, #2084, #2293) — one job per Op under stage "${stage}", each`,
+    `# chant Ops — one job per Op under stage "${stage}", each`,
     "# selected by its own rules:. A merge_request_event or push job needs no",
     "# setup; its rule fires on the event itself.",
   ];
@@ -512,14 +351,10 @@ export function generateGitlabOpPipeline(
   }
   headerLines.push("#", ...opLines);
 
-  const sections: string[] = [];
-  sections.push("stages:" + emitYAML(doc.stages, 1));
-  if (doc.variables) sections.push("variables:" + emitYAML(doc.variables, 1));
-  for (const { jobName } of jobs) {
-    sections.push(`${jobName}:` + emitYAML(doc[jobName], 1));
-  }
-
-  const yaml = headerLines.join("\n") + "\n\n" + sections.join("\n\n") + "\n";
+  const yaml = emitGitlabFile(
+    [["stages", doc.stages], ...(doc.variables ? [["variables", doc.variables] as const] : []), ...jobs.map(({ jobName }) => [jobName, doc[jobName]] as const)],
+    headerLines,
+  );
 
   return { files: [{ name: fileName, yaml }], jobs };
 }

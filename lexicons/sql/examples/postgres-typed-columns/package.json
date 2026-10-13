@@ -1,0 +1,20 @@
+{
+  "name": "sql-postgres-typed-columns-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon sql -o dist/schema.json",
+    "lint": "chant lint src",
+    "types": "chant sql types",
+    "types:check": "chant sql types --check",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-sql": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

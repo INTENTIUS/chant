@@ -31,6 +31,7 @@
 
 import type { FanOutPlan, FanOutSkip } from "./fan-out";
 import type { FanOutRunResult } from "./fan-out-run";
+import { waveGateName, type WaveRecord } from "../gated-waves";
 
 type Writer = (line: string) => void;
 
@@ -47,6 +48,12 @@ export interface FanOutRenderOptions {
   write?: Writer;
   /** Present when a gate covers the set, so the render can print the exact approve line. */
   gate?: FanOutGateRef;
+  /**
+   * Present when each wave has its own gate (#3049). A wave's digest is known
+   * only once it is planned, so a plan-only render names each wave's gate and
+   * no digest.
+   */
+  waveGate?: FanOutGateRef;
 }
 
 /** `unaffected` → `unaffected`; `blocked` also names the failure it was reached from. */
@@ -85,7 +92,8 @@ export function renderFanOutPlan(plan: FanOutPlan, options: FanOutRenderOptions 
     write("  nothing to run");
   } else {
     for (const [index, wave] of plan.waves.entries()) {
-      write(`  wave ${index + 1}: ${wave.join(", ")}`);
+      const gated = options.waveGate ? `  (gate ${waveGateName(options.waveGate.gate, index + 1)})` : "";
+      write(`  wave ${index + 1}: ${wave.join(", ")}${gated}`);
     }
   }
 
@@ -117,6 +125,28 @@ export function renderFanOutPlan(plan: FanOutPlan, options: FanOutRenderOptions 
   if (options.gate) {
     write(`  approve: chant approve ${options.gate.op} ${options.gate.gate} --plan ${plan.digest}`);
   }
+  if (options.waveGate) {
+    write(`  each wave is planned when it is reached, and its gate binds that wave's set digest`);
+  }
+}
+
+/** One line per wave a gated-wave run reached (#3049): its digest, members and where it got to. */
+function renderWaves(waves: readonly WaveRecord[], write: Writer): void {
+  for (const wave of waves) {
+    const state =
+      wave.status === "applied"
+        ? `applied, approved by ${wave.approvedBy ?? "unknown"}`
+        : wave.status === "gated"
+          ? wave.approved
+            ? "stopped: the set changed after it was approved"
+            : "waiting for approval"
+          : "failed";
+    write(`wave ${wave.wave} (${wave.gate}): ${state}`);
+    if (wave.digest) write(`  set digest: ${wave.digest}`);
+    for (const member of wave.members) write(`    ${member.member}  ${member.planDigest}`);
+    if (wave.approved) write(`  approved digest: ${wave.approved}`);
+    for (const f of wave.failed ?? []) write(`  ${f.component} failed${f.error ? `: ${f.error}` : ""}`);
+  }
 }
 
 /**
@@ -130,6 +160,17 @@ export function renderFanOutPlan(plan: FanOutPlan, options: FanOutRenderOptions 
 export function renderFanOutHuman(result: FanOutRunResult, options: FanOutRenderOptions = {}): void {
   const write = options.write ?? stderr;
   renderFanOutPlan(result.plan, { ...options, write });
+  if (result.waves) renderWaves(result.waves, write);
+
+  if (result.status === "gated" && result.waves) {
+    const at = result.waves[result.waves.length - 1];
+    write(
+      `gated at wave ${at?.wave ?? "?"}: ${result.completed.length} applied before it, ` +
+        `nothing in it or after it ran.`,
+    );
+    if (result.gate?.expiresAt) write(`  expires: ${result.gate.expiresAt}`);
+    return;
+  }
 
   if (result.status === "gated") {
     const gate = result.gate;

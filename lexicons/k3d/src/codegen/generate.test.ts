@@ -129,9 +129,9 @@ describe("offline fixture pipeline", () => {
   test("runtime index exports Cluster as resource and the rest as properties", async () => {
     const result = await generate({ schemaSource: loadSchemaFixtureMap() });
 
-    expect(result.indexTS).toContain('export const Cluster = createResource("K3d::Cluster", "k3d", {});');
+    expect(result.indexTS).toContain('export const Cluster = /* @__PURE__ */ createResource("K3d::Cluster", "k3d", {});');
     for (const name of PROPERTY_ENTITY_NAMES) {
-      expect(result.indexTS).toContain(`export const ${name} = createProperty("K3d::${name}", "k3d");`);
+      expect(result.indexTS).toContain(`export const ${name} = /* @__PURE__ */ createProperty("K3d::${name}", "k3d");`);
     }
   });
 });

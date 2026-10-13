@@ -4,10 +4,17 @@
  * Observability pattern. ServiceMonitor and PrometheusRule are CRDs
  * from the Prometheus Operator (monitoring.coreos.com/v1), returned
  * as raw objects that can be serialized alongside native K8s resources.
+ *
+ * Rules come in two forms. `ruleGroups` takes `RuleGroup`s from the
+ * prometheus lexicon (`@intentius/chant-lexicon-prometheus`), typed and
+ * checked there, and rendered here exactly as they would be in a rule file.
+ * `alertRules` is the older shorthand for one group of alerts and still works.
  */
 
 import { Composite, mergeDefaults } from "@intentius/chant";
+import { ruleGroupConfig, type RuleGroupEntity, type RuleGroupProps } from "@intentius/chant-lexicon-prometheus";
 import { Deployment, Service, ServiceMonitor, PrometheusRule } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface AlertRule {
@@ -38,6 +45,11 @@ export interface MonitoredServiceProps {
   scrapeInterval?: string;
   /** Alert rules — if provided, creates a PrometheusRule. */
   alertRules?: AlertRule[];
+  /**
+   * Rule groups from the prometheus lexicon — if provided, creates a
+   * PrometheusRule holding them, after the `alertRules` group when both are set.
+   */
+  ruleGroups?: Array<RuleGroupEntity | RuleGroupProps>;
   /** Number of replicas (default: 2). */
   replicas?: number;
   /** Additional labels to apply to all resources. */
@@ -58,10 +70,10 @@ export interface MonitoredServiceProps {
   securityContext?: ContainerSecurityContext;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    serviceMonitor?: Partial<Record<string, unknown>>;
-    prometheusRule?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    serviceMonitor?: MemberDefaults<"ServiceMonitor">;
+    prometheusRule?: MemberDefaults<"PrometheusRule">;
   };
 }
 
@@ -89,6 +101,14 @@ export interface MonitoredServiceResult {
  *     { name: "HighErrorRate", expr: 'rate(http_errors_total[5m]) > 0.1', for: "5m", severity: "critical" },
  *   ],
  * });
+ *
+ * // Or with typed rule groups from the prometheus lexicon:
+ * import { RuleGroup } from "@intentius/chant-lexicon-prometheus";
+ * const apiRules = new RuleGroup({
+ *   name: "api",
+ *   rules: [{ alert: "ApiDown", expr: 'up{job="api"} == 0', for: "5m", labels: { severity: "page" } }],
+ * });
+ * MonitoredService({ name: "api", image: "api:1.0", ruleGroups: [apiRules] });
  * ```
  */
 export const MonitoredService = Composite((props: MonitoredServiceProps) => {
@@ -100,6 +120,7 @@ export const MonitoredService = Composite((props: MonitoredServiceProps) => {
     metricsPath = "/metrics",
     scrapeInterval = "30s",
     alertRules,
+    ruleGroups,
     replicas = 2,
     labels: extraLabels = {},
     cpuLimit = "500m",
@@ -197,29 +218,33 @@ export const MonitoredService = Composite((props: MonitoredServiceProps) => {
 
   const result: Record<string, any> = { deployment, service, serviceMonitor };
 
+  const groups: Array<Record<string, unknown>> = [];
   if (alertRules && alertRules.length > 0) {
+    groups.push({
+      name: `${name}.rules`,
+      rules: alertRules.map((rule) => ({
+        alert: rule.name,
+        expr: rule.expr,
+        ...(rule.for && { for: rule.for }),
+        labels: {
+          ...(rule.severity && { severity: rule.severity }),
+        },
+        ...(rule.annotations && { annotations: rule.annotations }),
+      })),
+    });
+  }
+  for (const group of ruleGroups ?? []) {
+    groups.push(ruleGroupConfig(group) as unknown as Record<string, unknown>);
+  }
+
+  if (groups.length > 0) {
     result.prometheusRule = new PrometheusRule(mergeDefaults({
       metadata: {
         name: `${name}-alerts`,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "monitoring" },
       },
-      spec: {
-        groups: [
-          {
-            name: `${name}.rules`,
-            rules: alertRules.map((rule) => ({
-              alert: rule.name,
-              expr: rule.expr,
-              ...(rule.for && { for: rule.for }),
-              labels: {
-                ...(rule.severity && { severity: rule.severity }),
-              },
-              ...(rule.annotations && { annotations: rule.annotations }),
-            })),
-          },
-        ],
-      },
+      spec: { groups },
     }, defs?.prometheusRule));
   }
 

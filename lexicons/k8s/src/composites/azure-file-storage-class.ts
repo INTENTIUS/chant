@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { StorageClass } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface AzureFileStorageClassProps {
   /** StorageClass name. */
@@ -23,7 +24,7 @@ export interface AzureFileStorageClassProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    storageClass?: Partial<Record<string, unknown>>;
+    storageClass?: MemberDefaults<"StorageClass">;
   };
 }
 

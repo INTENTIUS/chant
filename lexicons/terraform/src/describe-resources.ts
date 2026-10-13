@@ -173,7 +173,7 @@ import {
 import type { OwnershipMarker } from "@intentius/chant/ownership";
 import {
   choudoufuLiveLs,
-  choudoufuLivePlan,
+  choudoufuLivePlanDocument,
   terraformInit,
   terraformShow,
 } from "./op/activities/terraform";
@@ -1007,14 +1007,15 @@ async function liveRoots(options: LiveEstateOptions): Promise<Array<{ root: stri
 export interface TerraformReadDeps {
   init: typeof terraformInit;
   show: typeof terraformShow;
-  livePlan: typeof choudoufuLivePlan;
+  /** The document alone (chant #2498): this reader indexes it and never reads the human render. */
+  livePlan: typeof choudoufuLivePlanDocument;
   liveLs: typeof choudoufuLiveLs;
 }
 
 const REAL_DEPS: TerraformReadDeps = {
   init: terraformInit,
   show: terraformShow,
-  livePlan: choudoufuLivePlan,
+  livePlan: choudoufuLivePlanDocument,
   liveLs: choudoufuLiveLs,
 };
 

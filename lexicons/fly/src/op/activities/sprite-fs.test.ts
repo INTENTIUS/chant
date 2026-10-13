@@ -19,6 +19,7 @@ import {
   spriteListDir as listImpl,
   spriteRemove as removeImpl,
   spriteFsUrl,
+  defaultSpritesRawHttp,
 } from "./sprite-fs";
 
 // Filesystem activities (#848) end-to-end against the in-process fake (S7) — no
@@ -60,6 +61,60 @@ describe("spriteFsUrl (pure)", () => {
   });
   test("no params → no query", () => {
     expect(spriteFsUrl("http://h", "s", "read", {})).toBe("http://h/v1/sprites/s/fs/read");
+  });
+});
+
+describe("defaultSpritesRawHttp bearer header (#2765)", () => {
+  test("sends Authorization: Bearer <token> when a token is set", async () => {
+    const seen: Array<Record<string, string> | undefined> = [];
+    const fakeFetch = (async (_url: string, init: { headers?: Record<string, string> }) => {
+      seen.push(init.headers);
+      return { status: 200, text: async () => "" } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const http = defaultSpritesRawHttp("secret-token", fakeFetch);
+    await http("GET", "http://x/v1/sprites/task-1/fs/read");
+    expect(seen[0]?.authorization).toBe("Bearer secret-token");
+  });
+
+  test("SPRITE_TOKEN alias authenticates when SPRITES_API_TOKEN is unset, through the shared resolver", async () => {
+    const seen: Array<Record<string, string> | undefined> = [];
+    const fakeFetch = (async (_url: string, init: { headers?: Record<string, string> }) => {
+      seen.push(init.headers);
+      return { status: 200, text: async () => "" } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const prevApiToken = process.env.SPRITES_API_TOKEN;
+    const prevAlias = process.env.SPRITE_TOKEN;
+    delete process.env.SPRITES_API_TOKEN;
+    process.env.SPRITE_TOKEN = "alias-token";
+    try {
+      const http = defaultSpritesRawHttp(undefined, fakeFetch);
+      await http("GET", "http://x/v1/sprites/task-1/fs/read");
+      expect(seen[0]?.authorization).toBe("Bearer alias-token");
+    } finally {
+      if (prevApiToken !== undefined) process.env.SPRITES_API_TOKEN = prevApiToken;
+      if (prevAlias !== undefined) process.env.SPRITE_TOKEN = prevAlias;
+      else delete process.env.SPRITE_TOKEN;
+    }
+  });
+
+  test("no Authorization header when no token is set", async () => {
+    const seen: Array<Record<string, string> | undefined> = [];
+    const fakeFetch = (async (_url: string, init: { headers?: Record<string, string> }) => {
+      seen.push(init?.headers);
+      return { status: 200, text: async () => "" } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const prevApiToken = process.env.SPRITES_API_TOKEN;
+    const prevAlias = process.env.SPRITE_TOKEN;
+    delete process.env.SPRITES_API_TOKEN;
+    delete process.env.SPRITE_TOKEN;
+    try {
+      const http = defaultSpritesRawHttp(undefined, fakeFetch);
+      await http("GET", "http://x/v1/sprites/task-1/fs/read");
+      expect(seen[0]?.authorization).toBeUndefined();
+    } finally {
+      if (prevApiToken !== undefined) process.env.SPRITES_API_TOKEN = prevApiToken;
+      if (prevAlias !== undefined) process.env.SPRITE_TOKEN = prevAlias;
+    }
   });
 });
 

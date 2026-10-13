@@ -1,0 +1,176 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 1,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "before-plan",
+            "name": "migrate",
+            "exit": 3,
+            "outcome": "held"
+          },
+          {
+            "moment": "before-plan",
+            "name": "migrate",
+            "exit": 3,
+            "outcome": "failed"
+          }
+        ]
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 2,
+      "logs": 3
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "hook",
+        "migrate",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "before-plan",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "migrate",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "before-plan",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_HOLD_APPROVED": "{\"op\":\"tf-migrate\",\"gate\":\"split-queues\",\"digest\":\"sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\"approvedBy\":\"alice\",\"approvedAt\":\"2026-10-10T00:00:00Z\"}",
+        "CHANT_HOLDS_APPROVED": "[{\"op\":\"tf-migrate\",\"gate\":\"split-queues\",\"digest\":\"sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\"approvedBy\":\"alice\",\"approvedAt\":\"2026-10-10T00:00:00Z\"}]"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "before-plan hook migrate exited 3 and holds wave 1 (net) on gate tf-migrate / split-queues, digest sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "before-plan hook migrate exited 3 after alice approved split-queues, and holds the wave again on tf-migrate / split-queues at sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq, which is already approved",
+    "a hook before the plan failed, so nothing in wave 1 was planned or applied"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/hold.json": {
+      "op": "tf-migrate",
+      "gate": "split-queues",
+      "digest": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "net",
+      "number": 1,
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply"
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply"
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,440 @@
+{
+  "jobs": [
+    {
+      "label": "decide, approved and spent",
+      "job": {
+        "wave": 3,
+        "decide": true
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 3,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-3",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "members": [
+            {
+              "member": "t3",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "migrate"
+            },
+            {
+              "member": "t1",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "migrate"
+            }
+          ],
+          "status": "approved",
+          "spend": "base",
+          "via": "ledger",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-10T00:00:00Z",
+          "spentAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": [
+          {
+            "version": 1,
+            "kind": "applied",
+            "op": "migrations",
+            "gate": "migrations-wave-3",
+            "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+            "approvedAt": "2026-10-10T00:00:00Z",
+            "approvedBy": "alice",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "wave": {
+              "number": 3,
+              "name": "prod"
+            }
+          }
+        ]
+      },
+      "calls": 3,
+      "logs": 2
+    },
+    {
+      "label": "share 2",
+      "job": {
+        "wave": 3,
+        "share": 2
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "t3"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 3,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-3",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "members": [
+            {
+              "member": "t3",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "migrate"
+            },
+            {
+              "member": "t1",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "migrate"
+            }
+          ],
+          "status": "approved",
+          "spend": "base",
+          "via": "ledger",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-10T00:00:00Z",
+          "spentAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": [
+          {
+            "version": 1,
+            "kind": "applied",
+            "op": "migrations",
+            "gate": "migrations-wave-3",
+            "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+            "approvedAt": "2026-10-10T00:00:00Z",
+            "approvedBy": "alice",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "wave": {
+              "number": 3,
+              "name": "prod"
+            }
+          }
+        ]
+      },
+      "calls": 2,
+      "logs": 0
+    },
+    {
+      "label": "share 1, t2 moved",
+      "job": {
+        "wave": 3,
+        "share": 1
+      },
+      "result": {
+        "exitCode": 4,
+        "applied": [
+          "t1"
+        ],
+        "failed": [],
+        "moved": [
+          "t2"
+        ],
+        "hooks": [],
+        "decision": {
+          "wave": 3,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-3",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "members": [
+            {
+              "member": "t3",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "migrate"
+            },
+            {
+              "member": "t1",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "migrate"
+            }
+          ],
+          "status": "approved",
+          "spend": "base",
+          "via": "ledger",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-10T00:00:00Z",
+          "spentAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": [
+          {
+            "version": 1,
+            "kind": "applied",
+            "op": "migrations",
+            "gate": "migrations-wave-3",
+            "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+            "approvedAt": "2026-10-10T00:00:00Z",
+            "approvedBy": "alice",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "wave": {
+              "number": 3,
+              "name": "prod"
+            }
+          }
+        ]
+      },
+      "calls": 3,
+      "logs": 1
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t3",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t3.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t1",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t1.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t2",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t2.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t3",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t3.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "t3",
+        "--plan",
+        ".chant/op-waves/migrations/wave-3/t3.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/migrations/wave-3/t3.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/migrations/wave-3/t3.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "migrations",
+          "op": "migrate",
+          "wave": "prod",
+          "number": 3,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "t3",
+              "op": "migrate",
+              "plan": ".chant/op-waves/migrations/wave-3/t3.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
+          "hooks": {},
+          "outcomes": []
+        }
+      }
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t1",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t1.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t2",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t2.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "t1",
+        "--plan",
+        ".chant/op-waves/migrations/wave-3/t1.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/migrations/wave-3/t1.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/migrations/wave-3/t1.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "migrations",
+          "op": "migrate",
+          "wave": "prod",
+          "number": 3,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "t1",
+              "op": "migrate",
+              "plan": ".chant/op-waves/migrations/wave-3/t1.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
+          "hooks": {},
+          "outcomes": []
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 3 (prod): gate always (read at bbbbbbbbbbbb), digest jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e: approved by alice",
+    "wave 3 (prod) applies under the approval by alice at 2026-10-10T00:00:00Z, which is now spent",
+    "t2: its plan moved since wave 3 was decided, so it was not applied. decided: sha256:2222222222222222222222222222222222222222222222222222222222222222; planned now: sha256:9999999999999999999999999999999999999999999999999999999999999999"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-3/t1.hooks.json": {
+      "version": 1,
+      "opWaves": "migrations",
+      "op": "migrate",
+      "wave": "prod",
+      "number": 3,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "t1",
+          "op": "migrate",
+          "plan": ".chant/op-waves/migrations/wave-3/t1.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/migrations/wave-3/t1.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    ".chant/op-waves/migrations/wave-3/t2.plan.json": {
+      "planDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    ".chant/op-waves/migrations/wave-3/t3.hooks.json": {
+      "version": 1,
+      "opWaves": "migrations",
+      "op": "migrate",
+      "wave": "prod",
+      "number": 3,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "t3",
+          "op": "migrate",
+          "plan": ".chant/op-waves/migrations/wave-3/t3.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/migrations/wave-3/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/migrations/wave-3/t3.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    ".chant/op-waves/migrations/wave-3.json": {
+      "wave": 3,
+      "name": "prod",
+      "op": "migrations",
+      "gate": "migrations-wave-3",
+      "policy": "always",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+      "members": [
+        {
+          "member": "t3",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "migrate"
+        },
+        {
+          "member": "t1",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "migrate"
+        },
+        {
+          "member": "t2",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "migrate"
+        }
+      ],
+      "status": "approved",
+      "spend": "base",
+      "via": "ledger",
+      "approvedBy": "alice",
+      "approvedAt": "2026-10-10T00:00:00Z",
+      "spentAt": "2026-10-11T00:00:00.000Z"
+    }
+  }
+}

@@ -51,3 +51,17 @@ describe("WGL017: Insecure Registry", () => {
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL017: job ids the old line parser skipped (#3256)", () => {
+  test("flags a job whose id starts with a capital, with no blank line before it", () => {
+    const yaml = `build:
+  script: make
+Push_Image:
+  script:
+    - docker push http://registry.local/app:latest
+`;
+    const diags = checkInsecureRegistry(yaml);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Push_Image");
+  });
+});

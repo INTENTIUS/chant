@@ -18,23 +18,37 @@ import type { UpgradeCheckResult } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult } from "../../codegen/rolling-upgrade";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
 
 // ── Classification ────────────────────────────────────────────────────
 
 describe("pinned vs rolling classification", () => {
-  test("pinned lexicons", () => {
-    for (const l of ["k8s", "gcp", "docker", "gitlab"] as const) {
-      expect(isPinned(l)).toBe(true);
+  const pin = {
+    file: "src/pin.ts",
+    pattern: /V = "(.+)"/,
+    replace: (v: string) => `V = "${v}"`,
+    upstream: { owner: "o", repo: "r", kind: "releases" as const },
+  };
+
+  test("pinned lexicons are any whose plugin declares upstreamPin", async () => {
+    const loadPin = vi.fn(async () => pin);
+    for (const l of ["k8s", "gcp", "docker", "gitlab", "sql", "k3s", "cedar"]) {
+      expect(await isPinned(l, "/x", loadPin)).toBe(true);
       expect(isRolling(l)).toBe(false);
     }
   });
 
-  test("rolling lexicons", () => {
+  test("a lexicon without a pin is not pinned", async () => {
+    expect(await isPinned("helm", "/x", async () => null)).toBe(false);
+  });
+
+  test("rolling lexicons", async () => {
+    const loadPin = vi.fn(async () => null);
     for (const l of ["aws", "azure", "github"] as const) {
       expect(isRolling(l)).toBe(true);
-      expect(isPinned(l)).toBe(false);
+      expect(await isPinned(l, "/x", loadPin)).toBe(false);
     }
+    expect(loadPin).not.toHaveBeenCalled();
   });
 });
 
@@ -303,6 +317,8 @@ describe("lexiconUpgrade issue mode", () => {
 
     vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
     vi.stubEnv("GITHUB_API_URL", "");
+    // A Forgejo run, since CHANT_FORGEJO_TOKEN is only read there (#3807).
+    vi.stubEnv("FORGEJO_ACTIONS", "true");
     // The cross-instance case (#2320): a Forgejo token that must outrank the
     // job's own `github.token`, on the path that used to forward neither.
     vi.stubEnv("CHANT_FORGEJO_TOKEN", "forgejo-cross-instance");
@@ -388,6 +404,86 @@ describe("lexiconUpgrade breakage handling", () => {
 });
 
 // ── out-of-scope rejection ────────────────────────────────────────────
+
+describe("discovered pinned lexicons (#3266)", () => {
+  const pin = {
+    file: "src/pin.ts",
+    pattern: /V = "(.+)"/,
+    replace: (v: string) => `V = "${v}"`,
+    upstream: { owner: "o", repo: "r", kind: "releases" as const },
+  };
+
+  test("a lexicon with a declared pin reaches the pinned check and opens a PR", async () => {
+    const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
+    const applyBump = vi.fn(async () => ({ filePath: "/x/src/pin.ts" }));
+    const { gh } = recordingGh();
+    const dir = join(tmpdir(), `chant-3266-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    const r = await lexiconUpgrade({
+      lexicon: "k3s",
+      lexiconDir: dir,
+      mode: "pull-request",
+      _loadPin: async () => pin,
+      _checkPinned: checkPinned,
+      _applyBump: applyBump,
+      _bumpPackageVersion: vi.fn(),
+      _gh: gh,
+    });
+    expect(checkPinned).toHaveBeenCalledOnce();
+    expect(applyBump).toHaveBeenCalledWith("k3s", dir, "v1.33.0");
+    expect(r.hasUpgrade).toBe(true);
+  });
+
+  test("a lexicon with no pin and not rolling is rejected", async () => {
+    await expect(
+      lexiconUpgrade({ lexicon: "helm", mode: "report", _loadPin: async () => null }),
+    ).rejects.toThrow(/not supported/);
+  });
+
+  test("a discovered pin reaches the real check when none is injected", async () => {
+    const loadPin = vi.fn(async () => pin);
+    // The real checkPinnedUpgrade loads the pin itself; an empty dir has no
+    // plugin, so it reports the fetch error rather than throwing "not supported".
+    const r = await lexiconUpgrade({
+      lexicon: "sql",
+      lexiconDir: join(tmpdir(), "chant-3266-none"),
+      mode: "report",
+      _loadPin: loadPin,
+    });
+    expect(loadPin).toHaveBeenCalledOnce();
+    expect(r.validationOk).toBe(false);
+  });
+
+  test("an alsoMoves pin is report-only: newer version and manual step, no bump, no git", async () => {
+    const manual = pinnedResult({
+      validation: null,
+      from: "25.8.1.1-lts",
+      to: "26.3.1.1-lts",
+      manualPin: { file: "src/spec/pin.ts", instructions: "move CLICKHOUSE_IMAGE_DIGEST too" },
+    });
+    const applyBump = vi.fn();
+    const { gh, calls } = recordingGh();
+    for (const mode of ["report", "issue", "pull-request"] as const) {
+      const r = await lexiconUpgrade({
+        lexicon: "sql",
+        mode,
+        _checkPinned: vi.fn(async () => manual),
+        _applyBump: applyBump,
+        _gh: gh,
+      });
+      expect(r.hasUpgrade).toBe(true);
+      expect(r.mode).toBe("report");
+      expect(r.prUrl).toBeUndefined();
+      expect(r.issueUrl).toBeUndefined();
+      expect(r.summary).toContain("26.3.1.1-lts");
+      expect(r.summary).toContain("move CLICKHOUSE_IMAGE_DIGEST too");
+      expect(r.summary).toContain("src/spec/pin.ts");
+    }
+    expect(applyBump).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+});
 
 describe("out-of-scope lexicons", () => {
   test("helm/forgejo throw", async () => {
@@ -583,5 +679,123 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("a lexicon with several pins (#3288)", () => {
+  const manual = (pin: string, from: string, to: string): UpgradeCheckResult =>
+    pinnedResult({ pin, validation: null, from, to, manualPin: { file: "src/spec/postgres-pin.ts", instructions: `move the ${pin} digest too` } });
+  const current = (pin: string, v: string): UpgradeCheckResult => pinnedResult({ pin, validation: null, hasUpgrade: false, from: v, to: v });
+
+  test("every pin is reported; manual pins stay report-only in every mode", async () => {
+    const results = [current("clickhouse", "26.8.15.10"), manual("postgres-17", "17.11", "17.12"), manual("postgres-14", "14.24", "14.25")];
+    const applyBump = vi.fn();
+    const { gh, calls } = recordingGh();
+    for (const mode of ["report", "issue", "pull-request"] as const) {
+      const r = await lexiconUpgrade({ lexicon: "sql", mode, _checkPinned: vi.fn(async () => results), _applyBump: applyBump, _gh: gh });
+      expect(r.hasUpgrade).toBe(true);
+      expect(r.mode).toBe("report");
+      expect(r.summary).toContain("## Lexicon upgrade: sql (clickhouse)");
+      expect(r.summary).toContain("## Lexicon upgrade: sql (postgres-17)");
+      expect(r.summary).toContain("move the postgres-17 digest too");
+      expect(r.summary).toContain("move the postgres-14 digest too");
+    }
+    expect(applyBump).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+
+  test("no pin has an upgrade: nothing to do", async () => {
+    const r = await lexiconUpgrade({
+      lexicon: "sql",
+      _checkPinned: vi.fn(async () => [current("clickhouse", "1.0"), current("postgres-18", "18.6")]),
+    });
+    expect(r.hasUpgrade).toBe(false);
+    expect(r.validationOk).toBe(true);
+  });
+
+  test("the pin label is forwarded to the check", async () => {
+    const check = vi.fn(async () => [current("postgres-16", "16.15")]);
+    await lexiconUpgrade({ lexicon: "sql", pin: "postgres-16", _checkPinned: check });
+    expect(check).toHaveBeenCalledWith(expect.objectContaining({ lexicon: "sql", pin: "postgres-16" }));
+  });
+
+  test("a rewritable pin leads: the PR branch, title and bump name the pin", async () => {
+    const results = [manual("clickhouse", "1.0", "2.0"), pinnedResult({ pin: "postgres-17", from: "17.11", to: "17.12" })];
+    const applyBump = vi.fn(async () => ({ filePath: "/x/pin.ts" }));
+    const { gh, calls } = recordingGh();
+    const dir = join(tmpdir(), `chant-3288-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    await lexiconUpgrade({
+      lexicon: "sql",
+      mode: "pull-request",
+      lexiconDir: dir,
+      _checkPinned: vi.fn(async () => results),
+      _applyBump: applyBump,
+      _bumpPackageVersion: vi.fn(() => "/x/package.json"),
+      _gh: gh,
+    });
+    expect(applyBump).toHaveBeenCalledWith("sql", dir, "17.12", "postgres-17");
+    expect(calls.some((c) => c.includes("lexicon-upgrade/sql-postgres-17"))).toBe(true);
+    expect(upgradeBranchName("sql", "postgres-17")).toBe("lexicon-upgrade/sql-postgres-17");
+    expect(upgradePrTitle("sql", "17.11", "17.12", "postgres-17")).toBe("feat(sql): upgrade postgres-17 17.11 to 17.12");
+  });
+});
+
+// ── Forgejo and GitLab open the PR over REST (#3798) ──────────────────
+
+describe("lexiconUpgrade pull request over REST", () => {
+  const pin = {
+    file: "src/pin.ts",
+    pattern: /V = "(.+)"/,
+    replace: (v: string) => `V = "${v}"`,
+    upstream: { owner: "o", repo: "r", kind: "releases" as const },
+  };
+
+  function fakeForge(open?: { number: number; url: string; body: string }) {
+    const calls: string[] = [];
+    const forge = {
+      findPullRequest: vi.fn(async (head: string) => (calls.push(`find ${head}`), open ? { ...open, title: "t", head } : undefined)),
+      openPullRequest: vi.fn(async (spec: { head: string; base?: string }) => (calls.push(`open ${spec.head} -> ${spec.base}`), { number: 5, url: "https://forge/pulls/5", title: "t", body: "b", head: spec.head })),
+      editPullRequest: vi.fn(async (n: number) => (calls.push(`edit ${n}`), undefined)),
+      addLabels: vi.fn(async (n: number, labels: readonly string[]) => void calls.push(`label ${n} ${labels.join(",")}`)),
+    };
+    return { forge: forge as unknown as import("../../pr-forge").PrForge, calls };
+  }
+
+  async function run(forge: import("../../pr-forge").PrForge) {
+    const { gh, calls } = recordingGh();
+    const dir = join(tmpdir(), `chant-3798-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    const r = await lexiconUpgrade({
+      lexicon: "k3s",
+      lexiconDir: dir,
+      mode: "pull-request",
+      _loadPin: async () => pin,
+      _checkPinned: vi.fn(async () => pinnedResult()),
+      _applyBump: vi.fn(async () => ({ filePath: "/x/src/pin.ts" })),
+      _bumpPackageVersion: vi.fn(),
+      _gh: gh,
+      _forge: forge,
+    });
+    return { r, ghCalls: calls };
+  }
+
+  test("opens the pull request and labels it through the forge, with no gh pr call", async () => {
+    const { forge, calls } = fakeForge();
+    const { r, ghCalls } = await run(forge);
+    expect(r.prUrl).toBe("https://forge/pulls/5");
+    expect(calls.filter((c) => c.startsWith("open"))).toEqual([`open ${upgradeBranchName("k3s")} -> main`]);
+    expect(calls.some((c) => c.startsWith("label"))).toBe(r.semverLabel !== undefined && r.semverLabel !== null);
+    expect(ghCalls.filter((c) => c.startsWith("gh "))).toEqual([]);
+  });
+
+  test("edits the open pull request in place of opening another", async () => {
+    const { forge, calls } = fakeForge({ number: 9, url: "https://forge/pulls/9", body: "old" });
+    const { r } = await run(forge);
+    expect(r.prUrl).toBe("https://forge/pulls/9");
+    expect(calls).toContain("edit 9");
+    expect(calls.some((c) => c.startsWith("open"))).toBe(false);
   });
 });

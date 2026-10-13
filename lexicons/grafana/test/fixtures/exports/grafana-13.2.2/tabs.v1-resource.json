@@ -1,0 +1,444 @@
+{
+  "kind": "Dashboard",
+  "apiVersion": "dashboard.grafana.app/v1",
+  "metadata": {
+    "name": "chant-fx-tabs",
+    "namespace": "default",
+    "uid": "6ff1d212-5ce9-4d33-b995-731806463755",
+    "resourceVersion": "1790650337138982",
+    "generation": 1,
+    "creationTimestamp": "2026-09-29T02:52:17Z",
+    "labels": {
+      "grafana.app/deprecatedInternalID": "1585156136865792"
+    },
+    "annotations": {
+      "grafana.app/createdBy": "anonymous:0"
+    }
+  },
+  "spec": {
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "A v2 dashboard with tabs, an auto grid, nested rows and conditional rendering",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "links": [
+      {
+        "asDropdown": false,
+        "icon": "doc",
+        "includeVars": false,
+        "keepTime": false,
+        "placement": "inControlsMenu",
+        "tags": [],
+        "targetBlank": true,
+        "title": "Runbook",
+        "tooltip": "",
+        "type": "link",
+        "url": "https://example.com/runbooks/checkout"
+      }
+    ],
+    "liveNow": false,
+    "panels": [
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 5,
+        "panels": [],
+        "title": "Overview",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "id": 1,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        },
+        "pluginVersion": "13.2.2",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "avg(up{job=\"checkout\"})",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "title": "Availability",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Requests per second by route",
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 12,
+          "x": 12,
+          "y": 1
+        },
+        "id": 2,
+        "interval": "30s",
+        "maxDataPoints": 500,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "13.2.2",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "sum by (route) (rate(http_requests_total{job=\"checkout\"}[5m]))",
+            "legendFormat": "{{route}}",
+            "range": true,
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "sum(rate(http_requests_total{job=\"checkout\"}[5m]))",
+            "hide": true,
+            "legendFormat": "total",
+            "range": true,
+            "refId": "B"
+          }
+        ],
+        "timeFrom": "1h",
+        "title": "Request rate",
+        "transformations": [
+          {
+            "disabled": true,
+            "id": "organize",
+            "options": {
+              "renameByName": {
+                "total": "all"
+              }
+            }
+          }
+        ],
+        "type": "timeseries"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 6
+        },
+        "id": 6,
+        "panels": [],
+        "title": "Details",
+        "type": "row"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 7
+        },
+        "id": 7,
+        "repeat": "env",
+        "title": "Latency ($env)",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 8
+        },
+        "id": 3,
+        "options": {},
+        "pluginVersion": "13.2.2",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"checkout\", env=\"$env\"}[5m])))",
+            "range": true,
+            "refId": "A"
+          }
+        ],
+        "title": "p99 latency",
+        "transparent": true,
+        "type": "timeseries"
+      },
+      {
+        "collapsed": true,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "id": 8,
+        "panels": [
+          {
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "gridPos": {
+              "h": 10,
+              "w": 24,
+              "x": 0,
+              "y": 17
+            },
+            "id": 4,
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true
+            },
+            "pluginVersion": "13.2.2",
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki"
+                },
+                "expr": "{service=\"checkout\"}",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "title": "Checkout logs",
+            "type": "logs"
+          }
+        ],
+        "title": "Logs",
+        "type": "row"
+      }
+    ],
+    "preload": false,
+    "refresh": "1m",
+    "schemaVersion": 42,
+    "tags": [
+      "fixture",
+      "v2"
+    ],
+    "templating": {
+      "list": [
+        {
+          "allowCustomValue": true,
+          "current": {
+            "text": "Prometheus",
+            "value": "prom"
+          },
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "datasource",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "type": "datasource"
+        },
+        {
+          "allowCustomValue": true,
+          "current": {
+            "text": "prod",
+            "value": "prod"
+          },
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "env",
+          "options": [
+            {
+              "selected": true,
+              "text": "prod",
+              "value": "prod"
+            },
+            {
+              "selected": false,
+              "text": "staging",
+              "value": "staging"
+            }
+          ],
+          "query": "prod,staging",
+          "skipUrlSync": false,
+          "type": "custom"
+        },
+        {
+          "allowCustomValue": true,
+          "current": {
+            "text": "",
+            "value": ""
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "definition": "label_values(up, job)",
+          "hide": 3,
+          "includeAll": false,
+          "multi": false,
+          "name": "job",
+          "options": [],
+          "query": {
+            "qryType": 1,
+            "query": "label_values(up, job)",
+            "refId": "PrometheusVariableQueryEditor-VariableQuery"
+          },
+          "refresh": 2,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        },
+        {
+          "current": {
+            "text": "false",
+            "value": "false"
+          },
+          "hide": 0,
+          "label": "Detailed",
+          "name": "detailed",
+          "options": [
+            {
+              "selected": false,
+              "text": "true",
+              "value": "true"
+            },
+            {
+              "selected": true,
+              "text": "false",
+              "value": "false"
+            }
+          ],
+          "query": "",
+          "skipUrlSync": false,
+          "type": "switch"
+        },
+        {
+          "current": {
+            "text": [
+              "route"
+            ],
+            "value": [
+              "route"
+            ]
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "hide": 0,
+          "multi": true,
+          "name": "groupBy",
+          "options": [],
+          "skipUrlSync": false,
+          "type": "groupby"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-3h",
+      "to": "now"
+    },
+    "timepicker": {
+      "nowDelay": "1m",
+      "quick_ranges": [
+        {
+          "display": "Last business day",
+          "from": "now-1d/d",
+          "to": "now-1d/d"
+        }
+      ],
+      "refresh_intervals": [
+        "30s",
+        "1m",
+        "5m"
+      ]
+    },
+    "timezone": "utc",
+    "title": "Checkout (tabs)",
+    "weekStart": "monday"
+  },
+  "status": {
+    "conversion": {
+      "failed": false,
+      "storedVersion": "v2"
+    }
+  }
+}

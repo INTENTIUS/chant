@@ -21,6 +21,7 @@ chant lint [path] [flags]
 | `--format` | `string` | `stylish` | Output format: `stylish`, `json`, or `sarif` |
 | `--fix` | `bool` | `false` | Auto-fix fixable issues |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and re-lint |
+| `--root-only` | `bool` | `false` | At the root of a declared workspace, lint the root project alone instead of refusing. See [At a workspace root](#at-a-workspace-root) |
 | `--sandbox` | `bool` | `false` | Run any project source the lint has to execute in one isolated child process rather than in the chant process. The same boundary as [`chant build --sandbox`](/chant/cli/build/#sandboxed-execution); composes with `--watch` |
 
 ## Usage
@@ -45,6 +46,12 @@ chant lint --watch
 chant lint --sandbox
 ```
 
+## Lexicon post-synth checks
+
+Each lexicon the project loads can ship post-synth checks, which read the built output rather than the source (SQLCH101 for a ClickHouse engine the pinned server does not have, for example). `chant lint` builds the lint path in memory, as [`chant build`](/chant/cli/build/) would, without writing anything, then runs every loaded lexicon's post-synth checks over the result. Their findings are reported with the source rules, under the check's own ID. `lint.rules` changes their severity or turns them off, and `lint.presets` applies as it does in `chant build`. A post-synth finding has no source line, so it is reported at `1:1` in the file that declared the resource it names, or at the config file when it names none.
+
+When the lint path does not build, each build error is reported as a `LEX002` error and the post-synth checks are skipped. Like `LEX001`, `LEX002` is not a rule and cannot be turned off. A project whose lexicons ship no post-synth checks is not built at all.
+
 ## Unresolved lexicons
 
 A lexicon the project declares in `chant.config.*` but that cannot be resolved is reported as a `LEX001` error against the config file, with the same message [`chant build`](/chant/cli/build/) gives for the same project. The lint exits 1, and the diagnostic appears in `--format json` and `--format sarif` like any other. This covers a lexicon package that is not installed and a `chant.config.ts` that fails to load, so a CI job that lints before it builds cannot report green on a project the build refuses.
@@ -53,9 +60,13 @@ A lexicon the project declares in `chant.config.*` but that cannot be resolved i
 
 A project that declares no lexicon and imports none is unaffected. It lints under the core rules alone, as it always has.
 
+## At a workspace root
+
+At the root of a [declared workspace](/chant/reference/workspace-declaration/), `chant lint` refuses with the code `WSP000` and exits 1, as [`chant build`](/chant/cli/build/#at-a-workspace-root) does. The members have left the root project, and [`chant workspace lint`](/chant/cli/workspace-lint/) lints each of them with its own chant. With `--root-only`, or `rootOnly: true` in the root's `chant.config.ts`, the root project is linted on its own. Member directories and example-group matches are then left out of it. Linting inside a member is never refused.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | No errors found |
-| 1 | Lint errors found, including a declared lexicon that could not be resolved |
+| 1 | Lint errors found, including a lexicon post-synth error, a declared lexicon that could not be resolved, a lint path that does not build (`LEX002`), or `WSP000` at a workspace root |

@@ -105,6 +105,46 @@ describe("descending into local modules", () => {
     expect(refused).toContain("../../shared");
   });
 
+  it("reads past the project root when moduleRoot names a wider directory (#2874)", async () => {
+    const { entities, warnings } = await renderTerraformRoots({
+      projectRoot: join(TREE, "outside"),
+      moduleRoot: TREE,
+      roots: { app: { dir: "./root" } },
+    });
+
+    expect([...entities.keys()].some((k) => k.includes("/module.shared/"))).toBe(true);
+    expect(warnings.some((w) => w.includes("outside the project"))).toBe(false);
+  });
+
+  it("gives an absolute root dir the moduleRoot as its boundary, not its own directory (#2874)", async () => {
+    const outside = await renderTerraformRoots({
+      projectRoot: join(TREE, "cycle"),
+      roots: { app: { dir: join(TREE, "outside", "root") } },
+    });
+    expect([...outside.entities.keys()].some((k) => k.includes("/module.shared/"))).toBe(false);
+
+    const widened = await renderTerraformRoots({
+      projectRoot: join(TREE, "cycle"),
+      moduleRoot: TREE,
+      roots: { app: { dir: join(TREE, "outside", "root") } },
+    });
+    expect([...widened.entities.keys()].some((k) => k.includes("/module.shared/"))).toBe(true);
+  });
+
+  it("refuses a source outside a moduleRoot narrower than the project (#2874)", async () => {
+    const wide = await renderTerraformRoots({ projectRoot: TREE, roots: { app: { dir: "./outside/root" } } });
+    expect([...wide.entities.keys()].some((k) => k.includes("/module.shared/"))).toBe(true);
+
+    const { entities, warnings } = await renderTerraformRoots({
+      projectRoot: TREE,
+      moduleRoot: "./outside",
+      roots: { app: { dir: "./outside/root" } },
+    });
+
+    expect([...entities.keys()].some((k) => k.includes("/module.shared/"))).toBe(false);
+    expect(warnings.some((w) => w.includes("module.shared") && w.includes("outside the project"))).toBe(true);
+  });
+
   it("stops on a cycle rather than recursing forever", async () => {
     const { entities, warnings } = await renderTerraformRoots({
       projectRoot: TREE,

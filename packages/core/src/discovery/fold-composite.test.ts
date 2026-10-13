@@ -322,6 +322,59 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect(run).toContain("GetAtt");
   });
 
+  test("a call whose props name a member of a same-file composite call interprets too (chant#3325)", async () => {
+    await writeComposite(
+      ADMISSIBLE_BODY,
+      `export const Reader = Composite((props) => {
+        const reader = new Role({ RoleName: props.name, Description: props.bucket.Arn });
+        return { reader };
+      }, "Reader");`,
+    );
+    await writeMain(`
+      import { Reader, WebApp } from "../composites";
+      export const web = WebApp({ name: "data" });
+      export const readers = Reader({ name: "readers", bucket: web.bucket });
+    `);
+
+    const runResult = await build(srcDir, [specSerializer], undefined, { fold: false });
+    resetFoldExecutionCounts();
+    const foldResult = await build(srcDir, [specSerializer], undefined, {
+      fold: true,
+      lexicons: [LEXICON_NAME],
+    });
+
+    expect(foldResult.errors).toEqual([]);
+    expect(foldResult.foldDecisions.map((d) => d.mode)).toEqual(["fold"]);
+    // `web` is interpreted once: the declarator and the reference share it.
+    expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 2, projectFactoryInvocations: 0 });
+    const folded = String(foldResult.outputs.get(LEXICON_NAME));
+    expect(folded).toBe(String(runResult.outputs.get(LEXICON_NAME)));
+    expect(folded).toContain('"webBucket"');
+    expect(JSON.parse(folded).readersReader.props.Description).toEqual({ GetAtt: ["webBucket", "Arn"] });
+  });
+
+  test("a same-file call result read in an argument is bound for that argument only (chant#3610)", async () => {
+    await writeComposite(
+      ADMISSIBLE_BODY,
+      `export const Reader = Composite((props) => {
+        const reader = new Role({ RoleName: props.name, Description: props.bucket.Arn });
+        return { reader };
+      }, "Reader");`,
+    );
+    // `plain` reads `web` outside any argument. Under F-Call step 6 that read
+    // does not resolve, whichever declarator comes first, so the file runs.
+    await writeMain(`
+      import { Reader, WebApp } from "../composites";
+      export const web = WebApp({ name: "data" });
+      export const readers = Reader({ name: "readers", bucket: web.bucket });
+      export const plain = { inner: web.bucket };
+    `);
+
+    const result = await build(srcDir, [specSerializer], undefined, { fold: true, lexicons: [LEXICON_NAME] });
+
+    expect(result.foldDecisions.map((d) => d.mode)).toEqual(["run"]);
+  });
+
   test("provenance is stamped from the source's own composite name", async () => {
     await writeComposite(ADMISSIBLE_BODY);
     await writeMain(CALL_WEBAPP);
@@ -450,10 +503,15 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect([...result.entities.keys()].sort()).toEqual(["webBucket", "webRole"]);
   });
 
-  test("a lexicon-package composite is deliberately not interpreted (rule 1)", async () => {
-    // `LambdaApi` is a composite the aws lexicon itself publishes. It folds —
-    // by invocation, in-process, which is exactly what #1093's allowlist
-    // permits for a package the CLI has already loaded.
+  test("a lexicon-package composite whose body declines is invoked, and the file still folds (rule 1)", async () => {
+    // `LambdaApi` is a composite the aws lexicon itself publishes, reached
+    // through the package barrel. Since chant#3247 it is a candidate for
+    // interpretation like a project composite. Its body declines: the nested
+    // `LambdaFunction` is outside the subset and is invoked (package code,
+    // which #1093's allowlist permits), and `defaults?.permission` on an
+    // absent `defaults` does not resolve. The decline lands where the code
+    // always landed: the package's factory is invoked in-process and the file
+    // folds. The attempt's nested invocation is counted too, hence two.
     await writeMain(`
       import { LambdaApi } from ${JSON.stringify(LEXICON)};
       export const api = LambdaApi({
@@ -469,7 +527,7 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect(result.errors).toEqual([]);
     expect(result.foldDecisions.find((d) => d.file.endsWith("main.ts"))?.mode).toBe("fold");
     expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 0, projectFactoryInvocations: 0 });
-    expect(foldExecutionCounts().factoryInvocations).toBe(1);
+    expect(foldExecutionCounts().factoryInvocations).toBe(2);
     expect(result.entities.size).toBeGreaterThan(0);
   });
 

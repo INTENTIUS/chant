@@ -3,7 +3,7 @@
  *
  * `hcl2json` drops comments entirely, and a probe of its output confirmed it
  * exposes no source ranges either, so a suppression comment has nothing to
- * attach to once a file goes through `@cdktf/hcl2json`. This module runs a
+ * attach to once a file goes through `@cdktn/hcl2json`. This module runs a
  * second, cheap pass over the SAME raw text `./parse.ts` hands the parser,
  * entirely with line-oriented regexes: a brace-depth counter to find each
  * top-level block's start line (`terraform`, `locals`, `provider "x"`,
@@ -27,9 +27,9 @@
 import type { SuppressionDirective, SuppressionIds } from "@intentius/chant/lint/suppressions";
 
 /** A block header keyword with zero labels (`terraform {`, `locals {`). */
-const BARE_RE = /^\s*(terraform|locals)\s*\{/;
+const BARE_RE = /^\s*(terraform|locals|remote_state)\s*\{/;
 /** One label (`provider "aws" {`, `module "vpc" {`, `variable "x" {`, `output "x" {`). */
-const ONE_LABEL_RE = /^\s*(provider|module|variable|output)\s+"([^"]*)"\s*\{/;
+const ONE_LABEL_RE = /^\s*(provider|module|variable|output|dependency|generate)\s+"([^"]*)"\s*\{/;
 /** Two labels (`resource "aws_s3_bucket" "assets" {`, `data "aws_ami" "x" {`). */
 const TWO_LABEL_RE = /^\s*(resource|data)\s+"([^"]*)"\s+"([^"]*)"\s*\{/;
 
@@ -43,6 +43,12 @@ function addressFor(keyword: string, labels: string[]): string {
       return "terraform";
     case "locals":
       return "locals";
+    case "remote_state":
+      return "remote_state";
+    case "dependency":
+      return `dependency.${labels[0]}`;
+    case "generate":
+      return `generate.${labels[0]}`;
     case "provider":
       return `provider.${labels[0]}`;
     case "module":

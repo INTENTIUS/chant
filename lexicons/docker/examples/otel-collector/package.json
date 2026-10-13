@@ -1,0 +1,20 @@
+{
+  "name": "docker-otel-collector-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon docker -o docker-compose.yml",
+    "lint": "chant lint src",
+    "up": "docker compose -f docker-compose.yml up -d",
+    "down": "docker compose -f docker-compose.yml down"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-docker": "*",
+    "@intentius/chant-lexicon-otel": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

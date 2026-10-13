@@ -208,7 +208,9 @@ describe("every fixture root gets the same verdict from chant audit as from chan
       entities,
       buildResult: { outputs: new Map(), entities, warnings, errors: [], sourceFileCount: entities.size },
     } as unknown as PostSynthContext;
-    return verdictOf((terraformPlugin.postSynthChecks?.() ?? []).flatMap((check) => check.check(ctx)));
+    // An `auditOptIn` check (TF040, #3190) is the one place the audit is meant to
+    // differ from the unfiltered build: it needs `lint.rules` there.
+    return verdictOf((terraformPlugin.postSynthChecks?.() ?? []).filter((check) => !check.auditOptIn).flatMap((check) => check.check(ctx)));
   }
 
   async function auditVerdict(dir: string): Promise<string[]> {

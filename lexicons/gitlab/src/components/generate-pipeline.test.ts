@@ -257,3 +257,108 @@ describe("generateGitlabPipeline: options", () => {
     expect((job.script as string[])[0]).toContain("--env production");
   });
 });
+
+describe("generateGitlabPipeline: a promote job (#2575)", () => {
+  const components = (): DriverComponent[] => [
+    { name: "shared-alb", dependsOn: [], deploy: [] },
+    {
+      name: "api",
+      dependsOn: ["shared-alb"],
+      deploy: [
+        { phase: "Build", steps: [{ kind: "docker-build", context: ".", into: "dist/api.tar" }] },
+        { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:dist/api.tar" }] },
+      ],
+    },
+  ];
+
+  test("without promoteTo the pipeline is unchanged", () => {
+    const yaml = generateGitlabPipeline(components(), { env: "staging" }).yaml;
+    expect(yaml).not.toContain("promote");
+    expect(yaml).not.toContain("dist/api.tar");
+  });
+
+  test("building jobs keep their archive as artifacts, and a promote stage job needs every component job", () => {
+    const result = generateGitlabPipeline(components(), { env: "staging", promoteTo: "prod" });
+    const parsed = parseYAML(result.yaml);
+
+    expect((parsed["api"] as Record<string, unknown>).artifacts).toEqual({ paths: ["dist/api.tar", "api.digest"] });
+    expect((parsed["shared-alb"] as Record<string, unknown>).artifacts).toEqual({ paths: ["shared-alb.outputs.json"] });
+
+    expect(parsed.stages).toEqual(["wave-1", "wave-2", "promote"]);
+    expect(result.stages).toEqual(["wave-1", "wave-2"]);
+    expect(parsed["promote-prod"]).toEqual({
+      stage: "promote",
+      image: "node:22",
+      script: ['chant components promote --from staging --to prod --digest "api=$(cut -d= -f2- api.digest)"'],
+      needs: ["api", "shared-alb"],
+    });
+  });
+
+  test("the promote job promotes the digest this pipeline's component job recorded (#2602)", () => {
+    const parsed = parseYAML(generateGitlabPipeline(components(), { env: "staging", promoteTo: "prod" }).yaml);
+    const job = (name: string) => parsed[name] as { script: string[]; artifacts?: { paths: string[] } };
+
+    // The component job writes the digest its run recorded, and keeps the file
+    // as an artifact, which GitLab hands to the promote job across `needs:`.
+    expect(job("api").script).toEqual(["chant run --components api --env staging --seed-outputs shared-alb.outputs.json --digest-file api.digest"]);
+    expect(job("api").artifacts?.paths).toContain("api.digest");
+    // shared-alb publishes nothing, so it records no release and is not pinned.
+    expect(job("shared-alb").script[0]).not.toContain("--digest-file");
+
+    const promote = job("promote-prod").script[0];
+    expect(promote).toContain('--digest "api=$(cut -d= -f2- api.digest)"');
+    expect(promote).not.toContain("shared-alb=");
+  });
+
+  test("promoteCommand still gets the pinned digests", () => {
+    const parsed = parseYAML(generateGitlabPipeline(components(), {
+      env: "staging",
+      promoteTo: "prod",
+      promoteCommand: ["npx", "chant", "components", "promote", "--from", "staging", "--to", "prod"],
+    }).yaml);
+    expect((parsed["promote-prod"] as { script: string[] }).script).toEqual([
+      'npx chant components promote --from staging --to prod --digest "api=$(cut -d= -f2- api.digest)"',
+    ]);
+  });
+
+  test("with no component that publishes, there is no release to pin, and generation fails", () => {
+    const infraOnly: DriverComponent[] = [{ name: "shared-alb", dependsOn: [], deploy: [] }];
+    expect(() => generateGitlabPipeline(infraOnly, { promoteTo: "prod" })).toThrow(/no component has a publish step/);
+    expect(() => generateGitlabPipeline(infraOnly)).not.toThrow();
+  });
+});
+
+describe("generateGitlabPipeline: gated waves (#3049)", () => {
+  /** net -> a, b -> app: three waves, four with a canary in front. */
+  const roots: DriverComponent[] = [
+    { name: "net", deploy: [] },
+    { name: "a", dependsOn: ["net"], deploy: [] },
+    { name: "b", dependsOn: ["net"], deploy: [] },
+    { name: "app", dependsOn: ["a"], deploy: [] },
+  ];
+
+  test("one job per wave, in order, each running that wave of the gated fan-out", () => {
+    const result = generateGitlabPipeline(roots, { env: "prod", gatedWaves: { gate: "release" } });
+    const parsed = parseYAML(result.yaml) as Record<string, Record<string, unknown>>;
+    expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3"]);
+    expect(parsed["wave-2"].needs).toEqual(["wave-1"]);
+    expect(parsed["wave-1"].needs).toBeUndefined();
+    expect(parsed["wave-3"].image).toBe("node:22");
+    expect(parsed["wave-3"].script).toEqual([
+      expect.stringMatching(/^command -v tofu /),
+      "chant components fan-out --base HEAD~1 --env prod --wave-gate release --wave 3 --resume .chant/fan-out.json",
+    ]);
+    // The record goes to the next job even when this one stops at a gate.
+    expect(parsed["wave-1"].artifacts).toEqual({ when: "always", paths: [".chant/fan-out.json"] });
+    expect(parsed["wave-1"].variables).toEqual({ GIT_DEPTH: "0" });
+    // No per-component jobs.
+    expect(parsed.net).toBeUndefined();
+  });
+
+  test("a canary list adds a wave in front and is passed to every job", () => {
+    const result = generateGitlabPipeline(roots, { env: "prod", gatedWaves: { gate: "release", canary: ["b"], base: "$CI_COMMIT_BEFORE_SHA" } });
+    expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3", "wave-4"]);
+    const parsed = parseYAML(result.yaml) as Record<string, Record<string, unknown>>;
+    expect((parsed["wave-1"].script as string[])[1]).toContain("--base $CI_COMMIT_BEFORE_SHA --env prod --wave-gate release --canary b --wave 1");
+  });
+});

@@ -2,6 +2,8 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
+import { GRAPH_IR_VERSION } from "../../graph-ir";
+import { NO_LEXICON_DETECTED_MESSAGE } from "../../detectLexicon";
 
 /**
  * The aws emulator capability, as the real plugin declares it. `--live`
@@ -110,6 +112,7 @@ vi.mock("../../build", async () => {
 });
 
 const { runGraph } = await import("./graph");
+const { behaviourReport, noBehaviourEngineRefusal, predictedRate } = await import("../../behaviour");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
@@ -158,6 +161,7 @@ describe("runGraph", () => {
     observeMock.mockReset();
     buildMock.mockReset();
     loadPluginsMock.mockReset();
+    loadPluginsMock.mockResolvedValue([]);
     resolveLexMock.mockReset();
     loadChantConfigMock.mockReset();
     loadChantConfigMock.mockResolvedValue({ config: {} });
@@ -225,6 +229,89 @@ describe("runGraph", () => {
       expect(ir.edges).toContainEqual({ from: "subnet", to: "vpc", kind: "ref", viaAttr: "network" });
     });
 
+    // #2559 — a lexicon's graphMeta answer lands in the IR meta, so the
+    // workspace graph can list collector pipelines without core importing otel.
+    test("--format ir carries what a lexicon's graphMeta reports under meta", async () => {
+      lintClean(); discovered();
+      const seen: string[][] = [];
+      loadPluginsMock.mockResolvedValue([{
+        name: "gcp",
+        serializer: {},
+        graphMeta: (entities: Map<string, unknown>) => {
+          seen.push([...entities.keys()].sort());
+          return { collector: { pipelines: [] } };
+        },
+      }]);
+      resolveLexMock.mockResolvedValue(["gcp"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(seen).toEqual([["pod", "subnet", "vpc"]]);
+      expect(JSON.parse(stdoutBuf.join("\n")).meta).toEqual({ collector: { pipelines: [] } });
+    });
+
+    // #3910 — a lexicon's graphEdges answer becomes edges and dangling refs.
+    test("--format ir carries what a lexicon's graphEdges reports", async () => {
+      lintClean(); discovered();
+      loadPluginsMock.mockResolvedValue([{
+        name: "gitlab",
+        serializer: {},
+        graphEdges: () => ({
+          references: [
+            { from: "pod", to: "vpc", kind: "needs", viaAttr: "needs" },
+            { from: "pod", to: "group/other", kind: "triggers", viaAttr: "trigger", crossPipeline: true, dangling: true },
+          ],
+          pipelines: { ".gitlab-ci.yml": ["pod", "vpc"] },
+        }),
+      }, { name: "broken", serializer: {}, graphEdges: () => { throw new Error("boom"); } }]);
+      resolveLexMock.mockResolvedValue(["gitlab", "broken"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.edges).toContainEqual({ from: "pod", to: "vpc", kind: "needs", viaAttr: "needs" });
+      expect(ir.dangling).toEqual([{ from: "pod", kind: "triggers", path: "trigger", value: "group/other", crossPipeline: true }]);
+      expect(ir.groups.byPipeline).toEqual({ ".gitlab-ci.yml": ["pod", "vpc"] });
+    });
+
+    test("--format ir has no meta when no lexicon reports anything", async () => {
+      lintClean(); discovered();
+      loadPluginsMock.mockResolvedValue([{ name: "gcp", serializer: {}, graphMeta: () => undefined }, { name: "k8s", serializer: {} }]);
+      resolveLexMock.mockResolvedValue(["gcp", "k8s"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect("meta" in JSON.parse(stdoutBuf.join("\n"))).toBe(false);
+    });
+
+    test("--format ir keeps the first answer when two lexicons report one key", async () => {
+      lintClean(); discovered();
+      loadPluginsMock.mockResolvedValue([
+        { name: "a", serializer: {}, graphMeta: () => ({ collector: 1 }) },
+        { name: "b", serializer: {}, graphMeta: () => ({ collector: 2 }) },
+      ]);
+      resolveLexMock.mockResolvedValue(["a", "b"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(JSON.parse(stdoutBuf.join("\n")).meta).toEqual({ collector: 1 });
+    });
+
+    // #2529 — the IR carries its version, as the first key, so a reader can
+    // decide how to read the rest before it reads anything else.
+    test("--format ir leads with the IR version", async () => {
+      lintClean(); discovered();
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.version).toBe(GRAPH_IR_VERSION);
+      expect(GRAPH_IR_VERSION).toBe(1);
+      expect(Object.keys(ir)[0]).toBe("version");
+    });
+
+    test("the other view formats carry no version field", async () => {
+      lintClean(); discovered();
+      const exit = await runGraph({ args: makeArgs({ format: "mermaid" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(stdoutBuf.join("\n")).not.toContain("version");
+    });
+
     // #1675 — discovery scans sourceDir, but ops live beside it (project root,
     // `ops/`) and are found by discoverOps from the git root. The IR joins them.
     describe("ops outside sourceDir reach the IR (#1675)", () => {
@@ -256,6 +343,70 @@ describe("runGraph", () => {
         const ir = JSON.parse(stdoutBuf.join("\n"));
         expect(ir.nodes.filter((n: { id: string }) => n.id === "deploy")).toHaveLength(1);
         expect(ir.nodes.find((n: { id: string }) => n.id === "deploy").attrs.phases).toEqual([]);
+      });
+
+      // #2377 / epic #2355: "the live path predicts the account as it stands,
+      // drift included. The declared path predicts the file. The two are shown
+      // as a delta." An earlier draft of #2377 required --live, which forbade
+      // the declared half and so forbade the delta.
+      test("--traffic predicts the declared graph, without --live", async () => {
+        lintClean(); discovered();
+        const seen: Array<{ traffic: string; environment: string }> = [];
+        loadPluginsMock.mockResolvedValue([{
+          name: "gcp",
+          serializer: {},
+          predictBehaviour: (o: { traffic: string; environment: string }) => {
+            seen.push({ traffic: o.traffic, environment: o.environment });
+            return Promise.resolve(behaviourReport(
+              { entityNames: ["vpc"], traffic: o.traffic, edgeCoverage: { verdict: "unknown" } },
+              { engine: "fixture", version: "0.0.1", total: predictedRate(1, "USD") },
+              { vpc: {
+                at: { traffic: o.traffic },
+                cost: predictedRate(1, "USD"),
+                headroom: { cpu: 0.5 },
+                errorRate: 0,
+                resilience: { failure: "one zone lost", verdict: "survives" },
+                provenance: { engine: "fixture", version: "0.0.1", tolerance: "±20%", basis: "modeled" },
+              } },
+              {},
+            ));
+          },
+        }]);
+        resolveLexMock.mockResolvedValue(["gcp"]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        expect(seen[0]?.traffic).toBe("100 rps, p50");
+        const ir = JSON.parse(stdoutBuf.join("\n"));
+        expect(ir.meta?._behaviour?.engine).toBe("fixture");
+        expect(ir.nodes.find((n: { id: string }) => n.id === "vpc").attrs._behaviour.cost.perHour).toBe(1);
+      });
+
+      test("the declared path says so, and names no environment", async () => {
+        lintClean(); discovered();
+        const seen: Array<{ environment: string; from: string }> = [];
+        loadPluginsMock.mockResolvedValue([{
+          name: "gcp",
+          serializer: {},
+          predictBehaviour: (o: { environment: string; from: string }) => {
+            seen.push({ environment: o.environment, from: o.from });
+            return Promise.resolve(noBehaviourEngineRefusal("gcp"));
+          },
+        }]);
+        resolveLexMock.mockResolvedValue(["gcp"]);
+
+        await runGraph({ args: makeArgs({ format: "ir", traffic: "100 rps, p50" }), plugins: [], serializers: [] });
+
+        // The half of the epic's delta that reads no account (#2355). A lexicon
+        // handed the same options as the live path would predict the account
+        // and label it the file.
+        expect(seen[0]?.from).toBe("declared");
+        // Naming an environment would claim the declared estate was deployed there.
+        expect(seen[0]?.environment).toBe("");
       });
 
       test("op-discovery errors are warnings, not a refusal", async () => {
@@ -383,6 +534,25 @@ describe("runGraph", () => {
       const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
       expect(exit).toBe(1);
       expect(stderrBuf.join("\n")).toContain("boom");
+    });
+
+    // #2841 — an Ops-only project (`lexicons: []`, no lexicon import) has no
+    // lexicon to predict with. Detection's sentinel means "none", not a failed
+    // graph, so `chant workspace graph` does not report the member failed.
+    test("--format ir in a project with no lexicon graphs with no plugins", async () => {
+      lintClean(); discovered();
+      resolveLexMock.mockRejectedValue(new Error(NO_LEXICON_DETECTED_MESSAGE));
+      loadPluginsMock.mockResolvedValue([]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(loadPluginsMock).toHaveBeenCalledWith([]);
+      expect(JSON.parse(stdoutBuf.join("\n")).nodes.length).toBe(3);
+    });
+
+    test("--format ir still fails on a lexicon error other than none detected", async () => {
+      lintClean(); discovered();
+      resolveLexMock.mockRejectedValue(new Error("lexicon @intentius/chant-lexicon-nope is not installed"));
+      await expect(runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] })).rejects.toThrow("not installed");
     });
   });
 
@@ -624,6 +794,192 @@ describe("runGraph", () => {
       const out = stdoutBuf.join("\n");
       expect(out).not.toContain("No lexicons implement describeResources");
       expect(out).toContain("web-vpc");
+    });
+
+    // #2377 — the overlay carries the prediction. behold's reader takes
+    // `attrs._behaviour` per node and `meta._behaviour` on the graph, and
+    // reads the absence of both as "not looked" rather than as a refusal, so
+    // all three states are asserted on what actually reaches the IR.
+    describe("behaviour overlay (--traffic)", () => {
+      const predictingPlugin = (predictBehaviour: unknown) => ({
+        name: "aws",
+        serializer: {},
+        emulator: awsEmulatorStub,
+        describeResources: () => Promise.resolve({}),
+        predictBehaviour,
+      });
+
+      const liveEstate = () => {
+        resolveLexMock.mockResolvedValue(["aws"]);
+        // `--overlay` builds the declared canvas to classify against. Empty is
+        // enough here: what is under test is the behaviour block, and an empty
+        // declared graph leaves the observed nodes in place as foreign.
+        discoverMock.mockResolvedValue({ entities: new Map(), errors: [], sourceFiles: [] });
+        observeMock.mockResolvedValue({
+          observations: [{ lexicon: "aws", resources: {
+            web: { type: "AWS::EC2::Instance", status: "OK" },
+            role: { type: "AWS::IAM::Role", status: "OK" },
+          } }],
+          errors: [],
+          warnings: [],
+        });
+      };
+
+      const report = () => behaviourReport(
+        { entityNames: ["web", "role"], traffic: "100 rps, p50", edgeCoverage: { verdict: "unknown" } },
+        { engine: "fixture", version: "0.0.1", total: predictedRate(0.0416, "USD") },
+        { web: {
+          at: { traffic: "100 rps, p50" },
+          cost: predictedRate(0.0416, "USD"),
+          headroom: { cpu: 0.6 },
+          errorRate: 0.0005,
+          resilience: { failure: "one zone lost", verdict: "survives" },
+          provenance: { engine: "fixture", version: "0.0.1", tolerance: "±20%", basis: "modeled" },
+        } },
+        { role: { reason: "unsupported-kind", detail: "a role is a grant" } },
+      );
+
+      test("with an engine: the block is on its node and the meta on the graph", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([predictingPlugin(() => Promise.resolve(report()))]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n")) as {
+          nodes: Array<{ id: string; attrs: Record<string, unknown> }>;
+          meta?: Record<string, { engine?: string; at?: { traffic?: string } }>;
+        };
+        expect(ir.meta?._behaviour?.engine).toBe("fixture");
+        expect(ir.meta?._behaviour?.at?.traffic).toBe("100 rps, p50");
+        const web = ir.nodes.find((n) => n.id === "web");
+        expect((web?.attrs._behaviour as { cost?: { perHour?: number } })?.cost?.perHour).toBe(0.0416);
+        // An entity the engine could not price carries no block rather than a
+        // zeroed one — "costs nothing" is a different claim from "not priced".
+        expect("_behaviour" in (ir.nodes.find((n) => n.id === "role")?.attrs ?? {})).toBe(false);
+      });
+
+      test("the traffic level reaches the engine verbatim, with the graph's own entities", async () => {
+        liveEstate();
+        const seen: Array<{ traffic: string; entityNames: string[]; from: string }> = [];
+        loadPluginsMock.mockResolvedValue([predictingPlugin((o: { traffic: string; entityNames: string[]; from: string }) => {
+          seen.push({ traffic: o.traffic, entityNames: o.entityNames, from: o.from });
+          return Promise.resolve(report());
+        })]);
+
+        await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "1000 rps, p99" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(seen[0]?.traffic).toBe("1000 rps, p99");
+        expect(seen[0]?.entityNames).toContain("web");
+        // This graph came off the account, and the lexicon is told so: without
+        // it, a lexicon answers about whichever estate it defaults to and the
+        // report cannot say which one it described (#2494).
+        expect(seen[0]?.from).toBe("live");
+      });
+
+      test("without --traffic: nothing is asked and neither key appears", async () => {
+        liveEstate();
+        let called = false;
+        loadPluginsMock.mockResolvedValue([predictingPlugin(() => { called = true; return Promise.resolve(report()); })]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        // Not a refusal: an engine was configured and reachable. behold reads
+        // this absence as "not looked", which is why nothing may be written.
+        expect(called).toBe(false);
+        const ir = JSON.parse(stdoutBuf.join("\n")) as {
+          nodes: Array<{ attrs: Record<string, unknown> }>; meta?: Record<string, unknown>;
+        };
+        expect(ir.meta?._behaviour).toBeUndefined();
+        for (const n of ir.nodes) expect("_behaviour" in n.attrs).toBe(false);
+      });
+
+      test("a refusal rides on the meta whole, and no node carries a block", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          predictingPlugin(() => Promise.resolve(noBehaviourEngineRefusal("aws"))),
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n")) as {
+          nodes: Array<{ attrs: Record<string, unknown> }>;
+          meta?: { _behaviour?: { refusal?: { reason?: string }; behaviour?: string } };
+        };
+        // behold branches on `refusal` before it looks for `engine`; the
+        // envelope is what makes it findable at all.
+        expect(ir.meta?._behaviour?.refusal?.reason).toMatch(/CHANT_BEHAVIOUR_ENGINE/);
+        expect(ir.meta?._behaviour?.behaviour).toBe("v1");
+        for (const n of ir.nodes) expect("_behaviour" in n.attrs).toBe(false);
+      });
+
+      test("no predicting lexicon: the graph is served unchanged, and says so once", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        expect(exit).toBe(0);
+        expect(stderrBuf.join("\n")).toContain("no installed lexicon implements predictBehaviour");
+        expect(JSON.parse(stdoutBuf.join("\n")).meta?._behaviour).toBeUndefined();
+      });
+
+      test("a thrown engine costs the prediction, never the graph", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          predictingPlugin(() => Promise.reject(new Error("socket hang up"))),
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        // The estate graph is what was asked for; a broken engine must not
+        // take it away.
+        expect(exit).toBe(0);
+        expect(stderrBuf.join("\n")).toContain("socket hang up");
+        const ir = JSON.parse(stdoutBuf.join("\n")) as { nodes: unknown[]; meta?: Record<string, unknown> };
+        expect(ir.nodes.length).toBeGreaterThan(0);
+        expect(ir.meta?._behaviour).toBeUndefined();
+      });
+
+      test("two predicting lexicons is refused rather than attributed to one", async () => {
+        liveEstate();
+        loadPluginsMock.mockResolvedValue([
+          predictingPlugin(() => Promise.resolve(report())),
+          { ...predictingPlugin(() => Promise.resolve(report())), name: "gcp" },
+        ]);
+
+        const exit = await runGraph({
+          args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", traffic: "100 rps, p50" }),
+          plugins: [], serializers: [],
+        });
+
+        // One `meta._behaviour` key and two engines: taking the first would
+        // put one engine's figures under the other's provenance.
+        expect(exit).toBe(1);
+        expect(stderrBuf.join("\n")).toContain("cannot merge two engines");
+      });
     });
 
     // #1279 — `graph` had no `--at`, so anyone wanting the raw IR of a recorded

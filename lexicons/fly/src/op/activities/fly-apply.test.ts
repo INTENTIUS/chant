@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi, afterEach } from "vitest";
 import { describeApplyConformance } from "@intentius/chant-test-utils";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,13 +38,18 @@ import {
   withLease,
   waitForMachine,
   flyApply,
+  flyDelete,
   toApplyResult,
+  listCerts,
+  CERT_PAGE_LIMIT,
+  MAX_CERT_PAGES,
   DEFAULT_FLAPS_BASE_URL,
   LEASE_NONCE_HEADER,
   type FlyHttp,
   type FlapsRequest,
   type ApplyCtx,
 } from "./fly-apply";
+import { createMachinesFake, CERT_PAGE_DEFAULT } from "./machines-fake";
 
 const CTX: ApplyCtx = { base: "http://localhost:4280" };
 const NO_WAIT = { intervalMs: 0, deadlineMs: 5_000 };
@@ -313,6 +318,7 @@ describe("owned-only prune", () => {
         };
       }
       if (method === "POST" && url.endsWith("/lease")) return { status: 200, text: JSON.stringify({ status: "success", data: { nonce: "N" } }) };
+      if (method === "POST" && url.endsWith("/stop")) return { status: 200, text: "{}" };
       if (method === "DELETE" && /\/machines\/[^/]+$/.test(url)) {
         destroyed.push(url.split("/").pop() ?? "");
         return { status: 200, text: "{}" };
@@ -324,6 +330,169 @@ describe("owned-only prune", () => {
     const pruned = await pruneMachines(CTX, "demo", new Set(["web"]), http, undefined, NO_WAIT);
     expect(pruned).toEqual([{ app: "demo", name: "orphan", id: "m-orphan" }]);
     expect(destroyed).toEqual(["m-orphan"]); // legacy (unmarked) never destroyed
+  });
+});
+
+/**
+ * #3115: flaps destroys a machine only when it is stopped (or suspended,
+ * failed, created) unless the DELETE carries ?force=true; a bare DELETE on a
+ * started machine is a 412 failed_precondition. The in-memory flaps answers the
+ * same way, so a bare delete of a running machine fails here.
+ */
+describe("destroying a running machine (#3115)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const machine = (name: string) => ({
+    endpoint: "/v1/apps/demo/machines",
+    method: "POST",
+    body: { name, config: { image: "nginx", metadata: { ...OWNED_META } } },
+  });
+  const planWith = (entries: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-3115-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entries));
+    return planPath;
+  };
+
+  /** A scripted flaps that records each call and answers like Fly for one machine `m1` in `state`. */
+  function scripted(state: string, overrides: (method: string, url: string) => { status: number; text: string } | undefined = () => undefined) {
+    const calls: string[] = [];
+    const http: FlyHttp = async (method, url) => {
+      const path = url.replace(CTX.base, "");
+      calls.push(`${method} ${path}`);
+      const o = overrides(method, path);
+      if (o) return o;
+      if (method === "POST" && path.endsWith("/lease")) return { status: 200, text: JSON.stringify({ data: { nonce: "N" } }) };
+      if (method === "DELETE" && path.endsWith("/lease")) return { status: 200, text: "{}" };
+      if (method === "POST" && path.endsWith("/stop")) { state = "stopped"; return { status: 200, text: "{}" }; }
+      if (method === "GET" && path.includes("/wait")) {
+        const want = new URL(url).searchParams.get("state");
+        return { status: 200, text: JSON.stringify({ ok: want === "destroyed" || want === state }) };
+      }
+      if (method === "DELETE" && /\/machines\/m1(\?force=true)?$/.test(path)) {
+        if (!path.endsWith("?force=true") && !["stopped", "suspended", "failed", "created"].includes(state)) {
+          return { status: 412, text: JSON.stringify({ error: "failed_precondition: unable to destroy machine, not currently stopped" }) };
+        }
+        return { status: 200, text: "{}" };
+      }
+      return { status: 500, text: `unscripted: ${method} ${path}` };
+    };
+    return { http, calls };
+  }
+  const mutations = (calls: string[]) => calls.filter((c) => !c.startsWith("GET"));
+
+  test("a started machine is stopped under a lease, waited to stopped, then destroyed under a lease", async () => {
+    const { http, calls } = scripted("started");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "started" });
+    expect(calls).toEqual([
+      "POST /v1/apps/demo/machines/m1/lease",
+      "POST /v1/apps/demo/machines/m1/stop",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+      "GET /v1/apps/demo/machines/m1/wait?state=stopped&timeout=60",
+      "POST /v1/apps/demo/machines/m1/lease",
+      "DELETE /v1/apps/demo/machines/m1",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+      "GET /v1/apps/demo/machines/m1/wait?state=destroyed&timeout=60",
+    ]);
+  });
+
+  test.each(["stopped", "suspended", "failed"])("a %s machine is destroyed without a stop", async (state) => {
+    const { http, calls } = scripted(state);
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state });
+    expect(mutations(calls)).toEqual([
+      "POST /v1/apps/demo/machines/m1/lease",
+      "DELETE /v1/apps/demo/machines/m1",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+    ]);
+  });
+
+  test("a stopping machine is waited on, not stopped again", async () => {
+    const { http, calls } = scripted("stopped");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "stopping" });
+    expect(calls).not.toContain("POST /v1/apps/demo/machines/m1/stop");
+    expect(calls).toContain("GET /v1/apps/demo/machines/m1/wait?state=stopped&timeout=60");
+  });
+
+  test("force sends DELETE ?force=true and no stop", async () => {
+    const { http, calls } = scripted("started");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "started", force: true });
+    expect(mutations(calls)).toEqual([
+      "POST /v1/apps/demo/machines/m1/lease",
+      "DELETE /v1/apps/demo/machines/m1?force=true",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+    ]);
+  });
+
+  test("a 412 from the delete (state unknown, or started since the list) gets one stop and a retry", async () => {
+    const { http, calls } = scripted("started");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, NO_WAIT);
+    expect(mutations(calls).filter((c) => !c.endsWith("/lease"))).toEqual([
+      "DELETE /v1/apps/demo/machines/m1",
+      "POST /v1/apps/demo/machines/m1/stop",
+      "DELETE /v1/apps/demo/machines/m1",
+    ]);
+  });
+
+  test("a stop that never reaches stopped fails naming the machine, and no delete is sent", async () => {
+    const { http, calls } = scripted("started", (method, path) =>
+      method === "POST" && path.endsWith("/stop") ? { status: 200, text: "{}" } : undefined,
+    );
+    await expect(
+      destroyMachine(CTX, "demo", "m1", http, undefined, { intervalMs: 0, deadlineMs: 20, state: "started", name: "web" }),
+    ).rejects.toThrow(/machine demo\/web \(m1\) did not stop, so it was not destroyed.*force: true/);
+    expect(calls).not.toContain("DELETE /v1/apps/demo/machines/m1");
+  });
+
+  test("a failed stop fails naming the machine", async () => {
+    const { http } = scripted("started", (method, path) =>
+      method === "POST" && path.endsWith("/stop") ? { status: 500, text: "boom" } : undefined,
+    );
+    await expect(
+      destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "started", name: "web" }),
+    ).rejects.toThrow("machine demo/web (m1) stop before destroy failed (500): boom");
+  });
+
+  test("the in-memory flaps refuses a bare DELETE on a started machine and honours force", async () => {
+    const fake = createMachinesFake();
+    await flyApply({ planPath: planWith({ app, web: machine("web") }), endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const id = fake.machine("demo", "web")!.id;
+    expect((await fake.http("DELETE", `${CTX.base}/v1/apps/demo/machines/${id}`)).status).toBe(412);
+    expect((await fake.http("DELETE", `${CTX.base}/v1/apps/demo/machines/${id}?force=true`)).status).toBe(200);
+    expect(fake.machine("demo", "web")).toBeUndefined();
+  });
+
+  test("prune removes a running machine: stop, then delete", async () => {
+    const fake = createMachinesFake();
+    await flyApply({ planPath: planWith({ app, web: machine("web"), worker: machine("worker") }), endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const id = fake.machine("demo", "worker")!.id;
+    expect(fake.machine("demo", "worker")!.state).toBe("started");
+
+    const out = await flyApply({ planPath: planWith({ app, web: machine("web") }), endpoint: CTX.base, wait: NO_WAIT, prune: true }, undefined, fake.http);
+    expect(out.pruned).toEqual([{ app: "demo", name: "worker", id }]);
+    expect(fake.machine("demo", "worker")).toBeUndefined();
+    expect(fake.machine("demo", "web")!.state).toBe("started");
+    expect(fake.calls).toContain(`POST /v1/apps/demo/machines/${id}/stop`);
+  });
+
+  test("prune with force removes a running machine without a stop", async () => {
+    const fake = createMachinesFake();
+    await flyApply({ planPath: planWith({ app, web: machine("web"), worker: machine("worker") }), endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const id = fake.machine("demo", "worker")!.id;
+    await flyApply({ planPath: planWith({ app, web: machine("web") }), endpoint: CTX.base, wait: NO_WAIT, prune: true, force: true }, undefined, fake.http);
+    expect(fake.machine("demo", "worker")).toBeUndefined();
+    expect(fake.calls).not.toContain(`POST /v1/apps/demo/machines/${id}/stop`);
+  });
+
+  test("flyDelete tears down an app whose machines are running", async () => {
+    const fake = createMachinesFake();
+    const planPath = planWith({ app, web: machine("web"), worker: machine("worker") });
+    await flyApply({ planPath, endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const out = await flyDelete({ planPath, endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    expect(out.machines).toEqual([
+      { app: "demo", name: "web" },
+      { app: "demo", name: "worker" },
+    ]);
+    expect(out.apps).toEqual([{ app: "demo", deleted: true }]);
+    expect(fake.calls.filter((c) => c.endsWith("/stop"))).toHaveLength(2);
   });
 });
 
@@ -361,7 +530,10 @@ describe("app-scoped resource classification + segments", () => {
     const at = (endpoint: string): FlapsRequest => ({ endpoint, method: "POST", body: {} });
     expect(isVolumeRequest(at("/v1/apps/demo/volumes"))).toBe(true);
     expect(isIpRequest(at("/v1/apps/demo/ip_assignments"))).toBe(true);
+    expect(isCertRequest(at("/v1/apps/demo/certificates/acme"))).toBe(true);
+    // A plan built before #3114 names the list path; it still classifies.
     expect(isCertRequest(at("/v1/apps/demo/certificates"))).toBe(true);
+    expect(isCertRequest(at("/v1/apps/demo/certificates/custom"))).toBe(false);
     expect(isSecretRequest(at("/v1/apps/demo/secrets/db"))).toBe(true);
     // Cross-checks: a secret endpoint is not a machine/volume request.
     expect(isMachineRequest(at("/v1/apps/demo/secrets/db"))).toBe(false);
@@ -412,10 +584,170 @@ describe("applyVolume / applyIp / applyCert idempotency (drift handling)", () =>
   });
 
   test("cert absent → create; present (by hostname) → no-op", async () => {
-    const req: FlapsRequest = { endpoint: "/v1/apps/demo/certificates", method: "POST", body: { hostname: "example.com" } };
+    const req: FlapsRequest = { endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname: "example.com" } };
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const empty: FlyHttp = async (method, url, body) =>
+      method === "GET"
+        ? { status: 200, text: JSON.stringify({ certificates: [] }) }
+        : (posts.push({ url, body }), { status: 201, text: JSON.stringify({ hostname: "example.com" }) });
+    expect(await applyCert(CTX, "demo", req, empty)).toEqual({ action: "created", hostname: "example.com" });
+    expect(posts).toEqual([{ url: "http://localhost:4280/v1/apps/demo/certificates/acme", body: { hostname: "example.com" } }]);
+
     const present: FlyHttp = async (method) =>
       method === "GET" ? { status: 200, text: JSON.stringify({ certificates: [{ hostname: "example.com" }] }) } : { status: 500, text: "" };
     expect(await applyCert(CTX, "demo", req, present)).toEqual({ action: "noop", hostname: "example.com" });
+  });
+});
+
+/**
+ * #3114: flaps has no POST on `.../certificates` and answers one with 404; ACME
+ * certificates are created at `.../certificates/acme`. The in-memory flaps
+ * routes certificates the same way, so a wrong path fails here.
+ */
+describe("flyApply creates certificates at /certificates/acme (#3114)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const planWith = (entries: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-3114-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entries));
+    return planPath;
+  };
+  const run = (fake: ReturnType<typeof createMachinesFake>, entries: Record<string, unknown>, prune = false) =>
+    flyApply({ planPath: planWith(entries), endpoint: CTX.base, wait: NO_WAIT, prune }, undefined, fake.http);
+
+  test("the in-memory flaps answers a POST to the bare list path with 404, as Fly does", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add("demo");
+    const res = await fake.http("POST", `${CTX.base}/v1/apps/demo/certificates`, { hostname: "example.com" });
+    expect(res.status).toBe(404);
+    expect(fake.certs.get("demo") ?? []).toEqual([]);
+  });
+
+  test("a certificate is created once, and a re-apply is a no-op", async () => {
+    const fake = createMachinesFake();
+    const cert = { endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname: "example.com" } };
+    const first = await run(fake, { app, cert });
+    expect(first.certs).toEqual([{ app: "demo", hostname: "example.com", action: "created" }]);
+    expect(fake.certs.get("demo")).toEqual(["example.com"]);
+    expect(fake.calls).toContain("POST /v1/apps/demo/certificates/acme");
+    expect(fake.calls).not.toContain("POST /v1/apps/demo/certificates");
+
+    const second = await run(fake, { app, cert });
+    expect(second.certs).toEqual([{ app: "demo", hostname: "example.com", action: "noop" }]);
+    expect(fake.calls.filter((c) => c === "POST /v1/apps/demo/certificates/acme")).toHaveLength(1);
+  });
+
+  test("a plan built before #3114, naming /certificates, still creates the certificate at /acme", async () => {
+    const fake = createMachinesFake();
+    const legacy = { endpoint: "/v1/apps/demo/certificates", method: "POST", body: { hostname: "example.com" } };
+    const out = await run(fake, { app, cert: legacy });
+    expect(out.certs).toEqual([{ app: "demo", hostname: "example.com", action: "created" }]);
+    expect(fake.certs.get("demo")).toEqual(["example.com"]);
+  });
+
+  test("prune deletes a certificate the plan no longer declares", async () => {
+    const fake = createMachinesFake();
+    const cert = (hostname: string) => ({ endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname } });
+    await run(fake, { app, keep: cert("keep.com"), drop: cert("drop.com") });
+    const out = await run(fake, { app, keep: cert("keep.com") }, true);
+    expect(out.prunedCerts).toEqual([{ app: "demo", hostname: "drop.com" }]);
+    expect(fake.certs.get("demo")).toEqual(["keep.com"]);
+  });
+});
+
+/**
+ * #3224: Fly pages the certificate list (25 by default, 500 at most, with a
+ * `next_cursor`), and the in-memory flaps does the same. Every reader goes
+ * through listCerts, which follows the cursor to the end.
+ */
+describe("certificate list pagination (#3224)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const cert = (hostname: string) => ({ endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname } });
+  const hosts = (n: number) => Array.from({ length: n }, (_, i) => `h${String(i).padStart(4, "0")}.example.com`);
+  const planOf = (hostnames: string[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-3224-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify({ app, ...Object.fromEntries(hostnames.map((h) => [h, cert(h)])) }));
+    return planPath;
+  };
+  const run = (fake: ReturnType<typeof createMachinesFake>, hostnames: string[], prune = false) =>
+    flyApply({ planPath: planOf(hostnames), endpoint: CTX.base, wait: NO_WAIT, prune }, undefined, fake.http);
+  const certGets = (fake: ReturnType<typeof createMachinesFake>) => fake.calls.filter((c) => c === "GET /v1/apps/demo/certificates");
+
+  test("the in-memory flaps pages the list at 25 with a next_cursor, as Fly does", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add("demo");
+    fake.certs.set("demo", hosts(30));
+    const first = JSON.parse((await fake.http("GET", `${CTX.base}/v1/apps/demo/certificates`)).text);
+    expect(first.certificates).toHaveLength(CERT_PAGE_DEFAULT);
+    expect(first.total_count).toBe(30);
+    expect(typeof first.next_cursor).toBe("string");
+    const second = JSON.parse((await fake.http("GET", `${CTX.base}/v1/apps/demo/certificates?cursor=${first.next_cursor}`)).text);
+    expect(second.certificates).toHaveLength(5);
+    expect(second.next_cursor).toBeUndefined();
+  });
+
+  test("a re-apply of more certificates than one page is a no-op", async () => {
+    const fake = createMachinesFake();
+    const all = hosts(30);
+    await run(fake, all);
+    expect(fake.certs.get("demo")).toEqual(all);
+    const again = await run(fake, all);
+    expect(again.certs.every((c) => c.action === "noop")).toBe(true);
+    expect(fake.calls.filter((c) => c === "POST /v1/apps/demo/certificates/acme")).toHaveLength(30);
+  });
+
+  test("prune removes undeclared certificates past the first page", async () => {
+    const fake = createMachinesFake();
+    const all = hosts(30);
+    await run(fake, all);
+    const out = await run(fake, all.slice(0, 3), true);
+    expect(out.prunedCerts.map((c) => c.hostname)).toEqual(all.slice(3));
+    expect(fake.certs.get("demo")).toEqual(all.slice(0, 3));
+  });
+
+  test("listCerts asks for the largest page and follows the cursor past it", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add("demo");
+    const all = hosts(2 * CERT_PAGE_LIMIT + 3);
+    fake.certs.set("demo", all);
+    const listed = await listCerts(CTX, "demo", fake.http);
+    expect(listed.map((c) => c.hostname)).toEqual(all);
+    expect(certGets(fake)).toHaveLength(3);
+  });
+
+  test("an absent app lists no certificates", async () => {
+    const fake = createMachinesFake();
+    expect(await listCerts(CTX, "nope", fake.http)).toEqual([]);
+  });
+
+  test("a repeated cursor fails loudly instead of looping", async () => {
+    let gets = 0;
+    const http: FlyHttp = async () => {
+      gets++;
+      return { status: 200, text: JSON.stringify({ certificates: [{ hostname: `h${gets}` }], next_cursor: "same" }) };
+    };
+    await expect(listCerts(CTX, "demo", http)).rejects.toThrow(/repeated cursor "same"/);
+    expect(gets).toBe(2);
+  });
+
+  test("a cursor that never ends fails after the page cap", async () => {
+    let gets = 0;
+    const http: FlyHttp = async () => {
+      gets++;
+      return { status: 200, text: JSON.stringify({ certificates: [], next_cursor: `c${gets}` }) };
+    };
+    await expect(listCerts(CTX, "demo", http)).rejects.toThrow(new RegExp(`after ${MAX_CERT_PAGES} pages`));
+    expect(gets).toBe(MAX_CERT_PAGES);
+  });
+
+  test("a failed later page is an error, not a short list", async () => {
+    let gets = 0;
+    const http: FlyHttp = async () =>
+      ++gets === 1
+        ? { status: 200, text: JSON.stringify({ certificates: [{ hostname: "a" }], next_cursor: "n" }) }
+        : { status: 404, text: "gone" };
+    await expect(listCerts(CTX, "demo", http)).rejects.toThrow(/certificate list failed for demo \(404\)/);
   });
 });
 
@@ -511,6 +843,109 @@ describe("flyApply orders volumes before the machines that mount them", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * #2516 — a Secret declared without a value is set outside chant. Posting it
+ * as `{}` on every apply clobbered or no-oped the real secret. Apply checks the
+ * app has it instead, and fails naming it when the app does not.
+ */
+describe("flyApply never sends a value-less secret (#2516)", () => {
+  const planWith = (entry: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-2516-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entry));
+    return planPath;
+  };
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const valueless = { endpoint: "/v1/apps/demo/secrets/DATABASE_URL", method: "POST", body: {}, applyOnly: true, mustExist: true };
+  const scripted = (liveSecrets: string[], calls: string[]): FlyHttp => async (method, url) => {
+    calls.push(`${method} ${url}`);
+    if (method === "GET" && /\/apps\/demo$/.test(url)) return { status: 200, text: JSON.stringify({ name: "demo" }) };
+    if (method === "GET" && url.endsWith("/secrets")) {
+      return { status: 200, text: JSON.stringify({ secrets: liveSecrets.map((name) => ({ name })) }) };
+    }
+    return { status: 200, text: "{}" };
+  };
+
+  test("an existing value-less secret is checked, never posted, and reports unchanged", async () => {
+    const calls: string[] = [];
+    const out = await flyApply(
+      { planPath: planWith({ app, db: valueless }), endpoint: "http://localhost:4280" },
+      undefined,
+      scripted(["DATABASE_URL"], calls),
+    );
+    expect(out.secrets).toEqual([{ app: "demo", name: "DATABASE_URL", action: "exists" }]);
+    expect(calls.filter((c) => c.includes("/secrets"))).toEqual(["GET http://localhost:4280/v1/apps/demo/secrets"]);
+    expect(toApplyResult(out).applied).toContainEqual({ kind: "secret", name: "DATABASE_URL", action: "unchanged" });
+  });
+
+  test("a missing value-less secret fails with its name and posts nothing", async () => {
+    const calls: string[] = [];
+    await expect(
+      flyApply({ planPath: planWith({ app, db: valueless }), endpoint: "http://localhost:4280" }, undefined, scripted([], calls)),
+    ).rejects.toThrow(/secret demo\/DATABASE_URL is declared without a value.*does not have it/);
+    expect(calls.some((c) => c.startsWith("POST") && c.includes("/secrets"))).toBe(false);
+  });
+
+  test("a plan from before mustExist, with an empty body, is treated the same", async () => {
+    const calls: string[] = [];
+    const legacy = { endpoint: "/v1/apps/demo/secrets/DATABASE_URL", method: "POST", body: {}, applyOnly: true };
+    await flyApply({ planPath: planWith({ app, db: legacy }), endpoint: "http://localhost:4280" }, undefined, scripted(["DATABASE_URL"], calls));
+    expect(calls.some((c) => c.startsWith("POST") && c.includes("/secrets"))).toBe(false);
+  });
+
+  test("a secret with a value is still set", async () => {
+    const calls: string[] = [];
+    const withValue = { endpoint: "/v1/apps/demo/secrets/API_KEY", method: "POST", body: { value: "k" }, applyOnly: true };
+    const out = await flyApply({ planPath: planWith({ app, key: withValue }), endpoint: "http://localhost:4280" }, undefined, scripted([], calls));
+    expect(out.secrets).toEqual([{ app: "demo", name: "API_KEY", action: "set" }]);
+    expect(calls).toContain("POST http://localhost:4280/v1/apps/demo/secrets/API_KEY");
+  });
+});
+
+/**
+ * #2516 — an Op step's stdout is its output, so the applier writes progress to
+ * stderr and leaves stdout clean.
+ */
+describe("flyApply keeps stdout clean (#2516)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  test("apply, prune and delete write progress to stderr only", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-2516-out-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(
+      planPath,
+      JSON.stringify({
+        app: { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } },
+        key: { endpoint: "/v1/apps/demo/secrets/API_KEY", method: "POST", body: { value: "k" }, applyOnly: true },
+      }),
+    );
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    const http: FlyHttp = async (method, url) => {
+      if (method === "GET" && /\/apps\/demo$/.test(url)) return { status: 404, text: "" };
+      if (method === "GET" && url.endsWith("/secrets")) return { status: 200, text: JSON.stringify({ secrets: [{ name: "OLD" }] }) };
+      if (method === "GET" && /\/(volumes|machines)$/.test(url)) return { status: 200, text: "[]" };
+      return { status: 200, text: "{}" };
+    };
+    try {
+      await flyApply({ planPath, endpoint: "http://localhost:4280", prune: true }, undefined, http);
+      await flyDelete({ planPath, endpoint: "http://localhost:4280" }, undefined, http);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(stdout).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(stderr.join("")).toMatch(/created: app\/demo/);
+    expect(stderr.join("")).toMatch(/set: secret\/demo\/API_KEY/);
+    expect(stderr.join("")).toMatch(/pruned: secret\/demo\/OLD/);
   });
 });
 
@@ -634,6 +1069,52 @@ describeApplyConformance({
         }
       },
       expectApplied: ["app/solo", "machine/web"],
+    },
+  ],
+  pruneScenarios: [
+    {
+      // The orphan is running, so it is stopped before the delete (#3115). The
+      // stop is a POST and lease releases are not resource deletes, so neither
+      // is captured: the one delete is the machine's own.
+      name: "a running owned orphan and a foreign machine in one app",
+      run: async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fly-3115-prune-"));
+        const write = (entries: Record<string, unknown>) => {
+          const planPath = join(dir, `plan-${Object.keys(entries).length}.json`);
+          writeFileSync(planPath, JSON.stringify(entries));
+          return planPath;
+        };
+        const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "solo" } };
+        const machine = (name: string) => ({
+          endpoint: "/v1/apps/solo/machines",
+          method: "POST",
+          body: { name, config: { image: "nginx" } },
+        });
+        try {
+          const fake = createMachinesFake();
+          const wait = { intervalMs: 0, deadlineMs: 5_000 };
+          await flyApply({ planPath: write({ app, web: machine("web"), orphan: machine("orphan") }), endpoint: CTX.base, wait }, undefined, fake.http);
+          // A machine chant did not create: no ownership marker, running.
+          fake.machines.get("solo")!.push({ id: "m-foreign", name: "foreign", state: "started", instance_id: "I-foreign", config: { image: "redis" } });
+          // The serializer stamps the marker; this plan is hand-written, so stamp it on the fake.
+          for (const m of fake.machines.get("solo")!) if (m.name !== "foreign") m.config.metadata = { ...OWNED_META };
+          const orphanId = fake.machine("solo", "orphan")!.id;
+
+          const deletes: string[] = [];
+          const http: FlyHttp = async (method, url, body, headers, signal) => {
+            if (method === "DELETE" && !url.endsWith("/lease")) deletes.push(url.replace(orphanId, "orphan"));
+            return fake.http(method, url, body, headers, signal);
+          };
+          const result = toApplyResult(
+            await flyApply({ planPath: write({ app, web: machine("web") }), endpoint: CTX.base, wait, prune: true }, undefined, http),
+          );
+          return { result, deletes };
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+      ownedOrphan: "/machines/orphan",
+      foreign: "m-foreign",
     },
   ],
 });

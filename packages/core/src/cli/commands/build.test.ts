@@ -781,6 +781,7 @@ export const testEntity = {
         primary: "kind: Deployment\n",
         files: { "db.sops.yaml": CIPHERTEXT },
         verbatimFiles: ["db.sops.yaml"],
+        secretFiles: ["db.sops.yaml"],
       }),
     };
 
@@ -841,6 +842,7 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
           primary: "kind: Deployment\n",
           files: { "db.sops.yaml": jsonish },
           verbatimFiles: ["db.sops.yaml"],
+          secretFiles: ["db.sops.yaml"],
         }),
       };
       await writeProject("secrets/db.sops.yaml");
@@ -890,6 +892,33 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
 
       expect(result.errors).toEqual([]);
       expect(readFileSync(join(testDir, "dist", "raw.json"), "utf-8")).toBe(raw);
+    });
+
+    test("a verbatim file that is not a secret prints with no --output (#3738)", async () => {
+      // The sql lexicon's DDL is verbatim but not a secret. Only `secretFiles`
+      // makes a build with no --output refuse.
+      const ddl = "CREATE TABLE events (id UInt64) ENGINE = MergeTree ORDER BY id;\n";
+      const ddlSerializer: Serializer = {
+        name: "multi",
+        rulePrefix: "MULTI",
+        serialize: () => ({ primary: "{}", files: { "clickhouse.sql": ddl }, verbatimFiles: ["clickhouse.sql"] }),
+      };
+      await writeFile(
+        join(testDir, "infra.ts"),
+        `export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+      );
+      const printed: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { printed.push(args.join(" ")); });
+      try {
+        const result = await buildCommand({ path: testDir, format: "json", serializers: [ddlSerializer] } as BuildOptions);
+
+        expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed.join("\n")).toContain("--- clickhouse.sql ---");
+      expect(printed).toContain(ddl);
     });
   });
 
@@ -1104,6 +1133,25 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
         ],
       };
     }
+
+    test("a lexicon's post-synth checks see the build's telemetry attribution (#3375)", async () => {
+      await writeTrivialEntity();
+      const plugin: LexiconPlugin = {
+        ...fakePostSynthPlugin("FAKE009", "warning"),
+        postSynthChecks: () => [
+          {
+            id: "FAKE009",
+            description: "reports ctx.telemetry",
+            check: (ctx) => [{ checkId: "FAKE009", severity: "warning", message: `telemetry=${JSON.stringify(ctx.telemetry ?? null)}` }],
+          },
+        ],
+      };
+      const run = () => buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [plugin] });
+
+      expect((await run()).warnings.join("\n")).toContain("telemetry=null");
+      await writeFile(join(testDir, "chant.config.ts"), `export default { telemetry: { attribution: true } };\n`);
+      expect((await run()).warnings.join("\n")).toContain("telemetry={}");
+    });
 
     test("lint.rules off suppresses a lexicon-shipped post-synth finding and reports a suppressed count", async () => {
       await writeTrivialEntity();

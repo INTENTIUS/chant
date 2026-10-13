@@ -1,0 +1,95 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
+  "contract": 1,
+  "digest": "jcs1-sha256:a66846faed3900cffc37cfa1c31d2735358875375b7218faa7c605502a17a529",
+  "members": [
+    {
+      "member": "delivery",
+      "lexicon": "aws",
+      "planner": "chant",
+      "scope": "dev",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:e526af57de8232c2d567d96e24eae57daf4aceb664e4ab3f00f3da1061361cb9",
+      "holes": []
+    }
+  ],
+  "entries": [
+    {
+      "member": "delivery",
+      "lexicon": "aws",
+      "planner": "chant",
+      "address": "alerts",
+      "type": "AWS::SNS::Topic",
+      "id": "arn:aws:sns:us-east-1:000000000000:cs-alerts",
+      "action": "no-op",
+      "scope": "dev",
+      "attributes": []
+    },
+    {
+      "member": "delivery",
+      "lexicon": "aws",
+      "planner": "chant",
+      "address": "dlq",
+      "type": "unknown",
+      "action": "create",
+      "scope": "dev",
+      "attributes": []
+    },
+    {
+      "member": "delivery",
+      "lexicon": "aws",
+      "planner": "chant",
+      "address": "events",
+      "type": "AWS::SQS::Queue",
+      "id": "http://localhost:4566/000000000000/cs-events",
+      "action": "no-op",
+      "scope": "dev",
+      "attributes": []
+    },
+    {
+      "member": "delivery",
+      "lexicon": "aws",
+      "planner": "chant",
+      "address": "jobs",
+      "type": "AWS::SQS::Queue",
+      "id": "http://localhost:4566/000000000000/cs-jobs",
+      "action": "no-op",
+      "scope": "dev",
+      "attributes": []
+    }
+  ],
+  "summary": {
+    "members": 1,
+    "entries": 4,
+    "actions": {
+      "create": 1,
+      "update": 0,
+      "replace": 0,
+      "delete": 0,
+      "read": 0,
+      "no-op": 3,
+      "forget": 0
+    },
+    "types": {
+      "AWS::SNS::Topic": {
+        "no-op": 1
+      },
+      "AWS::SQS::Queue": {
+        "no-op": 2
+      },
+      "unknown": {
+        "create": 1
+      }
+    },
+    "byMember": {
+      "delivery": {
+        "no-op": 3,
+        "create": 1
+      }
+    },
+    "deletes": [],
+    "replacements": [],
+    "failed": [],
+    "holes": 0
+  }
+}

@@ -11,7 +11,7 @@ user-invocable: true
 Everything materialized into a fountain sandbox must be presumed exfiltrated once untrusted agent code runs. Order of preference:
 
 1. **`${VAR}` substitution references** in agent config (MCP server env, system prompts). Resolved at spawn from the merged environment + vault sets. Never a value in source.
-2. **Environment secrets** (`spec.secrets`) — encrypted at rest, write-only over the API (values are never returned once stored). `fountainApply` sends them inline with the rest of the resource in the bulk apply request, and the server upserts them through the encrypted envelope path; a changed value cannot be detected, only overwritten.
+2. **Environment and Vault secrets** (`spec.secrets`), typed on both kinds as `secrets: { key: string; value: string }[]`. Encrypted at rest, write-only over the API (values are never returned once stored). Write the value as a reference your build resolves, not the secret itself. `fountainApply` sends them inline with the rest of the resource in the bulk apply request, and the server upserts them through the encrypted envelope path; a changed value cannot be detected, only overwritten.
 3. **`env_vars`** — plaintext config only. FTN012 errors on credential-shaped keys or values here.
 
 Never put a literal credential anywhere in a declaration: FTN001 catches known shapes (AWS keys, GitHub/Slack tokens, `sk-`/`ftn_` keys, private key material) at the AST; FTN015 errors on secret-shaped MCP env keys that are not `${VAR}` references.
@@ -26,4 +26,4 @@ FTN013 warns when an agent references `${VAR}` and its declared environment has 
 
 ## Round-trips and their limits
 
-`chant import --from` exports live resources but never secrets: values are write-only upstream, and secret keys are not on the typed request surface. Re-declare imported environments' secrets through your secret provider. Upstream discussion of a reference-based model that would fix this: BinaryBourbon/fountain#148.
+`chant import --from` exports live resources but never secrets: values are write-only upstream, so there is nothing to read back into `secrets`. Re-declare imported environments' secrets through your secret provider. Upstream discussion of a reference-based model that would fix this: BinaryBourbon/fountain#148.

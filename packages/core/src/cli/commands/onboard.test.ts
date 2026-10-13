@@ -7,6 +7,7 @@ import {
   patchDockerfile,
   patchRootTsconfigPaths,
   insertPrepackAfterEach,
+  patchLexiconList,
 } from "./onboard";
 
 function makeTempDir(): string {
@@ -184,6 +185,8 @@ function writeFixtureRepo(root: string): void {
   writeFileSync(join(root, ".github/workflows/publish.yml"), publishContent);
   writeFileSync(join(root, "test/Dockerfile.smoke"), dockerLoopContent);
   writeFileSync(join(root, "test/Dockerfile.smoke-npm"), dockerNpmContent);
+  writeFileSync(join(root, "test/smoke-npm-lexicons.txt"), "aws\ngitlab\nk8s\n");
+  writeFileSync(join(root, "test/smoke-e2e-lexicons.txt"), "aws\nk8s\n");
 }
 
 const TRACKED = [
@@ -193,6 +196,8 @@ const TRACKED = [
   ".github/workflows/publish.yml",
   "test/Dockerfile.smoke",
   "test/Dockerfile.smoke-npm",
+  "test/smoke-npm-lexicons.txt",
+  "test/smoke-e2e-lexicons.txt",
 ];
 
 function snapshot(root: string): Record<string, string> {
@@ -223,8 +228,12 @@ describe("onboardCommand", () => {
       "publish.yml (prepack)",
       "Dockerfile.smoke (lexicon list)",
       "Dockerfile.smoke-npm (lexicon list)",
+      "smoke-npm-lexicons.txt (lexicon list)",
     ]);
-    expect(result.skipped).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toContain("smoke-e2e-lexicons.txt: not patched");
+    expect(readFileSync(join(root, "test/smoke-npm-lexicons.txt"), "utf-8")).toBe("aws\ngitlab\nk8s\nterraform\n");
+    expect(readFileSync(join(root, "test/smoke-e2e-lexicons.txt"), "utf-8")).toBe("aws\nk8s\n");
 
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
     expect(pkg.dependencies["@intentius/chant-lexicon-terraform"]).toBe("workspace:*");
@@ -254,6 +263,8 @@ describe("onboardCommand", () => {
       "publish.yml: prepack for terraform already present",
       "Dockerfile.smoke: already covers terraform",
       "Dockerfile.smoke-npm: already covers terraform",
+      "smoke-npm-lexicons.txt: terraform already in test/smoke-npm-lexicons.txt",
+      expect.stringContaining("smoke-e2e-lexicons.txt: not patched"),
     ]);
   });
 
@@ -312,9 +323,9 @@ describe("root tsconfig.json paths (#1614)", () => {
 
     const cfg = JSON.parse(readFileSync(join(root, "tsconfig.json"), "utf-8"));
     expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-terraform"]).toEqual([
-      "lexicons/terraform/src/index.ts",
+      "./lexicons/terraform/src/index.ts",
     ]);
-    expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-terraform/*"]).toEqual(["lexicons/terraform/src/*"]);
+    expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-terraform/*"]).toEqual(["./lexicons/terraform/src/*"]);
     // Existing entries untouched
     expect(cfg.compilerOptions.paths["@intentius/chant-lexicon-aws"]).toEqual(["lexicons/aws/src/index.ts"]);
     expect(cfg.compilerOptions.moduleResolution).toBe("node");
@@ -460,5 +471,44 @@ describe("insertPrepackAfterEach", () => {
       "RUN npm run --prefix lexicons/terraform prepack",
       'RUN echo "npm run --prefix lexicons/$lex prepack"',
     ]);
+  });
+});
+
+describe("smoke lists and publish.yml reporting (#3227)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir();
+    writeFixtureRepo(root);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("patchLexiconList appends once and keeps the trailing newline", () => {
+    const file = join(root, "test/smoke-npm-lexicons.txt");
+    writeFileSync(file, "aws\nk8s");
+    expect(patchLexiconList(file, "sql").patched).toBe(true);
+    expect(readFileSync(file, "utf-8")).toBe("aws\nk8s\nsql\n");
+    expect(patchLexiconList(file, "sql").patched).toBe(false);
+    expect(readFileSync(file, "utf-8")).toBe("aws\nk8s\nsql\n");
+  });
+
+  test("a Dockerfile that reads the list file points at it instead of claiming coverage", () => {
+    const file = join(root, "test/Dockerfile.smoke-npm");
+    writeFileSync(file, "RUN LEXICONS=$(cat /app/test/smoke-npm-lexicons.txt) && \\\n    for lex in $LEXICONS; do :; done\n");
+    const result = patchDockerfile(file, "sql");
+    expect(result.patched).toBe(false);
+    expect(result.reason).toContain("test/smoke-npm-lexicons.txt");
+    expect(result.reason).not.toContain("already covers");
+  });
+
+  test("publish.yml with no per-lexicon prepack lines says nothing needs patching", () => {
+    writeFileSync(join(root, ".github/workflows/publish.yml"), "name: publish\njobs:\n  test:\n    steps:\n      - run: bash scripts/publish-verify-ci.sh\n");
+    const result = onboardCommand({ name: "sql", root });
+    const line = result.skipped.find((s) => s.startsWith("publish.yml:"));
+    expect(line).toContain("nothing to patch");
+    expect(line).toContain("scripts/ci-lexicon-artifacts.sh");
   });
 });

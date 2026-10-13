@@ -41,63 +41,55 @@
  * (absent on the resolution lines written before #2119, which is why
  * `"resolution"` is the default reading).
  */
+import { isNeverOverMcpGateOp } from "../op/gate-name";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
+import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
+import type { GateApprovalSource } from "../op/op-waves";
+import type { GateRunLocator } from "../op/gate-run-locator";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
+// The facts a pending record is written with live apart, so a bundle can import them without git (#3816).
+export { DEFAULT_GATE_EXPIRY, isApprovalUrl, resolveApprovalUrl } from "./gate-pending";
+
+// The selection rules a gate decides by live apart, so a bundle can import them without git (#3763).
+export {
+  isPendingGateExpired,
+  latestPendingGate,
+  latestResolutionForPlan,
+  latestResolutionSince,
+  type PlanBoundResolution,
+} from "./gate-ledger-select";
+
 const DIR = "_gates";
+
+/** The directory on the `chant/lifecycle` branch that holds gate ledgers, under a member's prefix when it has one. */
+export const GATES_DIR = DIR;
 const APPEND_RETRY_ATTEMPTS = 5;
 
-/**
- * The address of the approval surface for a gate, resolved from the CI
- * environment (#2028).
- *
- * #1485's argument for gate-as-fact was that approval gets an address:
- * "gate-as-PR gives approval a URL, a review surface, and CODEOWNERS as the
- * authorization model." What shipped recorded the gate and not the address,
- * so a pending-approval card had nothing to link to and gate-as-PR stayed a
- * convention. This is the narrow, honest half of that: when a tick (or a
- * `chant approve`) runs inside the PR/MR job that carries the change, the
- * loop genuinely knows where approval happens, and says so. Anywhere else it
- * returns `undefined` and the field is simply absent — never a guess, never a
- * synthesized link.
- *
- * The env-var fallback chain is the same one `--actor` and `--run-id` already
- * use (`../cli/handlers/components.ts`): GitHub Actions first, then GitLab CI.
- *
- * - GitHub Actions on a `pull_request` event: `GITHUB_SERVER_URL` +
- *   `GITHUB_REPOSITORY` + the PR number, which `GITHUB_REF_NAME` carries as
- *   `<n>/merge`. A push-event run has no PR, so it resolves to nothing.
- * - GitLab CI on a merge-request pipeline: `CI_MERGE_REQUEST_PROJECT_URL` +
- *   `CI_MERGE_REQUEST_IID`.
- */
-export function resolveApprovalUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const prNumber = /^(\d+)\/(merge|head)$/.exec(env.GITHUB_REF_NAME ?? "")?.[1];
-  if (prNumber && env.GITHUB_REPOSITORY) {
-    const server = (env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/$/, "");
-    return `${server}/${env.GITHUB_REPOSITORY}/pull/${prNumber}`;
-  }
-
-  if (env.CI_MERGE_REQUEST_PROJECT_URL && env.CI_MERGE_REQUEST_IID) {
-    return `${env.CI_MERGE_REQUEST_PROJECT_URL.replace(/\/$/, "")}/-/merge_requests/${env.CI_MERGE_REQUEST_IID}`;
-  }
-
-  return undefined;
-}
 
 /**
- * Whether `raw` is an address worth recording as one: an absolute `http`/
- * `https` URL. A gate's address is a link a reader is expected to follow, so
- * a relative path or a `file:`/`javascript:` scheme is refused at the CLI
- * boundary rather than written into an immutable record.
+ * The answer record a gate that asks a decision point cites (#3170): the
+ * point, the record's id (what `chant workspace points answer` takes) and its
+ * path from the repository root. On a pending fact it is the open question
+ * the run waits on; on a resolution, the answer that passed the gate, with
+ * the answer, the decider that gave it and the people who did.
  */
-export function isApprovalUrl(raw: string): boolean {
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
+export interface GateAnswerRef {
+  point: string;
+  id: string;
+  path: string;
+  answer?: string | boolean;
+  /** `table`, `model` or `quorum`. */
+  decider?: string;
+  answeredBy?: string[];
+  /**
+   * On a pending fact: the answers the gate passes on, when the gate names
+   * them (`point.pass`); absent means a noul point's yes. `chant run resume`
+   * reads it to tell an answer that passes the gate from one that does not,
+   * without the Op's config (#3835).
+   */
+  pass?: Array<string | boolean>;
 }
 
 /** One immutable gate-resolution record. */
@@ -112,6 +104,13 @@ export interface GateResolutionRecord {
   gate: string;
   /** Who resolved it — an actor name, the same convention `components release --actor` and `run approve --approver` use. */
   resolvedBy: string;
+  /**
+   * Who carried this approval to chant for `resolvedBy` (#3402): `chant
+   * approve --relayed-by`, such as a follower program relaying a person's
+   * approval. The approver is still `resolvedBy`; a seal covers this field
+   * too. Absent when the approver recorded it themselves.
+   */
+  relayedBy?: string;
   /** ISO-8601 timestamp, caller-supplied (library code never calls `Date.now()` internally). */
   timestamp: string;
   /** Optional free-text context. Before #2028 this was also where a PR link went by convention; put the link in {@link GateResolutionRecord.url} instead and leave this for prose. */
@@ -140,6 +139,13 @@ export interface GateResolutionRecord {
    */
   planDigest?: string;
   /**
+   * The environment this approval is for (#2574), copied off the pending fact
+   * it answers. Set for a component gate, whose ledger is keyed by component
+   * rather than by environment. A component gate counts only a resolution
+   * recorded for its own environment and plan.
+   */
+  environment?: string;
+  /**
    * The channel this resolution was authored on (chant#2384) — set by the
    * writer, never by the caller. `chant approve` records `"cli"`, the
    * `op-approve` MCP tool records `"mcp"`, an ACP-driven approve records
@@ -160,6 +166,51 @@ export interface GateResolutionRecord {
    * later should see which approvals had a second party and which did not.
    */
   sameOriginOverride?: boolean;
+  /**
+   * Whether a person or an agent recorded this, and the roles they claimed
+   * (#2508). Only a human approval counts toward a gate's quorum; an agent
+   * passes a gate only through a policy permit in `enforce` mode.
+   *
+   * Absent on every resolution written before #2508, and read as a human with
+   * no roles. Roles are claimed, not verified, the same local trust boundary
+   * as `resolvedBy`.
+   */
+  approver?: GateApprover;
+  /**
+   * The gate policy's decision for this approval (#2508), evaluated when it
+   * was recorded. Present only when the gate declared a policy.
+   */
+  policyDecision?: GatePolicyDecision;
+  /**
+   * An ssh signature over this approval by `resolvedBy` (#3163, ws-080):
+   * `chant approve --sign`, in the `chant-gate` namespace over the op, gate,
+   * environment, plan digest, approver and timestamp. It attests the approver
+   * only when the signers file at base lists a key for them. A gate the
+   * declaration's `identity.gates` names counts only approvals whose seal
+   * verifies. Absent on an unsigned approval.
+   */
+  seal?: GateApprovalSeal;
+  /**
+   * The forge review this approval came from (#3684): a wave whose approval
+   * mode is `pr-review` writes it when the merged pull request's head was
+   * approved by a writer other than its author and planned this digest.
+   * `resolvedBy` is the first of `approvers`.
+   */
+  review?: { pr: number; head: string; approvers: string[] };
+  /**
+   * The answer record that passed the gate, on a gate that asks a decision
+   * point (#3170). The run writes this resolution itself when the point's
+   * question is answered with an answer the gate passes on; the record's
+   * `constrains` names the gate back (`gate:<op>/<gate>`).
+   */
+  answer?: GateAnswerRef;
+}
+
+/** A gate approval's seal (#3163): who signed, the key's fingerprint (reported, never trusted), and the armored signature. */
+export interface GateApprovalSeal {
+  signer: string;
+  key: string;
+  signature: string;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
@@ -177,6 +228,21 @@ export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">
  * ledger by a line a minute. Once `expiresAt` passes, the fact is stale and
  * the next run records a fresh one.
  */
+export interface PendingGateWave {
+  number: number;
+  name: string;
+  /** The Op waves spec's name. */
+  op?: string;
+}
+
+/** The hook that holds a wave on a gate (#3886): which hook asked, at which moment, and for which run. */
+export interface PendingGateHeldBy {
+  hook: string;
+  moment: string;
+  /** The run, for a `perRun` hook. */
+  target?: string;
+}
+
 export interface PendingGateRecord {
   /** Schema version, so an incompatible future shape is detected before being misread. */
   version: 1;
@@ -196,15 +262,29 @@ export interface PendingGateRecord {
   /** The address approval happens at, when the run knew one — see {@link resolveApprovalUrl}. */
   url?: string;
   /**
+   * The CI job that reached this gate (#3683), when it ran in one: what
+   * `chant approve --resume` and `chant run resume` hand the forge to start
+   * that job again (`../op/gate-resume.ts`). Absent outside CI.
+   */
+  resume?: GateRunLocator;
+  /**
    * The plan the run reached this gate with (#2300) — `computePlanDigest`'s
    * output (`./plan-digest.ts`). This is what `chant approve` copies onto the
    * resolution by default, so approving the standing fact approves the plan
    * the approver was shown rather than the next run's.
    *
-   * Absent when the gate binds no plan (a component gate, an authored `gate`
-   * step with no `plan`), which is the shape every gate had before #2300.
+   * Absent when the gate binds no plan (an authored Op `gate` step with no
+   * `plan`), which is the shape every gate had before #2300. A component gate
+   * binds one since #2574.
    */
   planDigest?: string;
+  /**
+   * The environment the run reached this gate in (#2574). Set by the
+   * component driver, whose gate ledger is keyed by component, so pending
+   * facts for staging and prod stand side by side and `chant approve --env`
+   * can pick one.
+   */
+  environment?: string;
   /**
    * The channel the run that reached this gate was driven from (chant#2384).
    *
@@ -212,6 +292,42 @@ export interface PendingGateRecord {
    * and resolved over MCP has one author, not two.
    */
   origin?: GateOrigin;
+  /**
+   * The gate is never resolved over MCP or ACP (chant#3485), whichever channel
+   * reached it. The declaration travels on the record because an Op that MCP
+   * cannot discover, such as `fan-out`, has no config to read it from.
+   */
+  neverOverMcp?: true;
+  /**
+   * The gate's quorum and policy (#2508), with its context resolved against
+   * this run. `chant approve` reads it to evaluate the policy against the plan
+   * the run produced, and `chant operator status` to show quorum progress.
+   */
+  approval?: ResolvedGateApproval;
+  /**
+   * The approval mode an Op wave asked under (#3861): `ledger`, `pr-review` or
+   * `sealed`, as read at base. It says which approvals count for the gate, so a
+   * reader (behold, gate-audit) decides under the mode the wave used rather
+   * than inferring it from config. Not the quorum block in `approval`.
+   */
+  approvalMode?: GateApprovalSource;
+  /**
+   * The Op wave this gate belongs to (#3839): a hold on another gate or a
+   * policy denial. Absent on a gate that is not a wave's.
+   */
+  wave?: PendingGateWave;
+  /**
+   * The hook that holds the wave on this gate (#3886), on a hold only: its
+   * name, the moment it ran at and its run. A reader names the holder from it
+   * rather than from `description`, which the hook writes.
+   */
+  heldBy?: PendingGateHeldBy;
+  /**
+   * The open question this gate waits on, on a gate that asks a decision
+   * point (#3170). It is answered with `chant workspace points answer <id>`,
+   * not `chant approve`.
+   */
+  answer?: GateAnswerRef;
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
@@ -219,13 +335,6 @@ export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;
 /** Either kind of line in `_gates/<op>.jsonl`. */
 export type GateLedgerRecord = GateResolutionRecord | PendingGateRecord;
 
-/** The default a gate's pending fact expires after when its `GateStep` declares no `timeout` — the same 48h `GateStep.timeout` documents as its own default. */
-export const DEFAULT_GATE_EXPIRY = "48h";
-
-/** Whether a pending fact has aged out of relevance at `nowIso`. */
-export function isPendingGateExpired(record: PendingGateRecord, nowIso: string): boolean {
-  return new Date(record.expiresAt).getTime() <= new Date(nowIso).getTime();
-}
 
 function filename(op: string): string {
   return `${op}.jsonl`;
@@ -238,8 +347,8 @@ function filename(op: string): string {
  * fact was appended to (#2243) rather than describing it in prose that drifts
  * from `DIR`.
  */
-export function gateLedgerPath(op: string): string {
-  return `${DIR}/${filename(op)}`;
+export function gateLedgerPath(op: string, memberPrefix = ""): string {
+  return `${memberPrefix}${DIR}/${filename(op)}`;
 }
 
 /** Append one immutable gate-resolution record. Does not push to the remote — call `pushLifecycle` (./git.ts) afterward, same two-step shape every other ledger write here uses. Retries on `RefCASConflictError` the same way `appendConvergeRecord` does (./converge-ledger.ts) — a concurrent writer to a different op's/env's file on the same orphan branch is the ordinary case, not an edge case. The baseline read must be `readPathSha` + `readBlobBySha` rather than `readBlobFromPath`, so the exact sha `existing` came from can be passed as `expectPriorPathSha` — see `writeBlobToPath` (./git.ts) for the race that closes. */
@@ -270,6 +379,10 @@ export async function appendPendingGate(
     version: 1,
     kind: "pending",
     origin: currentGateOrigin(),
+    // chant#3485: an Op MCP cannot discover declares nothing, so the gate
+    // records the rule for it: fan-out, workspace-upgrade (chant#3513) and
+    // the pull-request gate's `pr-<number>` op.
+    ...(isNeverOverMcpGateOp(input.op) ? { neverOverMcp: true as const } : {}),
     ...input,
   };
   const commit = await appendGateLine(record, "Pending gate record", opts);
@@ -288,7 +401,7 @@ async function appendGateLine(
     try {
       const priorSha = await readPathSha(DIR, filename(record.op), opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
-      const content = existing ? `${existing.replace(/\n$/, "")}\n${json}` : json;
+      const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${json}\n`;
       return await writeBlobToPath(DIR, filename(record.op), content, message, {
         ...opts,
         expectPriorPathSha: priorSha,
@@ -313,7 +426,18 @@ export async function readGateLedger(
 ): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number }> {
   const content = await readBlobFromPath(DIR, filename(op), opts);
   if (!content) return { resolutions: [], pending: [], malformed: 0 };
+  return parseGateLedger(content);
+}
 
+/**
+ * Split the text of one gate ledger file into its two kinds of line, oldest
+ * first, the way {@link readGateLedger} reads it. Exported for a reader that
+ * fetches the file itself, such as `chant workspace status` (#2674), which
+ * reads every member's ledger by its full path from the workspace root.
+ */
+export function parseGateLedger(
+  content: string,
+): { resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number } {
   const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
   const resolutions: GateResolutionRecord[] = [];
   const pending: PendingGateRecord[] = [];
@@ -339,12 +463,25 @@ export async function readGateLedger(
         malformed++;
         continue;
       }
+      // #2574: the same reasoning for the environment a component gate
+      // approval is bound to.
+      const rawEnv: unknown = (parsed as { environment?: unknown }).environment;
+      if (rawEnv !== undefined && typeof rawEnv !== "string") {
+        malformed++;
+        continue;
+      }
       if (parsed.kind === "pending") {
         if (typeof parsed.expiresAt !== "string") {
           malformed++;
           continue;
         }
-        pending.push(parsed as PendingGateRecord);
+        // #3887: a `wave` or `heldBy` of the wrong shape is dropped, so a reader can trust the type.
+        const rec = parsed as PendingGateRecord;
+        const w = (parsed as { wave?: unknown }).wave as Partial<PendingGateWave> | null | undefined;
+        if (w !== undefined && !(w && typeof w === "object" && typeof w.number === "number" && typeof w.name === "string")) delete rec.wave;
+        const h = (parsed as { heldBy?: unknown }).heldBy as Partial<PendingGateHeldBy> | null | undefined;
+        if (h !== undefined && !(h && typeof h === "object" && typeof h.hook === "string" && typeof h.moment === "string")) delete rec.heldBy;
+        pending.push(rec);
         continue;
       }
       if (typeof parsed.resolvedBy !== "string") {
@@ -366,102 +503,4 @@ export async function readGateResolutions(
 ): Promise<{ records: GateResolutionRecord[]; malformed: number }> {
   const { resolutions, malformed } = await readGateLedger(op, opts);
   return { records: resolutions, malformed };
-}
-
-/** The most recent pending fact for `gate`, expired or not — the anchor {@link latestResolutionSince} measures a resolution against. `undefined` when the gate has never been recorded pending. */
-export function latestPendingGate(
-  records: PendingGateRecord[],
-  gate: string,
-): PendingGateRecord | undefined {
-  let latest: PendingGateRecord | undefined;
-  for (const r of records) {
-    if (r.gate !== gate) continue;
-    if (!latest || new Date(r.timestamp).getTime() >= new Date(latest.timestamp).getTime()) latest = r;
-  }
-  return latest;
-}
-
-/** The most recent resolution for `gate` recorded after `sinceIso` (a gated tick's own timestamp) — what `chant operator status` uses to tell a resolved gate from a still-pending one. `undefined` when no such resolution exists. */
-export function latestResolutionSince(
-  records: GateResolutionRecord[],
-  gate: string,
-  sinceIso: string,
-): GateResolutionRecord | undefined {
-  const since = new Date(sinceIso).getTime();
-  let latest: GateResolutionRecord | undefined;
-  for (const r of records) {
-    if (r.gate !== gate) continue;
-    if (new Date(r.timestamp).getTime() < since) continue;
-    if (!latest || new Date(r.timestamp).getTime() >= new Date(latest.timestamp).getTime()) latest = r;
-  }
-  return latest;
-}
-
-/** What {@link latestResolutionForPlan} found for the plan a run is holding. */
-export interface PlanBoundResolution {
-  /** The resolution that answers this gate for this plan. Absent when nothing does. */
-  resolution?: GateResolutionRecord;
-  /**
-   * Present instead of {@link PlanBoundResolution.resolution} when a
-   * resolution stands for this gate but for a different plan — the newest
-   * such record, so a refusal can name who approved what and when. Its
-   * `planDigest` is `undefined` for a record written before #2300.
-   */
-  mismatched?: GateResolutionRecord;
-}
-
-/**
- * The resolution that answers `gate` for the plan `planDigest` identifies
- * (#2300).
- *
- * The criterion is the digest; recency is only the tiebreak between several
- * resolutions that all match it. That inversion is the whole point of the
- * issue: {@link latestResolutionSince} asks "is there a newer approval",
- * which a run answers yes to no matter what has changed since, and this asks
- * "is there an approval of *this*".
- *
- * - `planDigest` `undefined` — the gate binds no plan (a component gate, a
- *   `gate` step authored with no `plan`). Falls straight through to
- *   {@link latestResolutionSince}: gates that never claimed to bind a plan
- *   behave exactly as they did before #2300.
- * - A resolution whose `planDigest` equals `planDigest` answers the gate.
- * - A resolution for a different plan does not, and comes back as
- *   `mismatched` so the caller can name both digests.
- * - A resolution with no `planDigest` at all — every record written before
- *   #2300 — does not either, and comes back as `mismatched` with an absent
- *   `planDigest`. This is the safe reading of the migration: such a record
- *   proves someone approved something, and nothing about what. Accepting it
- *   once would silently apply the very change this check exists to catch, on
- *   exactly the estates that have been running longest. The cost is one
- *   further `chant approve` per gate after the upgrade, which the refusal
- *   says out loud.
- */
-export function latestResolutionForPlan(
-  records: GateResolutionRecord[],
-  gate: string,
-  sinceIso: string,
-  planDigest: string | undefined,
-): PlanBoundResolution {
-  if (planDigest === undefined) {
-    const resolution = latestResolutionSince(records, gate, sinceIso);
-    return resolution ? { resolution } : {};
-  }
-
-  const since = new Date(sinceIso).getTime();
-  let matched: GateResolutionRecord | undefined;
-  let mismatched: GateResolutionRecord | undefined;
-  for (const r of records) {
-    if (r.gate !== gate) continue;
-    if (new Date(r.timestamp).getTime() < since) continue;
-    const newest = (best: GateResolutionRecord | undefined) =>
-      !best || new Date(r.timestamp).getTime() >= new Date(best.timestamp).getTime();
-    if (r.planDigest === planDigest) {
-      if (newest(matched)) matched = r;
-    } else if (newest(mismatched)) {
-      mismatched = r;
-    }
-  }
-
-  if (matched) return { resolution: matched };
-  return mismatched ? { mismatched } : {};
 }

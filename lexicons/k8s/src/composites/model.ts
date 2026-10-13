@@ -22,6 +22,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { PersistentVolumeClaim } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 /** Where the model's weights live. Maps to the matching KServe storage-initializer scheme. */
 export type ModelSource = "hf" | "gcs" | "s3" | "pvc";
@@ -56,7 +57,7 @@ export interface ModelProps {
   };
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    cachePvc?: Partial<Record<string, unknown>>;
+    cachePvc?: MemberDefaults<"PersistentVolumeClaim">;
   };
 }
 
@@ -83,7 +84,7 @@ interface ModelCachePvcProps {
   version: string;
   storageClass: string;
   size: string;
-  defaults?: Partial<Record<string, unknown>>;
+  defaults?: MemberDefaults<"PersistentVolumeClaim">;
 }
 
 const ModelCachePvc = Composite<ModelCachePvcProps, { pvc: InstanceType<typeof PersistentVolumeClaim> }>(

@@ -6,8 +6,14 @@
  * the right shape. The dialect differs in three small ways, all handled here as
  * a pre-pass over the resolved entity graph before the github serializer runs:
  *
- *  1. `permissions` and `continue-on-error` are silently ignored by the Forgejo
- *     runner — we drop them from the output and warn per occurrence.
+ *  1. `continue-on-error` is silently ignored by the Forgejo runner — we drop
+ *     it from the output and warn per occurrence. `permissions` is reduced to
+ *     the one scope a Forgejo job can still use: `id-token`, which a job that
+ *     assumes a cloud role over OIDC needs (#3500). Every other scope
+ *     (`contents`, `pull-requests`, ...) is dropped without a warning, since
+ *     Forgejo reads none of them and flags the key in the run page's
+ *     "Workflow warnings" box. A `permissions` block with no `id-token` goes
+ *     away whole; one with it keeps only that line.
  *  2. GitHub-hosted runner labels (`ubuntu-latest`, …) have no fixed meaning on
  *     Forgejo — we map them to a default Forgejo label, overridable per project.
  *  3. Anything we can't place (an unmapped runner label) passes through with a
@@ -28,8 +34,36 @@ import { resolveActionRef } from "./actions";
  * Keys the Forgejo runner ignores. Emitting them is misleading (they look
  * enforced but aren't), so the dialect drops them. Compared in kebab-case so
  * both `continueOnError` and `continue-on-error` spellings are caught.
+ * `permissions` is handled apart, by {@link reducePermissions}.
  */
-const DROPPED_KEYS = new Set(["permissions", "continue-on-error"]);
+const DROPPED_KEYS = new Set(["continue-on-error"]);
+
+/** The one `permissions` scope kept: a job needs it to request an OIDC token. */
+const KEPT_PERMISSION = "id-token";
+
+const PERMISSION_LEVELS = new Set(["read", "write", "none"]);
+
+/**
+ * True for a GitHub `permissions` value: `read-all`/`write-all`, or a map of
+ * scope to `read`/`write`/`none`. Anything else (an action's `with: {
+ * permissions: ... }` input, say) is not one and passes through untouched.
+ */
+function isPermissionsValue(value: unknown): boolean {
+  if (typeof value === "string") return value === "read-all" || value === "write-all";
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.values(value as Record<string, unknown>);
+  return entries.every((v) => typeof v === "string" && PERMISSION_LEVELS.has(v));
+}
+
+/**
+ * Reduce a `permissions` value to what Forgejo can use: the `id-token` scope,
+ * or `undefined` when there is none (the caller then omits the key).
+ */
+function reducePermissions(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const scope = (value as Record<string, unknown>)[KEPT_PERMISSION];
+  return scope === undefined ? undefined : { [KEPT_PERMISSION]: scope };
+}
 
 /** Property key whose value is a runner-label selector. */
 const RUNS_ON_KEY = "runs-on";
@@ -112,6 +146,11 @@ function transformValue(value: unknown, ctx: TransformCtx): unknown {
         `forgejo: dropped '${kebab}' in ${ctx.where} — the Forgejo runner ignores it. ` +
           `Re-establish this control through your Forgejo/runner configuration.`,
       );
+      continue;
+    }
+    if (kebab === "permissions" && isPermissionsValue(v)) {
+      const kept = reducePermissions(v);
+      if (kept) result[key] = kept;
       continue;
     }
     if (kebab === RUNS_ON_KEY) {

@@ -1,48 +1,24 @@
 /**
  * Thin wasm glue for the carve-out advisor (#214 T1): read a Terraform estate's
- * `.tf` files, run them through `@cdktf/hcl2json`, merge into one tree, and hand
- * off to the pure `buildGraph`.
- *
- * `@cdktf/hcl2json` is NOT a chant dependency — it carries a ~1.8 MB wasm blob
- * and only carve-out users need it. It is lazy-loaded here and, if absent, the
- * advisor fails with a one-line install hint.
+ * `.tf` files, run them through `@cdktn/hcl2json`, merge into one tree, and hand
+ * off to the pure `buildGraph`. The parser loader lives in `./hcl2json`, which
+ * this module re-exports.
  */
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { buildGraph, collectExpressions, type ExpressionRefs } from "./graph";
 import { readStateInstanceCounts, applyStateCounts } from "./state";
+import { loadHcl2json, type Hcl2Json } from "./hcl2json";
 import type { Hcl2JsonTree, TfGraph } from "./types";
 
-/** Minimal shape of the parser exports we depend on. */
-export interface Hcl2Json {
-  parse: (filename: string, hcl: string) => Promise<Hcl2JsonTree>;
-  /** Expression-AST reference extraction (#998) — one traversal accessor per reference. */
-  getReferencesInExpression: (filename: string, expression: string) => Promise<Array<{ value: string }>>;
-}
-
-export class Hcl2JsonNotInstalled extends Error {
-  constructor(cause: unknown) {
-    super(
-      "Terraform carve-out needs the HCL parser, which is not installed.\n" +
-        "  Install it once:  npm install -D @cdktf/hcl2json\n" +
-        `(underlying error: ${cause instanceof Error ? cause.message : String(cause)})`,
-    );
-    this.name = "Hcl2JsonNotInstalled";
-  }
-}
-
-/**
- * Lazy-load the optional HCL parser. Throws `Hcl2JsonNotInstalled` with an
- * install hint when the package is missing, rather than a raw MODULE_NOT_FOUND.
- */
-export async function loadHcl2json(): Promise<Hcl2Json> {
-  try {
-    return (await import("@cdktf/hcl2json")) as Hcl2Json;
-  } catch (err) {
-    throw new Hcl2JsonNotInstalled(err);
-  }
-}
+export {
+  loadHcl2json,
+  Hcl2JsonNotInstalled,
+  HCL2JSON_RECORD_ENV,
+  type Hcl2Json,
+  type Hcl2JsonRecordLine,
+} from "./hcl2json";
 
 /**
  * Resolve every interpolated string in the merged tree through the parser's

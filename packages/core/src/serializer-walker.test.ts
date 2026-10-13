@@ -118,6 +118,16 @@ describe("walkValue", () => {
     });
   });
 
+  test("an __attrRef envelope naming a property reads the attribute that property's AttrRef carries", () => {
+    // A fold writes `db.Endpoint_Address` as the property name; the attribute
+    // is `Endpoint.Address`.
+    const TestDb = createResource("Test::Db", "test", { Endpoint_Address: "Endpoint.Address" });
+    const db = new TestDb({}) as unknown as Declarable;
+    const names = new Map<Declarable, string>([[db, "MyDB"]]);
+    const value = { __attrRef: { entity: "MyDB", attribute: "Endpoint_Address" } };
+    expect(walkValue(value, names, mockVisitor)).toEqual({ __getAtt: ["MyDB", "Endpoint.Address"] });
+  });
+
   test("resolves standalone __attrRef envelope in plain object", () => {
     const names = new Map<Declarable, string>();
     const value = { __attrRef: { entity: "MyBucket", attribute: "DomainName" } };

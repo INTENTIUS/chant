@@ -3,12 +3,16 @@
  * `../components/cli-support.ts`'s `generateComponentsPipeline`. Mirrors that
  * module's own test style (`cli-support.test.ts`): a minimal mocked lexicon
  * plugin satisfying `isLexiconPlugin`, real `discoverOps()` resolution
- * against this repo's actual `*.op.ts` fixtures (`examples/alb-deploy.op.ts`
- * — see `./discover.test.ts`) so Op-name validation exercises the real
- * discovery path rather than a stub.
+ * against this repo's actual `*.op.ts` fixtures
+ * (`examples/gitlab-aws-alb-infra/ops/alb-deploy.op.ts`, see
+ * `./discover.test.ts`) so Op-name validation exercises the real discovery
+ * path rather than a stub. Discovery starts in that example: since #2527 the
+ * walk from the git root stops at child projects, so the repo root finds none.
  */
 
 import { describe, test, expect, vi } from "vitest";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { generateOpsPipeline, withOpSchedules } from "./generate-pipeline";
 import type { DiscoveredOp } from "./discover";
 import type { OpConfig } from "./types";
@@ -34,6 +38,9 @@ vi.mock("@intentius/chant-lexicon-gitlab", () => ({
   },
 }));
 
+/** The example project that holds `alb-deploy.op.ts`. */
+const ALB_INFRA = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../examples/gitlab-aws-alb-infra");
+
 describe("generateOpsPipeline", () => {
   test("errors when the target lexicon has no generateOpPipeline", async () => {
     const result = await generateOpsPipeline([{ name: "alb-deploy", schedule: "0 6 * * *" }], "aws");
@@ -45,6 +52,8 @@ describe("generateOpsPipeline", () => {
     const result = await generateOpsPipeline(
       [{ name: "definitely-not-a-real-op", schedule: "0 6 * * *" }],
       "gitlab",
+      undefined,
+      ALB_INFRA,
     );
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/Unknown Op\(s\): definitely-not-a-real-op/);
@@ -52,7 +61,7 @@ describe("generateOpsPipeline", () => {
 
   test("validates every named Op and delegates to the lexicon plugin", async () => {
     const specs: ScheduledOpSpec[] = [{ name: "alb-deploy", schedule: "0 6 * * *", findingMode: "issue" }];
-    const result = await generateOpsPipeline(specs, "gitlab");
+    const result = await generateOpsPipeline(specs, "gitlab", undefined, ALB_INFRA);
     expect(result.success).toBe(true);
     expect(result.files).toEqual([{ name: "alb-deploy.yml", yaml: "# alb-deploy @ 0 6 * * *" }]);
     expect(result.jobs).toEqual([
@@ -66,7 +75,7 @@ describe("generateOpsPipeline", () => {
   // `PipelineAuditOp`, `ReconcileOp`) only ever sets `schedule`.
   test("a legacy `{ schedule }` spec with no `trigger` round-trips unchanged", async () => {
     const specs: ScheduledOpSpec[] = [{ name: "alb-deploy", schedule: "0 6 * * *" }];
-    const result = await generateOpsPipeline(specs, "gitlab");
+    const result = await generateOpsPipeline(specs, "gitlab", undefined, ALB_INFRA);
     expect(result.success).toBe(true);
     expect(result.files).toEqual([{ name: "alb-deploy.yml", yaml: "# alb-deploy @ 0 6 * * *" }]);
     expect(result.jobs).toEqual([

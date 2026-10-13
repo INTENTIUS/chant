@@ -57,7 +57,7 @@ The daemon is a convenience, never a requirement. If it dies, nothing breaks and
 
 Single-writer per environment is a lease, and `git update-ref` already supports compare-and-swap: pass the ref's last-observed value as its old value, and the write only lands if nothing moved it in between. `chant operator` uses exactly that — no lock file, no new mechanism:
 
-- Each `ConvergeOp` gets a dedicated ref, `refs/chant/lease/<op-name>`, separate from the `chant/lifecycle` ledger branch's own history. The ref's value **is** the lease record — a bare git blob (holder, a fencing token, `acquiredAt`, `expiresAt`), no tree, no commit.
+- Each `ConvergeOp` gets a dedicated ref, `refs/chant/lease/<op-name>`, separate from the `chant/lifecycle` ledger branch's own history. In a workspace member the ref is `refs/chant/lease/_members/<member>/<op-name>` (see [Ledgers](/chant/reference/workspace-declaration/#ledgers)). The ref's value **is** the lease record — a bare git blob (holder, a fencing token, `acquiredAt`, `expiresAt`), no tree, no commit.
 - **Acquire**: read the ref's current value; if it's absent, expired, or already held by this same process, write a new value with `update-ref <ref> <new> <old>`. A concurrent acquirer loses the CAS outright — `git update-ref`'s own lockfile-then-rename is already an atomic local mutex, so no `flock` is needed on top of it.
 - **Renew**: the same acquire call, called every round for an op this process still holds — same fencing token, pushed-out expiry.
 - **Fencing token**: a fresh token is minted only when the lease actually changes hands (first acquire, or a re-acquire after the previous holder's lease expired). A tick checks, right before trusting its own work, that its token is still the live one — a lease stolen mid-tick (the process stalled past its TTL) is detected, not silently trusted.
@@ -68,6 +68,8 @@ chant operator --lease-ttl 5m        # default; long enough for a normal tick, s
 ```
 
 ## Crash recovery
+
+An operator that is stopped cleanly (Ctrl-C or SIGTERM) releases the Op leases it holds, so a restart ticks on its first round instead of printing `skipped=1(lease-held:<old holder>)` until they expire ([#2879](https://github.com/INTENTIUS/chant/issues/2879)). A killed one cannot, and that is the case the TTL covers.
 
 There is no special crash-recovery code path — restarting is ticking. A killed operator simply stops renewing its lease; the lease expires on its own TTL; the next round (this process restarted, a different machine's operator, or a bare `chant run <name>` from cron) re-acquires and re-ticks. A converge tick re-derives everything from live observation every time (`ConvergeOp`'s own design), so re-ticking after a crash and ticking on a normal schedule are the same act, not two different code paths to test and trust separately.
 
@@ -149,6 +151,27 @@ steward's turn ends at the gate rather than sitting on the thread waiting, and
 the thread once the resolution is written, so the sandbox re-runs and reads
 the fact.
 </Aside>
+
+### Reading the ledger as an audit trail
+
+`@intentius/chant/lifecycle/gate-audit` turns `_gates/<op>.jsonl` lines into typed audit entries and reports what the ledger is missing. It is a pure function that takes ledger lines and returns entries and gaps. It touches no git, clock or file, and it bundles small enough for a product's single CI file. The product keeps storage and rendering.
+
+```ts
+import { deriveGateAudit, gateLedgerLines } from "@intentius/chant/lifecycle/gate-audit";
+
+const { entries, gaps } = deriveGateAudit({
+  ledgers: [{ op: "tf-apply", lines: gateLedgerLines(fileText) }],
+  applies: [{ ref: "reports/1", at, gate: "wave-1", digest }],
+});
+```
+
+Entry kinds are `approval-requested`, `approved` (with `seal`, `signer`, `approver`, `relayedBy` and `review`), `override-requested`, `override-recorded` (reason in `note`), `revoked`, and, for the applies a product passes in, `applied` (with the approval it ran under) and `override-spent`. A line a commit removed is a revocation: feed `gateLedgerLinesFromLog` the text of `git log -p --unified=0` over the file. An override gate is one of op `policy-override` or named `override-<rule>` unless `isOverride` says otherwise. Gaps are `approval-without-request`, `unsealed` (when `sealed(op, gate)` says the gate needs a seal), `approval` and `override` (an apply with no approval or override behind it), and `malformed-line`. `readGateAuditLedgers(port, ops)` reads the current ledgers through a `GateLedgerPort`.
+
+Op-wave decision records carry the outcome of every hook (`outcomes`, with skipped moments and chained holds). Pass them as `decisions: [{ ref, at, record }]` (or `text`, the file as written) and each outcome becomes a `hook` entry with `hook: { moment, name, target, outcome, exit, reason }`, where `outcome` is `passed`, `failed`, `held` or `skipped`. The entry carries the wave (`wave`). It links to the wave's approval through `under` and to its `applied` entry through `applied`, matched on gate and digest. A record holds no time or place, so `ref` and `at` come from the caller; `readGateAuditDecisions(port, dir, at)` reads every `.json` under a directory of a `LedgerReadPort` for a product that keeps them on the ledger branch. A record that is not a decision record is a `malformed-line` gap.
+
+Each ledger entry's `source` names its line: `path`, `line` (the file's line number from `gateLedgerLines`, otherwise the line's place in `lines`) and `text`, exactly as passed in. Lines from `gateLedgerLinesFromLog` keep the commit that added or removed them, with its date, author and, if the log format ends in `%x1f%ae`, the author's email, as `source.author`. Approvals and overrides read that way also carry `committedBy`, the author of the commit that added the line. Under `approval: ledger` anyone who can push may write any `resolvedBy`, so `committedBy` is the check on who actually pushed it. The default `id` digests the source and the record. A product that already holds its own ids passes `id: (entry) => string`, which receives each entry with its default id and returns the id to use. `applied` and `override-spent` entries point at the returned ids through `under`.
+
+`seal` records how an approval was authorised. A line that came through a pull request review (`via: "pr-review"`, or a `review` field) is `review` even if `chant approve` also sealed it, because the review is what let it through. A sealed line that did not come through a review is `sealed`, and a line with neither is `unsigned`. Any line that carries a seal also gets `sealed: true` and its `signer`, so a sealed review keeps both facts.
 
 ## `chant operator status`
 

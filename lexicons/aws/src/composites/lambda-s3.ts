@@ -33,6 +33,7 @@ export type LambdaS3Result = LambdaFunctionResult & {
   permission: InstanceType<typeof Permission>;
 };
 
+/** A Lambda function with an S3 bucket, bucket access for its role and an optional bucket-notification trigger. */
 export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket: InstanceType<typeof Bucket>; permission?: InstanceType<typeof Permission> }>((props) => {
   const encryptionDefault = new Bucket_ServerSideEncryptionByDefault({ SSEAlgorithm: "AES256" });
   const encryptionRule = new Bucket_ServerSideEncryptionRule({

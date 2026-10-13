@@ -30,7 +30,7 @@
  * policy tool (1,888 lines, 222 cited URLs, attached to that issue as
  * comments). The tools and documents below are what the survey found worth
  * crediting from across that research. #2108 added none of them to
- * `PRIOR_ART`: `packages/core/src/audit/catalog.test.ts`'s "every registered
+ * `PRIOR_ART`: `packages/core/src/audit/catalog.e2e.test.ts`'s "every registered
  * tool is credited" test fails on an entry no shipped rule cites yet, and
  * neither TF001 nor TF101 cites anything. #2109 (TF002-TF005) is the first to
  * draw from this list: `tflint-ruleset-terraform`, `terraform-sentinel-policies`,
@@ -56,7 +56,7 @@
  * | `tflint-ruleset-redeploy` | tflint-ruleset-redeploy | https://github.com/RedeployAB/tflint-ruleset-redeploy | 0BSD | scanner | Community ruleset; richest source of language-level rules outside the official set. Sweep: indexed from `docs/rules/README.md`, same table shape (33 rules). |
  * | `tflint-ruleset-avm` | tflint-ruleset-avm | https://github.com/Azure/tflint-ruleset-avm | MIT | scanner | Azure Verified Modules conformance; two of its 33 rules are provider-agnostic. Sweep: indexed from the repository-root `RULES.md`, since `docs/` holds pages for only two rules (33 rules). |
  * | `tfsec` | tfsec | https://github.com/aquasecurity/tfsec | MIT | scanner | Historical: not archived but effectively frozen (no release since 2025-05); its docs site 404s above v0.61.x, so cite pinned repository paths (`github.com/aquasecurity/tfsec/blob/master/docs/checks/...`), not the docs site. Sweep: indexed from the root `rules.md` on `master`, a flat table of all 152 check ids, because `docs/checks` nests a directory per provider, service and check. |
- * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: not registered in `PRIOR_ART` (no rule cites it yet) and its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. |
+ * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: registered in `PRIOR_ART` since TF030 (#2285) cited `aws-ec2-no-public-ingress-sgr` (TF032 also cites `aws-ecs-no-plaintext-secrets`, AWS-0036), but not swept: its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. Check a cited id is live: TF031's counterpart, `aws-iam-no-policy-wildcards`, is a `deprecated: true` stub with no rule body, so TF031 does not cite it. |
  * | `terraform-sentinel-policies` | HashiCorp reference Sentinel policies | https://github.com/hashicorp/terraform-sentinel-policies | MPL-2.0 | specification | HashiCorp's own example policy set; ships zero rules baked into HCP Terraform itself, so treat a cited policy as a documented pattern (`specification`) unless a future entry runs it as a real check (`scanner`); the `kind` union allows either. Sweep: indexed by listing the five per-cloud directories, whose `.sentinel` filenames are the policy ids credits cite (73 policies); the repository publishes no index page. |
  * | `choudoufu` | choudoufu | https://github.com/INTENTIUS/choudoufu | MPL-2.0 | scanner | Its `internal/live/lint` package; experimental, AWS-only. Sweep: unsweepable, its rule ids are Go constants in `internal/live/lint/issue.go` and it publishes no rule index. |
  * | `hashicorp-style-guide` | HashiCorp Terraform style guide | https://developer.hashicorp.com/terraform/language/style | n/a | specification | Sweep: unsweepable, one prose page of recommendations with no rule ids; a credit quotes the sentence and links its fragment. |
@@ -400,5 +400,159 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
       relation: "overlaps",
     },
     { tool: "kics", rule: "a88baa34-e2ad-44ea-ad6f-8cac87bc7c71", url: "https://docs.kics.io/latest/secrets/", relation: "overlaps" },
+  ],
+  TF030: [
+    // Every credit overlaps; none is equivalent. TF030 is WAW019's port list
+    // (22, 3389, 3306, 5432) on 0.0.0.0/0 or ::/0, read across the three
+    // Terraform shapes. Checkov checks one port per id and, unlike TF030,
+    // reads tcp 0-0 as every port and passes any rule with `self = true`.
+    // tfsec flags a /0 on any port; trivy-checks only SSH and RDP; KICS a
+    // longer port list; the Sentinel policies only `aws_security_group_rule`
+    // with an exact `to_port`. Each upstream id was read from its source on
+    // 2026-10-02 (checkov `AbsSecurityGroupUnrestrictedIngress.py`, trivy-checks
+    // `no_public_ingress_sgr.rego` metadata, KICS `metadata.json`, tfsec
+    // `rules.md`).
+    { tool: "checkov", rule: "CKV_AWS_24", url: "https://www.checkov.io/5.Policy%20Index/terraform.html", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_25", url: "https://www.checkov.io/5.Policy%20Index/terraform.html", relation: "overlaps" },
+    {
+      tool: "tfsec",
+      rule: "aws-vpc-no-public-ingress-sgr",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/vpc/no-public-ingress-sgr/index.md",
+      relation: "overlaps",
+    },
+    {
+      tool: "trivy-checks",
+      rule: "aws-ec2-no-public-ingress-sgr",
+      url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/no_public_ingress_sgr.rego",
+      relation: "overlaps",
+    },
+    {
+      tool: "kics",
+      rule: "381c3f2a-ef6f-4eff-99f7-b169cda3422c",
+      url: "https://docs.kics.io/latest/queries/terraform-queries/aws/381c3f2a-ef6f-4eff-99f7-b169cda3422c/",
+      relation: "overlaps",
+    },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "restrict-ingress-sg-rule-ssh",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-ssh.sentinel",
+      relation: "overlaps",
+    },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "restrict-ingress-sg-rule-rdp",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-rdp.sentinel",
+      relation: "overlaps",
+    },
+  ],
+  // tfsec's check also flags a service wildcard (`s3:*`), which TF031 does
+  // not, so "overlaps". checkov splits the condition four ways: CKV_AWS_63
+  // (Action "*" on the policy resources, plus aws_ssoadmin_permission_set_
+  // inline_policy, which TF031 does not read) and CKV_AWS_49 (the same on the
+  // data source, which TF031 extends with Resource "*"); CKV_AWS_355/356 ask
+  // cloudsplaining whether Resource "*" meets a RESTRICTABLE action, a
+  // narrower test than TF031's literal one. trivy-checks has no credit:
+  // `aws-iam-no-policy-wildcards` (AWS-0057) survives there only as a
+  // `deprecated: true` metadata stub with no rule body, added by
+  // aquasecurity/trivy-checks c292eb6737e0 ("add removed Go checks as
+  // deprecated"), so it checks nothing to be equivalent to (#2286).
+  TF031: [
+    {
+      tool: "tfsec",
+      rule: "aws-iam-no-policy-wildcards",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/iam/no-policy-wildcards/index.md",
+      relation: "overlaps",
+    },
+    {
+      tool: "checkov",
+      rule: "CKV_AWS_63",
+      url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarActionPolicyDocument.py",
+      relation: "overlaps",
+    },
+    {
+      tool: "checkov",
+      rule: "CKV_AWS_49",
+      url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/StarActionPolicyDocument.py",
+      relation: "extends",
+    },
+    {
+      tool: "checkov",
+      rule: "CKV_AWS_355",
+      url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarResourcePolicyDocument.py",
+      relation: "overlaps",
+    },
+    {
+      tool: "checkov",
+      rule: "CKV_AWS_356",
+      url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py",
+      relation: "overlaps",
+    },
+  ],
+  // tfsec's `aws-ecs-no-plaintext-secrets` and its successor in trivy-checks
+  // (`long_id` aws-ecs-no-plaintext-secrets, AVD-AWS-0036) fire on the same
+  // condition: an environment entry whose name is sensitive or whose value a
+  // secret scanner flags. `overlaps`, not `equivalent`, because both evaluate
+  // the definition first and so also read what TF032 reports as not
+  // determined, and their name list differs from secret-shape.ts's. Checkov
+  // has no Terraform check for ECS environment values (its ECS checks cover
+  // privilege, read-only root, host process, task role and EFS encryption,
+  // `checkov/terraform/checks/resource/aws/ECS*.py`), so it gets no credit.
+  TF032: [
+    {
+      tool: "tfsec",
+      rule: "aws-ecs-no-plaintext-secrets",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecs/no-plaintext-secrets/index.md",
+      relation: "overlaps",
+    },
+    {
+      tool: "trivy-checks",
+      rule: "aws-ecs-no-plaintext-secrets",
+      url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecs/no_plaintext_secrets.rego",
+      relation: "overlaps",
+    },
+  ],
+  // TF033-TF037 (#2288). Every tool below reports an absent attribute the
+  // same as an insecure one, which is right for SNS (TF034) and ECR (TF037)
+  // and wrong for the rest: SQS encrypts new queues by default, an unset
+  // EBS `encrypted` follows the Region's encryption by default, and Aurora
+  // encrypts new clusters whatever `storage_encrypted` says. Where chant's
+  // answer to absence differs the credit is "overlaps"; where it agrees and
+  // the condition is the same, "equivalent". The ECR credits are "overlaps"
+  // too: none of them knows provider v6's `IMMUTABLE_WITH_EXCLUSION`, which
+  // TF037 passes and they report. trivy-checks ids are the live
+  // Rego checks (not `deprecated` stubs) at aquasecurity/trivy-checks
+  // 71c05d02845c. tfsec has no TF036 credit: its frozen `rules.md`, which
+  // the prior-art sweep indexes, no longer lists an EBS volume check.
+  TF033: [
+    { tool: "tfsec", rule: "aws-rds-encrypt-instance-storage-data", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-instance-storage-data/index.md", relation: "overlaps" },
+    { tool: "tfsec", rule: "aws-rds-encrypt-cluster-storage-data", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-cluster-storage-data/index.md", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-rds-encrypt-instance-storage-data", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_instance_storage_data.rego", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-rds-encrypt-cluster-storage-data", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_cluster_storage_data.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_16", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/RDSEncryption.py", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_96", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/AuroraEncryption.py", relation: "overlaps" },
+    { tool: "kics", rule: "08bd0760-8752-44e1-9779-7bb369b2b4e4", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/08bd0760-8752-44e1-9779-7bb369b2b4e4/", relation: "overlaps" },
+  ],
+  TF034: [
+    { tool: "tfsec", rule: "aws-sns-enable-topic-encryption", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sns/enable-topic-encryption/index.md", relation: "equivalent" },
+    { tool: "trivy-checks", rule: "aws-sns-enable-topic-encryption", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sns/enable_topic_encryption.rego", relation: "equivalent" },
+    { tool: "checkov", rule: "CKV_AWS_26", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SNSTopicEncryption.py", relation: "equivalent" },
+    { tool: "kics", rule: "28545147-2fc6-42d5-a1f9-cf226658e591", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/28545147-2fc6-42d5-a1f9-cf226658e591/", relation: "equivalent" },
+  ],
+  TF035: [
+    { tool: "tfsec", rule: "aws-sqs-enable-queue-encryption", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sqs/enable-queue-encryption/index.md", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-sqs-enable-queue-encryption", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sqs/enable_queue_encryption.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_27", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SQSQueueEncryption.py", relation: "overlaps" },
+    { tool: "kics", rule: "6e8849c1-3aa7-40e3-9063-b85ee300f29f", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/6e8849c1-3aa7-40e3-9063-b85ee300f29f/", relation: "overlaps" },
+  ],
+  TF036: [
+    { tool: "trivy-checks", rule: "aws-ec2-enable-volume-encryption", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/enable_volume_encryption.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_3", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/EBSEncryption.py", relation: "overlaps" },
+    { tool: "kics", rule: "cc997676-481b-4e93-aa81-d19f8c5e9b12", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/cc997676-481b-4e93-aa81-d19f8c5e9b12/", relation: "overlaps" },
+  ],
+  TF037: [
+    { tool: "tfsec", rule: "aws-ecr-enforce-immutable-repository", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecr/enforce-immutable-repository/index.md", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-ecr-enforce-immutable-repository", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecr/enforce_immutable_repository.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_51", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/ECRImmutableTags.py", relation: "overlaps" },
+    { tool: "kics", rule: "d1846b12-20c5-4d45-8798-fc35b79268eb", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/d1846b12-20c5-4d45-8798-fc35b79268eb/", relation: "overlaps" },
   ],
 };

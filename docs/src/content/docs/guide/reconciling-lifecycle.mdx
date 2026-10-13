@@ -38,7 +38,7 @@ Reconcile never mutates the cloud. It only changes source — the safest reconci
 
 ## Apply — `code → cloud`
 
-When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system — a Kubernetes server-side apply, a CloudFormation `deploy`, or an ARM deployment, selected by `target`:
+When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system — a Kubernetes server-side apply, a CloudFormation `deploy`, an ARM deployment, or a Grafana API apply, selected by `target`:
 
 ```typescript
 import { ApplyOp } from "@intentius/chant/op";

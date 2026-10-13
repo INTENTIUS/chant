@@ -1,0 +1,95 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json",
+  "contract": 1,
+  "changeSet": "jcs1-sha256:f8d97023003edfcd960c701d626fd9accc15270db53c9ddd7c33461a6bb113e2",
+  "unit": "member",
+  "units": 5,
+  "groups": [
+    {
+      "id": "79cd3ea7ffaf",
+      "units": [
+        "estates/e01",
+        "estates/e02",
+        "estates/e03",
+        "estates/e05"
+      ],
+      "outlier": false,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "+ module.shared.aws_sqs_queue.events",
+          "action": "create",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_iam_role.app: tags, tags_all",
+          "action": "update",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_s3_bucket.data: replication_configuration, tags, tags_all",
+          "action": "update",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_sqs_queue.work: tags, tags_all, visibility_timeout_seconds",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": [],
+      "sideEffects": []
+    },
+    {
+      "id": "36dca470b879",
+      "units": [
+        "estates/e04"
+      ],
+      "outlier": true,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "+ module.shared.aws_sqs_queue.events",
+          "action": "create",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_iam_role.app: tags, tags_all",
+          "action": "update",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_s3_bucket.data: replication_configuration, tags, tags_all",
+          "action": "update",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_sqs_queue.extra: tags, tags_all",
+          "action": "update",
+          "count": 1
+        },
+        {
+          "line": "~ module.shared.aws_sqs_queue.work: tags, tags_all, visibility_timeout_seconds",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "extends": "79cd3ea7ffaf",
+      "plus": [
+        {
+          "line": "~ module.shared.aws_sqs_queue.extra: tags, tags_all",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": [],
+      "sideEffects": []
+    }
+  ],
+  "failed": [],
+  "destroys": [],
+  "imports": [],
+  "forgets": [],
+  "sideEffects": [],
+  "holes": []
+}

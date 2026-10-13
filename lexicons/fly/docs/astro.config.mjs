@@ -32,6 +32,14 @@ export default defineConfig({
                               "slug": "serialization"
                         },
                         {
+                              "label": "Fly site",
+                              "slug": "fly-site"
+                        },
+                        {
+                              "label": "OpenTelemetry Collector",
+                              "slug": "otel-collector"
+                        },
+                        {
                               "label": "Pseudo-parameters",
                               "slug": "pseudo-params"
                         },

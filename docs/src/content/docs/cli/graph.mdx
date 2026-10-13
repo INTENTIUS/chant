@@ -77,6 +77,35 @@ chant graph --format ir --live --env prod --overlay                     # source
 chant graph --format ir --live --env prod --overlay --overlay-anchor live  # provisioned graph's own edges
 ```
 
+##### `--traffic "<level>"` for a prediction on the graph
+
+`--traffic "<level>"` asks the project's predicting lexicon what the estate does at that traffic level, and carries the answer on the IR. Each entity's block rides on `attrs._behaviour`. The graph-level half rides on `meta._behaviour`: which engine answered, at what version and level, with the estate totals.
+
+It works on either graph, and the two answer different questions. With `--live` the prediction is about the account as it stands, drift included. Without it, the prediction is about the declared source, which is the file rather than anything deployed, so no environment is named. Showing the pair as a delta is the point:
+
+```bash
+chant graph --format ir --traffic "100 rps, p50"                                  # the file
+chant graph --format ir --live --env prod --overlay --traffic "100 rps, p50"      # the account
+```
+
+Which entities carry figures, which are declared unmapped and why, and what a type with no row is reported as: [Behaviour Coverage](/chant/reference/behaviour-coverage/), generated from the rows each lexicon contributes.
+
+On a live root, the graph's own read and the prediction's read are one read: the command shares each `live-plan` document and `live-ls` listing between them, so the statuses and the figures describe the same moment in the account.
+
+The level is passed to the engine verbatim. chant neither parses it nor supplies a default of its own. Every figure an engine returns is *at* a stated traffic, so inventing one would silently decide what every number on the graph means. That is why the flag is the trigger rather than the engine variable:
+
+| | `attrs._behaviour` | `meta._behaviour` |
+|---|---|---|
+| flag, and an engine answered | the block, per priced entity | the report's meta |
+| flag, and no engine or an unreachable one | absent | the whole refusal report |
+| no flag | absent | absent |
+
+Absence of both means chant did not look, which is a different statement from a refusal. A refusal names a cause and a remedy. An entity the engine could not price carries no block rather than a zeroed one, since "costs nothing" and "was not priced" are different claims.
+
+The engine sees no credentials. Every request is screened before it is sent, and an engine run as a command is started with a fixed environment and none of the caller's.
+
+Predictions need `predictBehaviour` from an installed lexicon. With none the graph is served unchanged, and says so once. The Terraform lexicon implements it ([chant #2495](https://github.com/INTENTIUS/chant/issues/2495)). Under `--live` it makes one read of its own: a live graph's nodes carry an address and a provider type and no body, so an instance arrives with no `instance_type` for an engine to price. The lexicon declares each observed root again from `terraform.roots` and runs `live-ls` and `live-plan` on it, the two reads `describeResources` already makes. Both sides of the delta then reach the engine with the same sizes and the same containment, and what differs between them is the account.
+
 ##### `--namespace <ns>` — where to read entities that declare none
 
 A live read resolves each entity's address from its own declaration. For a Kubernetes object whose namespace is stamped by a controller at apply time (a Flux/Argo estate where the binding lives in a different project than the objects), there is nothing to resolve, so the read goes to `default` and every node paints pending. `--namespace <ns>` supplies the missing default:
@@ -99,9 +128,15 @@ chant graph ./infra --format layout    # node positions (dagre by default — no
 | Format | Output | Needs |
 |--------|--------|-------|
 | `mermaid` | A Mermaid `flowchart` with one subgraph per lexicon. The **zero-install default** — renders in GitHub, docs, and browsers. | nothing |
-| `ir` | The graph IR as JSON: `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property), and `groups`. The stable contract downstream diagram tools consume. | nothing |
+| `ir` | The graph IR as JSON: `version`, `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property and a `kind`), `groups`, and `dangling` when a CI reference names nothing declared. The stable contract downstream diagram tools consume. | nothing |
 | `dot` | Graphviz DOT text, with lexicon clusters and labelled edges. Render directly with `dot -Tsvg`, or feed to a layout engine. | nothing to produce; `dot` to render |
 | `layout` | Node positions for a custom painter that does its own drawing: `{ width, height, nodes: [{id, x, y, w, h}] }` (y-up, origin bottom-left). | nothing (dagre); `dot` only with `--layout-engine graphviz` |
+
+### Versioning: additive changes only
+
+The IR's first field is `version`, currently `1`. Every `--format ir` output carries it, including `--live`, `--overlay` and `--components`. Output from a chant older than the field has no `version` and reads as version 1.
+
+The format changes only additively. A release may add a field, an edge kind or a group, and none of those moves the number. A consumer must ignore any field and any edge `kind` it does not recognise, and keep reading the rest of the document. `version` moves only for a change a consumer could not safely ignore, such as a removed or renamed field or a changed meaning, and a consumer that sees a version it does not know should stop rather than guess.
 
 ### Groups: the boxes a renderer draws
 
@@ -113,15 +148,44 @@ chant graph ./infra --format layout    # node positions (dagre by default — no
 
 `byComposite` groups the nodes one composite instance expanded into, and `byContainer` (live graphs only) carries observed containment, a VPC's subnets and their instances, nested flatly so a renderer can recurse it.
 
+`byPipeline` (CI lexicons) maps each workflow or pipeline to the nodes that run in it: a GitHub workflow and its jobs, or every job of a GitLab `.gitlab-ci.yml`. Mermaid and DOT draw each one as a box inside its lexicon's box.
+
 ### Edges from a lexicon that parses foreign source
 
 Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. An edge is an edge whichever way it was found, and a consumer does not have to know.
+
+### CI edges
+
+A CI lexicon writes its dependencies as strings: `needs: ["build"]`, `uses: ./.github/workflows/ci.yml`, `include: ci/templates.yml`. The github, forgejo and gitlab lexicons resolve those strings against the project's declared entities, the way their serializers place jobs in workflows, and report each one as an edge with a `kind` saying what it means:
+
+| `kind` | From | To | Written as |
+|--------|------|----|------------|
+| `needs` | job | job it waits for | GitHub and GitLab `needs:` (a name, `{ job }`, or the Job itself). A GitLab job with no `needs:` waits for the stage before its own, reported with `viaAttr: "stage"` |
+| `calls` | job | reusable workflow | `uses: ./.github/workflows/<file>` (or `.forgejo/workflows/`), matched to the declared workflow written to that file. A step using a local composite action by path is a `calls` too |
+| `triggers` | job or workflow | pipeline | GitLab `trigger:` (the job starts the child or multi-project pipeline). GitHub `on.workflow_run.workflows` (the workflow named finishing starts this one), matched by workflow `name` |
+| `includes` | pipeline | file | GitLab `include:` |
+| `extends` | job | job it inherits from | GitLab `extends:` |
+
+Every edge points from the entity that wrote the reference. Some edges leave their pipeline. A reusable-workflow call or `workflow_run` does, as does a GitLab trigger or include or a cross-project `needs`. They carry `crossPipeline: true`, and Mermaid and DOT draw them dashed. The rest render labelled with their kind, plus the attribute when it adds something (`needs (stage)`).
+
+A string that names nothing declared in the project is never dropped and never matched to a near name. It goes on `dangling`, as written:
+
+```json
+"dangling": [
+  { "from": "deploy", "kind": "needs", "path": "needs.project", "value": "group/lib@main:package", "crossPipeline": true },
+  { "from": "build", "kind": "calls", "path": "steps.uses", "value": "./.github/actions/setup" }
+]
+```
+
+Another repository's workflow lands here, and so does a GitLab child pipeline or included file (chant generates one `.gitlab-ci.yml` per project). A hidden `extends` template from an included file lands here too. The same holds for a composite action, which chant does not declare, and for a typo'd job name. Mermaid and DOT draw each as a dashed edge to a stub labelled `(not declared)`.
+
+A lexicon reports these through the plugin's `graphEdges(entities)` hook; see the [lexicon authoring overview](/chant/lexicon-authoring/overview/).
 
 ### `--format layout`: size-aware positions
 
 The layout step exists for **custom painters** (the [pinhole](https://github.com/INTENTIUS/pinhole) diagrammer is one): chant computes positions, the painter draws. By default it uses **dagre** — a pure-JS engine, so `--format layout` needs **no native dependency**.
 
-A painter draws nodes at a real size (cards, icons, labels), so it can pass those footprints in and get spacing that fits them — no node overlap:
+A painter draws its nodes (cards, icons and labels) at a real size. It can pass those footprints in and get spacing that fits them, so no two nodes overlap.
 
 ```bash
 # {id: {w, h}} in layout units (≈ px). Inline, or '-' for stdin, or '@file.json'.

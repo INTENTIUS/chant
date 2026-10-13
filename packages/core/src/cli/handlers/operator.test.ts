@@ -17,6 +17,7 @@ const readGateLedgerMock = vi.fn();
 const readRunLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 const requireLifecycleLedgerMock = vi.fn();
+const loadGatePolicyEvaluatorMock = vi.fn();
 
 vi.mock("../../op/operator", async () => {
   const actual = await vi.importActual<typeof import("../../op/operator")>("../../op/operator");
@@ -62,15 +63,21 @@ vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
   return {
     ...actual,
-    pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
+    pushLifecycleReport: (...args: unknown[]) => pushLifecycleMock(...args),
     // Mocked, not merely defaulted: the real one shells to `git fetch`, and
     // these tests run in the chant checkout itself (#2303).
     requireLifecycleLedger: (...args: unknown[]) => requireLifecycleLedgerMock(...args),
   };
 });
 
+vi.mock("../../op/gate-approval", async () => {
+  const actual = await vi.importActual<typeof import("../../op/gate-approval")>("../../op/gate-approval");
+  return { ...actual, loadGatePolicyEvaluator: (...args: unknown[]) => loadGatePolicyEvaluatorMock(...args) };
+});
+
 // Imported after the mocks above are registered.
 const { runOperator, runOperatorStatus, runOperatorLog, runApprove } = await import("./operator");
+const { gateContextDigest } = await import("../../op/gate-approval");
 
 function ctx(args: Partial<ParsedArgs>) {
   return {
@@ -86,7 +93,7 @@ beforeEach(() => {
   loadActivitiesMock.mockResolvedValue(new Map());
   loadProfilesMock.mockResolvedValue({});
   discoverOpsMock.mockResolvedValue({ ops: new Map([["fountain-apply", {}]]), errors: [] });
-  pushLifecycleMock.mockResolvedValue(true);
+  pushLifecycleMock.mockResolvedValue({ pushed: true });
   requireLifecycleLedgerMock.mockResolvedValue(undefined);
   readGateResolutionsMock.mockResolvedValue({ records: [], malformed: 0 });
   readGateLedgerMock.mockResolvedValue({ resolutions: [], pending: [], malformed: 0 });
@@ -380,6 +387,16 @@ describe("runApprove", () => {
     errSpy.mockRestore();
   });
 
+  // #3760: --rule and --reason belong to an override of a denied plan.
+  test("refuses --rule and --reason on a gate that is not the override gate", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", rules: ["no-drop"], reason: "why" }))).toBe(1);
+    expect(errSpy.mock.calls.flat().join("\n")).toMatch(/--rule and --reason override a denied plan: chant approve policy-override <subject>/);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   test("appends a gate-resolution record and pushes, resolving --actor over env fallbacks", async () => {
     seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
@@ -447,6 +464,27 @@ describe("runApprove", () => {
     );
     errSpy.mockRestore();
     vi.unstubAllEnvs();
+  });
+
+  // #3402 — a relayed approval names who relayed it, typed, not in --note.
+  test("--relayed-by is recorded on the resolution line, and a blank one is refused", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "github:alice", relayedBy: "github:hud-follower", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "github:alice", relayedBy: "github:hud-follower" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedBy: "github:alice", relayedBy: "github:hud-follower" }),
+    );
+    expect(errSpy.mock.calls.flat().join("\n")).toMatch(/resolved by github:alice, relayed by github:hud-follower,/);
+
+    appendGateResolutionMock.mockClear();
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "github:alice", relayedBy: "a\nb" }))).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 
   test("without --url, the surrounding PR/MR job is itself the address", async () => {
@@ -891,6 +929,74 @@ describe("runApprove — the resolution names the plan it approves (#2300)", () 
   });
 });
 
+/**
+ * #2574 — a component's gate ledger holds every environment's pending facts.
+ * The approval records the environment it answers, and `--env` picks it.
+ */
+describe("runApprove — a component gate approval names its environment (#2574)", () => {
+  const PLAN_STAGING = `sha256:${"c".repeat(64)}`;
+  const PLAN_PROD = `sha256:${"d".repeat(64)}`;
+  function seedTwoEnvironments(): void {
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [
+        {
+          version: 1, kind: "pending", op: "search-service", gate: "release",
+          timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+          planDigest: PLAN_STAGING, environment: "staging",
+        },
+        {
+          version: 1, kind: "pending", op: "search-service", gate: "release",
+          timestamp: "2026-01-02T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+          planDigest: PLAN_PROD, environment: "prod",
+        },
+      ],
+      malformed: 0,
+    });
+    appendGateResolutionMock.mockImplementation(async (input: object) => ({ commit: "sha", record: { version: 1, ...input } }));
+  }
+
+  test("without --env it approves the newest pending fact and records its environment", async () => {
+    seedTwoEnvironments();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "search-service", extraPositional: "release", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_PROD, environment: "prod" }));
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain(`approves the plan ${PLAN_PROD} in environment "prod"`);
+    errSpy.mockRestore();
+  });
+
+  test("--env picks that environment's pending fact", async () => {
+    seedTwoEnvironments();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "search-service", extraPositional: "release", actor: "alex", env: "staging" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_STAGING, environment: "staging" }));
+    errSpy.mockRestore();
+  });
+
+  test("--env with no pending fact there refuses and writes nothing", async () => {
+    seedTwoEnvironments();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "search-service", extraPositional: "release", actor: "alex", env: "dev" }))).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain('no pending fact in environment "dev"');
+    errSpy.mockRestore();
+  });
+
+  test("--env is ignored for a gate whose pending facts record no environment", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockImplementation(async (input: object) => ({ commit: "sha", record: { version: 1, ...input } }));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", env: "prod" }))).toBe(0);
+    expect(appendGateResolutionMock.mock.calls[0][0]).toMatchObject({ planDigest: PLAN_A });
+    expect(appendGateResolutionMock.mock.calls[0][0]).not.toHaveProperty("environment");
+    errSpy.mockRestore();
+  });
+});
+
 describe("runApprove — the ledger branch is read before it is appended to (#2303)", () => {
   test("reads the branch before recording the resolution", async () => {
     seedPending("fountain-apply", "rollout-gate", PLAN_A);
@@ -951,31 +1057,112 @@ describe("runApprove — a push that does not land is reported (#2309 review)", 
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
     });
-    pushLifecycleMock.mockRejectedValue(new Error("Another snapshot completed for chant/lifecycle"));
+    pushLifecycleMock.mockResolvedValue({ pushed: false, pushWarning: "Another snapshot completed for chant/lifecycle" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const code = await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
 
     const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(out).toMatch(/push to the remote was rejected/);
+    expect(out).toMatch(/push to the remote did not land: Another snapshot completed/);
     expect(out).toMatch(/local only . the push did not land/);
     // Still exit 0: the local append is a correct local fact.
     expect(code).toBe(0);
     errSpy.mockRestore();
   });
 
-  test("a project with no remote says nothing was pushed", async () => {
+  test("a project with no remote says so quietly, with no warning (#3677)", async () => {
     seedPending("fountain-apply", "rollout-gate", PLAN_A);
     appendGateResolutionMock.mockResolvedValue({
       commit: "sha",
       record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
     });
-    pushLifecycleMock.mockResolvedValue(false);
+    pushLifecycleMock.mockResolvedValue({ pushed: false, pushWarning: "recorded locally (no remote for chant/lifecycle)" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }));
 
-    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/No remote is configured/);
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toMatch(/resolved by alex .*\(recorded locally \(no remote for chant\/lifecycle\)\)/);
+    expect(out).not.toMatch(/push did not land|did not land|No remote is configured/);
+    errSpy.mockRestore();
+  });
+});
+
+describe("runApprove — a gate with an approval policy (#2508)", () => {
+  const TEXT = "permit (principal is Chant::Agent, action, resource);\n";
+  const POLICY = { kind: "gate-policy" as const, lexicon: "cedar", name: "ship", version: "sha256:v1", text: TEXT };
+
+  function seedPolicyGate(mode: "log-only" | "enforce"): void {
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", planDigest: PLAN_A,
+        approval: { quorum: { count: 2, roles: ["maintainer"] }, policy: POLICY, mode, context: { risk: "low" } },
+      }],
+      malformed: 0,
+    });
+    appendGateResolutionMock.mockImplementation(async (input: Record<string, unknown>) => ({
+      commit: "sha",
+      record: { version: 1, ...input },
+    }));
+  }
+
+  test("evaluates the policy for an agent's approval and records the decision next to it", async () => {
+    seedPolicyGate("enforce");
+    const evaluateGatePolicy = vi.fn().mockResolvedValue({ decision: "allow", determining: ["agent-low-risk"], errors: [] });
+    loadGatePolicyEvaluatorMock.mockResolvedValue({ evaluateGatePolicy });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "release-bot", agent: true }))).toBe(0);
+
+    expect(loadGatePolicyEvaluatorMock).toHaveBeenCalledWith("cedar");
+    expect(evaluateGatePolicy).toHaveBeenCalledWith(POLICY, {
+      principal: { kind: "agent", name: "release-bot", roles: [] },
+      action: "PassGate",
+      resource: { op: "fountain-apply", gate: "rollout-gate" },
+      context: { risk: "low", planDigest: PLAN_A },
+    });
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({
+      approver: { kind: "agent" },
+      policyDecision: {
+        policy: "ship", version: "sha256:v1", mode: "enforce", contextDigest: gateContextDigest({ risk: "low" }),
+        decision: "allow", determining: ["agent-low-risk"], errors: [],
+      },
+    }));
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("In enforce mode this permit passes the gate on its own");
+    expect(out).toContain("An agent's approval does not count toward the quorum");
+    errSpy.mockRestore();
+  });
+
+  test("records a human's roles, and reports quorum progress with a log-only decision", async () => {
+    seedPolicyGate("log-only");
+    loadGatePolicyEvaluatorMock.mockResolvedValue({
+      evaluateGatePolicy: async () => ({ decision: "deny", determining: [], errors: [] }),
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", roles: ["maintainer"] }))).toBe(0);
+
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({
+      approver: { kind: "human", roles: ["maintainer"] },
+    }));
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain("log-only mode, so the decision is recorded and does not change the outcome");
+    expect(out).toContain("Quorum: 1 of 2 human approval(s) with role maintainer for this plan (alex)");
+    errSpy.mockRestore();
+  });
+
+  test("refuses, and writes nothing, when the policy cannot be evaluated", async () => {
+    seedPolicyGate("enforce");
+    loadGatePolicyEvaluatorMock.mockRejectedValue(new Error("@intentius/chant-lexicon-cedar/gate-policy could not be loaded"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(1);
+
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain('declares policy "ship", which could not be evaluated');
     errSpy.mockRestore();
   });
 });

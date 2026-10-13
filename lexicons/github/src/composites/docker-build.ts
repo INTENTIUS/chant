@@ -1,5 +1,6 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Step, Workflow } from "../generated/index";
+import { actionRef } from "../action-pins";
 
 export interface DockerBuildProps {
   /** Image tag. Default: "${{ github.sha }}" */
@@ -44,7 +45,7 @@ export const DockerBuild = Composite((props: DockerBuildProps) => {
   } = props;
 
   // ── Steps ──────────────────────────────────────────────────────────
-  const checkout = new Step({ name: "Checkout", uses: "actions/checkout@v4" });
+  const checkout = new Step({ name: "Checkout", uses: actionRef("actions/checkout") });
 
   const login = new Step({
     name: "Log in to container registry",

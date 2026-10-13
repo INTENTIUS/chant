@@ -5,6 +5,7 @@
  * for GitLab CI/CD pipelines.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
@@ -13,6 +14,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { gitlabSerializer } from "./serializer";
+import { gitlabGraphEdges } from "./graph-edges";
 import { gitlabContextTools } from "./mcp/context-tools";
 import { deprecatedOnlyExceptRule } from "./lint/rules/deprecated-only-except";
 import { missingScriptRule } from "./lint/rules/missing-script";
@@ -24,6 +26,7 @@ import { GitLabParser } from "./import/parser";
 import { GitLabGenerator } from "./import/generator";
 import { generateGitlabPipeline } from "./components/generate-pipeline";
 import { generateGitlabOpPipeline } from "./components/generate-op-pipeline";
+import { generateGitlabOpWavesPipeline } from "./components/generate-op-waves-pipeline";
 
 export const gitlabPlugin: LexiconPlugin = {
   name: "gitlab",
@@ -33,6 +36,8 @@ export const gitlabPlugin: LexiconPlugin = {
   // Generate mode, Op counterpart (#927): an Op → one GitLab CI job, on a
   // Pipeline Schedule, a merge request or a push (#2084, #2256).
   generateOpPipeline: (ops, options) => generateGitlabOpPipeline(ops, options),
+  // Ordered waves of Op runs, each behind one gate (#3679).
+  generateOpWavesPipeline: (spec, options) => generateGitlabOpWavesPipeline(spec, options),
   // Self-upgrade: where the pinned GitLab schema version lives + its upstream (#685).
   upstreamPin: {
     file: "src/codegen/fetch.ts",
@@ -42,6 +47,8 @@ export const gitlabPlugin: LexiconPlugin = {
     upstream: { owner: "gitlab-org", repo: "gitlab", kind: "tags", tagSuffix: "-ee" },
   },
   serializer: gitlabSerializer,
+  // `needs`, stage order, `extends`, `trigger:` and `include:` as graph edges (#3910).
+  graphEdges: (entities) => gitlabGraphEdges(entities),
 
   lintRules(): LintRule[] {
     return [deprecatedOnlyExceptRule, missingScriptRule, missingStageRule, artifactNoExpiryRule];
@@ -272,6 +279,10 @@ export const test = new Job({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

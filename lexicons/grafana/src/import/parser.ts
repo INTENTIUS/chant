@@ -1,0 +1,1537 @@
+/**
+ * Dashboard JSON (and Grafana's provisioning files) -> `TemplateIR`, for
+ * `chant import`.
+ *
+ * A dashboard's parts refer to each other: panels name datasources and
+ * variables, rows hold panels, the dashboard lists them all. So the IR
+ * carries one resource per dashboard, of type `Grafana::Dashboard`, whose
+ * properties are a `Plan` (./model.ts): the declarations the dashboard
+ * becomes and the references between them. The generator lays the plan out
+ * in modules, and says so with `ownsLayout` (#2964), so core writes its
+ * files as they are.
+ *
+ * What each JSON key becomes is decided by the tables in ./mappings.ts.
+ * Whatever cannot be carried is named in `warnings` and recorded as an
+ * edit (./edits.ts) in the resource's metadata; a key left out at the value
+ * Grafana assumes anyway (./normalize.ts) is an edit with no warning.
+ *
+ * Accepted input:
+ *
+ * - classic dashboard JSON, as the UI exports it, with or without "Export
+ *   for sharing externally" (`__inputs`, `__requires`, `__elements`);
+ * - the same wrapped in a `dashboard.grafana.app` v0/v1 resource (`spec`),
+ *   or in the `{ dashboard, meta }` of `GET /api/dashboards/uid/<uid>`;
+ * - a v2 dashboard (`dashboard.grafana.app/v2` or `v2beta1`, or a bare v2
+ *   spec), read into classic JSON by ./v2.ts, with a warning for each thing
+ *   v2 says that the classic model cannot (#2947);
+ * - a datasource, dashboard or alerting provisioning file (./alerting.ts).
+ *
+ * A v0/v1 resource that Grafana stores as v2 (`status.conversion` says so)
+ * is refused unless the caller opts in (`acceptLossyV1`): it is a lossy
+ * down-conversion that looks like any other v1 dashboard. A dashboard saved
+ * before Grafana 5.0 (panels inside a top-level `rows` list) is recognised
+ * and reported, and nothing is imported from it.
+ *
+ * Deliberate changes, each with a warning:
+ *
+ * - An `__inputs` datasource (`${DS_PROMETHEUS}`) becomes a
+ *   `DatasourceVariable` of the same name, so every `${DS_PROMETHEUS}` in
+ *   the dashboard still resolves, now to whatever the variable selects.
+ * - An `__inputs` constant is replaced by its value, as Grafana's import
+ *   dialog would.
+ * - The stored copy's `id`, `version` and `iteration` are Grafana's
+ *   bookkeeping and are dropped without a warning.
+ *
+ * Library panels (#3010): each library panel an export carries in
+ * `__elements` becomes a `LibraryPanel`, and each panel that references one
+ * (`libraryPanel: { uid, name }`) a `LibraryPanelRef` to it. A reference to
+ * a library panel the dashboard does not carry (a plain export) names it by
+ * `{ uid, name }`, with a warning that it must exist in Grafana. An element
+ * no panel references is left out, with a warning, since the build writes
+ * only the library panels a dashboard places.
+ */
+
+import * as jsYaml from "js-yaml";
+import type { TemplateIR, TemplateParser, ResourceIR } from "@intentius/chant/import/parser";
+import { DASHBOARD_SCHEMA_VERSION } from "../schema/dashboard.gen";
+import { BUILTIN_DATASOURCE_UIDS } from "../datasource";
+import { JSONDATA_LINKS } from "../datasource-settings";
+import {
+  looksLikeDashboard,
+  looksLikeAlertingProvisioning,
+  looksLikeDashboardApiResponse,
+  looksLikeDashboardProvisioning,
+  looksLikeDashboardResource,
+  looksLikeDatasourceProvisioning,
+  looksLikeLegacyRowsDashboard,
+  looksLikeV2Dashboard,
+} from "../detect";
+import { slugUid } from "../util";
+import { untypedTransformationReason } from "../transformations";
+import { pointer, type ImportEdit } from "./edits";
+import { NO_PROP, Report, list } from "./report";
+import { planAlertingProvisioning } from "./alerting";
+import { lossyV1Read, readV2Dashboard } from "./v2";
+import {
+  COMMON_VARIABLE_KEYS,
+  DASHBOARD_FIELDS,
+  DEFAULT_DATASOURCE_TYPE,
+  GRAPH_TOOLTIP,
+  PANEL_FIELDS,
+  ROW_FIELDS,
+  VARIABLE_HIDE,
+  VARIABLE_MAPPINGS,
+  builtinPanelFor,
+  builtinQueryFor,
+  type VariableContext,
+} from "./mappings";
+import { callValue, declRef, type CustomClass, type Declaration, type DeclRef, type ModuleSpec, type Plan } from "./model";
+import {
+  BOOKKEEPING_KEYS,
+  DASHBOARD_DEFAULTS,
+  MIXED_UID,
+  PANEL_DEFAULTS,
+  ROW_DEFAULTS,
+  canonicalVariableUid,
+  deepEqual,
+  isBuiltinAnnotation,
+  isDefault,
+  isObject,
+  variableDefaults,
+} from "./normalize";
+
+type Json = Record<string, unknown>;
+
+/** The IR resource type for one dashboard. */
+export const DASHBOARD_RESOURCE_TYPE = "Grafana::Dashboard";
+/** The IR resource type for a datasource or dashboard provisioning file. */
+export const PROVISIONING_RESOURCE_TYPE = "Grafana::Provisioning";
+
+/** `properties` of a `Grafana::Dashboard` or `Grafana::Provisioning` resource. */
+export interface PlanResourceProperties {
+  plan: Plan;
+}
+
+/** `metadata` of a `Grafana::Dashboard` resource. */
+export interface DashboardResourceMetadata {
+  /** The dashboard JSON the plan was made from (unwrapped from a resource or API response). */
+  source: Json;
+  /** What the importer did to it: apply these to `source` to get what the rebuilt dashboard should equal. */
+  edits: ImportEdit[];
+  /** For a v2 dashboard, the v2 JSON as given; `source` is then its classic form (see ./v2.ts). */
+  v2?: Json;
+}
+
+/** Options for reading dashboard JSON. */
+export interface GrafanaImportOptions {
+  /**
+   * Import a `dashboard.grafana.app` v0/v1 resource even when Grafana stores
+   * the dashboard as v2. That read has already lost what v1 cannot hold (tabs,
+   * auto grids, conditional rendering); prefer importing the v2 read. Off by
+   * default: such a resource is refused, with a warning saying why.
+   */
+  acceptLossyV1?: boolean;
+}
+
+/** `metadata` of an alerting provisioning file's resource. */
+export interface AlertingResourceMetadata {
+  /** The file as parsed. */
+  source: Json;
+  /** What the importer did to it: apply these to `source`, then `normalizeAlerting` both sides, to compare with the rebuilt file. */
+  edits: ImportEdit[];
+}
+
+/** The panel plugin id format `definePanel` accepts. */
+const PLUGIN_ID = /^[a-z0-9][a-z0-9-_]*$/;
+
+const VARIABLE_UID = /^(?:\$\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]*)?\}|\$([A-Za-z_][A-Za-z0-9_]*)|\[\[([A-Za-z_][A-Za-z0-9_]*)\]\])$/;
+
+/** Class names the package exports, which a class the import declares must not take. */
+const PACKAGE_CLASS_NAMES = new Set([
+  "Dashboard",
+  "DashboardProvider",
+  "Datasource",
+  "Row",
+  "QueryVariable",
+  "CustomVariable",
+  "IntervalVariable",
+  "DatasourceVariable",
+  "ConstantVariable",
+  "TextboxVariable",
+  "AdhocVariable",
+  "GroupByVariable",
+  "SwitchVariable",
+  "PromQuery",
+  "TempoQuery",
+  "LokiQuery",
+  "ElasticsearchQuery",
+  "CloudWatchQuery",
+  "AzureMonitorQuery",
+  "CloudMonitoringQuery",
+  "BigQueryQuery",
+  "PyroscopeQuery",
+  "OpenSearchQuery",
+  "PostgresQuery",
+  "MySQLQuery",
+  "MSSQLQuery",
+  "TimeSeriesPanel",
+  "StatPanel",
+  "GaugePanel",
+  "TablePanel",
+  "LogsPanel",
+  "TracesPanel",
+  "HeatmapPanel",
+  "TextPanel",
+  "BarChartPanel",
+  "BarGaugePanel",
+  "PieChartPanel",
+  "StateTimelinePanel",
+  "StatusHistoryPanel",
+  "HistogramPanel",
+  "NodeGraphPanel",
+  "XYChartPanel",
+  "TrendPanel",
+  "CanvasPanel",
+  "GeomapPanel",
+  "CandlestickPanel",
+  "AnnotationsListPanel",
+  "DashboardListPanel",
+  "NewsPanel",
+  "DataGridPanel",
+  "FlameGraphPanel",
+  "AlertListPanel",
+  "AlertRuleGroup",
+  "AlertRule",
+  "AlertQuery",
+  "ReduceExpression",
+  "MathExpression",
+  "ThresholdExpression",
+  "ResampleExpression",
+  "ClassicConditionsExpression",
+  "SqlExpression",
+  "ContactPoint",
+  "NotificationPolicy",
+  "MuteTiming",
+  "NotificationTemplate",
+  "ExternalDatasource",
+  "DatasourceProvisioning",
+  "Folder",
+  "LibraryPanel",
+  "LibraryPanelRef",
+]);
+
+function words(text: string): string[] {
+  return text.split(/[^A-Za-z0-9]+/).filter((w) => w !== "");
+}
+
+function pascal(text: string): string {
+  return words(text)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join("");
+}
+
+function describePanel(p: Json): string {
+  const title = typeof p.title === "string" && p.title !== "" ? `"${p.title}"` : "(untitled)";
+  return `panel ${title}${p.id !== undefined ? ` (id ${String(p.id)})` : ""}`;
+}
+
+
+
+/** Why a Mixed datasource anywhere but on a panel is not carried. */
+const MIXED_ELSEWHERE = '(it is "-- Mixed --", which only a panel can have: it means each query names its own datasource)';
+
+/** Grafana's grid width, and what the dashboard schema says a missing `gridPos` key is. */
+const GRID_COLUMNS = 24;
+const GRID_POS_DEFAULTS = { h: 9, w: 12, x: 0, y: 0 } as const;
+
+
+/** A resolved datasource reference: the prop value, the plugin type when known, and a key for comparing two. */
+interface ResolvedDs {
+  value: DeclRef;
+  type?: string;
+  key: string;
+  /** The `{ type, uid }` the build writes for it. */
+  written: { type: string; uid: string };
+}
+
+type Resolution = ResolvedDs | "mixed" | undefined;
+
+interface DatasourceVariableInfo {
+  declId: string;
+  pluginType: string;
+}
+
+/** Why the keys of a library panel reference besides its id, gridPos, title and libraryPanel are not carried. */
+const LIBRARY_REF_KEYS = "(Grafana draws a library panel from the library's copy, and does not read them from the reference)";
+
+/** The state of one dashboard's conversion. */
+class DashboardConverter {
+  readonly declarations: Declaration[] = [];
+  readonly customClasses = new Map<string, CustomClass>();
+  private readonly modules = new Map<string, ModuleSpec>();
+  private readonly refDecls = new Map<string, string>();
+  /** Datasource variables (and `__inputs` datasources) by name. */
+  private readonly datasourceVariables = new Map<string, DatasourceVariableInfo>();
+  /** Every declared variable by name, for `repeat`. */
+  private readonly variables = new Map<string, string>();
+  private panelCount = 0;
+  private rowCount = 0;
+  private legacyPanels = 0;
+  private readonly legacyTypes = new Set<string>();
+  private readonly takenModuleFiles = new Set<string>();
+  /** `__elements` by key, and the `LibraryPanel` declared for each one a panel references. */
+  private readonly elements = new Map<string, unknown>();
+  private readonly libraryPanels = new Map<string, string>();
+
+  constructor(
+    private readonly d: Json,
+    private readonly report: Report,
+  ) {}
+
+  // ── modules and custom classes ──────────────────────────────────
+
+  private module(key: string, file: string, summary: string, separable = false): string {
+    if (!this.modules.has(key)) {
+      let f = file;
+      for (let n = 2; this.takenModuleFiles.has(f); n++) f = `${file}-${n}`;
+      this.takenModuleFiles.add(f);
+      this.modules.set(key, { key, file: f, summary, ...(separable ? { separable } : {}) });
+    }
+    return key;
+  }
+
+  private customClassName(base: string): string {
+    const taken = new Set([...PACKAGE_CLASS_NAMES, ...[...this.customClasses.values()].map((c) => c.className)]);
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = `${base}${n}`;
+    return name;
+  }
+
+  /** The class for a panel of this type: a built-in, or a `definePanel` the import declares. */
+  private panelClass(type: string): { className: string; customClass?: string } {
+    const builtin = builtinPanelFor(type);
+    if (builtin) return { className: builtin.className };
+    const id = `panel-class:${type}`;
+    let custom = this.customClasses.get(id);
+    if (!custom) {
+      this.module("plugins", "plugins", "Panel and query classes for plugins chant has no class for");
+      const className = this.customClassName(`${/^[0-9]/.test(type) ? "Plugin" : ""}${pascal(type) || "Custom"}Panel`);
+      custom = {
+        id,
+        className,
+        factory: "definePanel",
+        definition: { type, className, defaultSize: { w: 12, h: 8 } },
+        comment: [
+          `// The "${type}" panel is not one chant has a class for, so its options are carried as data`,
+          "// and are not type-checked. Give definePanel an options type to check them.",
+        ],
+      };
+      this.customClasses.set(id, custom);
+    }
+    return { className: custom.className, customClass: id };
+  }
+
+  /** The class for a query to a datasource of this type: a built-in, or a `defineQuery` the import declares. */
+  private queryClass(datasourceType: string): { className: string; customClass?: string } {
+    const builtin = builtinQueryFor(datasourceType);
+    if (builtin) return { className: builtin.className };
+    const id = `query-class:${datasourceType}`;
+    let custom = this.customClasses.get(id);
+    if (!custom) {
+      this.module("plugins", "plugins", "Panel and query classes for plugins chant has no class for");
+      const isDefault = datasourceType === DEFAULT_DATASOURCE_TYPE;
+      const className = this.customClassName(isDefault ? "DefaultDatasourceQuery" : `${pascal(datasourceType) || "Custom"}Query`);
+      custom = {
+        id,
+        className,
+        factory: "defineQuery",
+        definition: { datasourceType, className },
+        comment: isDefault
+          ? [
+              "// Queries that name no datasource, on panels that name none: Grafana sends them to its",
+              "// default datasource. The query model is carried as data and is not type-checked.",
+            ]
+          : [
+              `// Queries to "${datasourceType}" datasources, which chant has no query class for, so the`,
+              "// query model is carried as data and is not type-checked. Give defineQuery a model type to check it.",
+            ],
+      };
+      this.customClasses.set(id, custom);
+    }
+    return { className: custom.className, customClass: id };
+  }
+
+  private add(decl: Declaration): string {
+    this.declarations.push(decl);
+    return decl.id;
+  }
+
+  // ── datasources ─────────────────────────────────────────────────
+
+  /** Datasources the dashboard references by uid, declared as `ExternalDatasource`s; exported so the build sees them. */
+  readonly externals: string[] = [];
+
+  /**
+   * The declaration for a datasource referenced by uid: an
+   * `ExternalDatasource` (it exists in Grafana, outside this dashboard), or,
+   * for one of Grafana's own pseudo-datasources, a `DatasourceRef` const.
+   */
+  private refDecl(type: string, uid: string): ResolvedDs {
+    const key = `${type}\u0000${uid}`;
+    let id = this.refDecls.get(key);
+    if (!id) {
+      id = `datasource:${type}:${uid}`;
+      this.module("datasources", "datasources", "Datasources the panels and queries refer to, by the uid they have in Grafana");
+      const pseudo = BUILTIN_DATASOURCE_UIDS.has(uid) || type === "datasource" || type === "grafana" || uid.includes("$");
+      if (pseudo) {
+        const hint = uid.includes("$") ? `${type} datasource` : `${uid.replace(/-/g, " ")} datasource`;
+        this.add({
+          id,
+          kind: "value",
+          value: { type, uid },
+          type: { text: `DatasourceRef<${JSON.stringify(type)}>`, imports: ["DatasourceRef"] },
+          name: hint,
+          module: "datasources",
+        });
+      } else {
+        const hint = /^[A-Za-z][A-Za-z0-9_-]{0,24}$/.test(uid) ? uid : `${type} datasource`;
+        this.add({ id, kind: "new", className: "ExternalDatasource", props: { type, uid }, name: hint, module: "datasources" });
+        this.externals.push(id);
+      }
+      this.refDecls.set(key, id);
+    }
+    return { value: declRef(id), type, key, written: { type, uid } };
+  }
+
+  /**
+   * GRAF101 checks a datasource variable against the declared datasources of
+   * its type. When the dashboard names some datasources by uid but a
+   * datasource variable's type is not among them, declaring the others would
+   * make GRAF101 fail the build over a datasource the dashboard never names;
+   * then the uids are written as plain refs instead, and the warning says
+   * what to declare.
+   */
+  private settleExternals(): void {
+    if (this.externals.length === 0) return;
+    const covered = new Set(this.externals.map((id) => String(this.declarations.find((d) => d.id === id)!.props!.type)));
+    const uncovered = [...this.datasourceVariables.entries()].filter(([, v]) => !covered.has(v.pluginType));
+    if (uncovered.length === 0) return;
+    const uids: string[] = [];
+    for (const id of this.externals) {
+      const i = this.declarations.findIndex((d) => d.id === id);
+      const { type, uid } = this.declarations[i].props as { type: string; uid: string };
+      uids.push(`"${uid}" (${type})`);
+      this.declarations[i] = {
+        id,
+        kind: "value",
+        value: { type, uid },
+        type: { text: `DatasourceRef<${JSON.stringify(type)}>`, imports: ["DatasourceRef"] },
+        name: this.declarations[i].name,
+        module: "datasources",
+      };
+    }
+    this.externals.length = 0;
+    const vars = uncovered.map(([name, v]) => `$${name} (${v.pluginType})`);
+    this.report.warn(
+      `datasources: the dashboard names ${list(uids)} by uid, but no ${[...new Set(uncovered.map(([, v]) => v.pluginType))].join(" or ")} datasource, ` +
+        `which ${list(vars)} ${vars.length === 1 ? "chooses" : "choose"} among. They are written as plain { type, uid } refs rather than ExternalDatasources, ` +
+        "so GRAF101 and GRAF102 do not check them; declare an ExternalDatasource for each, and one of each variable's type, to have them checked.",
+    );
+  }
+
+  /**
+   * A `datasource` value as a prop: a declared datasource variable, or a
+   * `DatasourceRef` const. Records the edit when it is written differently
+   * or cannot be carried.
+   */
+  resolveDatasource(value: unknown, path: string, subject: string): Resolution {
+    if (value === undefined || value === null) return undefined;
+    let ref: { type?: string; uid?: string };
+    if (typeof value === "string") {
+      // A reference by name, from before Grafana 8.3.
+      if (value === "" || value === "default") {
+        this.report.drop(path, subject, "datasource");
+        return undefined;
+      }
+      if (value === MIXED_UID) return "mixed";
+      if (value === "-- Grafana --" || value === "grafana") ref = { type: "grafana", uid: "-- Grafana --" };
+      else if (value === "-- Dashboard --") ref = { type: "datasource", uid: "-- Dashboard --" };
+      else if (VARIABLE_UID.test(value)) ref = { uid: value };
+      else {
+        this.report.drop(path, subject, "datasource", `(it names the datasource "${value}" rather than its uid, from before Grafana 8.3)`);
+        return undefined;
+      }
+    } else if (isObject(value)) {
+      ref = { type: typeof value.type === "string" ? value.type : undefined, uid: typeof value.uid === "string" ? value.uid : undefined };
+      const extra = Object.keys(value).filter((k) => k !== "type" && k !== "uid" && value[k] !== undefined);
+      if (extra.length > 0) {
+        this.report.drop(path, subject, "datasource", `(it has ${list(extra)} besides type and uid)`);
+        return undefined;
+      }
+    } else {
+      this.report.drop(path, subject, "datasource", "(it is not a datasource reference)");
+      return undefined;
+    }
+
+    if (ref.uid === undefined || ref.uid === "") {
+      this.report.drop(path, subject, "datasource", `(it names no uid${ref.type ? `, only the type ${ref.type}` : ""})`);
+      return undefined;
+    }
+    if (ref.uid === MIXED_UID) return "mixed";
+
+    const variable = VARIABLE_UID.exec(ref.uid);
+    if (variable) {
+      const name = variable[1] ?? variable[2] ?? variable[3];
+      const dsVar = this.datasourceVariables.get(name);
+      if (dsVar && (ref.type === undefined || ref.type === dsVar.pluginType)) {
+        const written = { type: dsVar.pluginType, uid: `\${${name}}` };
+        const resolved: ResolvedDs = { value: declRef(dsVar.declId), type: dsVar.pluginType, key: `var\u0000${name}`, written };
+        if (!deepEqual(value, written) && !(isObject(value) && value.type === written.type && canonicalVariableUid(String(value.uid)) === written.uid)) {
+          this.report.replace(path, written, subject, "datasource");
+        }
+        return resolved;
+      }
+      if (ref.type === undefined) {
+        this.report.drop(path, subject, "datasource", `(it refers to $${name}, which is not a datasource variable of this dashboard)`);
+        return undefined;
+      }
+      const resolved = this.refDecl(ref.type, canonicalVariableUid(ref.uid));
+      if (typeof value === "string") this.report.replace(path, { type: ref.type, uid: canonicalVariableUid(ref.uid) }, subject, "datasource");
+      return resolved;
+    }
+
+    if (ref.type === undefined) {
+      const pseudo: Record<string, string> = { "-- Grafana --": "grafana", grafana: "grafana", "-- Dashboard --": "datasource" };
+      if (pseudo[ref.uid]) ref.type = pseudo[ref.uid];
+      else {
+        this.report.drop(path, subject, "datasource", `(it names the uid "${ref.uid}" but not the datasource's type)`);
+        return undefined;
+      }
+    }
+    const resolved = this.refDecl(ref.type, ref.uid);
+    if (!isObject(value) || value.type !== ref.type || value.uid !== ref.uid) {
+      this.report.replace(path, { type: ref.type, uid: ref.uid }, subject, "datasource");
+    }
+    return resolved;
+  }
+
+  // ── __inputs ────────────────────────────────────────────────────
+
+  /** Datasource inputs become datasource variables, declared ahead of the dashboard's own. */
+  inputVariables(templateNames: Set<string>): string[] {
+    const ids: string[] = [];
+    const inputs = Array.isArray(this.d.__inputs) ? this.d.__inputs : [];
+    const made: string[] = [];
+    inputs.forEach((input, i) => {
+      if (!isObject(input) || typeof input.name !== "string") return;
+      if (input.type === "constant") return;
+      if (input.type !== "datasource" || typeof input.pluginId !== "string") {
+        this.report.drop(pointer("__inputs", i), "__inputs", input.name, `(an input of type ${String(input.type)} chant has no place for)`);
+        return;
+      }
+      if (templateNames.has(input.name)) return; // the dashboard declares it itself
+      this.module("variables", "variables", "Variables, in the order the dashboard lists them");
+      const id = `variable:${input.name}`;
+      const props: Json = { name: input.name };
+      const label = typeof input.label === "string" && input.label !== "" ? input.label : undefined;
+      if (label) props.label = label;
+      props.pluginType = input.pluginId;
+      this.add({
+        id,
+        kind: "new",
+        className: "DatasourceVariable",
+        props,
+        name: input.name,
+        module: "variables",
+        property: true,
+        comment: [`// From __inputs: the dashboard was exported for sharing, with ${input.name} for its ${input.pluginName ?? input.pluginId} datasource.`],
+      });
+      this.datasourceVariables.set(input.name, { declId: id, pluginType: input.pluginId });
+      this.variables.set(input.name, id);
+      this.report.edit({
+        op: "prependVariable",
+        value: { type: "datasource", name: input.name, ...(label ? { label } : {}), query: input.pluginId, regex: "", refresh: 1, options: [] },
+      });
+      ids.push(id);
+      made.push(`${input.name} (${input.pluginId})`);
+    });
+    if (made.length > 0) {
+      this.report.warn(
+        `__inputs: ${list(made)} ${made.length === 1 ? "becomes a datasource variable" : "become datasource variables"} of the same name, ` +
+          "so the dashboard asks for its datasources in its variable bar rather than in Grafana's import dialog",
+      );
+    }
+    return ids;
+  }
+
+  // ── annotations ─────────────────────────────────────────────────
+
+  /**
+   * `annotations.list` as `Dashboard.annotations`: every entry but the
+   * built-in one Grafana adds anyway, with its datasource resolved like a
+   * panel's and every other key as it is. `enable` and `iconColor`, which
+   * the schema requires and the build fills in, are recorded when missing.
+   */
+  annotations(): Json[] {
+    const container = this.d.annotations;
+    if (container === undefined || container === null) return [];
+    if (!isObject(container) || !Array.isArray(container.list)) {
+      this.report.drop(pointer("annotations"), "dashboard", "annotations", "(it is not an annotations.list)");
+      return [];
+    }
+    for (const key of Object.keys(container)) if (key !== "list") this.report.drop(pointer("annotations", key), "annotations", key, NO_PROP);
+    const out: Json[] = [];
+    container.list.forEach((a, i) => {
+      if (isBuiltinAnnotation(a)) return;
+      const path = (...rest: string[]) => pointer("annotations", "list", i, ...rest);
+      if (!isObject(a) || typeof a.name !== "string") {
+        this.report.drop(path(), "annotations", `entry ${i}`, "(it is not a named annotation query)");
+        return;
+      }
+      const subject = `annotation "${a.name}"`;
+      const props: Json = {};
+      for (const [key, value] of Object.entries(a)) {
+        if (value === null || value === undefined) {
+          this.report.drop(path(key), subject, key);
+          continue;
+        }
+        if (key !== "datasource") {
+          props[key] = value;
+          continue;
+        }
+        const ds = this.resolveDatasource(value, path(key), subject);
+        if (ds === "mixed") this.report.drop(path(key), subject, key, MIXED_ELSEWHERE);
+        else if (ds) props.datasource = ds.value;
+      }
+      if (typeof a.enable !== "boolean") this.report.replace(path("enable"), true, subject, "enable", "is missing, so it is written as true, which runs the query");
+      if (typeof a.iconColor !== "string") this.report.replace(path("iconColor"), "red", subject, "iconColor", "is missing, so it is written as red");
+      out.push(props);
+    });
+    return out;
+  }
+
+  // ── variables ───────────────────────────────────────────────────
+
+  variable(json: unknown, index: number): string | undefined {
+    const path = pointer("templating", "list", index);
+    if (!isObject(json) || typeof json.name !== "string") {
+      this.report.drop(path, "templating", `entry ${index}`, "(it is not a named variable)");
+      return undefined;
+    }
+    const name = json.name;
+    const subject = `variable "${name}"`;
+    const type = String(json.type);
+    const mapping = VARIABLE_MAPPINGS[type];
+    if (!mapping) {
+      this.report.drop(path, subject, "", `(${type}) is not carried: chant has no ${type} variable, so it is left out`);
+      return undefined;
+    }
+    let dropped = false;
+    const defaults = variableDefaults(type);
+    const ctx: VariableContext = {
+      json,
+      path,
+      datasource: (value, p) => {
+        const r = this.resolveDatasource(value, p, subject);
+        if (r === "mixed") this.report.drop(p, subject, "datasource", MIXED_ELSEWHERE);
+        return r === "mixed" || r === undefined ? undefined : r.value;
+      },
+      drop: (key, why) => this.report.drop(`${path}${pointer(key)}`, subject, key, why ?? NO_PROP),
+      dropVariable: (why) => {
+        dropped = true;
+        this.report.drop(path, subject, "", `is not carried: ${why}, so it is left out`);
+      },
+      replace: (key, value, why) => this.report.replace(`${path}${pointer(key)}`, value, subject, key, why),
+    };
+    const specific = mapping.convert(ctx);
+    if (dropped || specific === undefined) return undefined;
+
+    const props: Json = { name };
+    if (typeof json.label === "string" && json.label !== "") props.label = json.label;
+    if (typeof json.description === "string" && json.description !== "") props.description = json.description;
+    if (type !== "constant" && typeof json.hide === "number" && json.hide !== 0) {
+      const hide = VARIABLE_HIDE[json.hide];
+      if (hide) props.hide = hide;
+      else this.report.drop(`${path}/hide`, subject, "hide", `(${json.hide} is not a hide value Grafana has)`);
+    }
+    if (json.skipUrlSync === true) props.skipUrlSync = true;
+    Object.assign(props, specific);
+
+    const known = new Set([...COMMON_VARIABLE_KEYS, ...mapping.keys]);
+    for (const key of Object.keys(json)) {
+      if (known.has(key)) continue;
+      this.report.drop(`${path}${pointer(key)}`, subject, key, isDefault(defaults, key, json[key]) ? undefined : NO_PROP);
+    }
+
+    this.module("variables", "variables", "Variables, in the order the dashboard lists them");
+    const id = `variable:${name}`;
+    this.add({ id, kind: "new", className: mapping.className, props, name, module: "variables", property: true });
+    this.variables.set(name, id);
+    if (type === "datasource") {
+      const pluginType = String(props.pluginType);
+      this.datasourceVariables.set(name, { declId: id, pluginType });
+      // Since Grafana 8.3 the selected value is the datasource's uid and the text its name: a datasource that exists.
+      const cur = isObject(json.current) ? json.current : {};
+      if (typeof cur.value === "string" && cur.value !== "" && !cur.value.includes("$") && cur.value !== cur.text) {
+        this.refDecl(pluginType, cur.value);
+      }
+    }
+    return id;
+  }
+
+  // ── panels and rows ─────────────────────────────────────────────
+
+  /**
+   * A panel's `gridPos` with every coordinate written out. A missing `x` or
+   * `y` is 0 to Grafana, as it is in the dashboard schema, but the build
+   * would place the panel itself, so the 0 is written. A missing `h` or `w`
+   * is written as the schema's default, with a warning, since the build
+   * would otherwise use the panel class's default size. A panel with no
+   * `gridPos` at all is left to the build's auto-layout, with a warning.
+   */
+  private gridPos(json: Json, path: string, subject: string, props: Json): void {
+    const gp = json.gridPos;
+    if (!isObject(gp)) {
+      if (gp === undefined) this.report.warn(`${subject}: gridPos is missing, so the build places the panel itself, which can differ from where Grafana would put it (#3029)`);
+      return;
+    }
+    const filled: Json = { ...gp };
+    const sized: string[] = [];
+    for (const [key, value] of Object.entries(GRID_POS_DEFAULTS)) {
+      if (typeof gp[key] === "number") continue;
+      filled[key] = value;
+      if (key === "h" || key === "w") sized.push(`gridPos.${key}`);
+    }
+    if (deepEqual(filled, gp)) return;
+    props.gridPos = filled;
+    const why = sized.length === 0 ? undefined : `${sized.length === 1 ? "is" : "are"} missing, so the dashboard schema's default is written (h ${GRID_POS_DEFAULTS.h}, w ${GRID_POS_DEFAULTS.w})`;
+    this.report.replace(`${path}/gridPos`, filled, subject, sized.join(" and ") || "gridPos", why);
+  }
+
+  /** A panel's Mixed datasource, as a `DatasourceRef` const: the build writes it when the panel's queries alone would not make it Mixed. */
+  private mixed(value: unknown, path: string, subject: string): ResolvedDs {
+    const resolved = this.refDecl("datasource", MIXED_UID);
+    if (!deepEqual(value, resolved.written)) this.report.replace(path, resolved.written, subject, "datasource");
+    return resolved;
+  }
+
+  private copyFields(json: Json, fields: readonly string[], defaults: Readonly<Json>, props: Json): void {
+    for (const key of fields) {
+      if (!(key in json)) continue;
+      const v = json[key];
+      if (v === null || v === undefined) continue;
+      if (key !== "id" && key !== "title" && isDefault(defaults, key, v)) continue;
+      props[key] = v;
+    }
+  }
+
+  /**
+   * A panel's transformations, typed (#2954): each is written as the
+   * `{ id, options }` object `Transformation` types by id, or, when its id,
+   * a key or an option key is one the types don't know, through
+   * `customTransformation(id, options, { disabled, filter, topic })` with
+   * the same JSON. Nothing is dropped.
+   */
+  private transformations(list: unknown[], subject: string): unknown[] {
+    return list.map((t, i) => {
+      if (!isObject(t)) return t;
+      const why = untypedTransformationReason(t);
+      if (why === undefined) return t;
+      const { id, options, ...rest } = t;
+      if (typeof id !== "string") {
+        this.report.warn(`${subject}: transformation ${i + 1} has no id, so Grafana skips it; it is not carried.`);
+        return undefined;
+      }
+      if (options !== undefined && !isObject(options)) this.report.warn(`${subject}: transformation ${i + 1} (${id}) options are not an object, so they are not carried.`);
+      const common = Object.keys(rest).length > 0 ? [rest] : [];
+      this.report.warn(`${subject}: transformation ${i + 1} is written with customTransformation(), untyped: ${why}.`);
+      return callValue("customTransformation", [id, isObject(options) ? options : {}, ...common]);
+    }).filter((t) => t !== undefined);
+  }
+
+  /**
+   * One panel, with its queries; returns the panel's declaration id. A
+   * library panel's model (`model`) has no place of its own on the grid: its
+   * `gridPos`, `id` and `libraryPanel` belong to each reference, and are left
+   * out.
+   */
+  panel(json: unknown, path: string, module: string, opts: { model?: string } = {}): string | undefined {
+    if (!isObject(json)) {
+      this.report.drop(path, "panels", "", "(an entry that is not a panel) is not carried");
+      return undefined;
+    }
+    const subject = opts.model ?? describePanel(json);
+    if (!opts.model && json.libraryPanel !== undefined && json.libraryPanel !== null) return this.libraryPanelRef(json, path, subject, module);
+    const type = typeof json.type === "string" ? json.type : "";
+    // A built-in's id is taken as it is: core ids predate the lowercase rule (`nodeGraph`).
+    if (type === "row" || (!builtinPanelFor(type) && !PLUGIN_ID.test(type))) {
+      this.report.drop(path, subject, "", `has ${type ? `the type "${type}", which is not a panel plugin id` : "no type"}, so it is left out`);
+      return undefined;
+    }
+    const cls = this.panelClass(type);
+    const index = this.panelCount++;
+    const id = `panel:${index}`;
+    const props: Json = {};
+    this.copyFields(json, PANEL_FIELDS, PANEL_DEFAULTS, props);
+    if (Array.isArray(props.transformations)) props.transformations = this.transformations(props.transformations, subject);
+    const fc = json.fieldConfig;
+    if (isObject(fc) && deepEqual(fc, { defaults: {}, overrides: [] })) delete props.fieldConfig;
+
+    if (opts.model) {
+      for (const key of ["gridPos", "id", "libraryPanel"]) {
+        if (!(key in json)) continue;
+        delete props[key];
+        this.report.drop(`${path}${pointer(key)}`, subject, key);
+      }
+    } else {
+      this.gridPos(json, path, subject, props);
+    }
+
+    const own = this.resolveDatasource(json.datasource, `${path}/datasource`, subject);
+    if (own === "mixed") props.datasource = this.mixed(json.datasource, `${path}/datasource`, subject).value;
+    else if (own !== undefined) props.datasource = own.value;
+    // A panel without a datasource of its own stays without one, as in Grafana: it takes the dashboard default, never its row's.
+    const panelDs: Resolution = own;
+
+    const queries: DeclRef[] = [];
+    const targets = Array.isArray(json.targets) ? json.targets : json.targets === undefined || json.targets === null ? [] : undefined;
+    if (targets === undefined) this.report.drop(`${path}/targets`, subject, "targets", "(it is not a list)");
+    (targets ?? []).forEach((t, i) => {
+      const tPath = `${path}/targets/${i}`;
+      if (!isObject(t)) {
+        this.report.drop(tPath, subject, `query ${i}`, "(it is not an object)");
+        return;
+      }
+      const tds = this.resolveDatasource(t.datasource, `${tPath}/datasource`, `${subject} query ${String(t.refId ?? i)}`);
+      if (tds === "mixed") this.report.drop(`${tPath}/datasource`, `${subject} query ${String(t.refId ?? i)}`, "datasource", MIXED_ELSEWHERE);
+      const tResolved = tds === "mixed" ? undefined : tds;
+      const effectiveType =
+        tResolved?.type ?? (panelDs !== undefined && panelDs !== "mixed" ? panelDs.type : undefined) ?? DEFAULT_DATASOURCE_TYPE;
+      const qcls = this.queryClass(effectiveType);
+      const qprops: Json = {};
+      for (const [k, v] of Object.entries(t)) {
+        if (k === "datasource") continue;
+        qprops[k] = v;
+      }
+      const panelKey = panelDs !== undefined && panelDs !== "mixed" ? panelDs.key : undefined;
+      if (tResolved !== undefined && tResolved.key !== panelKey) qprops.datasource = tResolved.value;
+      const qid = `query:${index}:${i}`;
+      this.add({
+        id: qid,
+        kind: "new",
+        className: qcls.className,
+        customClass: qcls.customClass,
+        props: qprops,
+        name: { of: id, suffix: typeof t.refId === "string" && t.refId !== "" ? t.refId : `query ${i}` },
+        module,
+        unit: id,
+        property: qcls.customClass === undefined,
+      });
+      queries.push(declRef(qid));
+    });
+    if (queries.length > 0) props.targets = queries;
+
+    if (typeof json.repeat === "string" && json.repeat !== "") {
+      const v = this.variables.get(json.repeat);
+      props.repeat = v ? declRef(v) : json.repeat;
+    }
+
+    const handled = new Set([...PANEL_FIELDS, "type", "datasource", "targets", "repeat", "libraryPanel"]);
+    if (opts.model) handled.add("gridPos").add("id");
+    const extra: string[] = [];
+    for (const key of Object.keys(json)) {
+      if (handled.has(key)) continue;
+      const v = json[key];
+      if (v === null || v === undefined || isDefault(PANEL_DEFAULTS, key, v)) {
+        this.report.drop(`${path}${pointer(key)}`, subject, key);
+        continue;
+      }
+      extra.push(key);
+      this.report.drop(`${path}${pointer(key)}`, subject, key, NO_PROP);
+    }
+    if (extra.length >= 3 && ANGULAR_PANELS.has(type)) {
+      this.legacyPanels++;
+      this.legacyTypes.add(type);
+    }
+
+    const title = typeof json.title === "string" && json.title !== "" ? json.title : `panel ${String(json.id ?? index + 1)}`;
+    return this.add({
+      id,
+      kind: "new",
+      className: cls.className,
+      customClass: cls.customClass,
+      props,
+      name: title,
+      module,
+      unit: id,
+      property: cls.customClass === undefined,
+    });
+  }
+
+  // ── library panels ──────────────────────────────────────────────
+
+  /**
+   * A panel that places a library panel: a `LibraryPanelRef` with the
+   * reference's id, gridPos and title, naming the `LibraryPanel` declared
+   * from `__elements`, or `{ uid, name }` when the dashboard does not carry
+   * it.
+   */
+  private libraryPanelRef(json: Json, path: string, subject: string, module: string): string | undefined {
+    const lp = json.libraryPanel;
+    if (!isObject(lp) || typeof lp.uid !== "string" || lp.uid === "") {
+      this.report.drop(path, subject, "", "is a library panel reference with no uid, so it is left out");
+      return undefined;
+    }
+    const uid = lp.uid;
+    const element = this.elements.get(uid);
+    const declared = element === undefined ? undefined : this.libraryPanel(uid, element);
+    const name = declared ? declared.name : typeof lp.name === "string" ? lp.name : "";
+    const target: unknown = declared ? declRef(declared.id) : { uid, name };
+    if (!declared) {
+      if (typeof lp.name !== "string") this.report.replace(`${path}/libraryPanel/name`, name, subject, "libraryPanel.name", 'is missing, so it is written as ""');
+      this.report.warn(
+        `${subject} places the library panel "${name}" (uid ${uid}), which the dashboard does not carry: it is referenced as { uid, name }, so it must exist in Grafana. ` +
+          "To import the library panel too, import the dashboard as exported for sharing externally, which carries it in __elements.",
+      );
+    } else if (lp.name !== name) {
+      this.report.replace(`${path}/libraryPanel/name`, name, subject, "libraryPanel.name", `is written as the library panel's name, "${name}"`);
+    }
+    for (const key of Object.keys(lp)) if (key !== "uid" && key !== "name") this.report.drop(`${path}/libraryPanel${pointer(key)}`, subject, `libraryPanel.${key}`, NO_PROP);
+
+    const index = this.panelCount++;
+    const id = `panel:${index}`;
+    const props: Json = { libraryPanel: target };
+    if (typeof json.id === "number") props.id = json.id;
+    if (isObject(json.gridPos)) props.gridPos = json.gridPos;
+    this.gridPos(json, path, subject, props);
+    if (typeof json.title === "string" && json.title !== "") props.title = json.title;
+    const ignored: string[] = [];
+    for (const key of Object.keys(json)) {
+      if (key === "libraryPanel" || key === "id" || key === "gridPos" || (key === "title" && typeof json.title === "string")) continue;
+      const v = json[key];
+      // Grafana 12.4 writes this placeholder type on a reference in a plain export.
+      const placeholder = key === "type" && v === "library-panel-ref";
+      this.report.drop(`${path}${pointer(key)}`, subject, key, placeholder || v === null ? undefined : LIBRARY_REF_KEYS);
+      if (!placeholder && v !== null) ignored.push(key);
+    }
+    return this.add({
+      id,
+      kind: "new",
+      className: "LibraryPanelRef",
+      props,
+      name: typeof json.title === "string" && json.title !== "" ? json.title : name || `panel ${String(json.id ?? index + 1)}`,
+      module,
+      unit: id,
+      property: true,
+    });
+  }
+
+  /** The `LibraryPanel` for an `__elements` entry, declared the first time a panel references it. */
+  private libraryPanel(key: string, element: unknown): { id: string; name: string } | undefined {
+    const declared = this.libraryPanels.get(key);
+    if (declared) return { id: declared, name: String((this.declarations.find((d) => d.id === declared)!.props as Json).name) };
+    const path = pointer("__elements", key);
+    const subject = `library panel "${key}"`;
+    if (!isObject(element) || typeof element.name !== "string" || element.name === "" || !isObject(element.model)) {
+      return undefined;
+    }
+    const module = this.module("library-panels", "library-panels", "Library panels the dashboard places, as its export carried them in __elements");
+    const pid = this.panel(element.model, `${path}/model`, module, { model: `library panel "${element.name}"` });
+    if (!pid) return undefined;
+    const props: Json = { name: element.name, uid: key, panel: declRef(pid) };
+    if (element.uid !== key) this.report.replace(`${path}/uid`, key, subject, "uid", element.uid === undefined ? undefined : `is written as its key in __elements, "${key}"`);
+    // Grafana reads an element without a kind as a library panel, which the build writes as kind 1.
+    if (element.kind !== 1) this.report.replace(`${path}/kind`, 1, subject, "kind");
+    for (const k of Object.keys(element)) {
+      if (k === "uid" || k === "name" || k === "kind" || k === "model") continue;
+      if (element[k] === null) this.report.drop(`${path}${pointer(k)}`, subject, k);
+      else if (k === "folderUid") this.report.drop(`${path}${pointer(k)}`, subject, k, "(the uid of the folder it is kept in; give the LibraryPanel a folder)");
+      else this.report.drop(`${path}${pointer(k)}`, subject, k, NO_PROP);
+    }
+    const id = `library-panel:${key}`;
+    this.add({ id, kind: "new", className: "LibraryPanel", props, name: element.name, module });
+    this.libraryPanels.set(key, id);
+    return { id, name: element.name };
+  }
+
+  /**
+   * Reads `__elements`: each library panel is declared when a panel first
+   * references it. Called before the panels; `settleElements` reports what
+   * was not used.
+   */
+  readElements(): void {
+    const els = this.d.__elements;
+    if (els === undefined) return;
+    if (!isObject(els)) {
+      this.report.drop(pointer("__elements"), "dashboard", "__elements", els === null ? undefined : "(it is not an object of library panels)");
+      return;
+    }
+    for (const [key, el] of Object.entries(els)) {
+      if (isObject(el) && el.kind !== undefined && el.kind !== 1) {
+        this.report.drop(pointer("__elements", key), `__elements entry "${key}"`, "", `is a library ${el.kind === 2 ? "variable" : `element of kind ${String(el.kind)}`}, which chant has no class for, so it is left out`);
+        continue;
+      }
+      if (!isObject(el) || typeof el.name !== "string" || el.name === "" || !isObject(el.model)) {
+        this.report.drop(pointer("__elements", key), `__elements entry "${key}"`, "", "has no name or panel model, so it is left out");
+        continue;
+      }
+      this.elements.set(key, el);
+    }
+  }
+
+  /** Elements no panel referenced: the build writes only the library panels a dashboard places. */
+  settleElements(): void {
+    const els = this.d.__elements;
+    for (const key of this.elements.keys()) {
+      if (this.libraryPanels.has(key)) continue;
+      this.report.drop(pointer("__elements", key), `library panel "${key}"`, "", "is in __elements but no panel places it, so it is left out");
+    }
+    if (isObject(els) && Object.keys(els).length === 0) this.report.drop(pointer("__elements"), "dashboard", "__elements");
+  }
+
+  /** The `LibraryPanel` declarations, which the plan exports so the build and observation see them. */
+  libraryPanelIds(): string[] {
+    return [...this.libraryPanels.values()];
+  }
+
+  /** A row, after its panels. */
+  row(json: Json, path: string, children: Array<{ json: unknown; path: string }>, rowModule: string, ds: Resolution): string {
+    const index = this.rowCount++;
+    const id = `row:${index}`;
+    const subject = `row "${String(json.title ?? "")}"`;
+    const panels: DeclRef[] = [];
+    for (const c of children) {
+      const pid = this.panel(c.json, c.path, rowModule);
+      if (pid) panels.push(declRef(pid));
+    }
+    const props: Json = { title: typeof json.title === "string" ? json.title : "" };
+    this.copyFields(json, ROW_FIELDS, ROW_DEFAULTS, props);
+    if (ds === "mixed") this.report.drop(`${path}/datasource`, subject, "datasource", MIXED_ELSEWHERE);
+    else if (ds !== undefined) props.datasource = ds.value;
+    const gp = json.gridPos;
+    if (isObject(gp) && typeof gp.y === "number") {
+      // Grafana draws a row header full width and one line high whatever its gridPos says, so only y is carried.
+      props.gridPos = { y: gp.y };
+      const written = { h: 1, w: GRID_COLUMNS, x: 0, y: gp.y };
+      if (!deepEqual(gp, written)) this.report.replace(`${path}/gridPos`, written, subject, "gridPos");
+    }
+    if (typeof json.repeat === "string" && json.repeat !== "") {
+      const v = this.variables.get(json.repeat);
+      props.repeat = v ? declRef(v) : json.repeat;
+    }
+    if (panels.length > 0) props.panels = panels;
+    const handled = new Set([...ROW_FIELDS, "type", "datasource", "repeat", "panels", "gridPos"]);
+    for (const key of Object.keys(json)) {
+      if (handled.has(key)) continue;
+      const v = json[key];
+      this.report.drop(`${path}${pointer(key)}`, subject, key, v === null || isDefault(ROW_DEFAULTS, key, v) ? undefined : NO_PROP);
+    }
+    return this.add({ id, kind: "new", className: "Row", props, name: `${String(json.title ?? "")} row`, module: rowModule, unit: id, property: true });
+  }
+
+  /** The dashboard's panels list: top-level panels and rows, each row with the panels under it. */
+  items(): DeclRef[] {
+    const panels = Array.isArray(this.d.panels) ? this.d.panels : [];
+    const out: DeclRef[] = [];
+    let i = 0;
+    const topModule = () => this.module("panels", "panels", "Panels above the first row");
+    while (i < panels.length) {
+      const p = panels[i];
+      const path = pointer("panels", i);
+      if (isObject(p) && p.type === "row") {
+        const title = typeof p.title === "string" ? p.title : "";
+        const rowModule = this.module(`row:${i}`, `row-${slugUid(title || `row ${i}`)}`, `The row "${title}" and its panels`, true);
+        const ds = this.resolveDatasource(p.datasource, `${path}/datasource`, `row "${title}"`);
+        const children: Array<{ json: unknown; path: string }> = [];
+        const nested = Array.isArray(p.panels) ? p.panels : [];
+        if (p.collapsed === true) {
+          nested.forEach((c, j) => children.push({ json: c, path: `${path}/panels/${j}` }));
+          i++;
+        } else {
+          if (nested.length > 0) {
+            this.report.drop(`${path}/panels`, `row "${title}"`, "panels", "(the row is expanded, so Grafana shows the panels after it instead)");
+          }
+          i++;
+          while (i < panels.length && !(isObject(panels[i]) && (panels[i] as Json).type === "row")) {
+            children.push({ json: panels[i], path: pointer("panels", i) });
+            i++;
+          }
+        }
+        out.push(declRef(this.row(p, path, children, rowModule, ds)));
+      } else {
+        const pid = this.panel(p, path, topModule());
+        if (pid) out.push(declRef(pid));
+        i++;
+      }
+    }
+    return out;
+  }
+
+  // ── the dashboard ───────────────────────────────────────────────
+
+  convert(): Plan {
+    const d = this.d;
+    if ("__requires" in d) {
+      const v = d.__requires;
+      const empty = v === null || (Array.isArray(v) && v.length === 0);
+      this.report.drop(pointer("__requires"), "dashboard", "__requires", empty ? undefined : "(the list of plugins it was exported with; Grafana does not need it to load the dashboard)");
+    }
+    this.readElements();
+    if ("__inputs" in d) this.report.drop(pointer("__inputs"), "dashboard", "__inputs");
+
+    const templating = isObject(d.templating) && Array.isArray(d.templating.list) ? d.templating.list : [];
+    const templateNames = new Set(templating.filter(isObject).map((v) => String(v.name)));
+    const inputIds = this.inputVariables(templateNames);
+    // Datasource variables first: other variables and panels refer to them.
+    const order = templating.map((v, i) => ({ v, i })).sort((a, b) => Number(isObject(b.v) && b.v.type === "datasource") - Number(isObject(a.v) && a.v.type === "datasource"));
+    const varIds = new Map<number, string>();
+    for (const { v, i } of order) {
+      const id = this.variable(v, i);
+      if (id) varIds.set(i, id);
+    }
+    const variableRefs = [...inputIds, ...templating.map((_, i) => varIds.get(i)).filter((x): x is string => x !== undefined)].map(declRef);
+
+    const panelRefs = this.items();
+    this.settleElements();
+    const annotations = this.annotations();
+    this.settleExternals();
+    if (this.legacyPanels > 0) {
+      this.report.warn(
+        `${this.legacyPanels} ${this.legacyPanels === 1 ? "panel is an AngularJS panel" : "panels are AngularJS panels"} (${[...this.legacyTypes].join(", ")}) ` +
+          "that keep their settings as top-level keys, which are not carried. Grafana converts these panels when it loads the dashboard; " +
+          "to import them with their settings, load the dashboard in Grafana 11 or later, export it again, and import that export.",
+      );
+    }
+
+    const props: Json = {};
+    for (const key of DASHBOARD_FIELDS) {
+      if (!(key in d)) continue;
+      const v = d[key];
+      if (v === null || v === undefined || (key !== "title" && key !== "uid" && key !== "timezone" && isDefault(DASHBOARD_DEFAULTS, key, v))) continue;
+      if (key === "refresh" && v === false) continue;
+      props[key] = v;
+    }
+    if (typeof props.title !== "string") props.title = "";
+    if (typeof d.uid !== "string" || d.uid === "") {
+      props.uid = slugUid(String(props.title) || "dashboard");
+      this.report.replace(pointer("uid"), props.uid, "dashboard", "uid", `is missing, so the dashboard is given the uid "${String(props.uid)}", from its title`);
+    }
+    // chant writes "browser" for a dashboard without a timezone; Grafana reads a missing one as "", the viewer's preference.
+    if (!("timezone" in d) || d.timezone === null) props.timezone = "";
+    if (typeof d.graphTooltip === "number" && d.graphTooltip !== 0) {
+      const tooltip = GRAPH_TOOLTIP[d.graphTooltip];
+      if (tooltip) props.graphTooltip = tooltip;
+      else this.report.drop(pointer("graphTooltip"), "dashboard", "graphTooltip", `(${d.graphTooltip} is not a value Grafana has)`);
+    }
+    if (typeof d.schemaVersion === "number") {
+      if (d.schemaVersion !== DASHBOARD_SCHEMA_VERSION) props.schemaVersion = d.schemaVersion;
+    } else {
+      this.report.replace(pointer("schemaVersion"), DASHBOARD_SCHEMA_VERSION, "dashboard", "schemaVersion", `is missing, so the dashboard is written at ${DASHBOARD_SCHEMA_VERSION}`);
+    }
+    if (variableRefs.length > 0) props.variables = variableRefs;
+    if (panelRefs.length > 0) props.panels = panelRefs;
+
+    if (annotations.length > 0) props.annotations = annotations;
+
+    const handled = new Set([
+      ...DASHBOARD_FIELDS,
+      ...BOOKKEEPING_KEYS,
+      "panels",
+      "templating",
+      "annotations",
+      "graphTooltip",
+      "schemaVersion",
+      "__inputs",
+      "__requires",
+      "__elements",
+    ]);
+    for (const key of Object.keys(d)) {
+      if (handled.has(key)) continue;
+      const v = d[key];
+      this.report.drop(pointer(key), "dashboard", key, v === null || isDefault(DASHBOARD_DEFAULTS, key, v) ? undefined : NO_PROP);
+    }
+
+    this.module("dashboard", "dashboard", `The dashboard "${String(props.title)}"`);
+    this.add({ id: "dashboard", kind: "new", className: "Dashboard", props, name: String(props.title) || "dashboard", module: "dashboard" });
+
+    const order2 = ["plugins", "datasources", "variables", "library-panels", "panels"];
+    const modules = [...this.modules.values()].sort((a, b) => rank(a.key, order2) - rank(b.key, order2));
+    return {
+      directory: slugUid(typeof d.uid === "string" && d.uid !== "" ? d.uid : String(props.title) || "dashboard"),
+      modules,
+      declarations: this.declarations,
+      customClasses: [...this.customClasses.values()],
+      exports: [...this.externals, ...this.libraryPanelIds(), "dashboard"],
+      main: "dashboard",
+    };
+  }
+}
+
+const ANGULAR_PANELS = new Set(["graph", "singlestat", "table-old", "grafana-singlestat-panel", "grafana-piechart-panel", "grafana-worldmap-panel"]);
+
+function rank(key: string, order: string[]): number {
+  const i = order.indexOf(key);
+  if (i !== -1) return i;
+  return key === "dashboard" ? order.length + 2 : order.length + 1;
+}
+
+function substituteStrings(value: unknown, from: string, to: string): unknown {
+  if (typeof value === "string") return value.split(from).join(to);
+  if (Array.isArray(value)) return value.map((v) => substituteStrings(v, from, to));
+  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substituteStrings(v, from, to)]));
+  return value;
+}
+
+/** The logical id (export name) of a dashboard's IR resource. */
+function logicalIdFor(title: string): string {
+  const w = words(title);
+  const id = w.map((x, i) => (i === 0 ? x.charAt(0).toLowerCase() + x.slice(1) : x.charAt(0).toUpperCase() + x.slice(1))).join("");
+  return id === "" || /^[0-9]/.test(id) ? `dashboard${pascal(id)}` : id;
+}
+
+/** `__inputs` constants filled in, as Grafana's import dialog does: the dashboard with them substituted. */
+function substituteConstants(dashboard: Json, report: Report): Json {
+  let d = dashboard;
+  const inputs = Array.isArray(d.__inputs) ? d.__inputs : [];
+  for (const input of inputs) {
+    if (!isObject(input) || input.type !== "constant" || typeof input.name !== "string") continue;
+    const value = typeof input.value === "string" ? input.value : "";
+    for (const from of [`\${${input.name}}`, `$${input.name}`]) {
+      report.edit({ op: "substitute", from, to: value });
+      d = substituteStrings(d, from, value) as Json;
+    }
+    report.warn(`__inputs: the constant ${input.name} is written as its value ${JSON.stringify(value)}, the value Grafana's import dialog fills in`);
+  }
+  return d;
+}
+
+/** Plan one classic dashboard. */
+export function planDashboard(dashboard: Json): { plan: Plan; edits: ImportEdit[]; warnings: string[] } {
+  const report = new Report();
+  const plan = new DashboardConverter(substituteConstants(dashboard, report), report).convert();
+  return { plan, edits: report.edits, warnings: report.warnings() };
+}
+
+// ── provisioning files ─────────────────────────────────────────────
+
+const DATASOURCE_FIELDS = [
+  "name",
+  "type",
+  "uid",
+  "url",
+  "access",
+  "isDefault",
+  "basicAuth",
+  "basicAuthUser",
+  "user",
+  "database",
+  "withCredentials",
+  "jsonData",
+  "secureJsonData",
+  "editable",
+  "orgId",
+  "version",
+];
+
+/**
+ * The `jsonData` paths of `ds` that hold another datasource's uid (see
+ * `JSONDATA_LINKS`), with the uid found there and the plugin types the
+ * field accepts.
+ */
+function jsonDataLinks(type: string, jsonData: Json): Array<{ path: Array<string | number>; uid: string; targets: readonly string[] }> {
+  const out: Array<{ path: Array<string | number>; uid: string; targets: readonly string[] }> = [];
+  const walk = (value: unknown, rest: readonly string[], at: Array<string | number>, targets: readonly string[]) => {
+    if (rest.length === 0) {
+      if (typeof value === "string" && value !== "") out.push({ path: at, uid: value, targets });
+      return;
+    }
+    const [head, ...tail] = rest;
+    if (head === "*") {
+      if (Array.isArray(value)) value.forEach((v, i) => walk(v, tail, [...at, i], targets));
+    } else if (isObject(value)) walk(value[head], tail, [...at, head], targets);
+  };
+  for (const link of JSONDATA_LINKS) if (!link.on || link.on.includes(type)) walk(jsonData, link.path, [], link.targets);
+  return out;
+}
+
+/** A copy of `value` with `replacement` at `path`. */
+function replaceAt(value: unknown, path: ReadonlyArray<string | number>, replacement: unknown): unknown {
+  if (path.length === 0) return replacement;
+  const [head, ...tail] = path;
+  if (Array.isArray(value)) return value.map((v, i) => (i === head ? replaceAt(v, tail, replacement) : v));
+  if (isObject(value)) return { ...value, [head]: replaceAt(value[head], tail, replacement) };
+  return value;
+}
+
+/**
+ * Plan a datasource provisioning file: one `Datasource` per entry, and a
+ * `DatasourceProvisioning` for the file's own settings when they differ
+ * from what the build writes by default (`prune: true`, no deletes): a file
+ * that does not prune gets `prune: false`, so the rebuilt file still does
+ * not.
+ *
+ * A uid in one entry's `jsonData` that names another entry of the file (a
+ * Tempo's `tracesToLogsV2.datasourceUid`, a Prometheus exemplar's
+ * `datasourceUid`, a Loki derived field's) becomes a reference to that
+ * entry's `Datasource`, so the link is type-checked, when the entry is of a
+ * plugin type the field accepts. Declarations are ordered so each refers
+ * only to ones before it; a link that would close a cycle (Tempo to Loki and
+ * Loki back to Tempo) stays a uid string. The build writes provisioned
+ * datasources sorted by name, so the order does not show in its output.
+ */
+export function planDatasourceProvisioning(doc: Json): { plan: Plan; warnings: string[] } {
+  const report = new Report();
+  const entries: Array<{ id: string; name: string; type: string; props: Json; uid?: string }> = [];
+  const list = Array.isArray(doc.datasources) ? doc.datasources : [];
+  list.forEach((ds, i) => {
+    if (!isObject(ds) || typeof ds.name !== "string" || typeof ds.type !== "string") {
+      report.drop(pointer("datasources", i), "datasources", `entry ${i}`, "(it has no name or type)");
+      return;
+    }
+    const props: Json = {};
+    for (const key of DATASOURCE_FIELDS) if (ds[key] !== undefined && ds[key] !== null) props[key] = ds[key];
+    for (const key of Object.keys(ds)) {
+      if (!DATASOURCE_FIELDS.includes(key)) report.drop(pointer("datasources", i, key), `datasource "${ds.name}"`, key, NO_PROP);
+    }
+    entries.push({ id: `datasource:${i}`, name: ds.name, type: ds.type, props, ...(typeof ds.uid === "string" ? { uid: ds.uid } : {}) });
+  });
+  const settings: Json = {};
+  if (doc.prune !== true) settings.prune = false;
+  if (doc.prune !== undefined && doc.prune !== null && typeof doc.prune !== "boolean") {
+    report.drop(pointer("prune"), "the provisioning file", "prune", `(${JSON.stringify(doc.prune)} is not true or false, so the file is written not to prune)`);
+  }
+  const deletes: Json[] = [];
+  (Array.isArray(doc.deleteDatasources) ? doc.deleteDatasources : []).forEach((d, i) => {
+    if (!isObject(d) || typeof d.name !== "string") {
+      report.drop(pointer("deleteDatasources", i), "deleteDatasources", `entry ${i}`, "(it names no datasource)");
+      return;
+    }
+    const orgId = typeof d.orgId === "number" ? d.orgId : undefined;
+    for (const key of Object.keys(d)) if (key !== "name" && key !== "orgId") report.drop(pointer("deleteDatasources", i, key), `deleteDatasources "${d.name}"`, key, NO_PROP);
+    deletes.push({ name: d.name, ...(orgId !== undefined ? { orgId } : {}) });
+  });
+  if (deletes.length > 0) settings.deleteDatasources = deletes;
+  if (doc.deleteDatasources !== undefined && !Array.isArray(doc.deleteDatasources)) report.drop(pointer("deleteDatasources"), "the provisioning file", "deleteDatasources", "(it is not a list)");
+  const settingsDeclarations: Declaration[] = [];
+  if (Object.keys(settings).length > 0) {
+    settingsDeclarations.push({ id: "datasource-provisioning", kind: "new", className: "DatasourceProvisioning", props: settings, name: "datasource provisioning", module: "datasources" });
+  }
+  for (const key of Object.keys(doc)) {
+    if (key === "apiVersion" || key === "datasources" || key === "prune" || key === "deleteDatasources") continue;
+    report.drop(pointer(key), "the provisioning file", key, NO_PROP);
+  }
+
+  // Each entry's links to other entries of the file, by the uid they name.
+  const byUid = new Map(entries.filter((e) => e.uid !== undefined).map((e) => [e.uid!, e]));
+  const links = new Map(
+    entries.map((e) => {
+      const jsonData = e.props.jsonData;
+      const found = isObject(jsonData) ? jsonDataLinks(e.type, jsonData) : [];
+      return [e.id, found.flatMap((l) => {
+        const target = byUid.get(l.uid);
+        return target && target !== e && l.targets.includes(target.type) ? [{ path: l.path, target: target.id }] : [];
+      })];
+    }),
+  );
+  // File order, except that an entry waits for the entries it links to; a cycle is broken at the first entry left.
+  const declared = new Set<string>();
+  const declarations: Declaration[] = [];
+  while (declared.size < entries.length) {
+    const remaining = entries.filter((e) => !declared.has(e.id));
+    const next = remaining.find((e) => links.get(e.id)!.every((l) => declared.has(l.target))) ?? remaining[0];
+    let jsonData = next.props.jsonData;
+    for (const l of links.get(next.id)!) if (declared.has(l.target)) jsonData = replaceAt(jsonData, l.path, declRef(l.target));
+    const props = jsonData === undefined ? next.props : { ...next.props, jsonData };
+    declarations.push({
+      id: next.id,
+      kind: "new",
+      className: "Datasource",
+      typeArguments: [JSON.stringify(next.type)],
+      props,
+      name: next.name,
+      module: "datasources",
+    });
+    declared.add(next.id);
+  }
+  declarations.push(...settingsDeclarations);
+  return {
+    plan: {
+      directory: "",
+      modules: [{ key: "datasources", file: "datasources", summary: "Datasources, from a Grafana datasource provisioning file" }],
+      declarations,
+      customClasses: [],
+      exports: declarations.map((d) => d.id),
+    },
+    warnings: report.warnings(),
+  };
+}
+
+const PROVIDER_FIELDS = ["name", "orgId", "folder", "folderUid", "disableDeletion", "allowUiUpdates", "updateIntervalSeconds"];
+
+/** Plan a dashboard provisioning file: one `DashboardProvider` per file provider. */
+export function planDashboardProvisioning(doc: Json): { plan: Plan; warnings: string[] } {
+  const report = new Report();
+  const declarations: Declaration[] = [];
+  const list = Array.isArray(doc.providers) ? doc.providers : [];
+  list.forEach((p, i) => {
+    if (!isObject(p) || typeof p.name !== "string") {
+      report.drop(pointer("providers", i), "providers", `entry ${i}`, "(it has no name)");
+      return;
+    }
+    const subject = `provider "${p.name}"`;
+    if (p.type !== undefined && p.type !== "file") {
+      report.drop(pointer("providers", i), subject, "", `is of type ${String(p.type)}; chant writes file providers only, so it is left out`);
+      return;
+    }
+    const props: Json = {};
+    for (const key of PROVIDER_FIELDS) if (p[key] !== undefined && p[key] !== null) props[key] = p[key];
+    const options = isObject(p.options) ? p.options : {};
+    if (options.path !== undefined) props.path = options.path;
+    if (options.foldersFromFilesStructure !== undefined) props.foldersFromFilesStructure = options.foldersFromFilesStructure;
+    for (const key of Object.keys(options)) {
+      if (key !== "path" && key !== "foldersFromFilesStructure") report.drop(pointer("providers", i, "options", key), subject, `options.${key}`, NO_PROP);
+    }
+    for (const key of Object.keys(p)) {
+      if (!PROVIDER_FIELDS.includes(key) && key !== "type" && key !== "options") report.drop(pointer("providers", i, key), subject, key, NO_PROP);
+    }
+    declarations.push({ id: `provider:${i}`, kind: "new", className: "DashboardProvider", props, name: `${p.name} provider`, module: "providers" });
+  });
+  return {
+    plan: {
+      directory: "",
+      modules: [{ key: "providers", file: "dashboard-providers", summary: "Dashboard providers, from a Grafana dashboard provisioning file" }],
+      declarations,
+      customClasses: [],
+      exports: declarations.map((d) => d.id),
+    },
+    warnings: report.warnings(),
+  };
+}
+
+// ── the parser ─────────────────────────────────────────────────────
+
+/** The dashboard inside a resource or API response, and where it came from. */
+export function unwrapDashboard(data: Json): Json {
+  if (looksLikeDashboardApiResponse(data)) return data.dashboard;
+  if (looksLikeDashboardResource(data)) {
+    const spec = { ...data.spec };
+    const meta = isObject((data as Json).metadata) ? ((data as Json).metadata as Json) : {};
+    if ((typeof spec.uid !== "string" || spec.uid === "") && typeof meta.name === "string") spec.uid = meta.name;
+    return spec;
+  }
+  return data;
+}
+
+function parseDocument(content: string): unknown {
+  try {
+    return JSON.parse(content);
+  } catch {
+    // Provisioning files are YAML.
+  }
+  return jsYaml.load(content, { schema: jsYaml.CORE_SCHEMA });
+}
+
+function resource(logicalId: string, type: string, plan: Plan, metadata?: Json): ResourceIR {
+  const properties: PlanResourceProperties = { plan };
+  return { logicalId, type, properties: properties as unknown as Json, ...(metadata ? { metadata } : {}) };
+}
+
+/** One dashboard's IR: its plan, and the source and edits the round trip checks it against. */
+function dashboardIR(dashboard: Json, extra: { warnings?: string[]; v2?: Json } = {}): TemplateIR {
+  const { plan, edits, warnings } = planDashboard(dashboard);
+  const metadata: DashboardResourceMetadata = { source: dashboard, edits, ...(extra.v2 ? { v2: extra.v2 } : {}) };
+  const title = typeof dashboard.title === "string" ? dashboard.title : "dashboard";
+  return {
+    resources: [resource(logicalIdFor(title), DASHBOARD_RESOURCE_TYPE, plan, metadata as unknown as Json)],
+    parameters: [],
+    warnings: [...(extra.warnings ?? []), ...warnings],
+  };
+}
+
+/** Parse dashboard JSON or a provisioning file into IR. */
+export function parseGrafana(content: string, options: GrafanaImportOptions = {}): TemplateIR {
+  const data = content.trim() === "" ? undefined : parseDocument(content);
+  if (!isObject(data)) {
+    throw new Error("expected Grafana dashboard JSON or a provisioning file, as a JSON or YAML object");
+  }
+
+  if (looksLikeV2Dashboard(data)) {
+    const { dashboard, warnings } = readV2Dashboard(data);
+    const version = looksLikeDashboardResource(data) ? ` (${data.apiVersion})` : "";
+    const note =
+      `This is a v2 dashboard${version}. chant builds classic (v1) dashboard JSON, so it is read into the classic model the way Grafana reads it at v1` +
+      (warnings.length > 0 ? "; what v2 holds that the classic model cannot is listed below." : ", and nothing v2-only is lost.");
+    return dashboardIR(dashboard, { warnings: [note, ...warnings], v2: data });
+  }
+
+  const lossy = lossyV1Read(data);
+  if (lossy && !options.acceptLossyV1) {
+    const why = lossy.failed
+      ? `Grafana could not convert it from ${lossy.storedVersion || "the version it is stored at"} (status.conversion.failed)`
+      : `Grafana stores this dashboard as ${lossy.storedVersion} and converted it down to serve it at ${lossy.apiVersion}, dropping whatever v2 has and v1 does not (tabs, auto grids, conditional rendering), with nothing in the spec to show it`;
+    return {
+      resources: [],
+      parameters: [],
+      warnings: [
+        `Not imported: ${why}. Read the dashboard at dashboard.grafana.app/v2 (or export it from the UI with the V2 Resource model) and import that; ` +
+          "chant reads v2 and names everything it cannot carry. To import this down-converted copy anyway, parse it with acceptLossyV1.",
+      ],
+    };
+  }
+
+  const dashboard: unknown = unwrapDashboard(data);
+  if (looksLikeLegacyRowsDashboard(dashboard)) {
+    return {
+      resources: [],
+      parameters: [],
+      warnings: [
+        `This dashboard was saved before Grafana 5.0 (schemaVersion ${String(dashboard.schemaVersion)}): its panels are inside a top-level "rows" list, ` +
+          "which Grafana converts to a grid when it loads it and chant does not read. Import it into Grafana 11 or later, export it again, " +
+          "and import that export. Nothing was imported.",
+      ],
+    };
+  }
+
+  if (looksLikeDashboard(dashboard)) {
+    if (lossy) {
+      return dashboardIR(dashboard, {
+        warnings: [
+          lossy.failed
+            ? `Grafana could not convert this dashboard from ${lossy.storedVersion || "the version it is stored at"} to ${lossy.apiVersion} (status.conversion.failed), so this copy may be incomplete. Imported anyway (acceptLossyV1).`
+            : `Grafana stores this dashboard as ${lossy.storedVersion}, and this ${lossy.apiVersion} copy is a lossy down-conversion of it: ` +
+              "whatever v2 has and v1 does not (tabs, auto grids, conditional rendering) is already gone. Imported anyway (acceptLossyV1).",
+        ],
+      });
+    }
+    return dashboardIR(dashboard);
+  }
+
+  if (looksLikeDatasourceProvisioning(data)) {
+    const { plan, warnings } = planDatasourceProvisioning(data as unknown as Json);
+    return { resources: [resource("datasources", PROVISIONING_RESOURCE_TYPE, plan)], parameters: [], warnings };
+  }
+
+  if (looksLikeDashboardProvisioning(data)) {
+    const { plan, warnings } = planDashboardProvisioning(data as unknown as Json);
+    return { resources: [resource("dashboardProviders", PROVISIONING_RESOURCE_TYPE, plan)], parameters: [], warnings };
+  }
+
+  if (looksLikeAlertingProvisioning(data)) {
+    const { plan, edits, warnings } = planAlertingProvisioning(data);
+    const metadata: AlertingResourceMetadata = { source: data, edits };
+    return { resources: [resource("alerting", PROVISIONING_RESOURCE_TYPE, plan, metadata as unknown as Json)], parameters: [], warnings };
+  }
+
+  throw new Error(
+    "this is not Grafana dashboard JSON (no panels list) or a provisioning file (no datasources, providers, or alerting groups, contactPoints, policies, muteTimes or templates list)",
+  );
+}
+
+/** The Grafana dashboard parser `chant import` runs. */
+export class GrafanaParser implements TemplateParser {
+  constructor(private readonly options: GrafanaImportOptions = {}) {}
+
+  parse(content: string): TemplateIR {
+    return parseGrafana(content, this.options);
+  }
+}

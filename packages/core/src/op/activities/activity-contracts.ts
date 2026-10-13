@@ -25,6 +25,7 @@
 
 import { z } from "zod";
 import { activityContract } from "../activity-contract";
+import { backendSchema } from "../decide-config";
 
 export const lifecycleSnapshotContract = activityContract(
   "lifecycleSnapshot",
@@ -54,8 +55,14 @@ export const shellCmdContract = activityContract(
     env: z.record(z.string(), z.string()).optional(),
     cwd: z.string().optional(),
     okExit: z.array(z.number()).optional(),
+    gatedExit: z.number().optional(),
+    gate: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
+    json: z.boolean().optional(),
   }),
-  z.object({ stdout: z.string(), stderr: z.string(), exitCode: z.number() }),
+  // `json` is stdout parsed, when the step sets `json` (#2787): whatever the
+  // command printed, so its shape is the author's and only the whole value is
+  // a reference target (`sh.out.json`).
+  z.object({ stdout: z.string(), stderr: z.string(), exitCode: z.number(), json: z.unknown().optional() }),
 );
 
 export const httpCheckContract = activityContract(
@@ -129,3 +136,308 @@ export const behaviourFindingContract = activityContract(
     mergeRequest: z.string().optional(),
   }),
 );
+
+/**
+ * The propose-only template upgrade (#2550, ws-032). `args` mirrors
+ * `ProposeWorkspaceUpgradeArgs` without its test hooks. `returns` names what
+ * a step reads: whether anything changed, whether it was proposed, the patch
+ * digest the command's gate would bind, and the branch and pull request.
+ */
+export const proposeWorkspaceUpgradeContract = activityContract(
+  "proposeWorkspaceUpgrade",
+  z.strictObject({
+    scope: z.string().optional(),
+    to: z.string().optional(),
+    mode: z.enum(["report", "branch", "pull-request"]).optional(),
+    branch: z.string().optional(),
+    base: z.string().optional(),
+    remote: z.string().optional(),
+    allowCode: z.boolean().optional(),
+    source: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    scope: z.string(),
+    mode: z.enum(["report", "branch", "pull-request"]),
+    changed: z.boolean(),
+    proposed: z.boolean(),
+    checksOk: z.boolean(),
+    from: z.string().nullable(),
+    to: z.string().nullable(),
+    digest: z.string(),
+    manualSteps: z.number(),
+    governance: z.boolean(),
+    branch: z.string().optional(),
+    commit: z.string().optional(),
+    pushed: z.boolean().optional(),
+    prUrl: z.string().optional(),
+    summary: z.string(),
+  }),
+);
+
+/**
+ * The forward coverage check over an Op's own diff (#2773). `args` mirrors
+ * `ChangeCoverageArgs`. `returns` names what a step reads: whether the check
+ * passed, the range and work item checked, and each finding with the
+ * `triage` a work item seeded from it takes as its `source`.
+ */
+export const changeCoverageContract = activityContract(
+  "changeCoverage",
+  z.strictObject({
+    cwd: z.string().optional(),
+    range: z.string().optional(),
+    work: z.string().optional(),
+    severity: z.enum(["off", "warn", "fail"]).optional(),
+  }),
+  z.object({
+    ok: z.boolean(),
+    range: z.object({ spec: z.string(), base: z.string(), head: z.string() }),
+    work: z.string().nullable(),
+    severity: z.enum(["off", "warn", "fail"]),
+    findings: z.array(
+      z.object({
+        code: z.enum(["change-uncovered", "change-out-of-scope"]),
+        path: z.string(),
+        message: z.string(),
+        severity: z.enum(["warn", "fail"]),
+        records: z.array(z.string()),
+        triage: z.object({ finding: z.enum(["change-uncovered", "change-out-of-scope"]), region: z.string() }),
+      }),
+    ),
+    summary: z.object({
+      paths: z.number(),
+      covered: z.number(),
+      uncovered: z.number(),
+      outOfScope: z.number(),
+      ignored: z.number(),
+      records: z.number(),
+    }),
+  }),
+);
+
+/**
+ * Evidence for an acceptance criterion, under the run's work lease (#2772).
+ * `lease` is the run's lease, a reference the builder fills in, so it is not
+ * checked here. `returns` names what a step reads: the item, the record's
+ * path, the entry appended and the criteria counted with it.
+ */
+export const workEvidenceContract = activityContract(
+  "workEvidence",
+  z.strictObject({
+    lease: z.unknown(),
+    criterion: z.string(),
+    result: z.enum(["pass", "fail"]),
+    title: z.string(),
+    url: z.string().optional(),
+    path: z.string().optional(),
+    kind: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    item: z.string(),
+    path: z.string(),
+    evidence: z.record(z.string(), z.unknown()),
+    acceptance: z.object({ met: z.number(), total: z.number(), criteria: z.array(z.object({ id: z.string(), verification: z.string(), met: z.boolean() })) }),
+  }),
+);
+
+/**
+ * The source-release activities (#2782, ./source-release.ts). A release Op
+ * reads `archive.out.digest` into its plan, `plan.out.digest` into its gate
+ * and its ship step, and `plan.out.file` into its record step.
+ */
+export const sourceArchiveContract = activityContract(
+  "sourceArchive",
+  z.strictObject({ path: z.string(), ref: z.string().optional(), out: z.string().optional(), cwd: z.string().optional() }),
+  z.object({ digest: z.string(), archive: z.string(), commit: z.string(), dir: z.string(), files: z.number(), bytes: z.number() }),
+);
+
+const changeSetPart = z.object({
+  member: z.object({ member: z.string(), planDigest: z.string().nullable() }).passthrough(),
+  entries: z.array(z.unknown()),
+});
+
+export const composeChangeSetContract = activityContract(
+  "composeChangeSet",
+  z.strictObject({ parts: z.array(changeSetPart) }),
+  z.object({ document: z.record(z.string(), z.unknown()), digest: z.string(), summary: z.record(z.string(), z.unknown()) }),
+);
+
+export const lifecyclePlanChangeSetContract = activityContract(
+  "lifecyclePlanChangeSet",
+  z.strictObject({ member: z.string(), env: z.string(), cwd: z.string().optional(), owned: z.boolean().optional() }),
+  z.object({ part: changeSetPart }),
+);
+
+export const readChangeSetPartContract = activityContract(
+  "readChangeSetPart",
+  z.strictObject({ member: z.string(), planner: z.enum(["chant", "warden", "sql"]), file: z.string(), lexicon: z.string().optional() }),
+  z.object({ part: changeSetPart }),
+);
+
+export const releasePlanContract = activityContract(
+  "releasePlan",
+  z.strictObject({
+    component: z.string(),
+    env: z.string(),
+    gitSha: z.string(),
+    content: z.record(z.string(), z.unknown()),
+    dir: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ digest: z.string(), file: z.string(), gitSha: z.string() }),
+);
+
+export const releaseRecordContract = activityContract(
+  "releaseRecord",
+  z.strictObject({
+    plan: z.string(),
+    digest: z.string().optional(),
+    approval: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
+    actor: z.string().optional(),
+    runId: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ recorded: z.boolean(), digest: z.string(), env: z.string(), component: z.string(), approver: z.string().nullable() }),
+);
+
+/**
+ * `decide` (#2740, core's since #2828). OPS012 checks a step's args against
+ * it and OPS013 a later step's reference into its result, so a misspelled
+ * `point` or a key written as a literal string fails `chant build` rather
+ * than a run.
+ */
+const decideEscalation = z.object({ kind: z.enum(["table", "model"]), reason: z.string() }).loose();
+
+export const decideContract = activityContract(
+  "decide",
+  z.strictObject({
+    point: z.string().min(1),
+    inputs: z.record(z.string(), z.unknown()).optional(),
+    read: z.record(z.string(), z.string()).optional(),
+    subject: z.string().optional(),
+    kind: z.string().optional(),
+    cwd: z.string().optional(),
+    backends: z.record(z.string(), backendSchema).optional(),
+    dryRun: z.boolean().optional(),
+    store: z.enum(["tree", "ledger"]).optional(),
+  }),
+  z.strictObject({
+    id: z.string(),
+    path: z.string(),
+    state: z.enum(["escalated", "proposed", "answered"]),
+    open: z.boolean(),
+    answer: z.union([z.string(), z.boolean(), z.null()]),
+    decider: z.string(),
+    model: z.string().nullable(),
+    backend: z.string().nullable(),
+    confidence: z.number().nullable(),
+    threshold: z.number().nullable(),
+    answeredBy: z.array(z.string()),
+    escalations: z.array(decideEscalation),
+    missing: z.array(z.string()),
+  }),
+  { entities: ["point"] },
+);
+
+/**
+ * The rollback activities for a source release (#2800, ./source-rollback.ts).
+ * A rollback Op reads `plan.out.digest` into its gate, `plan.out.to` and the
+ * archive fields into the step that restores the Machine, and
+ * `plan.out.file` into its record step.
+ */
+export const releaseRollbackPlanContract = activityContract(
+  "releaseRollbackPlan",
+  z.strictObject({
+    component: z.string(),
+    env: z.string(),
+    to: z.string().optional(),
+    path: z.string().optional(),
+    dir: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    digest: z.string(),
+    file: z.string(),
+    to: z.string(),
+    from: z.string(),
+    gitSha: z.string(),
+    archive: z.string(),
+    archiveDigest: z.string(),
+    dir: z.string(),
+  }),
+);
+
+export const releaseRollbackRecordContract = activityContract(
+  "releaseRollbackRecord",
+  z.strictObject({
+    plan: z.string(),
+    digest: z.string().optional(),
+    approval: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
+    actor: z.string().optional(),
+    runId: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({ recorded: z.boolean(), digest: z.string(), env: z.string(), component: z.string(), approver: z.string().nullable() }),
+);
+
+/**
+ * The factory reference Op's activities (#3406, ws-087, ./factory.ts).
+ * OPS013 checks a later step's reference into each result, so `factoryOp`'s
+ * wiring (ask into build, build into check, all three into record) is
+ * validated at `chant build`.
+ */
+const factoryLease = z.unknown();
+const factoryBackends = z.record(z.string(), backendSchema).optional();
+
+export const factoryPickContract = activityContract(
+  "factoryPick",
+  z.strictObject({ cwd: z.string().optional(), kind: z.string().optional() }),
+  z.strictObject({
+    candidates: z.array(z.string()),
+    held: z.array(z.object({ item: z.string(), hold: z.string(), message: z.string() })),
+    keys: z.array(z.string()),
+  }),
+);
+
+export const factoryReadyContract = activityContract(
+  "factoryReady",
+  z.strictObject({ cwd: z.string().optional(), kind: z.string().optional(), also: z.string().optional() }),
+  z.array(z.string()),
+);
+
+export const factoryAskContract = activityContract(
+  "factoryAsk",
+  z.strictObject({ lease: factoryLease, cwd: z.string().optional(), kind: z.string().optional(), backends: factoryBackends }),
+  z.strictObject({
+    item: z.string(),
+    ask: z.boolean(),
+    tier: z.string(),
+    understand: z.string().nullable(),
+    outcome: z.enum(["dropped", "redraft", "ask"]).nullable(),
+  }),
+);
+
+export const factoryBuildContract = activityContract(
+  "factoryBuild",
+  z.strictObject({ lease: factoryLease, ask: z.unknown(), builder: z.string().min(1), context: z.string().optional(), cwd: z.string().optional() }),
+  z.strictObject({ ran: z.boolean(), finished: z.boolean(), exitCode: z.number().nullable(), reverted: z.array(z.string()), note: z.string(), report: z.record(z.string(), z.unknown()).nullable() }),
+);
+
+export const factoryCheckContract = activityContract(
+  "factoryCheck",
+  z.strictObject({ lease: factoryLease, build: z.unknown(), check: z.string().optional(), cwd: z.string().optional() }),
+  z.strictObject({ ran: z.boolean(), ok: z.boolean(), command: z.string().nullable(), evidence: z.array(z.string()), log: z.string().nullable(), report: z.record(z.string(), z.unknown()).nullable() }),
+);
+
+export const factoryRecordContract = activityContract(
+  "factoryRecord",
+  z.strictObject({ lease: factoryLease, ask: z.unknown(), build: z.unknown(), check: z.unknown(), after: z.string().optional(), cwd: z.string().optional() }),
+  z.strictObject({
+    outcome: z.enum(["done", "not_done", "dropped", "redraft", "ask"]),
+    reason: z.string().nullable(),
+    commit: z.string().nullable(),
+    implementsProposed: z.array(z.object({ decision: z.string(), paths: z.array(z.string()) })),
+  }),
+);
+

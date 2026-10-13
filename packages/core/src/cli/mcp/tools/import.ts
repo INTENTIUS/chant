@@ -17,6 +17,10 @@ export const importTool = {
         type: "string",
         description: "Output directory (default: ./infra/)",
       },
+      lexicon: {
+        type: "string",
+        description: "Lexicon to import with (e.g. k8s); skips template detection",
+      },
     },
     required: ["source"],
   },
@@ -28,11 +32,13 @@ export const importTool = {
 export async function handleImport(params: Record<string, unknown>): Promise<unknown> {
   const source = params.source as string;
   const output = params.output as string | undefined;
+  const lexicon = params.lexicon as string | undefined;
 
   const result = await importCommand({
     templatePath: source,
     output,
     force: true,
+    lexicon,
   });
 
   if (!result.success) {

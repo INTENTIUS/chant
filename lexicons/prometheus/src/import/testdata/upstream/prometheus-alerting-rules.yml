@@ -1,0 +1,15 @@
+# From github.com/prometheus/prometheus v3.15.0, docs/configuration/alerting_rules.md,
+# "Defining alerting rules" (https://github.com/prometheus/prometheus/blob/v3.15.0/docs/configuration/alerting_rules.md). Apache-2.0.
+groups:
+- name: example
+  labels:
+    team: myteam
+  rules:
+  - alert: HighRequestLatency
+    expr: job:request_latency_seconds:mean5m{job="myjob"} > 0.5
+    for: 10m
+    keep_firing_for: 5m
+    labels:
+      severity: page
+    annotations:
+      summary: High request latency

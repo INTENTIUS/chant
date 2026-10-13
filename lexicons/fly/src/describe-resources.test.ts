@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { describeObservationConformance } from "@intentius/chant-test-utils";
 import { describeResources, flyPlan } from "./describe-resources";
 import type { FlyHttp } from "./op/activities/fly-apply";
+import { createMachinesFake } from "./op/activities/machines-fake";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 // Injected-HTTP unit tests, mirroring fly-apply.test.ts: a scripted flaps answers
@@ -38,7 +39,8 @@ function entities(pairs: Array<[string, string]>): Map<string, { entityType: str
  * `machines` is the live machine array returned for the app.
  */
 function fakeHttp(machines: Array<Record<string, unknown>>): FlyHttp {
-  return async (method, url) => {
+  return async (method, href) => {
+    const url = href.split("?")[0];
     if (method === "GET" && /\/v1\/apps\/[^/]+$/.test(url)) return { status: 200, text: "{}" }; // app exists
     if (method === "GET" && url.endsWith("/machines")) return { status: 200, text: JSON.stringify(machines) };
     if (method === "GET" && url.endsWith("/volumes")) return { status: 200, text: "[]" };
@@ -126,13 +128,28 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
   });
 
   test("with no readable plan, declared entities are unobserved rather than absent (#1089)", async () => {
+    // Nothing a plan can be rebuilt from (a Secret keys no read): no plan at all.
+    const secrets = entities([["token", "Fly::Machines::Secret"]]);
     const res = await describeResources(
-      { environment: "prod", buildOutput: "", entityNames: ["web"], entities: ENTS, endpoint: ENDPOINT },
+      { environment: "prod", buildOutput: "", entityNames: ["token"], entities: secrets, endpoint: ENDPOINT },
       fakeHttp([]),
     );
     expect(res.resources).toEqual({});
-    expect(res.unobserved?.web?.reason).toBe("read-failed");
-    expect(res.unobserved?.app?.reason).toBe("read-failed");
+    expect(res.unobserved?.token?.reason).toBe("read-failed");
+  });
+
+  test("with no build output, the plan is rebuilt from the declared entities (status --live, #2736)", async () => {
+    const declared = new Map([
+      ["shopApp", { entityType: "Fly::Machines::App", props: { name: APP, org_slug: "personal" } as Record<string, unknown> }],
+      ["web", { entityType: "Fly::Machines::Machine", props: { name: "web" } as Record<string, unknown> }],
+    ]);
+    const res = await describeResources(
+      { environment: "prod", buildOutput: "", entityNames: ["shopApp", "web"], entities: declared, endpoint: ENDPOINT },
+      fakeHttp([liveMachine("web", "nginx:1", { id: "m-web" })]),
+    );
+    expect(res.resources.web?.physicalId).toBe("m-web");
+    expect(res.resources.shopApp?.physicalId).toBe(APP);
+    expect(res.unobserved ?? {}).toEqual({});
   });
 
   test("the owned filter records a withheld declared machine as `filtered`, not absent (#1089)", async () => {
@@ -143,6 +160,21 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
     );
     expect(res.resources.web).toBeUndefined();
     expect(res.unobserved?.web?.reason).toBe("filtered");
+  });
+});
+
+describe("describeResources reads every page of certificates (#3224)", () => {
+  test("an app with more certificates than one Fly page reports all of them", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add(APP);
+    const hostnames = Array.from({ length: 30 }, (_, i) => `h${i}.example.com`);
+    fake.certs.set(APP, hostnames);
+    const res = await describeResources(
+      { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, endpoint: ENDPOINT },
+      fake.http,
+    );
+    const certs = Object.values(res.resources).filter((r) => r.type === "Fly::Machines::Certificate");
+    expect(certs.map((r) => r.physicalId).sort()).toEqual([...hostnames].sort());
   });
 });
 

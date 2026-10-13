@@ -1,0 +1,173 @@
+{
+  "member": {
+    "member": "estate",
+    "lexicon": "terraform",
+    "planner": "terraform",
+    "status": "planned",
+    "planDigest": "jcs1-sha256:88985c9311911a8882e7157da4940a2a537046ccaeaceb95a2744976dcfd83bb",
+    "holes": []
+  },
+  "entries": [
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "terraform_data.config",
+      "type": "terraform_data",
+      "name": "config",
+      "action": "update",
+      "disruption": "in-place",
+      "attributes": [
+        {
+          "path": "input",
+          "before": {
+            "size": "small",
+            "tags": {
+              "team": "core"
+            }
+          },
+          "after": {
+            "size": "large",
+            "tags": {
+              "team": "core"
+            }
+          }
+        },
+        {
+          "path": "output",
+          "before": {
+            "size": "small",
+            "tags": {
+              "team": "core"
+            }
+          },
+          "unknown": true
+        }
+      ]
+    },
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "terraform_data.keep",
+      "type": "terraform_data",
+      "name": "keep",
+      "action": "no-op",
+      "attributes": []
+    },
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "terraform_data.old",
+      "type": "terraform_data",
+      "name": "old",
+      "action": "delete",
+      "disruption": "destroy",
+      "attributes": []
+    },
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "terraform_data.secret",
+      "type": "terraform_data",
+      "name": "secret",
+      "action": "update",
+      "disruption": "in-place",
+      "attributes": [
+        {
+          "path": "input",
+          "sensitive": true
+        },
+        {
+          "path": "output",
+          "before": "s3cr3t-1",
+          "unknown": true
+        }
+      ]
+    },
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "terraform_data.worker",
+      "type": "terraform_data",
+      "name": "worker",
+      "action": "replace",
+      "disruption": "destroy",
+      "attributes": [
+        {
+          "path": "id",
+          "before": "c9979d62-1c1d-d86b-3f97-92fddc2fcf8c",
+          "unknown": true
+        },
+        {
+          "path": "output",
+          "before": "v1",
+          "unknown": true
+        },
+        {
+          "path": "triggers_replace",
+          "before": [
+            "build-1"
+          ],
+          "after": [
+            "build-2"
+          ],
+          "forcesReplacement": true
+        }
+      ]
+    },
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "module.app.terraform_data.instance[0]",
+      "type": "terraform_data",
+      "name": "instance",
+      "index": 0,
+      "module": "module.app",
+      "action": "create",
+      "attributes": [
+        {
+          "path": "id",
+          "unknown": true
+        },
+        {
+          "path": "input",
+          "after": "app-0"
+        },
+        {
+          "path": "output",
+          "unknown": true
+        }
+      ]
+    },
+    {
+      "member": "estate",
+      "lexicon": "terraform",
+      "planner": "terraform",
+      "address": "module.app.terraform_data.instance[1]",
+      "type": "terraform_data",
+      "name": "instance",
+      "index": 1,
+      "module": "module.app",
+      "action": "create",
+      "attributes": [
+        {
+          "path": "id",
+          "unknown": true
+        },
+        {
+          "path": "input",
+          "after": "app-1"
+        },
+        {
+          "path": "output",
+          "unknown": true
+        }
+      ]
+    }
+  ]
+}

@@ -9,7 +9,6 @@ import {
   vaultNameRefs,
   type FountainHttp,
 } from "./fountain-apply";
-import { fountainRun } from "./fountain-run";
 import type { ChantConfig } from "@intentius/chant/config";
 
 interface Call {
@@ -221,7 +220,7 @@ describe("fountainApply", () => {
       return new Response(JSON.stringify({ data: { results: [] } }), { status: 200 });
     }) as typeof fetch;
     try {
-      await fountainApply({ manifestContent: MANIFEST, profile: "staging" }, undefined, {
+      await fountainApply({ manifestContent: MANIFEST, profile: "staging" }, undefined, undefined, {
         config: configWithProfiles,
       });
     } finally {
@@ -248,7 +247,7 @@ describe("fountainApply", () => {
       },
     });
 
-    const summary = await fountainApply({ manifestContent: MANIFEST }, http);
+    const summary = await fountainApply({ manifestContent: MANIFEST }, undefined, http);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ method: "POST", path: "/api/apply" });
@@ -268,7 +267,7 @@ describe("fountainApply", () => {
       },
     });
 
-    await fountainApply({ manifestContent: MANIFEST }, http);
+    await fountainApply({ manifestContent: MANIFEST }, undefined, http);
     const body = calls[0].body as { resources: Array<{ spec: Record<string, unknown> }> };
     expect(body.resources[1].spec.environment).toBe("concierge-env");
     expect(body.resources[1].spec.environment_id).toBeUndefined();
@@ -303,7 +302,7 @@ spec:
       },
     });
 
-    const summary = await fountainApply({ manifestContent: manifest }, http);
+    const summary = await fountainApply({ manifestContent: manifest }, undefined, http);
     expect(summary.updated).toEqual(["Environment/e"]);
     expect(summary.secretsUpserted).toBe(1);
     const body = calls[0].body as { resources: Array<{ spec: Record<string, unknown> }> };
@@ -349,7 +348,7 @@ spec: {}
       },
     });
 
-    await expect(fountainApply({ manifestContent: manifest }, http)).rejects.toThrow(/2 failure/);
+    await expect(fountainApply({ manifestContent: manifest }, undefined, http)).rejects.toThrow(/2 failure/);
   });
 
   it("throws on a failed secret upsert", async () => {
@@ -381,17 +380,17 @@ spec:
       },
     });
 
-    await expect(fountainApply({ manifestContent: manifest }, http)).rejects.toThrow(/BAD/);
+    await expect(fountainApply({ manifestContent: manifest }, undefined, http)).rejects.toThrow(/BAD/);
   });
 
   it("throws when the server rejects the request outright", async () => {
     const { http } = fakeHttp({ "POST /api/apply": { status: 500 } });
-    await expect(fountainApply({ manifestContent: MANIFEST }, http)).rejects.toThrow(/500/);
+    await expect(fountainApply({ manifestContent: MANIFEST }, undefined, http)).rejects.toThrow(/500/);
   });
 
   it("skips the POST entirely for an empty manifest", async () => {
     const { http, calls } = fakeHttp({});
-    const summary = await fountainApply({ manifestContent: "" }, http);
+    const summary = await fountainApply({ manifestContent: "" }, undefined, http);
     expect(calls).toHaveLength(0);
     expect(summary).toEqual({
       created: [],
@@ -423,7 +422,7 @@ spec:
       "GET /api/team": { status: 200, json: { data: [] } },
     });
 
-    const summary = await fountainApply({ manifestContent: "", prune: true }, http);
+    const summary = await fountainApply({ manifestContent: "", prune: true }, undefined, http);
     const deletes = calls.filter((c) => c.method === "DELETE").map((c) => c.path);
     expect(deletes).toEqual(["/api/agents/a-1", "/api/environments/e-1"]);
     expect(summary.pruned).toEqual(["Agent/owned-agent", "Environment/owned-env"]);
@@ -450,7 +449,7 @@ spec: {}
       "GET /api/team": { status: 200, json: { data: [] } },
     });
 
-    const summary = await fountainApply({ manifestContent: manifest, prune: true }, http);
+    const summary = await fountainApply({ manifestContent: manifest, prune: true }, undefined, http);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     expect(summary.pruned).toEqual([]);
   });
@@ -619,7 +618,7 @@ describe("fountainApply — allowed_vault_ids (#2166)", () => {
       },
     });
 
-    const summary = await fountainApply({ manifestContent: STEWARD_WITH_VAULT }, http);
+    const summary = await fountainApply({ manifestContent: STEWARD_WITH_VAULT }, undefined, http);
 
     // The vault the agent names is created first, then read back for its id.
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
@@ -651,7 +650,7 @@ describe("fountainApply — allowed_vault_ids (#2166)", () => {
       "GET /api/vaults": { status: 200, json: { data: [] } },
     });
 
-    await expect(fountainApply({ manifestContent: STEWARD_WITH_VAULT }, http)).rejects.toThrow(
+    await expect(fountainApply({ manifestContent: STEWARD_WITH_VAULT }, undefined, http)).rejects.toThrow(
       /Agent\/prod-steward: allowed_vault_ids names the vault "prod-creds"/,
     );
     // The agent was never sent, so fountain never saw the name.
@@ -668,7 +667,7 @@ describe("fountainApply — allowed_vault_ids (#2166)", () => {
       ),
     });
 
-    await fountainApply({ manifestContent: manifest }, http);
+    await fountainApply({ manifestContent: manifest }, undefined, http);
 
     expect(calls).toHaveLength(1);
     const agent = (calls[0].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[2];
@@ -685,7 +684,7 @@ describe("fountainApply — allowed_vault_ids (#2166)", () => {
       ),
     });
 
-    await fountainApply({ manifestContent: manifest }, http);
+    await fountainApply({ manifestContent: manifest }, undefined, http);
 
     expect(calls).toHaveLength(1);
     const agent = (calls[0].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[2];
@@ -708,7 +707,7 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "POST /api/webhooks": { status: 201, json: { data: { id: "w-1" } } },
     });
 
-    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, undefined, http);
 
     expect(summary.created).toEqual([
       "Agent/prod-steward",
@@ -761,7 +760,7 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "GET /api/webhooks": { status: 200, json: { data: [LIVE_WEBHOOK] } },
     });
 
-    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, undefined, http);
 
     expect(summary.unchanged).toEqual([
       "Agent/prod-steward",
@@ -796,7 +795,7 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "GET /api/webhooks": { status: 200, json: { data: [LIVE_WEBHOOK] } },
     });
 
-    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, undefined, http);
 
     expect(summary.updated).toEqual(["Schedule/prod-steward-prod-watch"]);
     const patches = calls.filter((c) => c.method === "PATCH");
@@ -826,7 +825,7 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "PATCH /api/webhooks/w-1": { status: 200, json: { data: LIVE_WEBHOOK } },
     });
 
-    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, undefined, http);
     expect(summary.updated).toEqual(["Webhook/prodHook"]);
   });
 
@@ -860,7 +859,7 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "GET /api/webhooks": { status: 200, json: { data: [LIVE_WEBHOOK] } },
     });
 
-    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, http);
+    const summary = await fountainApply({ manifestContent: STEWARD_MANIFEST }, undefined, http);
     expect(summary.updated).toEqual(["Teammate/prod-steward"]);
     expect(calls.find((c) => c.path === "/api/team/a-1")!.body).toEqual({ name: "prod-steward" });
   });
@@ -895,65 +894,12 @@ describe("fountainApply — Teammate, Schedule and Webhook", () => {
       "GET /api/agents": { status: 200, json: { data: [] } },
     });
 
-    const summary = await fountainApply({ manifestContent: "", prune: true }, http);
+    const summary = await fountainApply({ manifestContent: "", prune: true }, undefined, http);
 
     expect(summary.pruned).toEqual(["Schedule/retired-nightly", "Teammate/retired-steward"]);
     expect(calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
       "/api/team/a-1/schedules/s-1",
       "/api/team/a-1",
     ]);
-  });
-});
-
-describe("fountainRun", () => {
-  it("resolves the agent by name, starts, and polls to a terminal status", async () => {
-    let polls = 0;
-    const http: FountainHttp = async (method, path, body) => {
-      if (path.startsWith("/api/agents?search=")) {
-        return { status: 200, json: { data: [{ id: "agent-1", name: "researcher" }] } };
-      }
-      if (method === "POST" && path === "/api/conversations") {
-        expect((body as Record<string, unknown>).agent_id).toBe("agent-1");
-        return { status: 201, json: { data: { id: "conv-1" } } };
-      }
-      if (method === "GET" && path === "/api/conversations/conv-1") {
-        polls += 1;
-        return {
-          status: 200,
-          json: { data: { status: polls < 3 ? "running" : "completed" } },
-        };
-      }
-      throw new Error(`unrouted: ${method} ${path}`);
-    };
-
-    const result = await fountainRun(
-      { agent: "researcher", prompt: "hi", pollMs: 1, sleep: async () => {} },
-      http,
-    );
-    expect(result).toEqual({ conversationId: "conv-1", status: "completed", terminatedByDeadline: false });
-  });
-
-  it("terminates the conversation when the deadline passes", async () => {
-    const calls: string[] = [];
-    const http: FountainHttp = async (method, path) => {
-      calls.push(`${method} ${path}`);
-      if (path === "/api/conversations" && method === "POST") {
-        return { status: 201, json: { data: { id: "conv-2" } } };
-      }
-      if (method === "GET") return { status: 200, json: { data: { status: "running" } } };
-      return { status: 200, json: null };
-    };
-
-    const result = await fountainRun(
-      {
-        agent: "123e4567-e89b-42d3-a456-426614174000",
-        timeoutMs: 1,
-        pollMs: 1,
-        sleep: async () => {},
-      },
-      http,
-    );
-    expect(result.terminatedByDeadline).toBe(true);
-    expect(calls).toContain("POST /api/conversations/conv-2/terminate");
   });
 });

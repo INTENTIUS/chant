@@ -210,6 +210,16 @@ export function ipv4CidrContains(outer: string, inner: string): boolean | null {
 }
 
 /**
+ * A port as a number. CloudFormation accepts `"80"` as well as `80`, so a
+ * string of digits counts; anything else reads as -1, which means all ports.
+ */
+function portNumber(port: unknown): number {
+  if (typeof port === "number") return port;
+  if (typeof port === "string" && /^-?\d+$/.test(port.trim())) return Number(port);
+  return -1;
+}
+
+/**
  * Check if a port range [fromPort, toPort] contains any of the sensitive ports.
  */
 export function portRangeContainsSensitive(
@@ -220,8 +230,8 @@ export function portRangeContainsSensitive(
   // Missing ports means all ports
   if (fromPort === undefined && toPort === undefined) return true;
 
-  const from = typeof fromPort === "number" ? fromPort : -1;
-  const to = typeof toPort === "number" ? toPort : -1;
+  const from = portNumber(fromPort);
+  const to = portNumber(toPort);
 
   // If either is an intrinsic, we can't statically verify
   if (isIntrinsic(fromPort) || isIntrinsic(toPort)) return false;

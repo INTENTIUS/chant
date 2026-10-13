@@ -1,6 +1,6 @@
 ---
 title: Ops
-description: The terraform and choudoufu activities, the typed builders, and the apply, watch and adopt composites.
+description: The terraform and choudoufu activities, the typed builders, and the apply, watch, adopt and pin rollout composites.
 diataxis: how-to
 ---
 
@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/terraform/docs/pages/ops.mdx instead; changes here are overwritten. */}
 
 
-Eight activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus three composite Ops built from them: a gated apply, a scheduled watch, and a gated adoption.
+Nine activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus four composite Ops built from them. Three act on one root: a gated apply, a scheduled watch, and a gated adoption. The fourth rolls a module version out across many roots as pin-bump pull requests.
 
 ## The activities
 
@@ -17,7 +17,7 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 | Activity | Runs | Notes |
 |---|---|---|
 | `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfig`. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
-| `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. |
+| `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. Also returns `planDigest` and `changeSet`, the root's part of a [change-set document](/chant/reference/change-set/). |
 | `terraformApply` | `terraform apply <planFile>` | A saved plan, on either kind of root: there is no bare-apply mode here, and a missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. On a live root (see "choudoufu" below) that file is the approval artifact, and an apply that disagrees with it comes back as a named refusal rather than a thrown error. |
 | `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
 
@@ -34,6 +34,44 @@ const plan = terraformPlan("app", { id: "plan" }); // an id is what makes `.out`
 Give a Plan step an `id` when a later step applies its plan: `plan.out.planFile` builds a reference to that step's own saved output, instead of a literal path a rename could silently orphan. That reference is exactly what TF101 enforces — see [Lint Rules](../lint-rules/).
 
 Default profiles: `terraformInit`/`terraformPlan`/`terraformApply` run on `longInfra` (they call providers or download them); `terraformShow` runs on `fastIdempotent` (it reads an artifact and calls no provider).
+
+## Change sets
+
+`terraformPlan` returns `changeSet`, the root's part of a [change-set document](/chant/reference/change-set/). The root's name is the member, and the member's plan digest is the step's own `planDigest`. A run over several roots, or over roots and chant members, hands its parts to core's `composeChangeSet` and binds one gate to the document's digest.
+
+Two adapters live in the `@intentius/chant-lexicon-terraform/change-set` subpath. `terraformChangeSetPart` reads a `show -json` plan from terraform, tofu or choudoufu. `choudoufuSetPlanParts` reads `choudoufu live-plan-set -json` and returns one part per root, with choudoufu's root digest as `nativeDigest`. The subpath imports no lint rules and no TypeScript, so it bundles on its own.
+
+## Roots as components, in gated waves
+
+The lexicon contributes one component verb, `terraform-apply`. A component that deploys a root names it:
+
+```typescript
+import type { Component } from "@intentius/chant/components";
+
+export const app: Component = {
+  name: "app",
+  dependsOn: ["network"],
+  deploy: [
+    {
+      phase: "Apply",
+      steps: [
+        {
+          kind: "terraform-apply",
+          root: "app",
+          vars: { vpc_id: { stackOutput: { stack: "network", name: "vpc_id" } } },
+          noRollback: "an apply is undone by applying the previous configuration",
+        },
+      ],
+    },
+  ],
+};
+```
+
+`root` is a key into `terraform.roots`, so it works for `terraform`, `tofu` and `choudoufu` alike. `vars` are passed as `-var` after the root's var files, so a value another root's apply produced reaches this root's plan. The step returns the root's `terraform output -json` as `outputs`, which is what a dependent's `stackOutput()` reads.
+
+Roots written this way run as a [`chant components fan-out`](/chant/cli/components/#components-fan-out). With `--wave-gate <name>`, each wave of roots is planned once the wave before it has applied, and its gate binds the wave's set digest. The member is the root's name and its plan digest is the step's `planDigest`, so a wave's digest is the change-set digest of its roots. `run` applies the saved plan the wave approved. terraform and tofu refuse a saved plan whose state moved, and choudoufu refuses one whose live plan changed, so either way the approved plan is the one applied or nothing is.
+
+A live choudoufu root in a gated wave goes through choudoufu's own set commands, which need choudoufu v0.22.0 or later. `plan` runs `choudoufu live-plan-set -json` over the root, and the wave's gate binds the plan that document holds. `run` passes the document and choudoufu's set digest to `choudoufu live-wave-apply`, which plans the root again and applies nothing when the plan moved. choudoufu's resume file is kept in the fan-out's `--resume` record, so the next attempt hands it back to choudoufu. The files live under `.chant/choudoufu-waves/<root>/`. A choudoufu root whose step passes `vars`, or whose entry in `terraform.roots` has var files or backend config, keeps the `plan -out` and `apply` path, since `live-plan-set` takes none of them. An older choudoufu is refused on the wave path only; plain terraform and tofu roots do not need it.
 
 ## TerraformApplyOp
 
@@ -197,6 +235,8 @@ Two specs produce two workflow files, because a GitHub trigger is workflow-scope
 
 ```yaml
 # app-apply.yml
+name: app-apply
+
 on:
   push:
     branches:
@@ -213,7 +253,7 @@ permissions:
 jobs:
   app-apply:
     runs-on: ubuntu-latest
-    container: node:22-slim
+    container: node:22
     environment:
       name: production
     outputs:
@@ -222,7 +262,7 @@ jobs:
       gate: '${{ steps.chant-run.outputs.gate }}'
       approve: '${{ steps.chant-run.outputs.approve }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: '${{ vars.AWS_APPLY_ROLE_ARN }}'
@@ -243,6 +283,7 @@ jobs:
     needs: app-apply
     if: needs.app-apply.outputs.gated == 'true'
     runs-on: ubuntu-latest
+    container: node:22
     permissions:
       contents: read
       issues: write
@@ -250,13 +291,13 @@ jobs:
     steps:
       - name: Report the pending gate
         env:
-          GH_TOKEN: '${{ github.token }}'
-          GH_REPO: '${{ github.repository }}'
+          GITHUB_TOKEN: '${{ github.token }}'
           CHANT_OP: '${{ needs.app-apply.outputs.op }}'
           CHANT_GATE: '${{ needs.app-apply.outputs.gate }}'
           CHANT_APPROVE: '${{ needs.app-apply.outputs.approve }}'
         run: |
-          ...find the merged PR for $GITHUB_SHA, post or edit the marker comment, or open an issue...
+          ...npm install @intentius/chant@<this release>, then a node script through @intentius/chant/pr-forge:
+          ...find the merged PR for the commit, post or edit the marker comment, or keep a marker issue...
 ```
 
 The runner has no terraform on it, so the install is a `beforeScript` line pinned to a release rather than taken from a package repo: the version that plans is then the version the file names, which matters for a root with a `required_version` floor. `beforeScript` lines are emitted as plain `run:` steps ahead of the invocation, so the Op's first step is never a missing binary. A `setup` entry could carry `hashicorp/setup-terraform` instead; a curl and an unzip need no action to express.
@@ -273,15 +314,15 @@ The additive `permissions` map can only add. A scope the mode already granted is
 
 **The plan lands as a comment on the pull request that triggered the run.** That is `findingMode: "comment"` ([#2231](https://github.com/INTENTIUS/chant/issues/2231)), the fourth mode on `reconcilePr` and the one this shape was missing. It writes a hidden marker as the comment's first line and finds the comment again by that marker on the next run, so a pull request pushed to five times carries one comment holding the current plan rather than five stale ones. The pull request comes out of the run's own event payload (`GITHUB_EVENT_PATH`, falling back to `GITHUB_REF`), which is why the mode constrains the trigger rather than only the permission set: the github generator refuses it by name on a cron or push trigger, and a run reaching the Report step with no pull request fails there instead of posting the plan somewhere else.
 
-On GitLab the same mode writes a merge-request note ([#2256](https://github.com/INTENTIUS/chant/issues/2256)), by the same recipe: the marker is the note's first line, the next pipeline finds the note by it and edits it in place. The merge request comes out of `CI_MERGE_REQUEST_IID` and the project out of `CI_MERGE_REQUEST_PROJECT_ID`, so the gitlab generator constrains the trigger exactly as the github one does and refuses the mode by name on a cron or push job. On Forgejo it is still refused rather than approximated: the GitHub half of the activity shells to `gh` and chant carries no Forgejo client, so the forgejo Op generator points at `"issue"` instead.
+On GitLab the same mode writes a merge-request note ([#2256](https://github.com/INTENTIUS/chant/issues/2256)), by the same recipe: the marker is the note's first line, the next pipeline finds the note by it and edits it in place. The merge request comes out of `CI_MERGE_REQUEST_IID` and the project out of `CI_MERGE_REQUEST_PROJECT_ID`, so the gitlab generator constrains the trigger exactly as the github one does and refuses the mode by name on a cron or push job. On Forgejo it posts the same comment GitHub gets, through the same forge client over Forgejo's `/api/v1` ([#3757](https://github.com/INTENTIUS/chant/issues/3757)), so the forgejo generator emits the mode as the github one does.
 
 The push run stops at the apply's gate. It reaches the gate, finds no resolution on the ledger, records the pending fact and ends there instead of holding a runner open. `chant approve app-apply approve-app-apply --approver you` records the answer and re-running the workflow applies. A root whose merges should apply unattended sets `gate: "never"`.
 
 **A gated merge is a green run with a visible pending state** ([#2243](https://github.com/INTENTIUS/chant/issues/2243)). Actions has no neutral conclusion for a `run:` step, so exit 3 used to mark main as broken on every merge until someone approved. The push job now runs `chant run app-apply --gated-exit 0 --json`: `chant run` maps that one outcome, so a run that fails for any other reason still exits 1 and the job is still red. The gate, the `chant approve` line and the `_gates/app-apply.jsonl` ledger path go to `GITHUB_STEP_SUMMARY`, which is where the run page shows them.
 
-The pending state also leaves the Actions log. The `app-apply-gate-notice` job above `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so it asks `repos/{repo}/commits/{sha}/pulls` for the one the pushed commit belongs to — the commit's own associated-pull-request endpoint, exact rather than a search index — and posts there through the same hidden-marker recipe `findingMode: "comment"` uses, editing one comment rather than stacking one per merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead, which is why the job carries `issues: write` alongside `pull-requests: write`. Those permissions are the job's own and replace the workflow's for it alone, so the apply beside it stays `contents: read`.
+The pending state also leaves the Actions log. The `app-apply-gate-notice` job above `needs:` the apply and runs when its `gated` output is set. A push event carries no pull request, so it asks the forge for the one the pushed commit belongs to (`repos/{repo}/commits/{sha}/pulls` on GitHub, the commit's own associated-pull-request endpoint, exact rather than a search index) and posts there through the same hidden-marker recipe `findingMode: "comment"` uses, editing one comment rather than stacking one per merge. A commit with no pull request, such as a direct push to the branch, gets an issue instead, kept by the same marker, which is why the job carries `issues: write` alongside `pull-requests: write`. Those permissions are the job's own and replace the workflow's for it alone, so the apply beside it stays `contents: read`.
 
-Forgejo takes the mapping and the step summary and drops the notice job: it shells to `gh`, which no Forgejo runner points at its own instance, the same reason `comment` mode is refused there. GitLab takes neither, since its Op generator refuses a `push` trigger outright.
+The job runs in the Op's own image, installs the chant release the workflow was generated with, and posts through `@intentius/chant/pr-forge` ([#3773](https://github.com/INTENTIUS/chant/issues/3773)), so it needs no `gh` and no checkout. That is also why Forgejo takes all three: the same job, with Forgejo's `commits/{sha}/pull` lookup and its `/api/v1` base read off the job's environment. GitLab takes neither, since its Op generator refuses a `push` trigger outright.
 
 **The apply also runs in a GitHub environment, which is a second gate in front of the first** ([#2257](https://github.com/INTENTIUS/chant/issues/2257)). `environment: { name: "production" }` on the apply spec emits `environment: production` on that job, and a `production` environment configured in the repository with required reviewers then holds the job before its first step. The two gates stop different things. The reviewer stops the job from starting at all, so nothing is checked out and no role is assumed until somebody releases it; chant's gate stops the apply inside a run that already started, on a plan that already exists, and is cleared by a `chant approve` commit rather than by a button. Wanting both is the common case, and neither is required by the other: the reviewer alone pairs with `gate: "never"` on the root, and chant's gate alone is what a Forgejo estate gets, since Forgejo Actions has no environments and its generator drops the key with a header comment saying so. The plan half names no environment, because it deploys nothing and a reviewer prompt on every pull request is the fastest way to teach people to click through one.
 
@@ -338,3 +379,23 @@ Two live resources at one declared identity are two `unowned` entries with the s
 For an estate that still has its `terraform.tfstate`, do not start with the ledger loop above. `choudoufu live-import -state=terraform.tfstate -estate=<name>` reads that state file once, verifies each entry against the live system, and stamps markers on everything that verifies, which lands the whole estate in the "already marked" group with nothing left to adopt by hand. It is also the only path that answers the `count`/`for_each` blind spot: content matching never offers an indexed or keyed address, while `live-import` reads every instance, index and key included, straight out of the state. Two runs, the same two flags: the first prints a ratification report and writes nothing, the second stamps what the report showed as `VERIFIED` or `DRIFTED`.
 
 chant does not wrap it in an Op, on purpose. It reads a state file, once, and chant does not host one: the file is the migration's input rather than part of the estate, and an Op that took a path to somebody's `terraform.tfstate` as an argument would be pretending otherwise. Run it by hand in the root directory, keep the state file until it has run, then let `TerraformWatchOp` and `TerraformAdoptOp` cover what is left. choudoufu's "Migrate an existing estate" guide has the full sequence.
+
+## TerraformPinRolloutOp
+
+`terraformPinRollout` runs one step of a pin-bump rollout ([#3189](https://github.com/INTENTIUS/chant/issues/3189)). It names no `terraform.roots` entry. It finds the roots that call a module, in `.tf` files and `terragrunt.hcl`, splits them into waves, and opens at most the next wave's pull request. `TerraformPinRolloutOp` wraps it in one `Rollout` phase, whose run outcome is the rollout's status. `chant terraform pin-rollout` runs the same step from the command line.
+
+```typescript
+import { TerraformPinRolloutOp } from "@intentius/chant-lexicon-terraform";
+
+export const { op } = TerraformPinRolloutOp({
+  name: "vpc-1-4",
+  module: "oci://registry.example.com/modules/vpc",
+  from: "1.3.0",
+  to: "1.4.0",
+  canaries: ["live/dev/vpc"],
+  mode: "pull-request",
+  schedule: "*/30 * * * *",
+});
+```
+
+A wave's PR opens only on a run after the previous wave's PR merged and each of its roots reported its apply check as passed on the merge commit. A failed root fails the run and names the root. The [Pinned Module Rollout](/chant/guide/pinned-module-rollout/) guide covers pinning, wave planning, and the exit codes.

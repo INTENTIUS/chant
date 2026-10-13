@@ -205,6 +205,9 @@ export async function predictDeclared(projectPath: string, args: PredictBehaviou
     traffic: args.traffic,
     edges,
     edgeCoverage: declaredEdgeCoverage(),
+    // This activity builds from `discover` + `build`, never from an account —
+    // it is the declared estate by construction, on whichever checkout it runs.
+    from: "declared",
   };
   const answer = await createBehaviourPredict({ kinds })(options);
   // On arrival, with the names that were asked — `behaviourReport` checks the

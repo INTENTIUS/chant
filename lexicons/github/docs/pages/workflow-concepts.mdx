@@ -188,3 +188,18 @@ export const deploy = new Job({
   ],
 });
 ```
+
+## Dependencies in `chant graph`
+
+`chant graph --format ir|mermaid|dot` draws each workflow as a box holding its jobs, and draws the dependencies the workflows write as strings as edges:
+
+| Edge `kind` | From | To | From the source |
+|-------------|------|----|-----------------|
+| `needs` | job | job | `needs: ["build"]`, resolved within the job's own workflow by its kebab-cased key |
+| `calls` | job | workflow | `uses: "./.github/workflows/<file>.yml"`, resolved to the declared workflow written to that file |
+| `calls` | job | composite action | a step's `uses: "./path/to/action"` |
+| `triggers` | workflow | workflow | `on.workflow_run.workflows`, resolved by the other workflow's `name` |
+
+Jobs are placed in workflows the way the build places them: a workflow's own `jobs:` first, and standalone `Job` exports in the first workflow. A reusable-workflow call and a `workflow_run` trigger cross from one workflow to another, so they carry `crossPipeline: true` and draw dashed.
+
+A reference to anything the project does not declare (another repository's workflow, a job no workflow has, a local composite action, which chant does not declare) is listed under `dangling` in the IR and drawn as a dashed edge to a `(not declared)` stub, never dropped. See [`chant graph`](/chant/cli/graph/#ci-edges).

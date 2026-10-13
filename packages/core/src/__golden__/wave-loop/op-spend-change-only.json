@@ -1,0 +1,168 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 0,
+        "applied": [
+          "staging"
+        ],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 2,
+          "name": "staging",
+          "op": "migrations",
+          "gate": "migrations-wave-2",
+          "policy": "on-destructive",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "members": [
+            {
+              "member": "staging",
+              "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "op": "migrate",
+              "destructive": true
+            }
+          ],
+          "status": "approved",
+          "spend": "change",
+          "via": "ledger",
+          "approvedBy": "alice",
+          "approvedAt": "2026-10-10T00:00:00Z",
+          "spentAt": "2026-10-11T00:00:00.000Z"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": [
+          {
+            "version": 1,
+            "kind": "applied",
+            "op": "migrations",
+            "gate": "migrations-wave-2",
+            "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+            "approvedAt": "2026-10-10T00:00:00Z",
+            "approvedBy": "alice",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "wave": {
+              "number": 2,
+              "name": "staging"
+            }
+          }
+        ]
+      },
+      "calls": 2,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "staging",
+        "--out",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "apply",
+        "staging",
+        "--plan",
+        ".chant/op-waves/migrations/wave-2/staging.plan.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/migrations/wave-2/staging.hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/migrations/wave-2/staging.hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "migrations",
+          "op": "migrate",
+          "wave": "staging",
+          "number": 2,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+          "approved": true,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "staging",
+              "op": "migrate",
+              "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",
+          "hooks": {},
+          "outcomes": []
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 2 (staging): gate on-destructive (read at bbbbbbbbbbbb), digest jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d: approved by alice",
+    "wave 2 (staging) applies under the approval by alice at 2026-10-10T00:00:00Z, which is now spent"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-2/staging.hooks.json": {
+      "version": 1,
+      "opWaves": "migrations",
+      "op": "migrate",
+      "wave": "staging",
+      "number": 2,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+      "approved": true,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "staging",
+          "op": "migrate",
+          "plan": ".chant/op-waves/migrations/wave-2/staging.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/migrations/wave-2/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/migrations/wave-2/staging.plan.json": {
+      "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "destructive": true
+    },
+    ".chant/op-waves/migrations/wave-2.json": {
+      "wave": 2,
+      "name": "staging",
+      "op": "migrations",
+      "gate": "migrations-wave-2",
+      "policy": "on-destructive",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d",
+      "members": [
+        {
+          "member": "staging",
+          "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "op": "migrate",
+          "destructive": true
+        }
+      ],
+      "status": "approved",
+      "spend": "change",
+      "via": "ledger",
+      "approvedBy": "alice",
+      "approvedAt": "2026-10-10T00:00:00Z",
+      "spentAt": "2026-10-11T00:00:00.000Z"
+    }
+  }
+}

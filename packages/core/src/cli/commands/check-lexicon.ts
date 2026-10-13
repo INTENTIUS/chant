@@ -46,6 +46,17 @@ function findFiles(dir: string, predicate: (name: string) => boolean): string[] 
 }
 
 /** Read a file's content, returning empty string if missing. */
+/**
+ * Count the names in a validate.ts. Reads the entries of the exported
+ * REQUIRED_NAMES array; a lexicon with no such export falls back to counting
+ * quoted capitalised identifiers (digits allowed, e.g. K8sClusterReceiver).
+ */
+export function countRequiredNames(validateContent: string): number {
+  const arr = validateContent.match(/export\s+const\s+REQUIRED_NAMES\b[^=]*=\s*\[([\s\S]*?)\]/);
+  const body = arr ? arr[1] : validateContent;
+  return (body.match(/["'][A-Z][A-Za-z0-9]*["']/g) || []).length;
+}
+
 function readOr(path: string): string {
   try {
     return readFileSync(path, "utf-8");
@@ -103,6 +114,58 @@ export async function coverageReportCheck(plugin: LexiconPlugin | undefined): Pr
           : hasReport
             ? "all spec kinds accounted for"
             : undefined,
+  };
+}
+
+/**
+ * #3104 — how many composites a lexicon ships.
+ *
+ * This counted every `.ts` file in `src/composites/` except `index.ts`, so
+ * `catalog.ts`, `catalog.test.ts`, `composites.test.ts` and helper modules all
+ * counted: otel reported "4 composite(s)" for `NodeAgent` alone. The same rule
+ * as #1342 applies: a capability is what the plugin exposes, and a lexicon
+ * with composites exposes them through `composites()`, the catalog generated
+ * from its real exports (#2662). Ask that when it is there. Only a lexicon
+ * without it falls back to the files, and then not to tests, the catalog, the
+ * barrel or helper modules.
+ */
+export function countComposites(
+  plugin: LexiconPlugin | undefined,
+  dir: string,
+): { count: number; detail: string } {
+  if (registers(plugin, "composites")) {
+    const { items, error } = safeList(plugin!.composites!.bind(plugin));
+    if (error !== undefined) return { count: 0, detail: `composites() threw: ${error}` };
+    const names = new Set(items.map((e) => e.name));
+    return { count: names.size, detail: `${names.size} composite(s) in composites()` };
+  }
+  const files = listTsFiles(join(dir, "src/composites"), ["index.ts", "catalog.ts", "helpers.ts", "shared.ts"])
+    .filter((f) => !f.endsWith(".test.ts") && !f.endsWith(".d.ts") && !f.endsWith("-helpers.ts"));
+  return {
+    count: files.length,
+    detail: `${files.length} composite file(s) in src/composites/; the plugin has no composites()`,
+  };
+}
+
+/**
+ * #2535 — a lexicon that supplies member kinds publishes them as data at a
+ * `./workspace-kinds` subpath (ws-031). The file must be JSON, validate as
+ * kind data, and ship in the package. A lexicon without the subpath passes
+ * vacuously, like `coverageReport()` above. The workspace module loads only
+ * here, when the check runs.
+ */
+export async function workspaceKindsCheck(dir: string): Promise<CheckItem> {
+  const { readPackageKinds, kindsFileShips } = await import("../../workspace/kinds");
+  const read = readPackageKinds(dir);
+  const problems = [...read.problems];
+  if (read.file && problems.length === 0 && !kindsFileShips(dir, read.file)) {
+    problems.push(`${basename(read.file)} is not covered by package.json "files", so the published package would not carry it`);
+  }
+  return {
+    name: "Any ./workspace-kinds subpath holds valid kind data",
+    tier: 1,
+    pass: problems.length === 0,
+    detail: problems.length > 0 ? problems.join("; ") : read.file ? `${read.kinds.length} kind(s): ${read.kinds.map((k) => k.name).join(", ")}` : undefined,
   };
 }
 
@@ -434,6 +497,8 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
   // now states the fact directly via `coverageReport()`.
   items.push(await coverageReportCheck(plugin));
 
+  items.push(await workspaceKindsCheck(dir));
+
   // ── Tier 2: Recommended ────────────────────────────────────────
 
   const pluginContent = readOr(join(dir, "src/plugin.ts"));
@@ -527,12 +592,12 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
       : "reads no config namespace of its own",
   });
 
-  const compositeFiles = listTsFiles(join(dir, "src/composites"), ["index.ts"]);
+  const composites = countComposites(plugin, dir);
   items.push({
-    name: "At least 1 composite in src/composites/",
+    name: "At least 1 composite",
     tier: 2,
-    pass: compositeFiles.length > 0,
-    detail: compositeFiles.length > 0 ? `${compositeFiles.length} composite(s)` : undefined,
+    pass: composites.count > 0,
+    detail: composites.detail,
   });
 
   items.push({
@@ -644,7 +709,9 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     pass: hasTypecheckTest,
   });
 
-  const hasRoundtripTest = findFiles(join(dir, "src"), (n) => n === "roundtrip.test.ts").length > 0;
+  // A round trip over a large corpus can be an end-to-end test, kept out of the unit project's
+  // per-test budget under the e2e name.
+  const hasRoundtripTest = findFiles(join(dir, "src"), (n) => n === "roundtrip.test.ts" || n === "roundtrip.e2e.test.ts").length > 0;
   items.push({
     name: "roundtrip.test.ts exists",
     tier: 3,
@@ -654,8 +721,8 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
   items.push({
     name: "At least 5 composites",
     tier: 3,
-    pass: compositeFiles.length >= 5,
-    detail: `${compositeFiles.length} composite(s)`,
+    pass: composites.count >= 5,
+    detail: composites.detail,
   });
 
   const hasActions = existsSync(join(dir, "src/actions")) &&
@@ -668,12 +735,12 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
 
   // Validate required names count
   const validateContent = readOr(join(dir, "src/validate.ts"));
-  const requiredNamesMatches = validateContent.match(/["'][A-Z][a-zA-Z]+["']/g) || [];
+  const requiredNamesMatches = countRequiredNames(validateContent);
   items.push({
     name: "validate.ts checks at least 30 required names",
     tier: 3,
-    pass: requiredNamesMatches.length >= 30,
-    detail: `${requiredNamesMatches.length} required name(s)`,
+    pass: requiredNamesMatches >= 30,
+    detail: `${requiredNamesMatches} required name(s)`,
   });
 
   // Composite test file exists

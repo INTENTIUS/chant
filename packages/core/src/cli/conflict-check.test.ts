@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { checkConflicts } from "./conflict-check";
+import { checkConflicts, describeConflict } from "./conflict-check";
 import type { LexiconPlugin, CommandGroup } from "../lexicon";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,6 +226,23 @@ describe("checkConflicts", () => {
     const plugins = [makePlugin("rogue", { commandGroup: { name: "build", description: "d", commands: [] } })];
     const report = checkConflicts(plugins);
     expect(report.conflicts).toEqual([{ type: "command-group-name", key: "build", plugins: ["rogue"] }]);
+  });
+
+  // #2529 — `workspace` is reserved ahead of core's own command, and the
+  // error says it is reserved rather than naming a second lexicon.
+  test("a command group named workspace is a hard conflict with a clear message", () => {
+    const plugins = [makePlugin("rogue", { commandGroup: { name: "workspace", description: "d", commands: [] } })];
+    const report = checkConflicts(plugins);
+    expect(report.conflicts).toEqual([{ type: "command-group-name", key: "workspace", plugins: ["rogue"] }]);
+    expect(describeConflict(report.conflicts[0])).toMatch(
+      /"workspace" is a reserved chant command name, so no lexicon can register a command group with it/,
+    );
+  });
+
+  test("a conflict between two lexicons is described without the reserved-name note", () => {
+    expect(describeConflict({ type: "command-group-name", key: "kube", plugins: ["k8s", "fly"] })).toBe(
+      '  command-group-name "kube" from: k8s, fly',
+    );
   });
 
   test("no conflict for a single lexicon's own, non-reserved command-group name", () => {

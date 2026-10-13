@@ -1,0 +1,707 @@
+[
+  {
+    "label": "wave 1 waits",
+    "plan": {
+      "order": [
+        "net",
+        "a",
+        "b",
+        "app"
+      ],
+      "waves": [
+        [
+          "net"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "app"
+        ]
+      ],
+      "skipped": [],
+      "seeds": [],
+      "indeterminate": [],
+      "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+    },
+    "result": {
+      "plan": {
+        "order": [
+          "net",
+          "a",
+          "b",
+          "app"
+        ],
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ],
+        "skipped": [],
+        "seeds": [],
+        "indeterminate": [],
+        "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+      },
+      "status": "gated",
+      "results": [],
+      "completed": [],
+      "failed": [],
+      "blocked": [],
+      "componentOutputs": {},
+      "gate": {
+        "version": 1,
+        "kind": "pending",
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 1 of 3: net",
+        "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
+      },
+      "waves": [
+        {
+          "wave": 1,
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "components": [
+            "net"
+          ],
+          "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+          "members": [
+            {
+              "member": "net",
+              "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+            }
+          ],
+          "status": "gated"
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "run-start",
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ]
+      },
+      {
+        "type": "run-done",
+        "status": "gated"
+      }
+    ],
+    "settled": [
+      {
+        "wave": 1,
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "components": [
+          "net"
+        ],
+        "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+        "members": [
+          {
+            "member": "net",
+            "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+          }
+        ],
+        "status": "gated"
+      }
+    ],
+    "components": [],
+    "applied": [],
+    "ledger": {
+      "appended": [
+        {
+          "version": 1,
+          "kind": "pending",
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "timestamp": "2026-10-11T00:00:00.000Z",
+          "expiresAt": "2026-10-13T00:00:00.000Z",
+          "description": "wave 1 of 3: net",
+          "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
+        }
+      ],
+      "resolved": [],
+      "applied": []
+    }
+  },
+  {
+    "label": "wave 1 approved, wave 2 waits",
+    "plan": {
+      "order": [
+        "net",
+        "a",
+        "b",
+        "app"
+      ],
+      "waves": [
+        [
+          "net"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "app"
+        ]
+      ],
+      "skipped": [],
+      "seeds": [],
+      "indeterminate": [],
+      "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+    },
+    "result": {
+      "plan": {
+        "order": [
+          "net",
+          "a",
+          "b",
+          "app"
+        ],
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ],
+        "skipped": [],
+        "seeds": [],
+        "indeterminate": [],
+        "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+      },
+      "status": "gated",
+      "results": [
+        {
+          "component": "net",
+          "ok": true,
+          "status": "ok",
+          "records": [
+            {
+              "component": "net",
+              "phase": "Apply",
+              "kind": "fake-root",
+              "status": "ok",
+              "durationMs": 0,
+              "output": {
+                "outputs": {
+                  "id": "net-id"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "completed": [
+        "net"
+      ],
+      "failed": [],
+      "blocked": [],
+      "componentOutputs": {
+        "net": {
+          "id": "net-id"
+        }
+      },
+      "gate": {
+        "version": 1,
+        "kind": "pending",
+        "op": "fan-out",
+        "gate": "release-wave-2",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 2 of 3: a, b",
+        "planDigest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd"
+      },
+      "waves": [
+        {
+          "wave": 1,
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "components": [
+            "net"
+          ],
+          "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+          "members": [
+            {
+              "member": "net",
+              "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+            }
+          ],
+          "status": "applied",
+          "approvedBy": "ana"
+        },
+        {
+          "wave": 2,
+          "op": "fan-out",
+          "gate": "release-wave-2",
+          "components": [
+            "a",
+            "b"
+          ],
+          "digest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd",
+          "members": [
+            {
+              "member": "a",
+              "planDigest": "sha256:7b22726f6f74223a2261227d0000000000000000000000000000000000000000"
+            },
+            {
+              "member": "b",
+              "planDigest": "sha256:7b22726f6f74223a2262227d0000000000000000000000000000000000000000"
+            }
+          ],
+          "status": "gated"
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "run-start",
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ]
+      },
+      {
+        "type": "wave-start",
+        "wave": 1,
+        "components": [
+          "net"
+        ]
+      },
+      {
+        "type": "component-start",
+        "wave": 1,
+        "component": "net"
+      },
+      {
+        "type": "phase-start",
+        "component": "net",
+        "phase": "Apply"
+      },
+      {
+        "type": "step",
+        "component": "net",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "running"
+      },
+      {
+        "type": "step",
+        "component": "net",
+        "phase": "Apply",
+        "step": "fake-root",
+        "status": "ok"
+      },
+      {
+        "type": "phase-done",
+        "component": "net",
+        "phase": "Apply",
+        "status": "ok"
+      },
+      {
+        "type": "component-done",
+        "wave": 1,
+        "component": "net",
+        "status": "ok"
+      },
+      {
+        "type": "wave-done",
+        "wave": 1,
+        "status": "ok"
+      },
+      {
+        "type": "run-done",
+        "status": "gated"
+      }
+    ],
+    "settled": [
+      {
+        "wave": 1,
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "components": [
+          "net"
+        ],
+        "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+        "members": [
+          {
+            "member": "net",
+            "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+          }
+        ],
+        "status": "applied",
+        "approvedBy": "ana"
+      },
+      {
+        "wave": 2,
+        "op": "fan-out",
+        "gate": "release-wave-2",
+        "components": [
+          "a",
+          "b"
+        ],
+        "digest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd",
+        "members": [
+          {
+            "member": "a",
+            "planDigest": "sha256:7b22726f6f74223a2261227d0000000000000000000000000000000000000000"
+          },
+          {
+            "member": "b",
+            "planDigest": "sha256:7b22726f6f74223a2262227d0000000000000000000000000000000000000000"
+          }
+        ],
+        "status": "gated"
+      }
+    ],
+    "components": [
+      {
+        "component": "net",
+        "outputs": {
+          "id": "net-id"
+        }
+      }
+    ],
+    "applied": [
+      "net"
+    ],
+    "ledger": {
+      "appended": [
+        {
+          "version": 1,
+          "kind": "pending",
+          "op": "fan-out",
+          "gate": "release-wave-2",
+          "timestamp": "2026-10-11T00:00:00.000Z",
+          "expiresAt": "2026-10-13T00:00:00.000Z",
+          "description": "wave 2 of 3: a, b",
+          "planDigest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd"
+        }
+      ],
+      "resolved": [],
+      "applied": []
+    }
+  },
+  {
+    "label": "another digest approved",
+    "plan": {
+      "order": [
+        "net",
+        "a",
+        "b",
+        "app"
+      ],
+      "waves": [
+        [
+          "net"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "app"
+        ]
+      ],
+      "skipped": [],
+      "seeds": [],
+      "indeterminate": [],
+      "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+    },
+    "result": {
+      "plan": {
+        "order": [
+          "net",
+          "a",
+          "b",
+          "app"
+        ],
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ],
+        "skipped": [],
+        "seeds": [],
+        "indeterminate": [],
+        "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+      },
+      "status": "gated",
+      "results": [],
+      "completed": [],
+      "failed": [],
+      "blocked": [],
+      "componentOutputs": {},
+      "gate": {
+        "version": 1,
+        "kind": "pending",
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 1 of 3: net",
+        "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
+      },
+      "waves": [
+        {
+          "wave": 1,
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "components": [
+            "net"
+          ],
+          "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+          "members": [
+            {
+              "member": "net",
+              "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+            }
+          ],
+          "status": "gated",
+          "approved": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "run-start",
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ]
+      },
+      {
+        "type": "run-done",
+        "status": "gated"
+      }
+    ],
+    "settled": [
+      {
+        "wave": 1,
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "components": [
+          "net"
+        ],
+        "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+        "members": [
+          {
+            "member": "net",
+            "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+          }
+        ],
+        "status": "gated",
+        "approved": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      }
+    ],
+    "components": [],
+    "applied": [],
+    "ledger": {
+      "appended": [
+        {
+          "version": 1,
+          "kind": "pending",
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "timestamp": "2026-10-11T00:00:00.000Z",
+          "expiresAt": "2026-10-13T00:00:00.000Z",
+          "description": "wave 1 of 3: net",
+          "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
+        }
+      ],
+      "resolved": [],
+      "applied": []
+    }
+  },
+  {
+    "label": "with a description and timeout",
+    "plan": {
+      "order": [
+        "net",
+        "a",
+        "b",
+        "app"
+      ],
+      "waves": [
+        [
+          "net"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "app"
+        ]
+      ],
+      "skipped": [],
+      "seeds": [],
+      "indeterminate": [],
+      "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+    },
+    "result": {
+      "plan": {
+        "order": [
+          "net",
+          "a",
+          "b",
+          "app"
+        ],
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ],
+        "skipped": [],
+        "seeds": [],
+        "indeterminate": [],
+        "digest": "jcs1-sha256:4eb61d657aecab33201cedb6d604c6be9ca99eb91ac05897766e49a2350b1cb2"
+      },
+      "status": "gated",
+      "results": [],
+      "completed": [],
+      "failed": [],
+      "blocked": [],
+      "componentOutputs": {},
+      "gate": {
+        "version": 1,
+        "kind": "pending",
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-11T02:00:00.000Z",
+        "description": "the release",
+        "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
+      },
+      "waves": [
+        {
+          "wave": 1,
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "components": [
+            "net"
+          ],
+          "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+          "members": [
+            {
+              "member": "net",
+              "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+            }
+          ],
+          "status": "gated"
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "run-start",
+        "waves": [
+          [
+            "net"
+          ],
+          [
+            "a",
+            "b"
+          ],
+          [
+            "app"
+          ]
+        ]
+      },
+      {
+        "type": "run-done",
+        "status": "gated"
+      }
+    ],
+    "settled": [
+      {
+        "wave": 1,
+        "op": "fan-out",
+        "gate": "release-wave-1",
+        "components": [
+          "net"
+        ],
+        "digest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf",
+        "members": [
+          {
+            "member": "net",
+            "planDigest": "sha256:7b22726f6f74223a226e6574227d000000000000000000000000000000000000"
+          }
+        ],
+        "status": "gated"
+      }
+    ],
+    "components": [],
+    "applied": [],
+    "ledger": {
+      "appended": [
+        {
+          "version": 1,
+          "kind": "pending",
+          "op": "fan-out",
+          "gate": "release-wave-1",
+          "timestamp": "2026-10-11T00:00:00.000Z",
+          "expiresAt": "2026-10-11T02:00:00.000Z",
+          "description": "the release",
+          "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
+        }
+      ],
+      "resolved": [],
+      "applied": []
+    }
+  }
+]

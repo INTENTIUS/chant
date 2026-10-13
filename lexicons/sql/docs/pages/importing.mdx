@@ -1,0 +1,79 @@
+---
+title: "Importing a ClickHouse Server"
+description: "chant import --from <env> writes a ClickHouse server's schema as database, table and view declarations, from SHOW CREATE"
+diataxis: how-to
+order: 2
+label: "Importing a Live Server"
+group: "ClickHouse"
+---
+
+`chant import --from <env>` reads the schema of the server an environment is bound to and writes it as declarations: one `schema.ts` holding a `database`, `table` or `view` for each object, in dependency order.
+
+## Bind the environment
+
+Name the server per environment in `chant.config.ts`. Credentials are named by their environment variable, never written in the config:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-sql";
+
+export default {
+  lexicons: ["sql"],
+  sql: {
+    profiles: {
+      prod: {
+        url: "https://clickhouse.example.com:8443",
+        user: { env: "CH_USER" },
+        password: { env: "CH_PROD_PASSWORD" },
+        databases: ["analytics"],
+      },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+`databases` limits the read; without it every database is read except the server's own (`system`, `information_schema`). An environment with no profile falls back to `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. The same binding is what `chant lifecycle diff <env> --live` reads.
+
+## Import
+
+```bash
+chant import --from prod --output src/
+```
+
+Each object is read with `SHOW CREATE`, so the declaration is the server's canonical form: quoted names, `toIntervalDay(180)` for `INTERVAL 180 DAY`, codec levels filled in. Three changes are made to it:
+
+- A qualified name of another imported object becomes a reference to its export, and the database part of an object's own name a reference to the database's export (`CREATE TABLE ${analyticsDb}.events`, `FROM ${events}`), so the build orders them.
+- Backquotes go: a name that needs none is written bare, one that does is double-quoted.
+- What the server adds on its own is left out: settings at the pinned server's default (`index_granularity = 8192`) and a view's inferred column list. `--verbatim` keeps the statement as printed.
+
+A materialized view's inner table belongs to its view and is not imported, and the `default` database, which every server has, is not declared. A column a view's SELECT names directly stays text, so an imported view records the tables it reads but not its column lineage; write its column references as `${table.columns.name}` to get it.
+
+A migration runner's history table is read and marked with the tool's name, the same list the Postgres reader uses: golang-migrate's and dbmate's `schema_migrations`, goose's `goose_db_version`, Flyway's `flyway_schema_history`, and the others named in [Importing a Postgres Server](../postgres-importing/#objects-another-tool-keeps). Import leaves such a table out and says so on stderr:
+
+```
+warning: legacy.schema_migrations is kept by a migration runner (Rails, golang-migrate, dbmate); left out, since declaring it would have chant change what that tool owns
+```
+
+A plan never proposes dropping it (SQLCH250); it names the table in a hint and leaves it alone.
+
+An object of a kind no declaration holds yet stops the import: a window view, or a quota, settings profile, named collection, workload or HTTP handler made with SQL. The error names every such object at once; `--skip-undeclarable` imports everything else and prints each as a warning. What the server's configuration files define, such as the `default` quota from `users.xml`, is the server's and is not refused. [Object Coverage](../object-coverage/) lists every kind and its status.
+
+`--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier appends after the declared comment (see [Applying to a Server](../applying/)). The trailer is never written into an imported declaration. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
+
+A SQL user-defined function belongs to no database, so a server holds every project's functions side by side. An import adopts only the functions the imported tables, views and dictionaries use, and the functions those call. ClickHouse doesn't keep the call in a view's query or a column's default: it stores the function's body there, with the arguments in place of the parameters. So the import also looks for each function's body in what it reads, and adopts the function when the body is there. A body that is only a parameter (`x -> x`) can't be found that way, and a short one (`(x, k) -> x * k`) is found wherever the same expression appears. A warning names the functions left out. To import more, name them in the profile, by name or by a prefix ending in `*`:
+
+```ts
+sql: {
+  profiles: {
+    prod: { url: "https://ch.internal:8443", databases: ["shop"], importFunctions: ["shop_*"] },
+  },
+},
+```
+
+A function has no comment, so `--owned` does not apply to it. `--type ClickHouse::Function` or `--name <function>` imports the functions it names.
+
+## A file of statements
+
+`chant import schema.sql --lexicon sql` reads a file of CREATE statements the same way, keeping each as written. A statement that does not parse, or is not a CREATE, stops the import, and the error names every such statement. A project can also keep the file as it is and let the build read it; see [Plain .sql Files](../sql-files/).
+
+For a Postgres server, see [Importing a Postgres Server](../postgres-importing/).

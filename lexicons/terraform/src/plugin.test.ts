@@ -1,12 +1,15 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { behaviourEngineVariables, isBehaviourRefusalReport } from "@intentius/chant/behaviour";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
 import { validateLexiconConfig } from "@intentius/chant/lexicon-config";
 import type { ChantConfig } from "@intentius/chant/config";
 import { isDeclarable, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import { terraformPlugin } from "./plugin";
 import { terraformConfigSchema } from "./config";
+import { RESERVED_COMMAND_NAMES } from "@intentius/chant/cli/command-group";
+import { checkConflicts } from "@intentius/chant/cli/conflict-check";
 import {
   DATA_TYPE,
   LIVE_TYPE,
@@ -79,6 +82,27 @@ describe("terraform plugin", () => {
   });
 });
 
+describe("predictBehaviour on the plugin (#2495)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("reaches core's engine front with nothing injected, and refuses by name when no engine is set", async () => {
+    for (const name of behaviourEngineVariables("chant")) vi.stubEnv(name, "");
+    const result = await terraformPlugin.predictBehaviour!({
+      environment: "prod",
+      buildOutput: "",
+      from: "declared",
+      traffic: "100 rps, p50",
+      entityNames: ["net/aws_vpc.main"],
+      entities: new Map([
+        ["net/aws_vpc.main", { entityType: "Terraform::Resource", props: { root: "net", address: "aws_vpc.main", body: {} } }],
+      ]),
+      edges: [],
+      edgeCoverage: { verdict: "unknown" },
+    });
+    expect(isBehaviourRefusalReport(result) && result.refusal.cause).toBe("no-engine");
+  });
+});
+
 describe("terraform config schema", () => {
   it("accepts a root with every optional field", () => {
     const parsed = terraformConfigSchema.parse({
@@ -93,6 +117,17 @@ describe("terraform config schema", () => {
       },
     });
     expect(parsed.roots.app.workspace).toBe("prod");
+  });
+
+  // #2529 — core reserves `workspace` as a command name. That reserves a
+  // top-level command word, not the word itself: this lexicon's root field
+  // keeps its meaning, and the plugin loads with no conflict.
+  it("keeps its workspace field while core reserves the workspace command", () => {
+    expect(RESERVED_COMMAND_NAMES.has("workspace")).toBe(true);
+    expect(checkConflicts([terraformPlugin]).conflicts).toEqual([]);
+    expect(terraformConfigSchema.parse({ roots: { app: { dir: ".", workspace: "workspace" } } }).roots.app.workspace).toBe(
+      "workspace",
+    );
   });
 
   it("rejects an unknown key at the namespace level", () => {

@@ -56,3 +56,41 @@ describe("SPEC_VERSION is declared on the package entry (chant#2424)", () => {
     expect(chant.SPEC_VERSION).toBe(SPEC_VERSION);
   });
 });
+
+/**
+ * chant#3598 — the conformance adapter reads fold provenance (spec 2.2) off
+ * `foldProject`'s verdicts, and maps or recomputes it with the functions
+ * below. All of them, and the types the verdict field is written in, have to
+ * be reachable from this namespace.
+ */
+describe("fold provenance is on the package entry (chant#3598)", () => {
+  test("the functions are exported", () => {
+    for (const name of [
+      "foldProject",
+      "foldProvenanceOfEntities",
+      "foldProvenanceOfEntity",
+      "classifyFieldOrigin",
+      "emittedFieldPaths",
+      "describeFoldFieldOrigin",
+      "getProvenance",
+    ] as const) {
+      expect(typeof chant[name]).toBe("function");
+    }
+  });
+
+  test("a verdict's foldProvenance is typed in the exported shapes", () => {
+    const origins: chant.FoldFieldOrigin[] = [
+      { kind: "composite-parameter", composite: "C", instance: "i", parameters: ["p"] },
+      { kind: "composite-literal", composite: "C" },
+      { kind: "direct" },
+      { kind: "unknown", reason: "no-provenance" satisfies chant.UnknownOriginReason },
+    ];
+    const record: chant.EntityFoldProvenance = { fields: Object.fromEntries(origins.map((o, i) => [`f${i}`, o])) };
+    const verdict: chant.FoldProjectVerdict = {
+      verdict: "fold",
+      tentative: "fold",
+      foldProvenance: { e: record } satisfies chant.FoldProvenance,
+    };
+    expect(Object.keys(verdict.foldProvenance!.e.fields)).toEqual(["f0", "f1", "f2", "f3"]);
+  });
+});

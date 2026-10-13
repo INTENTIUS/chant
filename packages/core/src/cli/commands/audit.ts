@@ -6,14 +6,15 @@
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
-import { join } from "path";
+import { dirname, join, resolve } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
-import { AUDIT_LEXICONS, classifyFiles, collectCandidates, loadAuditPlugins, unclaimedFiles, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
+import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
 import { auditTerraformState } from "../../audit/terraform-state";
+import { workspaceMemberDirs } from "../../discovery/walk";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -21,6 +22,10 @@ import { fetchRepoFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit
 import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
+import { formatWarning } from "../format";
+import { lexiconPackagesToInstall, lexiconSourceLabel, pathLexiconMap, recordedLexiconModules } from "../../lexicon-module";
+import { readConfigFieldsStatically, readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "../../config-static";
+import { findProjectConfigPastFragments } from "../../config";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -68,6 +73,23 @@ export interface AuditCommandOptions {
    * present (URL targets have no local config file to read).
    */
   secretsScan?: SecretsScanOptions;
+  /**
+   * Files the local walk takes before it stops, counting every file
+   * (`--max-files`, #2528). Defaults to 1000. Local paths only.
+   */
+  maxFiles?: number;
+}
+
+/**
+ * A diagnostic about the run rather than the repository. Printed on stderr by
+ * `printAuditResult`, never part of `output`, so the report on stdout is the
+ * same with or without one.
+ */
+export interface AuditWarning {
+  /** The path the warning is about, when there is one. */
+  file?: string;
+  message: string;
+  hint?: string;
 }
 
 export interface AuditCommandResult {
@@ -96,14 +118,67 @@ export interface AuditCommandResult {
    * summary line.
    */
   suppressedCount?: number;
+  /** Run diagnostics for stderr: a truncated scan in a format that cannot carry it (#2528). */
+  warnings?: AuditWarning[];
 }
 
 /** Exit code when the audit had no lexicons to look with. Distinct from 1 (findings / failure). */
 export const NO_LEXICONS_EXIT_CODE = 2;
 
-/** The npm package that provides an audit lexicon's detection and checks. */
-function lexiconPackage(name: string): string {
-  return `@intentius/chant-lexicon-${name}`;
+/**
+ * What to tell the user about lexicons that did not load: an `npm i` line for
+ * the package-backed ones, and the declared path for any lexicon
+ * `chant.config.ts` names by path (#2520), which has no package to install
+ * (chant#2578).
+ */
+function missingLexiconRemedy(names: readonly string[], paths: ReadonlyMap<string, string>): string {
+  const parts: string[] = [];
+  const pkgs = lexiconPackagesToInstall(names, paths);
+  if (pkgs.length > 0) parts.push(`npm i ${pkgs.join(" ")}`);
+  for (const name of names) {
+    if (paths.has(name)) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)}`);
+  }
+  return parts.join("; ");
+}
+
+/**
+ * The rule ids the audited project enables with `lint.rules` (anything but
+ * `"off"`), read from its config without running it, the way the audit reads
+ * its lexicon paths. Only a check marked `auditOptIn` consults this (#3190).
+ * A config that cannot be read statically enables nothing.
+ */
+export function readEnabledRules(path: string): Set<string> {
+  const enabled = new Set<string>();
+  try {
+    const read = readConfigFieldsStatically(findProjectConfigPastFragments(path).dir, ["lint"]);
+    const rules = read.status === "read" ? (read.fields.lint as { rules?: unknown } | undefined)?.rules : undefined;
+    if (typeof rules !== "object" || rules === null) return enabled;
+    for (const [id, value] of Object.entries(rules)) {
+      const severity = Array.isArray(value) ? value[0] : value;
+      if (severity !== "off") enabled.add(id);
+    }
+  } catch {
+    // an unreadable config enables nothing
+  }
+  return enabled;
+}
+
+/**
+ * chant#2589 — the lexicons a local target's chant.config declares by path,
+ * with any recorded earlier in this process. The config is read statically
+ * (../../config-static.ts) and never evaluated, and the paths are not
+ * recorded for the loaders: audit names them in its messages, but never
+ * imports a project's lexicon module. `notice` is set when the config's
+ * `lexicons` could not be read that way.
+ */
+export function auditPathLexicons(target: string, isUrl: boolean): { paths: Map<string, string>; notice?: string } {
+  const paths = recordedLexiconModules();
+  if (isUrl) return { paths };
+  const read = readLexiconDeclarationsStatically(resolve(target));
+  if (read.status === "read") {
+    for (const [name, path] of pathLexiconMap(read.entries, dirname(read.configPath))) paths.set(name, path);
+  }
+  return { paths, notice: unknownPathLexiconsNotice(read) };
 }
 
 /** Missing audit lexicons the unclaimed files pointed at, in first-seen order. */
@@ -116,25 +191,31 @@ function wantedLexicons(unclaimed: UnclaimedFile[]): string[] {
  * lexicons it needs. Every wanted lexicon is a `-p` package so npx puts all of
  * them on the same resolution path.
  */
-export function installLine(lexicons: string[], target: string): string {
-  const pkgs = ["@intentius/chant", ...lexicons.map(lexiconPackage)];
+export function installLine(
+  lexicons: string[],
+  target: string,
+  paths: ReadonlyMap<string, string> = recordedLexiconModules(),
+): string {
+  // chant#2578 — a lexicon declared by path has no package for npx to fetch.
+  const pkgs = ["@intentius/chant", ...lexiconPackagesToInstall(lexicons, paths)];
   return `npx ${pkgs.map((p) => `-p ${p}`).join(" ")} chant audit ${target}`;
 }
 
 /** One-line coverage hint for the partial case: some lexicons loaded, others wanted by files on disk. */
-function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
+function missingLexiconHint(unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>): string | undefined {
   const wanted = wantedLexicons(unclaimed);
   if (wanted.length === 0) return undefined;
   const n = unclaimed.length;
   return `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
-    ` (npm i ${wanted.map(lexiconPackage).join(" ")}).`;
+    ` (${missingLexiconRemedy(wanted, paths)}).`;
 }
 
 /** Human-readable diagnostic for the zero-lexicon case. */
-function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
+function renderNoLexicons(target: string, unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>, truncated?: AuditTruncation): string {
   const lines: string[] = [];
   lines.push(`chant audit had nothing to look with: no audit lexicon is installed, so nothing under ${target} was inspected.`);
   lines.push("This is not a clean result. Detection and checks live in the lexicon packages.");
+  if (truncated) lines.push("", `Note: ${truncationNote(truncated, target)}`);
   const wanted = wantedLexicons(unclaimed);
   if (unclaimed.length > 0) {
     lines.push("", "Files that wanted a lexicon:");
@@ -145,12 +226,17 @@ function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
     lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain, or Terraform either.");
   }
   lines.push("", "Run it with the lexicons those files need:");
-  lines.push(`  ${installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target)}`);
+  const lexicons = wanted.length > 0 ? wanted : [...AUDIT_LEXICONS];
+  lines.push(`  ${installLine(lexicons, target, paths)}`);
+  // chant#2589 — a lexicon declared by path is left out of the line above.
+  for (const name of lexicons) {
+    if (paths.has(name)) lines.push(`  (${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)})`);
+  }
   return lines.join("\n");
 }
 
 /** Machine-readable form of the zero-lexicon diagnostic (`status: "no-lexicons"`). */
-function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): string {
+function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>, truncated?: AuditTruncation): string {
   const wanted = wantedLexicons(unclaimed);
   return JSON.stringify(
     {
@@ -162,7 +248,8 @@ function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): strin
       findings: [],
       unclaimed,
       missingLexicons: wanted,
-      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target),
+      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target, paths),
+      truncated,
     },
     null,
     2,
@@ -372,6 +459,28 @@ async function buildSnapshot(options: AuditCommandOptions, files: string[], isUr
   };
 }
 
+/** The flag that raises the local walk's file limit, named wherever a truncated scan is reported. */
+export const MAX_FILES_FLAG = "--max-files";
+
+/** How a report states that the local walk stopped at its limit (#2528). JSON carries it as `truncated`. */
+export interface AuditTruncation {
+  limit: number;
+  flag: typeof MAX_FILES_FLAG;
+}
+
+/** The truncation a walk reports, or undefined for a whole scan. */
+export function walkTruncation(walk: CandidateWalk): AuditTruncation | undefined {
+  return walk.truncated ? { limit: walk.maxFiles, flag: MAX_FILES_FLAG } : undefined;
+}
+
+/** The text-report note for a truncated scan. */
+export function truncationNote(t: AuditTruncation, target: string): string {
+  return (
+    `The scan of ${target} stopped at ${t.limit} files, so part of the tree was not audited. ` +
+    `The limit counts every file the walk reaches, not only the ones it audits. Raise it with ${t.flag} <n>.`
+  );
+}
+
 /** Run the audit and produce a rendered result. */
 export async function auditCommand(options: AuditCommandOptions): Promise<AuditCommandResult> {
   const format = options.format ?? "stylish";
@@ -379,6 +488,8 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const failOn = options.failOn ?? "none";
 
   const isUrl = /^https?:\/\//.test(options.path);
+  // chant#2589 — path lexicons the target declares, read without running its config.
+  const pathLexicons = auditPathLexicons(options.path, isUrl);
 
   // Detection lives in the lexicon plugins (each one's `detectTemplate`), so a
   // lexicon that isn't installed can't claim its files. Every branch below
@@ -387,6 +498,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // render the same way (#1623).
   const plugins = options.plugins ?? (await loadAuditPlugins());
   let candidates: RepoFile[];
+  let truncated: AuditTruncation | undefined;
   if (isUrl) {
     try {
       // Fetch the whole repo's candidate files (all lexicons, not just CI) and
@@ -406,8 +518,19 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // One walk, plugin-delegated detection. CI (path), Dockerfiles (name), and
     // Helm charts (bundle) are special-cased by the classifier since content
     // shape alone can't disambiguate them.
-    candidates = collectCandidates(options.path);
+    // Workspace members leave the root's audit only when a declaration exists
+    // (#2525 rule 3); without one this is a few existsSync calls (#2527).
+    const excludeDirs = await workspaceMemberDirs(options.path);
+    const walk = walkCandidates(options.path, { maxFiles: options.maxFiles, excludeDirs });
+    candidates = walk.files;
+    truncated = walkTruncation(walk);
   }
+  // Every format but SARIF states a truncated scan in the report itself
+  // (#2528). SARIF has no slot chant fills for it, so there it goes to stderr.
+  const warnings: AuditWarning[] =
+    truncated && format === "sarif" ? [{ message: truncationNote(truncated, options.path) }] : [];
+  if (pathLexicons.notice !== undefined) warnings.push({ message: pathLexicons.notice });
+  const withWarnings = warnings.length > 0 ? { warnings } : {};
   // A local target hands its directory to the classifier, so an input whose
   // path names a directory carries the directory itself (#2217): terraform's
   // parse-to-graph follows a root module's local `module` calls from there. A
@@ -438,15 +561,19 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const terraformStateFindings = auditTerraformState(candidates);
 
   if (plugins.length === 0) {
-    const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
-    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr" };
+    const output =
+      format === "json"
+        ? renderNoLexiconsJson(options.path, unclaimed, pathLexicons.paths, truncated)
+        : renderNoLexicons(options.path, unclaimed, pathLexicons.paths, truncated);
+    return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr", ...withWarnings };
   }
 
-  const missingLexiconNote = missingLexiconHint(unclaimed);
+  const missingLexiconNote = missingLexiconHint(unclaimed, pathLexicons.paths);
 
   if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0 && terraformStateFindings.length === 0) {
-    const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
-    return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0 };
+    let output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
+    if (truncated) output += `\n\nNote: ${truncationNote(truncated, options.path)}`;
+    return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0, ...withWarnings };
   }
 
   let findings: AuditFinding[] = [];
@@ -456,7 +583,11 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const suppressionStats: SuppressionStats = { count: 0 };
   if (inputs.length > 0) {
     try {
-      findings = await auditFiles(inputs, { checksProvider: options.checksProvider, suppressionStats });
+      findings = await auditFiles(inputs, {
+        checksProvider: options.checksProvider,
+        suppressionStats,
+        ...(isUrl ? {} : { enabledRules: readEnabledRules(options.path) }),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
@@ -472,6 +603,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
+  if (truncated) notes.unshift(truncationNote(truncated, options.path));
   if (missingLexiconNote) notes.push(missingLexiconNote);
   if (suppressionStats.count > 0) {
     notes.push(
@@ -520,7 +652,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   switch (format) {
     case "json": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed }), null, 2);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed, truncated }), null, 2);
       break;
     }
     case "sarif":
@@ -531,7 +663,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       break;
     case "html": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog });
+      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog, truncated });
       break;
     }
     default:
@@ -545,22 +677,20 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     } catch (err) {
       return { success: false, output, findings, scanned, exitCode: 1, error: `Failed to write ${options.output}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count };
+    return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, wroteTo: options.output, suppressedCount: suppressionStats.count, ...withWarnings };
   }
 
-  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count };
+  return { success: true, status: "ok", output, findings, scanned, unclaimed, exitCode, suppressedCount: suppressionStats.count, ...withWarnings };
 }
 
-/** Print an audit result to stdout. */
+/** Print an audit result to stdout, and its warnings to stderr. */
 export function printAuditResult(result: AuditCommandResult): void {
   if (!result.success) {
     console.error(result.error ?? "Audit failed");
     return;
   }
-  if (result.wroteTo) {
-    console.error(`Wrote report to ${result.wroteTo}`);
-    return;
-  }
-  if (result.stream === "stderr") console.error(result.output);
+  if (result.wroteTo) console.error(`Wrote report to ${result.wroteTo}`);
+  else if (result.stream === "stderr") console.error(result.output);
   else console.log(result.output);
+  for (const w of result.warnings ?? []) console.error(formatWarning(w));
 }

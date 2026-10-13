@@ -39,15 +39,21 @@ export const nfsdata = new Volume({ driver: "local", driver_opts: { type: "nfs",
 
 ## Dockerfile — generates Dockerfile.{name}:
 
+Each stage is `from` plus `steps`. A step is an object with one key naming one instruction. Steps are written exactly in the order listed.
+
 ```typescript
-// Single-stage:
-export const builder = new Dockerfile({
+// Single stage. Manifests before source, so the install layer is cached; root setup before USER.
+export const server = new Dockerfile({
   from: "node:20-alpine",
-  workdir: "/app",
-  copy: ["package*.json ./"],
-  run: ["npm ci --only=production"],
-  user: "node",
-  cmd: `["node", "dist/index.js"]`,
+  steps: [
+    { workdir: "/app" },
+    { copy: "package.json package-lock.json ./" },
+    { run: "npm ci --omit=dev" },
+    { copy: "src/ ./src/" },
+    { user: "node" },
+    { expose: 3000 },
+    { cmd: ["node", "src/index.js"] },  // a list is written in JSON exec form
+  ],
 });
 
 // Multi-stage build:
@@ -56,20 +62,36 @@ export const app = new Dockerfile({
     {
       from: "node:20-alpine",
       as: "build",
-      workdir: "/app",
-      copy: ["package*.json ./"],
-      run: ["npm ci", "npm run build"],
+      steps: [
+        { workdir: "/app" },
+        { copy: "package.json package-lock.json ./" },
+        { run: "npm ci" },
+        { copy: ". ." },
+        { run: "npm run build" },
+        { run: "npm prune --omit=dev" },
+      ],
     },
     {
       from: "node:20-alpine",
-      workdir: "/app",
-      copy: ["--from=build /app/dist ./dist", "--from=build /app/node_modules ./node_modules"],
-      user: "node",
-      cmd: `["node", "dist/index.js"]`,
+      steps: [
+        { workdir: "/app" },
+        { copy: "--from=build /app/node_modules ./node_modules" },
+        { copy: "--from=build /app/dist ./dist" },
+        { user: "node" },
+        { cmd: ["node", "dist/index.js"] },
+      ],
     },
   ],
 });
 ```
+
+Step keys: `arg`, `env`, `workdir`, `user`, `run`, `copy`, `add`, `expose`, `volume`, `label`, `entrypoint`, `cmd`, `healthcheck`, `shell`, `stopsignal`, `onbuild`. `from` and `as` are stage fields, and `globalArgs: ["NAME=value"]` writes `ARG` lines before the first `FROM`. `run`, `cmd`, `entrypoint` and `shell` take a string or a list (exec form); `expose` takes a number too.
+
+Rules:
+- Use `steps`. The older per-kind fields (`run: [...]`, `copy: [...]`, `user`) are written in a fixed order (ARG, ENV, WORKDIR, USER, RUN, COPY, ADD, EXPOSE, VOLUME, LABEL, ENTRYPOINT, CMD, HEALTHCHECK), not the order written, so every RUN lands before every COPY. Lint rule DKRS002 flags this, and `chant lint --fix` rewrites them as steps.
+- A stage can't have both `steps` and per-kind fields, and a step can't name two instructions. Both are build errors.
+- Props are type-checked: `Dockerfile` takes `DockerfileProps` and the Compose constructors take `ServiceProps`, `VolumeProps`, `NetworkProps`, `DockerConfigProps` and `DockerSecretProps`. A misspelled key or a wrong value type is a TypeScript error, so run `tsc` (or read the editor's errors) before `chant build`.
+- To share stages or steps between Dockerfiles in different modules, export a `const` stage (`DockerfileStage`) or step list (`DockerfileStep[]`) and import it. List the stage in `stages`, or spread the steps: `steps: [...nodeRuntime, { cmd: ["node", "dist/server.js"] }]`. This is chant's equivalent of an INCLUDE. Spreading a function call's result is a lint error (EVL004); put parameterized Dockerfiles in a `Composite`.
 
 ## Variable interpolation with env():
 
@@ -112,7 +134,10 @@ export const api = new Service({
   },
   ports: ["8080:8080"],
 });
-export const builder = new Dockerfile({ from: "node:20-alpine", ... });
+export const builder = new Dockerfile({
+  from: "node:20-alpine",
+  steps: [{ workdir: "/app" }, { copy: ". ." }, { run: "npm ci" }, { user: "node" }, { cmd: ["node", "index.js"] }],
+});
 ```
 
 ## Output structure
@@ -126,4 +151,6 @@ export const builder = new Dockerfile({ from: "node:20-alpine", ... });
 - `DKRD001`: Post-synth: no `:latest` images in generated YAML
 - `DKRD002`: Post-synth: no unused named volumes
 - `DKRD003`: Post-synth: SSH port 22 not exposed externally
-- `DKRD010–012`: Dockerfile best practices (apt recommends, COPY vs ADD, USER)
+- `DKRS002`: Dockerfile per-kind fields declared in an order the fixed order changes; use `steps`
+- `DKRD010–012`: Dockerfile best practices (apt recommends, COPY vs ADD, final stage USER)
+- `DKRD013–020`: order-aware Dockerfile checks: COPY . before a dependency install, root-only RUN after USER, repeated CMD/ENTRYPOINT, COPY --from an undefined stage, unused ARG before FROM, relative WORKDIR, ADD of a URL without --checksum, apt-get update in its own RUN

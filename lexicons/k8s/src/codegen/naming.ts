@@ -80,6 +80,9 @@ const k8sNamingConfig: NamingConfig = {
     // Events (core vs events.k8s.io — the core version wins)
     "K8s::Core::Event": "Event",
 
+    // Prometheus Operator's Probe CRD would collide with the core Probe property type
+    "K8s::Monitoring::Probe": "MonitoringProbe",
+
     // Property types
     "K8s::Core::Container": "Container",
     "K8s::Core::ContainerPort": "ContainerPort",
@@ -150,7 +153,18 @@ const k8sNamingConfig: NamingConfig = {
     "K8s::Networking::NetworkPolicy": ["NetPol"],
   },
 
-  priorityPropertyAliases: {},
+  // Names published before the Prometheus Operator CRDs (v0.94.1) added colliding
+  // property types stay with their original owners; the new CRDs' types are prefixed.
+  priorityPropertyAliases: {
+    "K8s::Monitoring::ServiceMonitor": {
+      AttachMetadata: "AttachMetadata",
+      NamespaceSelector: "NamespaceSelector",
+      Selector: "Selector",
+    },
+    "K8s::Traefik::Middleware": { BasicAuth: "BasicAuth" },
+    "K8s::Addons::HelmChartProxy": { TlsConfig: "TlsConfig" },
+    "K8s::S3::Bucket": { Lifecycle: "Lifecycle" },
+  },
 
   serviceAbbreviations: {
     Core: "Core",

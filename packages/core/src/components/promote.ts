@@ -1,0 +1,646 @@
+/**
+ * Promote a release to another environment without rebuilding (#2530).
+ *
+ * `chant run --components <name> --env prod` runs the component's whole
+ * `deploy` composition, and a composition that builds (a `Build` phase with
+ * `docker-build`) builds again in prod. The release ledger already knows which
+ * digest staging is running, so a promote reads that record and deploys the
+ * same artifact to the target environment instead.
+ *
+ * The mechanism is a transform on the composition, not a change to the driver:
+ *
+ *  - build-time steps (`BUILD_STEP_KINDS`) are removed, so nothing is built;
+ *  - the publish step stays. It moves the archived bytes to the target
+ *    environment, which is what "promote by digest" means in the build-archive
+ *    model, and its output is checked against the recorded digest. A publish
+ *    that produces any other digest fails the step, and so the component,
+ *    before anything after it runs;
+ *  - gates, apply, verify and every other step run exactly as a normal deploy
+ *    to the target environment would run them, so the target's gates apply.
+ *    A gate approval is bound to the target environment, the transformed
+ *    composition and the digest being deployed (#2574), so an approval for a
+ *    plain deploy or for another release does not pass it.
+ *
+ * A composition the transform cannot pin to one recorded digest is refused
+ * before anything runs: one with no publish step (nothing would carry the
+ * digest), one with more than one (the ledger records one digest per
+ * component), and one whose remaining steps read an output of a removed build
+ * step (it would resolve to nothing).
+ *
+ * A rollback (#2531) is the same run against one environment's own earlier
+ * release. There the publish step is replaced by the recorded digest rather
+ * than run, since the environment already received that artifact when the
+ * release was first deployed (see `withoutBuildSteps`'s `pinDigest`). A
+ * redeploy (#2604) is a rollback to the release the ledger already records as
+ * current, for an environment a failed deploy left running something else.
+ *
+ * The driver stays capability-agnostic. The two kind lists below are data, in
+ * the same spirit as `DEPLOY_UNIT_RULES` (./deploy-units.ts).
+ */
+
+import { parseWiringRef, type WiringRef } from "../lint/rules/comp/support";
+import { latestPerComponent, type ReleaseRecord, type ReleaseRecordInput, type RunOrigin } from "../lifecycle/release-ledger";
+import { CapabilityRegistry, type Capability } from "./capability";
+import {
+  runInterpretDriver,
+  DriverRunFailure,
+  type DriverComponent,
+  type DriverComponentResult,
+  type DriverGate,
+  type DriverPhase,
+  type DriverRunResult,
+  type DriverStep,
+} from "./driver";
+import type { GateLedgerPort } from "../op/gate";
+import type { RunProgressEvent } from "./run-progress";
+
+/**
+ * Step kinds that produce an artifact at build time: the build family, and the
+ * SBOM steps that read the freshly built archive. A promote removes them.
+ */
+export const BUILD_STEP_KINDS: readonly string[] = [
+  "docker-build",
+  "zip-package",
+  "jvm-build",
+  "generate-sbom",
+  "extract-config-bom",
+];
+
+/**
+ * The publish family (the same set COMP001 recognises, plus the
+ * `publish-asset` alias). Its output digest is the one a release record binds.
+ */
+export const PUBLISH_STEP_KINDS: readonly string[] = [
+  "publish-image",
+  "publish-artifact",
+  "publish-asset",
+  "load-image-on-host",
+];
+
+/** One component a promote will deploy, and the source release it deploys. */
+export interface PromotionItem {
+  component: string;
+  /** The recorded digest being promoted. */
+  digest: string;
+  /** The source environment's release record the digest came from. */
+  source: ReleaseRecord;
+}
+
+/** What a promote will do, decided before anything runs. */
+export interface PromotionPlan {
+  from: string;
+  to: string;
+  items: PromotionItem[];
+  /** Components left alone, and why. Reported, never an error. */
+  notPromoted: Array<{ component: string; reason: string }>;
+}
+
+/**
+ * Pick one release of `component` out of an environment's records: the latest
+ * one, or, when `digest` is given, the latest one that recorded that digest.
+ * A digest the ledger never recorded for the component is an error.
+ */
+export function selectRelease(
+  records: ReleaseRecord[],
+  component: string,
+  env: string,
+  digest?: string,
+): { record: ReleaseRecord } | { error: string } {
+  const own = records.filter((r) => r.component === component);
+  if (own.length === 0) return { error: `no release of "${component}" is recorded in "${env}"` };
+  if (digest === undefined) return { record: latestPerComponent(own).get(component)! };
+  const matching = own.filter((r) => r.digest === digest);
+  if (matching.length === 0) {
+    return {
+      error: `digest ${digest} is not recorded for "${component}" in "${env}"; ` +
+        `its recorded digests are ${[...new Set(own.map((r) => r.digest))].join(", ")}`,
+    };
+  }
+  return { record: latestPerComponent(matching).get(component)! };
+}
+
+/**
+ * Read `--digest <component>=<digest>` values (#2602) into a component-to-
+ * digest map. A value with no `=` is left to the single-component form
+ * (`--component <name> --digest <digest>`), so it is an error here. An empty
+ * digest is an error too: a generated promote job passes one when the job that
+ * deployed the component recorded no release, and promoting whatever is
+ * latest instead is the thing the pin is there to prevent.
+ */
+export function parseDigestPins(values: string[]): { pins: Record<string, string> } | { error: string } {
+  const pins: Record<string, string> = {};
+  for (const value of values) {
+    const at = value.indexOf("=");
+    if (at < 0) return { error: "--digest picks one release of one component, so it needs --component <name>, or the form <component>=<digest>" };
+    const component = value.slice(0, at);
+    const digest = value.slice(at + 1);
+    if (component === "") return { error: `--digest ${value} names no component` };
+    if (digest === "") {
+      return { error: `--digest ${value} names no digest; the run that deployed "${component}" recorded no release for it` };
+    }
+    if (component in pins && pins[component] !== digest) {
+      return { error: `--digest pins "${component}" twice, to ${pins[component]} and ${digest}` };
+    }
+    pins[component] = digest;
+  }
+  return { pins };
+}
+
+/**
+ * Decide which releases a promote deploys. With `component`, exactly that
+ * component's latest source release (or the one recording `digest`). With
+ * `pins` (#2602), exactly the pinned components, each at the source release
+ * recording its pinned digest. Otherwise, the latest source release of every
+ * component this checkout declares; a recorded component the checkout no
+ * longer declares is reported and left alone, since there is no composition
+ * to deploy it with.
+ */
+export function planPromotion(input: {
+  from: string;
+  to: string;
+  sourceRecords: ReleaseRecord[];
+  /** Names of the components this checkout declares. */
+  declared: string[];
+  component?: string;
+  digest?: string;
+  /** Component name to the digest to promote for it, from `--digest <component>=<digest>`. */
+  pins?: Record<string, string>;
+}): PromotionPlan | { error: string } {
+  const { from, to, sourceRecords, declared, component, digest, pins } = input;
+  if (from === to) return { error: `--from and --to name the same environment ("${from}")` };
+  if (digest !== undefined && component === undefined) {
+    return { error: "--digest picks one release of one component, so it needs --component <name>" };
+  }
+
+  if (pins !== undefined && Object.keys(pins).length > 0) {
+    if (component !== undefined) {
+      return { error: "--digest <component>=<digest> names its own component, so it does not take --component" };
+    }
+    const items: PromotionItem[] = [];
+    for (const [name, pinned] of Object.entries(pins).sort(([a], [b]) => a.localeCompare(b))) {
+      if (!declared.includes(name)) return { error: `component "${name}" is not declared in this checkout` };
+      const picked = selectRelease(sourceRecords, name, from, pinned);
+      if ("error" in picked) return picked;
+      items.push({ component: name, digest: picked.record.digest, source: picked.record });
+    }
+    return { from, to, items, notPromoted: [] };
+  }
+
+  if (component !== undefined) {
+    if (!declared.includes(component)) {
+      return { error: `component "${component}" is not declared in this checkout` };
+    }
+    const picked = selectRelease(sourceRecords, component, from, digest);
+    if ("error" in picked) return picked;
+    return { from, to, items: [{ component, digest: picked.record.digest, source: picked.record }], notPromoted: [] };
+  }
+
+  const latest = latestPerComponent(sourceRecords);
+  const items: PromotionItem[] = [];
+  const notPromoted: PromotionPlan["notPromoted"] = [];
+  for (const [name, record] of [...latest].sort(([a], [b]) => a.localeCompare(b))) {
+    if (declared.includes(name)) items.push({ component: name, digest: record.digest, source: record });
+    else notPromoted.push({ component: name, reason: "recorded but not declared in this checkout" });
+  }
+  if (items.length === 0) {
+    return { error: `nothing to promote: no component declared here has a release recorded in "${from}"` };
+  }
+  return { from, to, items, notPromoted };
+}
+
+/**
+ * Decide which release a rollback restores: the release of `component` in
+ * `env` given by `digest`, or by default the most recent release whose digest
+ * differs from the current one. Restoring the release already current is
+ * refused, since there is nothing to roll back.
+ */
+export function planRollback(input: {
+  env: string;
+  records: ReleaseRecord[];
+  declared: string[];
+  component: string;
+  digest?: string;
+}): PromotionPlan | { error: string } {
+  const { env, records, declared, component, digest } = input;
+  if (!declared.includes(component)) {
+    return { error: `component "${component}" is not declared in this checkout` };
+  }
+  const own = records.filter((r) => r.component === component);
+  const current = latestPerComponent(own).get(component);
+  if (!current) return { error: `no release of "${component}" is recorded in "${env}"` };
+
+  let target: ReleaseRecord;
+  if (digest !== undefined) {
+    const picked = selectRelease(own, component, env, digest);
+    if ("error" in picked) return picked;
+    target = picked.record;
+  } else {
+    const earlier = own.filter((r) => r.digest !== current.digest);
+    if (earlier.length === 0) {
+      return { error: `"${component}" has no earlier release in "${env}" with a digest other than the current ${current.digest}` };
+    }
+    target = latestPerComponent(earlier).get(component)!;
+  }
+  if (target.digest === current.digest) {
+    return { error: `${target.digest} is already the current release of "${component}" in "${env}"; nothing to roll back` };
+  }
+  return { from: env, to: env, items: [{ component, digest: target.digest, source: target }], notPromoted: [] };
+}
+
+/**
+ * Decide what a redeploy deploys: the release of `component` the ledger in
+ * `env` records as current. A deploy that fails partway records nothing, so
+ * after one the ledger still names the last good release while the
+ * environment may be running part of the failed one. `digest`, when given,
+ * has to be that current digest. It guards against a deploy recorded since
+ * the caller last looked; any earlier release is a rollback.
+ */
+export function planRedeploy(input: {
+  env: string;
+  records: ReleaseRecord[];
+  declared: string[];
+  component: string;
+  digest?: string;
+}): PromotionPlan | { error: string } {
+  const { env, records, declared, component, digest } = input;
+  if (!declared.includes(component)) {
+    return { error: `component "${component}" is not declared in this checkout` };
+  }
+  const current = latestPerComponent(records.filter((r) => r.component === component)).get(component);
+  if (!current) return { error: `no release of "${component}" is recorded in "${env}"` };
+  if (digest !== undefined && digest !== current.digest) {
+    return {
+      error: `${digest} is not the current release of "${component}" in "${env}" (that is ${current.digest}); ` +
+        `use \`chant components rollback ${env} --component ${component} --digest ${digest}\` to restore an earlier release`,
+    };
+  }
+  return { from: env, to: env, items: [{ component, digest: current.digest, source: current }], notPromoted: [] };
+}
+
+function isGate(step: DriverStep | DriverGate | DriverPhase): step is DriverGate {
+  return (step as { kind?: unknown }).kind === "gate";
+}
+
+function isPhase(step: DriverStep | DriverGate | DriverPhase): step is DriverPhase {
+  return typeof (step as { phase?: unknown }).phase === "string" && Array.isArray((step as DriverPhase).steps);
+}
+
+/**
+ * The build steps that write the archive a promote's publish step reads, each
+ * to its `into` path. The SBOM steps are left out: a promote refuses a step
+ * that reads their output, so it never needs it.
+ */
+export const ARCHIVE_STEP_KINDS: readonly string[] = ["docker-build", "zip-package", "jvm-build"];
+
+/**
+ * The paths `component`'s build steps write its archive to, in composition
+ * order without repeats (#2575). A generated pipeline carries these files from
+ * the job that deployed to the source environment to the job that promotes,
+ * since a promote publishes from the archive on disk. Throws when an `into` is
+ * not a literal path, such as a wiring reference or an `$env.` value, because
+ * a generator cannot name a file that is only known at run time.
+ */
+export function promoteArchivePaths(component: DriverComponent): string[] {
+  const paths: string[] = [];
+  const walk = (phases: DriverPhase[]): void => {
+    for (const phase of phases) {
+      for (const step of phase.steps) {
+        if (isPhase(step)) walk([step]);
+        else if (!isGate(step) && ARCHIVE_STEP_KINDS.includes(step.kind)) {
+          const into = step.into;
+          if (typeof into !== "string" || into === "" || into.startsWith("@") || into.startsWith("$")) {
+            throw new Error(
+              `component "${component.name}": the ${step.kind} step in phase "${phase.phase}" writes to ` +
+                `${JSON.stringify(into)}, which is not a literal path, so a generated promote job cannot carry its archive`,
+            );
+          }
+          if (!paths.includes(into)) paths.push(into);
+        }
+      }
+    }
+  };
+  walk(component.deploy);
+  return paths;
+}
+
+/**
+ * Whether `component`'s deploy has a publish step (#2602). Only such a
+ * component records a release when it deploys, so only its release can be
+ * promoted; a generated pipeline pins exactly these components' digests.
+ */
+export function hasPublishStep(component: DriverComponent): boolean {
+  const walk = (steps: Array<DriverStep | DriverGate | DriverPhase>): boolean =>
+    steps.some((step) => isPhase(step) ? walk(step.steps) : !isGate(step) && PUBLISH_STEP_KINDS.includes(step.kind));
+  return walk(component.deploy);
+}
+
+/** A component's composition with its build-time steps taken out. */
+export interface PromotableComponent {
+  component: DriverComponent;
+  /** The kinds removed, in composition order. */
+  removed: string[];
+}
+
+/**
+ * The step a rollback puts where the publish step was: it publishes nothing
+ * and returns the recorded digest, so `@Publish.digest` resolves to it.
+ */
+export const RECORDED_DIGEST_KIND = "recorded-digest";
+
+/** The capability behind {@link RECORDED_DIGEST_KIND}. */
+export const recordedDigestCapability: Capability<{ digest: string }, { digest: string }> = {
+  kind: RECORDED_DIGEST_KIND,
+  rollbackPolicy: "none-by-design",
+  async run(_ctx, input) {
+    return { digest: input.digest };
+  },
+};
+
+/**
+ * Remove every build-time step from `component`'s `deploy` composition and
+ * check that what is left can be pinned to one recorded digest. A phase left
+ * with nothing to run is dropped. `rollback` phases are untouched.
+ *
+ * With `pinDigest` (a rollback, #2531, or a redeploy, #2604), the publish step is replaced too, by a
+ * {@link RECORDED_DIGEST_KIND} step carrying that digest: the environment
+ * already received the artifact when the release being restored was
+ * deployed, and the archive it came from is usually long gone. Only the
+ * digest is known then, so a step reading any other publish output (such as
+ * `@Publish.uri`) is refused.
+ */
+export function withoutBuildSteps(
+  component: DriverComponent,
+  opts: { pinDigest?: string; verb?: string } = {},
+): PromotableComponent | { error: string } {
+  const verb = opts.verb ?? (opts.pinDigest === undefined ? "a promote" : "a rollback");
+  const removed: string[] = [];
+  /** Phases a build step was removed from, and whether anything else is left in them. */
+  const emptied = new Map<string, boolean>();
+  /** Phases a publish step was pinned in, and whether anything else is left in them. */
+  const pinned = new Map<string, boolean>();
+  let publishSteps = 0;
+  const kept: DriverStep[] = [];
+
+  const strip = (phase: DriverPhase): DriverPhase | undefined => {
+    const steps: DriverPhase["steps"] = [];
+    let lostBuildStep = false;
+    let pinnedHere = false;
+    for (const step of phase.steps) {
+      if (isGate(step)) {
+        steps.push(step);
+      } else if (isPhase(step)) {
+        const nested = strip(step);
+        if (nested) steps.push(nested);
+      } else if (BUILD_STEP_KINDS.includes(step.kind)) {
+        removed.push(step.kind);
+        lostBuildStep = true;
+      } else if (PUBLISH_STEP_KINDS.includes(step.kind)) {
+        publishSteps++;
+        if (opts.pinDigest === undefined) {
+          kept.push(step);
+          steps.push(step);
+        } else {
+          removed.push(step.kind);
+          pinnedHere = true;
+          steps.push({
+            kind: RECORDED_DIGEST_KIND,
+            digest: opts.pinDigest,
+            replaces: step.kind,
+            noRollback: "publishes nothing; it hands on a digest the environment already received",
+          });
+        }
+      } else {
+        kept.push(step);
+        steps.push(step);
+      }
+    }
+    const otherWork = steps.some((s) => !isGate(s) && (s as DriverStep).kind !== RECORDED_DIGEST_KIND);
+    if (lostBuildStep) emptied.set(phase.phase, !otherWork && !pinnedHere);
+    if (pinnedHere) pinned.set(phase.phase, !otherWork);
+    // A phase holding only gates after the strip still decides them.
+    if (steps.length === 0) return undefined;
+    return { ...phase, steps };
+  };
+
+  const deploy = component.deploy.map(strip).filter((p): p is DriverPhase => p !== undefined);
+
+  if (publishSteps === 0) {
+    return {
+      error: `component "${component.name}" has no publish step, so nothing in its deploy carries a recorded digest; ` +
+        `${verb} would deploy whatever its current source produces`,
+    };
+  }
+  if (publishSteps > 1) {
+    return {
+      error: `component "${component.name}" has ${publishSteps} publish steps, but its release record carries one digest`,
+    };
+  }
+  for (const step of kept) {
+    const { kind: _kind, ...fields } = step;
+    for (const ref of refsIn(fields)) {
+      if (ref.kind === "prior-step" && emptied.get(ref.phaseName) === true) {
+        return {
+          error: `component "${component.name}" reads "@${ref.phaseName}.${ref.field}", an output of a build step ` +
+            `${verb} does not run`,
+        };
+      }
+      const readsPinned =
+        (ref.kind === "prior-step" && pinned.get(ref.phaseName) === true && ref.field !== "digest") ||
+        (ref.kind === "component-artifact" && ref.componentName === component.name && ref.field !== "digest" && pinned.size > 0);
+      if (readsPinned) {
+        const spelled = ref.kind === "prior-step" ? `@${ref.phaseName}.${ref.field}` : `@${ref.componentName}.publish.${ref.field}`;
+        return {
+          error: `component "${component.name}" reads "${spelled}", but ${verb} knows only the recorded digest; ` +
+            `wire the digest instead`,
+        };
+      }
+    }
+  }
+  return { component: { ...component, deploy }, removed };
+}
+
+/** Every same-project wiring reference anywhere in a step's fields (cross-stack `stackOutput` objects excluded). */
+function refsIn(value: unknown): WiringRef[] {
+  const refs: WiringRef[] = [];
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") {
+      const ref = parseWiringRef(v);
+      if (ref) refs.push(ref);
+    } else if (Array.isArray(v)) {
+      v.forEach(walk);
+    } else if (v && typeof v === "object" && !("stackOutput" in v)) {
+      Object.values(v as Record<string, unknown>).forEach(walk);
+    }
+  };
+  walk(value);
+  return refs;
+}
+
+/**
+ * A registry whose publish-family capabilities check what they published
+ * against the digest being promoted for that component. A mismatch fails the
+ * step, which fails the component through the driver's ordinary path. Every
+ * other capability is passed through untouched, and the recorded-digest step a
+ * rollback's composition carries is added.
+ */
+export function checkPublishedDigest(
+  registry: CapabilityRegistry,
+  expected: ReadonlyMap<string, string>,
+): CapabilityRegistry {
+  const checked = new CapabilityRegistry();
+  if (!registry.has(RECORDED_DIGEST_KIND)) checked.register(recordedDigestCapability);
+  for (const kind of registry.kinds()) {
+    const inner = registry.resolve(kind) as Capability<unknown, unknown>;
+    if (!PUBLISH_STEP_KINDS.includes(kind)) {
+      checked.register(inner);
+      continue;
+    }
+    const wrapped: Capability<unknown, unknown> = {
+      kind,
+      ...(inner.rollbackPolicy ? { rollbackPolicy: inner.rollbackPolicy } : {}),
+      async run(ctx, input) {
+        let output: unknown;
+        try {
+          output = await inner.run(ctx, input);
+        } catch (err) {
+          throw new Error(
+            `${kind} could not publish from the build archive: ${err instanceof Error ? err.message : String(err)}. ` +
+              `A promote publishes the archive the source release was built from, so it has to run where that archive is on disk`,
+          );
+        }
+        const want = expected.get(ctx.component);
+        const got = (output as { digest?: unknown } | undefined)?.digest;
+        if (want !== undefined && got !== want) {
+          throw new Error(
+            `${kind} published ${typeof got === "string" ? got : "no digest"}, but the release being promoted recorded ${want}; ` +
+              `the build archive on disk is not the one that release was built from`,
+          );
+        }
+        return output;
+      },
+      ...(inner.rollback
+        ? { rollback: (ctx, input, output) => inner.rollback!(ctx, input, output) }
+        : {}),
+    };
+    checked.register(wrapped);
+  }
+  return checked;
+}
+
+/** Options for {@link runPromotion}. */
+export interface RunPromotionOptions {
+  plan: PromotionPlan;
+  /** The promotable compositions (see {@link withoutBuildSteps}), one per plan item. */
+  components: DriverComponent[];
+  registry: CapabilityRegistry;
+  componentOutputs?: Record<string, Record<string, unknown>>;
+  gates?: GateLedgerPort;
+  now?: string;
+  onProgress?: (event: RunProgressEvent) => void;
+}
+
+/**
+ * Deploy the plan's components to `plan.to`, in dependency order. A
+ * `dependsOn` edge to a component outside the promotion is dropped, the same
+ * way a single-component `chant run --components` runs without its
+ * dependencies; their outputs come from `componentOutputs`. Returns the
+ * driver's result for every outcome, including a failure.
+ */
+export async function runPromotion(options: RunPromotionOptions): Promise<DriverRunResult> {
+  const { plan } = options;
+  const names = new Set(plan.items.map((i) => i.component));
+  const targets = options.components
+    .filter((c) => names.has(c.name))
+    .map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => names.has(d)) }));
+  const expected = new Map(plan.items.map((i) => [i.component, i.digest]));
+  try {
+    return await runInterpretDriver(targets, checkPublishedDigest(options.registry, expected), {
+      env: plan.to,
+      componentOutputs: options.componentOutputs ?? {},
+      // #2574: a gate approval for this promote or rollback is bound to the
+      // release it deploys, as well as the environment and composition.
+      releases: expected,
+      // #3061: the workload's service.version and vcs.ref.head.revision are the earlier release's own.
+      releaseIdentity: (component) => {
+        const item = plan.items.find((i) => i.component === component);
+        return item ? { version: item.digest, revision: item.source.gitSha } : undefined;
+      },
+      ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+      ...(options.gates ? { gates: options.gates } : {}),
+      ...(options.now ? { now: options.now } : {}),
+    });
+  } catch (err) {
+    if (err instanceof DriverRunFailure) return err.result;
+    throw err;
+  }
+}
+
+/** Who approved the last gate a component passed in this run, if any. */
+export function gateApprover(result: DriverComponentResult | undefined): string | undefined {
+  let approver: string | undefined;
+  for (const record of result?.records ?? []) {
+    if (record.approval) approver = record.approval.resolvedBy;
+  }
+  return approver;
+}
+
+/** What a promote, rollback or redeploy knows about its own run, for the records it writes. */
+export interface DeployRunInfo {
+  runId: string;
+  runOrigin?: RunOrigin;
+  actor: string;
+  timestamp: string;
+  approver?: string;
+}
+
+/** The fields a promote, a rollback and a redeploy record share: the artifact is the earlier release's own. */
+function sharedRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
+  const { source } = item;
+  return {
+    component: item.component,
+    env,
+    digest: item.digest,
+    gitSha: source.gitSha,
+    runId: run.runId,
+    ...(run.runOrigin ? { runOrigin: run.runOrigin } : {}),
+    timestamp: run.timestamp,
+    actor: run.actor,
+    ...(run.approver ? { approver: run.approver } : {}),
+    ...(source.manifestDigest ? { manifestDigest: source.manifestDigest } : {}),
+    ...(source.inputDigest ? { inputDigest: source.inputDigest } : {}),
+  };
+}
+
+/** Name an earlier record the way `promotedFrom`, `restores` and `redeploys` do. */
+function refTo(record: ReleaseRecord) {
+  return { env: record.env, runId: record.runId, timestamp: record.timestamp };
+}
+
+/**
+ * The release record a successful promotion appends to the target ledger.
+ * The digest, git sha and archive identities are the source release's own,
+ * since the artifact is the one built there; `promotedFrom` names that
+ * release.
+ */
+export function promotionRecord(item: PromotionItem, to: string, run: DeployRunInfo): ReleaseRecordInput {
+  return { ...sharedRecord(item, to, run), promotedFrom: refTo(item.source) };
+}
+
+/**
+ * The release record a successful rollback appends. Like a promotion's, it
+ * carries the restored release's artifact identities; `restores` names that
+ * release.
+ */
+export function rollbackRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
+  return { ...sharedRecord(item, env, run), restores: refTo(item.source) };
+}
+
+/**
+ * The release record a successful redeploy appends. It carries the current
+ * release's artifact identities, as a rollback's carries the restored one's;
+ * `redeploys` names that release. The environment's current digest does not
+ * change, and the record says when it was last put back.
+ */
+export function redeployRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
+  return { ...sharedRecord(item, env, run), redeploys: refTo(item.source) };
+}

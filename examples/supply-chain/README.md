@@ -28,7 +28,7 @@ That is the right answer for a component-only project, and the reason the root
 example gate allowlists this directory. The entry point is `chant run
 --components`, which discovers
 `supply-chain-demo.component.ts` and dispatches its phases through the interpret
-driver. `examples/examples.test.ts` asserts that shape (two components, their
+driver. `examples/examples.e2e.test.ts` asserts that shape (two components, their
 phases, and the step kinds in each) so the CI regression guard in
 `.github/workflows/chant.yml` is not its only cover.
 

@@ -3,10 +3,14 @@ import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser, TemplateIR } from "./import/parser";
+import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
+import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
+import type { GatedWavePipelineOptions } from "./components/gated-wave-pipeline";
+import type { PrLoopPipelineOptions } from "./components/pr-pipeline";
+import type { OpWaveJob, OpWavesSpec } from "./op/op-waves";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
@@ -19,15 +23,18 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
-import type { IREdge } from "./graph-ir";
+import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { BehaviourResult, PredictBehaviourOptions } from "./behaviour";
 import type { BehaviourKinds } from "./behaviour-kinds";
+import type { ProjectCodegen } from "./project-codegen";
+import type { SymbolResolver } from "./workspace/symbols";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
+import type { Archetype } from "./components/component";
 
 // Re-exported so a lexicon that hosts Op runs (#2121) can type its
 // `opRuntime` from the same entry it imports the plugin contract from.
@@ -36,9 +43,17 @@ export type {
   OpRunHandle,
   OpRunRecord,
   OpRunStartOptions,
+  OpGateResolveOptions,
   OpRunState,
   OpRunStatus,
 } from "./op/runtime";
+
+export type {
+  ProjectCodegen,
+  ProjectCodegenContext,
+  ProjectCodegenGenerateContext,
+  ProjectCodegenOutput,
+} from "./project-codegen";
 
 // Re-exported so a lexicon can author its command group (#1078) from the
 // same `@intentius/chant/lexicon` entry it imports the plugin contract from.
@@ -424,12 +439,26 @@ export interface InitTemplateSet {
  * repos or version-constant locations. See ./codegen/pinned-upgrade.ts.
  */
 export interface UpstreamPin {
+  /**
+   * Short name for this pin (`clickhouse`, `postgres-17`), used to pick one
+   * pin of a plugin that declares several (`chant dev pinned-upgrade <dir>
+   * <label>`). Optional on a lone `upstreamPin`, where it defaults to the
+   * lexicon's name; required on every entry of `upstreamPins`.
+   */
+  readonly label?: string;
   /** Source file (relative to the lexicon package root) holding the pinned version constant. */
   readonly file: string;
   /** Regex whose first capture group is the current pinned version in `file`. */
   readonly pattern: RegExp;
   /** Rebuild a line that matched `pattern`, substituting the new version. */
   replace(newVersion: string, line: string): string;
+  /**
+   * Set when the version line is not the whole pin: other constants (an image
+   * digest, a checksum) move with it and `replace` cannot compute them. The
+   * upgrade tooling then reports the newer version and this text, and edits
+   * nothing. Say what to move and how.
+   */
+  readonly alsoMoves?: string;
   /** Where to query for the latest stable upstream tag. */
   readonly upstream: {
     readonly owner: string;
@@ -438,6 +467,25 @@ export interface UpstreamPin {
     readonly kind: "releases" | "tags";
     /** Only consider tags ending with this suffix (e.g. "-ee" for GitLab). */
     readonly tagSuffix?: string;
+    /**
+     * Map a raw tag to the version string the pin stores, or null to skip the
+     * tag. For upstreams whose tags are not versions: postgres/postgres tags
+     * are `REL_18_6`, `REL_18_BETA1`, `REL9_6_24`, so
+     * `(t) => /^REL_(\d+)_(\d+)$/.exec(t)?.slice(1).join(".") ?? null` gives
+     * `18.6` and drops betas, release candidates and the old spelling.
+     *
+     * When set, the tool reads every page of the tag list (not just the first
+     * 50), because such lists are not ordered by version, and the version this
+     * returns is what `replace` receives and what the report shows. The pinned
+     * constant may hold either the mapped version or the raw tag.
+     */
+    readonly tagVersion?: (tag: string) => string | null;
+    /**
+     * Only consider versions whose first numeric segment equals the pinned
+     * version's, so a pin on `17.9` reports `17.11` and never `18.6`. For
+     * lexicons that pin one snapshot per major line. Default false.
+     */
+    readonly trackMajor?: boolean;
   };
 }
 
@@ -486,6 +534,113 @@ export interface ComponentPipelineOptions {
    * this too when the file should land under some other name than its stage.
    */
   opsFileName?: string;
+  /**
+   * An environment to promote to after the deploy (#2575). The component
+   * generators add one job that needs every component job and runs
+   * `chant components promote --from <env> --to <promoteTo>`. Each component
+   * job also uploads the files its build steps wrote (see
+   * `promoteArchivePaths` in `components/promote.ts`), and the promote job
+   * downloads them, since a promote publishes from the archive on disk.
+   * Unset, the pipeline has no promote job and is unchanged.
+   */
+  promoteTo?: string;
+  /**
+   * The promote job's command as argv, when `promoteTo` is set. Default
+   * `["chant", "components", "promote", "--from", <env>, "--to", <promoteTo>]`.
+   */
+  promoteCommand?: string[];
+  /**
+   * Gated waves (#3049): one job per wave instead of one per component. Job
+   * `wave-<k>` runs `chant components fan-out --wave-gate <gate> --wave <k>`
+   * and hands the attempt record to the next job. See
+   * `components/gated-wave-pipeline.ts`. Unset, the pipeline is unchanged.
+   */
+  gatedWaves?: GatedWavePipelineOptions;
+  /**
+   * The pull-request loop (#3183): a plan job on each pull request and an
+   * apply job on each push to the target branch, bound to the digest a
+   * reviewer approved, instead of one job per component. See
+   * `components/pr-pipeline.ts`. Unset, the pipeline is unchanged.
+   */
+  prLoop?: PrLoopPipelineOptions;
+  /**
+   * The workspace member this pipeline belongs to (#2542, #2524 D19). Core
+   * sets it when the project sits in a member of a `chant.workspace.json`;
+   * a caller never needs to. Unset, every generator's output is unchanged.
+   * Set, the pipeline keeps the triggers it has without a member, and the
+   * ones that can take a path filter (an Op's `push` and `pull_request`, and
+   * GitLab's job rules) are limited to the member's files and the pipeline
+   * file. Its jobs run in the member's directory, and its names carry the
+   * member's name so two members' pipelines never collide.
+   *
+   * A pull-request pipeline (`prLoop`, #3465) takes no path filter: a change
+   * outside the member can reach it (a module it calls in another member),
+   * so its plan runs on every pull request and selects from the whole
+   * change. Its commands pass `--member`, which gives the member its own
+   * gate op, note and statuses on the pull request.
+   */
+  member?: PipelineMember;
+}
+
+/** Where a workspace member sits, for a generated pipeline (#2542). */
+export interface PipelineMember {
+  /** The member's name in the declaration. */
+  name: string;
+  /**
+   * The member's directory relative to the repository root, with `/`
+   * separators, or `"."` for a member at the root.
+   */
+  dir: string;
+  /**
+   * Directories (repository-relative) that belong to other members or to
+   * example groups. Only a member at `"."` uses them: its path filter is the
+   * whole repository minus these.
+   */
+  exclude?: string[];
+  /** The generated component pipeline's path, repository-relative. Added to the path filter. */
+  file?: string;
+  /**
+   * The directory (repository-relative) the generated Op pipeline files land
+   * in. Each file's own path is added to its path filter.
+   */
+  fileDir?: string;
+}
+
+/** `path` (relative to the member's directory) made relative to the repository root. Absolute paths pass through. */
+export function memberRepoPath(member: PipelineMember, path: string): string {
+  if (path.startsWith("/") || member.dir === "." || member.dir === "") return path;
+  const rest = path.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  return rest === "" || rest === "." ? member.dir : `${member.dir}/${rest}`;
+}
+
+/**
+ * The path filter for a member's `push` or `pull_request` trigger in GitHub
+ * Actions syntax (also Forgejo's): the member's directory and the pipeline
+ * file. A member at
+ * `"."` gets every path, minus the other members' directories.
+ */
+export function memberPathFilter(member: PipelineMember, file: string | undefined = member.file): string[] {
+  const paths =
+    member.dir === "." || member.dir === ""
+      ? ["**", ...(member.exclude ?? []).map((d) => `!${d}/**`)]
+      : [`${member.dir}/**`];
+  if (file && !paths.includes(file)) paths.push(file);
+  return paths;
+}
+
+/**
+ * The `rules: changes:` list for a member's GitLab jobs, or undefined for a
+ * member at `"."`: GitLab's `changes` has no exclusions, so the root member's
+ * jobs run on every change.
+ */
+export function memberGitlabChanges(member: PipelineMember, file: string | undefined = member.file): string[] | undefined {
+  if (member.dir === "." || member.dir === "") return undefined;
+  return [`${member.dir}/**/*`, ...(file ? [file] : [])];
+}
+
+/** A shell word for `cd` into the member's directory. */
+export function memberShellDir(member: PipelineMember): string {
+  return /^[A-Za-z0-9._\/-]+$/.test(member.dir) ? member.dir : `'${member.dir.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The synthesized CI pipeline for a component graph (generate mode). */
@@ -747,6 +902,23 @@ export interface OpPipelineResult {
 }
 
 /**
+ * Options for an Op waves pipeline (#3679): the generic knobs of
+ * {@link ComponentPipelineOptions} that apply to every wave job, and the path
+ * of the spec file the jobs read.
+ */
+export interface OpWavesPipelineOptions
+  extends Pick<ComponentPipelineOptions, "image" | "beforeScript" | "extraScript" | "variables" | "opsStage" | "opsFileName"> {
+  /** The spec's path from the repository root. Every job runs `chant run wave --spec <specFile>`. */
+  specFile: string;
+}
+
+/** An Op waves pipeline: one file, and its jobs in order. */
+export interface OpWavesPipelineResult {
+  files: OpPipelineFile[];
+  jobs: OpWaveJob[];
+}
+
+/**
  * Live status of a single deploy unit (a CloudFormation stack, a K8s release, …)
  * addressed by its deployed name — the per-component presence signal
  * `chant components status --live` needs (#57). A component's deploy step carries
@@ -768,6 +940,21 @@ export interface StackStatusObservation {
 /**
  * Context for a lexicon's {@link LexiconPlugin.buildRoots} hook (#1548).
  */
+/** What {@link LexiconPlugin.changedUnits} reads (#3183). */
+export interface ChangedUnitsContext {
+  /** The directory `chant.config.*` lives in. Config paths resolve against it. */
+  projectRoot: string;
+  /** The resolved project configuration, for the lexicon's own namespace. */
+  config: Record<string, unknown>;
+  /**
+   * Files the change added, modified or deleted, relative to `projectRoot`,
+   * with `/` separators. Files outside `projectRoot` are listed too, as
+   * `../...`, so a unit that calls code outside the project (another
+   * workspace member's module, #3465) can claim them.
+   */
+  changedFiles: string[];
+}
+
 export interface BuildRootContext {
   /**
    * The directory the project configuration was loaded from (where
@@ -797,6 +984,15 @@ export interface BuildRootContext {
    * treat an absent map as an empty one.
    */
   entities?: ReadonlyMap<string, Declarable>;
+  /**
+   * The directory this build discovered its source in (the path handed to
+   * `build()`, which `--src` or `sourceDir` chose), absolute. A contributor
+   * that reads files beside the typed source (the sql lexicon's `.sql`
+   * files) reads them here, so it sees the tree discovery saw. Optional: a
+   * caller that is not a build (the graph paths) omits it, and a hook then
+   * falls back to `sourceDir` in `config`, resolved against `projectRoot`.
+   */
+  sourceDir?: string;
 }
 
 /**
@@ -816,7 +1012,7 @@ export interface BuildRootContribution {
  * the argument is still assignable, which is what every pre-#1828 hook does.
  */
 export type BuildRootContributor = (
-  ctx: Pick<BuildRootContext, "entities">,
+  ctx: Pick<BuildRootContext, "entities" | "sourceDir">,
 ) => Promise<BuildRootContribution>;
 
 /**
@@ -840,6 +1036,45 @@ export interface AuditEntitiesInput {
   dir?: string;
   /** Absolute path of the audited root: the boundary a lexicon may read within. */
   baseDir?: string;
+}
+
+/**
+ * One parameter of a composite, read from the composite's declared props type
+ * (#2662).
+ */
+export interface CompositeParam {
+  /** The prop name as a caller writes it. */
+  name: string;
+  /** The declared TypeScript type, as source text (long inline types are shortened). */
+  type: string;
+  /** False when the prop is optional. */
+  required: boolean;
+  /** The prop's JSDoc summary, when it has one. */
+  description?: string;
+}
+
+/**
+ * A composite this lexicon exports, as static catalog data (#2662).
+ *
+ * The catalog is what `chant serve mcp` answers "what composites do you have
+ * for aws?" from: the `composites` tool, the `chant://composites` resource and
+ * `search` results of kind `composite` all read it, and none of them calls a
+ * provider. A lexicon writes it once, from source, and a test in the lexicon
+ * holds it to the composites the package actually exports.
+ */
+export interface CompositeEntry {
+  /** The exported name a caller imports (an alias gets its own entry). */
+  name: string;
+  /** The lexicon that exports it. */
+  lexicon: string;
+  /** One line saying what it builds. */
+  description: string;
+  /** Resource kinds (the lexicon's class names) its members are, nested composites flattened. */
+  bundles: string[];
+  /** Its props, from the declared props type. */
+  params: CompositeParam[];
+  /** The component archetype that ships it, when that is known. */
+  archetype?: Archetype;
 }
 
 export interface LexiconPlugin {
@@ -920,6 +1155,15 @@ export interface LexiconPlugin {
   /** Return declarative rule specs for compilation via rule() */
   declarativeRules?(): RuleSpec[];
 
+  /**
+   * Class names this lexicon exports whose instances are property-kind
+   * declarables (`createProperty`), such as Grafana's panels and queries.
+   * The core COR001, COR004 and COR009 heuristics leave them out, since a
+   * property-kind declarable lives inside the resource that holds it
+   * (chant #2957). A lexicon that leaves this out gets the rules unchanged.
+   */
+  propertyClassNames?(): string[];
+
   /** Return post-synthesis checks for build validation */
   postSynthChecks?(): PostSynthCheck[];
 
@@ -938,6 +1182,17 @@ export interface LexiconPlugin {
    * when both are present. Omit it in the common case.
    */
   activityContracts?(): ActivityContract[];
+
+  /**
+   * Op activity implementations, keyed by the name a step's `fn` calls them
+   * by (chant #2520). Read only for a lexicon declared by module path
+   * (`{ name, module }` in `chant.config.ts`), which has no
+   * `@intentius/chant-lexicon-<name>/op/activities` subpath for
+   * `loadActivities` to import. A package-backed lexicon keeps using the
+   * subpath and leaves this out.
+   */
+  activities?(): Record<string, (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>>
+    | Promise<Record<string, (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>>>;
 
   /**
    * Audit catalog metadata (title/tier/fix/authority/category) for this
@@ -1012,11 +1267,33 @@ export interface LexiconPlugin {
    */
   detectTemplate?(data: unknown): boolean;
 
-  /** Return a parser for importing external templates into IR */
-  templateParser?(): TemplateParser;
+  /**
+   * Return a parser for importing external templates into IR. `options` holds
+   * the `chant import --parser-option` values, already checked against
+   * `parserOptions()` and converted to their declared types; it is empty when
+   * none were given.
+   */
+  templateParser?(options?: ParserOptions): TemplateParser;
+
+  /**
+   * The options `templateParser` accepts. `chant import --parser-option` refuses
+   * any name not listed here, so a lexicon with no options leaves this out.
+   */
+  parserOptions?(): ParserOptionSpec[];
 
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;
+
+  /**
+   * Importers for this lexicon's content when it is embedded in another
+   * lexicon's resources (#2962): a collector config in a k8s ConfigMap, rule
+   * groups in a `PrometheusRule`, dashboard JSON in a ConfigMap. The host's
+   * parser offers the content through `ParseContext.embedded`, and core finds
+   * the owner at run time among the project's lexicons and the installed
+   * ones whose `detectTemplate` recognizes the content, so the host does not
+   * depend on the owner. See `packages/core/src/import/embedded.ts`.
+   */
+  embeddedImporters?(): EmbeddedContentImporter[];
 
   /**
    * Re-express local agent configuration (skills, MCP servers, instruction
@@ -1040,6 +1317,14 @@ export interface LexiconPlugin {
 
   /** How this lexicon pins its upstream schema version + where to check for a newer one (self-upgrade tooling — see ./codegen/pinned-upgrade.ts). Omit for lexicons with no pinned upstream. */
   readonly upstreamPin?: UpstreamPin;
+
+  /**
+   * Further pins, for a lexicon that pins more than one upstream (sql: the
+   * ClickHouse pin in `upstreamPin` plus one Postgres server per major). Each
+   * entry needs a unique `label`. The upgrade tooling checks `upstreamPin` and
+   * every entry here, one report per pin. Omit when there is one pin.
+   */
+  readonly upstreamPins?: readonly (UpstreamPin & { readonly label: string })[];
 
   /**
    * Generate a CI pipeline from the discovered component graph — the
@@ -1066,6 +1351,14 @@ export interface LexiconPlugin {
     ops: ScheduledOpSpec[],
     options?: ComponentPipelineOptions,
   ): OpPipelineResult;
+
+  /**
+   * Render ordered waves of Op runs, each behind one gate (#3679,
+   * `./op/op-waves.ts`): one job per wave, or a deciding job and share jobs
+   * for a wide one, each wave needing the one before. Only CI-provider
+   * lexicons implement this.
+   */
+  generateOpWavesPipeline?(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult;
 
   /**
    * Host Op runs — the seam `chant run <op> --on <this lexicon>` dispatches to
@@ -1100,6 +1393,88 @@ export interface LexiconPlugin {
    */
   buildRoots?(ctx: BuildRootContext): Promise<BuildRootContribution>;
 
+  /**
+   * Project-local code generation: typed code this lexicon generates into
+   * the project from sources the project declares in its own config
+   * namespace (the k8s lexicon's `k8s.crds`, helm's `helm.charts`). `chant
+   * generate` calls `generate` and writes the files under
+   * `<codegen.outDir>/<lexicon>/`; every build checks the committed output
+   * against `inputs` and fails when they disagree, then calls `load`. See
+   * ./project-codegen.ts. Omit for lexicons with nothing to generate per
+   * project.
+   */
+  projectCodegen?(): ProjectCodegen;
+
+  /**
+   * The units this lexicon owns that a change touched, judged from the
+   * changed files alone (#3183). A unit is a name a component's deploy step
+   * targets (`deploy-units.ts`): the terraform lexicon answers with the
+   * `terraform.roots` entries whose directory, local modules or var files a
+   * changed file sits in. `chant components fan-out --base` and `chant
+   * components pr-plan` add these to the stacks `lifecycle affected` finds,
+   * since a root that is not chant source never shows in an artifact diff.
+   * Omit for lexicons whose units are chant source.
+   */
+  changedUnits?(ctx: ChangedUnitsContext): Promise<string[]>;
+
+  /**
+   * Facts about the whole read that this lexicon's entities imply, for the
+   * graph IR's `meta` bag (#2559). The otel lexicon answers
+   * `{ collector: <topology> }`, which `chant workspace graph` lifts into its
+   * `collectors` section, so core carries the shape of the answer and never
+   * imports the lexicon that computes it.
+   *
+   * Called by `chant graph --format ir` with the discovered entities of the
+   * project, after the plugins are loaded. Return `undefined` or an empty
+   * object when the project declares nothing this lexicon reports; the IR is
+   * then unchanged. Keys must be unique to the lexicon (two lexicons writing
+   * one key is a conflict the graph refuses). Omit for lexicons with nothing
+   * to report.
+   */
+  graphMeta?(entities: ReadonlyMap<string, Declarable>): Record<string, unknown> | undefined;
+
+  /**
+   * Edges this lexicon's entities declare as strings (#3910). A typed lexicon
+   * gets its edges from `AttrRef`s for free; a CI lexicon writes its
+   * dependencies as job names (`needs: ["build"]`), workflow paths (`uses:
+   * ./.github/workflows/ci.yml`) and file names (`include:`), which only the
+   * lexicon can resolve. It resolves them here, against the whole entity map,
+   * and reports each as a `{ from, to, kind }` between entity keys, or as
+   * `dangling` with the string as written when nothing declared matches.
+   * `pipelines` says which entities run in which workflow or pipeline.
+   *
+   * Called by `chant graph` with the discovered entities, after the plugins
+   * are loaded; merged by `applyLexiconGraphEdges` (./graph-ir.ts). Pure: no
+   * I/O. Return `undefined` when the project declares nothing this lexicon
+   * reads. Omit for lexicons whose references are typed.
+   */
+  graphEdges?(entities: ReadonlyMap<string, Declarable>): LexiconGraphEdges | undefined;
+
+  /**
+   * The workspace outputs this lexicon's declarations expose (#3931): names
+   * another member's link may target, without anyone writing `output(...)`.
+   * The sql lexicon answers each table and view as `<schema>.<table>` and
+   * each column as `<schema>.<table>.<column>`.
+   *
+   * Called two ways, with the same answer expected from both:
+   *
+   * - by `chant workspace check`, offline, with the entities the member's
+   *   source folds to (`foldProject` under `sandbox`: no member code runs),
+   *   and `unread` listing the files that did not fold, with their text. A
+   *   file of this lexicon's among them is a gap: the list is then incomplete
+   *   and a link to a name not in it is unresolved rather than missing;
+   * - by `chant graph --format ir`, with the built entities and no `unread`.
+   *   The outputs land on the IR's `exports`, which `chant workspace graph`
+   *   resolves links against.
+   *
+   * Names come from the declarations as written in source, never from an
+   * environment's or profile's rendering, so they stay the same everywhere
+   * the member deploys. Pure: no I/O. Return `undefined` when the project
+   * declares nothing this lexicon reports. Omit for lexicons with no such
+   * declarations.
+   */
+  workspaceOutputs?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceOutputs | undefined;
+
   // LSP
   /** Provide completions for LSP */
   completionProvider?(ctx: CompletionContext): CompletionItem[];
@@ -1110,9 +1485,28 @@ export interface LexiconPlugin {
   /** Provide code actions for LSP */
   codeActionProvider?(ctx: CodeActionContext): CodeAction[];
 
+  /**
+   * Symbol resolvers for the languages this lexicon's members are written in
+   * (#3313), so `chant workspace graph --intent <path>#<symbol>` names a
+   * declaration in such a file: a table in a `.sql` file, a resource in a
+   * manifest. Each is `{ language, extensions, declarations(path, text) }`,
+   * returning every declaration's dotted name, kind and 1-based line range.
+   * The intent walk asks the lexicons a file's member configures, after
+   * core's TypeScript and JavaScript resolver, which keeps `.ts` and `.js`.
+   * Pure: no I/O, no network. Omit for a lexicon with no such language.
+   */
+  symbolResolvers?(): SymbolResolver[];
+
   // Docs
   /** Generate documentation pages */
   docs?(options?: { verbose?: boolean }): Promise<void>;
+
+  /**
+   * The composites this lexicon exports, as static data (#2662). Read by the
+   * MCP `composites` tool, the `chant://composites` resource and `search`.
+   * Omit for a lexicon that exports no composites.
+   */
+  composites?(): CompositeEntry[];
 
   // MCP
   /** Return MCP tool contributions */
@@ -1699,6 +2093,10 @@ export interface LexiconPlugin {
    * (the form a user would have authored). `verbatim: true` keeps them. Targets
    * whose live config is already the declared shape (e.g. a CloudFormation
    * original template) may ignore it.
+   *
+   * `skipUndeclarable` (`--skip-undeclarable`): an implementation that fails
+   * an import for live objects no declaration can hold, naming them, imports
+   * the rest instead and returns them as warnings.
    */
   exportResources?(options: {
     environment: string;
@@ -1712,6 +2110,7 @@ export interface LexiconPlugin {
     selector?: ResourceSelector;
     owned?: boolean;
     verbatim?: boolean;
+    skipUndeclarable?: boolean;
   }): Promise<ExportedTemplate>;
 }
 
@@ -1823,6 +2222,14 @@ export interface ResourceSelector {
 export type ExportedTemplate = TemplateIR & {
   /** Phantom marker — never present at runtime. */
   readonly __fidelity?: "full-config";
+  /**
+   * The same export parsed again with a {@link ParseContext}, from the
+   * objects already read: no second read of the live target. An exporter
+   * that maps through its import parser offers this so `chant import --from`
+   * can hand embedded content to the lexicon that owns it, as file import
+   * does (#2995). Without it, embedded content is kept as written.
+   */
+  readonly reparse?: (context: ParseContext) => TemplateIR;
 };
 
 /**
@@ -1912,7 +2319,13 @@ export interface ResourceMetadata {
   status: string;
   /** ISO timestamp of last update */
   lastUpdated?: string;
-  /** Cloud-assigned output properties */
+  /**
+   * Cloud-assigned output properties. Two keys are read by `components status
+   * --live` (#2513): `digest` (the artifact digest serving now) and `gitSha`
+   * (the commit it was built from). Set them when the live read knows them; a
+   * value that differs from the recorded release reports the component
+   * `drifted`. See `LIVE_IDENTITY_ATTRIBUTES` in lifecycle/status.ts.
+   */
   attributes?: Record<string, unknown>;
   /**
    * Live ownership verdict from the resource's marker (#119/#120). `owned` =

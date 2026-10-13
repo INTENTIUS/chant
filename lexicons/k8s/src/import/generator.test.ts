@@ -112,6 +112,25 @@ describe("K8sGenerator", () => {
     expect(files[0].content).toContain("ServicePort");
   });
 
+  // chant #3093 — the property classes carry their members, so a Role's
+  // rules built as IngressRules would no longer type-check.
+  test("a Role's rules use the PolicyRule constructor, an Ingress's the IngressRule one", () => {
+    const files = generator.generate(makeIR([
+      {
+        logicalId: "role",
+        type: "K8s::Rbac::Role",
+        properties: { metadata: { name: "r" }, rules: [{ apiGroups: [""], resources: ["pods"], verbs: ["get"] }] },
+      },
+      {
+        logicalId: "clusterRole",
+        type: "K8s::Rbac::ClusterRole",
+        properties: { metadata: { name: "cr" }, rules: [{ apiGroups: [""], resources: ["nodes"], verbs: ["list"] }] },
+      },
+    ]));
+    expect(files[0].content).toContain("new PolicyRule(");
+    expect(files[0].content).not.toContain("IngressRule");
+  });
+
   test("handles empty IR", () => {
     const ir = makeIR([]);
     const files = generator.generate(ir);

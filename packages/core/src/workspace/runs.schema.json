@@ -1,0 +1,1257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json",
+  "title": "chant workspace runs output",
+  "description": "What `chant workspace runs --json` prints (#3033, ws-076): every agent run in the run ledger, _agent-runs/<id>.jsonl on chant/lifecycle, with its model, tokens, cost and the commits it made, joined by the run's own list and by the Chant-Run trailer (#3149), and totals per work item, per decision and per principal. A run that reports no cost is listed in unpriced, never counted as zero. It reads the local branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "ledger",
+        "filter",
+        "trust",
+        "runs",
+        "totals",
+        "malformed",
+        "reasons"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string"
+            }
+          }
+        },
+        "ledger": {
+          "type": "object",
+          "required": [
+            "branch",
+            "dir",
+            "commit"
+          ],
+          "properties": {
+            "branch": {
+              "const": "chant/lifecycle"
+            },
+            "dir": {
+              "type": "string"
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The local branch tip read, or null when there is no branch."
+            }
+          }
+        },
+        "filter": {
+          "type": "object",
+          "required": [
+            "unit",
+            "decision",
+            "by",
+            "since"
+          ],
+          "properties": {
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "decision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "since": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "followSquash": {
+              "type": "boolean",
+              "description": "Whether --follow-squash was given (#3035). Added within version 1."
+            }
+          }
+        },
+        "trust": {
+          "$ref": "#/$defs/trust"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/run"
+          },
+          "description": "Newest first, by when each started."
+        },
+        "totals": {
+          "type": "object",
+          "required": [
+            "all",
+            "byUnit",
+            "byDecision",
+            "byPrincipal"
+          ],
+          "properties": {
+            "all": {
+              "$ref": "#/$defs/totals"
+            },
+            "byUnit": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/totals"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "unit"
+                    ],
+                    "properties": {
+                      "unit": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "byDecision": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/totals"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "decision"
+                    ],
+                    "properties": {
+                      "decision": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "byPrincipal": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/totals"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "principal"
+                    ],
+                    "properties": {
+                      "principal": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "malformed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "runs-no-ledger",
+                  "runs-ledger-malformed",
+                  "kind-unreadable",
+                  "squash-unfollowed"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "The runs could not be read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "One agent run, its start and end folded together.",
+      "required": [
+        "id",
+        "state",
+        "startedAt",
+        "endedAt",
+        "outcome",
+        "by",
+        "agent",
+        "harness",
+        "model",
+        "provider",
+        "unit",
+        "lease",
+        "records",
+        "instruction",
+        "usage",
+        "models",
+        "cost",
+        "transcript",
+        "commits",
+        "decisions",
+        "ledger",
+        "record",
+        "statements",
+        "attestation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The run id, the value of the Chant-Run trailer on its commits."
+        },
+        "state": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "description": "running until its end is recorded."
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "How it ended, as the writer said: done, not_done, failed, cancelled."
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The principal the run worked for: the person who prompted it, or the service that asked."
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The agent session it ran as (ws-067)."
+        },
+        "harness": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "kind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ],
+          "description": "The work item it worked on."
+        },
+        "lease": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The fencing token of the work lease it worked under."
+        },
+        "records": {
+          "type": "array",
+          "description": "Other records it worked on, by kind name and id.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "instruction": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pin"
+            }
+          ]
+        },
+        "usage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/usage"
+            }
+          ],
+          "description": "Its tokens, or null when it reported none."
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modelUsage"
+          },
+          "description": "Each model's share, when the harness reported a breakdown."
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cost"
+            }
+          ],
+          "description": "What it cost, or null when it reported no cost: never zero for unknown."
+        },
+        "transcript": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pin"
+            }
+          ],
+          "description": "The transcript, pinned by hash; never stored."
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sha",
+              "patchId",
+              "joinedBy"
+            ],
+            "properties": {
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "patchId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "git patch-id --stable, or null for a commit with no patch."
+              },
+              "joinedBy": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "record",
+                    "trailer",
+                    "patch-id",
+                    "squash"
+                  ]
+                },
+                "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history. patch-id: neither holds, and the commit on HEAD's history has the git patch-id --stable of a commit the run's end lists, as after a rebase or a cherry-pick that dropped the trailer (#3036); never alongside the others, and its hunks are null. Added within version 1. squash: with --follow-squash, a squash merge on HEAD whose pull request's original commits join the run one of the other ways (#3035); via names them, and hunks is null. Added within version 1."
+              },
+              "hunks": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "$ref": "#/$defs/hunk"
+                    }
+                  }
+                ],
+                "description": "The hunks of the commit the run's end says it wrote, or null when it gives none, and the run is then taken to have made the whole commit (#3034). graph --intent uses them to name which of several runs sharing a commit wrote a line. Added within version 1, so an older document may lack it."
+              },
+              "recordedAs": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$",
+                "description": "For a patch-id join (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. Added within version 1."
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40,64}$"
+                },
+                "description": "For a squash join (#3035): the pull request's original commits through which the commit joins the run, oldest first. Added within version 1."
+              }
+            }
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The decisions it carried out, as <kind>/<id>: the ones its work item implements and the decision records it names."
+        },
+        "ledger": {
+          "type": "string",
+          "description": "Its file on chant/lifecycle."
+        },
+        "record": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "sha256"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ],
+          "description": "The SHA-256 a statement signs: of the canonical JSON of [start line, end line]. Null until the run ends (#3192)."
+        },
+        "statements": {
+          "type": "array",
+          "description": "The signed statements the ledger holds for the run, oldest first (#3192).",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "envelope"
+            ],
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "envelope": {
+                "$ref": "#/$defs/envelope"
+              }
+            }
+          }
+        },
+        "attestation": {
+          "$ref": "#/$defs/attestation",
+          "description": "Its statements judged against the runner keys at base."
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "runs",
+        "running",
+        "tokens",
+        "cost",
+        "unpriced",
+        "unreported"
+      ],
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "object",
+          "required": [
+            "input",
+            "output",
+            "cacheRead",
+            "cacheWrite"
+          ],
+          "properties": {
+            "input": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cacheRead": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cacheWrite": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "cost": {
+          "type": "array",
+          "description": "One sum per currency.",
+          "items": {
+            "type": "object",
+            "required": [
+              "currency",
+              "amount"
+            ],
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "unpriced": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The runs that report no cost, running ones included: left out of cost, never counted as zero."
+        },
+        "unreported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The runs that report no usage: left out of tokens."
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": [
+        "amount",
+        "currency",
+        "source"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217, such as USD."
+        },
+        "source": {
+          "type": "string",
+          "description": "What priced it, as the writer names it: a harness's own report (harness:claude-code), a proxy's price table (lobby:list-2026-09), a provider's bill."
+        }
+      }
+    },
+    "pin": {
+      "type": "object",
+      "description": "A file pinned by hash and never copied.",
+      "required": [
+        "sha256",
+        "bytes",
+        "ref"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Its size, when chant hashed the file itself; null when the writer gave the hash."
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the writer keeps it, as the writer named it. chant never reads it back."
+        },
+        "excerpt": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "On the instruction only, and only when the writer gave one (#3034): a short excerpt to show beside the hash, such as its first line. The hash pins the whole instruction; the excerpt is the writer's and is never checked against it. Added within version 1."
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "required": [
+        "turns",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ],
+      "properties": {
+        "turns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "modelUsage": {
+      "type": "object",
+      "required": [
+        "model",
+        "provider",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "cost"
+      ],
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cost"
+            }
+          ]
+        }
+      }
+    },
+    "hunk": {
+      "type": "object",
+      "description": "Lines of one file a run wrote in a commit (#3034): new-side line numbers in the commit's own version of the file.",
+      "required": [
+        "path",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "From the repository root, as git names it in the commit's diff."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "description": "A DSSE v1 envelope (https://github.com/secure-systems-lab/dsse).",
+      "required": [
+        "payloadType",
+        "payload",
+        "signatures"
+      ],
+      "properties": {
+        "payloadType": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "string",
+          "description": "Base64 of the payload bytes."
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "keyid",
+              "sig"
+            ],
+            "properties": {
+              "keyid": {
+                "type": "string",
+                "description": "The signing key's ssh fingerprint, SHA256:..."
+              },
+              "sig": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "statement": {
+      "type": "object",
+      "description": "An in-toto Statement v1 with chant's agent-run predicate (#3192, ws-090).",
+      "required": [
+        "_type",
+        "subject",
+        "predicateType",
+        "predicate"
+      ],
+      "properties": {
+        "_type": {
+          "const": "https://in-toto.io/Statement/v1"
+        },
+        "subject": {
+          "type": "array",
+          "description": "The commits the run made, sorted by id.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "digest"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The commit id."
+              },
+              "digest": {
+                "type": "object",
+                "required": [
+                  "gitCommit"
+                ],
+                "properties": {
+                  "gitCommit": {
+                    "type": "string"
+                  }
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "properties": {
+                  "patchId": {
+                    "type": "string",
+                    "description": "git patch-id --stable of the commit."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "predicateType": {
+          "const": "https://intentius.io/chant/agent-run/v1"
+        },
+        "predicate": {
+          "type": "object",
+          "required": [
+            "signer",
+            "run",
+            "unit",
+            "harness",
+            "model",
+            "provider",
+            "by"
+          ],
+          "properties": {
+            "signer": {
+              "type": "string",
+              "description": "The runner principal whose key signs: the one .chant/trust.json lists for that key."
+            },
+            "run": {
+              "type": "object",
+              "required": [
+                "id",
+                "record"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "record": {
+                  "type": "object",
+                  "required": [
+                    "sha256"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                }
+              }
+            },
+            "unit": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "harness": {
+              "type": "object",
+              "required": [
+                "name",
+                "version"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "statementVerdict": {
+      "type": "object",
+      "description": "One stored statement, judged against the runner keys at base and the run's record.",
+      "required": [
+        "status",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "verified",
+            "mismatch",
+            "untrusted",
+            "invalid"
+          ],
+          "description": "verified: a listed runner key signed it and it matches the record. mismatch: a listed key signed it and it does not match. untrusted: no listed key signed it. invalid: not a DSSE envelope, not an agent-run statement, or naming another signer."
+        },
+        "code": {
+          "enum": [
+            "envelope-invalid",
+            "envelope-untrusted",
+            "run-statement-invalid",
+            "run-statement-signer-mismatch",
+            "run-statement-mismatch"
+          ],
+          "description": "Why it does not verify. Absent when verified."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "signer": {
+          "type": "string"
+        },
+        "class": {
+          "enum": [
+            "runner",
+            "service"
+          ]
+        },
+        "keyid": {
+          "type": "string"
+        },
+        "statement": {
+          "$ref": "#/$defs/statement",
+          "description": "The statement, when verified."
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "description": "The run's statements judged against the runner keys at base (#3192).",
+      "required": [
+        "status",
+        "signer",
+        "class",
+        "keyid",
+        "code",
+        "reason",
+        "commits",
+        "statements"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "signed",
+            "unsigned",
+            "mismatch",
+            "untrusted",
+            "invalid"
+          ],
+          "description": "signed: a stored statement verifies. unsigned: the ledger holds none. Otherwise the best failure, mismatch before untrusted before invalid."
+        },
+        "signer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "class": {
+          "enum": [
+            "runner",
+            "service",
+            null
+          ]
+        },
+        "keyid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "envelope-invalid",
+                "envelope-untrusted",
+                "run-statement-invalid",
+                "run-statement-signer-mismatch",
+                "run-statement-mismatch"
+              ]
+            }
+          ],
+          "description": "The code of the failure status reports, or null when signed or unsigned."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The commits the verified statement names. Empty unless signed."
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/statementVerdict"
+          },
+          "description": "One verdict per stored statement, in ledger order."
+        }
+      }
+    },
+    "trust": {
+      "type": "object",
+      "description": "The trust policy the run statements are judged by, read at base.",
+      "required": [
+        "base",
+        "baseFrom",
+        "runners",
+        "problems"
+      ],
+      "properties": {
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseFrom": {
+          "enum": [
+            "flag",
+            "origin/HEAD",
+            "main",
+            "master",
+            null
+          ]
+        },
+        "runners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "principal",
+              "class"
+            ],
+            "properties": {
+              "principal": {
+                "type": "string"
+              },
+              "class": {
+                "enum": [
+                  "runner",
+                  "service"
+                ]
+              }
+            }
+          }
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Why the policy at base can't be read. Nothing verifies then."
+        }
+      }
+    }
+  }
+}

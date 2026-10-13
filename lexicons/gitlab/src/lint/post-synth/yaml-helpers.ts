@@ -1,11 +1,14 @@
 /**
  * Helpers for parsing serialized GitLab CI YAML in post-synth checks.
  *
- * Since GitLab CI output is YAML (not JSON like CloudFormation), we parse
- * the YAML sections structurally using simple regex/string parsing. The
- * serializer emits a predictable format so we can extract what we need
- * without a full YAML parser dependency.
+ * Jobs, stages and global variables are read with the structural parser
+ * (`parseYAML`, js-yaml with chant's schema). Checks that pattern-match a
+ * job's text get it from {@link extractJobSection}, which cuts the document
+ * at top-level keys rather than at blank lines, so it does not depend on the
+ * serializer's spacing.
  */
+
+import { parseYAML } from "@intentius/chant/yaml";
 
 export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
 
@@ -22,7 +25,15 @@ export interface ParsedJob {
   name: string;
   stage?: string;
   rules?: ParsedRule[];
+  /**
+   * Same-pipeline jobs this job needs, in every form GitLab accepts: a plain
+   * name, `- job: name` (with `artifacts:`, `optional:`, `parallel:`), and
+   * `needs: []`. Cross-pipeline needs (`pipeline:` or `project:`) name jobs
+   * in another pipeline and are left out.
+   */
   needs?: string[];
+  /** The subset of {@link needs} declared `optional: true`. */
+  optionalNeeds?: string[];
   extends?: string[];
 }
 
@@ -32,104 +43,115 @@ export interface ParsedRule {
 }
 
 /**
- * Extract stages list from serialized YAML.
+ * Top-level keys that are global keywords, not jobs. `image`, `services`,
+ * `cache`, `before_script` and `after_script` are the deprecated global
+ * forms of the `default:` keywords; `spec` is a CI component's header.
  */
-export function extractStages(yaml: string): string[] {
-  const stages: string[] = [];
-  const stagesMatch = yaml.match(/^stages:\n((?:\s+- .+\n?)+)/m);
-  if (stagesMatch) {
-    for (const line of stagesMatch[1].split("\n")) {
-      const item = line.match(/^\s+- (.+)$/);
-      if (item) stages.push(item[1].trim().replace(/^'|'$/g, ""));
-    }
+export const RESERVED_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  "stages",
+  "variables",
+  "default",
+  "include",
+  "workflow",
+  "image",
+  "services",
+  "cache",
+  "before_script",
+  "after_script",
+  "spec",
+]);
+
+/** Parse the pipeline document; `undefined` when the YAML cannot be read. */
+export function parsePipeline(yaml: string): Record<string, unknown> | undefined {
+  try {
+    const doc = parseYAML(yaml);
+    return doc && typeof doc === "object" && !Array.isArray(doc) ? doc : undefined;
+  } catch {
+    return undefined;
   }
-  return stages;
+}
+
+function isMapping(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function scalarString(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return undefined;
 }
 
 /**
- * Extract job names and their stage values from serialized YAML.
+ * Every job in the pipeline as `[id, rawJobObject]`: each top-level key whose
+ * value is a mapping, minus the global keywords. Hidden jobs (ids starting
+ * with `.`, used as `extends:` templates) are included.
+ */
+export function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
+  const doc = parsePipeline(yaml);
+  if (!doc) return [];
+  const out: Array<[string, Record<string, unknown>]> = [];
+  for (const [name, val] of Object.entries(doc)) {
+    if (RESERVED_TOP_LEVEL_KEYS.has(name)) continue;
+    if (isMapping(val)) out.push([name, val]);
+  }
+  return out;
+}
+
+/**
+ * Extract stages list from serialized YAML (block or flow list).
+ */
+export function extractStages(yaml: string): string[] {
+  const stages = parsePipeline(yaml)?.stages;
+  if (!Array.isArray(stages)) return [];
+  return stages.map(scalarString).filter((s): s is string => s !== undefined);
+}
+
+/**
+ * Extract jobs with their stage, `needs:` and `extends:` from serialized YAML.
+ *
+ * Built on the structural parser, so every job id is read (capitals, spaces,
+ * colons, quoted ids) and every `needs:` entry is read whatever keys follow
+ * `job:` in its map. The line-based version this replaced skipped ids that
+ * start with a capital and stopped reading a `needs:` list at an
+ * `artifacts: true` line (#3256). YAML the parser cannot read gives no jobs.
  */
 export function extractJobs(yaml: string): Map<string, ParsedJob> {
   const jobs = new Map<string, ParsedJob>();
-
-  // Split into sections by double newlines
-  const sections = yaml.split("\n\n");
-  for (const section of sections) {
-    const lines = section.split("\n");
-    if (lines.length === 0) continue;
-
-    // Top-level key (including dot-prefixed hidden jobs like .deploy-template)
-    const topMatch = lines[0].match(/^(\.?[a-z][a-z0-9_.-]*):/);
-    if (!topMatch) continue;
-
-    const name = topMatch[1];
-    // Skip reserved keys
-    if (["stages", "default", "workflow", "variables", "include"].includes(name)) continue;
-
+  for (const [name, obj] of jobEntries(yaml)) {
     const job: ParsedJob = { name };
 
-    // Find stage, needs, extends within the section
-    let inNeeds = false;
-    for (const line of lines) {
-      const stageMatch = line.match(/^\s+stage:\s+(.+)$/);
-      if (stageMatch) {
-        job.stage = stageMatch[1].trim().replace(/^'|'$/g, "");
-      }
+    const stage = scalarString(obj.stage);
+    if (stage !== undefined) job.stage = stage;
 
-      // extends: .template or extends: [.a, .b]
-      const extendsMatch = line.match(/^\s+extends:\s+(.+)$/);
-      if (extendsMatch) {
-        const val = extendsMatch[1].trim();
-        if (val.startsWith("[")) {
-          // Inline array: [.a, .b]
-          job.extends = val.slice(1, -1).split(",").map((s) => s.trim().replace(/^'|'$/g, ""));
-        } else {
-          job.extends = [val.replace(/^'|'$/g, "")];
-        }
-      }
-
-      // needs: block (list form)
-      if (line.match(/^\s+needs:$/)) {
-        inNeeds = true;
-        job.needs = [];
-        continue;
-      }
-
-      if (inNeeds) {
-        // - job-name (simple string form)
-        const simpleNeed = line.match(/^\s+- ([a-z][a-z0-9_.-]*)$/);
-        if (simpleNeed) {
-          job.needs!.push(simpleNeed[1]);
+    if (obj.needs !== undefined && obj.needs !== null) {
+      const entries = Array.isArray(obj.needs) ? obj.needs : [obj.needs];
+      const needs: string[] = [];
+      const optional: string[] = [];
+      for (const entry of entries) {
+        const plain = scalarString(entry);
+        if (plain !== undefined) {
+          needs.push(plain);
           continue;
         }
-        // - 'job-name' (quoted string form)
-        const quotedNeed = line.match(/^\s+- '([^']+)'$/);
-        if (quotedNeed) {
-          job.needs!.push(quotedNeed[1]);
-          continue;
-        }
-        // - job: job-name (object form)
-        const objectNeed = line.match(/^\s+- job:\s+(.+)$/);
-        if (objectNeed) {
-          job.needs!.push(objectNeed[1].trim().replace(/^'|'$/g, ""));
-          continue;
-        }
-        // End of needs block when we hit a non-indented-list line
-        if (!line.match(/^\s+\s/) || line.match(/^\s+[a-z_]+:/)) {
-          inNeeds = false;
-        }
+        if (!isMapping(entry)) continue;
+        // Cross-pipeline needs name a job in another pipeline.
+        if ("pipeline" in entry || "project" in entry) continue;
+        const target = scalarString(entry.job);
+        if (target === undefined) continue;
+        needs.push(target);
+        if (entry.optional === true) optional.push(target);
       }
+      job.needs = needs;
+      if (optional.length > 0) job.optionalNeeds = optional;
+    }
 
-      // needs: [a, b] (inline array form)
-      const inlineNeeds = line.match(/^\s+needs:\s+\[(.+)\]$/);
-      if (inlineNeeds) {
-        job.needs = inlineNeeds[1].split(",").map((s) => s.trim().replace(/^'|'$/g, ""));
-      }
+    if (obj.extends !== undefined && obj.extends !== null) {
+      const ext = Array.isArray(obj.extends) ? obj.extends : [obj.extends];
+      job.extends = ext.map(scalarString).filter((s): s is string => s !== undefined);
     }
 
     jobs.set(name, job);
   }
-
   return jobs;
 }
 
@@ -143,34 +165,83 @@ export function hasInclude(yaml: string): boolean {
 }
 
 /**
- * Extract global variables from serialized YAML.
+ * Extract global variables from serialized YAML. A variable in the expanded
+ * form (`value:` / `description:` / `options:`) maps to its `value`.
  */
 export function extractGlobalVariables(yaml: string): Map<string, string> {
   const vars = new Map<string, string>();
-  const match = yaml.match(/^variables:\n((?:\s+.+\n?)+)/m);
-  if (!match) return vars;
-
-  for (const line of match[1].split("\n")) {
-    const kv = line.match(/^\s+(\w+):\s+(.+)$/);
-    if (kv) {
-      vars.set(kv[1], kv[2].trim().replace(/^['"]|['"]$/g, ""));
-    }
+  const variables = parsePipeline(yaml)?.variables;
+  if (!isMapping(variables)) return vars;
+  for (const [key, val] of Object.entries(variables)) {
+    const v = isMapping(val) ? scalarString(val.value) : scalarString(val);
+    vars.set(key, v ?? "");
   }
   return vars;
 }
 
 /**
- * Extract the full section text for a given job name.
+ * The key of a top-level mapping line (`build:`, `Build_Docs:`,
+ * `build:linux:`, `"deploy prod":`), unquoted, or undefined when the line
+ * does not start a top-level key.
  */
-export function extractJobSection(yaml: string, jobName: string): string | null {
-  const sections = yaml.split("\n\n");
-  for (const section of sections) {
-    const lines = section.split("\n");
-    if (lines.length > 0 && lines[0].startsWith(`${jobName}:`)) {
-      return section;
+export function topLevelKey(line: string): string | undefined {
+  if (line === "" || /^[\s#]/.test(line) || /^(---|\.\.\.)(\s|$)/.test(line) || line.startsWith("- ")) return undefined;
+  const dq = line.match(/^"((?:[^"\\]|\\.)*)"\s*:(?:\s|$)/);
+  if (dq) {
+    try {
+      return JSON.parse(`"${dq[1]}"`) as string;
+    } catch {
+      return dq[1];
     }
   }
-  return null;
+  const sq = line.match(/^'((?:[^']|'')*)'\s*:(?:\s|$)/);
+  if (sq) return sq[1].replace(/''/g, "'");
+  const plain = line.match(/^(.+?)\s*:(?:\s|$)/);
+  return plain ? plain[1] : undefined;
+}
+
+/** A top-level section of the document: its key and its raw text. */
+export interface TopLevelSection {
+  key: string;
+  text: string;
+}
+
+/**
+ * Split the document into top-level sections. A section starts at a line
+ * holding a top-level key and runs to the next one; blank lines and
+ * column-0 comments at its end are dropped. Unlike splitting on blank
+ * lines, this does not depend on the serializer's spacing.
+ */
+export function topLevelSections(yaml: string): TopLevelSection[] {
+  const lines = yaml.replace(/\r\n?/g, "\n").split("\n");
+  const out: TopLevelSection[] = [];
+  let key: string | undefined;
+  let start = 0;
+  const flush = (end: number) => {
+    if (key === undefined) return;
+    let last = end;
+    while (last > start + 1 && (lines[last - 1].trim() === "" || lines[last - 1].startsWith("#"))) last--;
+    out.push({ key, text: lines.slice(start, last).join("\n") });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const k = topLevelKey(line);
+    const boundary = k !== undefined || /^(---|\.\.\.)(\s|$)/.test(line);
+    if (!boundary) continue;
+    flush(i);
+    key = k;
+    start = i;
+  }
+  flush(lines.length);
+  return out;
+}
+
+/**
+ * Extract the full section text for a given job name (exact key match, so
+ * `build` never returns the `build:linux` section).
+ */
+export function extractJobSection(yaml: string, jobName: string): string | null {
+  return topLevelSections(yaml).find((s) => s.key === jobName)?.text ?? null;
 }
 
 /**
@@ -241,10 +312,8 @@ export interface ImageRef {
  */
 export function extractImageRefs(yaml: string): ImageRef[] {
   const refs: ImageRef[] = [];
-  for (const section of yaml.split("\n\n")) {
+  for (const { key: job, text: section } of topLevelSections(yaml)) {
     const lines = section.split("\n");
-    const top = lines[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
-    const job = top ? top[1] : "default";
 
     for (let i = 0; i < lines.length; i++) {
       // image: as object (next indented `name:`) or inline string
@@ -285,7 +354,7 @@ export interface IncludeEntry {
  */
 export function extractIncludes(yaml: string): IncludeEntry[] {
   const entries: IncludeEntry[] = [];
-  const section = yaml.split("\n\n").find((s) => /^include:/.test(s));
+  const section = topLevelSections(yaml).find((s) => s.key === "include")?.text;
   if (!section) return entries;
 
   // Inline string form: `include: <value>` (value on the same line, not a list)
@@ -342,11 +411,8 @@ export interface IdTokenDecl {
  */
 export function extractIdTokens(yaml: string): IdTokenDecl[] {
   const out: IdTokenDecl[] = [];
-  for (const section of yaml.split("\n\n")) {
+  for (const { key: job, text: section } of topLevelSections(yaml)) {
     const lines = section.split("\n");
-    const top = lines[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
-    if (!top) continue;
-    const job = top[1];
 
     let inIdTokens = false;
     let idTokensIndent = -1;
@@ -408,11 +474,8 @@ export interface ScriptCommand {
  */
 export function extractScriptCommands(yaml: string): ScriptCommand[] {
   const out: ScriptCommand[] = [];
-  for (const section of yaml.split("\n\n")) {
+  for (const { key: job, text: section } of topLevelSections(yaml)) {
     const lines = section.split("\n");
-    const top = lines[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
-    if (!top) continue;
-    const job = top[1];
 
     let inScript = false;
     let scriptIndent = -1;

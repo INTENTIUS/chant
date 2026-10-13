@@ -20,6 +20,7 @@ import {
   Service,
   RayService as RayServiceResource,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import {
   type RayClusterSpec,
   buildRayClusterParts,
@@ -48,14 +49,14 @@ export interface RayServiceProps {
   spilloverBucket?: string;
   labels?: Record<string, string>;
   defaults?: {
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    networkPolicy?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
-    pvc?: Partial<Record<string, unknown>>;
-    serveService?: Partial<Record<string, unknown>>;
-    rayService?: Partial<Record<string, unknown>>;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    networkPolicy?: MemberDefaults<"NetworkPolicy">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
+    pvc?: MemberDefaults<"PersistentVolumeClaim">;
+    serveService?: MemberDefaults<"Service">;
+    rayService?: MemberDefaults<"RayService">;
   };
 }
 

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
+  "contract": 1,
+  "digest": "jcs1-sha256:266dbcb79b7922940f2b18bae4bebda8418422d4a5539eeeed119759694bd3a3",
+  "members": [
+    {
+      "member": "warden",
+      "lexicon": "github",
+      "planner": "warden",
+      "scope": "acme",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:0ae7141f1c5543916126f5162bd2ce3c9d3f240155b6b9965886280a9fc56e62",
+      "holes": []
+    }
+  ],
+  "entries": [
+    {
+      "member": "warden",
+      "lexicon": "github",
+      "planner": "warden",
+      "address": "team.contractors",
+      "type": "team",
+      "name": "contractors",
+      "action": "delete",
+      "disruption": "destroy",
+      "scope": "acme",
+      "attributes": []
+    },
+    {
+      "member": "warden",
+      "lexicon": "github",
+      "planner": "warden",
+      "address": "team.platform",
+      "type": "team",
+      "name": "platform",
+      "action": "update",
+      "disruption": "unknown",
+      "scope": "acme",
+      "attributes": [
+        {
+          "path": "privacy",
+          "before": "secret",
+          "after": "closed"
+        }
+      ]
+    },
+    {
+      "member": "warden",
+      "lexicon": "github",
+      "planner": "warden",
+      "address": "team.release",
+      "type": "team",
+      "name": "release",
+      "action": "create",
+      "scope": "acme",
+      "attributes": [
+        {
+          "path": "description",
+          "after": "Release managers"
+        },
+        {
+          "path": "privacy",
+          "after": "secret"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "members": 1,
+    "entries": 3,
+    "actions": {
+      "create": 1,
+      "update": 1,
+      "replace": 0,
+      "delete": 1,
+      "read": 0,
+      "no-op": 0,
+      "forget": 0
+    },
+    "types": {
+      "team": {
+        "delete": 1,
+        "update": 1,
+        "create": 1
+      }
+    },
+    "byMember": {
+      "warden": {
+        "delete": 1,
+        "update": 1,
+        "create": 1
+      }
+    },
+    "deletes": [
+      {
+        "member": "warden",
+        "address": "team.contractors",
+        "type": "team",
+        "disruption": "destroy"
+      }
+    ],
+    "replacements": [],
+    "failed": [],
+    "holes": 0
+  }
+}

@@ -70,6 +70,17 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--promote-to is forwarded to the generator as promoteTo (#2575)", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "stages: []", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const exit = await runBuild({ args: makeArgs({ env: "staging", promoteTo: "prod" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock).toHaveBeenCalledWith(".", "gitlab", { env: "staging", promoteTo: "prod" }, undefined, []);
+    vi.restoreAllMocks();
+  });
+
   test("chant.config.ts's declared buildParams resolve, log, and are forwarded to generateComponentsPipeline", async () => {
     loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", default: "light" } } },

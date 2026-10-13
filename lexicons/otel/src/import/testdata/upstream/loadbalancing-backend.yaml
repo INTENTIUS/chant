@@ -1,0 +1,27 @@
+# Vendored from opentelemetry-collector-contrib v0.130.0 (Apache-2.0), unchanged below this header:
+# https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.130.0/exporter/loadbalancingexporter/example/otel-collector-config.yaml
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+processors:
+  batch:
+
+exporters:
+  debug:
+    verbosity: detailed
+
+extensions:
+  health_check:
+  pprof:
+  zpages:
+
+service:
+  extensions: [pprof, zpages, health_check]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

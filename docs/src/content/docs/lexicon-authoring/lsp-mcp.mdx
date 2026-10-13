@@ -189,6 +189,30 @@ eight (`checks`, `workflow` or `pipeline`, `references`, `affected`,
 contributes the first five. A new CI lexicon should match those names rather
 than invent its own. See `lexicons/gitlab/src/mcp/context-tools.ts`.
 
+## Symbol resolvers
+
+`chant workspace graph --intent <path>#<symbol>` follows a declaration through history instead of a line range ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). Core resolves symbols in TypeScript and JavaScript. A lexicon whose members hold files in another language can resolve them too, by returning resolvers from `symbolResolvers()` ([#3313](https://github.com/INTENTIUS/chant/issues/3313)):
+
+```typescript
+import type { LexiconPlugin, SymbolResolver } from "@intentius/chant";
+
+const sqlResolver: SymbolResolver = {
+  language: "SQL",
+  extensions: [".sql"],
+  declarations(path, text) {
+    // Every declaration in the file: its dotted name, its kind and its 1-based lines.
+    return [{ qualified: "app.users", kind: "table", lines: { start: 2, end: 4 } }];
+  },
+};
+
+export const plugin: LexiconPlugin = {
+  // ...
+  symbolResolvers: () => [sqlResolver],
+};
+```
+
+The intent walk asks for them only for a file core's resolver does not read, and only from the lexicons the file's member configures in its `chant.config`. The config is read without running it when it can be, so `graph --intent` loads your plugin but no project code. A bare name finds the one declaration whose dotted name ends with it, and a name that matches several is refused as ambiguous, as for TypeScript. `declarations` does no I/O and calls no network. chant drops a resolver whose extensions don't start with a dot, and any declaration whose lines are not a 1-based range. When a member's lexicon fails to load, the `intent-symbol-unsupported` message names it.
+
 ## Next Steps
 
 Add [skills](/chant/lexicon-authoring/skills/) for AI agent guidance, then [package and publish](/chant/lexicon-authoring/package/) your lexicon.

@@ -54,9 +54,24 @@ Three readers turn the cadence into something that fires on its own. The [github
 The two phases run in order on each tick:
 
 1. **`Snapshot`** — calls the `lifecycleSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
-2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
+2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`. A diff that exits non-zero, a build error among them, fails the step: it returns no result and no plan digest, so an `ApplyOp` gate never sees a digest of an error.
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
+
+### Failing the job on drift
+
+A run that finds drift completes: every step succeeded, and the drift is a fact on the run record. So `chant run prod-watch` exits 0 by default, and a scheduled CI job that runs it stays green. Declare `failOn: "drift"` to have the run exit **2** when its `Drift` outcome is true ([#3675](https://github.com/INTENTIUS/chant/issues/3675)):
+
+```typescript
+const { op } = WatchOp({
+  name: "prod-watch",
+  env: "prod",
+  schedule: "*/15 * * * *",
+  failOn: "drift",
+});
+```
+
+`failOn` rides on the Op's declaration, so a pipeline rendered by any of the CI generators picks it up with no change to the `chant run prod-watch` line they write. `chant run prod-watch --fail-on-drift` asks for the same exit code on one invocation of a watch that does not declare it. Either way the run records the same thing on the ledger; only the process exit status changes. A failed run still exits 1 and a gated one 3.
 
 `receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, recorded as a `StaleReceipts` outcome — it never runs an effect and never writes a receipt.
 
@@ -121,7 +136,7 @@ phase("Diff", [
 
 The run reads `drifted` off the activity's return value and folds it into the record's `outcomes` as `Drift`, so `chant run prod-watch --json` prints it and every later reader of the ledger sees the same field.
 
-`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the exit code (`from: "exitCode"`) or the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
+`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
 
 ## Choosing a schedule
 
@@ -148,6 +163,7 @@ The signal tells you *something* changed. The output tells you *what*. The next 
 - **`MISSING`** — declared in source, gone from the cloud. Usually a deletion or stack-rollback. Re-apply your stack or update source if the deletion was intentional.
 - **`ORPHAN`** — present in the cloud, not in source. Either a teammate created it manually (move it into source) or it's untracked tooling output (use `chant import` to bring it in, or scope it out of the env).
 - **`DRIFTED`** — observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape). A property-level drift that fires every tick because something else legitimately operates that field, an autoscaler on `replicas`, say, or a controller stamping an annotation on every sync, is worth declaring [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over) rather than re-triaging on every run. It stops appearing as drift, and shows up in the plan's HELD section with who holds it and why.
+- **`PROPERTY DRIFT`**: the deep read found a declared resource whose live properties differ from its declaration. Each property is listed with its declared and live values. A sql table whose TTL was changed by hand shows here ([Watching a Server for Drift](/chant/lexicons/sql/drift-watch/)). Below it, `PENDING` lists the changes an apply would make that no one resource's properties show, such as the revoke of a privilege granted by hand on Postgres ([Access](/chant/lexicons/sql/postgres-access/)) or ClickHouse ([Access Control](/chant/lexicons/sql/clickhouse-access/)).
 - **`DISAPPEARED`** / **`NEWLY OBSERVED`** — historical context across snapshots. Useful for incident timelines, less actionable per-tick.
 - **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`** — context-keyed (Helm releases, Docker containers). Same triage as the resource categories.
 

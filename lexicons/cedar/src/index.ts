@@ -4,6 +4,28 @@ export { cedarPlugin } from "./plugin";
 // Serializer
 export { cedarSerializer, policyIdFromLogicalName, resolvePolicyId, cedarPolicyRecords } from "./serializer";
 export { CEDAR_POLICY_TYPE, CEDAR_JSON_FILENAME } from "./serializer";
+
+// Gate approval policy (chant#2508) — a cedar policy set as a gate's `approval.policy`.
+export {
+  gatePolicy, evaluateGatePolicy,
+  GATE_HUMAN_TYPE, GATE_AGENT_TYPE, GATE_ROLE_TYPE, GATE_RESOURCE_TYPE, PASS_GATE_ACTION,
+} from "./gate-policy";
+export type { GatePolicies } from "./gate-policy";
+
+// Gate policy over the plan (chant#3182): the request's Cedar schema, with the
+// plan summary core puts in `context.plan`, and a starter policy pack over it.
+export {
+  GATE_CEDAR_SCHEMA, GATE_PLAN_SUMMARY_CEDAR_TYPES, gateCedarSchema, validateGatePolicy,
+} from "./gate-schema";
+export type { GateCedarSchemaOptions, GatePolicyValidation } from "./gate-schema";
+export {
+  STATEFUL_TYPES, allowRegions, capDeletes, capReplacements, permitLowRiskAgents, permitTagOnlyAgents,
+  protectStateful, requireCreateTags, starterGatePolicies,
+} from "./gate-policy-pack";
+export type {
+  AllowRegionsOptions, CapDeletesOptions, CapReplacementsOptions, GatePackAppliesTo, PermitLowRiskAgentsOptions,
+  ProtectStatefulOptions, RequireCreateTagsOptions, StarterGatePoliciesOptions,
+} from "./gate-policy-pack";
 export type { CedarEffect, CedarScope, CedarPolicyProps, CedarPolicyRecord } from "./serializer";
 
 // AVP embedding (#1652) — the typed statement an `AWS::VerifiedPermissions::Policy`

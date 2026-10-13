@@ -79,16 +79,127 @@ export interface IRNode {
   runtimeOwner?: string;
 }
 
-/** A directed dependency: `from` references an attribute of `to`. */
+/**
+ * What an edge means (#3910). `ref` is a typed cross-resource reference (an
+ * `AttrRef`, a `Ref` intrinsic, a whole node held in props, or an
+ * {@link EntityReference}). The rest are the dependency strings a CI lexicon
+ * writes, reported through a plugin's `graphEdges` hook:
+ *
+ *  - `needs`    — job waits for job (GitHub/GitLab `needs:`, GitLab stage order)
+ *  - `calls`    — job runs a reusable workflow or a local composite action (`uses:`)
+ *  - `triggers` — a pipeline starts another one: GitLab `trigger:` (from starts to),
+ *                 GitHub `on.workflow_run` (to finishing starts from)
+ *  - `includes` — a pipeline pulls in another file's config (GitLab `include:`)
+ *  - `extends`  — a job inherits another job's keys (GitLab `extends:`)
+ *
+ * Every edge points from the entity that holds the reference to the entity it
+ * names. The set grows additively ({@link GRAPH_IR_VERSION}): a reader ignores
+ * a kind it does not know.
+ */
+export type IREdgeKind = "ref" | "needs" | "calls" | "triggers" | "includes" | "extends";
+
+/** A directed dependency: `from` references `to` (an attribute of it, for `ref`). */
 export interface IREdge {
   from: string;
   to: string;
-  /** "ref" for an AttrRef-derived edge. */
-  kind: "ref";
+  /** "ref" for an AttrRef-derived edge; a CI kind otherwise (see {@link IREdgeKind}). */
+  kind: IREdgeKind;
   /** The consumer-side property the reference flows through, when derivable. */
   viaAttr?: string;
   /** The producer-side attribute referenced (e.g. "id"). Added at detail T3. */
   toAttr?: string;
+  /**
+   * True when the edge leaves the pipeline `from` belongs to (#3910): a
+   * reusable-workflow call, a `workflow_run` trigger, a GitLab child or
+   * multi-project trigger, an include, a cross-project `needs`. A renderer
+   * that draws each pipeline as a group ({@link IRGroups.byPipeline}) reads
+   * this to route the edge between groups. Absent on every in-pipeline edge.
+   */
+  crossPipeline?: boolean;
+}
+
+/**
+ * A reference whose target is not a node of this graph (#3910): a job
+ * `needs` a job no workflow declares, a `uses:` names another repository's
+ * workflow, a GitLab `include:` names a file chant did not generate. Kept on
+ * the IR rather than dropped or matched to a near name, so a reader can tell
+ * "no dependency" from "a dependency on something outside this project".
+ * Field names follow the live resolver's `DanglingRef` (./graph-refs.ts).
+ */
+export interface IRDanglingRef {
+  /** The node holding the reference. */
+  from: string;
+  /** The edge kind the reference would have been. */
+  kind: IREdgeKind;
+  /** Where on `from` it was written, e.g. `needs`, `uses`, `trigger.include`. */
+  path: string;
+  /** The reference exactly as written. */
+  value: string;
+  /** Same meaning as {@link IREdge.crossPipeline}. */
+  crossPipeline?: boolean;
+}
+
+/**
+ * One reference a lexicon reports through its `graphEdges` hook (#3910),
+ * resolved by the lexicon from strings core cannot read: job names, workflow
+ * file paths, pipeline names. `from` and `to` are entity keys. A reference
+ * the lexicon could not resolve sets `dangling` and carries the string as
+ * written in `to`; core turns it into an {@link IRDanglingRef}.
+ */
+export interface LexiconGraphReference {
+  from: string;
+  to: string;
+  kind: IREdgeKind;
+  viaAttr?: string;
+  crossPipeline?: boolean;
+  dangling?: boolean;
+}
+
+/**
+ * One output a lexicon reports for its own declarations (#3931): a name a
+ * workspace link may target, such as a sql table's `public.orders` or a
+ * column's `public.orders.customer_id`.
+ */
+export interface LexiconWorkspaceOutput {
+  /** The output's name, as a link's `output` names it. */
+  name: string;
+  /** The entity key that declares it. */
+  entity: string;
+  /**
+   * Names the output had before, from a rename hint in source (a sql
+   * `-- previously:` comment). A link to one of them is told where it went.
+   */
+  previously?: string[];
+}
+
+/** One file the reader was handed but could not read without running it (#3931). */
+export interface LexiconUnreadSource {
+  /** The file's path, as the caller names it in messages. */
+  file: string;
+  text: string;
+  /** Why it was not read: the fold's located reason. */
+  reason: string;
+}
+
+/** What a lexicon's `workspaceOutputs` hook returns (#3931). */
+export interface LexiconWorkspaceOutputs {
+  outputs: LexiconWorkspaceOutput[];
+  /**
+   * Why the list may be incomplete, one line each: a declaration whose name
+   * can't be known statically, a file of this lexicon's that did not fold, a
+   * view whose columns can't be derived. Empty or absent when it is complete.
+   */
+  gaps?: string[];
+}
+
+/** What a lexicon's `graphEdges` hook returns (#3910). */
+export interface LexiconGraphEdges {
+  references: LexiconGraphReference[];
+  /**
+   * Pipeline membership, `pipeline name -> entity keys`: a workflow and its
+   * jobs, a GitLab pipeline and its jobs. Lands on {@link IRGroups.byPipeline}.
+   */
+  pipelines?: Record<string, string[]>;
 }
 
 /**
@@ -210,6 +321,11 @@ export interface IRGroups {
    * wave-laned renderer reads this the way `byStack` drives boundary boxes.
    * Present only for the component-DAG projection; absent for entity IR. */
   byWave?: Record<string, string[]>;
+  /** CI pipeline membership (#3910): a workflow or pipeline name -> the node
+   * ids it runs (the workflow node and its jobs). Reported by a CI lexicon's
+   * `graphEdges` hook; absent when no lexicon reports one. Edges marked
+   * `crossPipeline` run between these groups. */
+  byPipeline?: Record<string, string[]>;
 }
 
 /** A cross-stack export this stack publishes (a `stackOutput`/`output`): its
@@ -225,12 +341,17 @@ export interface IRExport {
   value?: unknown;
   /** The deployed stack that publishes it, on an observed graph (#1279). */
   stack?: string;
+  /** Names the output had before, from a rename hint a lexicon read (#3931). */
+  previously?: string[];
 }
 
 /** A cross-stack import this stack consumes — a `Parameter` fed from another
  * stack's output at deploy time. A viewer matches an import `name` to another
  * stack's export `name` to draw the cross-stack edge; the parameter's in-stack
- * consumers are ordinary `$ref` edges to `node` (#513). */
+ * consumers are ordinary `$ref` edges to `node` (#513). A reader that infers
+ * that match by name uses `joinKey()` from `./join-key.ts` and labels the edge
+ * `exact` or `folded`, the way `chant workspace graph` labels joins across
+ * members (#2539, ws-008). */
 export interface IRImport {
   /** Parameter name — the cross-stack handle (e.g. "clusterArn"). */
   name: string;
@@ -290,11 +411,40 @@ export interface IRPipeline {
   edges: IRPipelineEdge[];
 }
 
+/**
+ * The version `chant graph --format ir` writes on its output (#2529, #2524 D8).
+ * The format changes only additively: a new field or edge kind never bumps
+ * it, and a consumer ignores the fields and edge kinds it does not know. The
+ * number moves only for a change a consumer could not ignore.
+ */
+export const GRAPH_IR_VERSION = 1;
+
 /** The full graph IR for a project at the default (declarable) detail level. */
 export interface GraphIR {
+  /**
+   * {@link GRAPH_IR_VERSION}, stamped by `chant graph --format ir` when it
+   * writes the IR (#2529). Absent on an IR built in memory, and on output
+   * from a chant older than the field, which a reader treats as version 1.
+   */
+  version?: number;
   nodes: IRNode[];
   edges: IREdge[];
   groups: IRGroups;
+  /**
+   * Graph-level facts that are about the whole read rather than any one node.
+   *
+   * Deliberately an open bag. A fact lands here when it has no node to sit on
+   * — `_behaviour` (#2377) carries the engine, its version, the traffic level
+   * the figures are *at*, and the estate's totals, or a whole refusal report
+   * when there was no engine to ask. None of that is a property of a single
+   * entity, and putting the refusal on nodes would mean writing it N times or
+   * dropping it, and dropping it is the one outcome the contract forbids
+   * (`./behaviour-overlay.ts`).
+   *
+   * Absent unless something filled it, and a consumer reads absence as "not
+   * looked" rather than as a negative finding.
+   */
+  meta?: Record<string, unknown>;
   /** Outputs this stack publishes for other stacks to import (#513). */
   exports?: IRExport[];
   /** Parameters this stack imports from other stacks. A viewer matches an import's
@@ -303,6 +453,11 @@ export interface GraphIR {
   imports?: IRImport[];
   /** The CI/pipeline projection alongside the component graph (#989) — see {@link IRPipeline}. */
   pipeline?: IRPipeline;
+  /**
+   * References that name nothing in this graph (#3910) — see
+   * {@link IRDanglingRef}. Absent when there are none.
+   */
+  dangling?: IRDanglingRef[];
   /**
    * Attributes chant computed rather than read back from the provider, keyed by the kind
    * they were folded onto. An enrichment pass records what it derived here so callers can
@@ -352,6 +507,23 @@ function refTarget(ref: AttrRef, reverse: Map<object, string>): string | undefin
   return ref.getLogicalName() ?? (parent ? reverse.get(parent) : undefined);
 }
 
+/**
+ * The node id a whole declarable held in a config bag stands for, or undefined
+ * when it is not a node of this graph (an inlined property-kind resource, say,
+ * which is config of the holder and gets walked instead). An entity can name
+ * another entity directly rather than through an AttrRef, as the sql lexicon's
+ * enumerable `dependsOn` does with the tables, views and databases a statement
+ * mentions (#3257); that is a reference to the node, not a nested bag.
+ */
+function nodeReference(
+  value: unknown,
+  reverse: Map<object, string>,
+  nodeIds: Set<string>,
+): string | undefined {
+  const id = reverse.get(value as object);
+  return id !== undefined && nodeIds.has(id) ? id : undefined;
+}
+
 /** Project a value into a JSON-safe, scrubbed form. References become `{ $ref }`. */
 function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string>, nodeIds: Set<string>): unknown {
   if (value === null) return null;
@@ -382,6 +554,9 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
   // Nested declarables (e.g. an inlined property-kind resource) keep their
   // config in a non-enumerable `props` bag, like top-level nodes — project that.
   if (isDeclarable(value)) {
+    // Another node held whole is a reference to it, not config to inline.
+    const to = nodeReference(value, reverse, nodeIds);
+    if (to) return { $ref: to } satisfies AttrRefEnvelope;
     const out = projectConfig(value, seen, reverse, nodeIds);
     seen.delete(value);
     return out;
@@ -484,6 +659,15 @@ function collectEdges(
       // — resolve it to an edge instead of dropping it as an opaque intrinsic (#513).
       const to = refIntrinsicTarget(value);
       if (to && to !== from && nodeIds.has(to)) edges.push({ from, to, kind: "ref", viaAttr });
+      return;
+    }
+    // A whole node held in props or an enumerable field (the sql lexicon's
+    // `dependsOn`) is a reference to it: draw the edge, and do not walk its
+    // config, whose refs belong to that node's own edges (#3257). Checked
+    // before `seen` so the same node under two attributes yields both edges.
+    const held = nodeReference(value, reverse, nodeIds);
+    if (held) {
+      if (held !== from) edges.push({ from, to: held, kind: "ref", viaAttr });
       return;
     }
     if (seen.has(value)) return;
@@ -622,6 +806,101 @@ export function buildGraphIr(
   if (exports.length) ir.exports = exports;
   if (imports.length) ir.imports = imports;
   return ir;
+}
+
+/**
+ * Add what the lexicons' `graphEdges` hooks reported (#3910) to a built IR.
+ *
+ * A resolved reference between two nodes becomes an edge. When it lands on
+ * the same `from`/`to`/`viaAttr` as an edge the AttrRef walk already found
+ * (a GitLab `needs:` holding the Job object itself, say), the lexicon's edge
+ * replaces it, since the lexicon knows the reference is a `needs` and the walk
+ * only knows it is a reference. A reference marked `dangling`, or whose
+ * target is not a node, goes on `ir.dangling` as written. One whose `from` is
+ * not a node is dropped: there is nothing to hang it on.
+ *
+ * Pure. Returns `ir` itself when no report added anything, so a project with
+ * no CI lexicon prints exactly what it did before.
+ */
+export function applyLexiconGraphEdges(ir: GraphIR, reports: readonly LexiconGraphEdges[]): GraphIR {
+  const nodeIds = new Set(ir.nodes.map((n) => n.id));
+  const edgeMap = new Map<string, IREdge>(ir.edges.map((e) => [edgeKey(e), e]));
+  const danglingMap = new Map<string, IRDanglingRef>((ir.dangling ?? []).map((d) => [danglingKey(d), d]));
+  const byPipeline: Record<string, string[]> = { ...(ir.groups.byPipeline ?? {}) };
+  let changed = false;
+
+  for (const report of reports) {
+    for (const ref of report.references) {
+      if (!nodeIds.has(ref.from)) continue;
+      if (ref.dangling || !nodeIds.has(ref.to)) {
+        const d: IRDanglingRef = {
+          from: ref.from,
+          kind: ref.kind,
+          path: ref.viaAttr ?? ref.kind,
+          value: ref.to,
+          ...(ref.crossPipeline ? { crossPipeline: true } : {}),
+        };
+        danglingMap.set(danglingKey(d), d);
+        changed = true;
+        continue;
+      }
+      if (ref.to === ref.from) continue;
+      const e: IREdge = {
+        from: ref.from,
+        to: ref.to,
+        kind: ref.kind,
+        ...(ref.viaAttr ? { viaAttr: ref.viaAttr } : {}),
+        ...(ref.crossPipeline ? { crossPipeline: true } : {}),
+      };
+      edgeMap.set(edgeKey(e), e);
+      changed = true;
+    }
+    for (const [name, members] of Object.entries(report.pipelines ?? {})) {
+      const present = members.filter((m) => nodeIds.has(m));
+      if (present.length === 0) continue;
+      byPipeline[name] = [...new Set([...(byPipeline[name] ?? []), ...present])].sort();
+      changed = true;
+    }
+  }
+  if (!changed) return ir;
+
+  const edges = [...edgeMap.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
+  const dangling = [...danglingMap.values()].sort((a, b) => danglingKey(a).localeCompare(danglingKey(b)));
+  const groups: IRGroups = { ...ir.groups };
+  if (Object.keys(byPipeline).length) groups.byPipeline = sortKeys(byPipeline);
+  const out: GraphIR = { ...ir, edges, groups };
+  if (dangling.length) out.dangling = dangling;
+  return out;
+}
+
+/**
+ * Add the outputs the lexicons' `workspaceOutputs` hooks report (#3931) to a
+ * built IR's `exports`, each on the node that declares it. An output whose
+ * name is already exported (a hand-written `output()`) keeps the existing
+ * export. Pure. Returns `ir` itself when no report added anything.
+ */
+export function applyLexiconOutputs(ir: GraphIR, reports: readonly LexiconWorkspaceOutputs[]): GraphIR {
+  const nodeIds = new Set(ir.nodes.map((n) => n.id));
+  const names = new Set((ir.exports ?? []).map((e) => e.name));
+  const added: IRExport[] = [];
+  for (const report of reports) {
+    for (const o of report.outputs) {
+      if (names.has(o.name)) continue;
+      names.add(o.name);
+      added.push({
+        name: o.name,
+        ...(nodeIds.has(o.entity) ? { node: o.entity } : {}),
+        ...(o.previously && o.previously.length > 0 ? { previously: [...o.previously] } : {}),
+      });
+    }
+  }
+  if (added.length === 0) return ir;
+  const exports = [...(ir.exports ?? []), ...added].sort((a, b) => a.name.localeCompare(b.name));
+  return { ...ir, exports };
+}
+
+function danglingKey(d: IRDanglingRef): string {
+  return `${d.from}\0${d.path}\0${d.value}`;
 }
 
 function sortKeys(rec: Record<string, string[]>): Record<string, string[]> {

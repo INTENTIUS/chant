@@ -31,10 +31,10 @@ Use it to decide where an incremental move is worth starting. The point is not t
 
 ## The parser is installed on demand
 
-Terraform only. The advisor parses HCL with [`@cdktf/hcl2json`](https://www.npmjs.com/package/@cdktf/hcl2json), HashiCorp's own parser compiled to wasm. It is not a chant dependency, because only carve-out users need it. The first run without it fails with an install hint:
+Terraform only. The advisor parses HCL with [`@cdktn/hcl2json`](https://www.npmjs.com/package/@cdktn/hcl2json), HashiCorp's HCL parser compiled to wasm and maintained by the CDK Terrain fork since the original repo was archived. It is not a chant dependency, because only carve-out users need it. The first run without it fails with an install hint:
 
 ```bash
-npm install -D @cdktf/hcl2json
+npm install -D @cdktn/hcl2json
 ```
 
 A CDK cloud assembly needs nothing installed. The assembly is already JSON, and its templates are already in `AWS::*` type space — the same space the tier map keys on.

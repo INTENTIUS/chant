@@ -38,7 +38,7 @@ An IP is assigned if the declared type is not already present, keyed by family (
 
 ## Certificates
 
-A certificate is created if absent, idempotent by hostname. A re-apply for a hostname that already has a certificate is a no-op.
+A `Certificate` is an ACME certificate that Fly issues once the hostname's DNS points at the app. `flyApply` creates it with `POST /v1/apps/{app}/certificates/acme`, if absent, idempotent by hostname. A re-apply for a hostname that already has a certificate is a no-op. Uploading your own certificate and key (Fly's `/certificates/custom`) is not modeled.
 
 ## Apply-only secrets
 

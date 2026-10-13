@@ -1,3 +1,4 @@
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, SkillDefinition, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
@@ -155,6 +156,10 @@ export const flyPlugin: LexiconPlugin = {
       examples: [],
     },
   ]),
+
+  composites() {
+    return compositeCatalog;
+  },
 
   mcpTools() {
     return flyContextTools();

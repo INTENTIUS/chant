@@ -1,0 +1,335 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GkeOtelCollector output > with Workload Identity 1`] = `
+"apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gke-otel-collector
+  namespace: gke-monitoring
+  labels:
+    app.kubernetes.io/name: gke-otel-collector
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gke-otel-collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gke-otel-collector
+    spec:
+      serviceAccountName: gke-otel-collector-sa
+      containers:
+        - name: gke-otel-collector
+          image: otel/opentelemetry-collector-contrib:latest
+          args:
+            - --config=/etc/otel/config.yaml
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+            limits:
+              cpu: '500m'
+              memory: '512Mi'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: config
+          configMap:
+            name: gke-otel-collector-config
+      tolerations:
+        - operator: Exists
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gke-otel-collector-sa
+  namespace: gke-monitoring
+  labels:
+    app.kubernetes.io/name: gke-otel-collector
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: agent
+  annotations:
+    iam.gke.io/gcp-service-account: otel@test-project.iam.gserviceaccount.com
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gke-otel-collector-role
+  labels:
+    app.kubernetes.io/name: gke-otel-collector
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - namespaces
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gke-otel-collector-binding
+  labels:
+    app.kubernetes.io/name: gke-otel-collector
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gke-otel-collector-role
+subjects:
+  - kind: ServiceAccount
+    name: gke-otel-collector-sa
+    namespace: gke-monitoring
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gke-otel-collector-config
+  namespace: gke-monitoring
+  labels:
+    app.kubernetes.io/name: gke-otel-collector
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: config
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      batch:
+        timeout: 30s
+        send_batch_size: 8192
+      resourcedetection:
+        detectors: [gcp]
+        timeout: 10s
+    
+    exporters:
+      googlecloud:
+        project: test-project
+        metric:
+          prefix: custom.googleapis.com/test-cluster
+        trace:
+          attribute_mappings:
+            - key: service.name
+              replacement: g.co/r/service/name
+    
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch, resourcedetection]
+          exporters: [googlecloud]
+        traces:
+          receivers: [otlp]
+          processors: [batch, resourcedetection]
+          exporters: [googlecloud]
+"
+`;
+
+exports[`GkeOtelCollector output > with every prop set 1`] = `
+"apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel
+  namespace: telemetry
+  labels:
+    app.kubernetes.io/name: otel
+    app.kubernetes.io/managed-by: chant
+    team: obs
+    app.kubernetes.io/component: agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel
+        team: obs
+    spec:
+      serviceAccountName: otel-sa
+      containers:
+        - name: otel
+          image: otel/opentelemetry-collector-contrib:0.100.0
+          args:
+            - --config=/etc/otel/config.yaml
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+          resources:
+            requests:
+              cpu: '50m'
+              memory: '128Mi'
+            limits:
+              cpu: '1'
+              memory: '1Gi'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: config
+          configMap:
+            name: otel-config
+      tolerations:
+        - operator: Exists
+  updateStrategy:
+    type: OnDelete
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-sa
+  namespace: telemetry
+  labels:
+    app.kubernetes.io/name: otel
+    app.kubernetes.io/managed-by: chant
+    team: obs
+    app.kubernetes.io/component: agent
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-role
+  labels:
+    app.kubernetes.io/name: otel
+    app.kubernetes.io/managed-by: chant
+    team: obs
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - namespaces
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-binding
+  labels:
+    app.kubernetes.io/name: otel
+    app.kubernetes.io/managed-by: chant
+    team: obs
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-role
+subjects:
+  - kind: ServiceAccount
+    name: otel-sa
+    namespace: telemetry
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-config
+  namespace: telemetry
+  labels:
+    app.kubernetes.io/name: otel
+    app.kubernetes.io/managed-by: chant
+    team: obs
+    app.kubernetes.io/component: config
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      batch:
+        timeout: 30s
+        send_batch_size: 8192
+      resourcedetection:
+        detectors: [gcp]
+        timeout: 10s
+    
+    exporters:
+      googlecloud:
+        project: p-123456
+        metric:
+          prefix: custom.googleapis.com/c1
+        trace:
+          attribute_mappings:
+            - key: service.name
+              replacement: g.co/r/service/name
+    
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch, resourcedetection]
+          exporters: [googlecloud]
+        traces:
+          receivers: [otlp]
+          processors: [batch, resourcedetection]
+          exporters: [googlecloud]
+"
+`;

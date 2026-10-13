@@ -140,7 +140,12 @@ const BLOCKS: Readonly<Record<string, string>> = {
   "Terraform::Live": "choudoufu's estate declaration, which names the ownership marker every resource of the root carries and holds nothing itself",
 };
 
-const UNMODELLED_TERRAFORM_PROVIDERS: ReadonlyArray<{ prefix: string; substrate: string }> = [
+/**
+ * Provider prefixes that are a substrate boundary rather than a missing row,
+ * each named as the substrate. Exported so the coverage page (#2404) can list
+ * them from the same table `notModelledWhen` reads.
+ */
+export const UNMODELLED_TERRAFORM_PROVIDERS: ReadonlyArray<{ prefix: string; substrate: string }> = [
   { prefix: "google_", substrate: "Google Cloud (the google terraform provider)" },
   { prefix: "google-beta_", substrate: "Google Cloud (the google-beta terraform provider)" },
   { prefix: "azurerm_", substrate: "Azure (the azurerm terraform provider)" },

@@ -1,0 +1,923 @@
+/**
+ * The ClickHouse entities: `database`, `table`, `view`, `dictionary` and
+ * `func` (#3682) tagged templates that parse their DDL at fold time into one
+ * Declarable each (chant #3196, #3197).
+ *
+ * ```ts
+ * import { table, view } from "@intentius/chant-lexicon-sql/clickhouse";
+ *
+ * export const events = table`
+ *   CREATE TABLE events (user_id UUID, kind LowCardinality(String), ts DateTime)
+ *   ENGINE = MergeTree ORDER BY (user_id, ts)`;
+ *
+ * export const activeUsers = view`
+ *   CREATE MATERIALIZED VIEW active_users
+ *   ENGINE = AggregatingMergeTree ORDER BY ${events.columns.user_id} AS
+ *   SELECT ${events.columns.user_id}, count() AS n FROM ${events} GROUP BY ${events.columns.user_id}`;
+ * ```
+ *
+ * The export name is the object's identity in chant; the name in the SQL is the
+ * object's name in the database.
+ *
+ * What an interpolation means is decided by its value:
+ *
+ * - a `table`, `view` or `database` entity is a reference to that object, and
+ *   renders as its (database-qualified) name;
+ * - `entity.columns.<name>` is a reference to one column, and renders as the
+ *   column's name;
+ * - a string is SQL text, spliced into the statement before it is parsed, so a
+ *   composite can supply a name, a type, an engine or an expression;
+ * - a number or bigint is a numeric literal, a boolean `true`/`false`, `null`
+ *   is `NULL`;
+ * - `literal(value)` is a quoted, escaped string literal, for the case where a
+ *   string is meant as a value (`DEFAULT ${literal(plan)}`).
+ *
+ * Anything else, `undefined` included, is refused with the position it was
+ * interpolated at. `${events.user_id}` is `undefined` (columns are reached
+ * through `.columns`), and the refusal says so.
+ */
+
+import type { AttrRef } from "@intentius/chant/attrref";
+import { setInterpolationFields } from "@intentius/chant/provenance";
+import { CLICKHOUSE_LEXICAL, isTrivia, SqlSyntaxError, untokenize } from "./tokens";
+import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span, type StorageNode } from "./parser";
+import { parseAccess, type AccessNode } from "./access";
+import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, unparsedClauses, type TemplateCtx, type TemplateDialect, type UnparsedClause } from "../core/interpolation";
+import { SQL_LEXICON, SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
+import type { LineageEdge } from "../core/references";
+import { SqlLiteral, SqlTemplateError, describeValue as describe, stripUnset as strip, templateParts } from "../core/template";
+import { setTypedSlots, type ColumnsIn, type Named, type RowIn, type SlotsIn, type TypedSlot, type Unnamed } from "../core/typed";
+
+export { SQL_LEXICON } from "../core/entity";
+export type { LineageEdge } from "../core/references";
+export type { UnparsedClause } from "../core/interpolation";
+export { SqlLiteral, SqlTemplateError, templateParts, unescapeTemplateDelimiters } from "../core/template";
+export type { AnyColumn, Column, ColumnTraits, KeyColumn, Named, NotNullColumn, UncheckedColumn, Unnamed } from "../core/typed";
+
+export const CLICKHOUSE_ENTITY_TYPES = {
+  database: "ClickHouse::Database",
+  table: "ClickHouse::Table",
+  view: "ClickHouse::View",
+  materializedView: "ClickHouse::MaterializedView",
+  dictionary: "ClickHouse::Dictionary",
+  function: "ClickHouse::Function",
+  user: "ClickHouse::User",
+  role: "ClickHouse::Role",
+  rowPolicy: "ClickHouse::RowPolicy",
+  grant: "ClickHouse::Grant",
+  quota: "ClickHouse::Quota",
+  settingsProfile: "ClickHouse::SettingsProfile",
+} as const;
+
+export type ClickHouseEntityType = (typeof CLICKHOUSE_ENTITY_TYPES)[keyof typeof CLICKHOUSE_ENTITY_TYPES];
+
+// ── Values ─────────────────────────────────────────────────────────────
+
+/** A column of a table or view, as declared. Expressions are the source text with interpolations rendered. */
+export interface ColumnDef {
+  name: string;
+  type?: string;
+  nullable?: boolean;
+  default?: { kind: "DEFAULT" | "MATERIALIZED" | "ALIAS" | "EPHEMERAL"; expr?: string };
+  codec?: string;
+  ttl?: string;
+  comment?: string;
+  statistics?: string;
+  settings?: string;
+}
+
+export interface EngineDef {
+  name: string;
+  /** Each argument's text, as written. Absent when the engine is written without parentheses. */
+  args?: string[];
+}
+
+interface StorageProps {
+  engine?: EngineDef;
+  orderBy?: string;
+  primaryKey?: string;
+  partitionBy?: string;
+  sampleBy?: string;
+  ttl?: string;
+  settings?: Record<string, string>;
+}
+
+interface CommonProps {
+  /** The object's name in the database, unquoted. */
+  name: string;
+  /** The database it is created in, when the DDL qualifies it. */
+  database?: string;
+  onCluster?: string;
+  comment?: string;
+  /** The statement as it will be sent: the author's text, interpolations rendered. */
+  ddl: string;
+  /** The template's raw parts, as written, for a source round trip. */
+  source: { strings: string[] };
+  /**
+   * Clauses chant's parser does not know (#3872), kept in `ddl` as written
+   * and left to the catalog checks and the server. Absent when there are none.
+   */
+  unparsed?: UnparsedClause[];
+}
+
+export interface DatabaseProps extends CommonProps {
+  engine?: EngineDef;
+  settings?: Record<string, string>;
+}
+
+export interface TableProps extends CommonProps, StorageProps {
+  columns: ColumnDef[];
+  indexes: Array<{ name: string; expr: string; type: string; granularity?: string }>;
+  projections: Array<{ name: string; definition: string }>;
+  constraints: Array<{ name: string; kind: "CHECK" | "ASSUME"; expr: string }>;
+  /**
+   * For a table over a table function (#3911), the call after `AS`:
+   * `numbers(10)`, `remote('host', db, t)`. Such a table has no engine and
+   * stores nothing; its columns may be left to the server to infer.
+   */
+  asFunction?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+}
+
+export interface ViewProps extends CommonProps, StorageProps {
+  /** Declared output columns; empty when the view infers them from its SELECT. */
+  columns: ColumnDef[];
+  /** For a refreshable materialized view, the `REFRESH` clause. */
+  refresh?: string;
+  append?: boolean;
+  /** The target a materialized view writes into: the entity when it is declared, else its name. */
+  to?: ClickHouseObject | string;
+  populate?: boolean;
+  empty?: boolean;
+  security?: string;
+  select: string;
+  /** The tables and views the SELECT reads, as references. */
+  reads: ClickHouseObject[];
+  /** Per output column of the top-level select list, the columns it reads. */
+  lineage: LineageEdge[];
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+}
+
+/** One attribute of a dictionary, as declared. */
+export interface DictionaryAttributeDef {
+  name: string;
+  type: string;
+  /** The value for a key the source does not have: `DEFAULT expr`. */
+  default?: string;
+  /** `EXPRESSION expr`: what the source computes the attribute from. */
+  expression?: string;
+  /** `HIERARCHICAL`, `BIDIRECTIONAL`, `INJECTIVE`, `IS_OBJECT_ID`, as written. */
+  flags?: string[];
+}
+
+export interface DictionaryProps extends CommonProps {
+  /** The attributes, key columns included. */
+  columns: DictionaryAttributeDef[];
+  /** The key columns: `PRIMARY KEY id`. */
+  primaryKey: string;
+  /** What is inside `SOURCE(...)`: `CLICKHOUSE(TABLE 'rates' DB 'shop')`. */
+  dataSource: string;
+  /** What is inside `LAYOUT(...)`: `HASHED()`. */
+  layout: string;
+  /** What is inside `LIFETIME(...)`: `300`, `MIN 0 MAX 300`. */
+  lifetime?: string;
+  /** What is inside `RANGE(...)`, for a range layout. */
+  range?: string;
+  settings?: Record<string, string>;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+}
+
+/**
+ * A string as a quoted, escaped ClickHouse string literal. An interpolated
+ * plain string is SQL text; wrap it in `literal()` when it is a value.
+ */
+export function literal(value: string | number | boolean | null): SqlLiteral {
+  if (value === null) return new SqlLiteral("NULL");
+  if (typeof value !== "string") return new SqlLiteral(String(value));
+  return new SqlLiteral(`'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`);
+}
+
+// ── Entities ───────────────────────────────────────────────────────────
+
+/** The members a ClickHouse entity has besides its props (the shared core's {@link SqlObject}). */
+export abstract class ClickHouseObject extends SqlObject {
+  declare readonly entityType: ClickHouseEntityType;
+  /** The name the object is referred to by in SQL: `name`, or `database.name`. */
+  declare readonly sqlName: string;
+}
+
+export interface ClickHouseDatabase extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Database";
+  readonly props: DatabaseProps;
+}
+
+/**
+ * Every ClickHouse table, view and dictionary the project declares, keyed by
+ * its qualified name (`shop.events`). Empty here; the `sql-types.d.ts` that
+ * `chant sql types` writes augments it, and a tag given the name as its type
+ * argument reads its columns from there.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmented by the generated declarations
+export interface SqlSchema {}
+
+/**
+ * A table or a view: something with columns that SQL can reference. `N` is
+ * its qualified name when its tag was given one (`` table<"shop.events">`...` ``):
+ * its columns are then the generated declarations' entry for that name.
+ */
+export interface ClickHouseRelation<N extends string = string> extends ClickHouseObject, Named<N> {
+  /** One reference per column, by name: `${events.columns.user_id}`. */
+  readonly columns: ColumnsIn<SqlSchema, N>;
+}
+
+export interface ClickHouseTable<N extends string = string> extends ClickHouseRelation<N> {
+  readonly entityType: "ClickHouse::Table";
+  readonly props: TableProps;
+}
+
+export interface ClickHouseView<N extends string = string> extends ClickHouseRelation<N> {
+  readonly entityType: "ClickHouse::View" | "ClickHouse::MaterializedView";
+  readonly props: ViewProps;
+}
+
+/** A SQL user-defined function, `CREATE FUNCTION name AS (x) -> expr`. It belongs to no database. */
+export interface FunctionProps {
+  name: string;
+  onCluster?: string;
+  /** The parameter names, in order. */
+  params: string[];
+  /** The expression after `->`, as written. */
+  body: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface ClickHouseFunction extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Function";
+  readonly props: FunctionProps;
+}
+
+/** A user (#3682). Its password is the environment's and is never declared (`./access.ts`). */
+export interface UserProps {
+  name: string;
+  onCluster?: string;
+  /** `IDENTIFIED ...` after the keyword, for a method that holds no secret; `NOT IDENTIFIED` as itself. */
+  identified?: string;
+  host?: string;
+  validUntil?: string;
+  defaultRole?: string;
+  defaultDatabase?: string;
+  grantees?: string;
+  settings?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface RoleProps {
+  name: string;
+  onCluster?: string;
+  settings?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface RowPolicyProps {
+  name: string;
+  onCluster?: string;
+  /** The table's database, when the DDL qualifies it. */
+  database?: string;
+  table: string;
+  /** `PERMISSIVE` or `RESTRICTIVE`. */
+  as?: string;
+  for?: string;
+  using: string;
+  to?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface GrantProps {
+  /** The grant's name in chant: its grantees, for a report. */
+  name: string;
+  onCluster?: string;
+  /** The privileges granted (`SELECT(a)`, `SHOW TABLES`), or the roles. */
+  privileges?: string[];
+  roles?: string[];
+  /** `db.table`, `db.*`, `*.*`. */
+  on?: string;
+  to: string[];
+  withGrantOption?: boolean;
+  withAdminOption?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+/** A quota (#3911): limits on what a user's queries use, per interval. */
+export interface QuotaProps {
+  name: string;
+  onCluster?: string;
+  /** `KEYED BY ...` after the keywords: `user_name`, `client_key, user_name`. Absent when not keyed. */
+  keyed?: string;
+  /** Every `FOR [RANDOMIZED] INTERVAL ...` clause, as written. */
+  intervals?: string;
+  /** `TO ...` after the keyword: the users and roles it applies to. */
+  to?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+/** A settings profile (#3911): settings and their constraints, for the users and roles it is given to. */
+export interface SettingsProfileProps {
+  name: string;
+  onCluster?: string;
+  /** `SETTINGS ...` after the keyword, as written. */
+  settings?: string;
+  /** `TO ...` after the keyword. */
+  to?: string;
+  orReplace?: boolean;
+  ifNotExists?: boolean;
+  ddl: string;
+  source: { strings: string[] };
+}
+
+export interface ClickHouseQuota extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Quota";
+  readonly props: QuotaProps;
+}
+export interface ClickHouseSettingsProfile extends ClickHouseObject {
+  readonly entityType: "ClickHouse::SettingsProfile";
+  readonly props: SettingsProfileProps;
+}
+
+export interface ClickHouseUser extends ClickHouseObject {
+  readonly entityType: "ClickHouse::User";
+  readonly props: UserProps;
+}
+export interface ClickHouseRole extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Role";
+  readonly props: RoleProps;
+}
+export interface ClickHouseRowPolicy extends ClickHouseObject {
+  readonly entityType: "ClickHouse::RowPolicy";
+  readonly props: RowPolicyProps;
+}
+export interface ClickHouseGrant extends ClickHouseObject {
+  readonly entityType: "ClickHouse::Grant";
+  readonly props: GrantProps;
+}
+
+/** A dictionary: its attributes are columns `dictGet` reads, so SQL can reference them. */
+export interface ClickHouseDictionary<N extends string = string> extends ClickHouseRelation<N> {
+  readonly entityType: "ClickHouse::Dictionary";
+  readonly props: DictionaryProps;
+}
+
+function makeEntity(
+  entityType: ClickHouseEntityType,
+  sqlName: string,
+  props: object,
+  columnNames: readonly string[] | undefined,
+  dependsOn: unknown[],
+): ClickHouseObject {
+  return makeSqlEntity(ClickHouseObject.prototype as ClickHouseObject, entityType, sqlName, props, columnNames, dependsOn);
+}
+
+/**
+ * A declared table's, view's or dictionary's row, for application code:
+ * `RowOf<typeof events>` for a declaration given its name, or
+ * `RowOf<"shop.users">` by name, which also covers an object only a `.sql`
+ * file declares.
+ */
+export type RowOf<T extends keyof SqlSchema | Named<keyof SqlSchema & string>> = RowIn<SqlSchema, T>;
+
+export function isClickHouseObject(value: unknown): value is ClickHouseObject {
+  return isSqlObjectOf(value, "ClickHouse::");
+}
+
+/** A column reference: an AttrRef whose parent is a ClickHouse table or view. */
+export function isColumnRef(value: unknown): value is AttrRef {
+  return isColumnRefOf(value, isClickHouseObject);
+}
+
+// ── Rendering interpolations ───────────────────────────────────────────
+
+/** A name as ClickHouse reads it: bare when it is a plain identifier, backquoted otherwise. */
+export function quoteIdentifier(name: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `\`${name.replace(/`/g, "``")}\``;
+}
+
+function renderReference(value: unknown): string {
+  if (isClickHouseObject(value)) return value.sqlName;
+  if (isColumnRef(value)) return quoteIdentifier(value.attribute);
+  throw new TypeError(`not a reference: ${describe(value)}`);
+}
+
+// ── Building ───────────────────────────────────────────────────────────
+
+/** ClickHouse as the shared template machinery reads it (`../core/interpolation.ts`). */
+export const CLICKHOUSE_TEMPLATES: TemplateDialect = {
+  lexical: CLICKHOUSE_LEXICAL,
+  isObject: isClickHouseObject,
+  isColumnRef,
+  renderReference,
+  identValue: unquote,
+  unnamedOutput: (n) => `_${n}`,
+};
+
+type Ctx = TemplateCtx;
+
+/** The tag's splice: plain values become SQL text, references stay `ref` tokens. */
+const splice = (tag: string, parts: readonly string[], values: readonly unknown[]) => spliceWith(CLICKHOUSE_TEMPLATES, tag, parts, values);
+
+const req = (s: string | undefined): string => s ?? "";
+
+/** A `'quoted'` string literal's value. */
+function stringValue(s: string | undefined): string | undefined {
+  if (s === undefined) return undefined;
+  if (!/^'.*'$/s.test(s)) return s;
+  return s.slice(1, -1).replace(/''/g, "'").replace(/\\(.)/g, "$1");
+}
+
+function columnDef(ctx: Ctx, c: ColumnNode): ColumnDef {
+  for (const span of [c.nameSpan, c.type, c.default?.expr, c.codec, c.ttl, c.comment, c.statistics, c.settings]) feed(ctx, span, "columns");
+  const def: ColumnDef = { name: c.name || req(text(ctx, c.nameSpan)) };
+  const set = <K extends keyof ColumnDef>(k: K, v: ColumnDef[K] | undefined) => {
+    if (v !== undefined) def[k] = v;
+  };
+  set("type", text(ctx, c.type));
+  set("nullable", c.nullable);
+  if (c.default) {
+    const expr = text(ctx, c.default.expr);
+    def.default = expr === undefined ? { kind: c.default.kind } : { kind: c.default.kind, expr };
+  }
+  set("codec", text(ctx, c.codec));
+  set("ttl", text(ctx, c.ttl));
+  set("comment", stringValue(text(ctx, c.comment)));
+  set("statistics", text(ctx, c.statistics));
+  set("settings", text(ctx, c.settings));
+  return def;
+}
+
+function storageProps(ctx: Ctx, node: StorageNode): StorageProps {
+  const out: StorageProps = {};
+  if (node.engine) {
+    feed(ctx, node.engine.nameSpan, "engine.name");
+    const name = node.engine.name || req(text(ctx, node.engine.nameSpan));
+    out.engine = node.engine.args ? { name, args: node.engine.args.map((a) => req(text(ctx, a, "engine.args"))) } : { name };
+  }
+  const put = (k: "orderBy" | "primaryKey" | "partitionBy" | "sampleBy" | "ttl", span: Span | undefined) => {
+    const v = text(ctx, span, k);
+    if (v !== undefined) out[k] = v;
+  };
+  put("orderBy", node.orderBy);
+  put("primaryKey", node.primaryKey);
+  put("partitionBy", node.partitionBy);
+  put("sampleBy", node.sampleBy);
+  put("ttl", node.ttl);
+  feed(ctx, node.settingsClause, "settings");
+  if (node.settings) out.settings = Object.fromEntries(node.settings.map((s) => [s.key, req(text(ctx, s.value, "settings"))]));
+  return out;
+}
+
+/** `name` or `db.name` from a qualified-name span; an interpolated database entity names the database. */
+function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
+  const sig = ctx.tokens.slice(span.from, span.to).filter((t) => !isTrivia(t));
+  const pieces: string[] = [];
+  const splices: Array<number | undefined> = [];
+  for (const t of sig) {
+    if (t.kind === "punct" && t.text === ".") continue;
+    if (t.kind === "ref") {
+      const v = ctx.values[t.part];
+      const refPieces = isClickHouseObject(v) && v.entityType === CLICKHOUSE_ENTITY_TYPES.database
+        ? [(v as ClickHouseDatabase).props.name]
+        : renderReference(v).split(".");
+      for (const piece of refPieces) {
+        pieces.push(piece);
+        splices.push(undefined);
+      }
+    } else {
+      pieces.push(unquote(t.text));
+      splices.push(t.splice);
+    }
+  }
+  const last = pieces.length - 1;
+  splices.forEach((splice, i) => {
+    if (splice !== undefined) ctx.fed[splice]!.add(i === last ? "name" : "database");
+  });
+  return pieces.length >= 2 ? { database: pieces[pieces.length - 2], name: pieces[pieces.length - 1]! } : { name: pieces[0] ?? "" };
+}
+
+/**
+ * The `${}` that stand alone as an element of a sort key (`ORDER BY ${t.columns.a}`,
+ * `ORDER BY (${t.columns.a}, b)`), each a column that must not be Nullable
+ * (#3751). An element inside an expression (`ifNull(${...}, '')`) is not one.
+ */
+function sortKeySlots(ctx: Ctx, span: Span | undefined): TypedSlot[] {
+  if (!span) return [];
+  let sig = ctx.tokens.slice(span.from, span.to).filter((t) => !isTrivia(t));
+  const isPunct = (i: number, p: string) => sig[i]?.kind === "punct" && sig[i]!.text === p;
+  if (isPunct(0, "(") && isPunct(sig.length - 1, ")")) {
+    let depth = 0;
+    let closesAt = -1;
+    for (let i = 0; i < sig.length && closesAt < 0; i++) {
+      if (isPunct(i, "(")) depth++;
+      else if (isPunct(i, ")") && --depth === 0) closesAt = i;
+    }
+    if (closesAt === sig.length - 1) sig = sig.slice(1, -1);
+  }
+  const out: TypedSlot[] = [];
+  let depth = 0;
+  let element: typeof sig = [];
+  const flush = () => {
+    const t = element[0];
+    if (element.length === 1 && t?.kind === "ref" && isColumnRef(ctx.values[t.part])) out.push({ index: t.part, kind: "sortKey" });
+    element = [];
+  };
+  for (const t of sig) {
+    if (t.kind === "punct" && t.text === "(") depth++;
+    else if (t.kind === "punct" && t.text === ")") depth--;
+    if (depth === 0 && t.kind === "punct" && t.text === ",") flush();
+    else element.push(t);
+  }
+  flush();
+  return out;
+}
+
+type Expect = "database" | "table" | "view" | "dictionary" | "func";
+
+function build(tag: Expect, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
+  const parts = templateParts(strings);
+  const tokens = splice(tag, parts, values);
+  let node: CreateNode;
+  try {
+    node = parseCreate(tokens);
+  } catch (err) {
+    if (!(err instanceof SqlSyntaxError)) throw err;
+    throw templateSyntaxError(tag, parts, err);
+  }
+  const ctx: Ctx = { d: CLICKHOUSE_TEMPLATES, tokens, values, fed: values.map(() => new Set<string>()) };
+  for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
+  if (node.statement !== (tag === "func" ? "function" : tag)) {
+    const holds =
+      node.statement === "database"
+        ? "CREATE DATABASE"
+        : node.statement === "table"
+          ? "CREATE TABLE"
+          : node.statement === "dictionary"
+            ? "CREATE DICTIONARY"
+            : node.statement === "function"
+              ? "CREATE FUNCTION"
+              : "CREATE VIEW";
+    throw new SqlTemplateError(tag, `holds a ${holds}; use the ${node.statement === "function" ? "func" : node.statement} tag`, 0, 0);
+  }
+  const { database, name } = qualified(ctx, node.name);
+  const sqlName = database ? `${quoteIdentifier(database)}.${quoteIdentifier(name)}` : quoteIdentifier(name);
+  const ddl = req(untokenize(tokens, (i) => renderReference(values[i])).trim().replace(/;\s*$/, ""));
+  const source = { strings: parts };
+  const dependsOn = [...new Set(values.filter((v) => isClickHouseObject(v) || isColumnRef(v)))];
+  const common = {
+    name,
+    database,
+    onCluster: text(ctx, node.onCluster, "onCluster"),
+    comment: stringValue(text(ctx, node.comment, "comment")),
+    unparsed: unparsedClauses(ctx, node.unknown),
+  };
+  const done = <T extends ClickHouseObject>(entity: T): T => {
+    setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));
+    if (node.statement === "table" || node.statement === "view") setTypedSlots(entity, [...sortKeySlots(ctx, node.orderBy), ...sortKeySlots(ctx, node.primaryKey)]);
+    return entity;
+  };
+
+  if (node.statement === "database") {
+    feed(ctx, node.engine?.nameSpan, "engine.name");
+    const engine = node.engine
+      ? node.engine.args
+        ? { name: node.engine.name, args: node.engine.args.map((a) => req(text(ctx, a, "engine.args"))) }
+        : { name: node.engine.name }
+      : undefined;
+    const settings = node.settings
+      ? Object.fromEntries(node.settings.map((s) => [s.key, req(text(ctx, s.value, "settings"))]))
+      : undefined;
+    const props: DatabaseProps = strip({ ...common, engine, settings, ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.database, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+
+  if (node.statement === "table") {
+    const columns = node.columns.map((c) => columnDef(ctx, c));
+    const props: TableProps = strip({
+      ...common,
+      orReplace: node.orReplace,
+      ifNotExists: node.ifNotExists,
+      columns,
+      indexes: node.indexes.map((i) =>
+        strip({
+          name: i.name,
+          expr: req(text(ctx, i.expr, "indexes")),
+          type: req(text(ctx, i.type, "indexes")),
+          granularity: text(ctx, i.granularity, "indexes"),
+        }),
+      ),
+      projections: node.projections.map((p) => ({ name: p.name, definition: req(text(ctx, p.body, "projections")) })),
+      constraints: node.constraints.map((c) => ({ name: c.name, kind: c.kind, expr: req(text(ctx, c.expr, "constraints")) })),
+      asFunction: text(ctx, node.asFunction, "asFunction"),
+      ...storageProps(ctx, node),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.table, sqlName, props, columns.map((c) => c.name), dependsOn));
+  }
+
+  if (node.statement === "function") {
+    for (const p of node.params) feed(ctx, p.span, "params");
+    const props: FunctionProps = strip({
+      name,
+      onCluster: common.onCluster,
+      orReplace: node.orReplace,
+      ifNotExists: node.ifNotExists,
+      params: node.params.map((p) => p.name || req(text(ctx, p.span))),
+      body: req(text(ctx, node.body, "body")),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.function, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+
+  if (node.statement === "dictionary") {
+    const columns: DictionaryAttributeDef[] = node.attributes.map((a) => {
+      for (const span of [a.nameSpan, a.type, a.default, a.expression]) feed(ctx, span, "columns");
+      return strip({
+        name: a.name || req(text(ctx, a.nameSpan)),
+        type: req(text(ctx, a.type)),
+        default: text(ctx, a.default),
+        expression: text(ctx, a.expression),
+        flags: a.flags.length > 0 ? a.flags : undefined,
+      });
+    });
+    const settings = text(ctx, node.settings, "settings");
+    const props: DictionaryProps = strip({
+      ...common,
+      orReplace: node.orReplace,
+      ifNotExists: node.ifNotExists,
+      columns,
+      primaryKey: req(text(ctx, node.primaryKey, "primaryKey")),
+      dataSource: req(text(ctx, node.source, "dataSource")),
+      layout: req(text(ctx, node.layout, "layout")),
+      lifetime: text(ctx, node.lifetime, "lifetime"),
+      range: text(ctx, node.range, "range"),
+      settings: settings === undefined ? undefined : dictionarySettings(settings),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.dictionary, sqlName, props, columns.map((c) => c.name), dependsOn));
+  }
+
+  const lin = lineage<ClickHouseObject>(ctx, node.select);
+  let to: ClickHouseObject | string | undefined;
+  if (node.to) {
+    const target = node.to.refs.length === 1 ? values[node.to.refs[0]!] : undefined;
+    to = isClickHouseObject(target) ? target : text(ctx, node.to, "to");
+  }
+  const columns = node.columns.map((c) => columnDef(ctx, c));
+  const props: ViewProps = strip({
+    ...common,
+    orReplace: node.orReplace,
+    ifNotExists: node.ifNotExists,
+    refresh: text(ctx, node.refresh, "refresh"),
+    append: node.append,
+    to,
+    columns,
+    ...storageProps(ctx, node),
+    populate: node.populate,
+    empty: node.empty,
+    security: text(ctx, node.security, "security"),
+    select: req(text(ctx, node.select, "select")),
+    reads: lin.reads,
+    lineage: lin.edges,
+    ddl,
+    source,
+  });
+  const outputs = columns.length > 0 ? columns.map((c) => c.name) : lin.edges.map((e) => e.output);
+  const type = node.materialized ? CLICKHOUSE_ENTITY_TYPES.materializedView : CLICKHOUSE_ENTITY_TYPES.view;
+  feed(ctx, node.select, "lineage");
+  return done(makeEntity(type, sqlName, props, outputs, dependsOn));
+}
+
+/** `a = 1, b = 'x'` as a record of each setting's value as written. */
+function dictionarySettings(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let depth = 0;
+  let cur = "";
+  const flush = () => {
+    const at = cur.indexOf("=");
+    if (at > 0) out[cur.slice(0, at).trim()] = cur.slice(at + 1).trim();
+    cur = "";
+  };
+  for (const ch of text) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) flush();
+    else cur += ch;
+  }
+  flush();
+  return out;
+}
+
+/** `` database`CREATE DATABASE ...` ``: one ClickHouse database, parsed at build time. */
+export function database(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseDatabase {
+  return build("database", strings, values) as ClickHouseDatabase;
+}
+
+/**
+ * `` table`CREATE TABLE ...` ``: one ClickHouse table, parsed at build time.
+ * Given its qualified name as the type argument (`` table<"shop.events">`...` ``),
+ * its columns are the ones `chant sql types` declared for that name.
+ */
+export function table<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): ClickHouseTable<N> {
+  return build("table", strings, values) as ClickHouseTable<N>;
+}
+
+/**
+ * `` view`CREATE [MATERIALIZED] VIEW ...` ``: one view or materialized view,
+ * with the tables it reads and its column lineage. Takes its qualified name
+ * as the type argument, as {@link table} does.
+ */
+export function view<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): ClickHouseView<N> {
+  return build("view", strings, values) as ClickHouseView<N>;
+}
+
+/**
+ * `` dictionary`CREATE DICTIONARY ...` ``: one dictionary, its attributes,
+ * key, source, layout and lifetime, parsed at build time (#3682). Its
+ * attributes are columns: `${rates.columns.rate}`.
+ */
+export function dictionary<const N extends string = Unnamed>(strings: TemplateStringsArray, ...values: SlotsIn<SqlSchema, N>): ClickHouseDictionary<N> {
+  return build("dictionary", strings, values) as ClickHouseDictionary<N>;
+}
+
+/**
+ * `` func`CREATE FUNCTION ...` ``: one SQL user-defined function, a lambda
+ * with a name (#3682). It belongs to no database, and has no comment, so it
+ * carries no ownership marker: chant replaces it when its declaration
+ * changes and never drops it.
+ */
+export function func(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseFunction {
+  return build("func", strings, values) as ClickHouseFunction;
+}
+
+type AccessTag = "user" | "role" | "policy" | "quota" | "settingsProfile" | "grant";
+const ACCESS_STATEMENT: Record<AccessTag, AccessNode["statement"]> = { user: "user", role: "role", policy: "rowPolicy", quota: "quota", settingsProfile: "settingsProfile", grant: "grant" };
+const ACCESS_HOLDS: Record<AccessNode["statement"], [string, AccessTag]> = {
+  user: ["CREATE USER", "user"],
+  role: ["CREATE ROLE", "role"],
+  rowPolicy: ["CREATE ROW POLICY", "policy"],
+  quota: ["CREATE QUOTA", "quota"],
+  settingsProfile: ["CREATE SETTINGS PROFILE", "settingsProfile"],
+  grant: ["GRANT", "grant"],
+};
+
+function buildAccess(tag: AccessTag, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
+  const parts = templateParts(strings);
+  const tokens = splice(tag, parts, values);
+  let node: AccessNode;
+  try {
+    node = parseAccess(tokens);
+  } catch (err) {
+    if (!(err instanceof SqlSyntaxError)) throw err;
+    throw templateSyntaxError(tag, parts, err);
+  }
+  if (node.statement !== ACCESS_STATEMENT[tag]) {
+    const [holds, use] = ACCESS_HOLDS[node.statement];
+    throw new SqlTemplateError(tag, `holds a ${holds}; use the ${use} tag`, 0, 0);
+  }
+  if (node.revoke) throw new SqlTemplateError(tag, "holds a REVOKE; declare the grants a grantee keeps, and a plan revokes the rest", 0, 0);
+  const ctx: Ctx = { d: CLICKHOUSE_TEMPLATES, tokens, values, fed: values.map(() => new Set<string>()) };
+  for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
+  const ddl = req(untokenize(tokens, (i) => renderReference(values[i])).trim().replace(/;\s*$/, ""));
+  const source = { strings: parts };
+  const dependsOn = [...new Set(values.filter((v) => isClickHouseObject(v) || isColumnRef(v)))];
+  const done = <T extends ClickHouseObject>(entity: T): T => {
+    setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));
+    return entity;
+  };
+  const rendered = (span: Span | undefined): string | undefined =>
+    span ? untokenize(tokens.slice(span.from, span.to), (i) => renderReference(values[i])).trim() || undefined : undefined;
+  const name = node.name ? unquote(rendered(node.name) ?? "") : "";
+  const c = node.clauses;
+  const common = { name, onCluster: text(ctx, node.onCluster, "onCluster"), orReplace: node.orReplace || undefined, ifNotExists: node.ifNotExists || undefined };
+  if (node.statement === "user") {
+    const props: UserProps = strip({
+      ...common,
+      identified: c.notIdentified ? "NOT IDENTIFIED" : rendered(c.identified),
+      host: rendered(c.host),
+      validUntil: rendered(c.validUntil),
+      defaultRole: rendered(c.defaultRole),
+      defaultDatabase: rendered(c.defaultDatabase),
+      grantees: rendered(c.grantees),
+      settings: rendered(c.settings),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.user, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "role") {
+    const props: RoleProps = strip({ ...common, settings: rendered(c.settings), ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.role, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "quota") {
+    const props: QuotaProps = strip({ ...common, keyed: rendered(c.keyed), intervals: rendered(c.for), to: rendered(c.to), ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.quota, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "settingsProfile") {
+    const props: SettingsProfileProps = strip({ ...common, settings: rendered(c.settings), to: rendered(c.to), ddl, source });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.settingsProfile, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  if (node.statement === "rowPolicy") {
+    const { database, name: tableName } = qualified(ctx, node.table!);
+    const props: RowPolicyProps = strip({
+      ...common,
+      database,
+      table: tableName,
+      as: rendered(c.as)?.toUpperCase(),
+      for: rendered(c.for),
+      using: req(rendered(c.using)),
+      to: rendered(c.to),
+      ddl,
+      source,
+    });
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.rowPolicy, quoteIdentifier(name), props, undefined, dependsOn));
+  }
+  const items = node.items.map((i) => rendered(i) ?? "");
+  const to = node.grantees.map((g) => unquote(rendered(g) ?? ""));
+  const props: GrantProps = strip({
+    name: to.join(", "),
+    onCluster: common.onCluster,
+    privileges: node.target ? items : undefined,
+    roles: node.target ? undefined : items.map(unquote),
+    on: rendered(node.target),
+    to,
+    withGrantOption: node.withOption === "GRANT" || undefined,
+    withAdminOption: node.withOption === "ADMIN" || undefined,
+    ddl,
+    source,
+  });
+  return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.grant, "", props, undefined, dependsOn));
+}
+
+/**
+ * `` user`CREATE USER ...` ``: one user (#3682). A password is the
+ * environment's: `IDENTIFIED BY` is refused, and a user declared without
+ * `IDENTIFIED` is compared without it and is not created by chant.
+ */
+export function user(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseUser {
+  return buildAccess("user", strings, values) as ClickHouseUser;
+}
+
+/** `` role`CREATE ROLE ...` ``: one role (#3682). Interpolate it where a grant or a user names it. */
+export function role(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseRole {
+  return buildAccess("role", strings, values) as ClickHouseRole;
+}
+
+/** `` policy`CREATE ROW POLICY ...` ``: one row policy on one table (#3682). */
+export function policy(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseRowPolicy {
+  return buildAccess("policy", strings, values) as ClickHouseRowPolicy;
+}
+
+/**
+ * `` quota`CREATE QUOTA ...` ``: one quota (#3911), its key, its intervals'
+ * limits and whom it applies to. A plan changes it with `ALTER QUOTA`, one
+ * clause or interval at a time, and never drops it.
+ */
+export function quota(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseQuota {
+  return buildAccess("quota", strings, values) as ClickHouseQuota;
+}
+
+/**
+ * `` settingsProfile`CREATE SETTINGS PROFILE ...` ``: one settings profile
+ * (#3911), its settings, their constraints and the profiles it inherits.
+ * Interpolate it where a user, a role or another profile names it.
+ */
+export function settingsProfile(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseSettingsProfile {
+  return buildAccess("settingsProfile", strings, values) as ClickHouseSettingsProfile;
+}
+
+/**
+ * `` grant`GRANT ...` ``: privileges or roles granted to users or roles
+ * (#3682). Every grant declaration naming a grantee adds up to its complete
+ * list: a plan revokes what it holds besides.
+ */
+export function grant(strings: TemplateStringsArray, ...values: unknown[]): ClickHouseGrant {
+  return buildAccess("grant", strings, values) as ClickHouseGrant;
+}

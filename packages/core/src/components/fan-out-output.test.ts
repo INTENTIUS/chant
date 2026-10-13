@@ -93,7 +93,7 @@ describe("the derivation", () => {
     expect(out).toContain(`plan: ${plan.digest}`);
     expect(out).toContain(`chant approve fan-out release --plan ${plan.digest}`);
     // Nothing abbreviates it: the whole 64-hex string is on the line.
-    expect(plan.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(plan.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
   });
 
   test("says so plainly when a change propagates to nothing", () => {

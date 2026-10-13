@@ -27,6 +27,7 @@ import { applyInlineSuppressions, type SuppressionMetaFinding } from "../lint/su
 import type { SerializerResult } from "../serializer";
 import type { AuditEntitiesInput, LexiconPlugin } from "../lexicon";
 import type { Declarable } from "../declarable";
+import { lexiconModulePath, lexiconPackagesToInstall, lexiconSourceLabel } from "../lexicon-module";
 
 /**
  * The lexicon whose post-synth checks run against an audited file. Any lexicon
@@ -155,9 +156,19 @@ async function load(names: string[]): Promise<LexiconPlugin[]> {
     const { loadPlugins } = await import("../cli/plugins");
     return await loadPlugins(names);
   } catch (err) {
-    const pkgs = names.map((n) => `@intentius/chant-lexicon-${n}`).join(" ");
+    const detail = err instanceof Error ? err.message : String(err);
+    // chant#2578 — a lexicon declared by path in chant.config.ts has no
+    // package: name its module and print no install line for it.
+    const pkgs = lexiconPackagesToInstall(names);
+    const paths = names.filter((n) => lexiconModulePath(n) !== undefined).map((n) => lexiconSourceLabel(n));
+    if (pkgs.length === 0) {
+      throw new MissingLexiconError(
+        `Could not load the lexicon module ${paths.join(", ")} needed to audit ${names.join("/")} workflows.\n(${detail})`,
+      );
+    }
+    const fromPath = paths.length > 0 ? ` The lexicon module ${paths.join(", ")} is declared by path and has nothing to install.` : "";
     throw new MissingLexiconError(
-      `Missing lexicon package needed to audit ${names.join("/")} workflows. Install it with: npm i ${pkgs}\n(${err instanceof Error ? err.message : String(err)})`,
+      `Missing lexicon package needed to audit ${names.join("/")} workflows. Install it with: npm i ${pkgs.join(" ")}${fromPath}\n(${detail})`,
     );
   }
 }
@@ -220,7 +231,13 @@ export interface SuppressionStats {
  */
 export async function auditFiles(
   inputs: AuditInput[],
-  opts: { checksProvider?: ChecksProvider; entitiesProvider?: EntitiesProvider; suppressionStats?: SuppressionStats } = {},
+  opts: {
+    checksProvider?: ChecksProvider;
+    entitiesProvider?: EntitiesProvider;
+    suppressionStats?: SuppressionStats;
+    /** Check ids the project enabled with `lint.rules`; a check marked `auditOptIn` runs only when listed here (#3190). */
+    enabledRules?: ReadonlySet<string>;
+  } = {},
 ): Promise<AuditFinding[]> {
   const provider = opts.checksProvider ?? defaultChecksProvider;
   const entitiesProvider = opts.entitiesProvider ?? defaultEntitiesProvider;
@@ -235,7 +252,7 @@ export async function auditFiles(
   }
 
   for (const [lexicon, files] of byLexicon) {
-    const checks = await provider(lexicon);
+    const checks = (await provider(lexicon)).filter((c) => !c.auditOptIn || opts.enabledRules?.has(c.id));
     if (checks.length === 0) continue;
     const parseEntities = await entitiesProvider(lexicon);
     findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats)));

@@ -1,0 +1,125 @@
+---
+diataxis: reference
+description: Generate typed code from the CRDs and Helm charts a project declares
+title: "chant generate"
+---
+
+## Synopsis
+
+```
+chant generate [path] [--check] [--lexicon <name>]
+```
+
+## Description
+
+`chant generate` writes typed TypeScript into your project from sources that
+`chant.config.ts` declares. Each lexicon that supports it reads its own config
+key and writes to its own directory:
+
+| Lexicon | Config key | What it generates |
+|---|---|---|
+| `k8s` | `k8s.crds` | A typed class per custom resource kind in your CRD files |
+| `helm` | `helm.charts` | A typed values type and a `<Name>Render` factory per chart |
+
+The output goes to `src/generated/<lexicon>/` (set `codegen.outDir` to change
+`src/generated`), and you commit it. A fresh clone then typechecks, gets editor
+completions and builds without running `chant generate` first, and a schema
+change shows up in review as a diff of the generated types.
+
+```ts
+// chant.config.ts
+export default {
+  lexicons: ["k8s", "helm"],
+  codegen: { outDir: "src/generated" }, // the default
+  k8s: {
+    crds: [{ type: "file", path: "crds/widgets.yaml" }],
+  },
+  helm: {
+    charts: {
+      traefik: { repo: "https://traefik.github.io/charts", chart: "traefik", version: "34.4.1" },
+    },
+  },
+};
+```
+
+```ts
+// src/app.ts
+import { Widget } from "./generated/k8s";
+import { TraefikRender } from "./generated/helm";
+```
+
+Remote sources must be pinned. A CRD URL needs its `sha256`, a chart needs its
+`version`, and generation fails when fetched content does not match the pin.
+Local files and chart directories are read as they are.
+
+## Build checks the output
+
+`chant generate` is the only command that fetches or writes generated code.
+`chant build` stays offline. Before it serializes, it computes a digest of the
+declared sources (the content of local files, the pins of remote ones) and
+compares it with the digest `chant generate` recorded in
+`<outDir>/<lexicon>/chant-codegen.json`. The build fails when:
+
+- a declared source changed since the code was generated,
+- sources are declared but nothing was generated, or a generated file is missing,
+- no sources are declared any more but generated code is still there.
+
+Each message says to run `chant generate` and commit the result. Running it with
+nothing declared removes the lexicon's previously generated files.
+
+## What gets written
+
+Each lexicon owns one directory under the output root and writes nothing outside it.
+
+The k8s lexicon writes `src/generated/k8s/index.ts` with one class per custom resource kind. Each
+class comes with a props type and with a type for each top-level field of the CRD's schema, such as
+`WidgetSpec` for `spec`. The class is named after the kind. When two declared CRDs share a kind, both
+classes take their API group as a prefix.
+
+The same directory holds `kinds.json`, which records the API version and the spec schema of each
+kind. The build reads this file before it serializes anything. That is how the serializer knows the
+`apiVersion` to emit for a project kind, and how the CRD spec checks know which fields a kind accepts.
+
+For `helm.charts`, `src/generated/helm/index.ts` holds a values type and a render factory for each
+chart, named after the chart's key in the config. The factory accepts the same props as `HelmRender`
+apart from the repository, chart name and version, which come from the config.
+
+Every lexicon directory also gets `chant-codegen.json`. It records a digest of the declared sources
+and the list of files the last run wrote. A later run deletes files that this list names and the new
+run no longer writes. Files you add to the directory yourself are never touched, though keeping
+hand-written code elsewhere is simpler.
+
+The generated modules start with chant's generated-file marker. Build and lint discovery skip them as
+sources of declarations, so importing them from your own files is the only way they take part in a
+build.
+
+## Updating a source
+
+Change the source in `chant.config.ts` (a new chart version, a new CRD release URL and its sha256) or
+edit the local CRD file or chart, then run `chant generate` again and commit both changes together.
+The diff of the generated types shows what the new schema changed, and any of your files that no
+longer typecheck point at the places that need updating.
+
+To find the sha256 of a CRD URL, download the file once and hash it, for example with
+`curl -sL <url> | shasum -a 256`. Use a URL that names a release tag or a release asset, so the
+content behind it stays fixed.
+
+## In CI
+
+Commit the generated code, so CI needs no network access and no generate step to build. A CI job may
+still run `chant generate --check` before the build, which reports a stale lexicon by name without
+running discovery. Running `chant generate` in CI and building the result would hide a source change
+that nobody reviewed, and would fetch remote charts on every run.
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--check` | Write nothing. Exit 1 when any lexicon's generated code no longer matches its declared sources, the same check `chant build` makes |
+| `--lexicon <name>` | Generate (or check) only this lexicon's code |
+
+## See Also
+
+- [Custom resource classes](/chant/lexicons/k8s/crd-classes/) for `k8s.crds`
+- [Helm composites](/chant/lexicons/helm/composites/) for typed chart values
+- [`chant dev generate`](/chant/cli/generate/), the lexicon-author command that regenerates a lexicon package's own types

@@ -1,0 +1,218 @@
+---
+title: "GenAI Pipeline"
+description: "genAiPipeline(): remove prompt and completion content, and derive agent RED and token metrics from GenAI spans"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/docs/pages/genai-pipeline.mdx instead; changes here are overwritten. */}
+
+
+Agent and LLM workloads instrumented with the OpenTelemetry GenAI semantic conventions put two things on their spans that a collector has to deal with. Prompts, completions, system instructions and tool-call payloads can be recorded as attributes or events, and they often hold user data. The spans also carry what agent metrics need: the operation, the model, the tool, the error type and token counts. `genAiPipeline()` is a collector preset that removes the content by default and turns the spans into metrics.
+
+```ts
+import { genAiPipeline, OtlpExporter, PrometheusExporter } from "@intentius/chant-lexicon-otel";
+
+const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+
+export default genAiPipeline({ traceExporters: [tempo], metricExporters: [prom] });
+```
+
+Like [`otlpCollector()`](../composites/), it returns entities: pass them to `collectorYaml()`, export them from a chant project, or hand them to a platform composite as its `config`.
+
+## What it declares
+
+| Pipeline | Receivers | Processors | Exporters |
+|---|---|---|---|
+| `traces` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `traceExporters`, `forward/genai` |
+| `traces/genai` | `forward/genai` | `filter/genai_spans` | `spanmetrics/genai`, `sum/genai_tokens` |
+| `metrics/genai` | `spanmetrics/genai`, `sum/genai_tokens` | `deltatocumulative/genai` when `deltaToCumulative` asks for it, `batch` | `metricExporters` |
+| `logs` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `logExporters` |
+
+The `otlp` receiver listens on 4317 and 4318, and a `health_check` extension on 13133 unless `healthCheck: false`. Exporters default to one `debug` exporter. `logs: false` leaves out the logs pipeline. With `clientMetrics` set, `signaltometrics/genai_client` joins the `traces/genai` exporters and the `metrics/genai` receivers, and a `metrics` pipeline passes the SDK's OTLP metrics through (see [below](#the-conventions-client-metrics)).
+
+## Content is removed unless you keep it
+
+These attributes are deleted from spans, span events and log records:
+
+| Attribute | What it holds |
+|---|---|
+| `gen_ai.system_instructions` | the system prompt |
+| `gen_ai.input.messages` | the messages sent to the model |
+| `gen_ai.output.messages` | the model's reply |
+| `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` | what a tool was given and returned |
+| `gen_ai.retrieval.query.text`, `gen_ai.retrieval.documents` | retrieval queries and results |
+| `gen_ai.prompt`, `gen_ai.completion` | deprecated, still set by older instrumentation |
+| `gen_ai.prompt.<n>.*`, `gen_ai.completion.<n>.*` | indexed keys some libraries write outside the conventions |
+
+The newer conventions can also send content as a `gen_ai.client.inference.operation.details` event, with the same attributes; those are deleted whether the event arrives as a span event or as a log record. The deprecated content events (`gen_ai.system.message`, `gen_ai.user.message`, `gen_ai.assistant.message`, `gen_ai.tool.message`, `gen_ai.choice`) carry content in the log record body, so for those events the preset deletes `content`, `message` and `tool_calls` from a map body and empties a string body. It matches the event by the record's event name or by an `event.name` attribute.
+
+A `transform` processor does the deleting. The `redaction` processor can't do it: with `allow_all_keys: false` it deletes every key not on its allow list, and with `allow_all_keys: true` it only masks values. So `redaction/genai_content` runs after the transform with `allow_all_keys: true` and the content keys as `blocked_key_patterns`, as a backstop that masks any content value the transform missed. Neither processor touches resource attributes.
+
+To keep content, say so:
+
+```ts
+genAiPipeline({ keepContent: true });
+```
+
+That is the only switch that keeps it, so a config that records prompts shows it at the declaration. `contentAttributes` adds keys of your own to delete, and `maskValues` takes RE2 patterns masked in every attribute value whether content is kept or not (`hashFunction` hashes them instead of writing `****`):
+
+```ts
+genAiPipeline({
+  keepContent: true,
+  maskValues: ["[0-9]{13,16}", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+"],
+  hashFunction: "sha3",
+});
+```
+
+## Agent RED and token metrics
+
+The traces pipeline forwards every span to `traces/genai`, which keeps spans that have a `gen_ai.operation.name` and feeds two connectors. The metrics come from all spans, before anything samples them. To sample exported traces, pass the sampling processors as `sampling`: they run in a `traces/sampled` pipeline fed by a second `forward` connector, after the metrics branch.
+
+`spanmetrics/genai` counts calls and records duration with these dimensions on top of its defaults (`service.name`, `span.name`, `span.kind`, `status.code`): `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.tool.name` and `error.type`. `dimensions` adds more, as long as each one has a small, fixed set of values: OTEL116 warns about a conversation, response, tool call, session or user id, or a content key, as a dimension (see [Lint Rules](../lint-rules/#otel116-high-cardinality-genai-attributes)). `spanmetrics` counts spans and can't sum an attribute, so token usage comes from the `sum` connector: `sum/genai_tokens` sums `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` by `gen_ai.request.model`. It skips in-process `invoke_agent` and `invoke_workflow` spans, whose usage totals the model calls under them, which are counted on their own spans.
+
+With the default `namespace` of `genai` and the `prometheus` exporter's default suffixes:
+
+| Metric | Prometheus | Type | Labels |
+|---|---|---|---|
+| `genai.calls` | `genai_calls_total` | counter | `service_name`, `span_name`, `span_kind`, `status_code`, `gen_ai_operation_name`, `gen_ai_request_model`, `gen_ai_tool_name`, `error_type` |
+| `genai.duration` | `genai_duration_seconds` | histogram | same as `genai.calls` |
+| `genai.tokens.input` | `genai_tokens_input_total` | counter | `gen_ai_request_model` |
+| `genai.tokens.output` | `genai_tokens_output_total` | counter | `gen_ai_request_model` |
+
+Errors are `genai_calls_total` with `status_code="STATUS_CODE_ERROR"`. A label is absent on a series whose spans lack the attribute, except the token model, which is `unknown` when the span names none. The `prometheus` exporter also sets `job` from the resource's `service.name`, and that is the only service label the token counters have.
+
+`genAiMetrics(options)` returns these names, Prometheus names and dimensions for the same options, so a dashboard can read them instead of repeating strings, and a renamed `namespace` moves the panels with it.
+
+`providerDimensions: true` adds `gen_ai.provider.name` and `gen_ai.response.model` to `genai.calls` and `genai.duration`. The token counters keep the model alone, for the reason below; `gen_ai.client.token.usage` splits tokens by both.
+
+Two things about the `sum` connector at the pinned collector release. It emits delta sums. The `prometheus` exporter accumulates them, but `prometheusremotewrite` drops non-cumulative sums and histograms, and some OTLP backends store only cumulative data. And it adds each value once per attribute it splits by, so the preset splits by the model alone; OTEL107 reports a `sum` metric with more than one attribute.
+
+`deltaToCumulative` puts a `deltatocumulative/genai` processor in front of `batch` on `metrics/genai`, which turns the token sums, and with `clientMetrics: "derive"` the client metric histograms, into cumulative ones and leaves the span metrics, already cumulative, alone:
+
+| `deltaToCumulative` | Inserted |
+|---|---|
+| `"auto"` | when a metric exporter's type is not in `DELTA_READY_EXPORTERS` (`prometheus`, `debug`), such as `prometheusremotewrite` or `otlp` |
+| `true` | always |
+| `false` | never, such as for an OTLP backend that wants deltas |
+| unset | `"auto"` with `clientMetrics: "derive"`; otherwise `false`, the output from before the option existed |
+
+```ts
+import { defineComponent, genAiPipeline } from "@intentius/chant-lexicon-otel";
+
+const RemoteWrite = defineComponent<{ endpoint: string }>()({
+  kind: "exporter",
+  type: "prometheusremotewrite",
+  pin: { source: "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter", version: "v0.130.0" },
+});
+const mimir = new RemoteWrite({ endpoint: "http://mimir:9009/api/v1/push" });
+
+export default genAiPipeline({ metricExporters: [mimir], deltaToCumulative: "auto" });
+```
+
+Without `clientMetrics: "derive"` it is opt-in, so a config built before the option existed comes out byte-identical. The processor keeps a running total per stream in memory, so with more than one collector replica each stream has to reach the same one.
+
+## The conventions' client metrics
+
+The `genai.*` names above are the preset's own, so a dashboard or backend that queries the conventions' names finds nothing in them. `clientMetrics` adds the metrics the conventions define, under their names:
+
+```ts
+genAiPipeline({ clientMetrics: "derive", metricExporters: [prom] });
+```
+
+Of the metrics semantic-conventions v1.41.1 defines, the collector derives the two that one span carries enough data for, and passes the rest through from the SDK:
+
+| Metric | With `clientMetrics: "derive"` | Why |
+|---|---|---|
+| `gen_ai.client.operation.duration` | derived from every GenAI span | the span's start and end time |
+| `gen_ai.client.token.usage` | derived from spans with token counts | `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` |
+| `gen_ai.client.operation.time_to_first_chunk` | passed through | needs stream timing only the SDK sees |
+| `gen_ai.client.operation.time_per_output_chunk` | passed through | same |
+| `gen_ai.server.*` | passed through | recorded by the serving process, not the client |
+
+`signaltometrics/genai_client` builds both derived metrics:
+
+| Metric | Prometheus | Type | Attributes | Buckets |
+|---|---|---|---|---|
+| `gen_ai.client.operation.duration` | `gen_ai_client_operation_duration_seconds` | histogram, `s` | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, `server.address`, `server.port`, `error.type` | 0.01, 0.02, 0.04 ... 81.92 (`GENAI_CLIENT_DURATION_BUCKETS`) |
+| `gen_ai.client.token.usage` | `gen_ai_client_token_usage` | histogram, `{token}` | the same, plus `gen_ai.token.type` (`input` or `output`) | 1, 4, 16 ... 67108864 (`GENAI_CLIENT_TOKEN_BUCKETS`) |
+
+The buckets are the ones the conventions advise. Every GenAI span has an operation name, since `filter/genai_spans` drops the others; an attribute the span lacks is left off its series instead of dropping the span, so a tool call with no provider is still timed. Each span records its input and output counts as two observations of the one token histogram, told apart by `gen_ai.token.type`. Because this is a histogram rather than a `sum` connector metric, it can split by provider and model together without the double counting described above. Token counts skip the same in-process `invoke_agent` and `invoke_workflow` spans, and a count that is not a number is skipped rather than failing the batch. The client metric names do not follow `namespace`.
+
+`clientMetrics` also adds a `metrics` pipeline from the `otlp` receiver to `metricExporters`, so the metrics in the passed-through rows reach the backend. That pipeline carries every OTLP metric the application sends, not only GenAI ones.
+
+### Derive or pass through
+
+Some instrumentation libraries record `gen_ai.client.operation.duration` and `gen_ai.client.token.usage` themselves. Deriving them as well would count every operation twice, so pick one source:
+
+- `clientMetrics: "derive"`: the collector derives them, and `filter/genai_sdk_client` drops any copies the SDK sends on the `metrics` pipeline. Use it when the SDK sends no metrics, or when you don't know whether it does.
+- `clientMetrics: "passthrough"`: the collector derives nothing and passes the SDK's metrics through. Use it when the SDK records them, since it sees things a span does not, such as streaming.
+
+To find out which applies, run with `"passthrough"` and look for `gen_ai_client_operation_duration_seconds_count` in the backend (or for the metric name in a `debug` exporter's output). If it is there, the SDK records it.
+
+### Delta temporality
+
+`signaltometrics` emits delta histograms for each batch. The `prometheus` exporter accumulates them, but an exporter that needs cumulative input, such as Prometheus remote write, needs a `deltatocumulative` processor in front. With `clientMetrics: "derive"`, `deltaToCumulative` defaults to `"auto"`, so `deltatocumulative/genai` goes on `metrics/genai` whenever a metric exporter is anything other than `prometheus` or `debug` (see the table above). Pass `deltaToCumulative: false` for an OTLP backend that wants deltas. The SDK's `metrics` pipeline gets no such processor, in either mode, since the SDK sets the temporality.
+
+`genAiMetrics({ clientMetrics })` returns the names under `client`, with `source` saying which mode built them:
+
+```ts
+const m = genAiMetrics({ clientMetrics: "derive" });
+m.client.operationDuration.prometheus; // "gen_ai_client_operation_duration_seconds"
+m.client.tokenUsage.prometheus;        // "gen_ai_client_token_usage"
+m.client.tokenUsage.dimensions;        // [...GENAI_CLIENT_METRIC_ATTRIBUTES, "gen_ai.token.type"]
+```
+
+Prometheus rules and dashboards for these metrics should read the names from there. The prometheus lexicon's [`GenAiRules`](/chant/lexicons/prometheus/genai-rules/) takes this object and builds rate, error, latency, token and cost rules from it. Without `clientMetrics`, `genAiMetrics()` has no `client` field and the YAML is byte for byte what the preset produced before the option existed.
+
+## Semantic-conventions pin
+
+The attribute keys follow `GENAI_SEMCONV_PIN`: `github.com/open-telemetry/semantic-conventions` `v1.41.1`, the last release of that repository that defines `gen_ai.*`. The GenAI conventions have since moved to `github.com/open-telemetry/semantic-conventions-genai`, which had no release when the pin was set. The pin moves with this package, the way `COLLECTOR_PIN` does.
+
+The emitted YAML says which version the keys follow in a `# chant:` line, and [`collectorTopology()`](../topology/) returns it under `semconv`, with the components whose config uses a `gen_ai.` attribute:
+
+```ts
+{
+  namespace: "gen_ai",
+  source: "github.com/open-telemetry/semantic-conventions",
+  version: "v1.41.1",
+  components: ["transform/genai_content", "redaction/genai_content", "filter/genai_spans", "spanmetrics/genai", "sum/genai_tokens"],
+}
+```
+
+## Wiring the pieces yourself
+
+`genAiComponents(options)` returns the same components without receivers, exporters or pipelines, for a collector you lay out yourself:
+
+| Field | Component |
+|---|---|
+| `contentRemoval` | `transform/genai_content`, absent with `keepContent` |
+| `redaction` | `redaction/genai_content`, absent with `keepContent` and no `maskValues` |
+| `processors` | the two above in the order to run them |
+| `forward`, `genAiSpans` | `forward/genai` and `filter/genai_spans`, the metrics branch |
+| `spanMetrics`, `tokenUsage` | `spanmetrics/genai` and `sum/genai_tokens` |
+| `clientMetrics` | `signaltometrics/genai_client`, present with `clientMetrics: "derive"`; wire it like `spanMetrics` |
+| `sdkClientMetricsFilter` | `filter/genai_sdk_client`, present with `clientMetrics: "derive"`; put it on the pipeline that receives the SDK's metrics |
+| `metrics` | what `genAiMetrics()` returns |
+| `semconv` | `GENAI_SEMCONV_PIN` |
+
+```ts
+import { genAiComponents, OtlpReceiver, DebugExporter, Pipeline } from "@intentius/chant-lexicon-otel";
+
+const genai = genAiComponents();
+const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+const debug = new DebugExporter({});
+
+export const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: genai.processors,
+  exporters: [debug, genai.spanMetrics],
+});
+export const metrics = new Pipeline({ signal: "metrics", receivers: [genai.spanMetrics], exporters: [debug] });
+```
+
+## Checking it against the collector
+
+The lexicon's tests render the preset in several configurations and run `otelcol validate` on each when `otelcol-contrib` is on `PATH` or `OTELCOL_BIN` names a contrib build. With the binary present they also run the collector, send GenAI spans and events through it, check that no content reaches the exporter unless `keepContent` is set, and read the metrics above from the `prometheus` exporter, including token totals of the derived client metrics split by provider and model. Without the binary those tests skip and the structural ones still run.

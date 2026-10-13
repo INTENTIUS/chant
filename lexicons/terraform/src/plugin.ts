@@ -12,9 +12,12 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
-import { auditRootName, parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { auditRootName, LOCK_FILENAME, parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
 import { descendModules } from "./hcl/descend";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
+import { terraformCommands } from "./commands";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -136,6 +139,19 @@ export const terraformPlugin: LexiconPlugin = {
   },
 
   /**
+   * The prediction, for whichever estate `options.from` names (#2495). The
+   * producer is `predictTerraformBehaviour` and this is its second caller, not
+   * a second producer: the contract's options are read as its own and handed
+   * over, and it runs with the real reads and core's engine front. What that
+   * reading has to put back, for a declared graph and for a live one, is on
+   * `terraformPredictOptionsFrom`.
+   */
+  async predictBehaviour(options) {
+    const { predictTerraformBehaviour, terraformPredictOptionsFrom } = await import("./behaviour");
+    return predictTerraformBehaviour(await terraformPredictOptionsFrom(options));
+  },
+
+  /**
    * The kinds a live root can enumerate beyond its declaration (#1278,
    * #2104). Empty on a project with no live root, because `live-ls` is the
    * only estate-wide read this lexicon has and a stock root has none: a state
@@ -170,7 +186,25 @@ export const terraformPlugin: LexiconPlugin = {
       roots,
       binary: namespace?.binary,
       callModuleType: namespace?.callModuleType,
+      moduleRoot: namespace?.moduleRoot,
     });
+  },
+
+  /** `chant terraform pin-rollout` (#3189). */
+  commands() {
+    return terraformCommands;
+  },
+
+  /**
+   * The `terraform.roots` a change touched (#3183): a changed file in the
+   * root's directory, in a local module it calls, or one of its var files.
+   * See `./changed-roots.ts`.
+   */
+  async changedUnits(ctx) {
+    const roots = (ctx.config as { terraform?: TerraformConfig }).terraform?.roots ?? {};
+    if (Object.keys(roots).length === 0) return [];
+    const { changedRoots } = await import("./changed-roots");
+    return changedRoots(ctx.projectRoot, roots, ctx.changedFiles);
   },
 
   lintRules() {
@@ -242,7 +276,10 @@ export const terraformPlugin: LexiconPlugin = {
   async auditEntities(content: string, input?: AuditEntitiesInput): Promise<Map<string, Declarable>> {
     try {
       const root = auditRootName(input?.path);
-      const entities = await parseTerraformRootContent(content, root);
+      // A local audit knows the root's directory, so it can say whether the
+      // lock file is beside the `.tf` files (TF040); a fetched one cannot.
+      const lockFile = input?.dir !== undefined ? existsSync(join(input.dir, LOCK_FILENAME)) : undefined;
+      const entities = await parseTerraformRootContent(content, root, undefined, lockFile === undefined ? undefined : { lockFile });
       if (input?.dir === undefined) return entities;
       const { entities: children } = await descendModules(entities, {
         dir: input.dir,

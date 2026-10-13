@@ -1,3 +1,4 @@
+import { compositeCatalog } from "./composites/catalog";
 import { createRequire } from "module";
 import { awsBehaviourKinds } from "./behaviour-kinds";
 import { detectTemplate } from "./detect";
@@ -117,6 +118,9 @@ export const awsPlugin: LexiconPlugin = {
       { name: "And", description: "Fn::And — condition conjunction", isTag: false, foldsAsCall: true },
       { name: "Or", description: "Fn::Or — condition disjunction", isTag: false, foldsAsCall: true },
       { name: "Not", description: "Fn::Not — condition negation", isTag: false, foldsAsCall: true },
+      { name: "FindInMap", description: "Fn::FindInMap — value from a declared mapping", isTag: false, foldsAsCall: true },
+      { name: "ImportValue", description: "Fn::ImportValue — value another stack exports", isTag: false, foldsAsCall: true },
+      { name: "Cidr", description: "Fn::Cidr — CIDR blocks from an address block", isTag: false, foldsAsCall: true },
     ];
   },
 
@@ -303,6 +307,51 @@ export const logsBucket = new Bucket({
   VersioningConfiguration: versioningEnabled,
   BucketEncryption: bucketEncryption,
   PublicAccessBlockConfiguration: publicAccessBlock,
+});
+`,
+      "bucket-policies.ts": `/**
+ * Bucket policies — deny every request that arrives over plaintext (WAW042)
+ *
+ * CloudFormation models a bucket policy as its own resource, so each bucket
+ * gets one here.
+ */
+
+import { S3BucketPolicy, Ref, Sub } from "@intentius/chant-lexicon-aws";
+import { dataBucket } from "./data-bucket";
+import { logsBucket } from "./logs-bucket";
+
+export const dataBucketTlsOnly = {
+  Version: "2012-10-17",
+  Statement: [{
+    Sid: "DenyInsecureTransport",
+    Effect: "Deny",
+    Principal: "*",
+    Action: "s3:*",
+    Resource: [dataBucket.Arn, Sub\`\${dataBucket.Arn}/*\`],
+    Condition: { Bool: { "aws:SecureTransport": "false" } },
+  }],
+};
+
+export const dataBucketPolicy = new S3BucketPolicy({
+  Bucket: Ref(dataBucket),
+  PolicyDocument: dataBucketTlsOnly,
+});
+
+export const logsBucketTlsOnly = {
+  Version: "2012-10-17",
+  Statement: [{
+    Sid: "DenyInsecureTransport",
+    Effect: "Deny",
+    Principal: "*",
+    Action: "s3:*",
+    Resource: [logsBucket.Arn, Sub\`\${logsBucket.Arn}/*\`],
+    Condition: { Bool: { "aws:SecureTransport": "false" } },
+  }],
+};
+
+export const logsBucketPolicy = new S3BucketPolicy({
+  Bucket: Ref(logsBucket),
+  PolicyDocument: logsBucketTlsOnly,
 });
 `,
     } };
@@ -528,7 +577,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       ],
       preConditions: [
         "chant CLI is installed (chant --version succeeds)",
-        "@cdktf/hcl2json is installed (npm install -D @cdktf/hcl2json)",
+        "@cdktn/hcl2json is installed (npm install -D @cdktn/hcl2json)",
       ],
       parameters: [
         {
@@ -969,6 +1018,10 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       }
     }
     return merged;
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

@@ -97,6 +97,16 @@ export interface LintContext {
    * case config-aware rules stay silent.
    */
   projectConfig?: LintProjectConfig;
+  /**
+   * chant #2957 — class names the active lexicons declare property-kind
+   * (`LexiconPlugin.propertyClassNames()`), such as Grafana's panels,
+   * queries and variables. COR001, COR004 and COR009 leave these out: a
+   * property-kind declarable lives inside the resource that holds it, so it
+   * is neither a resource to count nor dead code on its own. Undefined when
+   * no active lexicon names any, and those rules then treat every
+   * declarable alike.
+   */
+  propertyClasses?: ReadonlySet<string>;
 }
 
 /**

@@ -21,16 +21,21 @@ record that nothing here can create for you — hand your agent
 chant dev onboard <name>
 ```
 
-This patches 6 files (`packages/core/src/cli/commands/onboard.ts:305`):
+This patches up to six files (`packages/core/src/cli/commands/onboard.ts`):
 
 | File | What it adds |
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
-| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths (chant #1614). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it |
-| `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
-| `.github/workflows/publish.yml` | Prepack line in test job. No publish step is needed; `scripts/publish-packages.sh` enumerates the workspace |
+| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths, written `./lexicons/<name>/...` like the existing entries (chant #1614, #3227). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it. With no `baseUrl`, a path without the leading `./` makes tsx's tsconfig loader throw |
+| `.github/workflows/chant.yml` | Prepack lines in any check/test `run:` block that lists them, and a validate step |
 | `test/Dockerfile.smoke` | `<name>` in the `for lex in ...` lexicon list of the workspace smoke test |
-| `test/Dockerfile.smoke-npm` | `<name>` in both `for lex in ...` lexicon lists of the npm tarball smoke test |
+| `test/smoke-npm-lexicons.txt` | `<name>` on its own line. The npm tarball smoke (`test/Dockerfile.smoke-npm`) and `smoke.sh` both read this list |
+
+Onboard leaves some files alone and names them in its "Not patched" output:
+
+- `.github/workflows/publish.yml` has no per-lexicon lines to patch. `scripts/ci-lexicon-artifacts.sh` builds every workspace lexicon and `scripts/publish-packages.sh` publishes them, so a new lexicon needs no edit.
+- `test/Dockerfile.smoke-npm` reads `test/smoke-npm-lexicons.txt`, which is the file onboard patches.
+- `test/smoke-e2e-lexicons.txt` is opt-in. It lists the lexicons an e2e example uses and the lexicons they depend on, so add yours there by hand when an example needs it.
 
 The command is idempotent. A second run changes nothing and reports each file as already covered.
 
@@ -100,14 +105,14 @@ The command is idempotent. A second run changes nothing and reports each file as
    # Unit tests
    npx vitest run lexicons/<name>
 
-   # Full test suite
-   npx vitest run
+   # The unit suite, the one a change merges on
+   npx vitest run --project unit
 
    # Docker smoke tests
    just smoke
    ```
 
-   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` run only locally. No CI job builds them. The `smoke-npm` job in `.github/workflows/chant.yml` is gated `if: false` on purpose (chant #1687), because a Docker build per push is too expensive. A new lexicon's integration section therefore executes for the first time when you run `just smoke` by hand. Do that before the lexicon's first release.
+   The Docker smoke images (`test/Dockerfile.smoke`, `test/Dockerfile.smoke-npm`) and the per-lexicon sections in `test/integration.sh` never run on a push or a pull request (chant #1687), because a Docker build per change costs more than it catches. They run only when a person starts them: `just smoke` at a terminal, which asks you to type `run`, or the `smoke-npm` job of `.github/workflows/large-suites.yml`, a `workflow_dispatch` workflow. A new lexicon's integration section therefore executes for the first time when someone runs `just smoke`. Do that before the lexicon's first release.
 
 </Steps>
 
@@ -115,9 +120,10 @@ The command is idempotent. A second run changes nothing and reports each file as
 
 <Aside type="danger" title="Do this before the first release, or the release breaks">
 A new package needs an npm **trusted publisher** record, and nothing in the
-repo can create one for you. Without it the publish workflow authenticates
-over OIDC, the registry has no record to match, and `npm publish` reports a
-bare `ENEEDAUTH` — indistinguishable from having no credentials at all.
+repo can create one for you. Without it the publish workflow's `audit` job
+fails and nothing in the release is published. Before that job gated the
+release, the package's `npm publish` reported a bare `ENEEDAUTH` after every
+other package had shipped.
 
 On [npmjs.com](https://www.npmjs.com), open the package, then Settings ->
 Trusted Publisher, and add:
@@ -139,8 +145,49 @@ Releases go out through `just release`, which bumps every package in lockstep,
 commits, and pushes the tag the workflow actually listens for:
 
 ```bash
-just release patch    # or: minor / major
+just release patch             # or: minor / major
+just release minor --dry-run   # print the commit and version, change nothing
+just release patch <commit>    # release a named commit on main
 ```
+
+The recipe releases the newest commit on main whose `chant` run succeeded, not
+main's HEAD. It commits the version bump on top of that commit, tags it, and
+merges the tag back into main, so main ends up on the released version without
+any history being rewritten.
+
+The publish workflow's `test` job is the CI gate. Instead of running the suite
+again, `scripts/publish-verify-ci.sh` looks up the `chant` run through the API.
+A bump commit that changes only version fields is checked through its parent,
+the green commit the recipe picked; any other commit needs a green run of its
+own. Because the push that lands the tag is also what starts that run, the gate
+polls until the run finishes rather than failing on a queued one. A successful
+run lets the release through. The gate fails when every run has completed
+without success, or when no run has appeared after 5 minutes.
+
+Beside the gate, the `audit` job runs `scripts/audit-trusted-publishers.sh`,
+which asks npm for an OIDC token for every publishable package. It fails when
+any package has no working trusted-publisher record, including a package that
+is not on npm yet, and `publish` waits for it, so a missing record stops the
+release before any package ships. The run summary lists the packages to fix.
+When the job gets no id-token from GitHub, as on a fork, the audit can check
+nothing; it prints a warning and passes.
+
+When the gate, the audit or the publish fails, the `untag` job runs
+`scripts/release-untag.sh`. If none of the packages the release bumped is on
+npm, it deletes the tag, so a tag exists only for a release that reached npm.
+After an audit failure that is always the case: add the missing records, then
+push the tag again at the same commit.
+
+The tag survives two cases:
+
+- Part of the release reached npm. Deleting the tag then would leave npm ahead
+  of git with no tag, so `untag` keeps it, fails, and its summary lists which
+  packages published and which did not. Fix the cause and run
+  `gh run rerun <publish-run-id> --failed`; packages already on npm are
+  skipped.
+- The `chant` run is still going after 45 minutes. The gate ends with outcome
+  `timeout` and nothing is published. Wait for that run to go green, then
+  re-run the gate and the publish with `gh run rerun <publish-run-id> --failed`.
 
 To move a single lexicon without a full release:
 
@@ -153,8 +200,19 @@ tag matches neither and silently does nothing.
 
 Publishing itself is `scripts/publish-packages.sh`. It enumerates every
 non-private workspace package, so a new lexicon is picked up with no workflow
-edit. A package already at its version on the registry is skipped, which makes
+edit. By default it publishes to `latest` in dependency order, core first. A
+package already at its version on the registry is skipped, which makes
 re-running the workflow a safe way to recover a partial release.
+
+Setting the repository variable `CHANT_STAGED_PUBLISH` to `1` switches on
+staged publishing. Every package is published under the `next` dist-tag, the
+run waits until each one can be installed, and then it moves `latest`, core
+first and the lexicons after it. Until `latest` moves, `npm install` with a
+version range keeps resolving the previous release. If anything fails before
+the tag move, `latest` stays where it was, and a re-run only moves the tags.
+Staged publishing needs every package's trusted-publisher record on npmjs.com
+to have "Allow npm dist-tag" turned on, including a new package's. Without it,
+that package's `latest` move fails and the run fails with the setting named.
 
 <Aside type="caution" title="First-time scoped packages">
 `npm publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.

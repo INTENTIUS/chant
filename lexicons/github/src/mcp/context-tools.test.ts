@@ -33,6 +33,23 @@ describe("downstreamJobs / actionPinned (#327)", () => {
     expect(downstreamJobs(yaml, "deploy")).toEqual([]);
   });
 
+  test("downstreamJobs follows a scalar needs: (#3201)", () => {
+    const yaml = `jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: echo build
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Test
+        run: echo test
+`;
+    expect(downstreamJobs(yaml, "build")).toEqual(["test"]);
+  });
+
   test("actionPinned only accepts a full commit SHA", () => {
     expect(actionPinned("actions/checkout@" + "a".repeat(40))).toBe(true);
     expect(actionPinned("actions/checkout@v4")).toBe(false);

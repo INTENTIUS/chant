@@ -15,7 +15,7 @@ import { collectEffectReceipts, isEffectReceipt, type EffectReceiptDeclaration }
 import { evaluateScenario, type ScenarioBehaviourFixture, type ScenarioVerdict } from "../../lifecycle/scenario-eval";
 import { validateBehaviourResult } from "../../behaviour-delta";
 import { collectScenarios, type ScenarioDeclaration, type ScenarioGiven } from "../../lifecycle/scenario";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { loadChantConfig } from "../../config";
 import { unknownEnvError } from "../../env";
 import { collectBuildRootContributors } from "../plugins";
@@ -281,7 +281,7 @@ async function evaluateOneScenario(
     // and observed like any resource (#1832) — it joins the declared axis so
     // its lexicon's fixture data can confirm presence, absence, or a hole,
     // the same as `runLifecyclePlan` (lifecycle.ts:1184).
-    if (!isResourceDeclarable(entity) && !isEffectReceipt(entity)) continue;
+    if (!isObservableDeclarable(entity) && !isEffectReceipt(entity)) continue;
     if (!declaredByLexicon.has(entity.lexicon)) declaredByLexicon.set(entity.lexicon, new Set());
     declaredByLexicon.get(entity.lexicon)!.add(name);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { classifyModuleSource, isDefaultBranch, isPinnedRef } from "./module-source";
+import { classifyModuleSource, isDefaultBranch, isExactVersionConstraint, isMutableOciTag, isPinnedRef } from "./module-source";
 
 describe("classifyModuleSource", () => {
   test("local paths", () => {
@@ -72,4 +72,45 @@ describe("isDefaultBranch", () => {
   test("does not flag an arbitrary branch name as a default branch", () => {
     expect(isDefaultBranch("some-feature")).toBe(false);
   });
+});
+
+describe("classifyModuleSource: oci sources (#3190)", () => {
+  const cases: Array<[string, string, string | undefined, string | undefined]> = [
+    ["tag query", "oci://example.com/org/mod?tag=v1.4.0", "v1.4.0", undefined],
+    ["digest query", "oci://example.com/org/mod?digest=sha256:abc123", undefined, "sha256:abc123"],
+    ["tag suffix", "oci://example.com/org/mod:1.4.0", "1.4.0", undefined],
+    ["digest suffix", "oci://example.com/org/mod@sha256:abc123", undefined, "sha256:abc123"],
+    ["tag and digest suffix", "oci://example.com/org/mod:1.4.0@sha256:abc123", "1.4.0", "sha256:abc123"],
+    ["tag and digest query", "oci://example.com/org/mod?tag=1.4.0&digest=sha256:abc123", "1.4.0", "sha256:abc123"],
+    ["neither", "oci://example.com/org/mod", undefined, undefined],
+    ["host with a port, no tag", "oci://registry.example.com:5000/org/mod", undefined, undefined],
+    ["host with a port and a tag", "oci://registry.example.com:5000/org/mod:2.0.1", "2.0.1", undefined],
+    ["host with a port and a digest", "oci://registry.example.com:5000/org/mod@sha256:def", undefined, "sha256:def"],
+    ["subdirectory before the query", "oci://example.com/org/mod//modules/vpc?tag=v1.0.0", "v1.0.0", undefined],
+    ["subdirectory, no pin", "oci://example.com/org/mod//modules/vpc", undefined, undefined],
+  ];
+
+  test.each(cases)("%s", (_name, source, tag, digest) => {
+    const c = classifyModuleSource(source);
+    expect(c.kind).toBe("oci");
+    expect(c.tag).toBe(tag);
+    expect(c.digest).toBe(digest);
+  });
+});
+
+describe("isMutableOciTag", () => {
+  test("names that move are mutable, versions are not", () => {
+    expect(isMutableOciTag("latest")).toBe(true);
+    expect(isMutableOciTag("LATEST")).toBe(true);
+    expect(isMutableOciTag("main")).toBe(true);
+    expect(isMutableOciTag("1.4.0")).toBe(false);
+    expect(isMutableOciTag("v1.4.0")).toBe(false);
+  });
+});
+
+describe("isExactVersionConstraint", () => {
+  test.each([["1.4.0", true], ["= 1.4.0", true], ["=1.4.0", true], ["1.4.0-rc1", true], ["~> 1.4", false], [">= 1.4", false], [">= 1.0, < 2.0", false], ["!= 1.4.0", false], ["< 2", false]])(
+    "%s",
+    (v, exact) => expect(isExactVersionConstraint(v as string)).toBe(exact),
+  );
 });

@@ -1,0 +1,77 @@
+---
+title: "OpenTelemetry Collector"
+description: "Typed OpenTelemetry Collector config: receivers, processors, exporters and pipelines"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
+    Edit lexicons/otel/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The otel lexicon types [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
+config: receivers, processors, exporters, connectors, extensions and the
+pipelines that connect them. `chant build` emits one collector config file, the YAML
+`otelcol --config` reads as it is.
+
+```ts
+import { OtlpReceiver, BatchProcessor, OtlpExporter, Pipeline } from "@intentius/chant-lexicon-otel";
+
+export const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+export const batch = new BatchProcessor({ timeout: "5s" });
+export const backend = new OtlpExporter({ name: "backend", endpoint: "tempo.observability:4317" });
+
+export const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: [batch],
+  exporters: [backend],
+});
+```
+
+The built-in component set is otlp, prometheus, hostmetrics, filelog,
+k8s_cluster and kubeletstats receivers; batch, memory_limiter, resource,
+attributes, k8sattributes, resourcedetection, filter, transform, redaction,
+tail_sampling, probabilistic_sampler and deltatocumulative processors; otlp, otlphttp, debug,
+prometheus, googlecloud and loadbalancing exporters; spanmetrics,
+servicegraph, routing, forward, count, sum and signaltometrics connectors; and the
+health_check, pprof, zpages and k8s_leader_elector extensions. `genAiPipeline()` is a preset for
+GenAI workloads: it removes prompt and completion content and derives agent
+RED and token metrics.
+Their config types follow the collector-contrib release named on the
+Custom components page. A component chant doesn't ship is added with
+`defineComponent`, and it is serialized and checked the same way as the
+built-ins. `chant import` turns an existing collector config file into this
+TypeScript (see Importing a Collector Config).
+
+Checks catch a pipeline that uses a component nobody declared (OTEL101), a
+pipeline with no receivers or exporters (OTEL102), a declared component no
+pipeline uses (OTEL103), a connector joining pipelines of signals it can't
+convert (OTEL112), pipelines feeding each other in a cycle (OTEL113), a
+connector id shared with a receiver or exporter (OTEL114), a `routing` route
+to a pipeline that doesn't receive from it (OTEL115), a connector
+splitting metrics by a per-request GenAI attribute such as
+`gen_ai.conversation.id` (OTEL116), two started components listening
+on the same address (OTEL117), and a literal credential in source (OTEL002)
+or in the config (OTEL120). Others report deprecated fields (OTEL119),
+credentials sent in plaintext (OTEL121), zpages or pprof off loopback
+(OTEL122), detailed debug output beside a backend (OTEL123), delivery and
+batching settings (OTEL124, OTEL125), and k8sattributes fields or
+resourcedetection detectors the collector doesn't know (OTEL126, OTEL127). In
+a build that stamps telemetry attribution, OTEL118 reports a processor that can
+drop or overwrite one of the attribution's resource attributes.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 37 |
+| Property types | 0 |
+| Services | 7 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 27 |
+
+**Lexicon version:** 0.102.0  
+**Namespace:** `OTel`
+
+- [All Rules](./rules) — 27 rules
+- [Serialization](./serialization) — output format details

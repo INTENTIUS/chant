@@ -157,7 +157,7 @@ describe("the binding digest", () => {
   });
 
   test("it looks like every other plan digest, so `chant approve --plan` accepts it", () => {
-    expect(planFanOut({ components: ESTATE, changed: ["net"] }).digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(planFanOut({ components: ESTATE, changed: ["net"] }).digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
   });
 });
 

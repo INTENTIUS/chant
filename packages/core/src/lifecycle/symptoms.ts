@@ -124,3 +124,98 @@ export const CONVERGE_SYMPTOM_FIELDS: ReadonlySet<string> = new Set([
   "unobservedReasons",
   "totalCount",
 ]);
+
+// ── Resources an observer step reports (#2778) ──────────────────────────────
+
+/**
+ * One resource's verdict, as an observer step reports it: `in-sync` when it
+ * is what its declaration says, `drifted` when it isn't, and `unknown` when
+ * the observer could not tell.
+ */
+export type ResourceStatus = "in-sync" | "drifted" | "unknown";
+
+/** One resource an observer step looked at. */
+export interface ObservedResource {
+  name: string;
+  status: ResourceStatus;
+  /** Why the observer gave that verdict, in one line. */
+  detail?: string;
+}
+
+/**
+ * What a `ConvergeOp`'s observer step returns (#2778), for resources no
+ * lexicon declares or observes: the processes a supervisor runs in a box,
+ * for example. `ConvergeOp({ observe })` evaluates its rules once per
+ * resource, against a {@link ResourceSymptom}.
+ */
+export interface ResourceObservation {
+  resources: ObservedResource[];
+}
+
+/**
+ * The record a `ConvergeOp` with an observer step evaluates each rule
+ * against, once per observed resource (#2778). A rule reads `status` (and
+ * may read `resource` to single one out); a `run()` it fires is dispatched
+ * for that resource, which the dispatched Op reads from
+ * `CHANT_CONVERGE_RESOURCE`.
+ */
+export interface ResourceSymptom {
+  env: string;
+  /** The resource's name, as the observer reported it. */
+  resource: string;
+  status: ResourceStatus;
+  /** The observer's one-line reason, or "". */
+  detail: string;
+}
+
+/**
+ * The environment variable a dispatched Op reads the resource from, when a
+ * ConvergeOp with an observer step fired its rule for one resource (#2778).
+ */
+export const CONVERGE_RESOURCE_ENV = "CHANT_CONVERGE_RESOURCE";
+
+/** Every field a {@link ResourceSymptom} produces: OPS014's whitelist for a ConvergeOp with an observer step. */
+export const RESOURCE_SYMPTOM_FIELDS: ReadonlySet<string> = new Set(["env", "resource", "status", "detail"]);
+
+const RESOURCE_STATUSES: ReadonlySet<string> = new Set(["in-sync", "drifted", "unknown"]);
+
+/**
+ * Read an observer step's result as a {@link ResourceObservation}. The
+ * result is the observation itself, or a `shell()` step's result whose
+ * stdout is the observation as JSON. Throws, naming what is wrong, on
+ * anything else: a tick must not converge from a reading it can't parse.
+ */
+export function parseResourceObservation(value: unknown): ResourceObservation {
+  let candidate: unknown = value;
+  if (candidate && typeof candidate === "object" && !("resources" in candidate) && typeof (candidate as { stdout?: unknown }).stdout === "string") {
+    const stdout = (candidate as { stdout: string }).stdout;
+    try {
+      candidate = JSON.parse(stdout);
+    } catch {
+      throw new Error(`the observer step's stdout is not JSON: ${stdout.slice(0, 120)}`);
+    }
+  }
+  const resources = (candidate as { resources?: unknown } | null)?.resources;
+  if (!Array.isArray(resources)) {
+    throw new Error("the observer step returned no `resources` array: it must return { resources: [{ name, status }] }, or print it as JSON");
+  }
+  const seen = new Set<string>();
+  const out: ObservedResource[] = [];
+  for (const [i, r] of resources.entries()) {
+    const entry = r as { name?: unknown; status?: unknown; detail?: unknown } | null;
+    if (!entry || typeof entry.name !== "string" || entry.name === "") {
+      throw new Error(`the observer step's resources[${i}] has no name`);
+    }
+    if (typeof entry.status !== "string" || !RESOURCE_STATUSES.has(entry.status)) {
+      throw new Error(`the observer step's resource "${entry.name}" has status ${JSON.stringify(entry.status)}: it must be in-sync, drifted or unknown`);
+    }
+    if (seen.has(entry.name)) throw new Error(`the observer step reported resource "${entry.name}" twice`);
+    seen.add(entry.name);
+    out.push({
+      name: entry.name,
+      status: entry.status as ResourceStatus,
+      ...(typeof entry.detail === "string" && entry.detail !== "" ? { detail: entry.detail } : {}),
+    });
+  }
+  return { resources: out };
+}

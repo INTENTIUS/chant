@@ -35,7 +35,7 @@ import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 export const SERVER_TYPE = "K3s::Server";
@@ -139,7 +139,7 @@ function emitDocument(doc: Record<string, unknown>): string {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       sections.push(`${key}: ${scalar(value)}`);
     } else {
-      sections.push(`${key}:` + emitYAML(value, 1));
+      sections.push(emitYAMLEntry(key, value));
     }
   }
   return sections.join("\n") + "\n";

@@ -1,0 +1,7 @@
+{
+  "name": "delivery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Declares the reader conformance workspace's app as a composite, with the component that deploys it."
+}

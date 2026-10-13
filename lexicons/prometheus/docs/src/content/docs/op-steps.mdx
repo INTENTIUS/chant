@@ -1,0 +1,116 @@
+---
+title: "Op Steps"
+description: "promtool, amtool, Alertmanager silences, loaded-rule observation and the rule audit as chant Op steps"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/op-steps.mdx instead; changes here are overwritten. */}
+
+
+The lexicon ships Op steps for what happens around a rule file once it is built: checking it with the upstream tools, silencing alerts during a change, watching that Prometheus loaded it, and auditing a running Prometheus. List `prometheus` in `chant.config.ts` and `chant run` loads the activities behind them.
+
+```ts title="chant.config.ts"
+export default { lexicons: ["prometheus"] } satisfies ChantConfig;
+```
+
+Every step has an activity contract, so `chant build` and `chant lint` check its arguments (OPS012) and any step-output reference to its result (OPS013).
+
+## Checking built files
+
+`promtoolCheckRules`, `promtoolTestRules` and `amtoolCheckConfig` run the same tools as the helpers on [Checking with promtool and amtool](../upstream-tools/), over files on disk. A step fails when its tool is missing or rejects the file, with the tool's output as the error: a check that did not run never reads as a pass.
+
+These three share their names with the plain helpers the package root exports, so the step builders are imported from `@intentius/chant-lexicon-prometheus/op/builders`.
+
+```ts title="ops/checks.op.ts"
+import { Op, phase } from "@intentius/chant/op";
+import { promtoolCheckRules, promtoolTestRules, amtoolCheckConfig } from "@intentius/chant-lexicon-prometheus/op/builders";
+import { amtoolRoutesTest } from "@intentius/chant-lexicon-prometheus";
+import { checkout } from "../src/slo";
+
+export const checks = Op({
+  name: "rule-checks",
+  overview: "Check the built rule file and Alertmanager config",
+  phases: [
+    phase("Check", [
+      promtoolCheckRules({ rules: "dist/rules.yml" }),
+      promtoolTestRules({
+        rules: "dist/rules.yml",
+        slos: [{ slo: checkout, good: 'http_requests_total{code="200"}', bad: 'http_requests_total{code="500"}' }],
+      }),
+      amtoolCheckConfig({ config: "dist/alertmanager.yml" }),
+      amtoolRoutesTest({ config: "dist/alertmanager.yml", labels: { severity: "page", slo: "checkout" }, expect: "oncall" }),
+    ]),
+  ],
+});
+```
+
+`promtoolTestRules` takes test files (`tests`), test documents (`testYaml`), or `slos`. With `slos`, the builder generates the tests when the Op is built: for each burn-rate pair, a scenario that burns the error budget at 1.25 times the pair's factor (the alert must fire) and one at 0.9 times it (it must not), with the expected alerts worked out by the lexicon's rule evaluator. `good` and `bad` name the counters the SLI reads as good and bad events, since the generator cannot invent series for an SLI expression it did not write. `sloRuleTests()` returns the same documents, for a test of your own.
+
+Each test file names `rules.yml` in `rule_files:`, which is where the step writes the rule file under test.
+
+`amtoolRoutesTest` runs `amtool config routes test` and fails unless the labels route to `expect`, one receiver or several in order.
+
+## Silencing alerts during a change
+
+`alertmanagerSilence` creates a silence through `POST /api/v2/silences` and records its id under `.chant/alertmanager-silences/<record>.json`. `alertmanagerUnsilence` expires what the record holds through `DELETE /api/v2/silence/{id}`. Step-output references are not available in `onFailure` phases, and the record is what lets both the last phase and `onFailure` find the silence:
+
+```ts
+import { Op, phase } from "@intentius/chant/op";
+import { alertmanagerSilence, alertmanagerUnsilence } from "@intentius/chant-lexicon-prometheus";
+
+export const deploy = Op({
+  name: "deploy",
+  overview: "Deploy with the checkout SLO's alerts silenced",
+  phases: [
+    phase("Silence", [alertmanagerSilence({ matchers: ['slo="checkout"'], duration: "30m", record: "deploy" })]),
+    phase("Deploy", [/* ... */]),
+    phase("Unsilence", [alertmanagerUnsilence({ record: "deploy" })]),
+  ],
+  onFailure: [phase("Unsilence", [alertmanagerUnsilence({ record: "deploy" })])],
+});
+```
+
+`matchers` takes Alertmanager matcher strings or a label set matched by equality. An unknown or already expired silence counts as expired, so the step can run in both places. The silence step defaults to the `atMostOnce` profile: a retry after a lost answer would create a second silence. Alertmanager is `url`, else `$ALERTMANAGER_URL`, else `http://localhost:9093`.
+
+## Watching that rules are loaded
+
+`rulesLoadedObserve` is an observer for `ConvergeOp({ observe })`. It reads `GET /api/v1/rules` and returns one resource per declared group: `drifted` when Prometheus has not loaded the group or a rule in it has `health: "err"` (the detail is the rule's `lastError`), `in-sync` otherwise, and `unknown` for every group when the API cannot be read. The declared groups are `groups`, plus those of each rule file in `rules`, read on every tick.
+
+```ts title="ops/rules-loaded.op.ts"
+import { ConvergeOp, eq, report, when, type ResourceSymptom } from "@intentius/chant/op";
+import { rulesLoadedObserve } from "@intentius/chant-lexicon-prometheus";
+
+export const { op } = ConvergeOp({
+  name: "rules-loaded",
+  env: "prod",
+  schedule: "*/5 * * * *",
+  observe: rulesLoadedObserve({ rules: "dist/rules.yml" }),
+  rules: [
+    when<ResourceSymptom>(eq("status", "drifted"), report("a rule group is not loaded or failing"), {
+      id: "rule-group-drift",
+      why: "A group Prometheus dropped alerts on nothing.",
+    }),
+  ],
+});
+```
+
+Prometheus is `url`, else `$PROMETHEUS_URL`, else `http://localhost:9090`.
+
+## Auditing a running Prometheus
+
+`RuleAuditOp` runs one `ruleAudit` step, on a schedule or once with `chant run`:
+
+- rules with `health: "err"`, by group;
+- alerts pending longer than `pendingFor` (default `1h`) or firing longer than `firingFor` (default `24h`);
+- selectors in the loaded rules that no series matches, each queried once as `count(last_over_time(<selector>[<lookback>]))`, at most `selectorBudget` (default 50) of them. Selectors over series the rules record themselves, and over `ALERTS`, are skipped.
+
+```ts
+import { RuleAuditOp } from "@intentius/chant-lexicon-prometheus";
+
+export const { op } = RuleAuditOp({ name: "rule-audit", url: "http://prometheus:9090", schedule: "0 * * * *", onFinding: "issue" });
+```
+
+`onFinding: "report"` (the default) returns the findings as the run's result; `"issue"` also keeps one GitHub issue current with them, through `gh`.
+
+The [observe-converge example](../examples/#observe-converge) puts the check Op, both observers and the audit in one project.

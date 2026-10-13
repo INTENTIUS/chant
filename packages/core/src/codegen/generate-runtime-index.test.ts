@@ -25,9 +25,9 @@ describe("generateRuntimeIndex", () => {
     const result = generateRuntimeIndex(resources, properties, baseConfig);
 
     // Resources sorted: Alarm before Bucket
-    expect(result).toContain('export const Alarm = createResource("AWS::CloudWatch::Alarm", "test", {});');
-    expect(result).toContain('export const Bucket = createResource("AWS::S3::Bucket", "test", {"arn":"Arn"});');
-    expect(result).toContain('export const Bucket_Versioning = createProperty("AWS::S3::Bucket.VersioningConfiguration", "test");');
+    expect(result).toContain('export const Alarm = /* @__PURE__ */ createResource("AWS::CloudWatch::Alarm", "test", {});');
+    expect(result).toContain('export const Bucket = /* @__PURE__ */ createResource("AWS::S3::Bucket", "test", {"arn":"Arn"});');
+    expect(result).toContain('export const Bucket_Versioning = /* @__PURE__ */ createProperty("AWS::S3::Bucket.VersioningConfiguration", "test");');
 
     // Alarm should come before Bucket in the output
     const alarmIdx = result.indexOf("Alarm");

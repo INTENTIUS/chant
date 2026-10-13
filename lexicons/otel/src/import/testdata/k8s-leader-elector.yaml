@@ -1,0 +1,35 @@
+# A k8s_cluster receiver behind a k8s_leader_elector extension
+# (collector-contrib v0.130.0), for a gateway with more than one replica:
+# only the replica holding the Lease collects.
+
+receivers:
+  k8s_cluster:
+    auth_type: serviceAccount
+    collection_interval: 30s
+    k8s_leader_elector: k8s_leader_elector/cluster
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+processors:
+  batch: {}
+exporters:
+  otlp:
+    endpoint: backend.observability.svc:4317
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  k8s_leader_elector/cluster:
+    auth_type: serviceAccount
+    lease_name: otel-k8s-cluster
+    lease_namespace: observability
+    lease_duration: 20s
+    renew_deadline: 15s
+    retry_period: 3s
+service:
+  extensions: [health_check, k8s_leader_elector/cluster]
+  pipelines:
+    metrics:
+      receivers: [otlp, k8s_cluster]
+      processors: [batch]
+      exporters: [otlp]

@@ -265,7 +265,7 @@ describe("CFGenerator", () => {
     expect(files[0].content).toContain("\\`field-name\\`");
   });
 
-  test("generates nested GetAtt attribute with GetAtt function call", () => {
+  test("generates a dotted GetAtt attribute as its underscored property", () => {
     const ir: TemplateIR = {
       parameters: [],
       resources: [
@@ -286,7 +286,28 @@ describe("CFGenerator", () => {
 
     const files = generator.generate(ir);
 
-    expect(files[0].content).toContain('GetAtt(ELB, "SourceSecurityGroup.OwnerAlias")');
-    expect(files[0].content).toContain("import { GetAtt");
+    expect(files[0].content).toContain("BucketName: ELB.SourceSecurityGroup_OwnerAlias");
+    expect(files[0].content).not.toContain("GetAtt");
+  });
+
+  test("generates GetAtt by name for an attribute the class does not expose", () => {
+    const ir: TemplateIR = {
+      parameters: [],
+      resources: [
+        { logicalId: "MyQueue", type: "AWS::SQS::Queue", properties: {} },
+        {
+          logicalId: "MyBucket",
+          type: "AWS::S3::Bucket",
+          properties: {
+            BucketName: { __intrinsic: "GetAtt", logicalId: "MyQueue", attribute: "QueueName" },
+          },
+        },
+      ],
+    };
+
+    const files = generator.generate(ir);
+
+    expect(files[0].content).toContain('BucketName: GetAtt("MyQueue", "QueueName")');
+    expect(files[0].content).toMatch(/import \{[^}]*\bGetAtt\b/);
   });
 });

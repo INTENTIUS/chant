@@ -11,6 +11,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Docker',
+      components: { PageTitle: './src/components/PageTitle.astro' },
       sidebar: [
             {
                   "label": "← chant docs",
@@ -80,6 +81,10 @@ export default defineConfig({
                         {
                               "label": "Lint Rules",
                               "slug": "lint-rules"
+                        },
+                        {
+                              "label": "OpenTelemetry Collector",
+                              "slug": "otel-collector"
                         },
                         {
                               "label": "Variable Interpolation",

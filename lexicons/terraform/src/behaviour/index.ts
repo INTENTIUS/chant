@@ -17,8 +17,11 @@ export {
 export {
   liveRootsOf,
   predictTerraformBehaviour,
+  readTerraformDeclaration,
   TERRAFORM,
+  terraformPredictOptionsFrom,
   type TerraformBehaviourDeps,
+  type TerraformDeclarationReader,
   type TerraformPredictOptions,
 } from "./predict";
 export {

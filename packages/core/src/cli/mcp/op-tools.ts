@@ -14,12 +14,14 @@
  * run.
  */
 
+import { lexiconNames } from "../../lexicon-module";
 import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider } from "../../op/runtime";
 import { loadChantConfig } from "../../config";
 import { loadPlugins } from "../plugins";
+import { readGateLedger, latestPendingGate } from "../../lifecycle/gate-ledger";
 import { recordGateApproval } from "../handlers/operator";
 import type { ToolRegistration } from "./lifecycle-tools";
 
@@ -39,7 +41,7 @@ async function runtimeFor(name: unknown): Promise<OpRuntimeProvider> {
   }
 
   const configured = await loadChantConfig(resolve("."))
-    .then(({ config }) => config.lexicons ?? [])
+    .then(({ config }) => lexiconNames(config.lexicons ?? []))
     .catch(() => [] as string[]);
   if (!configured.includes(wanted)) {
     throw new Error(
@@ -50,6 +52,32 @@ async function runtimeFor(name: unknown): Promise<OpRuntimeProvider> {
   const plugin = (await loadPlugins([wanted]))[0];
   if (!plugin?.opRuntime) throw new Error(`lexicon "${wanted}" does not host Op runs`);
   return plugin.opRuntime;
+}
+
+/**
+ * The refusal for an Op that declares `neverOverMcp`, or `undefined` when MCP
+ * may act on it. It names the rule and the way through, which is a person at a
+ * shell. An Op that is not discovered is left to the caller's own not-found
+ * handling.
+ */
+async function neverOverMcpRefusal(
+  name: string,
+  action: "run" | "approve",
+  gate?: string,
+): Promise<string | undefined> {
+  const { ops } = await discoverOps();
+  let declared = Boolean(ops.get(name)?.config.neverOverMcp);
+  // An Op that is not discovered (fan-out) declares nothing, so its gate
+  // records the rule itself (chant#3485).
+  if (!declared && action === "approve" && gate !== undefined) {
+    const { pending } = await readGateLedger(name).catch(() => ({ pending: [] }));
+    declared = Boolean(latestPendingGate(pending, gate)?.neverOverMcp);
+  }
+  if (!declared) return undefined;
+  return action === "run"
+    ? `Op "${name}" declares neverOverMcp, so it is not run over MCP. Run it at a shell with \`chant run ${name}\`; op-status and op-report still answer here.`
+    : `Op "${name}" declares neverOverMcp, so its gates are not resolved over MCP, whichever channel reached them. ` +
+        `Approvals belong to people: approve at a shell with \`chant approve ${name} <gate>\`.`;
 }
 
 const RUNTIME_PARAM = {
@@ -102,11 +130,15 @@ export function createOpRunTool(): ToolRegistration {
     definition: {
       name: "op-run",
       description:
-        "Run an Op on a runtime and return its result. Defaults to the built-in local runtime, which executes the Op in this process.",
+        "Run an Op on a runtime and return its result. Defaults to the built-in local runtime, which executes the Op in this process. " +
+        "Refuses an Op that declares neverOverMcp.",
       inputSchema: {
         type: "object",
         properties: {
           name: { type: "string", description: "Op name (e.g. alb-deploy)" },
+          // chant#3560 — what `chant run --env` passes: the environment the
+          // run targets. Omitted, the runtime uses its own default.
+          env: { type: "string", description: "Environment the run targets (defaults to the runtime's own)" },
           runtime: RUNTIME_PARAM,
         },
         required: ["name"],
@@ -116,13 +148,16 @@ export function createOpRunTool(): ToolRegistration {
       const name = params.name as string;
 
       const { ops } = await discoverOps();
+      const refusal = await neverOverMcpRefusal(name, "run");
+      if (refusal) throw new Error(refusal);
       if (!ops.has(name)) {
         const available = [...ops.keys()];
         return `Op "${name}" not found. Available: ${available.join(", ") || "none"}`;
       }
 
       const runtime = await runtimeFor(params.runtime);
-      const handle = await runtime.start(ops.get(name)!.config, {});
+      const env = typeof params.env === "string" && params.env !== "" ? params.env : undefined;
+      const handle = await runtime.start(ops.get(name)!.config, env !== undefined ? { env } : {});
       const status = await handle.result();
 
       return {
@@ -184,7 +219,8 @@ export function createOpApproveTool(): ToolRegistration {
         "Record a gate's resolution on the gate ledger and wake the runtime hosting the gated run. " +
         "Refuses a gate this same channel reached: a run started with op-run must be approved from " +
         "somewhere else, normally `chant approve <op> <gate>` at a shell. The approver is recorded as " +
-        "unattested, because this channel cannot verify a name.",
+        "unattested, because this channel cannot verify a name. Also refuses every gate of an Op that " +
+        "declares neverOverMcp, whatever channel reached the gate.",
       inputSchema: {
         type: "object",
         properties: {
@@ -195,6 +231,10 @@ export function createOpApproveTool(): ToolRegistration {
           // the ledger recorded it indistinguishably from a name a person gave.
           note: { type: "string", description: "Free-text context recorded on the resolution" },
           url: { type: "string", description: "Absolute http/https URL this resolution happened at" },
+          // chant#3555 — what `chant run approve --env` passes: the
+          // environment the woken run runs in. Omitted, the runtime keeps the
+          // gated run's.
+          env: { type: "string", description: "Environment the woken run runs in (defaults to the gated run's)" },
           runtime: RUNTIME_PARAM,
         },
         required: ["name", "gate"],
@@ -204,6 +244,9 @@ export function createOpApproveTool(): ToolRegistration {
       const name = params.name as string;
       const gate = params.gate as string;
       if (!name || !gate) throw new Error("op-approve needs both an Op name and a gate name");
+
+      const refusal = await neverOverMcpRefusal(name, "approve", gate);
+      if (refusal) throw new Error(refusal);
 
       const runtime = await runtimeFor(params.runtime);
       const outcome = await recordGateApproval(name, gate, {
@@ -221,7 +264,11 @@ export function createOpApproveTool(): ToolRegistration {
         );
       }
 
-      if (runtime.resolveGate) await runtime.resolveGate(name, gate, outcome.record);
+      if (runtime.resolveGate) {
+        const env = typeof params.env === "string" && params.env !== "" ? params.env : undefined;
+        if (env !== undefined) await runtime.resolveGate(name, gate, outcome.record, { env });
+        else await runtime.resolveGate(name, gate, outcome.record);
+      }
 
       return {
         op: name,

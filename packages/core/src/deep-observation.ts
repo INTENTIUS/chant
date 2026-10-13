@@ -69,6 +69,14 @@ export interface DeepResourceObservation {
    */
   fieldOwners?: Record<string, string>;
   /**
+   * The server the properties were read from, when a reader reads more than
+   * one copy of the entity and they disagree (#3664): a sql table on a
+   * ClickHouse cluster, read on every shard and replica, reports the copy
+   * that differs from the rest and names its server here. Absent when there
+   * is one copy, or every copy reads the same.
+   */
+  observedOn?: string;
+  /**
    * The paths this entity's declaration claims (#2160) — every property chant
    * set, flattened into the diff's own grammar and sorted. Built by core in
    * `lifecycle/deep-observe.ts` from the declaration's `props`, never by a
@@ -85,6 +93,24 @@ export interface DeepResourceObservation {
    * `../claimed-fields.ts`.
    */
   claimedFields?: readonly string[];
+}
+
+/**
+ * A change an apply would make that no one declared entity's properties show
+ * (#3706): Postgres privileges, which the declarations decide as the access
+ * they add up to rather than one grant at a time, so a privilege granted by
+ * hand is a change to make with no declared property it differs on.
+ *
+ * `lifecycle diff --live` prints these as drift, so the plan digest an
+ * approval binds to moves with them.
+ */
+export interface DeepPendingChange {
+  /** What the change is on, in the lexicon's words: `relation app.orders TO reader`. */
+  subject: string;
+  /** What an apply would do about it: the statements, or a sentence. */
+  change: string;
+  /** The declared entities behind it, where the reader can name them. */
+  entities?: string[];
 }
 
 /**
@@ -111,12 +137,16 @@ export interface DeepObservationResult {
    * surface, not a claim about existence.
    */
   unobserved?: Record<string, UnobservedEntity>;
+  /** Changes an apply would make beyond the declared properties (#3706). Omitted when there are none. */
+  pending?: DeepPendingChange[];
 }
 
 /** Normalized form every consumer works with. Both maps always present. */
 export interface NormalizedDeepObservation {
   resources: Record<string, DeepResourceObservation>;
   unobserved: Record<string, UnobservedEntity>;
+  /** As {@link DeepObservationResult.pending}; absent when there are none. */
+  pending?: DeepPendingChange[];
 }
 
 /** True when `value` is the versioned {@link DeepObservationResult} envelope. */
@@ -132,11 +162,13 @@ export function isDeepObservationResult(value: unknown): value is DeepObservatio
 export function deepObservation(
   resources: Record<string, DeepResourceObservation>,
   unobserved?: Record<string, UnobservedEntity>,
+  pending?: DeepPendingChange[],
 ): DeepObservationResult {
   return {
     deepObservation: "v1",
     resources,
     ...(unobserved && Object.keys(unobserved).length > 0 ? { unobserved } : {}),
+    ...(pending && pending.length > 0 ? { pending } : {}),
   };
 }
 
@@ -150,7 +182,11 @@ export function normalizeDeepObservation(
   value: DeepObservationResult | undefined,
 ): NormalizedDeepObservation {
   if (!value) return { resources: {}, unobserved: {} };
-  return { resources: value.resources ?? {}, unobserved: value.unobserved ?? {} };
+  return {
+    resources: value.resources ?? {},
+    unobserved: value.unobserved ?? {},
+    ...(value.pending && value.pending.length > 0 ? { pending: value.pending } : {}),
+  };
 }
 
 // ── Normalization pass ──────────────────────────────────────────────────────
@@ -363,6 +399,15 @@ export function deepPathSet(tree: Record<string, unknown>): Set<string> {
     // gives it, so this path set agrees with what the normalized tree
     // actually looks like a path down.
     if (isHeldElsewhere(value)) return;
+    // A property-kind declarable is walked as its props, exactly as
+    // `normalizeDeepProperties` inlines it (#1314). Stopping at it left every
+    // path under a typed nested property out of the set, so the other tree's
+    // nodes there read `counterpart: "absent"` and default subtraction fired
+    // on properties the author did declare.
+    if (isPropertyDeclarableValue(value)) {
+      walk((value as { props?: unknown }).props ?? {}, path, pattern);
+      return;
+    }
     if (Array.isArray(value)) {
       value.forEach((el, i) => walk(el, joinIndex(path, i), joinPattern(pattern)));
       return;

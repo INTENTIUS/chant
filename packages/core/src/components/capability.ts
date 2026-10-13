@@ -12,6 +12,9 @@
  * Cloud implementations are a later phase (see epic #551, issue #554).
  */
 
+import type { ReleaseIdentity } from "../telemetry-attribution";
+import type { ChangeSetPart } from "../change-set";
+
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
  * its typed `input`. Deliberately minimal for this phase: the orchestrator
@@ -27,6 +30,57 @@ export interface DeployContext {
   component: string;
   /** Arbitrary environment config resolved by the orchestrator (registry URLs, cluster names, ...). */
   vars?: Record<string, unknown>;
+  /**
+   * The release this run deploys (#3061, ws-081): the commit, set by the
+   * caller, and the digest of the artifact a publish step has promoted so
+   * far in this component's run, set by the driver. A deploy step passes it
+   * to the workload with `releaseEnvironment()`. Absent outside
+   * `chant run --components`.
+   */
+  release?: ReleaseIdentity;
+  /**
+   * What this component's steps planned before its wave's gate was decided
+   * (#3049), keyed by {@link CapabilityPlan.member}. Set by a gated-wave
+   * fan-out and by a pull request's apply (#3183). A capability whose `run`
+   * finds its own member here applies that plan, the one the approver
+   * approved, instead of planning again.
+   */
+  plans?: Record<string, unknown>;
+  /**
+   * What a step kept for a member in an earlier attempt at this same fan-out
+   * (#3459), keyed by member: the value it last passed to {@link carry}. A
+   * choudoufu root keeps choudoufu's wave resume file here, so the next
+   * attempt hands choudoufu the file it wrote. Set by `chant components
+   * fan-out --resume`; absent otherwise.
+   */
+  carried?: Record<string, unknown>;
+  /**
+   * Keep `value` for `member` in the fan-out's attempt record, replacing what
+   * was kept before. The next attempt finds it in {@link carried}. Call it
+   * before throwing, too: a failed root's state is what a retry needs most.
+   * Absent outside a fan-out that writes a record.
+   */
+  carry?: (member: string, value: unknown) => void;
+}
+
+/**
+ * What a capability's `plan` produced (#3049): the member it planned, that
+ * plan's digest, and whatever `run` needs to apply exactly that plan.
+ */
+export interface CapabilityPlan {
+  /** The member's name in a wave's set digest. For a terraform-family step, the root. */
+  member: string;
+  /** The digest a gate on this member alone would bind (#2300). */
+  planDigest: string;
+  /** Handed back to `run` as `DeployContext.plans[member]`. Opaque to the runner. */
+  artifact?: unknown;
+  /**
+   * The member's part of a change-set document (#3181): every change the
+   * plan proposes. A pull request's plan (#3183) composes the parts into the
+   * document whose grouped summary the PR note shows. Without it the member
+   * still counts toward the digest, with no entries.
+   */
+  changeSet?: ChangeSetPart;
 }
 
 /**
@@ -61,6 +115,22 @@ export interface Capability<In = unknown, Out = unknown> {
    * never needs it (most of them) simply ignores the third parameter.
    */
   rollback?(ctx: DeployContext, input: In, output?: Out): Promise<void>;
+  /**
+   * Optional: say what `run` would change, without changing it (#3049). A
+   * gated-wave fan-out calls this for every step of every component in a
+   * wave, once the waves before it have applied, and binds the wave's gate
+   * to the set digest of the results. `run` then receives the result's
+   * `artifact` through `DeployContext.plans`. A capability without `plan`
+   * is covered by its component's composition digest instead.
+   */
+  plan?(ctx: DeployContext, input: In): Promise<CapabilityPlan>;
+  /**
+   * Optional: the outputs `run` exposed when it last ran, read without
+   * changing anything (#3183). A pull request's plan reads them for each
+   * component a planned one depends on, so a `stackOutput()` wiring resolves
+   * to the value standing now. The shape is `run`'s `outputs` field.
+   */
+  outputs?(ctx: DeployContext, input: In): Promise<Record<string, unknown>>;
   /**
    * How this verb relates to rollback, for the COMP003 composition check.
    * Usually derivable and left unset: a capability with a `rollback` method is

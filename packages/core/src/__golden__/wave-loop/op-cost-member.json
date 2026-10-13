@@ -1,0 +1,191 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 1,
+          "name": "layer",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af",
+          "members": [
+            {
+              "member": "a/vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply"
+            },
+            {
+              "member": "a/idle",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "waiting",
+          "digestOver": "changing",
+          "discovered": {
+            "waves": 1
+          },
+          "extras": [
+            {
+              "member": "cost",
+              "planDigest": "usd:120.00"
+            }
+          ],
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 1 (layer): 2 runs, gate always, approval ledger",
+            "planDigest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "tf-apply",
+            "gate": "wave-1",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 1 (layer): 2 runs, gate always, approval ledger",
+            "planDigest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 1,
+      "logs": 2
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "layer",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "layer",
+          "number": 1,
+          "discover": true,
+          "runs": []
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 1 (layer): the plan found 2 runs of 1 waves: a/vpc, a/idle",
+    "Nothing in wave 1 or after it ran. Read the plans, then approve: chant approve tf-apply wave-1 --plan jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af (with --resume, the approval also starts this job again)"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/a_idle.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "a/vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "target": "a/idle",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "empty": true
+        }
+      ],
+      "waves": 1,
+      "members": [
+        {
+          "member": "cost",
+          "planDigest": "usd:120.00"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "layer",
+      "number": 1,
+      "discover": true,
+      "runs": []
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "layer",
+      "op": "tf-apply",
+      "gate": "wave-1",
+      "policy": "always",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af",
+      "members": [
+        {
+          "member": "a/vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "tf-apply"
+        },
+        {
+          "member": "a/idle",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "tf-apply",
+          "empty": true
+        }
+      ],
+      "status": "waiting",
+      "digestOver": "changing",
+      "discovered": {
+        "waves": 1
+      },
+      "extras": [
+        {
+          "member": "cost",
+          "planDigest": "usd:120.00"
+        }
+      ],
+      "pendingFact": {
+        "version": 1,
+        "kind": "pending",
+        "approvalMode": "ledger",
+        "op": "tf-apply",
+        "gate": "wave-1",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 1 (layer): 2 runs, gate always, approval ledger",
+        "planDigest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
+      },
+      "recorded": true,
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "approve": "chant approve tf-apply wave-1 --plan jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
+    }
+  }
+}

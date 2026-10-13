@@ -1,0 +1,340 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 2
+      },
+      "result": {
+        "exitCode": 1,
+        "applied": [
+          "b/db"
+        ],
+        "failed": [
+          "c/app"
+        ],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 3,
+          "name": "rest",
+          "op": "tf-apply",
+          "gate": "wave-3",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784",
+          "members": [
+            {
+              "member": "c/app",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply"
+            }
+          ],
+          "status": "not-required",
+          "digestOver": "changing",
+          "discovered": {
+            "waves": 4
+          }
+        },
+        "rest": [
+          {
+            "wave": 2,
+            "exitCode": 0,
+            "digest": "jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac"
+          },
+          {
+            "wave": 3,
+            "exitCode": 1,
+            "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784"
+          }
+        ]
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 4,
+      "logs": 6
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "rest",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "rest",
+          "number": 2,
+          "discover": true,
+          "runs": []
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "rest",
+        ".chant/op-waves/tf-apply/wave-2/runs.json",
+        ".chant/op-waves/tf-apply/wave-2/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-2/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-2/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "rest",
+          "number": 2,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "b/db",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-2/b_db.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
+          "hooks": {},
+          "outcomes": []
+        },
+        ".chant/op-waves/tf-apply/wave-2/runs.json": {
+          "wave": "rest",
+          "number": 2,
+          "digest": "jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac",
+          "runs": [
+            {
+              "target": "b/db",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "rest",
+        ".chant/op-waves/tf-apply/wave-3/runs.json",
+        ".chant/op-waves/tf-apply/wave-3/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-3/runs.json": {
+          "wave": "rest",
+          "number": 3,
+          "discover": true,
+          "runs": []
+        }
+      }
+    },
+    {
+      "argv": [
+        "tg",
+        "apply",
+        "rest",
+        ".chant/op-waves/tf-apply/wave-3/runs.json",
+        ".chant/op-waves/tf-apply/wave-3/plans.json"
+      ],
+      "env": {
+        "CHANT_HOOKS": ".chant/op-waves/tf-apply/wave-3/hooks.json",
+        "CHANT_APPLY_OUTCOME": ".chant/op-waves/tf-apply/wave-3/hooks-outcome.json"
+      },
+      "read": {
+        "CHANT_HOOKS": {
+          "version": 1,
+          "opWaves": "tf-apply",
+          "op": "tf-apply",
+          "wave": "rest",
+          "number": 3,
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784",
+          "approved": false,
+          "runBy": "chant",
+          "runs": [
+            {
+              "target": "c/app",
+              "op": "tf-apply",
+              "plan": ".chant/op-waves/tf-apply/wave-3/c_app.plan.json"
+            }
+          ],
+          "runsFile": ".chant/op-waves/tf-apply/wave-3/runs.json",
+          "hooks": {},
+          "outcomes": []
+        },
+        ".chant/op-waves/tf-apply/wave-3/runs.json": {
+          "wave": "rest",
+          "number": 3,
+          "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784",
+          "runs": [
+            {
+              "target": "c/app",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 2 (rest): the plan found 1 run of 4 waves: b/db",
+    "wave 2 (rest): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac: not-required",
+    "wave 2 applied; the plan found 4 waves, so this job goes on to wave 3",
+    "wave 3 (rest): the plan found 1 run of 4 waves: c/app",
+    "wave 3 (rest): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784: not-required",
+    "wave 3 (rest): apply failed, so none of c/app counts as applied"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-2/b_db.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    ".chant/op-waves/tf-apply/wave-2/hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "tf-apply",
+      "wave": "rest",
+      "number": 2,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "b/db",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-2/b_db.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-2/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/tf-apply/wave-2/plans.json": {
+      "runs": [
+        {
+          "target": "b/db",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "waves": 4
+    },
+    ".chant/op-waves/tf-apply/wave-2/runs.json": {
+      "wave": "rest",
+      "number": 2,
+      "digest": "jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac",
+      "runs": [
+        {
+          "target": "b/db",
+          "op": "tf-apply",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-2.json": {
+      "wave": 2,
+      "name": "rest",
+      "op": "tf-apply",
+      "gate": "wave-2",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:8385a1fe81876680546eca59fd5c3d61bde8e2a825ece03966babdb726b5edac",
+      "members": [
+        {
+          "member": "b/db",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "tf-apply"
+        }
+      ],
+      "status": "not-required",
+      "digestOver": "changing",
+      "discovered": {
+        "waves": 4
+      }
+    },
+    ".chant/op-waves/tf-apply/wave-3/c_app.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    ".chant/op-waves/tf-apply/wave-3/hooks.json": {
+      "version": 1,
+      "opWaves": "tf-apply",
+      "op": "tf-apply",
+      "wave": "rest",
+      "number": 3,
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784",
+      "approved": false,
+      "runBy": "chant",
+      "runs": [
+        {
+          "target": "c/app",
+          "op": "tf-apply",
+          "plan": ".chant/op-waves/tf-apply/wave-3/c_app.plan.json"
+        }
+      ],
+      "runsFile": ".chant/op-waves/tf-apply/wave-3/runs.json",
+      "hooks": {},
+      "outcomes": []
+    },
+    ".chant/op-waves/tf-apply/wave-3/plans.json": {
+      "runs": [
+        {
+          "target": "c/app",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ],
+      "waves": 4
+    },
+    ".chant/op-waves/tf-apply/wave-3/runs.json": {
+      "wave": "rest",
+      "number": 3,
+      "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784",
+      "runs": [
+        {
+          "target": "c/app",
+          "op": "tf-apply",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-3.json": {
+      "wave": 3,
+      "name": "rest",
+      "op": "tf-apply",
+      "gate": "wave-3",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:e9369a41f15cc5f1f7078226505a4a3f42112777ef27d91e4cc3e435f421c784",
+      "members": [
+        {
+          "member": "c/app",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "tf-apply"
+        }
+      ],
+      "status": "not-required",
+      "digestOver": "changing",
+      "discovered": {
+        "waves": 4
+      }
+    }
+  }
+}

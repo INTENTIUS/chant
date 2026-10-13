@@ -1,0 +1,52 @@
+# chant build
+# on a copy of examples/local-op-quickstart; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote
+!! dist/ops/azure-deploy/op.json
+!! dist/ops/hello/op.json
+!! dist/ops/local-aws-migrate/op.json
+!! dist/ops/local-aws/op.json
+!! dist/ops/local-gcp/op.json
+!! dist/ops/local-k8s/op.json
+
+--- stdout
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Metadata": {
+    "chant:effect-receipts": {
+      "schemaSeeded": {
+        "Properties": {
+          "Name": "/chant-receipts/local-op-quickstart/local/demo-schema-seed",
+          "Tags": [
+            {
+              "Key": "chant:managed-by",
+              "Value": "chant"
+            },
+            {
+              "Key": "chant:stack",
+              "Value": "local-op-quickstart"
+            },
+            {
+              "Key": "chant:env",
+              "Value": "local"
+            }
+          ],
+          "Type": "String",
+          "Value": "sha256:ec664fe0a0b8488249eb92a74c623f096a8238982568d9c1253c6d46bae12582"
+        },
+        "Type": "AWS::SSM::Parameter"
+      }
+    },
+    "chant:ownership": {
+      "chant:env": "local",
+      "chant:managed-by": "chant",
+      "chant:stack": "local-op-quickstart"
+    }
+  },
+  "Resources": {}
+}
+
+--- stderr
+fold: <n> files folded, <n> ran (--verbose for reasons)
+Wrote 6 op.json file(s) under dist/ops/

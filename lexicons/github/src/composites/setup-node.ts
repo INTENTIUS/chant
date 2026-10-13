@@ -1,11 +1,18 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Step } from "../generated/index";
+import { actionRef, type ActionPinMode } from "../action-pins";
 
 export interface SetupNodeProps {
   nodeVersion?: string;
   registryUrl?: string;
   cache?: string;
   cacheFilePath?: string;
+  /**
+   * `"tag"` (default) emits the action's major tag. `"sha"` emits the commit
+   * SHA from the lexicon's pin table with the version as a YAML comment, which
+   * passes GHA021, GHA029 and GHA059.
+   */
+  pin?: ActionPinMode;
   defaults?: {
     step?: Partial<ConstructorParameters<typeof Step>[0]>;
   };
@@ -21,7 +28,7 @@ export const SetupNode = Composite((props: SetupNodeProps) => {
 
   const step = new Step(mergeDefaults({
     name: "Setup Node.js",
-    uses: "actions/setup-node@v4",
+    uses: actionRef("actions/setup-node", props.pin),
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),
   }, defaults?.step));
 

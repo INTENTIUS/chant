@@ -6,7 +6,7 @@
  * does chant talk to" answers the question once and is wrong after the next
  * PR that adds a `fetch`. So the catalogue is not prose: it is
  * {@link EGRESS_CATALOGUE}, checked from three sides by
- * `test/no-egress.test.ts`.
+ * `test/no-egress.e2e.test.ts`.
  *
  *  1. **Closure.** {@link scanEgressSites} walks `packages/`, `lexicons/`,
  *     `scripts/` and `ops/` for modules that name a network primitive. Every
@@ -43,7 +43,7 @@ import { join, relative, sep } from "node:path";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "include" | "template" | "upgrade" | "provenance" | "ci" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -58,7 +58,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "apply",
     label: "Reading and changing an estate",
     summary:
-      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant run` and every component verb talk to the substrate they manage. This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
+      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that do (`chant workspace check` without `--live` reads files only). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
   },
   {
     id: "emulator",
@@ -73,10 +73,40 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
       "`chant dev generate`, `chant dev pinned-upgrade` and `chant vendor` fetch upstream schemas. Every lexicon's `spec/fetch.ts` runs here and nowhere else: the generated types and the committed spec snapshot are what a build reads, so a machine that never runs codegen never needs the endpoints below. `chant dev pinned-upgrade` is the one command here that queries `api.github.com`, and it is a lexicon-maintainer command — it moves a pin in a lexicon's own source, and nothing on an adopter's build, lint or apply path calls it.",
   },
   {
+    id: "include",
+    label: "Including a pinned URL in a build",
+    summary:
+      "A `k8sInclude` whose `source` is an `http(s)` URL is fetched by `chant build` the first time the build sees its digest. The bytes must match the declared `sha256` digest. They are cached under it in `~/.chant/includes/` (moved by `CHANT_INCLUDE_CACHE_ROOT`). Every later build reads the cache and reaches nothing. A project with no URL include, or with its includes already cached, builds offline.",
+  },
+  {
+    id: "template",
+    label: "Starting a project from a template",
+    summary:
+      "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing, and `chant init --from <dir>` copies a template directory already on disk and reaches nothing (#2647). The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
+  },
+  {
+    id: "upgrade",
+    label: "Upgrading a project from its template",
+    summary:
+      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it, and a scope made from a directory reads the `--to` directory from disk and reaches nothing. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. `chant workspace adopt-lineage` and `chant workspace hash-index` list a template's tags and fetch the versions they compare, and `chant workspace versions --available` lists the tags of each git template. Every step is a `git` or `gh` child process, listed below as shell-outs.",
+  },
+  {
+    id: "provenance",
+    label: "Following a squash merge",
+    summary:
+      "`chant workspace graph --intent`, `graph --intent --record` and `chant workspace runs` read git history locally and reach nothing, unless `--follow-squash` is given. Then a squash commit's pull request head is fetched from `origin` when the clone lacks it, once per pull request, into `refs/chant/pull/<n>/head` where later reads find it (#3035). Its row is in the shell-out table below, since git does the fetching.",
+  },
+  {
     id: "audit",
     label: "Auditing a remote repository",
     summary:
       "`chant audit <url>` reads someone else's repository over a git host's API. Auditing a local path reaches nothing.",
+  },
+  {
+    id: "ci",
+    label: "Tagging the commits that passed CI",
+    summary:
+      "`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` reads local tags only and reaches nothing.",
   },
   {
     id: "maintenance",
@@ -94,7 +124,7 @@ export interface OfflinePhase {
   /** What it does without a network. */
   note: string;
   /**
-   * Whether `test/no-egress.test.ts` drives this command over the corpus with
+   * Whether `test/no-egress.e2e.test.ts` drives this command over the corpus with
    * the network primitives replaced by throwing stubs. A `false` here is a
    * claim from the static scan alone and says so in the generated page.
    */
@@ -103,14 +133,14 @@ export interface OfflinePhase {
 
 /**
  * The offline half. Every entry with `guarded: true` is executed by
- * `test/no-egress.test.ts` against a real corpus project, with
+ * `test/no-egress.e2e.test.ts` against a real corpus project, with
  * `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing
  * stubs — so the claim is tested, not asserted.
  */
 export const OFFLINE_PHASES: readonly OfflinePhase[] = [
   {
     command: "chant build",
-    note: "Discovery, evaluation and serialization. No network in process. One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below.",
+    note: "Discovery, evaluation and serialization. No network in process, except a `k8sInclude` URL whose digest is not yet cached (see above). One declaration puts a network-reaching child on this path — `HelmRender` with a `repo`, which renders the chart at synthesis time; see the shell-outs below.",
     guarded: true,
   },
   {
@@ -176,7 +206,7 @@ export interface ShellOut {
  * rather than covered — the acceptance criterion in #1984 is that the test
  * names them rather than implying total coverage.
  *
- * `test/no-egress.test.ts` records every spawn the guarded phases make and
+ * `test/no-egress.e2e.test.ts` records every spawn the guarded phases make and
  * fails on a binary that is not listed here, so this list is closed the same
  * way the catalogue is.
  */
@@ -216,6 +246,121 @@ export const OFFLINE_SHELL_OUTS: readonly ShellOut[] = [
   },
 ];
 
+// ── Shell-outs that reach the network on purpose ─────────────────────────────
+
+export interface NetworkShellOut {
+  /** The binary spawned. */
+  binary: string;
+  /** Its subcommand, which the module must pass as a literal argument. */
+  subcommand: string;
+  /** The command a reader types. */
+  command: string;
+  /** The module that spawns it, repo-relative with forward slashes. */
+  file: string;
+  phase: EgressPhaseId;
+  destination: string;
+  why: string;
+}
+
+/**
+ * Child processes that a command spawns in order to reach a network. The scan
+ * below finds in-process primitives only, so these are listed by hand, and
+ * `test/no-egress.e2e.test.ts` checks that each module still spawns what its
+ * entry says.
+ */
+export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant ci tick",
+    file: "packages/core/src/workspace/ci-green.ts",
+    phase: "ci",
+    destination: "the repository's `origin` remote",
+    why: "`git fetch --no-tags --prune origin +refs/heads/<branch>:refs/remotes/origin/<branch> +refs/tags/ci/*:refs/tags/ci/*` brings the branch and the ci tags, pruning a ci tag deleted on the remote by hand, so the tick judges what the remote holds (#3573). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any.",
+  },
+  {
+    binary: "git",
+    subcommand: "push",
+    command: "chant ci tick",
+    file: "packages/core/src/workspace/ci-green.ts",
+    phase: "ci",
+    destination: "the repository's `origin` remote",
+    why: "`git push origin refs/tags/ci/green/<sha> ...` pushes the tags the tick made, never forced, so a tag that already exists there is refused rather than moved (#3573).",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace graph --intent --follow-squash, chant workspace graph --intent --record --follow-squash and chant workspace runs --follow-squash",
+    file: "packages/core/src/workspace/squash.ts",
+    phase: "provenance",
+    destination: "the clone's `origin` remote, GitHub or Forgejo, which keeps each pull request's head at `refs/pull/<n>/head`. A local repository reaches nothing",
+    why: "`git fetch --no-tags origin +refs/pull/<n>/head:refs/chant/pull/<n>/head` for each squash whose pull request head the clone lacks, in one fetch, so the walk can read the pull request's original commits (#3035). Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and the fetch times out after a minute. Without `--follow-squash` it never runs.",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant init --from <repo>@<ref>",
+    file: "packages/core/src/workspace/lineage-init.ts",
+    phase: "template",
+    destination: "the repository named in `--from`: a git URL, `git@host:path`, or `https://github.com/<owner>/<name>.git` for `owner/name`. A local path reaches nothing",
+    why: "`git fetch --depth 1 <repo> <ref>` into a scratch repository that is deleted afterwards. The commit and tree it resolves are the content address the lineage lock records (#2540). Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any.",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace upgrade <scope>",
+    file: "packages/core/src/workspace/lineage-upgrade.ts",
+    phase: "upgrade",
+    destination: "the template repository the lineage lock records for the scope (`source.url`), or the one `--source` names when the upgrade moves the scope to another template. A local repository reaches nothing",
+    why: "`git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base, always from the scope's recorded source; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550, #2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "ls-remote",
+    command: "chant workspace adopt-lineage --from <repo>, chant workspace hash-index --from <repo> and chant workspace versions --available",
+    file: "packages/core/src/workspace/lineage-hash-index.ts",
+    phase: "upgrade",
+    destination: "the template repository named in `--from`, or for `versions --available` the one each family's lock records. A local repository reaches nothing",
+    why: "`git ls-remote --tags <url>` lists the template's tags and the commit each names, so a cached hash index is reused only for tags that still name the same commit, and `versions` can say how many versions are newer than each lock (#2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace adopt-lineage --from <repo> and chant workspace hash-index --from <repo>",
+    file: "packages/core/src/workspace/lineage-hash-index.ts",
+    phase: "upgrade",
+    destination: "the template repository named in `--from`. A local repository reaches nothing",
+    why: "`git fetch --depth 1 --no-tags <url> refs/tags/<tag>...` for the version tags the index has to compute, or `git fetch --depth 1 <url> <ref>` for the one ref `--from <repo>@<ref>` names, then a cached winner's tag again to re-check it, into a scratch repository deleted afterwards. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "push",
+    command: "an Op step running the proposeWorkspaceUpgrade activity, in branch or pull-request mode",
+    file: "packages/core/src/op/activities/propose-upgrade.ts",
+    phase: "upgrade",
+    destination: "the repository's own remote (`origin` unless the step names another)",
+    why: "`git push --force <remote> <commit>:refs/heads/<branch>`, only for the proposal branch (default `chant/upgrade/<scope>`). The activity refuses the default branch, the base branch and the checked-out branch (#2550).",
+  },
+  {
+    binary: "docker",
+    subcommand: "run",
+    command: "npm run generate in lexicons/sql after a ClickHouse pin move, or with --force",
+    file: "lexicons/sql/src/core/container.ts",
+    phase: "codegen",
+    destination: "the container registry, for `clickhouse/clickhouse-server` at the pinned tag and digest when the image is not already local",
+    why: "`docker run` starts the pinned server on a random loopback port so generation can read its catalog, and the container is removed afterwards. The pull is the only egress; the catalog read itself is loopback.",
+  },
+  {
+    binary: "gh",
+    subcommand: "pr",
+    command: "an Op step running the proposeWorkspaceUpgrade activity, in pull-request mode",
+    file: "packages/core/src/op/activities/propose-upgrade.ts",
+    phase: "upgrade",
+    destination: "the forge that hosts the remote, through the GitHub CLI and its own credentials",
+    why: "`gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550). On a Forgejo or GitLab job the same calls go over REST through `pr-forge.ts` instead (#3798).",
+  },
+];
+
 // ── The catalogue ────────────────────────────────────────────────────────────
 
 /**
@@ -230,7 +375,9 @@ export type EgressPrimitive =
   | "node:net"
   | "node:tls"
   | "node:dns"
-  | "http-client-package";
+  | "http-client-package"
+  /** A database driver that opens its own sockets (`pg`). */
+  | "database-client-package";
 
 export interface EgressSite {
   /** Repo-relative path, forward slashes. */
@@ -249,7 +396,7 @@ export interface EgressSite {
  * network primitive directly.
  *
  * Adding a row is the deliberate, reviewed act #1984 asks for. Adding a fetch
- * without a row fails `test/no-egress.test.ts`.
+ * without a row fails `test/no-egress.e2e.test.ts`.
  */
 export const EGRESS_CATALOGUE: readonly EgressSite[] = [
   // ── apply ──────────────────────────────────────────────────────────────────
@@ -273,6 +420,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "AWS Cloud Control and CloudFormation, or `AWS_ENDPOINT_URL`",
     why: "The aws lexicon's read transport, signed with SigV4 and retargetable at a local emulator; there is no AWS SDK in the tree.",
+  },
+  {
+    file: "lexicons/aws/src/api/credential-chain.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the AWS IAM Identity Center portal (`portal.sso.<region>.amazonaws.com`) and SSO OIDC (`oidc.<region>.amazonaws.com`)",
+    why: "`chant lifecycle whoami` resolves an SSO profile as the AWS CLI does (#3954): it refreshes an expired cached session token through OIDC when it can, then trades the token for role credentials. A `credential_process` profile runs the configured command, which may reach whatever it reaches.",
   },
   {
     file: "lexicons/aws/src/op/activities/aws-apply.ts",
@@ -331,6 +485,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network.",
   },
   {
+    file: "lexicons/grafana/src/api/client.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the Grafana HTTP API named by `grafana.profiles.<env>` or `GRAFANA_URL`",
+    why: "The grafana lexicon's transport for `lifecycle diff --live` and `import --from`, injectable through `GrafanaHttp` so tests need no network.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/fly-apply.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -338,11 +499,39 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`flyApply` creates, updates and destroys Machines; pointing it at the emulator is how the Fly tutorials run offline.",
   },
   {
+    file: "lexicons/fly/src/op/activities/machine-release.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the app's own health endpoint, at the URL a release step is given",
+    why: "`flyMachineVerify` checks that a released Machine's app answers its health endpoint with that release (#2736). The Machines API calls go through fly-apply.ts's client.",
+  },
+  {
+    file: "lexicons/fly/src/components/fly-release.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the app's own health endpoint, through `flyMachineVerify`",
+    why: "The `fly-release` and `fly-rollback` capabilities hand an injectable `fetch` to `flyMachineVerify`, so tests reach no network (#2736).",
+  },
+  {
+    file: "lexicons/fly/src/op/activities/machines-local.ts",
+    primitives: ["node:net"],
+    phase: "emulator",
+    destination: "127.0.0.1 only: a free port for a Machine's service, and a connect that waits for it to listen",
+    why: "The opt-in running mode of the local Machines API runs each started Machine on this host and publishes its service on a loopback port (#2831). Only tests and a local runner reach it.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/sprites.ts",
     primitives: ["fetch"],
     phase: "apply",
     destination: "the Sprites API, or `SPRITES_BASE_URL`",
     why: "Sprite lifecycle activities — create, exec, destroy — for the Sprites Ops.",
+  },
+  {
+    file: "lexicons/fly/src/op/activities/sprite-service-converge.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a box service's own health URL, as the Op declares it",
+    why: "`spriteServicesObserve` probes each declared service's health URL for a ConvergeOp, and `spriteServiceRestart` waits for it after a restart (#2778). The Sprites API calls go through sprite-services.ts.",
   },
   {
     file: "lexicons/fly/src/op/activities/sprite-fs.ts",
@@ -394,6 +583,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`httpCheck` is a generic probe step — the URL is the caller's, and the activity has no default of its own.",
   },
   {
+    file: "packages/core/src/op/decide-backend.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a Jev-compatible `POST /v1/systemone` server a backend declares",
+    why: "The `decide` activity asks a decision point's model decider. It runs only as an Op step: no chant read calls a model (ws-052).",
+  },
+  {
     file: "packages/core/src/op/activities/workflow-audit.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -401,11 +597,116 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The workflow-audit activity resolves an action reference to a commit so a pipeline can assert what it actually ran.",
   },
   {
+    file: "packages/core/src/pr-forge.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge that hosts the pull request: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or a GitLab instance's API",
+    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). terragucci and SQL Yodeler import it from `@intentius/chant/pr-forge` for their own notes, statuses and tracking issues (#3759). On a Forgejo or GitLab job, `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` find, open, edit and label their pull request through it, since `gh pr` speaks a GraphQL API Forgejo does not serve (#3798). Only those CI paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+  },
+  {
+    file: "packages/core/src/op/activities/reconcile.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge a reconcile finding is posted to: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
+    why: "`reconcilePr`'s `comment` and `issue` finding modes keep one pull request comment, merge request note or issue (#2256, #2292, #3757): GitLab over its REST API here, GitHub and Forgejo through `pr-forge.ts`'s clients. Only an Op step in one of those modes reaches it.",
+  },
+  {
+    file: "packages/core/src/op/activities/forge-pull-request.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge a Forgejo or GitLab job runs on: a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
+    why: "Picks the `pr-forge.ts` client that `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` open their pull request through on Forgejo and GitLab, where `gh pr` cannot (#3798), and passes it the caller's `fetch`. GitHub, and a run outside CI, keep `gh`.",
+  },
+  {
+    file: "packages/core/src/gate-resume-run.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge that runs the job waiting at a gate: `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab, as the pending fact recorded it",
+    why: "Gate resume (#3683): `chant approve --resume` and `chant run resume` read the waiting run's state and re-run it (GitHub), retry its job (GitLab) or dispatch its workflow (Forgejo). Only those two commands reach it, and the client takes an injected `fetch`, so no unit test opens a socket.",
+  },
+  {
+    file: "packages/core/src/cli/handlers/gate-resume.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the same forge as `packages/core/src/gate-resume-run.ts`, through it",
+    why: "The handlers of `chant approve --resume` and `chant run resume` (#3683) pass an injected `fetch` through to `resumeGateRun`; they open no connection of their own.",
+  },
+  {
+    file: "packages/core/src/notify.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the URLs the environment variables named by an Op waves spec's `notify` hold: a Slack or Microsoft Teams incoming webhook, or the team's own webhook",
+    why: "Notify (#3761): `chant run wave` posts an event when a wave waits for an approval, refuses a moved plan or fails, and products built on chant send the same event. Only a spec with `notify` reaches it, a failed delivery never changes the exit code, and `sendNotify` takes an injected `fetch`, so no unit test opens a socket.",
+  },
+  {
+    file: "packages/core/src/op/gate-review.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge that hosts the merged pull request: `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab",
+    why: "A `pr-review` wave gate (#3684): `chant run wave` finds the pull request that merged the applied commit and reads its reviews, its author and the reviewers' access. Only a wave whose approval mode is `pr-review` reaches it, and the client takes an injected `fetch`, so no unit test opens a socket.",
+  },
+  {
+    file: "packages/core/src/workspace/ci-green-forge.ts",
+    primitives: ["fetch"],
+    phase: "ci",
+    destination: "`api.github.com`, or `$GITHUB_API_URL` for GitHub Enterprise Server",
+    why: "`chant ci tick` lists every check run on each commit within `ci.green`'s window, to judge its phases by each run's latest attempt (#3573). The client takes an injected `fetch`, so no test opens a socket.",
+  },
+  {
     file: "packages/core/src/op/activities/pipeline-audit.ts",
     primitives: ["fetch"],
     phase: "apply",
     destination: "a GitLab instance's API",
     why: "The pipeline-audit activity reads project and pipeline metadata for the same governance question on GitLab.",
+  },
+  {
+    file: "lexicons/prometheus/src/api/client.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a Mimir, Cortex or Loki ruler, a plain Prometheus, or an Alertmanager, at the target a profile declares",
+    why: "The prometheus lexicon's transport (#3371): `lifecycle diff --live`, `import --from` and the ruler ApplyOp target all read and write through it, with the declared tenant and credentials. It takes an injected `PromHttp`, so tests need no network.",
+  },
+  {
+    file: "lexicons/prometheus/src/op/activities/rules-loaded.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a Prometheus at the declared URL, `$PROMETHEUS_URL`, or `http://localhost:9090`",
+    why: "`rulesLoadedObserve` reads `/api/v1/rules` so a ConvergeOp can see whether each declared rule group is loaded and healthy (#3369).",
+  },
+  {
+    file: "lexicons/prometheus/src/op/activities/rule-audit.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a Prometheus at the declared URL, `$PROMETHEUS_URL`, or `http://localhost:9090`",
+    why: "`ruleAudit`, the activity behind RuleAuditOp, reads rule health and alerts and queries each rule selector to find series nothing writes (#3369).",
+  },
+  {
+    file: "lexicons/prometheus/src/op/activities/silence.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "an Alertmanager at the declared URL, `$ALERTMANAGER_URL`, or `http://localhost:9093`",
+    why: "`alertmanagerSilence` and `alertmanagerUnsilence` create and expire the silence an Op step holds over a change (#3369).",
+  },
+  {
+    file: "lexicons/otel/src/op/activities/collector-health.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a running collector's own health_check, zpages and metrics endpoints, or the hosts an Op step names in their place",
+    why: "`collectorHealthObserve` probes the endpoints a collector's config declares so a ConvergeOp can tell whether it is up (#3369).",
+  },
+  {
+    file: "lexicons/otel/src/op/activities/github.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "`api.github.com` release lists",
+    why: "CollectorAuditOp reads the collector and semantic-conventions release lists here (#3369). The sticky issue that CollectorAuditOp and RuleAuditOp keep, and the proposal pull request, go through `git` and `gh` child processes.",
+  },
+  {
+    file: "lexicons/otel/src/op/activities/collector-audit.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "`raw.githubusercontent.com`, for each built-in component's `metadata.yaml` in the collector repositories",
+    why: "`collectorAudit`, the activity behind CollectorAuditOp, compares component stability at the pinned and the newest collector release (#3369). The release lists come through github.ts.",
   },
 
   {
@@ -425,12 +726,27 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
   // ── emulator ───────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/op/emulator-lifecycle.ts",
+    primitives: ["fetch", "node:net"],
+    phase: "emulator",
+    destination: "the just-started emulator container on localhost, and 127.0.0.1 ports",
+    why: "The shared boot loop polls the container's health endpoint until it answers, and `hostPortInUse` opens a connect to 127.0.0.1 to see whether a host port is taken before a container is bound to it; loopback only, and the image pull it depends on is the container runtime's.",
+  },
+  {
+    file: "lexicons/sql/src/op/activities/clickhouse-emulator.ts",
     primitives: ["fetch"],
     phase: "emulator",
-    destination: "the just-started emulator container on localhost",
-    why: "The shared boot loop polls the container's health endpoint until it answers; loopback only, and the image pull it depends on is the container runtime's.",
+    destination: "the ClickHouse emulator's HTTP endpoint, as `chant emulator status` prints it",
+    why: "The identity probe asks the server for its UUID and version (#3673) so a server of another origin on the same port is told apart from the emulator; the endpoint is the container `chant emulator up` started, on localhost.",
   },
 
+  // ── include ────────────────────────────────────────────────────────────────
+  {
+    file: "lexicons/k8s/src/include/resolve.ts",
+    primitives: ["fetch"],
+    phase: "include",
+    destination: "the URL a `k8sInclude` declares as its `source`",
+    why: "Fetches a pinned multi-document YAML at `buildRoots()` when no cached copy matches its `sha256` digest. Bytes that do not match the digest fail the build and are not cached; matching bytes are cached by digest, so later builds are offline (chant #3566).",
+  },
   // ── codegen ────────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/codegen/fetch.ts",
@@ -447,6 +763,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The aws spec fetch follows redirects itself rather than going through the shared cache helper; run by `chant dev generate`, never by a build.",
   },
   {
+    file: "lexicons/k8s/src/crd/oci-chart.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "the OCI registry of a `type: \"helm\"` CRD source (today `ghcr.io`, for the KubeMicroVM operator chart at its pinned version and layer digest)",
+    why: "Pulls a chart's content layer over the registry API so k8s generation reads chart-only CRDs without needing `helm` on PATH (chant #3300). The bare `fetch` is the anonymous-token probe, which expects a 401; the token, manifest and blob go through `fetchWithRetry`. Run by `npm run generate`, never by a build.",
+  },
+  {
     file: "lexicons/aws/scripts/refresh-enum-overlay.ts",
     primitives: ["fetch"],
     phase: "codegen",
@@ -459,6 +782,34 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "codegen",
     destination: "the Control Plane OpenAPI document",
     why: "`just snapshot` refreshes the committed offline spec snapshot; run on a networked machine on purpose, and the snapshot is what everything else reads.",
+  },
+  {
+    file: "lexicons/grafana/src/spec/fetch-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for the grafana-foundation-sdk JSON Schemas at the pinned commit",
+    why: "`just fetch-schemas` re-downloads the vendored Grafana schemas when bumping `GRAFANA_SCHEMA_PIN`; a maintainer command. Generate, bundle, validate, build and the tests read the committed files under `src/spec/schemas/` and reach nothing.",
+  },
+  {
+    file: "lexicons/grafana/src/spec/fetch-units-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for Grafana's `valueFormats/categories.ts` at the tag in `GRAFANA_UNITS_SOURCE`",
+    why: "`just fetch-units` re-extracts the unit ids GRAF115 accepts when moving to a newer Grafana; a maintainer command. Build, lint and the tests read the committed `src/spec/units.gen.ts` and reach nothing.",
+  },
+  {
+    file: "lexicons/sql/src/clickhouse/http.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a ClickHouse server's HTTP interface: the one `sql.profiles.<env>` (or `CLICKHOUSE_URL`) binds the environment to, and on a ClickHouse pin move the pinned `clickhouse/clickhouse-server` container generation starts on a loopback port",
+    why: "The sql lexicon's only client. `describeResources` reads `system.databases` and `system.tables`, and `chant import --from` adds `SHOW CREATE` per object; all reads. `clickhouseApply` (the `clickhouse` ApplyOp target) writes: the `CREATE`, `ALTER` and, under a prune, `DROP` statements a build's classified changes need, and reads `system.mutations` while a background rewrite runs. Generation reads the pinned server's `system.*` catalog only when the pin moves or `npm run generate -- --force` asks; every other generate, bundle, validate and build reads the committed snapshot and reaches nothing.",
+  },
+  {
+    file: "lexicons/sql/src/postgres/live/client.ts",
+    primitives: ["database-client-package"],
+    phase: "apply",
+    destination: "a Postgres server: the one `sql.profiles.<env>` (a `postgres://` URL) or `POSTGRES_URL` binds the environment to",
+    why: "The Postgres dialect's client, node-postgres (`pg`), loaded only when a Postgres server is read. `describeResources`, `observeResourcesDeep` and `chant import --from` read the catalog (`pg_catalog`, and `pg_get_*def()` for each object's statement); all reads, in a session with an empty `search_path`. A ClickHouse-only project never loads it.",
   },
   {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",
@@ -484,6 +835,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "maintenance",
     destination: "`api.github.com` release metadata",
     why: "Reports how far behind an emulator's pinned image is. Advisory, never gating, and reached only from `scripts/check-emulator-freshness.ts` — no CLI command calls it.",
+  },
+  {
+    file: "packages/core/src/workspace/conformance/broker.ts",
+    primitives: ["fetch"],
+    phase: "maintenance",
+    destination: "the broker under test, at the base URL its `start(env)` returns",
+    why: "The broker conformance suite (#3164) makes each check's request to the broker a maintainer points it at, as a box would. No CLI command or build, lint or apply path imports it; only a broker's own test run does, and chant's own test dials a loopback stand-in.",
   },
   {
     file: "scripts/dogwood-freshness.ts",
@@ -514,7 +872,16 @@ export const EGRESS_SCAN_ROOTS = ["packages", "lexicons", "scripts", "ops"] as c
  * chant's, and cataloguing them would bury the rows that matter. `generated`
  * and `dist` are build output. Test files are excluded by extension below, for
  * the same reason: a test is not a path an adopter runs, and a recording
- * fetch mock in one would read as a network caller.
+ * fetch mock in one would read as a network caller. `e2e` holds the helpers
+ * the `*.e2e.test.ts` files share (chant #2956: the grafana lexicon's
+ * container helpers, which poll the containers they start on localhost), and
+ * is skipped for the same reason as the test files themselves.
+ *
+ * Dot-directories are skipped too (chant #3176). Round-trip and init tests
+ * create throwaway projects such as `.roundtrip-tmp-*` and `.init-template-*`
+ * inside a package and delete them when done, and a scan that ran in parallel
+ * failed on a file deleted between listing and reading. No shipped code lives
+ * in a dot-directory under the scan roots.
  */
 export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "node_modules",
@@ -525,6 +892,7 @@ export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "__snapshots__",
   "coverage",
   ".git",
+  "e2e",
 ]);
 
 /** Client-side symbols per builtin. `createServer` is deliberately absent. */
@@ -539,6 +907,9 @@ const BUILTIN_EGRESS_SYMBOLS: Record<string, { primitive: EgressPrimitive; symbo
 
 /** Third-party HTTP clients. None are dependencies today; importing one is the point of the check. */
 const HTTP_CLIENT_PACKAGES = new Set(["undici", "axios", "got", "node-fetch", "ky", "superagent", "phin", "needle"]);
+const DATABASE_CLIENT_PACKAGES = new Set(["pg"]);
+/** A dynamic `import("pkg")`, the way a lexicon loads a driver only when it is used. */
+const DYNAMIC_IMPORT = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
 
 export interface ScannedSite {
   file: string;
@@ -555,7 +926,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (EGRESS_SCAN_SKIP_DIRS.has(entry.name)) continue;
+      if (entry.name.startsWith(".") || EGRESS_SCAN_SKIP_DIRS.has(entry.name)) continue;
       walk(full, out);
     } else if (/\.(m?ts|mjs)$/.test(entry.name) && !/\.d\.ts$/.test(entry.name) && !/\.test\.m?ts$/.test(entry.name)) {
       out.push(full);
@@ -623,9 +994,17 @@ export function egressPrimitivesIn(source: string): EgressPrimitive[] {
 
   if (GLOBAL_FETCH.test(code)) found.add("fetch");
 
+  for (const match of withStrings.matchAll(DYNAMIC_IMPORT)) {
+    if (DATABASE_CLIENT_PACKAGES.has(match[1]!)) found.add("database-client-package");
+  }
+
   for (const match of withStrings.matchAll(IMPORT_STATEMENT)) {
     const specifier = match[2] ?? match[3];
     if (!specifier) continue;
+    if (DATABASE_CLIENT_PACKAGES.has(specifier)) {
+      found.add("database-client-package");
+      continue;
+    }
 
     const bare = specifier.replace(/^node:/, "");
     if (HTTP_CLIENT_PACKAGES.has(bare) || HTTP_CLIENT_PACKAGES.has(specifier)) {
@@ -667,7 +1046,15 @@ export function scanEgressSites(repoRoot: string): ScannedSite[] {
   const sites: ScannedSite[] = [];
   for (const root of EGRESS_SCAN_ROOTS) {
     for (const file of walk(join(repoRoot, root))) {
-      const primitives = egressPrimitivesIn(readFileSync(file, "utf-8"));
+      let code: string;
+      try {
+        code = readFileSync(file, "utf-8");
+      } catch (error) {
+        // Deleted since the walk listed it, by a test cleaning up in parallel.
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const primitives = egressPrimitivesIn(code);
       if (primitives.length > 0) {
         sites.push({ file: relative(repoRoot, file).split(sep).join("/"), primitives });
       }
@@ -694,7 +1081,7 @@ export function renderEgressCatalogueBlock(): string {
 
   lines.push("## Phases with no egress", "");
   lines.push(
-    "A guarded row is executed by `test/no-egress.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.",
+    "A guarded row is executed by `test/no-egress.e2e.test.ts` over every project in the example corpus, with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs. Adding a network call to one of these paths fails that test.",
     "",
   );
   lines.push("| Command | Behaviour | Guarded by test |", "|---|---|---|");
@@ -722,18 +1109,30 @@ export function renderEgressCatalogueBlock(): string {
   lines.push("## Phases that do reach the network", "");
   for (const phase of EGRESS_PHASES) {
     const sites = EGRESS_CATALOGUE.filter((site) => site.phase === phase.id);
+    const shellOuts = NETWORK_SHELL_OUTS.filter((shellOut) => shellOut.phase === phase.id);
     lines.push(`### ${phase.label}`, "", phase.summary, "");
-    lines.push("| Module | Primitive | Destination | Why |", "|---|---|---|---|");
-    for (const site of sites) {
-      lines.push(
-        `| \`${cell(site.file)}\` | ${site.primitives.map((p) => `\`${cell(p)}\``).join(", ")} | ${cell(site.destination)} | ${cell(site.why)} |`,
-      );
+    if (sites.length > 0) {
+      lines.push("| Module | Primitive | Destination | Why |", "|---|---|---|---|");
+      for (const site of sites) {
+        lines.push(
+          `| \`${cell(site.file)}\` | ${site.primitives.map((p) => `\`${cell(p)}\``).join(", ")} | ${cell(site.destination)} | ${cell(site.why)} |`,
+        );
+      }
+      lines.push("");
     }
-    lines.push("");
+    if (shellOuts.length > 0) {
+      lines.push("| Command | Spawns | Module | Destination | Why |", "|---|---|---|---|---|");
+      for (const shellOut of shellOuts) {
+        lines.push(
+          `| \`${cell(shellOut.command)}\` | \`${cell(`${shellOut.binary} ${shellOut.subcommand}`)}\` | \`${cell(shellOut.file)}\` | ${cell(shellOut.destination)} | ${cell(shellOut.why)} |`,
+        );
+      }
+      lines.push("");
+    }
   }
 
   lines.push(
-    `**${EGRESS_CATALOGUE.length} modules** across ${EGRESS_SCAN_ROOTS.map((root) => `\`${root}/\``).join(", ")} call a network primitive directly. Every other module that reaches the network does so through one of them.`,
+    `**${EGRESS_CATALOGUE.length} modules** across ${EGRESS_SCAN_ROOTS.map((root) => `\`${root}/\``).join(", ")} call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.`,
   );
   lines.push("", EGRESS_CATALOGUE_END);
   return lines.join("\n");

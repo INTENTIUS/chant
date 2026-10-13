@@ -1,0 +1,75 @@
+---
+skill: chant-sql-rebuild
+description: Run a ClickHouse table rebuild (a sorting key, primary key, partition key, engine or key column type change) with ClickHouseRebuildOp, a gated Op with backfill receipts, verification, an exchange swap and onFailure cleanup
+user-invocable: true
+---
+# Running a ClickHouse rebuild migration
+
+Use this skill when `chant sql plan` or `chant sql diff` exits 2 because a table's change is a rebuild: a sorting key rename or reorder (SQLCH220), a primary key change (SQLCH221), a partition key change (SQLCH222), an engine or engine argument change such as a ReplacingMergeTree version column (SQLCH223), or a key column's type (SQLCH211). ClickHouse has no ALTER for these. The data is copied into a new table, and the old one is swapped out.
+
+`ClickHouseRebuildOp` rebuilds tables. A view's or materialized view's rebuild-class change (SQLCH224, SQLCH242, SQLCH243) is a drop and a create of that view, not this Op.
+
+## Declare the Op
+
+The plan names the Op for each refused table, with the table filled in and a dual-write mode suggested. Copy it into an `*.op.ts` file in the same pull request as the schema change:
+
+```typescript
+// ops/rebuild-events.op.ts
+import { ClickHouseRebuildOp } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const { op } = ClickHouseRebuildOp({
+  name: "rebuild-shop-events",
+  env: "prod",                       // sql.profiles.prod
+  table: "shop.events",              // database.name on the server
+  dualWrite: { mode: "materialized-view", cutoverColumn: "ts" },
+  retain: "7d",                      // how long the old table is kept
+});
+```
+
+Options: `name`, `env`, `table`, `dualWrite` (required); `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `retain` (default `7d`), `gate` (the swap gate: `gate`, `timeout`, `description`, `approval`), `dropGate`, `writesGate` (app mode), `backfillTimeout` (default `6h`), `mutationTimeout` (default `10m`), `replicaTimeout` (default `2m`, Replicated databases only), `cutoverTimeout` (default `10m`, materialized-view mode only), `stack`, `ownershipEnv`.
+
+On a `cluster:<name>` topology with more than one shard, the backfill and the verification work per shard through the profile's server, with a receipt per shard and partition; each shard needs its own `{shard}` macro.
+
+Run as one step of a change approved elsewhere: `gates: "outer"` leaves out the swap gate, the drop gate and the Drop phase (verification and the swap's own comparison still run; the old table is kept), and `onFailure: "keep"` leaves out onFailure, so a failed run's next run resumes the backfill from its receipts. Set them rather than editing the Op's phases.
+
+Pick the dual-write mode:
+
+- `{ mode: "materialized-view", cutoverColumn: "ts", cutoverDelay?: "5s" }` when the table has a time column rows arrive in order of. Writes keep flowing: a materialized view sends rows at or after the cut-over to the new table, the backfill copies the rows before it. The backfill starts once the server's clock has passed the cut-over and every INSERT into the old table begun before it has finished, asynchronous inserts still in their buffer included; `cutoverTimeout` bounds the second wait. Set `cutoverDelay` longer than the batches of a writer that holds rows before inserting them.
+- `{ mode: "app" }` otherwise. A gate, `<name>-writes-stopped`, waits for someone to confirm the application stopped writing to the table; writes resume after the swap.
+
+## Run it
+
+```bash
+chant run rebuild-shop-events        # new table, dual write, backfill, verify; exits 3 at approve-rebuild-shop-events
+chant run status rebuild-shop-events # the Verification, VerifiedPartitions and VerifiedRows outcomes
+chant approve rebuild-shop-events approve-rebuild-shop-events --actor <you>
+chant run rebuild-shop-events        # swaps, recreates the views that read the table; exits 3 at approve-rebuild-shop-events-drop
+chant approve rebuild-shop-events approve-rebuild-shop-events-drop --actor <you>
+chant run rebuild-shop-events        # drops the old table once retain has passed
+```
+
+Each run goes as far as the next gate. Every step reads the server again, so re-running after a gate, a crash or an approval carries on where the last run stopped.
+
+The swap gate is bound to a digest of the plan and the verification (row counts and checksums per partition). If the next run verifies different numbers, the gate asks again. The drop gate is bound to the old table's UUID and retention date; approving it early is fine, nothing is dropped before the date.
+
+## When something goes wrong
+
+- A run stopped during the backfill (Ctrl-C, a killed job) is not a failure. The next run resumes from the receipts in `chant_receipts.receipts` on the same server (in `<db>.__chant_receipts` on a Replicated database), and a partition whose copy was cut off before its receipt is cleared and copied again, so no row is copied twice.
+- A failed step (a failed copy after its retries, a verification mismatch, a refused declaration) runs onFailure: the new table `<t>__chant_new` and the dual-write view `<t>__chant_dual` are dropped, and the next run starts from a new table. With `onFailure: "keep"` they stay, and the next run resumes; drop them by hand to start over. The original table is untouched until the swap.
+- A verification mismatch in materialized-view mode usually means rows arrived with a time before the cut-over later than `cutoverDelay`. Raise the delay and run again.
+- On a Summing, Replacing, Aggregating or Collapsing MergeTree the verification compares both tables under `FINAL`, so unmerged parts in the old table are not a mismatch. A mismatch that remains names the engine: run `OPTIMIZE TABLE <db>.<table> FINAL` and run the rebuild again.
+- A plain MergeTree rebuilt into one of those engines is compared per key of the new sorting key, on what the new engine keeps (a Summing table's sums, a Replacing table's highest version, a Collapsing table's sum of signs), so the different row counts are not a mismatch. A missing key or a changed sum still fails.
+- A backfill that stops naming writes "begun before the cut-over" waited `cutoverTimeout` for INSERTs into the old table that were still running. Let them finish, or stop them, and run again.
+- The Op refuses a database that is neither Atomic nor Replicated (`EXCHANGE TABLES` needs one of them), a table whose change is not a rebuild (use the applier), and an object already under one of its working names that is not its own. In a Replicated database it also refuses a table, or a declaration, whose engine is not `Replicated*MergeTree`: a plain MergeTree keeps different rows on each replica and one replica's copy would lose the others'.
+
+## On a Replicated database
+
+The Op runs on a `Replicated` database (two replicas with Keeper are covered by the e2e test). Declare the tables `ENGINE = ReplicatedMergeTree` with no arguments, so each table, the new one included, gets its own Keeper path from its UUID; an explicit path without `{uuid}` is refused. `chant run` can reach any replica, and a different one on each run: the DDL reaches every replica through the database, the receipts live in `<db>.__chant_receipts` and replicate, each step that reads rows first waits for its replica to catch up (`SYSTEM SYNC REPLICA`), and a copy still running on another replica is killed with `KILL QUERY ON CLUSTER '<db>'`. A dependent view is detached `PERMANENTLY`, the only form the database takes, and attached again.
+
+A replica that is down does not stop the rebuild by itself. Every DDL statement runs with `distributed_ddl_output_mode = throw_only_active`: it goes on with the live replicas, and the down one runs the statements from the database's log in Keeper when it comes back, in order, then fetches the rows. Right after a replica goes down, Keeper still counts it active until its session expires (about 30s), so the next statement waits that long once. A step that reads rows stops only when the down replica holds parts that no live replica has fetched: it waits `replicaTimeout` per attempt for them, then fails with a message naming the replica and the parts, and onFailure drops the new table. Bring that replica back and run again. Point `chant run` at a live replica, and keep Keeper itself up: without Keeper nothing replicates.
+
+## Checking it is done
+
+`chant sql plan <env> dist/schema.json` reports no changes for the table, `<t>__chant_old` is gone after the drop, and a later `chant run` of the Op reports `RebuildState` `done`. Then remove the `*.op.ts` file.
+
+The rebuild's working tables carry chant's comment marker with `rebuild=<db.t>` and a role, and plans, imports and prunes leave them out, so an `ApplyOp` for the rest of the schema can run beside a rebuild.

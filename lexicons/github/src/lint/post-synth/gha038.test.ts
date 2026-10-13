@@ -61,4 +61,24 @@ jobs:
     const diags = gha038.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
+
+  test("flags a checkout step that starts with name: (#3201)", () => {
+    const yaml = `name: After CI
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Report
+        run: ./report.sh
+`;
+    const diags = gha038.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("report");
+  });
 });

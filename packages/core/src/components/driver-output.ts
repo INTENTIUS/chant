@@ -7,6 +7,7 @@
  */
 
 import type { DriverRunResult, DriverStepRecord } from "./driver";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 
 type Writer = (line: string) => void;
 
@@ -75,7 +76,9 @@ export function renderDriverHuman(result: DriverRunResult, write: Writer = stder
     // #2310: this run's own append reached only the local chant/lifecycle
     // branch. The gate still stands correctly — but an operator elsewhere
     // cannot see the pending fact to approve it.
-    if (result.gatePushed === false) {
+    if (result.gatePushed === false && isLifecycleLocalNote(result.gatePushWarning)) {
+      write(`  note    : ${LIFECYCLE_LOCAL_NOTE}`);
+    } else if (result.gatePushed === false) {
       write(
         `  warning : the pending fact was not pushed to the remote — ` +
           (result.gatePushWarning ?? "it exists only in this checkout") +

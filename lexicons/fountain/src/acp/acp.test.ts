@@ -8,8 +8,15 @@
  * would pass without the protocol ever being spoken.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { PassThrough } from "node:stream";
+
+// The workspace's sealed gates (`identity.gates`), standing in for a project's declaration.
+const sealedGates = new Set<string>();
+vi.mock("@intentius/chant/op/gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@intentius/chant/op/gate")>();
+  return { ...actual, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
+});
 import {
   JsonRpcPeer,
   memoryTransportPair,
@@ -126,6 +133,8 @@ interface StubHostOptions {
 
 interface StubHost extends ChantHost {
   started: string[];
+  /** The options each `startOp` was handed, in order. */
+  startOpts: OpRunStartOptions[];
   verbsRun: string[];
   resolvedGates: Array<{ op: string; gate: string; by: string }>;
   firstStep: Promise<void>;
@@ -140,6 +149,7 @@ function stubHost(opts: StubHostOptions = {}): StubHost {
   const host: StubHost = {
     cwd: process.cwd(),
     started: [],
+    startOpts: [],
     verbsRun: [],
     resolvedGates: [],
     firstStep,
@@ -153,6 +163,7 @@ function stubHost(opts: StubHostOptions = {}): StubHost {
     },
     async startOp(op: OpConfig, start: OpRunStartOptions): Promise<OpRunHandle> {
       host.started.push(op.name);
+      host.startOpts.push(start);
       const runId = "run-1";
       const settled = (async (): Promise<OpRunStatus> => {
         const records = opts.records ?? [];
@@ -336,6 +347,7 @@ describe("chant acp", () => {
     expect(init.agentCapabilities).toMatchObject({
       loadSession: false,
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      sessionCapabilities: { resume: {} },
     });
 
     const session = (await client.peer.request("session/new", {
@@ -358,6 +370,60 @@ describe("chant acp", () => {
     await client.peer.request("initialize", {});
     await client.peer.request("session/new", { cwd: "/tmp/project-a" });
     expect(seen).toEqual(["/tmp/project-a"]);
+  });
+
+  // Fountain spawns `chant acp` once per turn and, from a conversation's
+  // second turn on, resumes the session the first turn opened. A fresh
+  // process has never seen that id, and must take it up rather than fail.
+  it("resumes a session another process opened, in the cwd the client sends", async () => {
+    const seen: string[] = [];
+    const host = stubHost({ records: okRecords });
+    const server = new AcpServer({
+      createHost: (cwd) => {
+        seen.push(cwd);
+        return host;
+      },
+    });
+    const client = connect(server);
+    await client.peer.request("initialize", {});
+
+    const result = await client.peer.request("session/resume", {
+      sessionId: "sess-from-turn-1",
+      cwd: "/tmp/project-b",
+      mcpServers: [],
+    });
+    expect(result).toEqual({});
+    expect(seen).toEqual(["/tmp/project-b"]);
+
+    await client.peer.request("session/prompt", {
+      sessionId: "sess-from-turn-1",
+      prompt: promptOf("chant run demo-op"),
+    });
+    expect(host.started).toEqual(["demo-op"]);
+  });
+
+  it("keeps a session this process already holds when it is resumed", async () => {
+    const seen: string[] = [];
+    const server = new AcpServer({
+      createHost: (cwd) => {
+        seen.push(cwd);
+        return stubHost();
+      },
+    });
+    const client = connect(server);
+    await client.peer.request("initialize", {});
+    const { sessionId } = (await client.peer.request("session/new", { cwd: "/tmp/project-a" })) as {
+      sessionId: string;
+    };
+    await client.peer.request("session/resume", { sessionId, cwd: "/tmp/project-a" });
+    expect(seen).toEqual(["/tmp/project-a"]);
+  });
+
+  it("refuses a session/resume with no sessionId", async () => {
+    const server = new AcpServer({ createHost: () => stubHost() });
+    const client = connect(server);
+    await client.peer.request("initialize", {});
+    await expect(client.peer.request("session/resume", { cwd: "/tmp/x" })).rejects.toThrow(/sessionId/);
   });
 
   it("rejects an unknown method with -32601", async () => {
@@ -403,6 +469,39 @@ describe("chant acp", () => {
         order.indexOf(`tool_call_update ${call.toolCallId}`),
       );
     }
+  });
+
+  // #3539: on fountain the session names every run by the conversation id,
+  // and a prompt's --param and --work reach the run as `chant run` passes them.
+  it("names the run by the server's runId and passes --env, --param and --work through", async () => {
+    const host = stubHost({ records: okRecords });
+    const server = new AcpServer({ createHost: () => host, runId: "conv-42" });
+    const { client, sessionId } = await open(server);
+
+    await client.peer.request("session/prompt", {
+      sessionId,
+      prompt: promptOf('chant run demo-op --env prod --param tier=gold --param "note=two words" --work ISSUE-7 --on local'),
+    });
+
+    expect(host.startOpts).toHaveLength(1);
+    expect(host.startOpts[0]).toMatchObject({
+      env: "prod",
+      runId: "conv-42",
+      params: { tier: "gold", note: "two words" },
+      work: { item: "ISSUE-7" },
+    });
+  });
+
+  it("leaves the run id to the runtime when the server names none", async () => {
+    const host = stubHost({ records: okRecords });
+    const server = new AcpServer({ createHost: () => host });
+    const { client, sessionId } = await open(server);
+
+    await client.peer.request("session/prompt", { sessionId, prompt: promptOf("chant run demo-op") });
+
+    expect(host.startOpts[0]).not.toHaveProperty("runId");
+    expect(host.startOpts[0]).not.toHaveProperty("params");
+    expect(host.startOpts[0]).not.toHaveProperty("work");
   });
 
   it("replies with the run record as the final chunk", async () => {
@@ -527,10 +626,32 @@ describe("chant acp", () => {
 
     expect(result.stopReason).toBe("end_turn");
     expect(text(client.updates)).toContain("chant approve demo-op deploy");
+    expect(text(client.updates)).not.toContain("--sign");
     expect(client.permissionRequests).toEqual([]);
 
     // A step the run never reached is settled rather than left spinning.
     expect(toolUpdates(client.updates).length).toBe(toolCalls(client.updates).length);
+  });
+
+  it("names --sign in the approve hint when the gate is sealed (#3521)", async () => {
+    sealedGates.add("deploy");
+    try {
+      const host = stubHost({
+        records: [okRecords[0]],
+        status: {
+          state: "gated",
+          gate: { name: "deploy", since: "2026-09-06T00:00:01.000Z" },
+        } as Partial<OpRunStatus>,
+      });
+      const server = new AcpServer({ createHost: () => host });
+      const { client, sessionId } = await open(server);
+
+      await client.peer.request("session/prompt", { sessionId, prompt: promptOf("chant run demo-op") });
+
+      expect(text(client.updates)).toContain("chant approve demo-op deploy --sign");
+    } finally {
+      sealedGates.delete("deploy");
+    }
   });
 
   it("asks for permission and waits under --durable-requests, then completes on resume", async () => {

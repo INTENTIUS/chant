@@ -3,7 +3,8 @@ import { runOpLocally } from "../local-executor";
 import type { ActivityFn, ActivityProfile } from "../activity-registry";
 import type { OpConfig } from "../types";
 import { eq, gt, run, report, when } from "../converge-rule";
-import type { ConvergeSymptom } from "../../lifecycle/symptoms";
+import type { ConvergeSymptom, ResourceSymptom } from "../../lifecycle/symptoms";
+import { activity } from "../builders";
 import { ConvergeOp } from "./converge-op";
 
 function props(op: unknown): OpConfig {
@@ -164,5 +165,30 @@ describe("ConvergeOp — end-to-end local run (#1484)", () => {
     ]);
     const result = await runOpLocally(config, activities, PROFILES);
     expect(result.status).toBe("ok");
+  });
+});
+
+describe("ConvergeOp with an observer step (#2778)", () => {
+  const restart = when<ResourceSymptom>(eq("status", "drifted"), run("restart-service"), { id: "restart-drifted", why: "Restart a drifted service." });
+  const observer = activity("spriteServicesObserve", { services: [{ name: "app" }] });
+
+  test("the observer is the Observe phase, and its whole result is the tick's observation", () => {
+    const { op } = ConvergeOp({ name: "box-converge", env: "box", dial: "apply", observe: observer, rules: [restart], schedule: "* * * * *" });
+    const config = props(op);
+    expect(config.labels).toEqual({ Converge: "true", Env: "box", Dial: "apply", Observe: "step" });
+    expect(config.schedule).toEqual({ cron: "* * * * *", overlap: "skip" });
+    expect(phaseNamed(op, "Observe").steps).toEqual([{ ...observer, id: "observe" }]);
+    const tickStep = phaseNamed(op, "Converge").steps[0] as { fn: string; args: Record<string, unknown> };
+    expect(tickStep.fn).toBe("convergeTick");
+    expect(tickStep.args.observed).toMatchObject({ kind: "step-output-ref", step: "observe" });
+    expect(tickStep.args.preflightDrift).toBeUndefined();
+    expect(tickStep.args.rules).toEqual([restart]);
+  });
+
+  test("an observer's own id is kept, and a rule over a field ResourceSymptom doesn't produce is refused", () => {
+    const { op } = ConvergeOp({ name: "box-converge", env: "box", observe: activity("shellCmd", { cmd: "./probe" }, { id: "probe" }), rules: [restart] });
+    expect((phaseNamed(op, "Converge").steps[0] as unknown as { args: { observed: { step: string } } }).args.observed.step).toBe("probe");
+    const envRule = when<ConvergeSymptom>(gt("adoptCount", 0), report("x"), { id: "adopt", why: "x" });
+    expect(() => ConvergeOp({ name: "box-converge", env: "box", observe: observer, rules: [envRule as never] })).toThrow(/ResourceSymptom/);
   });
 });

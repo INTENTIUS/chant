@@ -5,6 +5,14 @@ import { join } from "node:path";
 import type { ParsedArgs } from "../registry";
 
 const discoverOpsMock = vi.fn();
+// Default: no steward owns anything discovered, so `stewardTurnGate` (#2750)
+// is a no-op for every test that doesn't explicitly set up a steward — a
+// `mockResolvedValueOnce` in those tests overrides it for one call and this
+// default is what every other call sees.
+const discoverStewardsMock = vi.fn().mockResolvedValue({ stewards: new Map(), errors: [], conflicts: [] });
+const acquireStewardTurnMock = vi.fn();
+const holdBesideLeaseMock = vi.fn();
+const releaseLeaseMock = vi.fn();
 const loadChantConfigMock = vi.fn();
 const writeFileSyncMock = vi.fn();
 const mkdirSyncMock = vi.fn();
@@ -18,7 +26,22 @@ const recordGateApprovalMock = vi.fn();
 const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
 let gateLedger = memoryGateLedgerPort();
 
-vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
+vi.mock("../../op/discover", () => ({
+  discoverOps: () => discoverOpsMock(),
+  discoverStewards: () => discoverStewardsMock(),
+}));
+vi.mock("../../op/operator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../op/operator")>();
+  return { ...actual, acquireStewardTurn: (...args: unknown[]) => acquireStewardTurnMock(...args) };
+});
+vi.mock("../../op/steward-beside", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../op/steward-beside")>();
+  return { ...actual, holdBesideLease: (...args: unknown[]) => holdBesideLeaseMock(...args) };
+});
+vi.mock("../../lifecycle/lease", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lifecycle/lease")>();
+  return { ...actual, releaseLease: (...args: unknown[]) => releaseLeaseMock(...args) };
+});
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
   return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };
@@ -38,6 +61,7 @@ vi.mock("node:fs", async () => {
   };
 });
 vi.mock("../../components/cli-support", () => ({
+  isComponentList: (selector: string) => selector.includes(","),
   runComponents: (...args: unknown[]) => runComponentsMock(...args),
   listComponents: (...args: unknown[]) => listComponentsMock(...args),
 }));
@@ -52,8 +76,9 @@ vi.mock("./operator", () => ({
 // gate handling, and a unit test must never write a fact to the real repo.
 vi.mock("../../op/gate", async () => {
   const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
-  return { ...actual, gitGateLedgerPort: () => gateLedger };
+  return { ...actual, gitGateLedgerPort: () => gateLedger, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
 });
+const sealedGates = new Set<string>();
 // The local runtime appends each run's record to that same branch (#2118).
 // Real behavior in a project, and exactly what this suite must not do in
 // chant's own checkout, since the append is against `process.cwd()`. Only the
@@ -199,6 +224,25 @@ describe("runOp dispatcher", () => {
     stderrWrite.mockRestore();
   });
 
+  test("--work on an Op with no work lease → exit 1, nothing run (#2748)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello", work: "W-1" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('--work W-1: Op "hello" declares no work lease');
+  });
+
+  test("an Op whose work lease leaves the item to the run, run without --work → exit 1 naming the flag (#2748)", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([["leased", { config: { name: "leased", overview: "leased", phases: [], workLease: {} } }]]),
+      errors: [],
+    });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "leased", holder: "me" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("chant run leased --work <id>");
+  });
+
   test("--report → exit 1 naming the removal, nothing run (#2116)", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
     const stderr = makeStderrSpy();
@@ -222,7 +266,26 @@ describe("runOp dispatcher", () => {
     stderrWrite.mockRestore();
     expect(out).toContain('is gated on "approve-prod"');
     expect(out).toContain("chant approve gated approve-prod");
+    expect(out).not.toContain("--sign");
     expect(gateLedger.appended).toHaveLength(1);
+  });
+
+  test("gate in local mode on a sealed gate: the approve line carries --sign (#3521)", async () => {
+    gateLedger = memoryGateLedgerPort();
+    sealedGates.add("approve-prod");
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("gated", [{ kind: "gate", gate: "approve-prod" }])]),
+      errors: [],
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await runOp({ args: makeArgs({ path: "gated" }), plugins: [], serializers: [] })).toBe(3);
+      const out = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
+      expect(out).toContain("approve : chant approve gated approve-prod --sign");
+    } finally {
+      stderrWrite.mockRestore();
+      sealedGates.clear();
+    }
   });
 
   test("an approved gate lets the run through and exits 0", async () => {
@@ -266,6 +329,279 @@ describe("runOp dispatcher", () => {
     expect(parsed.status).toBe("ok");
     expect(parsed.phases[0].steps[0]).toMatchObject({ fn: "shellCmd", status: "ok" });
     vi.restoreAllMocks();
+  });
+});
+
+/**
+ * chant #2750 — an Op a declared steward lists is one of its turns, not a
+ * run beside one: `chant run <op>` for such an Op takes the steward's turn
+ * lease (in the local form) or is redirected to the steward's thread (on
+ * fountain), rather than running unaware of a turn already in progress.
+ *
+ * `acquireStewardTurn` and `releaseLease` are stubbed here (mocked above):
+ * the point of these tests is the CLI's own decision and its message, not
+ * the lease's git plumbing, which `op/steward.test.ts` and
+ * `lifecycle/lease.test.ts` already cover against a real repo.
+ */
+describe("runOp: a steward's turn (#2750)", () => {
+  function stewardOwning(opName: string, name: string, form: "local" | "fountain" = "local") {
+    return {
+      stewards: new Map([[name, {
+        declaration: {
+          kind: "Chant::Steward", name, ops: [{ name: opName, phases: [] }],
+          form: { default: form, environments: {} }, capabilities: [], vault: null,
+        },
+        filePath: "ops/steward.op.ts", exportName: "steward",
+      }]]),
+      errors: [], conflicts: [],
+    };
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    acquireStewardTurnMock.mockReset();
+    releaseLeaseMock.mockReset().mockResolvedValue(true);
+  });
+
+  test("local form, the turn is free: takes it, runs, and releases it once the run is over", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockResolvedValue({
+      acquired: true,
+      lease: { op: "_turns/box-steward", holder: "h", token: "t1", acquiredAt: "x", expiresAt: "y" },
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+    stderrWrite.mockRestore();
+
+    expect(exit).toBe(0);
+    expect(acquireStewardTurnMock).toHaveBeenCalledTimes(1);
+    expect(acquireStewardTurnMock.mock.calls[0]?.[0]).toBe("box-steward");
+    expect(releaseLeaseMock).toHaveBeenCalledTimes(1);
+    expect(releaseLeaseMock).toHaveBeenCalledWith("_turns/box-steward", expect.any(String), "t1");
+  });
+
+  test("local form, a turn is already in progress: refused, naming the steward and holder, nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockResolvedValue({
+      acquired: false,
+      reason: "held",
+      heldBy: { op: "_turns/box-steward", holder: "other-host:123:abcd", token: "t0", acquiredAt: "x", expiresAt: "y" },
+    });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("other-host:123:abcd");
+    expect(out).toContain("chant operator status --steward box-steward");
+    expect(releaseLeaseMock).not.toHaveBeenCalled();
+  });
+
+  test("fountain form without --on fountain: refused, naming the redirect, no turn lease touched", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("release", [])]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward", "fountain"));
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("chant run release --on fountain");
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+  });
+
+  test("fountain form with --on fountain: the local turn-lease check is skipped and the fountain runtime runs it", async () => {
+    const runtime = {
+      name: "fountain",
+      start: vi.fn(async (op: { name: string }) => ({
+        op: op.name,
+        runId: "f-1",
+        result: async () => ({ op: op.name, runId: "f-1", state: "completed" as const, startedAt: "t", endedAt: "t" }),
+      })),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("release", [])]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"] } });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "release", on: "fountain" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+  });
+
+  test("fountain form with run.on: fountain and no flag: runs on fountain like --on fountain (#2523)", async () => {
+    const runtime = {
+      name: "fountain",
+      start: vi.fn(async (op: { name: string }) => ({
+        op: op.name,
+        runId: "f-1",
+        result: async () => ({ op: op.name, runId: "f-1", state: "completed" as const, startedAt: "t", endedAt: "t" }),
+      })),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("release", [])]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"], run: { on: "fountain" } } });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "release" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+  });
+
+  // #3555: a runtime that carries the work item (fountain) is handed what the
+  // caller named, and nothing else; one that does not refuses --work by name.
+  function leasedOp(name: string) {
+    return [name, { config: { name, overview: `${name} overview`, phases: [], workLease: {} } }] as const;
+  }
+
+  test("--work on a runtime that carries work: start gets the item and holder the caller named (#3555)", async () => {
+    const runtime = {
+      name: "fountain",
+      carriesWork: true,
+      start: vi.fn(async (op: { name: string }, _opts: { work?: { item?: string; holder?: string } }) => ({
+        op: op.name,
+        runId: "f-1",
+        result: async () => ({ op: op.name, runId: "f-1", state: "completed" as const, startedAt: "t", endedAt: "t" }),
+      })),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([leasedOp("leased")]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("leased", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"] } });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "leased", on: "fountain", work: "ISSUE-7" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(runtime.start.mock.calls[0][1].work).toEqual({ item: "ISSUE-7" });
+  });
+
+  test("--work on a runtime that does not carry work: exit 1 naming the runtime, nothing started (#3555)", async () => {
+    const runtime = {
+      name: "fountain",
+      start: vi.fn(),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([leasedOp("leased")]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("leased", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"] } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "leased", on: "fountain", work: "ISSUE-7" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(1);
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect(stderr.join("\n")).toContain('--work and --holder run on the local runtime; "fountain" takes the work lease');
+  });
+
+  test("local form, the turn lease's own acquire throws (a stale .lock): refused as a lease error, not an uncaught exception, and nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockRejectedValue(new Error("cannot lock ref 'refs/chant/lease/_turns/box-steward': File exists"));
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("cannot lock ref");
+    expect(releaseLeaseMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * chant #2861: `chant run <op>` for an Op a steward runs beside its turns
+ * takes the Op's own lease, as `--holder`, and never the steward's turn.
+ * `holdBesideLease` is stubbed; `op/steward-beside.test.ts` runs it against a
+ * real repo.
+ */
+describe("runOp: an Op beside a steward's turns (#2861)", () => {
+  function stewardBeside(opName: string, name: string) {
+    return {
+      stewards: new Map([[name, {
+        declaration: {
+          kind: "Chant::Steward", name, ops: [{ name: "converge", phases: [] }, { name: opName, phases: [] }],
+          beside: [{ op: opName, ready: null }],
+          form: { default: "local", environments: {} }, capabilities: [], vault: null,
+        },
+        filePath: "ops/steward.op.ts", exportName: "steward",
+      }]]),
+      errors: [], conflicts: [],
+    };
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    acquireStewardTurnMock.mockReset();
+    holdBesideLeaseMock.mockReset();
+    releaseLeaseMock.mockReset().mockResolvedValue(true);
+  });
+
+  test("takes the Op's lease as --holder, not the turn, runs, and releases it once the run is over", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("dispatch", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardBeside("dispatch", "box-steward"));
+    const release = vi.fn(async () => {});
+    holdBesideLeaseMock.mockResolvedValue({ acquired: true, lease: { op: "dispatch", holder: "h", token: "t1", acquiredAt: "x", expiresAt: "y" }, release });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "dispatch", holder: "box-steward/dispatch@op1" }), plugins: [], serializers: [] });
+    stderrWrite.mockRestore();
+
+    expect(exit).toBe(0);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+    expect(holdBesideLeaseMock).toHaveBeenCalledWith("dispatch", "box-steward/dispatch@op1");
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  test("a run of it in progress: refused, naming the holder, nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("dispatch", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardBeside("dispatch", "box-steward"));
+    holdBesideLeaseMock.mockResolvedValue({ acquired: false, heldBy: "box-steward/dispatch@op1" });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "dispatch" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain(`runs beside steward "box-steward"'s turns`);
+    expect(out).toContain("box-steward/dispatch@op1");
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
   });
 });
 
@@ -352,9 +688,30 @@ describe("runOp: --gated-exit (#2243)", () => {
     expect(readFileSync(file, "utf8")).toContain("chant approve gated approve-prod");
   });
 
+  test("a sealed gate: the --json approve field and the summary carry --sign (#3521)", async () => {
+    const file = summaryFile();
+    process.env.GITHUB_STEP_SUMMARY = file;
+    sealedGates.add("approve-prod");
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    makeStderrSpy();
+
+    try {
+      await runOp({ args: makeArgs({ path: "gated", gatedExit: 0, json: true }), plugins: [], serializers: [] });
+      const parsed = JSON.parse(stdoutWrite.mock.calls.map((c) => String(c[0])).join("").trim());
+      expect(parsed.approve).toBe("chant approve gated approve-prod --sign");
+      expect(readFileSync(file, "utf8")).toContain("chant approve gated approve-prod --sign --approver <you>");
+    } finally {
+      sealedGates.clear();
+    }
+  });
+
   test("a run that fails for any other reason is still red under the flag", async () => {
     discoverOpsMock.mockResolvedValue({
-      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", args: { cmd: "exit 7" } }])]),
+      // atMostOnce: one attempt. The default profile retries twice with 5s and
+      // 10s backoff, which put this test at 15s for waits it does not test (#2817).
+      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", profile: "atMostOnce", args: { cmd: "exit 7" } }])]),
       errors: [],
     });
     const file = summaryFile();
@@ -510,6 +867,45 @@ describe("runOp: --sandbox with a policyGate step (chant #2003)", () => {
     expect(seen).not.toHaveProperty("profile");
   });
 
+  // #3521: a hosted runtime that reports only a gate name gets a hint whose
+  // approve command names `--sign` when the workspace seals that gate.
+  describe("a runtime that reports a gated state with only the gate name (#3521)", () => {
+    async function runGatedOnStub(): Promise<string> {
+      discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("prod-apply")]), errors: [] });
+      const start = vi.fn(async () => ({
+        op: "prod-apply",
+        runId: "stub-1",
+        result: async () => ({
+          op: "prod-apply", runId: "stub-1", state: "gated", startedAt: "2026-01-01T00:00:00.000Z",
+          gate: { name: "approve-prod", since: "2026-01-01T00:00:00.000Z" },
+        }),
+      }));
+      makeStdoutSpy();
+      const stderr = makeStderrSpy();
+      const exit = await runOp({
+        args: makeArgs({ path: "prod-apply", on: "stub" }),
+        plugins: [{ name: "stub", opRuntime: { name: "stub", start } } as never], serializers: [],
+      });
+      expect(exit).toBe(3);
+      return stderr.join("\n");
+    }
+
+    test("unsealed gate: the hint's approve command has no --sign", async () => {
+      const out = await runGatedOnStub();
+      expect(out).toContain("Record the resolution with: chant approve prod-apply approve-prod");
+      expect(out).not.toContain("--sign");
+    });
+
+    test("sealed gate: the hint's approve command ends in --sign", async () => {
+      sealedGates.add("approve-prod");
+      try {
+        expect(await runGatedOnStub()).toContain("Record the resolution with: chant approve prod-apply approve-prod --sign");
+      } finally {
+        sealedGates.clear();
+      }
+    });
+  });
+
   test("--sandbox on an Op with no policyGate step is untouched", async () => {
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
@@ -612,6 +1008,29 @@ describe("run subcommands on the resolved runtime", () => {
     expect((runtime.start.mock.calls[0][0] as { name: string }).name).toBe("hello");
   });
 
+  test("--param reaches the runtime's start as params (#3539)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", on: "stub", env: "staging", param: ["agent=ops-bot", "tier=gold plus"] }),
+      plugins: [stubPlugin(runtime)], serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect((runtime.start.mock.calls[0] as unknown[])[1]).toMatchObject({
+      env: "staging",
+      params: { agent: "ops-bot", tier: "gold plus" },
+    });
+  });
+
+  test("no --param hands start no params", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    makeStdoutSpy();
+    await runOp({ args: makeArgs({ path: "hello", on: "stub" }), plugins: [stubPlugin(runtime)], serializers: [] });
+    expect((runtime.start.mock.calls[0] as unknown[])[1]).not.toHaveProperty("params");
+  });
+
   test("run status/log/list/cancel --on stub reach their methods", async () => {
     const runtime = makeStubRuntime();
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
@@ -655,6 +1074,93 @@ describe("run subcommands on the resolved runtime", () => {
     });
     expect(exit).toBe(1);
     expect(stderr.join("\n")).toContain('lexicon "plain" does not host Op runs');
+  });
+
+  test("run.on in chant.config.ts is the default runtime when --on is not given (#2523)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"], run: { on: "stub" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    const ctx = (over: Partial<ParsedArgs>) => ({ args: makeArgs(over), plugins: [stubPlugin(runtime)], serializers: [] });
+
+    expect(await runOp(ctx({ path: "hello" }))).toBe(0);
+    expect(await runOpStatus(ctx({ extraPositional: "hello" }))).toBe(0);
+    expect(await runOpLog(ctx({ extraPositional: "hello" }))).toBe(0);
+    expect(await runOpList(ctx({}))).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(runtime.status).toHaveBeenCalledWith("hello");
+    expect(runtime.log).toHaveBeenCalledTimes(1);
+    expect(runtime.list).toHaveBeenCalledTimes(1);
+  });
+
+  test("--on local overrides run.on and runs on the built-in runtime (#2523)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"], run: { on: "stub" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    await runOpList({ args: makeArgs({ on: "local" }), plugins: [stubPlugin(runtime)], serializers: [] });
+    expect(runtime.list).not.toHaveBeenCalled();
+  });
+
+  test("run.on naming an unconfigured lexicon gets --on's refusal, naming run.on (#2523)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["aws"], run: { on: "nope" } } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('run.on "nope" in chant.config.ts: "nope" is not a configured lexicon');
+    expect(stderr.join("\n")).toContain("Configured lexicons: aws");
+    expect(stderr.join("\n")).toContain("--on local");
+  });
+
+  test("an explicit --on wins over run.on (#2523)", async () => {
+    const chosen = makeStubRuntime();
+    const other = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub", "other"], run: { on: "other" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    const plugins = [stubPlugin(chosen), { name: "other", opRuntime: other } as never];
+    expect(await runOpList({ args: makeArgs({ on: "stub" }), plugins, serializers: [] })).toBe(0);
+    expect(chosen.list).toHaveBeenCalledTimes(1);
+    expect(other.list).not.toHaveBeenCalled();
+  });
+
+  test("run.on: local selects the built-in runtime (#2523)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"], run: { on: "local" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    await runOpList({ args: makeArgs({}), plugins: [stubPlugin(runtime)], serializers: [] });
+    expect(runtime.list).not.toHaveBeenCalled();
+  });
+
+  test("an invalid run block is refused, not run locally (#2523)", async () => {
+    const { InvalidChantConfigError } = await vi.importActual<typeof import("../../config")>("../../config");
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockRejectedValue(
+      new InvalidChantConfigError("Invalid chant config in /p/chant.config.ts: run.on: Expected string, received number", "run"),
+    );
+    const stderr = makeStderrSpy();
+    makeStdoutSpy();
+    expect(await runOpList({ args: makeArgs({}), plugins: [stubPlugin(runtime)], serializers: [] })).toBe(1);
+    expect(stderr.join("\n")).toContain("Invalid chant config in /p/chant.config.ts: run.on");
+    expect(runtime.list).not.toHaveBeenCalled();
+    // --on local still runs: the flag needs nothing from the config.
+    expect(await runOpList({ args: makeArgs({ on: "local" }), plugins: [stubPlugin(runtime)], serializers: [] })).toBe(0);
+  });
+
+  test("run.on naming a lexicon with no opRuntime gets --on's refusal, naming run.on (#2523)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["plain"], run: { on: "plain" } } });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [{ name: "plain" } as never], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('run.on "plain" in chant.config.ts: lexicon "plain" does not host Op runs');
   });
 
   test("--components on a runtime that cannot host them → one line, exit 1", async () => {
@@ -707,6 +1213,21 @@ describe("runOpApprove", () => {
     expect(stderr.join("\n")).toContain('Runtime "stub" was notified');
   });
 
+  test("--env on the approve line reaches resolveGate (#3539)", async () => {
+    const record = { version: 1, op: "alb-deploy", gate: "release", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" };
+    recordGateApprovalMock.mockResolvedValue({ ok: true, record });
+    const resolveGate = vi.fn(async () => undefined);
+    makeStderrSpy();
+
+    const exit = await runOpApprove({
+      args: makeArgs({ on: "stub", extraPositional: "alb-deploy", extraPositional2: "release", approver: "alex", env: "prod" }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", resolveGate } } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(resolveGate).toHaveBeenCalledWith("alb-deploy", "release", record, { env: "prod" });
+  });
+
   test("a provider with no resolveGate still records the fact and exits 0", async () => {
     const record = { version: 1, op: "alb-deploy", gate: "release", resolvedBy: "ci", timestamp: "2026-01-01T00:00:00.000Z" };
     recordGateApprovalMock.mockResolvedValue({ ok: true, record });
@@ -757,6 +1278,25 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     vi.restoreAllMocks();
   });
 
+  test("a list selector prints the resolved order and the added dependencies before running (#3950)", async () => {
+    discoverOpsMock.mockReset();
+    const stderr = makeStderrSpy();
+    let printedBeforeRun = "";
+    runComponentsMock.mockImplementation(async (_path: string, _selector: string, options: { onPlan?: (plan: unknown) => void }) => {
+      options.onPlan?.({ order: ["db", "api", "web"], waves: [["db"], ["api", "web"]], added: ["db"] });
+      printedBeforeRun = stderr.join("\n");
+      return { success: true, selected: ["db", "api", "web"], run: { order: ["db", "api", "web"], waves: [["db"], ["api", "web"]], results: [], ok: true, status: "ok" } };
+    });
+
+    const exit = await runOp({ args: makeArgs({ path: "api,web", components: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "api,web", expect.objectContaining({ onPlan: expect.any(Function) }));
+    expect(printedBeforeRun).toContain("run order: db, then api + web");
+    expect(printedBeforeRun).toContain("added as dependencies: db");
+    vi.restoreAllMocks();
+  });
+
   // chant #1116 — the component driver never checked --report, so it was
   // silently ignored and the command fell through to a real dispatch.
   // Hard-error instead, before runComponents is ever reached.
@@ -785,6 +1325,53 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     expect(exit).toBe(0);
     expect(runComponentsMock).toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+// #3521: a gated component's approve line and mismatch line name `--sign` on
+// a sealed gate and leave it off otherwise.
+describe("runOp --components gate hints (#3521)", () => {
+  beforeEach(() => {
+    runComponentsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
+  });
+
+  async function runGatedComponent(): Promise<string> {
+    runComponentsMock.mockResolvedValue({
+      success: false,
+      selected: ["svc"],
+      gated: {
+        component: "svc",
+        gate: {
+          version: 1, kind: "pending", op: "svc", gate: "approve-prod", environment: "prod",
+          timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+        mismatch: { approved: "sha256:aaa", planned: "sha256:bbb", resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z", environment: "prod" },
+      },
+    });
+    const stderr = makeStderrSpy();
+    expect(await runOp({ args: makeArgs({ path: "svc", components: true }), plugins: [], serializers: [] })).toBe(3);
+    return stderr.join("\n");
+  }
+
+  test("unsealed gate: the approve line and the mismatch line carry no --sign", async () => {
+    const out = await runGatedComponent();
+    expect(out).toContain("approve : chant approve svc approve-prod --env prod");
+    expect(out).toContain("needs a fresh one: chant approve svc approve-prod --env prod");
+    expect(out).not.toContain("--sign");
+  });
+
+  test("sealed gate: the approve line and the mismatch line end in --sign", async () => {
+    sealedGates.add("approve-prod");
+    try {
+      const out = await runGatedComponent();
+      expect(out).toContain("approve : chant approve svc approve-prod --env prod --sign");
+      expect(out).toContain("needs a fresh one: chant approve svc approve-prod --env prod --sign");
+    } finally {
+      sealedGates.clear();
+    }
   });
 });
 
@@ -1157,6 +1744,53 @@ describe("runOpComponents", () => {
       vi.restoreAllMocks();
     });
 
+    test("--digest-file writes <component>=<digest> for each release the run recorded (#2602)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc", "infra"],
+        run: {
+          order: ["svc", "infra"],
+          waves: [["svc", "infra"]],
+          results: [
+            { component: "svc", ok: true, status: "ok", records: [] },
+            { component: "infra", ok: true, status: "ok", records: [] },
+          ],
+          ok: true,
+          status: "ok",
+        },
+      });
+      maybeRecordAutoReleaseMock.mockImplementation(async (info: { component: string }) =>
+        info.component === "svc"
+          ? { recorded: true, commit: "a".repeat(40), record: { version: 1, component: "svc", env: "staging", digest: "sha256:abc", gitSha: "x", runId: "local-1", timestamp: "t", actor: "a" } }
+          : { recorded: false, reason: "no-digest" });
+      writeFileSyncMock.mockClear();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "all", env: "staging", digestFile: "out/svc.digest" }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      const call = writeFileSyncMock.mock.calls.find(([path]) => String(path).endsWith("out/svc.digest"));
+      expect(call?.[1]).toBe("svc=sha256:abc\n");
+      vi.restoreAllMocks();
+    });
+
+    test("--digest-file is written empty when nothing was recorded (#2602)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
+      });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+      writeFileSyncMock.mockClear();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runOpComponents({ args: makeArgs({ path: "svc", digestFile: "svc.digest" }), plugins: [], serializers: [] });
+
+      const call = writeFileSyncMock.mock.calls.find(([path]) => String(path).endsWith("svc.digest"));
+      expect(call?.[1]).toBe("");
+      vi.restoreAllMocks();
+    });
+
     test("a release-write error is surfaced as a warning but does not change the exit code", async () => {
       runComponentsMock.mockResolvedValue({
         success: true,
@@ -1261,5 +1895,163 @@ describe("runOpComponents", () => {
       expect(stderr.join("\n")).toContain("manifest push failed");
       vi.restoreAllMocks();
     });
+  });
+});
+
+/**
+ * chant #3675 — a completed run that found drift exits 0 unless asked to
+ * fail: `--fail-on-drift` on the command line, or `failOn: "drift"` on the Op.
+ * The drift arrives the way a WatchOp's does, as a `Drift` outcome attribute.
+ */
+describe("runOp: --fail-on-drift (#3675)", () => {
+  function driftOp(name: string, drifted: boolean, extra: Record<string, unknown> = {}) {
+    const step = {
+      kind: "activity",
+      fn: "shellCmd",
+      args: { cmd: `echo '{"drifted":${drifted}}'`, json: true },
+      outcomeAttribute: { name: "Drift", from: "json.drifted" },
+    };
+    const [opName, discovered] = localOp(name, [step]);
+    return [opName, { config: { ...discovered.config, ...extra } }] as const;
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  test("drift without the flag or failOn still exits 0", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true)]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runOp({ args: makeArgs({ path: "watch" }), plugins: [], serializers: [] })).toBe(0);
+  });
+
+  test("--fail-on-drift exits 2 when the Drift outcome is true, and says why", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true)]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+    expect(await runOp({ args: makeArgs({ path: "watch", failOnDrift: true }), plugins: [], serializers: [] })).toBe(2);
+    expect(stderr.join("\n")).toContain("exiting 2 because --fail-on-drift");
+  });
+
+  test("--fail-on-drift exits 0 when the run found no drift", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", false)]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runOp({ args: makeArgs({ path: "watch", failOnDrift: true }), plugins: [], serializers: [] })).toBe(0);
+  });
+
+  test("an Op declaring failOn: \"drift\" exits 2 with no flag", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true, { failOn: "drift" })]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runOp({ args: makeArgs({ path: "watch" }), plugins: [], serializers: [] })).toBe(2);
+  });
+});
+
+/**
+ * chant #3955 — `--no-record` runs every step and records nothing on
+ * `chant/lifecycle`. The run says so before it starts and after it ends, a
+ * gate fails rather than recording a pending fact nobody could approve, and
+ * a runtime that would record elsewhere is refused.
+ */
+describe("runOp --no-record (#3955)", () => {
+  const START = "not recording (--no-record)";
+  const END = "not recorded (--no-record): nothing went on chant/lifecycle and nothing was pushed";
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    runComponentsMock.mockReset();
+    maybeRecordAutoReleaseMock.mockReset();
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
+    gateLedger = memoryGateLedgerPort();
+    delete process.env.CHANT_NO_RECORD;
+  });
+
+  afterEach(() => {
+    delete process.env.CHANT_NO_RECORD;
+    vi.restoreAllMocks();
+  });
+
+  test("an Op runs, the run says at its start and end that nothing was recorded, and the flag does not outlive it", async () => {
+    let during: string | undefined;
+    discoverOpsMock.mockImplementation(async () => {
+      during = process.env.CHANT_NO_RECORD;
+      return { ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", profile: "atMostOnce", args: { cmd: "true" } }])]), errors: [] };
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "hello", noRecord: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(during).toBe("1");
+    expect(process.env.CHANT_NO_RECORD).toBeUndefined();
+    expect(stderr[0]).toContain(START);
+    expect(stderr.at(-1)).toContain(END);
+  });
+
+  test("a gate fails the run and leaves no pending fact, and the end line still prints", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [{ kind: "gate", gate: "approve-prod" }])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gated", noRecord: true, gatedExit: 0 }), plugins: [], serializers: [] });
+
+    // A failure, not a gated stop: --gated-exit cannot turn it green.
+    expect(exit).toBe(1);
+    expect(gateLedger.appended).toHaveLength(0);
+    expect(stderr.at(-1)).toContain(END);
+  });
+
+  test("CHANT_NO_RECORD does the same without the flag, names itself, and stays set", async () => {
+    process.env.CHANT_NO_RECORD = "1";
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("hello", [])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(stderr[0]).toContain("not recording (CHANT_NO_RECORD=1)");
+    expect(process.env.CHANT_NO_RECORD).toBe("1");
+  });
+
+  test("a runtime other than local is refused before the run starts", async () => {
+    const start = vi.fn();
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"] } });
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", on: "stub", noRecord: true }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", start } } as never], serializers: [],
+    });
+
+    expect(exit).toBe(1);
+    expect(start).not.toHaveBeenCalled();
+    expect(stderr.join("\n")).toContain('--no-record runs on the local runtime; the "stub" runtime records the run where it executes it');
+  });
+
+  test("--components records no release and persists no manifest", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: true,
+      selected: ["svc"],
+      run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
+    });
+    maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", noRecord: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(maybeRecordAutoReleaseMock.mock.calls[0][1]).toMatchObject({ disabled: true });
+    expect(maybePersistBuildManifestMock.mock.calls[0][1]).toMatchObject({ disabled: true });
+    expect(stderr[0]).toContain(START);
+    expect(stderr.at(-1)).toContain(END);
   });
 });

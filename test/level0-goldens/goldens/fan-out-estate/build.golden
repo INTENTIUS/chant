@@ -1,0 +1,873 @@
+# chant build
+# on a copy of examples/fan-out-estate; see test/level0-goldens/harness.ts for what is normalised
+exit: 0
+
+--- wrote (empty)
+
+--- stdout
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Metadata": {
+    "chant:ownership": {
+      "chant:env": "local",
+      "chant:managed-by": "chant",
+      "chant:stack": "chant-fan-out-estate"
+    }
+  },
+  "Outputs": {
+    "LogGroupName": {
+      "Value": {
+        "Ref": "clusterBLogGroup"
+      }
+    },
+    "QueueUrl": {
+      "Value": {
+        "Fn::GetAtt": [
+          "networkQueue",
+          "QueueUrl"
+        ]
+      }
+    },
+    "TableName": {
+      "Value": {
+        "Ref": "clusterBTableTable"
+      }
+    },
+    "TopicArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "networkTopic",
+          "TopicArn"
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "app01TableName": {
+      "Description": "The cluster-a stack's TableName output",
+      "Type": "String"
+    },
+    "app02TableName": {
+      "Description": "The cluster-a stack's TableName output",
+      "Type": "String"
+    },
+    "app03TableName": {
+      "Description": "The cluster-a stack's TableName output",
+      "Type": "String"
+    },
+    "app04TableName": {
+      "Description": "The cluster-a stack's TableName output",
+      "Type": "String"
+    },
+    "app05TableName": {
+      "Description": "The cluster-a stack's TableName output",
+      "Type": "String"
+    },
+    "app06TableName": {
+      "Description": "The cluster-a stack's TableName output",
+      "Type": "String"
+    },
+    "app07TableName": {
+      "Description": "The cluster-b stack's TableName output",
+      "Type": "String"
+    },
+    "app08TableName": {
+      "Description": "The cluster-b stack's TableName output",
+      "Type": "String"
+    },
+    "app09TableName": {
+      "Description": "The cluster-b stack's TableName output",
+      "Type": "String"
+    },
+    "app10TableName": {
+      "Description": "The cluster-b stack's TableName output",
+      "Type": "String"
+    },
+    "app11TableName": {
+      "Description": "The cluster-b stack's TableName output",
+      "Type": "String"
+    },
+    "app12TableName": {
+      "Description": "The cluster-b stack's TableName output",
+      "Type": "String"
+    },
+    "clusterAQueueUrl": {
+      "Description": "The network stack's QueueUrl output",
+      "Type": "String"
+    },
+    "clusterATopicArn": {
+      "Description": "The network stack's TopicArn output",
+      "Type": "String"
+    },
+    "clusterBQueueUrl": {
+      "Description": "The network stack's QueueUrl output",
+      "Type": "String"
+    },
+    "clusterBTopicArn": {
+      "Description": "The network stack's TopicArn output",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "app01LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-01/${app01TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app01Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-01",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app01TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app02LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-02/${app02TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app02Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-02",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app02TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app03LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-03/${app03TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app03Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-03",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app03TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app04LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-04/${app04TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app04Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-04",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app04TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app05LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-05/${app05TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app05Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-05",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app05TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app06LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-06/${app06TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app06Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-06",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-a"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app06TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app07LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-07/${app07TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app07Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-07",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app07TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app08LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-08/${app08TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app08Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-08",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app08TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app09LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-09/${app09TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app09Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-09",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app09TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app10LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-10/${app10TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app10Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-10",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app10TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app11LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-11/${app11TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app11Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-11",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app11TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "app12LogGroup": {
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/chant/fan-out-estate/app-12/${app12TableName}"
+        },
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "app12Queue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-app-12",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "app"
+          },
+          {
+            "Key": "chant:cluster",
+            "Value": "cluster-b"
+          },
+          {
+            "Key": "chant:table",
+            "Value": {
+              "Ref": "app12TableName"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "clusterALogGroup": {
+      "Properties": {
+        "LogGroupName": "/chant/fan-out-estate/cluster-a",
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "cluster"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "clusterATableTable": {
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "TableName": "fan-out-estate-cluster-a",
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "cluster"
+          },
+          {
+            "Key": "chant:upstream-topic",
+            "Value": {
+              "Ref": "clusterATopicArn"
+            }
+          },
+          {
+            "Key": "chant:upstream-queue",
+            "Value": {
+              "Ref": "clusterAQueueUrl"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::DynamoDB::Table"
+    },
+    "clusterBLogGroup": {
+      "Properties": {
+        "LogGroupName": "/chant/fan-out-estate/cluster-b",
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "cluster"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "clusterBTableTable": {
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "TableName": "fan-out-estate-cluster-b",
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "cluster"
+          },
+          {
+            "Key": "chant:upstream-topic",
+            "Value": {
+              "Ref": "clusterBTopicArn"
+            }
+          },
+          {
+            "Key": "chant:upstream-queue",
+            "Value": {
+              "Ref": "clusterBQueueUrl"
+            }
+          }
+        ]
+      },
+      "Type": "AWS::DynamoDB::Table"
+    },
+    "networkQueue": {
+      "Properties": {
+        "QueueName": "fan-out-estate-network",
+        "SqsManagedSseEnabled": true,
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "network"
+          }
+        ]
+      },
+      "Type": "AWS::SQS::Queue"
+    },
+    "networkTopic": {
+      "Properties": {
+        "DisplayName": "fan-out-estate network",
+        "KmsMasterKeyId": "alias/aws/sns",
+        "Tags": [
+          {
+            "Key": "chant:estate",
+            "Value": "fan-out-estate"
+          },
+          {
+            "Key": "chant:tier",
+            "Value": "network"
+          }
+        ],
+        "TopicName": "fan-out-estate-network"
+      },
+      "Type": "AWS::SNS::Topic"
+    }
+  }
+}
+
+--- stderr
+fold: <n> files folded, <n> ran (--verbose for reasons)

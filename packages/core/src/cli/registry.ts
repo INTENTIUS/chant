@@ -9,6 +9,8 @@ export interface ParsedArgs {
   path: string;
   extraPositional?: string;
   extraPositional2?: string;
+  /** Every positional after the command word, in order (#3308): for a command with more than three, such as `workspace box listing set <member>`. */
+  positionals?: string[];
   output?: string;
   format: string;
   force?: boolean;
@@ -18,6 +20,8 @@ export interface ParsedArgs {
   watch: boolean;
   verbose: boolean;
   help: boolean;
+  /** `--version` / `-V` (#2701): print the installed chant's version. */
+  version?: boolean;
   report?: boolean;
   /** `chant run` — force the local in-process executor (the default). */
   local?: boolean;
@@ -73,6 +77,8 @@ export interface ParsedArgs {
   migrateFrom?: string;
   /** `chant import --kustomize <dir>` — render the kustomization, then import (#1548) */
   kustomize?: string;
+  /** `chant import --parser-option key[=value]`, repeatable (#2994): options for the lexicon's template parser */
+  parserOption?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
@@ -129,6 +135,18 @@ export interface ParsedArgs {
    * ignore it.
    */
   namespace?: string;
+  /** `chant workspace upgrade --allow-code` (#2550) — run migrations whose body is the template's own code. */
+  allowCode?: boolean;
+  /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
+  source?: string;
+  /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */
+  tags?: string;
+  /** `chant workspace adopt-lineage --index <file>` (#2551): a cached hash index. */
+  index?: string;
+  /** `chant workspace versions --available` (#2551): list each git template's version tags. */
+  available?: boolean;
+  /** `chant workspace import --remove` (#2552): remove the export member instead of writing it again. */
+  remove?: boolean;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
@@ -140,11 +158,25 @@ export interface ParsedArgs {
   confirmProd?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
+  /** `chant import --skip-undeclarable` — import what can be declared and warn about the live objects that cannot, instead of failing */
+  skipUndeclarable?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
   src?: string;
   /** `--env <name>` — active environment: sets CHANT_ENV so env-aware source
    * re-evaluates for that environment (`build` + `graph`), and drives policy. */
   env?: string;
+  /** `chant emulator up --port <container-port>=<host-port>`, repeatable (#3673); a bare `<host-port>` when one emulator is selected. */
+  port?: string[];
+  /** `chant emulator up --image <ref>` (#3952): the image to start, when one emulator is selected. */
+  image?: string;
+  /** `chant emulator up --network <name>` (#3952): the Docker network each started container joins. */
+  network?: string;
+  /** `chant emulator up --setting <KEY>=<VALUE>`, repeatable (#3952): an emulator setting such as `FLOCI_<NAME>`, passed as `-e`. */
+  setting?: string[];
+  /** `chant emulator up --loopback` (#3952): publish ports on 127.0.0.1 only. */
+  loopback?: boolean;
+  /** `chant build --components --generate <lexicon> --promote-to <env>` (#2575) — add a promote job to the generated pipeline. */
+  promoteTo?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
   stacks?: boolean;
   /** `chant graph --live --overlay` — classify the provisioned graph against
@@ -159,13 +191,29 @@ export interface ParsedArgs {
    * cross-substrate topology) and joins live status per node; `live` keeps the
    * provisioned graph's reconstructed edges (the pre-#821 behaviour). */
   overlayAnchor?: "source" | "live";
+  /** `chant graph --live --overlay --traffic "<level>"` (#2377) — predict the
+   * overlaid estate's behaviour at this traffic level and carry the result on
+   * the IR: each entity's block on `attrs._behaviour`, the report's meta (or a
+   * whole refusal report) on `meta._behaviour`.
+   *
+   * The flag is the trigger, and it has no default. The level is passed to the
+   * engine verbatim — chant does not parse it, default it or convert it
+   * (`../behaviour.ts`) — so without the flag there is no traffic level to
+   * predict *at*, nothing is asked, and neither key appears. A consumer reads
+   * that absence as "not looked", never as a refusal. */
+  traffic?: string;
   /** `chant list --components` / `chant graph --components` — surface discovered
    * `Component` declarations (#560) instead of/alongside lexicon resources. */
   components?: boolean;
   /** `chant build --components --generate <lexicon>` — generate mode (#563):
    * synthesize CI YAML from discovered components instead of running a normal
-   * lexicon build. Only "gitlab" is implemented for v1. */
+   * lexicon build. Also `chant run --generate <provider>` (#2533): one CI
+   * pipeline file per scheduled Op, through `generateOpsPipeline`. */
   generate?: string;
+  /** `chant run --generate <provider> --spec <file>` (#2533): a JSON file of
+   * `ScheduledOpSpec`s (or `{ ops, options }`) to generate instead of every
+   * discovered Op that declares a `schedule`. */
+  opsSpec?: string;
   /** `chant graph --format ir --detail <0..3>` — graph IR detail tier */
   detail?: number;
   /** `chant graph --lens <kind>:<target>` — focus the graph IR on a slice */
@@ -205,13 +253,64 @@ export interface ParsedArgs {
    */
   gate?: string;
   /**
+   * `chant components fan-out --wave-gate <name>` (#3049) — one gate per wave
+   * instead of one over the set. Wave `n` waits on `<name>-wave-<n>`, bound to
+   * that wave's set digest, and is planned only once the waves before it
+   * applied. Also `chant build --components --generate <lexicon> --wave-gate
+   * <name>`, which generates one CI job per wave.
+   */
+  waveGate?: string;
+  /** `chant components fan-out --wave <n>` (#3049) — run wave `n` of a `--wave-gate` fan-out and no other. Also `chant run wave --wave <k>` (#3679). */
+  wave?: number;
+  /** `chant run wave --decide` (#3679) — plan a wide wave and decide its gate, applying nothing. */
+  decide?: boolean;
+  /** `chant run wave --record-plans` (#3684) — plan every wave at a pull request's head and record the digests for a `pr-review` gate. */
+  recordPlans?: boolean;
+  /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
+  share?: number;
+  /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
+  canary?: string[];
+  /**
+   * `chant components pr-plan|pr-apply --pr <n>` (#3183) — the pull or merge
+   * request the plan belongs to. Its gate is recorded under op `pr-<n>`.
+   * pr-apply finds it from the commit through `--forge` when omitted.
+   */
+  pr?: number;
+  /**
+   * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
+   * — post the note and the commit status on this forge, with the client
+   * read from the CI job's environment.
+   */
+  forge?: string;
+  /**
+   * `chant components pr-apply --require-review` (#3183) — count an approval
+   * only when its approver has a standing approving review on the pull
+   * request. Needs `--forge`.
+   */
+  requireReview?: boolean;
+  /**
+   * `chant build --components --generate <lexicon> --pr-loop` (#3183) —
+   * generate the pull-request pipeline: plan on the pull request, apply on
+   * merge bound to the approved digest.
+   */
+  prLoop?: boolean;
+  /**
    * `chant components fan-out --resume <file>` (#2420) — the attempt record
    * this fan-out reads before it starts and writes when it finishes. Repeating
    * the identical command finishes what an interrupted attempt left, because
    * the plan is narrowed by this file before the gate is decided and the
    * digest is carried rather than recomputed, so the approval still stands.
+   * `chant components pr-apply --resume <file>` (#3464) keeps the same record
+   * with the approved change set in it, and finishes an apply that failed
+   * partway under that approval.
    */
   resume?: string;
+  /**
+   * `chant approve <op> <gate> --resume` (#3683): after recording the
+   * approval, start the CI job that waits at the gate again through the
+   * forge's API. Set when `--resume` is given no value.
+   */
+  resumeRun?: boolean;
   /** `chant audit --tier merge-worthy|all` */
   tier?: string;
   /**
@@ -231,6 +330,8 @@ export interface ParsedArgs {
   allProjects?: boolean;
   /** `chant audit --fail-on merge-worthy|warning|error|none` */
   failOn?: string;
+  /** `chant audit --max-files <n>` (#2528) — files the local walk takes before it stops (default 1000). */
+  maxFiles?: number;
   /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */
   theme?: string;
   /** `chant dev surface-diff --update-snapshot` — write the fresh snapshot as the new baseline */
@@ -259,6 +360,137 @@ export interface ParsedArgs {
    * should win.
    */
   at?: string;
+  /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
+  kind?: string;
+  /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
+  kinds?: string[];
+  /** Every `--by` given, in order: `chant workspace points answer` counts each person toward the quorum (#2739). */
+  bys?: string[];
+  /** `chant workspace points --open` (#2739): only the questions still open. */
+  open?: boolean;
+  /** `chant workspace points ask <point> --inputs <file|-|json>` (#2739): the inputs, as a JSON object. */
+  inputs?: string;
+  /** `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates. */
+  candidates?: string;
+  /** `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got from a backend. */
+  response?: string;
+  /** `chant workspace points ask <point> --subject <id>` (#2739): what the question is about. */
+  subject?: string;
+  /** `chant workspace points ask <point> --store ledger` (#3815): hold the question on chant/lifecycle rather than in the working tree. */
+  store?: "tree" | "ledger";
+  /** `chant workspace points answer <id> --answer <value>` (#2739): the people's answer. */
+  answer?: string;
+  /** `chant workspace graph --no-cache` (#2876): read every member, bypassing the per-member cache. */
+  noCache?: boolean;
+  /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
+  composites?: boolean;
+  /** `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651): the region the intent graph is over. Empty with `--record`. */
+  intent?: string;
+  /** `chant workspace graph --intent` and `chant workspace runs` (#3035): follow squash merges to their pull requests' original commits, fetching missing pull request refs. */
+  followSquash?: boolean;
+  /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
+  record?: string;
+  /** `chant workspace patch <range> --path <p>`: only these paths, from the workspace root. Repeatable. */
+  paths?: string[];
+  /** `chant workspace patch <range> --max-bytes <n>`: the most hunk text printed for one file. */
+  maxBytes?: number;
+  /** `chant workspace patch [<commit>] --worktree`: the working tree against the commit (HEAD unless given). */
+  worktree?: boolean;
+  /** `chant workspace check --changes <base>..<head>` (#2773): the diff the forward coverage check maps to records. */
+  changes?: string;
+  /** `chant workspace check --changes ... --severity off|warn|fail` (#2773): in place of the declaration's `changes.severity`. */
+  severity?: string;
+  /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
+  current?: boolean;
+  /** `chant workspace records --uncommitted` (#3160): only the records the working tree holds modified or new against HEAD. */
+  uncommitted?: boolean;
+  /** `chant workspace records amend <id> --set <file|->` (#2670): the JSON fields to set. */
+  set?: string;
+  /** `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read; the write is refused with record-conflict when it has moved on. */
+  expect?: string;
+  /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */
+  verdict?: string;
+  /** `chant workspace box listing set <member> --cover <image>` (#3308): a PNG, JPEG or WebP picture to copy in as the box's cover. */
+  cover?: string;
+  /** `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308): where the cover goes, from the workspace root. */
+  coverPath?: string;
+  /** `chant workspace box publish <member> --records` (#3165): publish the records kept uncommitted instead of a work item. */
+  records?: boolean;
+  /** `chant workspace wip save --label <text>` (#3172): what the caller calls the snapshot, such as a turn id. */
+  label?: string;
+  /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
+  branch?: string;
+  /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. */
+  ciWorkflows?: string[];
+  /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. */
+  ciChant?: string;
+  /** `chant ci workflow --install <command>` (#3573): a step before the tick that installs what `--chant` runs. */
+  ciInstall?: string;
+  /** `chant ci workflow --token-secret <NAME>` (#3573): the repository secret the tick's tag push authenticates with. */
+  ciTokenSecret?: string;
+  /** `chant ci workflow --app-id-var <VAR>` (#3573): the Actions variable holding the GitHub App id whose token pushes the tags. */
+  ciAppIdVar?: string;
+  /** `chant ci workflow --app-key-secret <NAME>` (#3573): the secret holding that App's private key. */
+  ciAppKeySecret?: string;
+  /**
+   * `chant workspace records review <id> --by <principal>` (#2670): the
+   * reviewer, as the caller names them. Also `chant workspace records new
+   * --by <name>` (#2756): the record's proposer, or its decider when it
+   * opens straight into a later state; see {@link ChannelOptions.by} in
+   * `records-write.ts`.
+   */
+  by?: string;
+  /**
+   * `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey.
+   * On `records new` and `records amend`, the key that seals the record's author (#2688).
+   * On `chant approve` and `chant run approve`, the key that seals the gate approval (#3163).
+   */
+  sign?: string | true;
+  /**
+   * `chant approve <op> <gate> --relayed-by <principal>` and `chant workspace
+   * points answer <id> --relayed-by <principal>` (#3402): the principal that
+   * carried the approval or answer to chant on behalf of the person it names.
+   */
+  relayedBy?: string;
+  /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */
+  session?: string;
+  /** `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under. */
+  prefix?: string;
+  /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
+  require?: string;
+  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). */
+  key?: string;
+  /** `chant workspace evidence sign --check-id <id>` (#2553): the check the evidence is for. */
+  checkId?: string;
+  /** `chant workspace evidence sign --claim <file>` (#2553): hashed into the evidence. */
+  claim?: string;
+  /** `chant workspace evidence sign --environment <file>` (#2553): the runner environment, hashed into the evidence. */
+  environment?: string;
+  /** `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign. */
+  signer?: string;
+  /** `chant workspace evidence verify --envelope <file>` (#2553). */
+  envelope?: string;
+  /** `chant workspace signers rotate --threshold <n>` (#2553). */
+  threshold?: string;
+  /**
+   * `chant build --root-only` and `chant lint --root-only` (#2537): run on the
+   * root project of a declared workspace, members left out, instead of
+   * refusing with `WSP000`.
+   */
+  rootOnly?: boolean;
+  /**
+   * `chant workspace check --generated` (#2641): run each declared generator
+   * and compare its output with the file in the tree. Off by default, since
+   * generators run member code.
+   */
+  generated?: boolean;
+  /**
+   * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
+   * the named members or example groups. Repeatable, and a comma list works too.
+   * `chant components pr-plan|pr-apply --member <name>` (#3465) takes exactly
+   * one: the workspace member whose pull-request loop runs.
+   */
+  members?: string[];
   /**
    * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
    * resources of a kind this estate manages that exist in the account without
@@ -286,6 +518,10 @@ export interface ParsedArgs {
    * `chant search "<q>" --check-live|--check-snapshot --fail-on-drift`
    * (#1268) — exit non-zero when the scoped check finds drift, so it is usable
    * as a CI gate. Meaningless without one of the two flags above.
+   *
+   * `chant run <op> --fail-on-drift` (#3675) — exit 2 instead of 0 when the
+   * run completes and its `Drift` outcome is true, the same as the Op
+   * declaring `failOn: "drift"`. A failed run still returns 1, a gated one 3.
    */
   failOnDrift?: boolean;
 
@@ -301,6 +537,10 @@ export interface ParsedArgs {
   component?: string;
   /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. Also `chant components export --digest <manifestDigest>` (#929) — a build archive manifest digest to export directly, bypassing env/component resolution. */
   digest?: string;
+  /** `chant components release record --release-plan <file>` (ws-055, #2733) — path to a release plan JSON file, persisted content-addressed to `_plans/<digest>.json` on chant/lifecycle and read back through the read contract (`chant workspace status --json`). The plan's own `digest` field supplies `--digest` when it is omitted, and must match it when both are given. Distinct from `--plan` (#2300, below), the Op gate-approval plan digest. */
+  releasePlanFile?: string;
+  /** Every `--digest` value, in order (#2602). `chant components promote --digest <component>=<sha256:...>` is repeatable, one per component; the other commands read the single {@link digest}. */
+  digests?: string[];
   /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
   gitSha?: string;
   /** `chant components release record --run-id <id>` (#568) — orchestrator/CI run identifier. */
@@ -315,8 +555,12 @@ export interface ParsedArgs {
   compareTo?: string;
   /** `chant run --components <name> --env <env> --no-release-record` (#597) — opt out of auto-emitting a release-ledger record after a successful component deploy. Default (flag omitted): recording is ON. Also settable project-wide via `chant.config.ts`'s `release.autoRecord: false`. */
   noReleaseRecord?: boolean;
+  /** `chant run <op>` / `chant run --components <name>` `--no-record` (#3955) — run every step but record nothing on `chant/lifecycle` and push nothing; a gate step fails. `CHANT_NO_RECORD=1` does the same for every chant process that inherits it (../../lifecycle/no-record.ts). */
+  noRecord?: boolean;
   /** `chant run --components <name> --dump-outputs <file>` — after the run, write the accumulated cross-component/cross-stack outputs (JSON, keyed by component name) to `<file>`, for a downstream job to `--seed-outputs`. */
   dumpOutputs?: string;
+  /** `chant run --components <name> --digest-file <file>` (#2602) — after a successful run, write one `<component>=<digest>` line per release the run recorded to `<file>`, the form `chant components promote --digest` takes, so a generated promote job promotes exactly the release its pipeline run built. Written empty when nothing was recorded. */
+  digestFile?: string;
   /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
   seedOutputs?: string[];
   /** `chant build --fold` (#1022/#1023, epic #1019) — opt-in: fold source modules statically instead of importing/running them; folds resource constructors and composite factory calls, falling back to run per-file for anything the folder can't represent (a cross-file-only reference, a re-export, `export default`, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */
@@ -329,6 +573,8 @@ export interface ParsedArgs {
   foldRankCollapsedFile?: string;
   /** `chant build --param name=value` (#1064) — repeatable. Bound to `params.<name>` (`@intentius/chant/params`) for source to reference, after validation against `chant.config.ts`'s declared `buildParams`. Highest precedence over `--params-file`/a declared `env` mapping/the declared `default`. */
   param?: string[];
+  /** `chant build --lexicon-output <lexicon>=<path>` — repeatable. Writes that lexicon's output to its own file, so one project can declare several lexicons (otel and prometheus) without their outputs sharing a file. Lexicons not named are built into `--output` when given, and skipped otherwise. */
+  lexiconOutput?: string[];
   /** `chant build --params-file <path>` (#1064) — a JSON file of `{ "name": value }` build-time parameter values. Second precedence, after `--param`. */
   paramsFile?: string;
   /** `chant graph --components --format ir --projection <lexicon>` (#989) — add
@@ -341,10 +587,35 @@ export interface ParsedArgs {
   interval?: string;
   /** `chant operator --lease-ttl <duration>` (#1485) — how long an acquired lease is valid before it's reclaimable by another operator. Default: 5m. */
   leaseTtl?: string;
+  /**
+   * `chant operator --steward [<name>]` (#2731) — run a declared steward's
+   * local form: its scheduled Ops on their crons, under the steward's own
+   * lease. `""` when the flag is given without a name, which picks the
+   * project's only steward.
+   */
+  steward?: string;
+  /** `chant workspace runs --unit <id>` (#3033): only the agent runs on this work item. */
+  unit?: string;
+  /** `chant workspace runs --decision <id>` (#3033): only the agent runs that carried out this decision. */
+  decision?: string;
+  /** `chant workspace work claim|renew|release <id> --holder <name>` (#2732): who holds, or releases, the work lease. */
+  holder?: string;
+  /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. `chant workspace check --changes --work <id>` (#2773): the work item in hand. */
+  work?: string;
+  /** `chant workspace work claim|renew <id> --ttl <seconds|duration>` (#2732): how long the lease lasts unless renewed. */
+  ttl?: string;
+  /** `chant workspace work renew|release <id> --token <token>` (#2732): the fencing token the caller holds. */
+  token?: string;
+  /** `chant workspace work release <id> --outcome <outcome>` (#2732): how the work ended, one of the closed list WORK_LEASE_OUTCOMES (#3147). */
+  outcome?: string;
   /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
   once?: boolean;
   /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */
   note?: string;
+  /** `chant approve policy-override <subject> --reason <text>` (#3760): why a denied plan goes out anyway, recorded as the override's note. */
+  reason?: string;
+  /** `chant approve policy-override <subject> --rule <id>` (#3760), repeated: the rules that denied the plan, which the override names. */
+  rules?: string[];
   /** `chant approve <op> <gate> --expire` (#2119) — clear the gate's standing pending fact instead of approving it, so the next run decides the gate from scratch and records a fresh one. Writes no resolution: nothing is approved, the wait is only restarted. */
   expire?: boolean;
   /**
@@ -353,11 +624,15 @@ export interface ParsedArgs {
    * on a model-authored channel.
    */
   allowSameOrigin?: boolean;
+  /** `chant approve --role <name>` (#2508) — roles the approver claims, for a gate whose quorum counts only some roles. Repeatable; a comma list also works. */
+  roles?: string[];
+  /** `chant approve --agent` (#2508) — record the approval as an agent's. An agent never counts toward a quorum; it passes a gate only through a policy permit in `enforce` mode. */
+  agent?: boolean;
   /** `chant approve <op> <gate> --plan <digest>` (#2300) — the plan this approval is for, as `sha256:<64 hex>`. Omitted, the digest is taken from the gate's standing pending fact, which is the plan the run that stopped at the gate actually produced; pass it to approve a plan explicitly, or to approve one before any run has recorded a pending fact. */
   plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
   op?: string;
-  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. */
+  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. */
   since?: string;
   /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */
   limit?: number;
@@ -373,6 +648,13 @@ export interface CommandDef {
   name: string;
   /** If true, load lexicon plugins before calling handler */
   requiresPlugins?: boolean;
+  /**
+   * chant#2591, chant#2589 — the command never evaluates the project's
+   * `chant.config.ts`, so `main` does not load it before dispatch either. Such
+   * a command reads what it needs from the config statically
+   * (../config-static.ts). A function decides per invocation.
+   */
+  runsNoConfig?: boolean | ((args: ParsedArgs) => boolean);
   /** Command handler — returns exit code */
   handler: (ctx: CommandContext) => Promise<number>;
 }

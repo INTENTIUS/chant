@@ -2,11 +2,15 @@ import { dirname, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, type GraphIR, type IRPipeline, type LiveObservation } from "../../graph-ir";
+import { applyLexiconGraphEdges, applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconGraphEdges, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
+import { behaviourOverlay } from "../../behaviour-overlay";
+import type { SerializerResult } from "../../serializer";
+import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
+import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
@@ -17,15 +21,30 @@ import { toDot } from "../../graph-dot";
 import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
+import { isNoLexiconDetected } from "../../detectLexicon";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
-import type { CommandContext } from "../registry";
+import type { CommandContext, ParsedArgs } from "../registry";
+import type { LexiconPlugin } from "../../lexicon";
 import { computeComponentGraph, generateComponentsPipeline } from "../../components/cli-support";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { BuildParamProvenance } from "../../provenance";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 
+/**
+ * The project's lexicons, or none for a project that declares none and imports
+ * none (an Ops-only member, `lexicons: []`): detection's NO_LEXICON_DETECTED
+ * sentinel means "no lexicon", as `chant lint` reads it, not a failed graph (#2841).
+ */
+async function projectLexiconsOrNone(projectPath: string): Promise<string[]> {
+  try {
+    return await resolveProjectLexicons(projectPath);
+  } catch (err) {
+    if (isNoLexiconDetected(err)) return [];
+    throw err;
+  }
+}
 
 /**
  * Resolve this invocation's declared build-time parameters, the same way
@@ -142,7 +161,17 @@ async function mergeGraphOps(
  * `--format` projects the component DAG itself into that format (nodes =
  * components, wave groups, `dependsOn` edges) — the graph behold renders.
  */
-export async function runGraph(ctx: CommandContext): Promise<number> {
+/**
+ * One `chant graph` is one read of the account (chant #2498): the live
+ * observation and the `--traffic` prediction are two plugin methods that
+ * each read a live root, and inside this session a read one of them made
+ * is the read the other gets.
+ */
+export function runGraph(ctx: CommandContext): Promise<number> {
+  return withLiveReadSession(() => runGraphCommand(ctx));
+}
+
+async function runGraphCommand(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
   const isViewFormat = (viewFormats as readonly string[]).includes(ctx.args.format);
   // `--projection <lexicon>` (#989) only means anything for the component
@@ -208,7 +237,7 @@ async function runGraphLive(
   // `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
   // lexicon), so `ctx.plugins` is empty. The live path needs the project's
   // observation plugins — load them here, mirroring the lifecycle handlers.
-  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
+  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await projectLexiconsOrNone(projectPath));
   const declaredEnvNames = environmentNames(config.environments);
   if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
@@ -434,6 +463,21 @@ async function runGraphLive(
     }
   }
 
+  // Behaviour overlay (#2377, epic #2355): carry a prediction on the graph.
+  // After the drift overlay so it lands on the final node set beside `_status`,
+  // and before the lens so a lens filters a predicted node like any other.
+  {
+    const raw = buildResult.outputs ? [...buildResult.outputs.values()][0] : undefined;
+    const predicted = await predictOntoIr(ir, plugins, args, {
+      environment: environment ?? "",
+      buildOutput: raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary,
+      // This graph was read from the account, drift included.
+      from: "live",
+    });
+    if (predicted === REFUSED) return 1;
+    ir = predicted;
+  }
+
   if (args.lens) {
     try {
       ir = applyLens(ir, parseLens(args.lens, { up: args.up, down: args.down }));
@@ -589,6 +633,13 @@ async function runComponentGraphView(
         wave: waveOf.get(name) ?? null,
         liveNames: graph.liveNames?.[name] ?? [name],
         ...(graph.composites?.[name] ? { composites: graph.composites[name] } : {}),
+        // The archetype (#2662), declared or inferred, so a reader such as
+        // `chant workspace graph --composites` labels a component without
+        // importing its source.
+        ...(graph.archetypes?.[name] ? { archetype: graph.archetypes[name] } : {}),
+        // The environments the component declares (#3153), where each release goes, so
+        // `chant workspace graph --composites` lists them without importing its source.
+        ...(graph.environments?.[name] ? { environments: graph.environments[name] } : {}),
       },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),
@@ -654,6 +705,144 @@ async function buildPipelineProjection(
  * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
  * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
  */
+/**
+ * Add what the lexicons' `graphMeta` hooks report to `ir.meta` (#2559). A
+ * lexicon with nothing to report leaves the IR as it was, so a project that
+ * declares none of their entities prints what it did before. Two lexicons
+ * that answer the same key keep the first and say so on stderr.
+ */
+function withGraphMeta(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
+  const added: Record<string, unknown> = {};
+  for (const p of plugins) {
+    if (!p.graphMeta) continue;
+    for (const [key, value] of Object.entries(p.graphMeta(entities) ?? {})) {
+      if (key in added || (ir.meta && key in ir.meta)) {
+        console.error(formatWarning({ message: `the ${p.name} lexicon reports graph meta "${key}", which another source already set; its value is dropped` }));
+        continue;
+      }
+      added[key] = value;
+    }
+  }
+  return Object.keys(added).length === 0 ? ir : { ...ir, meta: { ...(ir.meta ?? {}), ...added } };
+}
+
+/**
+ * Add the edges the lexicons' `graphEdges` hooks resolve (#3910): CI
+ * dependencies written as strings (`needs`, `uses:`, `trigger:`, `include:`,
+ * `extends`), which the AttrRef walk in `buildGraphIr` cannot see. A hook that
+ * throws costs its own edges and a warning, not the graph.
+ */
+function withLexiconEdges(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
+  const reports: LexiconGraphEdges[] = [];
+  for (const p of plugins) {
+    if (!p.graphEdges) continue;
+    try {
+      const report = p.graphEdges(entities);
+      if (report) reports.push(report);
+    } catch (err) {
+      console.error(formatWarning({ message: `the ${p.name} lexicon's graphEdges failed (${err instanceof Error ? err.message : String(err)}); its edges are left out` }));
+    }
+  }
+  return reports.length === 0 ? ir : applyLexiconGraphEdges(ir, reports);
+}
+
+/**
+ * Add the outputs the lexicons' `workspaceOutputs` hooks report (#3931) to
+ * the IR's `exports`: a sql table and each of its columns, which `chant
+ * workspace graph` resolves member links against. A hook that throws costs
+ * its own outputs and a warning, not the graph.
+ */
+function withLexiconOutputs(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
+  const reports: LexiconWorkspaceOutputs[] = [];
+  for (const p of plugins) {
+    if (!p.workspaceOutputs) continue;
+    try {
+      const report = p.workspaceOutputs(entities);
+      if (report) reports.push(report);
+    } catch (err) {
+      console.error(formatWarning({ message: `the ${p.name} lexicon's workspaceOutputs failed (${err instanceof Error ? err.message : String(err)}); its outputs are left out` }));
+    }
+  }
+  return reports.length === 0 ? ir : applyLexiconOutputs(ir, reports);
+}
+
+/** Returned instead of a graph when the prediction cannot be attempted honestly. */
+const REFUSED = Symbol("behaviour-refused");
+
+/**
+ * Carry a prediction on `ir`, if one was asked for (#2377, epic #2355).
+ *
+ * Shared by both graph paths, because the epic wants both: "the live path
+ * predicts the account as it stands, drift included. The declared path
+ * predicts the file. The two are shown as a delta" (#2355). A delta between
+ * two shapes that reached the engine by different routes is the worst possible
+ * input to a delta, so there is one route.
+ *
+ * `--traffic` is the trigger, and it is the trigger rather than the engine
+ * variable because the contract forbids defaulting the level
+ * (../../behaviour.ts): every figure an engine returns is *at* a stated
+ * traffic, so inventing one would silently decide what every number on the
+ * graph means. Without the flag nothing is asked, neither key appears, and a
+ * consumer reads that absence as "not looked" rather than as a refusal.
+ */
+async function predictOntoIr(
+  ir: GraphIR,
+  plugins: LexiconPlugin[],
+  args: ParsedArgs,
+  ctx: { environment: string; buildOutput: string; from: "live" | "declared" },
+): Promise<GraphIR | typeof REFUSED> {
+  if (!args.traffic) return ir;
+
+  const predicting = plugins.filter((p) => p.predictBehaviour);
+  if (predicting.length === 0) {
+    console.error(formatWarning({
+      message:
+        "--traffic: no installed lexicon implements predictBehaviour, so nothing was predicted. The graph is unchanged.",
+    }));
+    return ir;
+  }
+  if (predicting.length > 1) {
+    // Two engines would mean two `meta._behaviour` values and one key. Rather
+    // than pick, say so: a merged prediction across engines is not defined by
+    // the contract, and silently taking the first would attribute one engine's
+    // figures to the other's provenance.
+    console.error(formatError({
+      message: `--traffic: ${predicting.length} lexicons implement predictBehaviour (${predicting.map((p) => p.name).join(", ")}) — chant cannot merge two engines' figures onto one graph.`,
+      hint: "Predict one lexicon at a time, or drop --traffic to graph without a prediction",
+    }));
+    return REFUSED;
+  }
+
+  const request = behaviourRequestFromIr(ir, {
+    environment: ctx.environment,
+    traffic: args.traffic,
+    buildOutput: ctx.buildOutput,
+    from: ctx.from,
+    // `unknown`, for the reason the declared path claims it
+    // (../../op/activities/predict-behaviour.ts): reference edges resolved,
+    // containment absent, and no vocabulary here for "this kind is a boundary
+    // whose containment is missing". Claiming `complete` would be true about
+    // references and false about the graph; `partial` has to name its gap as
+    // `dangling` or `unresolvedKinds`, and this gap is neither.
+    edgeCoverage: { verdict: "unknown" },
+    ...(args.owned === undefined ? {} : { owned: args.owned }),
+  });
+
+  try {
+    // A refusal is a value, not a throw: it comes back as a result and rides on
+    // `meta._behaviour` whole, which is the one shape behold's reader branches
+    // on (../../behaviour-overlay.ts).
+    return applyBehaviourOverlay(ir, behaviourOverlay(await predicting[0].predictBehaviour!(request)));
+  } catch (err) {
+    // The estate graph is the thing asked for; a broken engine must not take it
+    // away. Say what failed and serve the graph without the block.
+    console.error(formatWarning({
+      message: `--traffic: ${predicting[0].name}'s predictBehaviour failed (${err instanceof Error ? err.message : String(err)}) — showing the graph without a prediction`,
+    }));
+    return ir;
+  }
+}
+
 async function runGraphView(
   ctx: CommandContext,
   format: "ir" | "mermaid" | "dot" | "layout",
@@ -710,6 +899,31 @@ async function runGraphView(
   // Build the base IR, focus with a lens (declarable-level, most precise), then
   // apply the detail tier — so e.g. blast:<resource> works before any collapse.
   let ir: GraphIR = buildGraphIr(result.entities, projectPath);
+
+  // The declared half of the epic's delta (#2355): this path predicts the
+  // file, the live path predicts the account. Same helper, so the two shapes
+  // reach the engine by one route and stay comparable.
+  {
+    const plugins = ctx.plugins.length > 0
+      ? ctx.plugins
+      : await loadPlugins(await projectLexiconsOrNone(projectPath));
+    ir = withLexiconEdges(ir, plugins as LexiconPlugin[], result.entities);
+    ir = withLexiconOutputs(ir, plugins as LexiconPlugin[], result.entities);
+    const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
+      // No environment on the declared path: the file is not deployed anywhere
+      // yet, and naming one would claim it was.
+      environment: ctx.args.env ?? "",
+      buildOutput: "",
+      // And this graph was built from the file, so say so. Without it a
+      // lexicon cannot tell the two paths apart and answers about whichever
+      // estate it defaults to, with nothing in the report to say which.
+      from: "declared",
+    });
+    if (predicted === REFUSED) return 1;
+    ir = predicted;
+    ir = withGraphMeta(ir, plugins as LexiconPlugin[], result.entities);
+  }
+
   if (ctx.args.lens) {
     try {
       ir = applyLens(ir, parseLens(ctx.args.lens, { up: ctx.args.up, down: ctx.args.down }));
@@ -757,7 +971,9 @@ async function emitIr(
       }
     case "ir":
     default:
-      console.log(JSON.stringify(ir, null, 2));
+      // The version leads the document (#2529), so a reader sees it before
+      // anything it might not understand.
+      console.log(JSON.stringify({ version: GRAPH_IR_VERSION, ...ir }, null, 2));
       return 0;
   }
 }

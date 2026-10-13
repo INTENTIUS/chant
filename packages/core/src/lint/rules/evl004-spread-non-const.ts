@@ -8,6 +8,11 @@ import { isInsideCompositeFactory } from "./composite-scope";
  * Spread expressions ({...x} or [...x]) must reference a const-declared
  * variable, object literal, or property access chain from a const.
  * Spreading from function calls or non-traceable sources is blocked.
+ *
+ * A binding imported from another module counts as const: an import can't
+ * be reassigned, and sharing an exported const (a preset, a list of
+ * Dockerfile steps) across modules is the point of exporting it. Whether the
+ * exporting module declared it `const` is that module's own EVL concern.
  */
 
 function isTraceableToConst(node: ts.Node, sourceFile: ts.SourceFile): boolean {
@@ -40,8 +45,18 @@ function isTraceableToConst(node: ts.Node, sourceFile: ts.SourceFile): boolean {
 }
 
 function isConstIdentifier(id: ts.Identifier, sourceFile: ts.SourceFile): boolean {
-  // Walk all statements looking for a const declaration of this identifier
+  // Walk all statements looking for a const declaration or an import of this identifier
   for (const stmt of sourceFile.statements) {
+    if (ts.isImportDeclaration(stmt) && stmt.importClause && !stmt.importClause.isTypeOnly) {
+      const clause = stmt.importClause;
+      if (clause.name?.text === id.text) return true;
+      const bindings = clause.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        if (bindings.elements.some((el) => !el.isTypeOnly && el.name.text === id.text)) return true;
+      } else if (bindings && ts.isNamespaceImport(bindings) && bindings.name.text === id.text) {
+        return true;
+      }
+    }
     if (ts.isVariableStatement(stmt)) {
       if (stmt.declarationList.flags & ts.NodeFlags.Const) {
         for (const decl of stmt.declarationList.declarations) {

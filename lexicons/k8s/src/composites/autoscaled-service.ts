@@ -8,6 +8,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Deployment, Service, HorizontalPodAutoscaler, PodDisruptionBudget } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface AutoscaledServiceProps {
@@ -73,10 +74,10 @@ export interface AutoscaledServiceProps {
   tmpDirs?: string[];
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    deployment?: Partial<Record<string, unknown>>;
-    service?: Partial<Record<string, unknown>>;
-    hpa?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
+    deployment?: MemberDefaults<"Deployment">;
+    service?: MemberDefaults<"Service">;
+    hpa?: MemberDefaults<"HorizontalPodAutoscaler">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
   };
 }
 

@@ -33,6 +33,7 @@
  */
 
 import {
+  appendGateResolution,
   appendPendingGate,
   isPendingGateExpired,
   latestPendingGate,
@@ -40,13 +41,20 @@ import {
   readGateLedger,
   resolveApprovalUrl,
   DEFAULT_GATE_EXPIRY,
+  type GateResolutionInput,
   type GateResolutionRecord,
   type PendingGateInput,
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
-import { describePlanDigest } from "../lifecycle/plan-digest";
-import { pushLifecycle, requireLifecycleLedger } from "../lifecycle/git";
+import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
+import { isModelAuthored } from "../lifecycle/gate-origin";
+import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord } from "../lifecycle/gate-applied";
+import { sortedJsonReplacer } from "../utils";
+import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
+import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
+import { resolveGateRunLocator } from "./gate-run-locator";
+import { refuseGateWithoutRecording } from "../lifecycle/no-record";
 
 /**
  * What appending a pending fact learned about reaching the remote.
@@ -63,7 +71,10 @@ export interface PendingGatePush {
    * configured, or the push was rejected — `pushWarning` says which.
    */
   pushed: boolean;
-  /** Set when `pushed` is false. */
+  /**
+   * Set when `pushed` is false. With no remote it is the lifecycle module's
+   * `LIFECYCLE_LOCAL_NOTE`, which renderers show as a note, not a warning (#3677).
+   */
   pushWarning?: string;
 }
 
@@ -71,6 +82,31 @@ export interface PendingGatePush {
 export interface GateLedgerPort {
   read(op: string): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[] }>;
   appendPending(input: PendingGateInput): Promise<PendingGatePush>;
+  /**
+   * Append a resolution the run itself writes (#3170): a gate that asks a
+   * decision point records the answer that passed it. Absent on a port that
+   * only plain gates use.
+   */
+  appendResolution?(input: GateResolutionInput): Promise<{ record: GateResolutionRecord; pushed: boolean; pushWarning?: string }>;
+  /**
+   * The rule a workspace sets for approvals of `gate` (#3163, ws-080), or
+   * null when none applies: the declaration's `identity.gates`, read at base.
+   * `at.base` names that commit, as an op wave reads every rule at its
+   * `--base` (#3841); absent, origin/HEAD, else `main`, else `master`.
+   * Absent, every approval is judged as before.
+   */
+  approvalRule?(gate: string, at?: { base?: string }): Promise<GateApprovalRule | null>;
+  /** The approvals a wave applied under (#3784), from `_gates/<op>/applied.jsonl`. Absent on a port that never spends approvals. */
+  readApplied?(op: string): Promise<AppliedGateRecord[]>;
+  /** Record that a wave is about to apply under an approval (#3784), which spends it. */
+  appendApplied?(record: AppliedGateRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
+}
+
+/** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
+export interface GateApprovalRule {
+  requirement: { gate: string; class: string | null };
+  /** Why `approval` doesn't count, or null when it does. */
+  refuses(approval: GateResolutionRecord): string | null;
 }
 
 /**
@@ -99,40 +135,77 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       const { resolutions, pending } = await readGateLedger(op, opts);
       return { resolutions, pending };
     },
+    async approvalRule(gate, at) {
+      // Loaded on demand: the rule lives in the workspace modules, which import the Op modules.
+      const { gateAdmission } = await import("../workspace/identity");
+      return gateAdmission(opts?.cwd ?? process.cwd(), gate, at?.base);
+    },
+    async appendResolution(input) {
+      const { record } = await appendGateResolution(input, opts);
+      return { record, ...(await pushLifecycleReport(opts)) };
+    },
     async appendPending(input) {
       const { record } = await appendPendingGate(input, opts);
-      try {
-        const pushed = await pushLifecycle(opts);
-        return pushed
-          ? { record, pushed }
-          : {
-              record,
-              pushed,
-              pushWarning:
-                "no remote is configured for chant/lifecycle — the pending fact was recorded locally only",
-            };
-      } catch (err) {
-        return {
-          record,
-          pushed: false,
-          pushWarning: err instanceof Error ? err.message : String(err),
-        };
+      return { record, ...(await pushLifecycleReport(opts)) };
+    },
+    async readApplied(op) {
+      await requireLifecycleLedger(opts);
+      const { dir, file } = appliedGatePath(op);
+      const text = await readBlobFromPath(dir, file, opts);
+      return text ? parseAppliedGateLines(text) : [];
+    },
+    async appendApplied(record) {
+      const { dir, file } = appliedGatePath(record.op);
+      const line = JSON.stringify(record, sortedJsonReplacer);
+      let lastErr: unknown;
+      // The same append-and-retry as a ledger line: another writer to the branch is the ordinary case.
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const prior = await readPathSha(dir, file, opts);
+          const existing = prior ? await readBlobBySha(prior, opts) : null;
+          await writeBlobToPath(dir, file, existing ? `${existing.replace(/\n$/, "")}\n${line}\n` : `${line}\n`, `Applied under ${record.gate}`, {
+            ...opts,
+            expectPriorPathSha: prior,
+          });
+          return pushLifecycleReport(opts);
+        } catch (err) {
+          if (!(err instanceof RefCASConflictError)) throw err;
+          lastErr = err;
+        }
       }
+      throw lastErr;
     },
   };
 }
 
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
 export function memoryGateLedgerPort(
-  seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[] } = {},
-): GateLedgerPort & { appended: PendingGateRecord[] } {
+  seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[]; applied?: AppliedGateRecord[] } = {},
+): GateLedgerPort & { appended: PendingGateRecord[]; resolved: GateResolutionRecord[]; applied: AppliedGateRecord[] } {
   const resolutions = [...(seed.resolutions ?? [])];
   const pending = [...(seed.pending ?? [])];
   const appended: PendingGateRecord[] = [];
+  const resolved: GateResolutionRecord[] = [];
+  const applied: AppliedGateRecord[] = [...(seed.applied ?? [])];
   return {
     appended,
+    resolved,
+    applied,
+    async readApplied(op) {
+      return applied.filter((a) => a.op === op);
+    },
+    async appendApplied(record) {
+      applied.push(record);
+      return { pushed: true };
+    },
     async read() {
       return { resolutions: [...resolutions], pending: [...pending] };
+    },
+    async appendResolution(input) {
+      const record: GateResolutionRecord = { version: 1, ...input };
+      resolutions.push(record);
+      resolved.push(record);
+      return { record, pushed: true };
     },
     async appendPending(input) {
       const record: PendingGateRecord = { version: 1, kind: "pending", ...input };
@@ -167,8 +240,37 @@ export interface GateCheckInput {
    * the standing pending fact satisfies the gate whatever has changed since.
    */
   planDigest?: string;
+  /**
+   * The environment this run deploys to (#2574). The component driver sets it,
+   * because a component's gate ledger is keyed by component and holds every
+   * environment's facts. Set, the gate reads only this environment's pending
+   * facts and resolutions (plus resolutions that record no environment, which
+   * come back as a mismatch), and the pending fact it records carries it.
+   */
+  environment?: string;
+  /**
+   * The gate's quorum and policy (#2508), context already resolved. Absent,
+   * one approval passes the gate, which is the rule every gate had before.
+   * Present, {@link tallyGateApprovals} decides, and the pending fact carries
+   * it so `chant approve` can evaluate the policy.
+   */
+  approval?: ResolvedGateApproval;
   /** ISO-8601 "now" — supplied by the caller, so the decision is deterministic under test. */
   now?: string;
+  /**
+   * The approvals a wave already applied under (#3784). Given, an approval
+   * one of them spent counts for nothing: it neither satisfies the gate nor
+   * stands as a mismatch. Absent, nothing is spent.
+   */
+  spent?: readonly AppliedGateRecord[];
+  /**
+   * Fields a caller adds to the pending fact it records (#3821), such as an
+   * Op waves product's commit and members. Every field this function writes
+   * itself wins over one of the same name.
+   */
+  fields?: Record<string, unknown>;
+  /** The pending fact it records carries `neverOverMcp` (#3821, chant#3485). */
+  neverOverMcp?: boolean;
 }
 
 /**
@@ -184,6 +286,8 @@ export interface GateDigestMismatch {
   resolvedBy: string;
   /** When they recorded it. */
   timestamp: string;
+  /** The environment this run deploys to, on a component gate (#2574). The approve command a refusal prints names it. */
+  environment?: string;
 }
 
 /**
@@ -197,24 +301,46 @@ export interface GateDigestMismatch {
  * have changed — the record simply never said what it approved, which is
  * every record written before #2300.
  */
-export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch): string {
+export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch, sealed = false): string {
   const why =
     mismatch.approved === undefined
-      ? "That resolution predates plan-bound gates (#2300) and records no plan at all, so it cannot " +
-        "answer for this one. Approving again binds it:"
+      ? mismatch.environment !== undefined
+        ? "That approval predates environment- and plan-bound component gates (#2574) and records neither, " +
+          "so it cannot answer for this one. Approving again binds it:"
+        : "That resolution predates plan-bound gates (#2300) and records no plan at all, so it cannot " +
+          "answer for this one. Approving again binds it:"
       : "The configuration or the live system changed between that approval and this plan, so it needs " +
         "a fresh one:";
   return (
     `Gate "${gate}" is approved, but not for this plan. ` +
     `approved: ${describePlanDigest(mismatch.approved)} (by ${mismatch.resolvedBy} at ${mismatch.timestamp}); ` +
     `planned: ${mismatch.planned}. ` +
-    `${why} ${approveCommand(op, gate)}`
+    `${why} ${approveCommand(op, gate, mismatch.environment, undefined, sealed)}`
   );
+}
+
+/** How far a gate with a quorum has got (#2508). */
+export interface GateQuorumProgress {
+  /** Approvers whose approval counts toward the quorum, oldest first. */
+  approvers: string[];
+  need: number;
 }
 
 /** Either the gate is answered, or it is a standing fact. */
 export type GateCheck =
-  | { satisfied: true; resolution: GateResolutionRecord }
+  | {
+      satisfied: true;
+      /** The approval that completed the gate: the newest counted one, or the permit that passed it. */
+      resolution: GateResolutionRecord;
+      /**
+       * Set on a gate that declares `approval` (#2508). `"quorum"` when enough
+       * human approvals were recorded, `"policy"` when an `enforce`-mode permit
+       * passed it on its own.
+       */
+      via?: "quorum" | "policy";
+      /** Every approval that counted toward the quorum. Set with `via`. */
+      approvals?: GateResolutionRecord[];
+    }
   | {
       satisfied: false;
       pending: PendingGateRecord;
@@ -230,7 +356,154 @@ export type GateCheck =
       pushWarning?: string;
       /** Present when a resolution stands for this gate but for another plan (#2300). */
       mismatch?: GateDigestMismatch;
+      /** Present on a gate with a quorum (#2508): who has approved this plan so far. */
+      quorum?: GateQuorumProgress;
+      /**
+       * Approvals of this gate and plan, newer than the standing pending fact,
+       * that the port's approval rule did not count, and why (#3841), oldest
+       * first. Absent when there are none.
+       */
+      refused?: GateRefusedApproval[];
     };
+
+/** An approval the port's {@link GateLedgerPort.approvalRule} did not count, and why. */
+export interface GateRefusedApproval {
+  resolution: GateResolutionRecord;
+  reason: string;
+}
+
+/** How a recorded approval reads: its own `approver`, or for a record written before #2508, a human unless a model-authored channel wrote it. */
+export function approverOf(record: GateResolutionRecord): GateApprover {
+  if (record.approver) return record.approver;
+  return { kind: isModelAuthored(record.origin) ? "agent" : "human" };
+}
+
+/** What {@link tallyGateApprovals} found. */
+export interface GateTally {
+  /** Distinct human approvers of this plan who count toward the quorum, one record each (their newest), oldest first. */
+  counted: GateResolutionRecord[];
+  /** The quorum's count, 1 when the gate declares none. */
+  need: number;
+  /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version and resolved context. */
+  permit?: GateResolutionRecord;
+  /** The newest approval of this gate for a different plan, when the gate binds one. */
+  mismatched?: GateResolutionRecord;
+}
+
+/**
+ * Tally the approvals that answer a gate with an `approval` block (#2508).
+ *
+ * An approval counts only if it is newer than `sinceIso` (the standing pending
+ * fact) and, on a plan-bound gate, recorded for `planDigest`. So a changed
+ * plan invalidates every approval collected for the old one, the rule #2300
+ * set for a single approval. A human's approval may be older than the
+ * standing fact, back to `humansSinceIso` ({@link humanQuorumSince}), so a
+ * pending fact re-recorded for a changed mode or context keeps a partly
+ * filled quorum (#3206). It defaults to `sinceIso`.
+ *
+ * Of those, only a human's counts toward the quorum, once per `resolvedBy`,
+ * and only with one of the quorum's roles when it names any. An agent counts
+ * only through a recorded `allow` in `enforce` mode, evaluated under the
+ * policy version the gate declares now, recorded while the gate was in
+ * `enforce` (#2512), and evaluated under the context the gate resolves now
+ * (#3774). A `log-only` decision never changes the outcome, even
+ * after the gate switches to `enforce`, and a `deny` never removes a human's approval: a policy can add
+ * a way through the gate but cannot take one away.
+ */
+export function tallyGateApprovals(
+  records: GateResolutionRecord[],
+  gate: string,
+  sinceIso: string,
+  planDigest: string | undefined,
+  approval: ResolvedGateApproval,
+  humansSinceIso: string = sinceIso,
+): GateTally {
+  const since = new Date(sinceIso).getTime();
+  const humansSince = Math.min(since, new Date(humansSinceIso).getTime());
+  const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
+  const roles = approval.quorum?.roles;
+  const context = gateContextDigest(approval.context);
+
+  const byActor = new Map<string, GateResolutionRecord>();
+  let permit: GateResolutionRecord | undefined;
+  let mismatched: GateResolutionRecord | undefined;
+  for (const r of records) {
+    if (r.gate !== gate || at(r) < humansSince) continue;
+    if (planDigest !== undefined && !samePlanDigest(r.planDigest, planDigest)) {
+      if (at(r) >= since && (!mismatched || at(r) >= at(mismatched))) mismatched = r;
+      continue;
+    }
+
+    const decision = r.policyDecision;
+    // #3206: an approval from before the standing fact can only be a human's
+    // toward the quorum. A permit is anchored on the standing fact, the one
+    // `chant approve` evaluated it under.
+    const sinceStanding = at(r) >= since;
+    // #2512: the decision must also have been recorded under `enforce`. An
+    // allow recorded while the gate was log-only was never binding, and a
+    // later switch to enforce does not make it binding. #3774: and under
+    // the context this run resolved, since the run checks approvals before it
+    // re-records the pending fact for a changed context.
+    if (
+      sinceStanding && approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
+      decision.mode === "enforce" && decision.version === approval.policy.version &&
+      decision.contextDigest === context && (!permit || at(r) >= at(permit))
+    ) {
+      permit = r;
+    }
+
+    const approver = approverOf(r);
+    if (approver.kind !== "human") continue;
+    if (roles && !(approver.roles ?? []).some((role) => roles.includes(role))) continue;
+    const prior = byActor.get(r.resolvedBy);
+    if (!prior || at(r) >= at(prior)) byActor.set(r.resolvedBy, r);
+  }
+
+  const counted = [...byActor.values()].sort((a, b) => at(a) - at(b));
+  return {
+    counted,
+    need: approval.quorum?.count ?? 1,
+    ...(permit ? { permit } : {}),
+    ...(mismatched ? { mismatched } : {}),
+  };
+}
+
+/**
+ * Where a gate's human quorum starts counting (#3206): the oldest pending fact
+ * in the unbroken run of facts, newest first from `standing`, recorded for
+ * `standing`'s plan and policy version.
+ *
+ * A pending fact is re-recorded when anything in the approval block changes,
+ * the mode and the context included, so `chant approve` evaluates the policy
+ * under what the gate now declares. A human's approval counts for the plan
+ * it names whatever the mode or context was, so re-recording for one of
+ * those must not drop it. The run stops at a fact for another plan or policy
+ * version, which needs fresh approvals, and at one that had expired by the
+ * time the next was recorded, which expiry already closed.
+ *
+ * `pending` may hold every pending fact in the ledger; only `standing`'s gate
+ * and environment are read.
+ */
+export function humanQuorumSince(pending: readonly PendingGateRecord[], standing: PendingGateRecord): string {
+  const at = (p: PendingGateRecord) => new Date(p.timestamp).getTime();
+  const version = (p: PendingGateRecord) => p.approval?.policy?.version;
+  const sameKey = (p: PendingGateRecord) =>
+    samePlanDigest(p.planDigest, standing.planDigest) && version(p) === version(standing);
+  const older = pending
+    .filter((p) => p !== standing && p.gate === standing.gate && p.environment === standing.environment && at(p) <= at(standing))
+    .sort((a, b) => at(b) - at(a));
+  let anchor = standing;
+  for (const p of older) {
+    if (!sameKey(p) || isPendingGateExpired(p, anchor.timestamp)) break;
+    anchor = p;
+  }
+  return anchor.timestamp;
+}
+
+/** Whether two resolved approval blocks are the same, so a standing pending fact still describes this gate. */
+function sameApproval(a: ResolvedGateApproval | undefined, b: ResolvedGateApproval | undefined): boolean {
+  return JSON.stringify(a ?? null, sortedJsonReplacer) === JSON.stringify(b ?? null, sortedJsonReplacer);
+}
 
 /** The beginning of time — the anchor for a gate that has never been recorded pending, so any resolution for it counts. */
 const EPOCH = new Date(0).toISOString();
@@ -259,17 +532,66 @@ const EPOCH = new Date(0).toISOString();
  *   recorded" from "still standing".
  */
 export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput): Promise<GateCheck> {
+  // #3955: a run that records nothing cannot be approved or spend an approval.
+  refuseGateWithoutRecording(input.op, input.gate);
   const now = input.now ?? new Date().toISOString();
-  const { resolutions, pending } = await port.read(input.op);
-
+  const ledger = await port.read(input.op);
+  // #2574: a component's ledger holds every environment's facts. This run
+  // answers only to its own environment's pending facts and approvals. An
+  // approval that records no environment at all is kept, so it comes back as
+  // a mismatch with a message instead of silently not counting.
+  const env = input.environment;
+  const pending = env === undefined ? ledger.pending : ledger.pending.filter((p) => p.environment === env);
+  // #3163: a gate the workspace's identity.gates names counts only signed approvals from its class.
+  const rule = (await port.approvalRule?.(input.gate)) ?? null;
   const standing = latestPendingGate(pending, input.gate);
-  const { resolution, mismatched } = latestResolutionForPlan(
-    resolutions,
-    input.gate,
-    standing?.timestamp ?? EPOCH,
-    input.planDigest,
-  );
-  if (resolution) return { satisfied: true, resolution };
+  const since = standing?.timestamp ?? EPOCH;
+  // #3841: an approval of this plan the rule refuses is named, so a wait says why.
+  const refused: GateRefusedApproval[] = [];
+  const resolutions = (
+    env === undefined
+      ? ledger.resolutions
+      : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env)
+  )
+    .filter((r) => input.spent === undefined || r.gate !== input.gate || !isApprovalSpent(input.spent, r))
+    .filter((r) => {
+      if (rule === null || r.gate !== input.gate) return true;
+      const reason = rule.refuses(r);
+      if (reason === null) return true;
+      if (samePlanDigest(r.planDigest, input.planDigest) && new Date(r.timestamp).getTime() >= new Date(since).getTime()) refused.push({ resolution: r, reason });
+      return false;
+    });
+  refused.sort((a, b) => new Date(a.resolution.timestamp).getTime() - new Date(b.resolution.timestamp).getTime());
+
+  let mismatched: GateResolutionRecord | undefined;
+  let quorum: GateQuorumProgress | undefined;
+  if (input.approval) {
+    // #3206: the humans' anchor reaches back past facts re-recorded for this
+    // plan and policy version, so a mode or context change keeps the quorum.
+    const humansSince =
+      standing && samePlanDigest(standing.planDigest, input.planDigest) &&
+      standing.approval?.policy?.version === input.approval.policy?.version
+        ? humanQuorumSince(pending, standing)
+        : since;
+    const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval, humansSince);
+    if (tally.permit) {
+      return { satisfied: true, resolution: tally.permit, via: "policy", approvals: tally.counted };
+    }
+    if (tally.counted.length >= tally.need) {
+      return {
+        satisfied: true,
+        resolution: tally.counted[tally.counted.length - 1]!,
+        via: "quorum",
+        approvals: tally.counted,
+      };
+    }
+    mismatched = tally.mismatched;
+    quorum = { approvers: tally.counted.map((r) => r.resolvedBy), need: tally.need };
+  } else {
+    const found = latestResolutionForPlan(resolutions, input.gate, since, input.planDigest);
+    if (found.resolution) return { satisfied: true, resolution: found.resolution };
+    mismatched = found.mismatched;
+  }
 
   // `input.planDigest` is defined whenever `mismatched` is — `latestResolutionForPlan`
   // returns a mismatch only on the plan-bound path.
@@ -279,21 +601,31 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
         planned: input.planDigest!,
         resolvedBy: mismatched.resolvedBy,
         timestamp: mismatched.timestamp,
+        ...(env !== undefined ? { environment: env } : {}),
       }
     : undefined;
-  const asMismatch = mismatch ? { mismatch } : {};
+  const asMismatch = { ...(mismatch ? { mismatch } : {}), ...(quorum ? { quorum } : {}), ...(refused.length > 0 ? { refused } : {}) };
 
   // A standing fact only stands for the plan it was recorded against. When
   // the plan has moved, re-recording is what gives `chant approve` (which
   // defaults to the newest pending fact's digest) the current plan to
   // approve; leaving the old fact standing would make the common path
   // approve a plan that is no longer the one being run.
-  if (standing && !isPendingGateExpired(standing, now) && standing.planDigest === input.planDigest) {
+  // The same holds for the approval block (#2508): a pending fact recorded
+  // under another policy version or another context would have `chant
+  // approve` evaluate the policy against something this run no longer has.
+  if (
+    standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) &&
+    sameApproval(standing.approval, input.approval)
+  ) {
     return { satisfied: false, pending: standing, recorded: false, ...asMismatch };
   }
 
   const url = resolveApprovalUrl();
+  // #3683: in CI, where this job runs, so an approval can start it again.
+  const resume = resolveGateRunLocator();
   const { record, pushed, pushWarning } = await port.appendPending({
+    ...(input.fields as Partial<PendingGateInput> | undefined),
     op: input.op,
     gate: input.gate,
     timestamp: now,
@@ -303,7 +635,11 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.description ? { description: input.description } : {}),
     ...(input.runId ? { runId: input.runId } : {}),
     ...(url ? { url } : {}),
+    ...(resume ? { resume } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
+    ...(env !== undefined ? { environment: env } : {}),
+    ...(input.approval ? { approval: input.approval } : {}),
+    ...(input.neverOverMcp ? { neverOverMcp: true as const } : {}),
   });
   return {
     satisfied: false,
@@ -315,7 +651,33 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   };
 }
 
-/** The line every renderer prints to say how a pending gate is cleared. */
-export function approveCommand(op: string, gate: string): string {
-  return `chant approve ${op} ${gate}`;
+/**
+ * The line every renderer prints to say how a pending gate is cleared. A
+ * component gate names its environment (#2574), so the approval picks that
+ * environment's pending fact when others stand beside it. A gate bound to a
+ * plan (#2300) gets `--plan <digest>` too (#2832), so the line approves the
+ * plan the reader was shown and not whatever is pending by the time they run
+ * it.
+ */
+export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string, sealed = false): string {
+  return `chant approve ${op} ${gate}` +
+    (environment === undefined ? "" : ` --env ${environment}`) +
+    (planDigest === undefined ? "" : ` --plan ${planDigest}`) +
+    (sealed ? " --sign" : "");
+}
+
+/**
+ * Whether the workspace seals `gate` (`identity.gates`), so an approval
+ * without `--sign` doesn't count. Callers pass the answer to
+ * {@link approveCommand} so the hint names the flag. Loaded on demand, as the
+ * git ledger port does: the workspace modules import the Op modules. A read
+ * that throws counts as unsealed, since the hint is advice and not the check.
+ */
+export async function gateIsSealed(gate: string, cwd: string = process.cwd()): Promise<boolean> {
+  try {
+    const { gateAdmission } = await import("../workspace/identity");
+    return gateAdmission(cwd, gate) !== null;
+  } catch {
+    return false;
+  }
 }

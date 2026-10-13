@@ -22,7 +22,7 @@ import type { OpConfig, StepDefinition } from "@intentius/chant/op/types";
 import type { StepRecord } from "@intentius/chant/op/local-executor";
 import type { OpRunStatus } from "@intentius/chant/op/runtime";
 import type { PendingGateRecord } from "@intentius/chant/lifecycle/gate-ledger";
-import { approveCommand } from "@intentius/chant/op/gate";
+import { approveCommand, gateIsSealed } from "@intentius/chant/op/gate";
 import { gateName } from "@intentius/chant/op/gate-name";
 import type { ChantCommand } from "./command-line";
 import type { ChantHost } from "./host";
@@ -106,6 +106,8 @@ export interface TurnOptions {
   durableRequests: boolean;
   /** Mints the id a resume prompt names. Injected so a test can pin it. */
   newRequestId: () => string;
+  /** The id an Op run is named by, when the host names runs (#3539: fountain's conversation id). */
+  runId?: string;
 }
 
 /**
@@ -210,8 +212,19 @@ async function runOpTurn(
 
   let status: OpRunStatus;
   try {
+    // What `chant run` itself hands a runtime (#3539): the run's id, when
+    // the session names it, and the prompt's `--param` and `--work`, which a
+    // turn used to drop.
+    const params = paramsOf(command.args.param);
+    const work = {
+      ...(command.args.work !== undefined ? { item: command.args.work } : {}),
+      ...(command.args.holder !== undefined ? { holder: command.args.holder } : {}),
+    };
     const handle = await host.startOp(config, {
       ...(command.args.env ? { env: command.args.env } : {}),
+      ...(opts.runId ? { runId: opts.runId } : {}),
+      ...(params ? { params } : {}),
+      ...(Object.keys(work).length > 0 ? { work } : {}),
       progress: settle,
       signal,
     });
@@ -236,8 +249,32 @@ async function runOpTurn(
     return gatedReply(opts, command, status);
   }
 
+  // chant#2749 — an open decision point ends the turn as a gate does. The
+  // question is a record in the workspace, where hud asks a person; it is not
+  // asked here, because this thread is the steward's and nobody reads it for
+  // questions, and the steward never answers one itself.
+  const point = status.result?.record.point ?? status.point;
+  if (status.state === "waiting" && point) {
+    sink.message(
+      `Op "${command.op}" is waiting on decision point "${point.point}": question ${point.id} is ${point.state}.\n` +
+        `A person answers it through hud or \`chant workspace points answer ${point.id}\`, and the next run reads the answer.\n`,
+    );
+  }
+
   sink.message(JSON.stringify(status.result?.record ?? status, null, 2) + "\n");
   return { stopReason: "end_turn" };
+}
+
+/** `--param name=value` flags as a record, the way `chant run` reads them. */
+function paramsOf(entries: string[] | undefined): Record<string, string> | undefined {
+  if (!entries?.length) return undefined;
+  const out: Record<string, string> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf("=");
+    if (eq === -1) out[entry] = "";
+    else out[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return out;
 }
 
 /**
@@ -265,7 +302,7 @@ async function gatedReply(
   sink.message(
     `Op "${command.op}" is waiting on gate "${gate.name}", pending since ${gate.since}` +
       (pending?.expiresAt ? ` and expiring ${pending.expiresAt}` : "") +
-      `.\nApprove with: ${approveCommand(command.op, gate.name)}\n`,
+      `.\nApprove with: ${approveCommand(command.op, gate.name, undefined, undefined, await gateIsSealed(gate.name))}\n`,
   );
   sink.message(JSON.stringify(status.result?.record ?? status, null, 2) + "\n");
 

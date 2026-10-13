@@ -1,0 +1,75 @@
+---
+schema: 1
+id: "ws-075"
+title: "Commit trailers"
+state: "decided"
+area: "D15"
+source:
+  issue: "INTENTIUS/chant#3149"
+  row: "Commit trailers for leases, runs, records and applies"
+  revision: null
+question: "Which trailer names does a commit use to point at the work lease, the agent run, the records and the apply behind it, who writes them, how does chant read them, and what becomes of studio's Studio-* and Factory-* trailers?"
+options:
+  - id: "a"
+    label: "chant's own trailers, read by core: Chant-Agent, Chant-Lease, Chant-Run, Chant-Record and Chant-Applied-*"
+    how: "Chant-Agent keeps ws-067's meaning, the agent session that wrote the commit. Chant-Lease carries a work lease's fencing token, Chant-Run an agent run's id (#3033), and Chant-Record a record as <kind>:<id>, once per record, with kind the record kind's name. The commit that applies a leased branch carries Chant-Applied-By, Chant-Applied-At and Chant-Applied-Commit beside the item's Chant-Record and Chant-Lease. Whoever makes the commit writes the lines, since chant never commits for a caller (ws-074). graph --intent and graph --intent --record read them with no plugin: each commit reports them in joins, a Chant-Lease token is turned into its work item through the lease histories on the local chant/lifecycle branch, and a Chant-Record of a kind read, or a lease's work item, gets a carries edge and makes the commit the own work of the decision it names or that the work item implements. Studio's trailers map one to one: Studio-Unit to Chant-Record: work:<id>, Studio-Contract, Studio-Driver and Studio-Evidence to Chant-Record of their kinds, Factory-Lease to Chant-Lease, Studio-Author: factory to Chant-Agent: factory, and Applied-By, Applied-At and Applied-Commit to the Chant-Applied-* trailers. Factory-Note stays a note in the message body."
+    tradeoff: "Any orchestrator gets the joins studio built for itself, and hud reads them from the read contract instead of a studio plugin. A trailer is text a person can edit or drop, so a join survives a rebase or a cherry-pick only when the message does; following a squash is #3035 and joining by content is #3036. Kinds such as contract and evidence resolve only once a kind for them is declared (#3148); until then they are reported with node null."
+  - id: "b"
+    label: "each product keeps its own trailers, joined by its own commitJoins plugin"
+    how: "Studio keeps Studio-Unit, Studio-Contract, Studio-Evidence, Studio-Author, Factory-Lease and the Applied-* trailers, and its decision kind's commitJoins turns them into units, contracts and evidence, as today. Another orchestrator writes its own and ships its own plugin."
+    tradeoff: "Nothing changes for studio. Every orchestrator invents its own names and its own plugin, a run or lease join can't be read without that plugin, and the spec does not describe a studio repository by itself (#3145)."
+  - id: "c"
+    label: "one structured trailer, such as Chant: lease=<token>; run=<id>; record=work:W-1"
+    how: "A single key whose value packs every join, parsed by chant."
+    tradeoff: "One line per commit. git's own tooling (git log --format=%(trailers:key=...), interpret-trailers) can no longer read one join without chant's parser, and a value with several records needs its own escaping."
+  - id: "d"
+    label: "git notes under refs/notes/chant instead of trailers"
+    how: "The joins live in a note attached to each commit, written after the commit and pushed as their own ref."
+    tradeoff: "The message stays clean and a join can be added after the fact. Notes don't follow a commit through a rebase, a cherry-pick or a squash unless every tool is configured to rewrite them, forges don't show or push them by default, and a clone without the notes ref has no joins at all."
+  - id: "e"
+    label: "as a, and an apply ledger on chant/lifecycle as well"
+    how: "Applying a branch also appends a line to _applies/<item>.jsonl through a chant command, so a reader can list applies without walking history."
+    tradeoff: "A list of applies without git log. The apply commit already says who, when and what in its author, date, parents and trailers, so the ledger line is a second copy that can disagree with it, and ws-068 keeps the ledgers for facts made off the working branch."
+choice:
+  option: "a"
+  reason: "chant keys provenance to record ids, never to commit SHAs (#3037), and a trailer is the place git keeps such an id with the commit, readable with plain git and kept by a rebase or a cherry-pick that keeps the message. Core names the trailers so the joins work for any orchestrator and any reader, the way #3145 asks the spec to describe a studio repository by itself; studio's names become a mapping rather than a plugin. Separate keys per join keep each readable by git's own trailer formatting. An apply is a commit on the working branch, so its trailers are the record of it, as a release's facts live in its ledger: a second copy in the ledger could only disagree. Chant-Agent stays the author class it is under ws-067, since a session's class comes from the declaration and role grants at base; a class a plugin defines is #3080, and a tool's commit with no session is judged by its author and signature as before."
+rejected:
+  - option: "b"
+    why: "It keeps the joins a product's private vocabulary, so the read contract can't say which run or lease made a commit, and #3145 asks for a spec that describes a studio repository without studio."
+  - option: "c"
+    why: "git can read separate trailer keys one at a time with its own formatting; a packed value needs chant's parser and an escaping rule of its own."
+  - option: "d"
+    why: "Notes are lost through the rebases, cherry-picks and squashes the joins have to survive, and forges and clones leave them out by default."
+  - option: "e"
+    why: "The apply commit already holds who, when and which tip, so a ledger line would be a second copy that can disagree with it."
+supersedes: []
+evidence:
+  - title: "INTENTIUS/chant#3149, commit trailers for leases, runs, records and applies"
+    url: "https://github.com/INTENTIUS/chant/issues/3149"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "INTENTIUS/chant#3037, workspace provenance epic"
+    url: "https://github.com/INTENTIUS/chant/issues/3037"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "arugula-salad/studio#280, how Apply's pull requests merge so provenance survives"
+    url: "https://github.com/arugula-salad/studio/issues/280"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "ws-067, Write scope and agent sessions"
+    url: "https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "ws-074, The repo is the database"
+    url: "https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md"
+    as_of: "2026-10-03T00:00:00Z"
+decided_by: "lex00"
+decided_on: "2026-10-03"
+reviews: []
+constrains:
+  - "INTENTIUS/chant#3149"
+  - "INTENTIUS/chant#3033"
+  - "INTENTIUS/chant#3035"
+  - "INTENTIUS/chant#3036"
+  - "arugula-salad/studio#280"
+  - "ws-067"
+  - "path:packages/core/src/workspace/trailers.ts"
+---
+
+# Commit trailers

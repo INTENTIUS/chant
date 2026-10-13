@@ -1,0 +1,123 @@
+---
+title: Asking How a File Got This Way
+description: Trace a file or a line range in a workspace back to the decisions, pinned artifacts and commits behind it with chant workspace graph --intent.
+diataxis: how-to
+---
+
+Use `chant workspace graph --intent` when you are looking at some code in a workspace and want to know how it got this way and who decided it should be this way. The command gathers the commits that touched the code, the decisions that govern it and the artifacts those decisions rest on. It shows you where they leave gaps, and the judgment stays with you.
+
+You need a workspace with a `chant.workspace.json`, a git history, and decision records read through a record kind file, as [`chant workspace records`](/chant/cli/workspace-records/) reads them.
+
+## Walk from a line
+
+Name the file and the line, and pass the decision kind:
+
+```bash
+cd reference-workspace
+chant workspace graph --intent app/src/server.mjs:19 --kind decisions/decision.kind.mjs
+```
+
+The output reads top to bottom in the order you would ask the questions:
+
+```
+region    app/src/server.mjs:19 (file, member app) in the working tree
+decision  ref-001 decided: How the app is deployed; constrains member:app (member), ...
+decision  ref-002 decided: Where the screen design lives; constrains member:app (member), ...
+artifact  design/screens/home.json pinned; pinned by ref-002 at 074e55f5 (pinned); now 074e55f5
+commit    72173388 2026-09-23 lex00: feat(workspace): the reference workspace as chant's integration fixture (#2543) (#2595), lines 13; unattested
+finding   intent-commit-undecided: 72173388 changed the region when no decision constrained app/src/server.mjs by path
+finding   intent-decision-provisional: the decisions constraining app/src/server.mjs are decided, and none is in a closed state
+finding   intent-constraint-coarse: app/src/server.mjs is constrained only through its member, app
+```
+
+A whole file (`app/src/server.mjs`) or a directory (`app`) works the same way. A line range follows the lines through their history with `git log -L`, so a commit that changed other parts of the file is left out.
+
+## Read the findings as questions
+
+Each finding marks a place where the record is thin. None of them says the code is wrong.
+
+| Finding | What to ask |
+|---|---|
+| `intent-commit-undecided` | Was this change meant to carry out a decision? If so, which one, and should it name this path? |
+| `intent-constraint-coarse` | Only a member-wide decision covers this code. Should a decision name the path? |
+| `intent-decision-provisional` | No one has ratified the decisions this code rests on. Should they be reviewed first? |
+| `intent-decision-contested` | A reviewer dissented from the decision this code rests on, and the concern has been neither answered nor withdrawn. Should someone answer it before more code builds on the decision? |
+| `intent-pin-drifted` | The artifact changed after the decision pinned it. Does the decision still hold for the new version? |
+| `intent-pin-stale` | A newer decision replaced the old one, and the artifact is still at the hash the old one pinned. Should the artifact change to match the new decision? |
+| `intent-artifact-unpinned` | Only a superseded decision pinned this artifact. Should the decision that replaced it pin it too? |
+| `intent-decision-superseded-live` | The decision covering this code was replaced, and nothing newer covers it. Does the replacement apply here? |
+| `intent-region-unconstrained` | No decision covers this code. Is one needed? |
+| `intent-decision-unimplemented` | This decision was made, and no work item or commit carries it out. Should someone open a work item for it? |
+| `intent-work-blocked` | Commits landed under this work item while an item it needs was unfinished. Was the need wrong, or did the work start too early? |
+| `intent-work-open-decided-code` | The code carries out the decision, and its work item is still open. Is the item done, or is part of the work still missing? |
+
+The [read contract](/chant/reference/workspace-read-contract/#reason-codes) lists every code.
+
+Code can move away from a decision while the decision is still in force. chant can't tell when that happened, so it lists every commit made inside the decision's window under the decision ([#2656](https://github.com/INTENTIUS/chant/issues/2656)):
+
+```
+decision  dec-001 decided: The notes list is sorted newest first; constrains path:app/notes.mjs (path), ...
+  within    9c1e04aa sort the notes alphabetically; unit U-0002, in dec-001's window and not its work
+  decided   3f2b7d10 add the notes list; unit U-0001, dec-001's own work
+  ask       is this drift, a superseding decision nobody wrote down, or the decision being wrong?
+```
+
+The `decided` line is the decision's own work, because a plugin joined it to a unit whose record, or whose contract, names the decision. Only timing ties a `within` line to the decision. For each one, decide which of the three it is. Drift means the code should go back. A superseding decision nobody wrote down means a new record is needed. If the decision was wrong, reopen it. Without a plugin that joins units, every commit inside a window is a `within` commit.
+
+A plugin can add its own findings about a commit, with codes such as `plugin:units:criteria-changed`. They print with the other findings and often point at the commit you most need to judge.
+
+## See the work queue beside the code
+
+When the declaration names a work kind, as the reference workspace's does, the walk also shows the work items that touch the region. With `--kind`, pass the work kind beside the decision kind:
+
+```bash
+cd reference-workspace
+chant workspace graph --intent design/screens/home.json
+```
+
+```
+work      W-001 in-progress, owned by lex00: The app renders the home screen from its spec; constrains path:design/screens/home.json (path); implements ref-002 (decided); from intent-decision-unimplemented on design/screens/home.json
+work      W-002 open: The app's test checks the home page against the spec; constrains path:design/screens/home.json (path); blocked by W-001 (in-progress)
+```
+
+A `work` node is a work item whose `constrains` cover the region, with its state, `ready` and `blockedBy`. It points to the decision it carries out through `implements`, and to each item it waits on through `needs`. Changes made while an item was open reach it through `within`, with the state `worked`. A finding the item came from points to it through `addressed-by`, and the text ends that finding with `addressed by W-001`. A finding nobody has taken shows no such suffix. [Work items](/chant/guide/work-items/) covers the three findings the work kind adds.
+
+## Look at an older state
+
+Add `--at <rev>` to walk the tree, the records and the history as they were at a commit. Nothing is checked out and nothing is fetched.
+
+```bash
+chant workspace graph --intent app/src/server.mjs:19 --kind decisions/decision.kind.mjs --at HEAD~5
+```
+
+A shallow clone cuts the history short. The walk still runs and reports `intent-history-shallow`, so run `git fetch --unshallow` first when the older commits matter.
+
+## Add units and contracts from a plugin
+
+When the workspace records units of work and contracts, a kind file with a `commitJoins` export joins them to the commits. Pass it with a second `--kind`:
+
+```bash
+chant workspace graph --intent app/src/server.mjs --kind decisions/decision.kind.mjs --kind plugins/units.kind.mjs
+```
+
+Each commit then lists the unit that produced it and the contract it served, and a commit whose unit names the decision it carries out shows as that decision's own work. [Commit joins](/chant/cli/workspace-graph/#commit-joins) describes the export.
+
+A plugin doesn't need trailers either. The `context` its `commitJoins` gets has `read(path)` for a file and `list(dir)` for a directory's entries, both from the workspace root in the tree the graph reads ([#2663](https://github.com/INTENTIUS/chant/issues/2663)). So it can list its unit records and pick the one that names the sha:
+
+```js
+export function commitJoins(commit, context) {
+  for (const path of context.list("design/units") ?? []) {
+    if (!path.endsWith(".json")) continue;
+    const unit = JSON.parse(context.read(path));
+    if (unit.result?.commit === commit.sha) return { unit: { id: unit.id, contract: unit.contract }, contract: { id: unit.contract } };
+  }
+}
+```
+
+`list` returns sorted paths from the workspace root, and a directory's path ends in `/`. The tree is the one `--at` names, or the working tree. A unit record that names a sha is written after the change it describes, so the change's own tree wouldn't have it.
+
+A plugin's findings are named after its kind: the record kind's name, or the file's name without `.kind.mjs`. Joins kept beside the decision kind therefore report `plugin:decision:<code>`. Moving the joins into a kind file of their own, such as `chud.kind.mjs`, gives them that file's name. You can also leave them where they are and add `export const commitJoinsName = "chud"`, which makes the codes `plugin:chud:<code>`.
+
+## Hand the graph to another tool
+
+Add `--json` to print the document hud and other readers draw. It follows the schema `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json`. The findings are nodes in it, so a reader draws each one beside the nodes it concerns.

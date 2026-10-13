@@ -64,6 +64,8 @@ export interface ProjectBuildOptionsInput {
   ownership?: OwnershipMarker;
   /** This build's resolved build-time parameters (#1064). */
   buildParams?: BuildParamProvenance[];
+  /** Telemetry attribution facts (#2558), from `resolveTelemetryAttribution`; unset at level 0. */
+  telemetry?: import("../telemetry-attribution").TelemetryAttribution;
 }
 
 /**
@@ -75,7 +77,7 @@ export interface ProjectBuildOptionsInput {
  * in this function, never at a call site.
  */
 export function resolveProjectBuildOptions(input: ProjectBuildOptionsInput): BuildOptions {
-  const { config, configDir, plugins, modes, ownership, buildParams } = input;
+  const { config, configDir, plugins, modes, ownership, buildParams, telemetry } = input;
 
   // #1039 — each loaded plugin's registered intrinsics (e.g. AWS's `Sub`), so
   // a file using a registered intrinsic tagged template folds instead of
@@ -90,6 +92,7 @@ export function resolveProjectBuildOptions(input: ProjectBuildOptionsInput): Bui
 
   return {
     ownership,
+    ...(telemetry ? { telemetry } : {}),
     config: config as unknown as Record<string, unknown>,
     fold: modes.fold,
     sandbox: modes.sandbox,

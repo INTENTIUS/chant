@@ -6,10 +6,14 @@
  */
 
 import { fetchWithRetry } from "@intentius/chant/codegen/fetch";
+import { K8S_SCHEMA_VERSION } from "../spec/fetch";
 
-/** Pinned versions of external dependencies. */
+/**
+ * Pinned versions of external dependencies. The Kubernetes entry mirrors
+ * K8S_SCHEMA_VERSION in spec/fetch.ts, which is the version codegen downloads.
+ */
 export const PINNED_VERSIONS = {
-  k8sOpenAPI: "v1.32.0",
+  k8sOpenAPI: K8S_SCHEMA_VERSION,
 } as const;
 
 /**

@@ -17,7 +17,7 @@ Each activity is a direct REST call over an injectable HTTP client, imported fro
 | Activity | What it does |
 |----------|--------------|
 | `spriteCreate` | Create a sandbox. The caller-chosen `name` becomes the sprite `id` that every later activity keys on |
-| `spriteExec` | Run a command inside the sprite. A non-zero exit throws, so the phase fails and any `onFailure` compensation runs |
+| `spriteExec` | Run a command inside the sprite, with optional `env`, `dir` and `timeoutMs` (#2765). A non-zero exit or a `timeoutMs` overrun throws, so the phase fails and any `onFailure` compensation runs |
 | `spriteCheckpoint` | Snapshot the sprite under a caller-chosen `label` |
 | `spriteRestore` | Rewind the sprite to a labeled checkpoint |
 | `spriteDestroy` | Destroy the sprite (idempotent; an already-gone sprite is a no-op) |
@@ -78,7 +78,7 @@ When the `Run` phase's command exits non-zero, `spriteExec` throws, the phase fa
 
 ## Targeting the emulator or real Sprites
 
-The activities resolve their endpoint in this order: an explicit `endpoint` arg, then `SPRITES_BASE_URL`, then the real Sprites base. The same Op targets an emulator or real Sprites with no code change. The default `fetch` client adds `Authorization: Bearer ${SPRITES_API_TOKEN}` when a token is set; the emulator ignores it.
+The activities resolve their endpoint in this order: an explicit `endpoint` arg, then `SPRITES_BASE_URL`, then its alias `SPRITES_API_URL` (the name the studio and wisp's own docs use), then the real Sprites base. The same Op targets an emulator or real Sprites with no code change. The default `fetch` client adds `Authorization: Bearer <token>` when a token is set — `SPRITES_API_TOKEN`, or its alias `SPRITE_TOKEN` — the emulator ignores it. Either alias is read only when the original name is unset, so an existing deployment using `SPRITES_BASE_URL`/`SPRITES_API_TOKEN` is unaffected.
 
 ```bash
 # Point at a self-hosted or in-process emulator.
@@ -104,10 +104,13 @@ The same lexicon ships more Sprite primitives, all imported from `@intentius/cha
 | Family | Activities | Use |
 |--------|-----------|-----|
 | Filesystem (#848) | `spriteWriteFile` / `spriteReadFile` / `spriteListDir` / `spriteRemove` | stage an input file and read a result out without shelling `spriteExec` + `cat` |
-| Config reconcile (#849) | `spriteApplyNetworkPolicy` / `spriteApplyServices` | reconcile a Sprite's egress allowlist and background services against typed config (validated before any HTTP; a whole-object replace for policy, create-or-update by name for services) |
+| Config reconcile (#849) | `spriteApplyNetworkPolicy` / `spriteApplyServices` | reconcile a Sprite's egress allowlist and background services against typed config (validated before any HTTP; a whole-object replace for policy, create-or-update by name for services). Without an `id`, `spriteApplyServices({ box: true })` runs inside the sprite and applies the box block's `services` through `sprite-env services` (#2880): it creates the missing ones and deletes and creates the changed ones, in dependency order, with `only`, `start` and `restart` |
+| Services (#2711) | `spriteServiceCreate` / `spriteServiceGet` / `spriteServiceList` / `spriteServiceStart` / `spriteServiceStop` / `spriteServiceDelete` / `spriteServiceLogs` | the single-service primitives underneath `spriteApplyServices` — create-and-start one long-lived service (a box's door or hud), inspect or list what's running, stop/start or delete one by name, read its log tail |
+| Converge (#2778) | `spriteServicesObserve` / `spriteServiceRestart` | keep a box's declared services running with a `ConvergeOp`: the observer step gives one verdict per service (`in-sync`, `drifted`, `unknown`) from the supervisor and each health URL, and the restart is the step of the Op a rule dispatches for the drifted service. Inside the sprite they call `sprite-env services`; with a sprite `id` they use the API. The services come from `services`, a `servicesFile`, or with `box: true` the box block's `services` in `chant.workspace.json` (#2880) |
+| Sprite URL / delete (#2711) | `spriteUrl` / `spriteDelete` | resolve a Sprite's URL, optionally waiting until a path on it answers; delete the Sprite (`spriteDelete` is `spriteDestroy` under the name spritzer/wisp and the other lexicons' delete activities use — same call, either name) |
 | Keep-alive (#847) | `spriteTaskCreate` / `spriteTaskRefresh` / `spriteTaskRelease` | hold a Sprite active for a session so it will not pause; a session past the 1-hour task cap refreshes on an interval |
 
-These are still runtime-orchestration primitives, not declarable resources — a Sprite has no desired-state create body to reconcile.
+These are still runtime-orchestration primitives, not declarable resources — a Sprite has no desired-state create body to reconcile. Services created directly with `spriteServiceCreate` are what a box's `spritzer` preset provisions door/hud on (arugula-salad/studio#27) — the same wire surface as `sprite-env services` inside the sprite, spritzer 0.6.0's container mode, and wisp.
 
 ## Where it fits
 

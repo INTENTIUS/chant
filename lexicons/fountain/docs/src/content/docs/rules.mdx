@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Fountain lexi
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fountain` — DO NOT EDIT.
     Edit lexicons/fountain/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Fountain lexicon provides **13** rules: 1 lint rule and 12 post-synth checks.
+The Fountain lexicon provides **14** rules: 1 lint rule and 13 post-synth checks.
 
 ## Lint Rules
 
@@ -31,4 +31,5 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `FTN020` | Schedule cron must be five- or six-field UTC cron (no @nickname shorthands) |
 | `FTN021` | A Teammate's agent and a Schedule's teammate must resolve within the build |
 | `FTN022` | Webhook url must be https and must not be a loopback or private address |
-| `FTN023` | FTN023 |
+| `FTN023` | Agent runtime "acp" requires runtime_command, and no other runtime accepts one |
+| `FTN024` | Environment setup_timeout_seconds must be an integer from 1 to 900 |

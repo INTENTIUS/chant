@@ -1,0 +1,65 @@
+---
+title: "Rule Groups"
+description: "RuleGroup, recording and alerting rules, and the plain functions around them"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/rule-groups.mdx instead; changes here are overwritten. */}
+
+
+The types follow the rule file format of Prometheus `v3.15.0` (`PROMETHEUS_PIN.prometheus`). Field names are the file's own snake_case, so the [Prometheus rule docs](https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/) apply as written.
+
+## `RuleGroup`
+
+`new RuleGroup(props)` declares one entry under `groups:`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | `string` | The group's name. Unique within a rule file (PROM101). |
+| `interval` | duration | How often the group is evaluated. Defaults to Prometheus's `evaluation_interval`. |
+| `query_offset` | duration | Evaluate this far in the past, for late-arriving samples. |
+| `limit` | `number` | Most alerts (alerting rule) or series (recording rule) one rule may produce. 0 is no limit. |
+| `labels` | `Record<string, string>` | Added to every rule in the group; a rule's own labels win. |
+| `rules` | `Rule[]` | Evaluated in order, so a recording rule is visible to the rules after it in the same evaluation. |
+
+The entity exposes `groupName`. `isRuleGroup(value)` tells a `RuleGroup` apart from other values.
+
+## Recording rules
+
+| Field | Type | Meaning |
+|---|---|---|
+| `record` | `string` | The series name the result is stored under. Convention: `level:metric:operations`. |
+| `expr` | `string` | PromQL. |
+| `labels` | `Record<string, string>` | Added to the stored series. |
+
+A recording rule takes no `for`, `keep_firing_for` or `annotations` (PROM105).
+
+## Alerting rules
+
+| Field | Type | Meaning |
+|---|---|---|
+| `alert` | `string` | The `alertname` label on every alert the rule fires. |
+| `expr` | `string` | PromQL. Each returned series is one alert. |
+| `for` | duration | How long the expression must hold before the alert fires. |
+| `keep_firing_for` | duration | How long the alert keeps firing after the expression stops returning it. |
+| `labels` | `Record<string, string>` | Alertmanager routes on these. Set `severity` (PROM106). |
+| `annotations` | `Record<string, string>` | `summary`, `description`, `runbook_url`. Go templates like `{{ $labels.job }}` pass through. |
+
+Two alerting rules may share a name when their labels differ, which is how one alert is written at two severities. Two rules with the same name and labels clash (PROM102).
+
+## Durations
+
+A duration is one or more `<number><unit>` terms, units in descending order and each at most once: `y`, `w`, `d`, `h`, `m`, `s`, `ms`. `1h30m` is valid; `90m` is valid; `1.5h` and `30m1h` are not. `isValidDuration`, `durationMs` and `formatDuration` read and write them.
+
+## Plain functions
+
+| Function | Returns |
+|---|---|
+| `ruleGroupConfig(group)` | The plain group as it appears under `groups:`, keys in canonical order. Takes an entity or plain props. |
+| `buildRuleFile(entities)` | `{ config, groups }` for every `RuleGroup` in a list or entity map, groups sorted by name. |
+| `ruleFileYaml(entities)` | The rule file text, exactly as the serializer writes it. |
+| `validateRuleFile(file)` | PROM101 to PROM107 findings for any parsed rule file. |
+| `checkPromql(expr)` | `{ ok: true }`, or the offset and a message for the first syntax error. |
+
+A composite that builds rules from data (an SLO declaration, one group per service) returns `RuleGroup`s built from plain `Rule` objects, and both the rule file and a `PrometheusRule` pick them up.

@@ -1,0 +1,689 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "wave": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          },
+          {
+            "moment": "before-apply",
+            "name": "migrate",
+            "exit": 3,
+            "outcome": "held"
+          },
+          {
+            "moment": "after-gate",
+            "name": "report",
+            "exit": 0,
+            "outcome": "passed"
+          }
+        ],
+        "decision": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "waiting",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ],
+            "before-apply": [
+              {
+                "name": "migrate",
+                "command": [
+                  "hook",
+                  "migrate",
+                  "{runs}"
+                ],
+                "onFailure": "approve"
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "before-apply",
+              "name": "migrate",
+              "exit": 3,
+              "outcome": "held"
+            },
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            }
+          ],
+          "heldOn": {
+            "op": "tf-migrate",
+            "gate": "split-queues",
+            "digest": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "hook": "before-apply hook migrate",
+            "status": "waiting",
+            "approve": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "waitingSince": "2026-10-11T00:00:00.000Z",
+            "recorded": true
+          },
+          "approve": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "recorded": true
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "members": [],
+            "approvalMode": "ledger",
+            "wave": {
+              "number": 1,
+              "name": "net",
+              "op": "tf-apply"
+            },
+            "heldBy": {
+              "hook": "migrate",
+              "moment": "before-apply"
+            },
+            "op": "tf-migrate",
+            "gate": "split-queues",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "move the queues",
+            "planDigest": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 4,
+      "logs": 3
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tg",
+        "plan",
+        "net",
+        ".chant/op-waves/tf-apply/wave-1/runs.json",
+        ".chant/op-waves/tf-apply/wave-1/plans.json"
+      ],
+      "read": {
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply"
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply"
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "not-required",
+        "CHANT_GATE_OP": "tf-apply",
+        "CHANT_GATE": "wave-1",
+        "CHANT_GATE_DIGEST": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "empty": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "not-required",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ],
+            "before-apply": [
+              {
+                "name": "migrate",
+                "command": [
+                  "hook",
+                  "migrate",
+                  "{runs}"
+                ],
+                "onFailure": "approve"
+              }
+            ]
+          },
+          "digestOver": "changing"
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "empty": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "migrate",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "before-apply",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "empty": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "empty": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "argv": [
+        "hook",
+        "report",
+        ".chant/op-waves/tf-apply/wave-1/runs.json"
+      ],
+      "env": {
+        "CHANT_OP_WAVES": "tf-apply",
+        "CHANT_WAVE": "net",
+        "CHANT_WAVE_NUMBER": "1",
+        "CHANT_HOOK": "after-gate",
+        "CHANT_RUNS": ".chant/op-waves/tf-apply/wave-1/runs.json",
+        "CHANT_HOLD": ".chant/op-waves/tf-apply/wave-1/hold.json",
+        "CHANT_GATE_STATUS": "waiting",
+        "CHANT_GATE_OP": "tf-migrate",
+        "CHANT_GATE": "split-queues",
+        "CHANT_GATE_DIGEST": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "CHANT_DECISION": ".chant/op-waves/tf-apply/wave-1.json",
+        "CHANT_GATE_APPROVE": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "CHANT_GATE_WAITING_SINCE": "2026-10-11T00:00:00.000Z",
+        "CHANT_GATE_RECORDED": "true"
+      },
+      "read": {
+        "CHANT_RUNS": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "empty": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        },
+        "CHANT_DECISION": {
+          "wave": 1,
+          "name": "net",
+          "op": "tf-apply",
+          "gate": "wave-1",
+          "policy": "never",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "members": [
+            {
+              "member": "vpc",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "dns",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "tf-apply",
+              "empty": true
+            },
+            {
+              "member": "nat",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "tf-apply",
+              "empty": true
+            }
+          ],
+          "status": "waiting",
+          "hooks": {
+            "after-gate": [
+              {
+                "name": "report",
+                "command": [
+                  "hook",
+                  "report",
+                  "{runs}"
+                ]
+              }
+            ],
+            "before-apply": [
+              {
+                "name": "migrate",
+                "command": [
+                  "hook",
+                  "migrate",
+                  "{runs}"
+                ],
+                "onFailure": "approve"
+              }
+            ]
+          },
+          "digestOver": "changing",
+          "outcomes": [
+            {
+              "moment": "after-gate",
+              "name": "report",
+              "exit": 0,
+              "outcome": "passed"
+            },
+            {
+              "moment": "before-apply",
+              "name": "migrate",
+              "exit": 3,
+              "outcome": "held"
+            }
+          ],
+          "heldOn": {
+            "op": "tf-migrate",
+            "gate": "split-queues",
+            "digest": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "hook": "before-apply hook migrate",
+            "status": "waiting",
+            "approve": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+            "waitingSince": "2026-10-11T00:00:00.000Z",
+            "recorded": true
+          },
+          "approve": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "recorded": true
+        },
+        ".chant/op-waves/tf-apply/wave-1/runs.json": {
+          "wave": "net",
+          "number": 1,
+          "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+          "runs": [
+            {
+              "target": "vpc",
+              "op": "tf-apply",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "empty": true
+            },
+            {
+              "target": "dns",
+              "op": "tf-apply",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "empty": true
+            },
+            {
+              "target": "nat",
+              "op": "tf-apply",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "empty": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "logs": [
+    "wave 1 (net): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc: not-required",
+    "before-apply hook migrate exited 3 and holds wave 1 (net) on gate tf-migrate / split-queues, digest sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "wave 1 (net) waits on tf-migrate / split-queues, which before-apply hook migrate holds it on: nobody approved sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq. Approve: chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+  ],
+  "files": {
+    ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1/nat.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1/plans.json": {
+      "runs": [
+        {
+          "target": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "empty": true
+        },
+        {
+          "target": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "empty": true
+        },
+        {
+          "target": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "empty": true
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/runs.json": {
+      "wave": "net",
+      "number": 1,
+      "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+      "runs": [
+        {
+          "target": "vpc",
+          "op": "tf-apply",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "empty": true
+        },
+        {
+          "target": "dns",
+          "op": "tf-apply",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "empty": true
+        },
+        {
+          "target": "nat",
+          "op": "tf-apply",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "empty": true
+        }
+      ]
+    },
+    ".chant/op-waves/tf-apply/wave-1/vpc.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "empty": true
+    },
+    ".chant/op-waves/tf-apply/wave-1.json": {
+      "wave": 1,
+      "name": "net",
+      "op": "tf-apply",
+      "gate": "wave-1",
+      "policy": "never",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc",
+      "members": [
+        {
+          "member": "vpc",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "tf-apply",
+          "empty": true
+        },
+        {
+          "member": "dns",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "tf-apply",
+          "empty": true
+        },
+        {
+          "member": "nat",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "tf-apply",
+          "empty": true
+        }
+      ],
+      "status": "waiting",
+      "hooks": {
+        "after-gate": [
+          {
+            "name": "report",
+            "command": [
+              "hook",
+              "report",
+              "{runs}"
+            ]
+          }
+        ],
+        "before-apply": [
+          {
+            "name": "migrate",
+            "command": [
+              "hook",
+              "migrate",
+              "{runs}"
+            ],
+            "onFailure": "approve"
+          }
+        ]
+      },
+      "digestOver": "changing",
+      "outcomes": [
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        },
+        {
+          "moment": "before-apply",
+          "name": "migrate",
+          "exit": 3,
+          "outcome": "held"
+        },
+        {
+          "moment": "after-gate",
+          "name": "report",
+          "exit": 0,
+          "outcome": "passed"
+        }
+      ],
+      "heldOn": {
+        "op": "tf-migrate",
+        "gate": "split-queues",
+        "digest": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "hook": "before-apply hook migrate",
+        "status": "waiting",
+        "approve": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "waitingSince": "2026-10-11T00:00:00.000Z",
+        "recorded": true
+      },
+      "approve": "chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "recorded": true
+    }
+  }
+}

@@ -5,7 +5,30 @@ import {
 } from "@intentius/chant-lexicon-github";
 
 // ── Reusable (called) workflow ─────────────────────────────────────
-// This workflow is called by other workflows via workflow_call.
+// This workflow is called by other workflows via workflow_call. Its job is
+// exported so the graph draws it, and placed in the workflow by the `jobs:`
+// map below. A standalone Job export with no `jobs:` map would land in the
+// first workflow instead.
+
+export const ci = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 15,
+  steps: [
+    Checkout({}).step,
+    SetupNode({
+      nodeVersion: inputs("node-version").toString(),
+      cache: "npm",
+    }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({
+      name: "Lint",
+      if: inputs("run-lint").toString(),
+      run: "npm run lint",
+    }),
+    new Step({ name: "Test", run: "npm test" }),
+    new Step({ name: "Build", run: "npm run build" }),
+  ],
+});
 
 export const reusableWorkflow = new Workflow({
   name: "Reusable CI",
@@ -34,38 +57,11 @@ export const reusableWorkflow = new Workflow({
     },
   },
   permissions: { contents: "read" },
-});
-
-export const ci = new Job({
-  "runs-on": "ubuntu-latest",
-  timeoutMinutes: 15,
-  steps: [
-    Checkout({}).step,
-    SetupNode({
-      nodeVersion: inputs("node-version").toString(),
-      cache: "npm",
-    }).step,
-    new Step({ name: "Install", run: "npm ci" }),
-    new Step({
-      name: "Lint",
-      if: inputs("run-lint").toString(),
-      run: "npm run lint",
-    }),
-    new Step({ name: "Test", run: "npm test" }),
-    new Step({ name: "Build", run: "npm run build" }),
-  ],
+  jobs: { ci },
 });
 
 // ── Caller workflow ────────────────────────────────────────────────
 // This workflow calls the reusable workflow above.
-
-export const callerWorkflow = new Workflow({
-  name: "CI Pipeline",
-  on: {
-    push: { branches: ["main"] },
-    pull_request: { branches: ["main"] },
-  },
-});
 
 export const callCi = new Job({
   "runs-on": "ubuntu-latest",
@@ -75,4 +71,13 @@ export const callCi = new Job({
     "run-lint": "true",
   },
   secrets: "inherit",
+});
+
+export const callerWorkflow = new Workflow({
+  name: "CI Pipeline",
+  on: {
+    push: { branches: ["main"] },
+    pull_request: { branches: ["main"] },
+  },
+  jobs: { callCi },
 });

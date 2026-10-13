@@ -76,7 +76,15 @@ describe("helm CRD source", () => {
 
   test("says what to do when helm is missing or the pull fails", async () => {
     await expect(
-      loadCRDs({ type: "helm", chart: "oci://example.invalid/nope", version: "0.0.1" }),
+      loadCRDs({ type: "helm", chart: "https://example.invalid/charts/nope", version: "0.0.1" }),
     ).rejects.toThrow(/helm (pull failed|not found on PATH)/);
+  });
+
+  // An oci:// chart is pulled over HTTP, so a missing helm cannot change what
+  // generation produces; a failed pull names the chart instead.
+  test("an oci:// chart does not go through helm", async () => {
+    await expect(
+      loadCRDs({ type: "helm", chart: "oci://example.invalid/nope", version: "0.0.1" }),
+    ).rejects.toThrow(/could not pull chart oci:\/\/example\.invalid\/nope 0\.0\.1/);
   });
 });

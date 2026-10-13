@@ -31,9 +31,13 @@ export const build = new Job({
 
 On build, the Forgejo dialect:
 
-- **Drops keys Forgejo ignores** — `permissions` and `continue-on-error` are
-  silently ignored by the Forgejo runner, so they are removed from the output
-  and reported as build warnings (emitting them is misleading).
+- **Drops keys Forgejo ignores** — `continue-on-error` is silently ignored by
+  the Forgejo runner, so it is removed from the output and reported as a build
+  warning (emitting it is misleading). `permissions` is dropped too, because
+  Forgejo reads none of its scopes and lists the key in the run page's
+  "Workflow warnings" box. The one exception is `id-token`: a job that assumes
+  a cloud role over OIDC keeps `id-token: write`, and nothing else from its
+  `permissions` block.
 - **Maps runner labels** — GitHub-hosted labels like `ubuntu-latest` have no
   fixed meaning on Forgejo. They are mapped to a default Forgejo label
   (`docker`), overridable per project. Unmapped labels pass through with a
@@ -75,8 +79,8 @@ fate across the edge:
 |---|---|
 | `translated` | carried across as-is |
 | `approximated` | carried with a close equivalent |
-| `needs-review` | confirm/adjust on Forgejo (unresolved `uses:`, unmapped runner label) |
-| `lost` | the Forgejo runner ignores it (`permissions`, `continue-on-error`) |
+| `needs-review` | confirm/adjust on Forgejo (`permissions`, which the runner does not enforce, unresolved `uses:`, unmapped runner label) |
+| `lost` | the Forgejo runner ignores it (`continue-on-error`) |
 
 The same view is available to agents as the `forgejo:compare` MCP tool, which
 takes a workflow file and returns per-property fates plus summary counts —

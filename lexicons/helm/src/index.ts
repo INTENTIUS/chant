@@ -24,6 +24,7 @@ export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDepen
 // HelmRender — render an upstream chart at chant build time
 export { HelmRender, getHelmRenderRecords, clearHelmRenderRecords } from "./render";
 export type { HelmRenderProps, HelmRenderRecord } from "./render";
+export type { HelmProjectChart } from "./config";
 
 // #1237 — render canonicalization + the contentDigest/inputDigest split.
 export { canonicalizeRender, helmContentDigest, helmInputDigest, renderStability } from "./render-digest";

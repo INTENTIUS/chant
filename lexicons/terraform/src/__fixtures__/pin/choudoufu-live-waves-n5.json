@@ -1,0 +1,83 @@
+{
+  "format_version": "1",
+  "roots": [
+    {
+      "root": "estates/e01",
+      "estate": "ls-e01"
+    },
+    {
+      "root": "estates/e02",
+      "estate": "ls-e02",
+      "reads": [
+        {
+          "estate": "ls-e01",
+          "from": "data.aws_vpc.upstream"
+        }
+      ]
+    },
+    {
+      "root": "estates/e03",
+      "estate": "ls-e03",
+      "reads": [
+        {
+          "estate": "ls-e02",
+          "from": "data.aws_subnet.upstream"
+        }
+      ]
+    },
+    {
+      "root": "estates/e04",
+      "estate": "ls-e04"
+    },
+    {
+      "root": "estates/e05",
+      "estate": "ls-e05"
+    }
+  ],
+  "waves": [
+    {
+      "wave": 1,
+      "canary": true,
+      "roots": [
+        "estates/e04"
+      ]
+    },
+    {
+      "wave": 2,
+      "canary": false,
+      "roots": [
+        "estates/e01",
+        "estates/e05"
+      ]
+    },
+    {
+      "wave": 3,
+      "canary": false,
+      "roots": [
+        "estates/e02"
+      ]
+    },
+    {
+      "wave": 4,
+      "canary": false,
+      "roots": [
+        "estates/e03"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "reader": "estates/e02",
+      "producer": "estates/e01",
+      "estate": "ls-e01",
+      "from": "data.aws_vpc.upstream"
+    },
+    {
+      "reader": "estates/e03",
+      "producer": "estates/e02",
+      "estate": "ls-e02",
+      "from": "data.aws_subnet.upstream"
+    }
+  ],
+  "external_reads": []
+}

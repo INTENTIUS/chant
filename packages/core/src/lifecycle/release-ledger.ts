@@ -29,7 +29,13 @@
  */
 
 import { sortedJsonReplacer } from "../utils";
-import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments } from "./git";
+import { warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./legacy-digest";
+import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments, type LedgerLocation } from "./git";
+import { parseReleaseLedger, validateReleaseRecord } from "./release-read";
+
+// The pure readers live apart, so a bundle can import them without git (#3865).
+export { validateReleaseRecord, parseReleaseLedger, releaseLedgerLines, readReleaseRecords, listReleaseEnvironmentsOn } from "./release-read";
+export type { LedgerReadPort } from "./ledger-port";
 
 /**
  * The id space a `ReleaseRecord.runId` lives in, and how to reach the run
@@ -48,6 +54,20 @@ export interface RunOrigin {
   repo?: string;
   /** Resolved link to the run, when the environment provided enough to build one. */
   url?: string;
+}
+
+/**
+ * Points at one earlier release record (#2530, #2531, #2604). A record has no id of its own,
+ * so it is named by the environment whose ledger holds it plus the run id and
+ * timestamp it was written with, which is enough to find the line again.
+ */
+export interface ReleaseRef {
+  /** The environment whose ledger holds the referenced record. */
+  env: string;
+  /** The referenced record's `runId`. */
+  runId: string;
+  /** The referenced record's `timestamp`. */
+  timestamp: string;
 }
 
 /**
@@ -128,18 +148,34 @@ export interface ReleaseRecord {
    * bytes each cluster got. Absent when `digest` is already input-side.
    */
   inputDigest?: string;
+  /**
+   * Optional: set when this release was a promotion (`chant components
+   * promote`, #2530). Names the source environment's release whose digest
+   * was deployed here without a build. Absent on every other record.
+   */
+  promotedFrom?: ReleaseRef;
+  /**
+   * Optional: set when this release was a rollback (`chant components
+   * rollback`, #2531). Names the earlier release of the same environment
+   * whose digest was deployed again. Absent on every other record.
+   */
+  restores?: ReleaseRef;
+  /**
+   * Set on read, never written. `["legacy-digest"]` when `digest`,
+   * `manifestDigest` or `inputDigest` was recorded by the 32-bit hash chant
+   * used before real SHA-256 (#2514). Such a record is kept exactly as it
+   * was written, never re-keyed, and is accepted through
+   * `LEGACY_DIGEST_ACCEPTED_THROUGH` (./legacy-digest.ts).
+   */
+  flags?: LegacyDigestFlag[];
+  /**
+   * Optional: set when this release was a redeploy (`chant components
+   * redeploy`, #2604). Names the release the ledger recorded as current,
+   * whose digest was deployed again, usually after a deploy that failed
+   * partway. Absent on every other record.
+   */
+  redeploys?: ReleaseRef;
 }
-
-/** Required, non-empty-string fields every `ReleaseRecord` must carry. */
-const REQUIRED_STRING_FIELDS: Array<keyof ReleaseRecord> = [
-  "component",
-  "env",
-  "digest",
-  "gitSha",
-  "runId",
-  "timestamp",
-  "actor",
-];
 
 /** Thrown by `appendReleaseRecord` when the record is missing a required field — a release record can never be recorded partially, since it is never editable afterward. */
 export class InvalidReleaseRecordError extends Error {
@@ -149,18 +185,8 @@ export class InvalidReleaseRecordError extends Error {
   }
 }
 
-/** Validate that a release record carries every required field as a non-empty string. */
-export function validateReleaseRecord(record: Partial<ReleaseRecord>): string[] {
-  const missing: string[] = [];
-  for (const field of REQUIRED_STRING_FIELDS) {
-    const value = record[field];
-    if (typeof value !== "string" || value.length === 0) missing.push(field);
-  }
-  return missing;
-}
-
 /** Input a caller supplies to record one deploy — `version` is filled in, everything else is required (see `ReleaseRecord`). */
-export type ReleaseRecordInput = Omit<ReleaseRecord, "version">;
+export type ReleaseRecordInput = Omit<ReleaseRecord, "version" | "flags">;
 
 /**
  * Resolve a run id and its origin from the same environment, in one step, so
@@ -227,7 +253,8 @@ export async function appendReleaseRecord(
   const missing = validateReleaseRecord(input);
   if (missing.length > 0) throw new InvalidReleaseRecordError(missing);
 
-  const record: ReleaseRecord = { version: 1, ...input };
+  // `flags` are read-side only (#2514); a record passed back in never persists them.
+  const record: ReleaseRecord = { version: 1, ...withoutReadFlags(input as ReleaseRecordInput & { flags?: unknown }) };
   const json = JSON.stringify(record, sortedJsonReplacer);
   const commit = await appendReleaseRecordLine(record.env, json, opts);
   return { commit, record };
@@ -241,28 +268,24 @@ export async function appendReleaseRecord(
  */
 export async function readReleaseLedger(
   environment: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<{ records: ReleaseRecord[]; malformed: number }> {
-  const lines = await readReleaseLedgerLines(environment, opts);
-  const records: ReleaseRecord[] = [];
-  let malformed = 0;
-  for (const line of lines) {
-    try {
-      const parsed = JSON.parse(line) as ReleaseRecord;
-      if (validateReleaseRecord(parsed).length > 0) {
-        malformed++;
-        continue;
-      }
-      records.push(parsed);
-    } catch {
-      malformed++;
-    }
-  }
+  const { records, malformed } = parseReleaseLedger(await readReleaseLedgerLines(environment, opts));
+  // chant #2514 — say once that this ledger holds values in the old form.
+  warnOnLegacyDigests(
+    records.flatMap((r) => [r.digest, r.manifestDigest, r.inputDigest]),
+    "release ledger",
+    opts?.cwd,
+  );
   return { records, malformed };
 }
 
-/** List every environment that has release records on the orphan branch. */
-export async function listReleaseEnvironments(opts?: { cwd?: string }): Promise<string[]> {
+/**
+ * List every environment that has release records on the orphan branch. With
+ * `member` or `ledgerPrefix` (#3865) it lists that workspace member's, from
+ * wherever `cwd` is; without either, the member `cwd` resolves to.
+ */
+export async function listReleaseEnvironments(opts?: LedgerLocation): Promise<string[]> {
   return gitListLedgerEnvironments(opts);
 }
 

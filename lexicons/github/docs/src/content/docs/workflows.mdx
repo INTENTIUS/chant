@@ -190,7 +190,7 @@ The lexicon serializes resources into **`.github/workflows/*.yml`** YAML files. 
 | `export const buildApp = new Job({...})` | `jobs: build-app:` | Export name to kebab-case job key |
 | `"runs-on": "ubuntu-latest"` | `runs-on: ubuntu-latest` | Property names match GitHub spec |
 | `timeoutMinutes: 15` | `timeout-minutes: 15` | camelCase to kebab-case for job properties |
-| `new Step({ uses: "actions/checkout@v4" })` | `- uses: actions/checkout@v4` | Steps serialize as sequence entries |
+| `new Step({ uses: "actions/checkout@v7" })` | `- uses: actions/checkout@v7` | Steps serialize as sequence entries |
 
 Build with:
 

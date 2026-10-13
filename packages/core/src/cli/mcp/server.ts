@@ -6,12 +6,16 @@ import { importTool, handleImport } from "./tools/import";
 import { explainTool, handleExplain } from "./tools/explain";
 import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
+import { compositesTool, createCompositesHandler } from "./tools/composites";
 import type { LexiconPlugin } from "../../lexicon";
-import type { McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
+import type { McpClientInfo, McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
+import { findWorkspaceRoot } from "../../project-root";
+import { createWorkspaceTools, type WorkspaceToolsOptions } from "./workspace-tools";
 import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
 import { setGateOrigin } from "../../lifecycle/gate-origin";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
+import { CHANT_VERSION } from "../version";
 
 /**
  * Protocol versions this server understands, newest first. `initialize` and
@@ -21,15 +25,21 @@ import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
  * Exported because `docs-parity.test.ts` reads it: `cli/mcp.mdx` states these
  * revisions in prose, and stating them twice is how the page came to claim
  * 2024-11-05 for two releases after this list moved past it (#2385).
+ *
+ * The 2025 revisions are here because Claude Code 2.1.274 asks for
+ * 2025-11-25 and rejects any answer outside 2025-11-25, 2025-06-18,
+ * 2025-03-26, 2024-11-05 and 2024-10-07. A 2025 client sends
+ * `protocolVersion`/`clientInfo` at the top level of `initialize`, which
+ * {@link parseMeta} already falls back to, so it needs no other branch.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2024-11-05"] as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 /**
  * Pick the protocol version to answer with: the client's requested version
- * when we support it, otherwise our latest. A 2024-11-05 client that asks
- * for `2024-11-05` gets it back unchanged; a 2026-07-28 client — or one
- * that never says — gets the latest revision (#1194).
+ * when we support it, otherwise our latest. A 2024-11-05 or 2025 client that
+ * asks for its own version gets it back unchanged; a 2026-07-28 client, or one
+ * that never says, gets the latest revision (#1194).
  */
 export function negotiateProtocolVersion(requested: string | undefined): string {
   if (requested && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(requested)) {
@@ -45,14 +55,14 @@ export function negotiateProtocolVersion(requested: string | undefined): string 
  * sends on `initialize`. Read-side only — the server holds no handshake
  * state to update (#1194).
  */
-export function parseMeta(params: Record<string, unknown>): { protocolVersion?: string; clientInfo?: { name: string; version?: string } } {
+export function parseMeta(params: Record<string, unknown>): { protocolVersion?: string; clientInfo?: McpClientInfo } {
   const meta = (params._meta ?? {}) as McpRequestMeta;
   const protocolVersion =
     (typeof meta.protocolVersion === "string" ? meta.protocolVersion : undefined) ??
     (typeof params.protocolVersion === "string" ? params.protocolVersion : undefined);
   const clientInfo =
     meta["io.modelcontextprotocol/clientInfo"] ??
-    (params.clientInfo as { name: string; version?: string } | undefined);
+    (params.clientInfo as McpClientInfo | undefined);
   return { protocolVersion, clientInfo };
 }
 
@@ -90,8 +100,24 @@ export class McpServer {
   private tools: Map<string, ToolDefinition> = new Map();
   private toolHandlers: Map<string, ToolHandler> = new Map();
   private pluginResources: Map<string, { definition: ResourceDefinition; handler: () => Promise<string> }> = new Map();
+  private plugins: LexiconPlugin[];
+  private instructions: string | undefined;
+  /** The `clientInfo` the client gave on `initialize`, for a request that carries none in `_meta` (#2707). */
+  private clientInfo: McpClientInfo | undefined;
 
-  constructor(plugins?: LexiconPlugin[]) {
+  /**
+   * `options.instructions` is sent as the `initialize` result's
+   * `instructions`, the text a client may give its model about this server.
+   * Only a workspace root with no lexicon of its own sets it (#2700), to say
+   * which members' lexicons were loaded.
+   *
+   * `options.workspace` names the directory the server serves (#2707). When
+   * it is at or inside a declared workspace, the workspace read-contract and
+   * record-write tools are served too.
+   */
+  constructor(plugins?: LexiconPlugin[], options: { instructions?: string; workspace?: WorkspaceToolsOptions } = {}) {
+    this.plugins = plugins ?? [];
+    this.instructions = options.instructions;
     // Register core tools
     this.registerTool(buildTool, handleBuild);
     this.registerTool(lintTool, handleLint);
@@ -99,6 +125,7 @@ export class McpServer {
     this.registerTool(explainTool, handleExplain);
     this.registerTool(scaffoldTool, createScaffoldHandler(plugins ?? []));
     this.registerTool(searchTool, createSearchHandler(plugins ?? []));
+    this.registerTool(compositesTool, createCompositesHandler(plugins ?? []));
 
     // Register state tools
     const snapshot = createSnapshotTool(plugins ?? []);
@@ -111,6 +138,11 @@ export class McpServer {
     for (const factory of [createOpListTool, createOpRunTool, createOpStatusTool, createOpApproveTool, createOpReportTool]) {
       const t = factory();
       this.registerTool(t.definition, t.handler);
+    }
+
+    // Workspace reads and record writes (#2707), inside a declared workspace only.
+    if (options.workspace && findWorkspaceRoot(options.workspace.cwd)) {
+      for (const t of createWorkspaceTools(options.workspace)) this.registerTool(t.definition, t.handler);
     }
 
     // Register plugin contributions
@@ -219,7 +251,9 @@ export class McpServer {
     return {
       protocolVersion: negotiateProtocolVersion(protocolVersion),
       capabilities: { tools: {}, resources: {} },
-      serverInfo: { name: "chant", version: "0.1.0" },
+      // The installed chant's version, so a client can tell which chant it talks to (#2689).
+      serverInfo: { name: "chant", version: CHANT_VERSION },
+      ...(this.instructions ? { instructions: this.instructions } : {}),
     };
   }
 
@@ -229,6 +263,8 @@ export class McpServer {
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case "initialize":
+        // Kept for a write's source block (#2707): a prior-revision client names itself only here.
+        this.clientInfo = parseMeta(params).clientInfo ?? this.clientInfo;
         // Answered for prior-revision clients too — negotiated, not hard-coded (#1194).
         return this.buildInitializeResult(params);
 
@@ -252,7 +288,7 @@ export class McpServer {
         return buildResourcesList(this.pluginResources);
 
       case "resources/read":
-        return handleResourcesRead(params, this.pluginResources);
+        return handleResourcesRead(params, this.pluginResources, this.plugins);
 
       default:
         throw new Error(`Unknown method: ${method}`);
@@ -275,7 +311,9 @@ export class McpServer {
     }
 
     try {
-      const result = await handler(toolParams);
+      // The client, from this request's _meta (2026-07-28) or else from initialize.
+      const clientInfo = parseMeta(params).clientInfo ?? this.clientInfo;
+      const result = await handler(toolParams, clientInfo ? { clientInfo } : {});
       const isStructured = typeof result === "object" && result !== null;
       return {
         content: [
@@ -359,6 +397,6 @@ export async function startMcpServer(): Promise<void> {
     // Start without plugins if resolution fails
   }
 
-  const server = new McpServer(plugins);
+  const server = new McpServer(plugins, { workspace: { cwd: process.cwd() } });
   server.start();
 }

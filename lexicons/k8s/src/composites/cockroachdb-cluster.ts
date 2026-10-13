@@ -9,6 +9,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { StatefulSet, Service, ServiceAccount, Role, RoleBinding, ClusterRole, ClusterRoleBinding, PodDisruptionBudget, Job } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface CockroachDbClusterProps {
   /** Cluster name — used in metadata, labels, and service names. */
@@ -80,17 +81,17 @@ export interface CockroachDbClusterProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    serviceAccount?: Partial<Record<string, unknown>>;
-    role?: Partial<Record<string, unknown>>;
-    roleBinding?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    publicService?: Partial<Record<string, unknown>>;
-    headlessService?: Partial<Record<string, unknown>>;
-    pdb?: Partial<Record<string, unknown>>;
-    statefulSet?: Partial<Record<string, unknown>>;
-    initJob?: Partial<Record<string, unknown>>;
-    certGenJob?: Partial<Record<string, unknown>>;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    role?: MemberDefaults<"Role">;
+    roleBinding?: MemberDefaults<"RoleBinding">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    publicService?: MemberDefaults<"Service">;
+    headlessService?: MemberDefaults<"Service">;
+    pdb?: MemberDefaults<"PodDisruptionBudget">;
+    statefulSet?: MemberDefaults<"StatefulSet">;
+    initJob?: MemberDefaults<"Job">;
+    certGenJob?: MemberDefaults<"Job">;
   };
 }
 

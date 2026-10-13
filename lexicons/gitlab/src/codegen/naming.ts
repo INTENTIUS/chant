@@ -17,6 +17,7 @@ const gitlabNamingConfig: NamingConfig = {
     "GitLab::CI::Job": "Job",
     "GitLab::CI::Default": "Default",
     "GitLab::CI::Workflow": "Workflow",
+    "GitLab::CI::Pipeline": "Pipeline",
     "GitLab::CI::Artifacts": "Artifacts",
     "GitLab::CI::Cache": "Cache",
     "GitLab::CI::Image": "Image",

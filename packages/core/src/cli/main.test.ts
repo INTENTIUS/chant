@@ -1,9 +1,26 @@
 import { describe, test, expect } from "vitest";
 import { EventEmitter } from "node:events";
-import { parseArgs, waitForStreamDrain } from "./main";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { commandRegistry, parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
+  // #2377 — the level reaches the engine verbatim, so parsing must not
+  // normalise it, and an empty one must not read as "predict at nothing".
+  test("takes --traffic as an opaque level, and refuses an empty one", () => {
+    expect(parseArgs(["graph", "--live", "--overlay"]).traffic).toBeUndefined();
+    expect(parseArgs(["graph", "--live", "--overlay", "--traffic", "100 rps, p50"]).traffic).toBe("100 rps, p50");
+    // Spacing, casing and punctuation are the engine's to interpret.
+    expect(parseArgs(["graph", "--traffic", "1000rps p99"]).traffic).toBe("1000rps p99");
+    expect(() => parseArgs(["graph", "--traffic"])).toThrow(/--traffic needs a level/);
+  });
+
+  test("--skip-undeclarable reaches live import (#3911)", () => {
+    expect(parseArgs(["import", "--from", "prod"]).skipUndeclarable).toBeUndefined();
+    expect(parseArgs(["import", "--from", "prod", "--skip-undeclarable"]).skipUndeclarable).toBe(true);
+  });
+
   test("--fold and --no-fold set the tri-state fold option (#1134)", () => {
     expect(parseArgs(["build", "src"]).fold).toBeUndefined();
     expect(parseArgs(["build", "src", "--fold"]).fold).toBe(true);
@@ -57,6 +74,13 @@ describe("parseArgs", () => {
   test("parses -h flag", () => {
     const result = parseArgs(["-h"]);
     expect(result.help).toBe(true);
+  });
+
+  test("parses --version and -V (#2701)", () => {
+    expect(parseArgs(["--version"]).version).toBe(true);
+    expect(parseArgs(["-V"]).version).toBe(true);
+    expect(parseArgs(["build"]).version).toBeUndefined();
+    expect(() => parseArgs(["--version=1"])).toThrow();
   });
 
   test("parses --output with value", () => {
@@ -236,6 +260,23 @@ describe("parseArgs", () => {
     expect(result.extraPositional2).toBe(undefined);
   });
 
+  test("positionals keeps every positional after the command, for workspace box listing set <member> (#3308)", () => {
+    const result = parseArgs(["workspace", "box", "listing", "set", "app", "--from", "-", "--cover", "c.png", "--cover-path", "app/c.png"]);
+    expect(result.positionals).toEqual(["box", "listing", "set", "app"]);
+    expect(result).toMatchObject({ path: "box", extraPositional: "listing", migrateFrom: "-", cover: "c.png", coverPath: "app/c.png" });
+    expect(() => parseArgs(["workspace", "box", "listing", "set", "app", "--cover"])).toThrow(/--cover needs/);
+  });
+
+  test("workspace wip takes --label and --branch, with its verb and snapshot as positionals (#3172)", () => {
+    const save = parseArgs(["workspace", "wip", "save", "--label", "turn:3", "--by", "github:alex", "--json"]);
+    expect(save).toMatchObject({ positionals: ["wip", "save"], label: "turn:3", by: "github:alex", json: true });
+    expect(resolveCommand(save, commandRegistry)?.def.name).toBe("workspace wip");
+    expect(parseArgs(["workspace", "wip", "restore", "abc123"]).positionals).toEqual(["wip", "restore", "abc123"]);
+    expect(parseArgs(["workspace", "wip", "--branch", "chant/work/W-1", "--json"])).toMatchObject({ branch: "chant/work/W-1", json: true });
+    expect(() => parseArgs(["workspace", "wip", "save", "--label"])).toThrow(/--label needs/);
+    expect(() => parseArgs(["workspace", "wip", "--branch"])).toThrow(/--branch needs/);
+  });
+
   // ── components release/status flags (#568) ──────────────────────────────
 
   test("parses --component, --digest, --git-sha, --run-id, --actor for components release", () => {
@@ -255,6 +296,30 @@ describe("parseArgs", () => {
     expect(result.gitSha).toBe("deadbeef");
     expect(result.runId).toBe("run-1");
     expect(result.actor).toBe("alice");
+  });
+
+  test("parses --release-plan for components release, distinct from --plan (#2300)'s approval-digest flag (ws-055, #2733)", () => {
+    const result = parseArgs([
+      "components", "release", "prod",
+      "--component", "search-service",
+      "--release-plan", "plan.json",
+      "--actor", "alice",
+    ]);
+    expect(result.releasePlanFile).toBe("plan.json");
+    expect(result.digest).toBeUndefined();
+    expect(result.plan).toBeUndefined();
+  });
+
+  test("--digest repeats for components promote, and --digest-file is parsed (#2602)", () => {
+    const promote = parseArgs([
+      "components", "promote", "--from", "staging", "--to", "prod",
+      "--digest", "api=sha256:a", "--digest", "web=sha256:w",
+    ]);
+    expect(promote.digests).toEqual(["api=sha256:a", "web=sha256:w"]);
+    expect(promote.digest).toBe("web=sha256:w");
+
+    const run = parseArgs(["run", "--components", "api", "--env", "staging", "--digest-file", "api.digest"]);
+    expect(run.digestFile).toBe("api.digest");
   });
 
   test("parses --compare-to and --live for components status", () => {
@@ -286,7 +351,48 @@ describe("parseArgs", () => {
     expect(result.url).toBe("https://github.com/org/repo/pull/1");
   });
 
+  test("parses --rule (repeated) and --reason for an override (#3760)", () => {
+    const result = parseArgs(["approve", "policy-override", "prod", "--rule", "no-drop", "--rule", "no-lock", "--reason", "the table is empty"]);
+    expect(result.rules).toEqual(["no-drop", "no-lock"]);
+    expect(result.reason).toBe("the table is empty");
+    expect(() => parseArgs(["approve", "policy-override", "prod", "--rule"])).toThrow(/--rule needs a rule id/);
+    expect(() => parseArgs(["approve", "policy-override", "prod", "--reason"])).toThrow(/--reason needs the text/);
+  });
+
   // ── --no-release-record (#597) ───────────────────────────────────────────
+
+  test("emulator up --image/--network/--setting/--loopback parse, and a missing value is refused (#3952)", () => {
+    const a = parseArgs([
+      "emulator", "up", "--image", "floci/floci:1.6.0", "--network", "loom",
+      "--setting", "FLOCI_A=1", "--setting", "FLOCI_B=2", "--loopback",
+    ]);
+    expect(a.image).toBe("floci/floci:1.6.0");
+    expect(a.network).toBe("loom");
+    expect(a.setting).toEqual(["FLOCI_A=1", "FLOCI_B=2"]);
+    expect(a.loopback).toBe(true);
+    expect(parseArgs(["emulator", "up", "--setting=FLOCI_A=1"]).setting).toEqual(["FLOCI_A=1"]);
+    expect(() => parseArgs(["emulator", "up", "--image"])).toThrow(/--image needs an image reference/);
+    expect(() => parseArgs(["emulator", "up", "--network", "--json"])).toThrow(/--network needs a Docker network name/);
+    expect(() => parseArgs(["emulator", "up", "--setting"])).toThrow(/--setting needs a value/);
+    expect(() => parseArgs(["emulator", "up", "--loopback=yes"])).toThrow();
+  });
+
+  test("--promote-to <env> sets promoteTo, and a missing value is refused (#2575)", () => {
+    expect(parseArgs(["build", "--components", "--generate", "github", "--promote-to", "prod"]).promoteTo).toBe("prod");
+    expect(() => parseArgs(["build", "--components", "--generate", "github", "--promote-to"])).toThrow(/--promote-to needs an environment/);
+    expect(() => parseArgs(["build", "--promote-to", "--env", "x"])).toThrow(/--promote-to needs an environment/);
+  });
+
+  test("--promote-to outside build --components --generate is refused, naming the flags it needs (#2603)", () => {
+    const needs = /--promote-to needs build --components --generate <lexicon>/;
+    expect(() => parseArgs(["build", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["build", "--components", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["build", "--generate", "github", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["run", "--components", "all", "--generate", "github", "--promote-to", "prod"])).toThrow(needs);
+    expect(() => parseArgs(["components", "promote", "--from", "staging", "--promote-to", "prod"])).toThrow(needs);
+    // Flag order does not matter: the check runs once the whole line is parsed.
+    expect(parseArgs(["build", "--promote-to", "prod", "--generate", "gitlab", "--components"]).promoteTo).toBe("prod");
+  });
 
   test("parses --no-release-record for run --components", () => {
     const result = parseArgs(["run", "--components", "search-service", "--env", "staging", "--no-release-record"]);
@@ -298,6 +404,14 @@ describe("parseArgs", () => {
   test("--no-release-record is undefined (not false) when omitted", () => {
     const result = parseArgs(["run", "--components", "search-service"]);
     expect(result.noReleaseRecord).toBeUndefined();
+  });
+
+  test("parses --no-record for run <op> and run --components, apart from --no-release-record (#3955)", () => {
+    expect(parseArgs(["run", "smoke", "--no-record"])).toMatchObject({ path: "smoke", noRecord: true });
+    const components = parseArgs(["run", "--components", "svc", "--no-record"]);
+    expect(components).toMatchObject({ components: true, noRecord: true });
+    expect(components.noReleaseRecord).toBeUndefined();
+    expect(parseArgs(["run", "smoke"]).noRecord).toBeUndefined();
   });
 
   // ── --progress-json (M3, behold roadmap) ─────────────────────────────────
@@ -623,6 +737,193 @@ describe("parseArgs — run flags", () => {
   });
 });
 
+describe("workspace records (#2546)", () => {
+  test("parses --kind, --current, --at and --json", () => {
+    const args = parseArgs(["workspace", "records", "--kind", "docs/k.kind.mjs", "--current", "--at", "HEAD~1", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "records", kind: "docs/k.kind.mjs", current: true, at: "HEAD~1", json: true });
+    expect(parseArgs(["workspace", "records", "--kind=docs/k.kind.mjs"]).kind).toBe("docs/k.kind.mjs");
+    expect(parseArgs(["workspace", "records"]).current).toBeUndefined();
+    expect(() => parseArgs(["workspace", "records", "--kind"])).toThrow(/--kind needs a kind file/);
+    expect(() => parseArgs(["workspace", "records", "--kind", "--json"])).toThrow(/--kind needs a kind file/);
+  });
+
+  test("resolves to the records command, and anything else under workspace to its fallback", () => {
+    expect(resolveCommand(parseArgs(["workspace", "records", "--kind", "k.mjs"]), commandRegistry)?.def.name).toBe("workspace records");
+    expect(resolveCommand(parseArgs(["workspace", "no-such-subcommand"]), commandRegistry)?.def.name).toBe("workspace");
+  });
+
+  // #2525 rule 5: the workspace code loads only when a workspace command runs.
+  // The level-0 goldens catch it at run time; this catches it in review.
+  test("main.ts never imports workspace code statically", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).not.toMatch(/^import[^;]*from\s+["'][^"']*workspace/m);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/records-cli"\)/);
+  });
+});
+
+describe("workspace graph --composites (#2662)", () => {
+  test("parses as a boolean on workspace graph", () => {
+    const args = parseArgs(["workspace", "graph", "--composites", "--at", "HEAD", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "graph", composites: true, at: "HEAD", json: true });
+    expect(() => parseArgs(["workspace", "graph", "--composites=yes"])).toThrow();
+    expect(resolveCommand(args, commandRegistry)?.def.name).toBe("workspace graph");
+  });
+});
+
+describe("workspace graph --intent (#2651)", () => {
+  test("parses the region and every --kind, in order", () => {
+    const args = parseArgs(["workspace", "graph", "--intent", "app/server.mjs:3-7", "--kind", "a.kind.mjs", "--kind", "b.kind.mjs", "--at", "HEAD", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "graph", intent: "app/server.mjs:3-7", kinds: ["a.kind.mjs", "b.kind.mjs"], kind: "b.kind.mjs", at: "HEAD", json: true });
+    expect(parseArgs(["workspace", "graph", "--intent=app"]).intent).toBe("app");
+    expect(() => parseArgs(["workspace", "graph", "--intent"])).toThrow(/--intent needs a region/);
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--json"])).toThrow(/--intent needs a region/);
+    expect(resolveCommand(args, commandRegistry)?.def.name).toBe("workspace graph");
+  });
+});
+
+describe("workspace check --changes (#2773)", () => {
+  test("parses the range, the work item and the severity", () => {
+    const args = parseArgs(["workspace", "check", "--changes", "main..HEAD", "--work", "W-001", "--severity", "fail", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "check", changes: "main..HEAD", work: "W-001", severity: "fail", json: true });
+    expect(() => parseArgs(["workspace", "check", "--changes"])).toThrow(/--changes needs a range/);
+    expect(() => parseArgs(["workspace", "check", "--changes", "main", "--severity"])).toThrow(/--severity needs off, warn or fail/);
+    expect(resolveCommand(args, commandRegistry)?.def.name).toBe("workspace check");
+  });
+});
+
+describe("workspace init and ls (#2534)", () => {
+  test("resolve to their commands in the one workspace group, with the directory as extra positional", () => {
+    const ls = parseArgs(["workspace", "ls", "examples", "--at", "HEAD", "--json"]);
+    expect(ls).toMatchObject({ command: "workspace", path: "ls", extraPositional: "examples", at: "HEAD", json: true });
+    expect(resolveCommand(ls, commandRegistry)?.def.name).toBe("workspace ls");
+    const init = parseArgs(["workspace", "init", "--name", "acme", "--yes"]);
+    expect(init).toMatchObject({ command: "workspace", path: "init", selectName: "acme", yes: true });
+    expect(resolveCommand(init, commandRegistry)?.def.name).toBe("workspace init");
+    expect(commandRegistry.filter((c) => c.name === "workspace" || c.name.startsWith("workspace ")).map((c) => c.name).sort()).toEqual([
+      "workspace",
+      "workspace admit",
+      "workspace adopt-lineage",
+      "workspace agent",
+      "workspace audit",
+      "workspace box",
+      "workspace build",
+      "workspace check",
+      "workspace evidence",
+      "workspace export",
+      "workspace graph",
+      "workspace hash-index",
+      "workspace host",
+      "workspace import",
+      "workspace init",
+      "workspace lineage",
+      "workspace lint",
+      "workspace lock",
+      "workspace ls",
+      "workspace member",
+      "workspace member-run",
+      "workspace patch",
+      "workspace pin",
+      "workspace points",
+      "workspace records",
+      "workspace runs",
+      "workspace signers",
+      "workspace status",
+      "workspace upgrade",
+      "workspace verify",
+      "workspace versions",
+      "workspace wip",
+      "workspace work",
+    ]);
+  });
+
+  test("adopt-lineage, hash-index, versions and upgrade --source take their flags (#2551)", () => {
+    const adopt = parseArgs(["workspace", "adopt-lineage", "app", "--from", "acme/starter#svc", "--tags", "v*", "--index", "i.json", "--param", "name=x", "--dry-run"]);
+    expect(adopt).toMatchObject({ command: "workspace", path: "adopt-lineage", extraPositional: "app", migrateFrom: "acme/starter#svc", tags: "v*", index: "i.json", param: ["name=x"], dryRun: true });
+    expect(resolveCommand(adopt, commandRegistry)?.def.name).toBe("workspace adopt-lineage");
+    expect(parseArgs(["workspace", "versions", "--available", "--template", "x"])).toMatchObject({ path: "versions", available: true, template: "x" });
+    expect(parseArgs(["workspace", "upgrade", "--source", "acme/upstream", "--to", "v2.0.0"])).toMatchObject({ source: "acme/upstream", migrateTo: "v2.0.0" });
+    expect(() => parseArgs(["workspace", "adopt-lineage", "--tags"])).toThrow(/--tags needs a tag glob/);
+    expect(() => parseArgs(["workspace", "upgrade", "--source", "--to"])).toThrow(/--source needs a template/);
+  });
+
+  test("export, import and admit take their arguments (#2552)", () => {
+    const exp = parseArgs(["workspace", "export", "app,design", "--to", "out", "--param", "domain=example.com", "--dry-run", "--json"]);
+    expect(exp).toMatchObject({ command: "workspace", path: "export", extraPositional: "app,design", migrateTo: "out", param: ["domain=example.com"], dryRun: true, json: true });
+    expect(resolveCommand(exp, commandRegistry)?.def.name).toBe("workspace export");
+    const imp = parseArgs(["workspace", "import", "../copy", "--remove"]);
+    expect(imp).toMatchObject({ path: "import", extraPositional: "../copy", remove: true });
+    expect(resolveCommand(imp, commandRegistry)?.def.name).toBe("workspace import");
+    const admit = parseArgs(["workspace", "admit", "ret-0123456789ab", "--note", "returned from the studio"]);
+    expect(admit).toMatchObject({ path: "admit", extraPositional: "ret-0123456789ab", note: "returned from the studio" });
+    expect(resolveCommand(admit, commandRegistry)?.def.name).toBe("workspace admit");
+  });
+
+  test("workspace work takes its verb, id and lease flags (#2732)", () => {
+    const claim = parseArgs(["workspace", "work", "claim", "W-001", "--holder", "a", "--ttl", "60", "--json"]);
+    expect(claim).toMatchObject({ command: "workspace", path: "work", extraPositional: "claim", extraPositional2: "W-001", holder: "a", ttl: "60", json: true });
+    expect(resolveCommand(claim, commandRegistry)?.def.name).toBe("workspace work");
+    expect(parseArgs(["workspace", "work", "release", "W-001", "--holder=a", "--token", "t", "--outcome", "done"])).toMatchObject({ holder: "a", token: "t", outcome: "done" });
+    expect(() => parseArgs(["workspace", "work", "claim", "W-001", "--holder"])).toThrow(/--holder needs a value/);
+  });
+
+  test("graph --intent takes --record in place of a region", () => {
+    expect(parseArgs(["workspace", "graph", "--intent", "--record", "studio-008", "--json"])).toMatchObject({ intent: "", record: "studio-008", json: true });
+    expect(parseArgs(["workspace", "graph", "--intent", "app/server.mjs"])).toMatchObject({ intent: "app/server.mjs" });
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--json"])).toThrow(/--intent needs a region/);
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--record"])).toThrow(/--record needs a record id/);
+  });
+
+  test("patch takes a range, --path and --max-bytes", () => {
+    const patch = parseArgs(["workspace", "patch", "main...chant/work/W-001", "--path", "app", "--path", "docs/a.md", "--max-bytes", "4096", "--json"]);
+    expect(patch).toMatchObject({ command: "workspace", path: "patch", extraPositional: "main...chant/work/W-001", paths: ["app", "docs/a.md"], maxBytes: 4096, json: true });
+    expect(resolveCommand(patch, commandRegistry)?.def.name).toBe("workspace patch");
+    expect(() => parseArgs(["workspace", "patch", "HEAD", "--max-bytes", "0"])).toThrow(/--max-bytes needs a whole number/);
+    expect(parseArgs(["workspace", "patch", "--worktree", "--path", "docs/a.md", "--json"])).toMatchObject({ command: "workspace", path: "patch", worktree: true, paths: ["docs/a.md"], json: true });
+  });
+
+  test("run takes --work <id> for an Op with a work lease (#2748)", () => {
+    expect(parseArgs(["run", "dispatch", "--work", "W-001", "--holder", "box/dispatch@h"])).toMatchObject({ command: "run", path: "dispatch", work: "W-001", holder: "box/dispatch@h" });
+    expect(() => parseArgs(["run", "dispatch", "--work"])).toThrow(/--work needs a work item id/);
+  });
+
+  test("load their modules only when they run", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).toMatch(/await import\("\.\.\/workspace\/init"\)/);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/ls"\)/);
+  });
+});
+
+describe("workspace points (ws-058, #2739)", () => {
+  test("ask and answer take their flags, and --by repeats", () => {
+    const ask = parseArgs(["workspace", "points", "ask", "slice-tier", "--inputs", "in.json", "--response", "r.json", "--subject", "W-001", "--dry-run"]);
+    expect(ask).toMatchObject({ path: "points", extraPositional: "ask", extraPositional2: "slice-tier", inputs: "in.json", response: "r.json", subject: "W-001", dryRun: true });
+    expect(resolveCommand(ask, commandRegistry)?.def.name).toBe("workspace points");
+    expect(parseArgs(["workspace", "points", "ask", "p", "--inputs", "-"]).inputs).toBe("-");
+    const answer = parseArgs(["workspace", "points", "answer", "slice-tier-0123456789ab", "--answer", "medium", "--by", "alice", "--by", "bob"]);
+    expect(answer).toMatchObject({ extraPositional: "answer", answer: "medium", bys: ["alice", "bob"] });
+    expect(parseArgs(["workspace", "points", "--open", "--json"])).toMatchObject({ open: true, json: true });
+    expect(() => parseArgs(["workspace", "points", "ask", "p", "--response", "--json"])).toThrow(/--response needs a JSON file/);
+    // #3815: --store ledger holds the question on chant/lifecycle.
+    expect(parseArgs(["workspace", "points", "ask", "p", "--inputs", "-", "--store", "ledger"]).store).toBe("ledger");
+    expect(() => parseArgs(["workspace", "points", "ask", "p", "--store", "git"])).toThrow(/--store is tree .* or ledger/);
+  });
+});
+
+describe("workspace status (#2544)", () => {
+  test("takes the environment as extra positional, a directory after it, and --compare-to", () => {
+    const status = parseArgs(["workspace", "status", "staging", "apps", "--compare-to", "prod", "--json"]);
+    expect(status).toMatchObject({ command: "workspace", path: "status", extraPositional: "staging", extraPositional2: "apps", compareTo: "prod", json: true });
+    expect(resolveCommand(status, commandRegistry)?.def.name).toBe("workspace status");
+    // --compare-to --live parses, so the command can say live isn't read yet.
+    expect(parseArgs(["workspace", "status", "prod", "--compare-to", "--live"]).compareTo).toBe("--live");
+  });
+
+  test("loads its module only when it runs", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).toMatch(/await import\("\.\.\/workspace\/status"\)/);
+  });
+});
+
 describe("waitForStreamDrain", () => {
   // Minimal writable stub — just the surface waitForStreamDrain reads.
   function fakeStream(len: number): NodeJS.WriteStream & { writableLength: number } {
@@ -667,5 +968,38 @@ describe("waitForStreamDrain", () => {
     const p = waitForStreamDrain(s);
     s.emit("close");
     await expect(p).resolves.toBeUndefined();
+  });
+});
+
+describe("per-member commands and the root refusal (#2537)", () => {
+  test("--root-only is a boolean, and --member repeats and splits on commas", () => {
+    expect(parseArgs(["build", "--root-only"]).rootOnly).toBe(true);
+    expect(parseArgs(["lint", "src"]).rootOnly).toBeUndefined();
+    expect(() => parseArgs(["build", "--root-only=yes"])).toThrow();
+    const args = parseArgs(["workspace", "lint", "--member", "api,web", "--member", "examples", "--format", "sarif"]);
+    expect(args).toMatchObject({ command: "workspace", path: "lint", members: ["api", "web", "examples"], format: "sarif" });
+    expect(() => parseArgs(["workspace", "build", "--member"])).toThrow(/--member needs a member or group name/);
+  });
+
+  test("workspace build, lint, audit and graph resolve to their commands", () => {
+    for (const verb of ["build", "lint", "audit", "graph"]) {
+      expect(resolveCommand(parseArgs(["workspace", verb, "some/dir"]), commandRegistry)?.def.name).toBe(`workspace ${verb}`);
+    }
+  });
+
+  test("the refusal and the per-member code load only when used", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    expect(source).toMatch(/await import\("\.\.\/workspace\/root-refusal"\)/);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/member-commands"\)/);
+    expect(source).toMatch(/await import\("\.\.\/workspace\/member-run"\)/);
+  });
+});
+
+describe("chant workspace check --generated (#2641)", () => {
+  test("is a boolean flag, distinct from --generate <lexicon>", () => {
+    expect(parseArgs(["workspace", "check", "--generated", "--json"])).toMatchObject({ command: "workspace", path: "check", generated: true, json: true });
+    expect(parseArgs(["workspace", "check"]).generated).toBeUndefined();
+    expect(parseArgs(["build", "--generate", "github"]).generated).toBeUndefined();
+    expect(() => parseArgs(["workspace", "check", "--generated=yes"])).toThrow();
   });
 });

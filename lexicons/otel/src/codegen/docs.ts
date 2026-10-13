@@ -1,0 +1,109 @@
+/**
+ * Documentation generation for the otel lexicon: the generated reference
+ * pages from the core docs pipeline, plus the authored pages in docs/pages/.
+ */
+
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
+
+function serviceFromType(resourceType: string): string {
+  const parts = resourceType.split("::");
+  return parts.length >= 2 ? parts[1] : "OTel";
+}
+
+const overview = `The otel lexicon types [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
+config: receivers, processors, exporters, connectors, extensions and the
+pipelines that connect them. \`chant build\` emits one collector config file, the YAML
+\`otelcol --config\` reads as it is.
+
+\`\`\`ts
+import { OtlpReceiver, BatchProcessor, OtlpExporter, Pipeline } from "@intentius/chant-lexicon-otel";
+
+export const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+export const batch = new BatchProcessor({ timeout: "5s" });
+export const backend = new OtlpExporter({ name: "backend", endpoint: "tempo.observability:4317" });
+
+export const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: [batch],
+  exporters: [backend],
+});
+\`\`\`
+
+The built-in component set is otlp, prometheus, hostmetrics, filelog,
+k8s_cluster and kubeletstats receivers; batch, memory_limiter, resource,
+attributes, k8sattributes, resourcedetection, filter, transform, redaction,
+tail_sampling, probabilistic_sampler and deltatocumulative processors; otlp, otlphttp, debug,
+prometheus, googlecloud and loadbalancing exporters; spanmetrics,
+servicegraph, routing, forward, count, sum and signaltometrics connectors; and the
+health_check, pprof, zpages and k8s_leader_elector extensions. \`genAiPipeline()\` is a preset for
+GenAI workloads: it removes prompt and completion content and derives agent
+RED and token metrics.
+Their config types follow the collector-contrib release named on the
+Custom components page. A component chant doesn't ship is added with
+\`defineComponent\`, and it is serialized and checked the same way as the
+built-ins. \`chant import\` turns an existing collector config file into this
+TypeScript (see Importing a Collector Config).
+
+Checks catch a pipeline that uses a component nobody declared (OTEL101), a
+pipeline with no receivers or exporters (OTEL102), a declared component no
+pipeline uses (OTEL103), a connector joining pipelines of signals it can't
+convert (OTEL112), pipelines feeding each other in a cycle (OTEL113), a
+connector id shared with a receiver or exporter (OTEL114), a \`routing\` route
+to a pipeline that doesn't receive from it (OTEL115), a connector
+splitting metrics by a per-request GenAI attribute such as
+\`gen_ai.conversation.id\` (OTEL116), two started components listening
+on the same address (OTEL117), and a literal credential in source (OTEL002)
+or in the config (OTEL120). Others report deprecated fields (OTEL119),
+credentials sent in plaintext (OTEL121), zpages or pprof off loopback
+(OTEL122), detailed debug output beside a backend (OTEL123), delivery and
+batching settings (OTEL124, OTEL125), and k8sattributes fields or
+resourcedetection detectors the collector doesn't know (OTEL126, OTEL127). In
+a build that stamps telemetry attribution, OTEL118 reports a processor that can
+drop or overwrite one of the attribution's resource attributes.
+`;
+
+const outputFormat = `The otel lexicon serializes every otel entity in a build into **one
+collector config file** in YAML, the file \`otelcol --config\` reads.
+
+- Sections come out as receivers, processors, exporters, connectors, extensions, service,
+  separated by a blank line. Empty sections are left out.
+- A component's id is its collector type, or \`type/name\` when its \`name\` is
+  set. The export name in source never appears in the output.
+- A list of scalars is written in flow style (\`receivers: [otlp]\`), any
+  other list in block style. Strings are plain where YAML reads them back
+  unchanged and double-quoted otherwise.
+- Declared extensions are enabled in declaration order unless a \`Service\`
+  lists \`extensions\`.
+- Each custom component adds a \`# chant:\` comment line above the config
+  naming its schema pin. Built-ins add none.
+- A collector config has no metadata channel, so no ownership marker is
+  stamped.
+`;
+
+export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
+  const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+
+  const config: DocsConfig = {
+    name: "otel",
+    displayName: "OpenTelemetry Collector",
+    description: "Typed OpenTelemetry Collector config: receivers, processors, exporters and pipelines",
+    distDir: join(pkgDir, "dist"),
+    outDir: join(pkgDir, "docs"),
+    basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/otel/",
+    overview,
+    outputFormat,
+    serviceFromType,
+    srcDir: join(pkgDir, "src"),
+    examplesDir: join(pkgDir, "examples"),
+  };
+
+  const result = docsPipeline(config);
+  writeDocsSite(config, result);
+
+  if (opts?.verbose) {
+    console.error(`Generated ${result.pages.size} documentation pages`);
+  }
+}

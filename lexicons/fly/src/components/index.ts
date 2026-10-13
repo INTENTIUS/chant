@@ -12,3 +12,19 @@ export {
   createFlySpriteActivities,
   parseSpriteExecFailure,
 } from "./run-agent";
+export {
+  flyReleaseCapability,
+  flyRollbackCapability,
+  createFlyReleaseCapability,
+  createFlyRollbackCapability,
+  migrationReceipt,
+} from "./fly-release";
+export type {
+  FlyReleaseInput,
+  FlyReleaseOutput,
+  FlyRollbackInput,
+  FlyRollbackOutput,
+  FlyMigration,
+  FlyVerify,
+  FlyReleaseDeps,
+} from "./fly-release";

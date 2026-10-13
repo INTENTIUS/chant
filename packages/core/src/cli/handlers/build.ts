@@ -6,6 +6,7 @@ import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
 import { loadChantConfigUpward, type ChantConfig } from "../../config";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
+import { findWorkspaceRoot } from "../../project-root";
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -44,6 +45,35 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // A project inside a workspace member gets that member's pipeline (#2542):
+  // path-filtered, run in the member's directory, written to a file named
+  // after the member and recorded as the member's generated file. The
+  // workspace module loads only when a declaration was found, so a project
+  // outside any workspace generates exactly what it did before.
+  const found = findWorkspaceRoot(resolve(args.path));
+  let plan: import("../../workspace/member-pipeline").MemberComponentPlan | undefined;
+  let memberPipeline: typeof import("../../workspace/member-pipeline") | undefined;
+  if (found) {
+    memberPipeline = await import("../../workspace/member-pipeline");
+    try {
+      plan = memberPipeline.planMemberComponentPipeline({
+        projectDir: resolve(args.path),
+        found,
+        lexicon,
+        env: args.env,
+        promoteTo: args.promoteTo,
+        output: args.output,
+        params: args.param,
+        paramsFile: args.paramsFile,
+        ...(args.waveGate ? { waveGate: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } } : {}),
+        ...(args.prLoop ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } } : {}),
+      });
+    } catch (err) {
+      console.error(formatError({ message: memberPipeline.describeError(err) }));
+      return 1;
+    }
+  }
+
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
@@ -51,7 +81,19 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const result = await generateComponentsPipeline(
     args.path,
     lexicon,
-    { env: args.env },
+    {
+      env: args.env,
+      ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}),
+      ...(plan ? { member: plan.member } : {}),
+      // #3049: one job per wave of a gated-wave fan-out instead of one per component.
+      ...(args.waveGate
+        ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
+        : {}),
+      // #3183: a plan job per pull request and an apply job per merge.
+      ...(args.prLoop
+        ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } }
+        : {}),
+    },
     args.sandbox,
     paramsResolution.provenance,
   );
@@ -73,11 +115,17 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
           // generator's own resolution, forwarded rather than left for a
           // consumer to re-derive by parsing the YAML back (#2060).
           ...(result.env ? { env: result.env } : {}),
+          // A workspace member's pipeline (#2542): the member and the file
+          // the pipeline belongs in, relative to the repository root.
+          ...(plan ? { member: plan.member.name, file: plan.file } : {}),
         },
         null,
         2,
       ),
     );
+  } else if (plan && memberPipeline) {
+    memberPipeline.writeMemberComponentPipeline(plan, yaml);
+    console.error(formatSuccess(`wrote ${formatBold(plan.file)} for member ${formatBold(plan.member.name)}`));
   } else if (args.output) {
     const outputPath = resolve(args.output);
     mkdirSync(dirname(outputPath), { recursive: true });
@@ -130,6 +178,72 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
 
   // #1064 — `--param name=value`, repeated, into a flat { name: value } record.
   const params = parseParamFlags(args.param);
+
+  // `--lexicon-output <lexicon>=<path>`: each named lexicon builds into its own
+  // file. One build per file, over the same project, so every write, check and
+  // diagnostic path is the one a single-lexicon `--lexicon` build already takes.
+  if (args.lexiconOutput?.length) {
+    if (args.watch || args.lexicon) {
+      console.error(formatError({ message: "--lexicon-output cannot be combined with --watch or --lexicon" }));
+      return 1;
+    }
+    const targets = new Map<string, string>();
+    for (const spec of args.lexiconOutput) {
+      const eq = (spec ?? "").indexOf("=");
+      if (eq <= 0 || eq === spec.length - 1) {
+        console.error(formatError({ message: `Invalid --lexicon-output "${spec}". Expected <lexicon>=<path>.` }));
+        return 1;
+      }
+      const name = spec.slice(0, eq);
+      if (targets.has(name)) {
+        console.error(formatError({ message: `--lexicon-output names lexicon "${name}" twice.` }));
+        return 1;
+      }
+      if (!serializers.some((s) => s.name === name)) {
+        console.error(formatError({ message: `No serializer found for lexicon "${name}". Available: ${serializers.map((s) => s.name).join(", ")}. List the lexicon in chant.config.ts.` }));
+        return 1;
+      }
+      targets.set(name, spec.slice(eq + 1));
+    }
+    const groups: { serializers: typeof serializers; output: string }[] = [...targets].map(([name, output]) => ({
+      serializers: serializers.filter((s) => s.name === name),
+      output,
+    }));
+    const rest = serializers.filter((s) => !targets.has(s.name));
+    if (args.output && rest.length > 0) groups.push({ serializers: rest, output: args.output });
+
+    const seenWarnings = new Set<string>();
+    let failed = false;
+    // One build for every file: each group takes its own lexicons' outputs.
+    const sharedBuild = { serializers };
+    for (const group of groups) {
+      const { format, warning } = resolveBuildFormat(args.format, group.output);
+      if (warning) console.error(formatInfo(warning));
+      const result = await buildCommand({
+        path: args.path,
+        output: group.output,
+        format,
+        serializers: group.serializers,
+        sharedBuild,
+        plugins,
+        verbose: args.verbose,
+        env: args.env,
+        fold: args.fold,
+        sandbox: args.sandbox,
+        foldRank: args.foldRank,
+        foldRankCollapsedFile: args.foldRankCollapsedFile,
+        params: parseParamFlags(args.param),
+        paramsFile: args.paramsFile,
+      });
+      // The lexicons built by another group are not missing serializers.
+      const own = result.warnings.filter((w) => !w.includes("No serializer found for lexicon") && !seenWarnings.has(w));
+      for (const w of own) seenWarnings.add(w);
+      printWarnings(own);
+      printErrors(result.errors);
+      if (!result.success) failed = true;
+    }
+    return failed ? 1 : 0;
+  }
 
   if (args.watch) {
     const cleanup = buildCommandWatch({

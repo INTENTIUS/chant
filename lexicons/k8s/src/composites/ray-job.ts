@@ -17,6 +17,7 @@ import {
   PersistentVolumeClaim,
   RayJob as RayJobResource,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 import {
   type RayClusterSpec,
   buildRayClusterParts,
@@ -59,12 +60,12 @@ export interface RayJobProps {
   spilloverBucket?: string;
   labels?: Record<string, string>;
   defaults?: {
-    serviceAccount?: Partial<Record<string, unknown>>;
-    clusterRole?: Partial<Record<string, unknown>>;
-    clusterRoleBinding?: Partial<Record<string, unknown>>;
-    networkPolicy?: Partial<Record<string, unknown>>;
-    pvc?: Partial<Record<string, unknown>>;
-    rayJob?: Partial<Record<string, unknown>>;
+    serviceAccount?: MemberDefaults<"ServiceAccount">;
+    clusterRole?: MemberDefaults<"ClusterRole">;
+    clusterRoleBinding?: MemberDefaults<"ClusterRoleBinding">;
+    networkPolicy?: MemberDefaults<"NetworkPolicy">;
+    pvc?: MemberDefaults<"PersistentVolumeClaim">;
+    rayJob?: MemberDefaults<"RayJob">;
   };
 }
 

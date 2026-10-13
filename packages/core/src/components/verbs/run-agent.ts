@@ -237,7 +237,7 @@
  *    `externalParameters`, never replacing it), not a shape break.
  */
 
-import { createHash } from "node:crypto";
+import { contentDigest } from "../../content-digest";
 import type { Capability, DeployContext } from "../capability";
 import type { ProvenanceLink } from "./reproducibility";
 import type { BuildArchiveEntry } from "./build-archive";
@@ -555,10 +555,8 @@ export function createRunAgentCapability(
 const PROMPT_PATH = "/work/prompt";
 const OUTPUT_PATH = "/work/output";
 
-/** `sha256:<hex>` over a string, prefixed the same way ./build-archive.ts's `contentDigest` and ./build.ts's zip/jar digests are. */
-function sha256Digest(content: string): string {
-  return `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`;
-}
+/** `sha256:<hex>` over a string: ../../content-digest.ts's `contentDigest`, the same digest ./build-archive.ts uses. */
+const sha256Digest = contentDigest;
 
 const EMPTY_DIGEST = sha256Digest("");
 

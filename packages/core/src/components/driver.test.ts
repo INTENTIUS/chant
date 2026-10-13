@@ -13,7 +13,8 @@
 import { describe, expect, it } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { stubCapability } from "./verbs/stub";
-import { memoryGateLedgerPort } from "../op/gate";
+import { describeGateMismatch, memoryGateLedgerPort } from "../op/gate";
+import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateInput } from "../lifecycle/gate-ledger";
 import {
   DependencyCycleError,
@@ -238,6 +239,34 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
     return { registry, calls, rolledBack };
   }
 
+  // #3955: a run that records nothing cannot spend an approval or leave a
+  // pending fact, so the gate fails even with an approval standing for it.
+  it("fails at the gate under CHANT_NO_RECORD, writing nothing and running nothing after it", async () => {
+    const { registry, calls } = registryWithCalls();
+    const port = memoryGateLedgerPort({
+      resolutions: [{ op: "neo4j-cluster", gate: "approve-node-1", resolvedBy: "alice", timestamp: NOW, environment: "dev" } as never],
+    });
+    process.env.CHANT_NO_RECORD = "1";
+    let result;
+    try {
+      result = await runComponentDeploy(
+        gatedComponent(), { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+        { port, now: NOW },
+      );
+    } finally {
+      delete process.env.CHANT_NO_RECORD;
+    }
+
+    expect(result.status).toBe("fail");
+    expect(port.appended).toHaveLength(0);
+    // A failure, so the component unwinds as any failed step would; nothing after the gate ran.
+    expect(calls).not.toContain("code-deploy");
+    const gate = result.records.find((r) => r.kind === "gate:approve-node-1");
+    expect(gate).toMatchObject({ status: "fail" });
+    expect(gate!.error).toContain("cannot be passed under --no-record");
+    expect(result.records.find((r) => r.kind === "code-deploy")).toMatchObject({ status: "skipped" });
+  });
+
   it("ends gated, records the pending fact, and runs nothing after the gate", async () => {
     const { registry, calls, rolledBack } = registryWithCalls();
     const port = memoryGateLedgerPort();
@@ -311,14 +340,17 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
 
   it("a resolution newer than the pending fact passes the gate and carries the approver", async () => {
     const { registry, calls } = registryWithCalls();
+    const planDigest = componentPlanDigest({ environment: "dev", component: gatedComponent() });
     const port = memoryGateLedgerPort({
       pending: [{
         version: 1, kind: "pending", op: "neo4j-cluster", gate: "approve-node-1",
         timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
+        planDigest, environment: "dev",
       }],
       resolutions: [{
         version: 1, op: "neo4j-cluster", gate: "approve-node-1",
         resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z",
+        planDigest, environment: "dev",
       }],
     });
     const result = await runComponentDeploy(
@@ -330,6 +362,79 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
     expect(calls).toEqual(["cfn-deploy", "code-deploy"]);
     expect(result.records.find((r) => r.kind === "gate:approve-node-1")?.approval)
       .toEqual({ gate: "approve-node-1", resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z" });
+  });
+
+  // #2574: a component gate approval is bound to the environment and the plan.
+  describe("approvals bound to environment and plan (#2574)", () => {
+    const run = (port: ReturnType<typeof memoryGateLedgerPort>, env: string, component = gatedComponent()) =>
+      runComponentDeploy(component, { env, component: "neo4j-cluster" }, registryWithCalls().registry, {}, undefined, { port, now: NOW });
+
+    it("the pending fact records the environment and the plan", async () => {
+      const port = memoryGateLedgerPort();
+      const result = await run(port, "staging");
+      expect(result.gate).toMatchObject({
+        environment: "staging",
+        planDigest: componentPlanDigest({ environment: "staging", component: gatedComponent() }),
+      });
+    });
+
+    it("an approval given for another environment does not pass the gate", async () => {
+      const port = memoryGateLedgerPort();
+      const staging = await run(port, "staging");
+      const approval = {
+        version: 1 as const, op: "neo4j-cluster", gate: "approve-node-1", resolvedBy: "alex",
+        timestamp: "2026-09-05T12:30:00.000Z",
+        planDigest: staging.gate!.planDigest!, environment: "staging",
+      };
+      const withApproval = memoryGateLedgerPort({ pending: [staging.gate!], resolutions: [approval] });
+
+      expect((await run(withApproval, "staging")).status).toBe("ok");
+      const prod = await run(withApproval, "prod");
+      expect(prod.status).toBe("gated");
+      expect(prod.gate).toMatchObject({ environment: "prod" });
+      // The staging approval is not this run's business, so it is not reported as a mismatch either.
+      expect(prod.gateMismatch).toBeUndefined();
+    });
+
+    it("an approval given for another plan in the same environment is refused and named", async () => {
+      const port = memoryGateLedgerPort();
+      const before = await run(port, "prod");
+      const approval = {
+        version: 1 as const, op: "neo4j-cluster", gate: "approve-node-1", resolvedBy: "alex",
+        timestamp: "2026-09-05T12:30:00.000Z",
+        planDigest: before.gate!.planDigest!, environment: "prod",
+      };
+      const changed = gatedComponent();
+      changed.deploy[1]!.steps.push({ kind: "cfn-deploy", stack: "extra" });
+      const result = await run(memoryGateLedgerPort({ pending: [before.gate!], resolutions: [approval] }), "prod", changed);
+
+      expect(result.status).toBe("gated");
+      expect(result.gateMismatch).toMatchObject({
+        approved: before.gate!.planDigest, planned: result.gate!.planDigest, environment: "prod", resolvedBy: "alex",
+      });
+      expect(result.gate!.planDigest).not.toBe(before.gate!.planDigest);
+    });
+
+    it("an approval recorded before the binding is refused, with the command that replaces it", async () => {
+      const legacyPending = {
+        version: 1 as const, kind: "pending" as const, op: "neo4j-cluster", gate: "approve-node-1",
+        timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
+      };
+      const legacy = {
+        version: 1 as const, op: "neo4j-cluster", gate: "approve-node-1",
+        resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z",
+      };
+      const port = memoryGateLedgerPort({ pending: [legacyPending], resolutions: [legacy] });
+      const result = await run(port, "prod");
+
+      expect(result.status).toBe("gated");
+      expect(port.appended).toHaveLength(1);
+      expect(result.gateMismatch).toMatchObject({ resolvedBy: "alex", environment: "prod" });
+      expect(result.gateMismatch!.approved).toBeUndefined();
+      const message = describeGateMismatch("neo4j-cluster", "approve-node-1", result.gateMismatch!);
+      expect(message).toContain("predates environment- and plan-bound component gates (#2574)");
+      expect(message).toContain("chant approve neo4j-cluster approve-node-1 --env prod");
+    });
   });
 
   it("the neo4j pilot's gated Node 1 phase ends the run pending approval", async () => {
@@ -450,7 +555,7 @@ describe("runComponentDeploy — onFailure saga rollback", () => {
     );
   });
 
-  it("runs a component-level rollback (schema `rollback` field) after step rollback, matching the ALB/ECS pilot's explicit compensation", async () => {
+  it("runs a component-level rollback (schema `rollback` field) after step rollback", async () => {
     const registry = new CapabilityRegistry();
     registry.register(fakeCapability("docker-build", { run: () => ({ digest: "sha256:abc" }) }).capability);
     registry.register(
@@ -458,26 +563,29 @@ describe("runComponentDeploy — onFailure saga rollback", () => {
         .capability,
     );
     registry.register(fakeCapability("cfn-deploy", { run: () => ({ stackStatus: "UPDATE_COMPLETE", outputs: {} }) }).capability);
-    // ecs-update-service fails, and (per the pilot's comment) has no native
-    // rollback — the component's own `rollback` phase is what should fire.
+    // ecs-update-service fails; the component's own `rollback` phase is what
+    // should fire after the executed steps unwind.
     registry.register(fakeCapability("ecs-update-service", { failRun: true }).capability);
-    const { capability: rollbackPreviousCap, calls: rollbackPreviousCalls } = fakeCapability("rollback-previous", {
+    const { capability: restoreCap, calls: restoreCalls } = fakeCapability("restore-service", {
       run: () => ({ restored: true }),
     });
-    registry.register(rollbackPreviousCap);
+    registry.register(restoreCap);
     // Verify/rollback phases never reached since Apply fails first, but register
     // stubs anyway so a hypothetical reordering wouldn't crash the test on an
     // unregistered kind.
     registry.register(fakeCapability("wait-steady-state", { run: () => ({ runningCount: 1 }) }).capability);
     registry.register(fakeCapability("health-gate", { run: () => ({ healthy: true }) }).capability);
 
-    const json = projectToJson(searchService) as unknown as DriverComponent;
+    const json: DriverComponent = {
+      ...(projectToJson(searchService) as unknown as DriverComponent),
+      rollback: [{ phase: "Rollback", steps: [{ kind: "restore-service", service: "search" }] }],
+    };
     const result = await runComponentDeploy(json, { env: "dev", component: "search-service" }, registry, {});
 
     expect(result.ok).toBe(false);
-    expect(rollbackPreviousCalls).toHaveLength(1);
-    expect(rollbackPreviousCalls[0]!.input).toMatchObject({ service: "search" });
-    const rollbackRecord = result.records.find((r) => r.phase === "Rollback" && r.kind === "rollback-previous");
+    expect(restoreCalls).toHaveLength(1);
+    expect(restoreCalls[0]!.input).toMatchObject({ service: "search" });
+    const rollbackRecord = result.records.find((r) => r.phase === "Rollback" && r.kind === "restore-service");
     expect(rollbackRecord?.status).toBe("ok");
   });
 });
@@ -630,7 +738,6 @@ describe("runInterpretDriver — end to end", () => {
       "ecs-update-service",
       "wait-steady-state",
       "health-gate",
-      "rollback-previous",
       "wait-for-stack",
       "run-migration",
     ];
@@ -750,7 +857,6 @@ describe("runInterpretDriver — end to end", () => {
       "ecs-update-service",
       "wait-steady-state",
       "health-gate",
-      "rollback-previous",
       "wait-for-stack",
       "run-migration",
       "lambda-deploy",
@@ -989,5 +1095,57 @@ describe("capabilities are consumed exactly as the registry provides them", () =
     expect(result.ok).toBe(false);
     const failed = result.records.find((r) => r.status === "fail");
     expect(failed?.error).toMatch(/capability "some-future-verb" is not implemented/);
+  });
+});
+
+describe("the release a deploy step sees (#3061, ws-081)", () => {
+  function setup() {
+    const registry = new CapabilityRegistry();
+    registry.register(fakeCapability("publish-image", { run: () => ({ uri: "ghcr.io/acme/api@sha256:abc", digest: "sha256:abc" }) }).capability);
+    registry.register(fakeCapability("generate-sbom", { run: () => ({ digest: "sha256:sbom" }) }).capability);
+    const deploy = fakeCapability("deploy");
+    registry.register(deploy.capability);
+    return { registry, deploy };
+  }
+
+  it("carries the caller's revision and the digest a publish step promoted, not an SBOM's", async () => {
+    const { registry, deploy } = setup();
+    const api: DriverComponent = {
+      name: "api",
+      dependsOn: [],
+      deploy: [
+        { phase: "Publish", steps: [{ kind: "publish-image" }, { kind: "generate-sbom" }] },
+        { phase: "Deploy", steps: [{ kind: "deploy" }] },
+      ],
+    };
+    const result = await runInterpretDriver([api], registry, { env: "prod", releaseIdentity: () => ({ revision: "0123abc" }) });
+    expect(result.ok).toBe(true);
+    expect(deploy.calls[0]!.ctx.release).toEqual({ revision: "0123abc", version: "sha256:abc" });
+  });
+
+  it("keeps each component's release its own, and passes none without releaseIdentity", async () => {
+    const { registry, deploy } = setup();
+    const api: DriverComponent = { name: "api", dependsOn: [], deploy: [{ phase: "P", steps: [{ kind: "publish-image" }, { kind: "deploy" }] }] };
+    const worker: DriverComponent = { name: "worker", dependsOn: ["api"], deploy: [{ phase: "D", steps: [{ kind: "deploy" }] }] };
+    await runInterpretDriver([api, worker], registry, { env: "prod", releaseIdentity: () => ({ revision: "r1" }) });
+    expect(deploy.calls.map((c) => [c.ctx.component, c.ctx.release])).toEqual([
+      ["api", { revision: "r1", version: "sha256:abc" }],
+      ["worker", { revision: "r1" }],
+    ]);
+    const plain = setup();
+    await runInterpretDriver([{ ...worker, dependsOn: [] }], plain.registry, { env: "prod" });
+    expect(plain.deploy.calls[0]!.ctx.release).toBeUndefined();
+  });
+
+  it("a promote's recorded digest is the version when no step publishes one", async () => {
+    const { registry, deploy } = setup();
+    const api: DriverComponent = { name: "api", dependsOn: [], deploy: [{ phase: "D", steps: [{ kind: "deploy" }] }] };
+    await runInterpretDriver([api], registry, {
+      env: "prod",
+      gates: memoryGateLedgerPort(),
+      releases: new Map([["api", "sha256:recorded"]]),
+      releaseIdentity: () => ({ revision: "r0" }),
+    });
+    expect(deploy.calls[0]!.ctx.release).toEqual({ revision: "r0", version: "sha256:recorded" });
   });
 });

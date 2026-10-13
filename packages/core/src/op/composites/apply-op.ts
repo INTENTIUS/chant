@@ -10,8 +10,12 @@
  * the ownership tag on `arm` (chant #1448 — previously `--mode Complete`, which
  * removed resources chant never applied), the ownership label on `gcp`
  * (chant #1449), the metadata marker (machines) and managed app
- * (volumes/ips/certs/secrets) on `fly` (chant #1449), and the stack itself on
- * `cloudformation`, which a resource CFN did not create is not in. All of
+ * (volumes/ips/certs/secrets) on `fly` (chant #1449), the ownership labels on
+ * `grafana` (chant #3011), the comment marker on `clickhouse` (chant #3208)
+ * and `postgres` (chant #3280), the declared ruler namespaces on `ruler`
+ * (chant #3372),
+ * and the stack itself on `cloudformation`, which a
+ * resource CFN did not create is not in. All of
  * them are owned-only. See {@link DeleteMode}.
  *
  * A gate is a fact, not a wait (#2119): the local executor reads the gate
@@ -38,6 +42,15 @@
  *   delete: "gated",
  *   gate: { gate: "approve-apply", description: "Approve prod apply with deletes" },
  * });
+ *
+ * // the gate asks the prod-apply decision point (#3170): answered with
+ * // `chant workspace points answer <id>`, then re-run
+ * export const { op } = ApplyOp({
+ *   name: "prod-apply",
+ *   env: "prod",
+ *   target: "kubectl",
+ *   gate: { gate: "approve-apply", point: "prod-apply" },
+ * });
  * ```
  *
  * @see #112 — stateless-authoritative state model + live import
@@ -47,19 +60,24 @@ import { Op, phase, activity, gate } from "../builders";
 import { stepOutput } from "../step-output-ref";
 import { gateName } from "../gate-name";
 import type { OpResource } from "../resource";
+import type { GateStep } from "../types";
 import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../activities/apply";
 
 export interface ApplyOpConfig {
   /** Op name (kebab-case). */
   name: string;
-  /** Environment — CFN stack name / ARM resource group / kube context env;
-   * a log label on `gcp` and `fly`. */
+  /** Environment — CFN stack name / ARM resource group / kube context env /
+   * the `grafana.profiles.<env>` entry on `grafana` / the `sql.profiles.<env>`
+   * entry on `clickhouse` and `postgres`, the `prometheus.profiles.<env>` entry on `ruler`; a log label on `gcp` and
+   * `fly`. */
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
   target?: ApplyTarget;
   /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
    * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp,
-   * `dist/fly.json` for fly. Must match your build output. */
+   * `dist/fly.json` for fly, `dist/grafana.json` (the build index) for
+   * grafana, `dist/schema.json` for clickhouse and postgres, `dist/rules.yml` for ruler. Must match your
+   * build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
   path?: string;
@@ -90,6 +108,13 @@ export interface ApplyOpConfig {
     signalName?: string;
     timeout?: string;
     description?: string;
+    /**
+     * A declared decision point the gate asks (#3170), in place of `chant
+     * approve`: its deciders and quorum decide, and `chant workspace points
+     * answer` answers an open question. The point declares the input
+     * `gate.planDigest`, since the gate binds the plan. See `GateStep.point`.
+     */
+    point?: GateStep["point"];
   };
   /**
    * Saga-style rollback on partial apply failure, run as an `onFailure` phase.
@@ -157,6 +182,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
           // the gate refuses, naming the approved digest and the planned one,
           // instead of applying what nobody read.
           plan: stepOutput("plan", "planDigest"),
+          ...(config.gate?.point !== undefined ? { point: config.gate.point } : {}),
           description:
             config.gate?.description ??
             `Approve apply to ${config.env} (delete mode: ${deleteMode}` +
@@ -195,7 +221,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   if (config.compensate !== undefined && config.compensate !== false && !rollbackAvailable) {
     throw new Error(
       `ApplyOp "${config.name}": compensate is enabled, but target "${target}" has no automatic ` +
-        `rollback — the only mapped one today is cloudformation's rollbackStack. Either supply ` +
+        `rollback — the mapped ones are cloudformation's rollbackStack and the ruler's previous-group re-apply. Either supply ` +
         `compensate: { command: "..." } with a rollback of your own, or set compensate: false.`,
     );
   }
@@ -222,6 +248,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
               activity("compensateApply", {
                 target,
                 env: config.env,
+                ...(target === "ruler" ? { output } : {}),
                 ...(compensateCommand ? { command: compensateCommand } : {}),
               }),
             ]),

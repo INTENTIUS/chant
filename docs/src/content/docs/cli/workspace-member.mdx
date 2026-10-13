@@ -1,0 +1,104 @@
+---
+title: "chant workspace member and host"
+description: Add or remove a member, and add or replace a host, in the workspace declaration through chant instead of editing chant.workspace.json
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace member add <name> --from <file|-> [--by <principal>] [--dry-run] [--json]
+chant workspace member remove <name> [--by <principal>] [--dry-run] [--json]
+chant workspace host set <name> --from <file|-> [--by <principal>] [--dry-run] [--json]
+```
+
+## Description
+
+These commands write one entry of the declaration's [`members`](/chant/reference/workspace-declaration/#members) or [`hosts`](/chant/reference/workspace-declaration/#isolation) ([#3596](https://github.com/INTENTIUS/chant/issues/3596)). Under [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md) a tool writes the repo only through chant. A local lobby that runs one box per member uses them to plant a box (`member add`), retire it (`member remove`) and declare the host its boxes run on (`host set`), and never edits `chant.workspace.json` itself.
+
+| Command | What it writes |
+|---|---|
+| `member add <name>` | Appends the entry `--from` gives to `members`. When an entry of that name exists and is the same, nothing changes. When it differs, the write is refused with `member-exists` |
+| `member remove <name>` | Removes the member's entry from `members`. An unknown name, or the name of an example group, is refused with `member-unknown` |
+| `host set <name>` | Replaces the entry of that name in `hosts`, or appends it when there is none. A declaration with no `hosts` gets one |
+
+`--from` names a JSON file, or `-` for standard input, holding the entry as the declaration holds it: a [member entry](/chant/reference/workspace-declaration/#members) with its box block, or a [host](/chant/reference/workspace-declaration/#isolation). Its `name` may be left out. When it is given it must be the name on the command line, which goes first in the entry written. `x-` keys are kept as given.
+
+Each command edits the declaration in place. The rest of the file is left byte for byte, comments and trailing commas in a `chant.workspace.jsonc` included. A new entry goes after the array's last one, indented like it. The command never commits. As after [`box listing set`](/chant/cli/workspace-box/), the caller commits the change. Each holds the working tree's [write lock](/chant/cli/workspace-records/#writers-at-the-same-time) from reading the declaration to writing it.
+
+## Refusals
+
+Nothing is written when a write is refused, and `error.code` says why.
+
+| Code | When |
+|---|---|
+| `write-usage-invalid` | No name, no `--from` for `member add` or `host set`, or a `--from` for `member remove` |
+| `write-input-invalid` | The entry isn't a JSON object, names another entry, or the declaration with it would not read. The message is the read's own, such as a member of kind `other` with no `because`, an agent bound to the member removed, or a box naming a host that isn't declared |
+| `member-exists` | `member add` names an entry the declaration already has, with other contents |
+| `member-unknown` | `member remove` names no member |
+| `box-isolation-collision` | The write gives two boxes on one host the same port, state path or cookie name, such as a second box in a slot one already holds. [`check`](/chant/cli/workspace-check/#boxes) reports this as `WSP123` |
+| `box-isolation-literal` | The write adds a literal machine path as a host's `stateRoot` or a box's state entry (`WSP124`) |
+| `write-scope-member`, `write-scope-protected`, `write-scope-class-unknown`, `agent-unknown` | The write scope at base keeps the writer off the declaration |
+| `principal-unidentified` | `--by` is a bare name under `identity.attribution: "identified"` |
+
+A collision or literal path the declaration already had does not refuse a write. Only one the write adds does.
+
+## Who may write
+
+The declaration is judged as [`check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) judges the commit that will carry it, by the write scope in the declaration at base, as for [`box listing set`](/chant/cli/workspace-box/#who-may-write). The declaration is at the workspace root, in no member, so an agent session is refused with `write-scope-member`. A `protected` entry covering the declaration lets these writes through when its `except` names what they change: `{ "path": "chant.workspace.json", "except": ["members", "hosts"] }` keeps the rest of the declaration protected.
+
+## Output
+
+Each command prints one JSON document following `https://intentius.io/chant/schemas/workspace/member-write/v1/member-write.schema.json`, with or without `--json`, and exits 0 when it wrote or had nothing to change, and 1 when refused.
+
+```sh
+chant workspace member add fern --from - <<'EOF'
+{ "dir": "boxes/fern", "kind": "other", "because": "a box the lobby planted",
+  "box": { "host": "local", "slot": 0, "ports": { "door": 0, "site": 1 } } }
+EOF
+```
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/member-write/v1/member-write.schema.json",
+  "contract": 1,
+  "chant": "0.110.0",
+  "action": "member add",
+  "name": "fern",
+  "declaration": { "path": "chant.workspace.jsonc", "sha256": "5b0e41c2..." },
+  "paths": ["chant.workspace.jsonc"],
+  "changed": true,
+  "dryRun": false,
+  "previous": null,
+  "entry": {
+    "name": "fern",
+    "dir": "boxes/fern",
+    "kind": "other",
+    "because": "a box the lobby planted",
+    "box": { "host": "local", "slot": 0, "ports": { "door": 0, "site": 1 } }
+  }
+}
+```
+
+| Field | Value |
+|---|---|
+| `action` | `member add`, `member remove` or `host set` |
+| `declaration` | the declaration's path from the repository root, and the sha256 of its bytes after the write |
+| `paths` | the declaration, when the write changed it; empty otherwise |
+| `changed` | whether the declaration changed |
+| `dryRun` | `true` with `--dry-run`: nothing was written, and the document says what would have been |
+| `previous` | the entry before the write, as the file held it, or `null` |
+| `entry` | the entry after the write, or `null` after `member remove` |
+
+A refusal prints `{ "$schema", "contract", "chant", "action", "name", "error": { "code", "message" } }`. The box's ports, state paths and cookie names are not in this document. A reader takes them from [`status --json`](/chant/cli/workspace-status/#output), which resolves them from the host and slot.
+
+## Examples
+
+```bash
+# The first start declares the host the boxes run on
+echo '{"ports":{"from":18100,"to":18199,"perBox":10},"stateRoot":"${STUDIO_LOBBY_HOME}/boxes"}' |
+  chant workspace host set local --from -
+
+# Retiring a box frees its slot
+chant workspace member remove fern
+```

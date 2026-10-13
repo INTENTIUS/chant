@@ -21,31 +21,39 @@ COPY . .
 
 RUN npm install
 
+# The lexicons this image packs are listed once, in test/smoke-e2e-lexicons.txt:
+# each lexicon an example uses, and the lexicons they depend on (k8s needs
+# prometheus and otel, gitlab needs github) so the image tests this commit's
+# copy of those rather than the registry's. smoke.sh's build_e2e_image reads
+# the same list, and test/smoke-tarball-deps.test.ts checks that every loop
+# here reads it.
+
 # Generate dist/ artifacts for each lexicon
-RUN for lex in aws azure gcp gitlab k8s; do \
+RUN LEXICONS=$(cat /app/test/smoke-e2e-lexicons.txt) && \
+    for lex in $LEXICONS; do \
       echo "=== prepack lexicons/$lex ===" && \
       npm run --prefix "lexicons/$lex" prepack; \
     done
 
 # Fix workspace:* deps → real version, strip scripts
 RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
+    LEXICONS=$(cat /app/test/smoke-e2e-lexicons.txt) && \
     cd /app/packages/core && \
     jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json && \
-    for lex in aws azure gcp gitlab k8s; do \
+    for lex in $LEXICONS; do \
       cd /app/lexicons/$lex && \
       jq --arg v "$CORE_VERSION" \
-        '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
-        package.json > tmp.json && mv tmp.json package.json; \
+        '(if .dependencies then .dependencies |= with_entries(if .value == "workspace:*" then .value = $v else . end) else . end) | del(.scripts)' \
+        package.json > tmp.json && mv tmp.json package.json || exit 1; \
     done
 
 # Pack tarballs (rm stale .tgz first — glob with multiple matches breaks mv)
-RUN mkdir -p /tarballs && \
+RUN LEXICONS=$(cat /app/test/smoke-e2e-lexicons.txt) && \
+    mkdir -p /tarballs && \
     cd /app/packages/core && rm -f *.tgz && npm pack && mv *.tgz /tarballs/core.tgz && \
-    cd /app/lexicons/aws && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
-    cd /app/lexicons/gitlab && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
-    cd /app/lexicons/k8s && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
-    cd /app/lexicons/gcp && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
-    cd /app/lexicons/azure && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-azure.tgz
+    for lex in $LEXICONS; do \
+      cd /app/lexicons/$lex && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-${lex}.tgz || exit 1; \
+    done
 
 # ── Stage 2: E2E runner ──────────────────────────────────────────────────────
 FROM --platform=linux/amd64 node:24-slim

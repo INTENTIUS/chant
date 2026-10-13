@@ -1,9 +1,10 @@
 import { basename, dirname, relative, resolve } from "node:path";
 import { isDeclarable, type Declarable } from "../declarable";
-import { isCompositeInstance, expandComposite } from "../composite";
+import { isCompositeInstance, expandComposite, compositeOfMember } from "../composite";
 import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
 import { setProvenance, type EntityProvenance } from "../provenance";
+import { expandHostComposite, hostCompositeName } from "./host-composite";
 
 /**
  * The entity key for an export. `export default` is per-module — the `Op` pattern
@@ -42,6 +43,16 @@ function stackPrefix(file: string, buildRoot: string | undefined): string {
  * attributed to a build parameter is not overwritten.
  */
 const AUTHORED_ROOT: EntityProvenance["paths"] = { "": { kind: "authored" } };
+
+/**
+ * The record for an entity exported on its own. chant#3608: one destructured
+ * from a composite call also names that composite, so fold provenance reads
+ * its unattributed paths as `unknown` rather than as the file's own `direct`.
+ */
+function authoredProvenance(entity: Declarable, file: string): EntityProvenance {
+  const composite = compositeOfMember(entity);
+  return { sourceFile: file, ...(composite ? { composite } : {}), paths: AUTHORED_ROOT };
+}
 
 /** One entity to be placed into the map, produced by {@link enumerateEntries}. */
 interface PendingEntry {
@@ -82,12 +93,12 @@ function enumerateEntries(
     for (const [rawName, value] of sortedExports) {
       const name = exportKey(rawName, file);
       if (isDeclarable(value)) {
-        entries.push({ bareKey: name, value, file, provenance: { sourceFile: file, paths: AUTHORED_ROOT } });
+        entries.push({ bareKey: name, value, file, provenance: authoredProvenance(value, file) });
       } else if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
           const item = value[i];
           if (isDeclarable(item)) {
-            entries.push({ bareKey: `${name}_${i}`, value: item, file, provenance: { sourceFile: file, paths: AUTHORED_ROOT } });
+            entries.push({ bareKey: `${name}_${i}`, value: item, file, provenance: authoredProvenance(item, file) });
           } else if (isCompositeInstance(item)) {
             const indexedName = `${name}_${i}`;
             for (const [expandedName, entity] of expandComposite(indexedName, item)) {
@@ -109,6 +120,18 @@ function enumerateEntries(
             provenance: { sourceFile: file, compositeInstance: name },
           });
         }
+      } else if (hostCompositeName(value) !== undefined) {
+        // chant#3612 — a host composite instance the fold resolved, expanded
+        // here rather than by one caller, so `build()` and `foldProject`
+        // report the same entities for it. See ./host-composite.ts.
+        for (const [expandedName, entity] of expandHostComposite(name, value as Record<string, unknown>)) {
+          entries.push({
+            bareKey: expandedName,
+            value: entity,
+            file,
+            provenance: { sourceFile: file, compositeInstance: name },
+          });
+        }
       } else if (isLexiconOutput(value)) {
         // LexiconOutput is not a Declarable but build() expects to find them in
         // the entities map so it can collect and pass them to serializers.
@@ -123,7 +146,8 @@ function enumerateEntries(
 /**
  * Collects all declarable entities from imported modules.
  * CompositeInstance exports are expanded into individual entities
- * with `{exportName}_{memberName}` naming.
+ * with `{exportName}_{memberName}` naming, and so are host composite
+ * instances the fold resolved (chant#3612, ./host-composite.ts).
  * LexiconOutput exports are also collected so that build() can
  * extract them and pass them to the serializer.
  *

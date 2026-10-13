@@ -18,6 +18,7 @@ import {
   ServingRuntime,
   ClusterServingRuntime,
 } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 /** Container resource spec. GPU count maps to nvidia.com/gpu requests/limits. */
 export interface VllmResourceSpec {
@@ -72,7 +73,7 @@ export interface VllmServingRuntimeProps {
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides via mergeDefaults. */
   defaults?: {
-    servingRuntime?: Partial<Record<string, unknown>>;
+    servingRuntime?: MemberDefaults<"ServingRuntime"> | MemberDefaults<"ClusterServingRuntime">;
   };
 }
 

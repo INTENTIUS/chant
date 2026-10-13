@@ -32,12 +32,12 @@ export interface LifecycleDiffArgs {
 export interface LifecycleDiffResult {
   /** Combined stdout + stderr from the chant command. */
   output: string;
-  /** Process exit code (0 = success). */
+  /** Process exit code: always 0, since a diff that exits non-zero throws (#3712). */
   exitCode: number;
   /**
    * True when the diff output contains any drift indicators
-   * (MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers from
-   * `chant lifecycle diff --live`).
+   * (MISSING / ORPHAN / DRIFTED / DISAPPEARED / PROPERTY DRIFT section
+   * headers from `chant lifecycle diff --live`).
    */
   drifted: boolean;
   /**
@@ -85,12 +85,19 @@ const DRIFT_HEADERS = [
   "ORPHAN",
   "DISAPPEARED",
   "DRIFTED",
+  // An owned resource whose live properties differ from its declaration (the
+  // deep read): a sql table's TTL changed out of band, say (#3642).
+  "PROPERTY DRIFT",
+  // A change an apply would make that no declared property shows: a
+  // privilege granted by hand on a Postgres table (#3706).
+  "PENDING",
   "ARTIFACTS ADDED",
   "ARTIFACTS REMOVED",
   "ARTIFACTS CHANGED",
 ];
 
-function detectDrift(output: string): boolean {
+/** True when a `chant lifecycle diff` render carries any of {@link DRIFT_HEADERS}' sections. */
+export function detectDrift(output: string): boolean {
   return DRIFT_HEADERS.some((h) => output.includes(`${h} (`) || output.includes(`\n${h}`));
 }
 
@@ -100,7 +107,7 @@ function detectDrift(output: string): boolean {
  * what the change set is *of*: the same rows against `staging` are not an
  * approval to apply against `prod`.
  */
-function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
+export function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
   return computePlanDigest("lifecycle-diff", {
     env: args.env,
     live: args.live === true,
@@ -114,21 +121,30 @@ function lifecycleDiffDigest(args: LifecycleDiffArgs, output: string): string {
  * Uses fastIdempotent profile.
  *
  * The `drifted` field is computed by scanning the output for any of the
- * MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers documented in
+ * MISSING / ORPHAN / DRIFTED / DISAPPEARED / PROPERTY DRIFT section headers documented in
  * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
  * on a WatchOp activity step to surface drift as the run's `Drift` outcome.
+ *
+ * A diff that exits non-zero (#3712) fails the step and yields no digest.
+ * Its output is an error, not a change set: every failed run printed the
+ * same lines, so a digest over them was one an approval matched whatever
+ * the declarations had become since.
  */
 export async function lifecycleDiff(args: LifecycleDiffArgs, signal?: AbortSignal): Promise<LifecycleDiffResult> {
   const liveFlag = args.live ? " --live" : "";
+  const command = `chant lifecycle diff ${args.env}${liveFlag}`;
+  let stdout: string;
+  let stderr: string;
   try {
-    const { stdout, stderr } = await execAsync(`chant lifecycle diff ${args.env}${liveFlag}`, { signal });
-    const output = `${stdout}${stderr}`.trim();
-    if (output) console.log(output);
-    return { output, exitCode: 0, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
+    ({ stdout, stderr } = await execAsync(command, { signal }));
   } catch (err) {
     const e = err as { code?: number; stdout?: string; stderr?: string };
     const output = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
     if (output) console.error(output);
-    return { output, exitCode: e.code ?? 1, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
+    const message = `${command} failed (exit ${String(e.code ?? 1)}); no plan to digest${output ? `:\n${output}` : ""}`;
+    throw new Error(message);
   }
+  const output = `${stdout}${stderr}`.trim();
+  if (output) console.log(output);
+  return { output, exitCode: 0, drifted: detectDrift(output), planDigest: lifecycleDiffDigest(args, output) };
 }

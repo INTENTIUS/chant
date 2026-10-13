@@ -6,13 +6,15 @@ diataxis: how-to
 
 import { Aside } from '@astrojs/starlight/components';
 
-The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Five optional plugin members cover import and its neighbours; a lexicon with no import story implements none of them.
+The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Six optional plugin members cover import and its neighbours; a lexicon with no import story implements none of them.
 
 | Member | Returns | Drives |
 |---|---|---|
-| `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks each loaded plugin in turn, and takes the first `true` (`detectPlugin` in `packages/core/src/cli/commands/import.ts`). |
-| `templateParser()` | `TemplateParser` | Source format to `TemplateIR`. |
+| `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks the project's lexicons and then the installed ones, and takes the first `true` (`detectTemplateLexicon` in `packages/core/src/cli/commands/import.ts`). |
+| `templateParser(options?)` | `TemplateParser` | Source format to `TemplateIR`. `options` holds the `--parser-option` values, checked and typed. |
+| `parserOptions()` | `ParserOptionSpec[]` | Optional. The options `templateParser` takes (`name`, `type`, `description`). `chant import --parser-option` refuses any name not listed. |
 | `templateGenerator()` | `TypeScriptGenerator` | `TemplateIR` to `GeneratedFile[]`. |
+| `embeddedImporters()` | `EmbeddedContentImporter[]` | This lexicon's content when it sits inside another lexicon's resources, such as a collector config in a k8s ConfigMap. See [Embedded content](#embedded-content). |
 | `migrationSource(from)` | `MigrationSource \| undefined` | `chant migrate`: another provider's format into this lexicon's. |
 | `agentConfigImporter()` | `AgentConfigImporter` | `chant import --agents`: local agent configuration into this lexicon's resources. |
 
@@ -21,8 +23,8 @@ The `chant import` command reads existing infrastructure files (YAML, JSON, Dock
 Two interfaces in `packages/core/src/import/` are the whole contract between a lexicon and the import pipeline:
 
 ```typescript
-interface TemplateParser    { parse(content: string): TemplateIR; }
-interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; }
+interface TemplateParser    { parse(content: string, context?: ParseContext): TemplateIR; }
+interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; readonly ownsLayout?: boolean; }
 interface GeneratedFile     { readonly path: string; readonly content: string; }
 ```
 
@@ -55,7 +57,51 @@ Three rules follow from that shape:
 
 ### How core drives the two halves
 
-`generateOrganizedFiles` in `packages/core/src/cli/commands/import.ts` decides the file layout, not you. Up to three resources it calls `generate(ir)` once and writes whatever paths you return. Above three it buckets resources by category (`storage` / `compute` / `network` / `other`), calls `generate()` once per non-empty bucket, and takes `generated[0].content` for `<category>.ts`. So a generator must return at least one file for any IR it is handed, and its first file must be the whole content for those resources.
+`generateOrganizedFiles` in `packages/core/src/cli/commands/import.ts` decides the file layout unless your generator takes it over. File import and live import (`chant import --from <env>`) both go through it.
+
+By default an IR of up to three resources gets one `generate(ir)` call and core writes whatever paths you return. Above three, core buckets resources by category (`storage` / `compute` / `network` / `other`) and calls `generate()` once per non-empty bucket. The category is guessed from substrings of each resource's `type`. It writes `generated[0].content` as `<category>.ts` and adds an `index.ts` that re-exports each resource's lowercased `logicalId` from its category file. Any further files a call returns are not written, and the import warns with their paths. A call that returns nothing is skipped with a warning. So under the default layout your first file must be the whole content for the resources you were handed, and resources in different buckets cannot import each other.
+
+Set `ownsLayout: true` on the generator when that split does not fit. That is the case when your resources refer to each other (collector pipelines to components, or Alertmanager routes to receivers), or when one call returns several modules. Core then calls `generate(ir)` once with the whole IR, whatever its size. It writes exactly the files you return at the paths you give, and adds no `index.ts` of its own. The otel and prometheus generators return several modules per call but leave `ownsLayout` unset. Each of their parsers emits a single IR resource per config, so the split never runs for them.
+
+```typescript
+export class MyGenerator implements TypeScriptGenerator {
+  readonly ownsLayout = true;
+  generate(ir: TemplateIR): GeneratedFile[] {
+    // one module per component, plus whatever barrel you want
+  }
+}
+```
+
+## Embedded content
+
+Some sources carry another lexicon's source inside them. A Kubernetes ConfigMap can hold a collector's `config.yaml`, a Prometheus rule file or a Grafana dashboard's JSON, and a `PrometheusRule`'s `spec.groups` are Prometheus rule groups. `chant import` hands such content to the lexicon that owns it, so it comes out as that lexicon's typed declarations, and the host resource refers to them ([#2962](https://github.com/INTENTIUS/chant/issues/2962)):
+
+```typescript
+import { ConfigMap } from "@intentius/chant-lexicon-k8s";
+import { collectorYaml } from "@intentius/chant-lexicon-otel";
+import { debug } from "./otel-agent/exporters";
+import { traces } from "./otel-agent/pipelines";
+import { otlp } from "./otel-agent/receivers";
+
+export const configMapOtelAgent = new ConfigMap({
+  metadata: { name: "otel-agent" },
+  data: { "config.yaml": collectorYaml([otlp, debug, traces]) },
+});
+```
+
+A ConfigMap's `alertmanager.yml` is handed to prometheus the same way.
+
+Neither side depends on the other. The contract is in `packages/core/src/import/embedded.ts`:
+
+- The host's parser offers content. `parse(content, context)` calls `context.embedded.resolve(site)` for each place content can sit, and puts the `EmbeddedReference` it gets back into its IR in place of the raw value. `undefined` means keep the value as written. A site gives its `location` for messages, a `directory` name, the content as `text` or as the `document` it would be in a file of its own, and `select` when the host's value is one member of that document (`"groups"` for `spec.groups`). It may also name an `expectedOwner`, which is used only to warn when that lexicon is not installed. `context` is absent outside `chant import`, and a parser then keeps everything as written.
+- The owner declares an `EmbeddedContentImporter` in `embeddedImporters()`. `matches(site)` says whether it imports the content. `import(site)` returns the modules that declare it (paths relative to their own directory) and an `EmbeddedValue`: the declarations the host's value is built from, either as a list or as a single one, and optionally a function of the owner's package to pass them through. The otel importer returns `collectorYaml([...])` over every component and pipeline. Prometheus gives the list of `RuleGroup`s, `ruleFileYaml([...])` for a rule file held as text, or `alertmanagerYaml([...])` for an `alertmanager.yml`, and grafana gives `dashboardJson(dashboard)`.
+- Content an owner matches can still be kept as written. `keepsAsWritten(site)` returns the reason, which becomes the import's warning, and `undefined` means import it. Use it when importing would change the content on the next build. Grafana keeps a v2 dashboard this way: it reads v2, but builds v1 JSON, so the ConfigMap would change from v2 to v1 ([#3031](https://github.com/INTENTIUS/chant/issues/3031)).
+- Core finds the owner at run time. When the parser offers anything, core asks the project's lexicons and every installed lexicon whose `/detect` module's `detectTemplate` recognizes an offered document, loads only those in full, and parses again with their importers. It writes each import's modules in a directory of its own beside the host's files. Warnings name content the owner could not carry, an import that failed, and content whose expected owner is not installed. That content is kept as written.
+- The host's generator renders the reference with `renderEmbeddedReference(ref, scope)`. An `EmbeddedImportScope` collects the imports the module needs and aliases a name the module already uses (a second collector's `otlp` becomes `otlp2`).
+
+`chant import --from <env>` delegates the same way ([#2995](https://github.com/INTENTIUS/chant/issues/2995)). An export has no parser call of its own, so an exporter that maps through its import parser returns `reparse(context)` on its `ExportedTemplate`: the same objects parsed again with a `ParseContext`, with no second read of the live target. Core probes and resolves through it exactly as above, and writes the owners' modules beside the generated files. An export without `reparse` keeps embedded content as read. See [Implementing Live Export](/chant/lexicon-authoring/live-export/#embedded-content).
+
+k8s is the only host so far (`lexicons/k8s/src/import/embedded.ts`). otel, prometheus and grafana are the owners, each in its `src/import/embedded.ts`. The round trip over real manifests is `lexicons/k8s/src/import/embedded-roundtrip.test.ts`, and the same through live import against a fake cluster is `embedded-live.test.ts` beside it.
 
 ## The three files
 
@@ -75,7 +121,7 @@ Two shapes are in use. github and gitlab implement `TemplateParser` / `TypeScrip
 import { parseYAML } from "@intentius/chant/yaml";
 ```
 
-`parseYAML` handles the YAML subset found in real infrastructure files — nested maps, block sequences, inline JSON, booleans, and quoted scalars with colons (e.g. `"80:80"` port strings). Custom regex parsers miss edge cases and drift from the core parser's behaviour.
+`parseYAML` reads YAML with js-yaml and the YAML 1.2 core schema, plus merge keys and three things chant has always done: `yes` and `no` are booleans, a date stays a string, and a local tag on a scalar or sequence (`!reference [.base, script]`, `!Ref MyApi`) reads as its text. It returns `{}` for a top-level list (use `parseYAMLDocument` for the list), and skips `---` and `...` lines. Custom regex parsers miss edge cases and drift from the core parser's behaviour. Input it cannot read, such as a key indented under a scalar or an alias with no anchor, throws a `YAMLParseError` naming the line; let it reach `chant import`, which reports it as a parse failure.
 
 <Aside type="caution">
 When a scalar contains a colon but is not a mapping (e.g. Docker port `"80:80"`, volume `"data:/path"`), **quote it in the source YAML**. Unquoted `key:value` is valid YAML syntax for a single-key mapping, not a scalar.

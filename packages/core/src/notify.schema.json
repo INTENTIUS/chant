@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/notify/v1/notify.schema.json",
+  "title": "chant.notify/v1",
+  "description": "The event a notify webhook receives (#3761): a wave or environment waits for an approval, a run was refused or failed, or drift was found. Sent by chant's Op waves and by products built on chant (terragucci, SQL Yodeler) through @intentius/chant/notify, signed with HMAC-SHA256 over <timestamp>.<body>. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": ["schema", "id", "event", "at", "source", "project", "summary", "targets"],
+  "properties": {
+    "schema": { "const": "chant.notify/v1" },
+    "id": { "type": "string", "minLength": 1, "description": "The same for every send of one event about one digest (else drift fingerprint, else commit), so a receiver can drop a repeat; random when there is none. The delivery header carries it too." },
+    "event": { "enum": ["waiting", "refused", "failed", "drift"] },
+    "at": { "type": "string", "description": "When it was sent, ISO 8601 UTC." },
+    "source": { "type": "string", "minLength": 1, "description": "The product that sent it: chant, terragucci, sql-yodeler." },
+    "project": { "type": "string", "description": "What the run belongs to: the repository, or a name the product gives." },
+    "summary": { "type": "string", "description": "One line a person can read." },
+    "wave": {
+      "type": "object",
+      "required": ["number"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string" },
+        "gate": { "type": "string", "description": "The gate the wave waits on." }
+      }
+    },
+    "environment": { "type": "string" },
+    "targets": { "type": "array", "items": { "type": "string" }, "description": "What the event concerns: a wave's roots or runs, an environment's pending migrations. For refused and failed, the ones refused or failed when the product knows them." },
+    "digest": { "type": "string", "description": "The plan digest an approval binds." },
+    "approve": {
+      "type": "object",
+      "description": "On waiting: how a person approves it.",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "description": "The command to run, as the product prints it." },
+        "chant": { "type": "string", "description": "chant's own command for the same approval, when the product's differs." },
+        "review": {
+          "type": "object",
+          "description": "Under pr-review: the pull request whose approving review would approve it.",
+          "required": ["pr", "url"],
+          "properties": { "pr": { "type": "integer" }, "url": { "type": "string" } }
+        }
+      }
+    },
+    "status": { "type": "string", "description": "The product's own word for the outcome." },
+    "reason": { "type": "string", "description": "On refused and failed: why." },
+    "exitCode": { "type": "integer" },
+    "drift": {
+      "type": "object",
+      "required": ["changed"],
+      "properties": {
+        "changed": { "type": "array", "items": { "type": "string" } },
+        "missing": { "type": "array", "items": { "type": "string" } },
+        "failed": { "type": "array", "items": { "type": "string" }, "description": "What could not be checked." },
+        "fingerprint": { "type": "string", "description": "The same drift has the same fingerprint, run after run." }
+      }
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "description": "The CI run's page (GitHub, Forgejo) or job's page (GitLab)." },
+        "forge": { "enum": ["github", "gitlab", "forgejo"] },
+        "repository": { "type": "string" },
+        "commit": { "type": "string" },
+        "pr": { "type": "integer" }
+      }
+    },
+    "reportUrl": { "type": "string" },
+    "detail": { "type": "object", "description": "The product's own record of the outcome, carried whole (terragucci.outcome/v1)." }
+  },
+  "allOf": [
+    { "if": { "required": ["event"], "properties": { "event": { "const": "drift" } } }, "then": { "required": ["drift"], "properties": { "drift": { "type": "object" } } } }
+  ]
+}

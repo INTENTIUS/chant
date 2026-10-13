@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { beforeAll, describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
 import Ajv from "ajv";
 import { auditCommand, tokenForHost, coverageNotes, installLine, NO_LEXICONS_EXIT_CODE } from "./audit";
@@ -21,6 +21,14 @@ function loadSarifSchema(): unknown {
   const path = fileURLToPath(new URL("./__fixtures__/schemas/sarif-2.1.0.schema.json", import.meta.url));
   return JSON.parse(readFileSync(path, "utf-8"));
 }
+
+// The first loadAuditPlugins() imports every installed lexicon's plugin, the
+// 15MB azure and 11MB aws generated barrels among them: 13s to 15s cold, which
+// whichever test ran first paid, over the unit shards' per-test budget (#2817).
+// Paid once here, the tests below time the audit, not the imports.
+beforeAll(async () => {
+  await loadAuditPlugins();
+}, 120_000);
 
 describe("auditCommand", () => {
   test("selects a host-specific token (no cross-host leakage)", () => {

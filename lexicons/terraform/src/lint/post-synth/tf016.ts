@@ -8,7 +8,7 @@
  * argument that takes a list or a bool.
  *
  * This is the one rule in the family that reads the block's SOURCE rather than
- * its parsed body, and it has to. `@cdktf/hcl2json` renders both `x = var.y`
+ * its parsed body, and it has to. `@cdktn/hcl2json` renders both `x = var.y`
  * and `x = "${var.y}"` as the string `"${var.y}"`, so a check over the parse
  * cannot tell the deprecated form from the idiomatic one and would report every
  * reference in the root. The quotes only survive in the text, so the text is

@@ -33,4 +33,15 @@ describe("shell (#557)", () => {
   it("declares no rollback — an escape-hatch shell owns its own compensation", () => {
     expect(createShellCapability(createMockProcessRunner().runner).rollback).toBeUndefined();
   });
+
+  it("exports a release's attributes for a docker compose up, and a value the step sets wins (#3061)", async () => {
+    const mock = createMockProcessRunner();
+    const release = { version: "sha256:abc", revision: "0123abc" };
+    await createShellCapability(mock.runner).run({ ...ctx, release }, { cmd: "docker compose up -d", reason: "compose" });
+    expect(mock.calls.at(-1)!.command).toBe(
+      "env CHANT_RELEASE_ATTRIBUTES=',service.version=sha256%3Aabc,vcs.ref.head.revision=0123abc' docker compose up -d",
+    );
+    await createShellCapability(mock.runner).run({ ...ctx, release }, { cmd: "up", env: { CHANT_RELEASE_ATTRIBUTES: "" }, reason: "x" });
+    expect(mock.calls.at(-1)!.command).toBe("env CHANT_RELEASE_ATTRIBUTES='' up");
+  });
 });

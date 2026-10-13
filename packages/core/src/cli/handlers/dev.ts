@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { formatError, formatSuccess } from "../format";
+import { formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
 export async function runDevGenerate(ctx: CommandContext): Promise<number> {
@@ -33,6 +33,11 @@ export async function runDevOnboard(ctx: CommandContext): Promise<number> {
   }
 
   const { onboardCommand, printOnboardResult } = await import("../commands/onboard");
+  // chant#2578 — so a lexicon the project declares by path is recognised.
+  // chant#2591 — read without running chant.config.ts.
+  const { recordProjectLexicons, unknownPathLexiconsNotice } = await import("../plugins");
+  const notice = unknownPathLexiconsNotice(recordProjectLexicons(process.cwd()));
+  if (notice !== undefined) console.error(formatWarning({ message: notice }));
   const result = onboardCommand({ name, verbose: ctx.args.verbose });
   await printOnboardResult(result, name);
   return result.success ? 0 : 1;
@@ -80,16 +85,18 @@ export async function runDevSurfaceDiff(ctx: CommandContext): Promise<number> {
 
 export async function runDevPinnedUpgrade(ctx: CommandContext): Promise<number> {
   const dir = ctx.args.extraPositional ?? ".";
-  const { runPinnedUpgrade, printPinnedUpgradeResult } = await import("../commands/pinned-upgrade");
-  const result = await runPinnedUpgrade({
+  const { runPinnedUpgrades, printPinnedUpgradeResults } = await import("../commands/pinned-upgrade");
+  // The optional second positional is a pin label, for a lexicon that declares several pins.
+  const results = await runPinnedUpgrades({
     lexiconDir: resolve(dir),
+    pin: ctx.args.extraPositional2,
     force: ctx.args.force,
     verbose: ctx.args.verbose,
   });
-  printPinnedUpgradeResult(result, ctx.args.format === "json");
-  // Exit non-zero when the upstream query failed or the regen validation broke.
-  if (result.fetchError) return 1;
-  if (result.validation && !result.validation.ok) return 1;
+  printPinnedUpgradeResults(results, ctx.args.format === "json");
+  // Exit non-zero when an upstream query failed or a regen validation broke.
+  if (results.some((r) => r.fetchError)) return 1;
+  if (results.some((r) => r.validation && !r.validation.ok)) return 1;
   return 0;
 }
 

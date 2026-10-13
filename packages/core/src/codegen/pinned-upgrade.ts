@@ -1,5 +1,6 @@
 /**
- * Pinned-version upgrade detection for k8s, gcp, docker, gitlab lexicons.
+ * Pinned-version upgrade detection for any lexicon that declares `upstreamPin`
+ * (k8s, k3s, gcp, docker, gitlab, cedar, sql).
  *
  * For each lexicon with a pinned upstream version constant, this module:
  *   1. Reads the currently pinned version from the source file.
@@ -21,11 +22,14 @@
  *   (returns the latest version tag, or null when no stable release is found).
  */
 
-import { readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { join, resolve } from "path";
+import { pathToFileURL } from "url";
 import { regenLexicon, type RegenResult } from "./lexicon-regen";
 import { fetchWithRetry } from "./fetch";
 import { isLexiconPlugin, type UpstreamPin } from "../lexicon";
+import { importLexiconPackage } from "../lexicon-module";
+import { ensureTypeScriptLoader } from "../ts-loader";
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -41,6 +45,8 @@ export type { UpstreamPin };
 export interface UpgradeCheckResult {
   /** Lexicon identifier. */
   lexicon: LexiconId;
+  /** The pin's label. Set only when the plugin declares more than one pin. */
+  pin?: string;
   /** Whether a newer stable upstream version was found. */
   hasUpgrade: boolean;
   /** Current pinned version string (e.g. "v1.32.0"). */
@@ -51,6 +57,12 @@ export interface UpgradeCheckResult {
   validation: RegenResult | null;
   /** Human-readable error when the upstream query itself failed. */
   fetchError: string | null;
+  /**
+   * Set when the new version was found but the pin cannot be rewritten
+   * generically (it moves with other constants). Nothing was edited or
+   * regenerated; `instructions` says what to move by hand.
+   */
+  manualPin?: { file: string; instructions: string };
 }
 
 /** Injectable upstream version resolver. Returns the latest stable tag or null. */
@@ -61,6 +73,11 @@ export interface CheckPinnedUpgradeOptions {
   lexiconDir: string;
   /** Which lexicon to check. */
   lexicon: LexiconId;
+  /**
+   * Label of the one pin to check, for a plugin that declares several. Omitted:
+   * `checkPinnedUpgrade` checks the first pin, `checkPinnedUpgrades` all of them.
+   */
+  pin?: string;
   /**
    * Override the upstream resolver (useful in tests to inject mocks).
    * When omitted the real GitHub API is called.
@@ -197,17 +214,93 @@ export function revertVersionBump(filePath: string, original: string): void {
  * not self-upgradable). Mirrors ../components/capability-plugin-loader.ts's
  * lexicon-borne loading.
  */
-export async function loadUpstreamPin(lexicon: LexiconId): Promise<UpstreamPin | null> {
-  let mod: Record<string, unknown>;
+export async function loadUpstreamPin(lexicon: LexiconId, lexiconDir?: string): Promise<UpstreamPin | null> {
+  return (await loadUpstreamPins(lexicon, lexiconDir))[0]?.pin ?? null;
+}
+
+/** One pin of a plugin with the label it is addressed by. */
+export interface LabeledPin {
+  label: string;
+  pin: UpstreamPin;
+}
+
+/**
+ * Every pin a plugin declares: its `upstreamPin` (labelled by its own `label`,
+ * else the lexicon's name) followed by each `upstreamPins` entry. Empty when
+ * the plugin declares none or cannot be loaded.
+ */
+export function pinsOfPlugin(plugin: { upstreamPin?: UpstreamPin; upstreamPins?: readonly UpstreamPin[] }, lexicon: LexiconId): LabeledPin[] {
+  const pins: LabeledPin[] = [];
+  if (plugin.upstreamPin) pins.push({ label: plugin.upstreamPin.label ?? lexicon, pin: plugin.upstreamPin });
+  for (const pin of plugin.upstreamPins ?? []) pins.push({ label: pin.label ?? `${lexicon}-${pins.length}`, pin });
+  return pins;
+}
+
+/** Load every pin the lexicon's plugin declares; see {@link loadUpstreamPin} for where it looks. */
+export async function loadUpstreamPins(lexicon: LexiconId, lexiconDir?: string): Promise<LabeledPin[]> {
+  const pinsOf = (mod: Record<string, unknown>): LabeledPin[] => {
+    for (const value of Object.values(mod)) {
+      if (isLexiconPlugin(value)) {
+        const pins = pinsOfPlugin(value, lexicon);
+        if (pins.length > 0) return pins;
+      }
+    }
+    return [];
+  };
+  // The directory the caller pointed at wins: it is the checkout whose pin
+  // file will be edited, and it need not be installed under node_modules.
+  const entry = lexiconDir ? lexiconEntry(lexiconDir) : null;
+  if (entry) {
+    try {
+      ensureTypeScriptLoader();
+      const pins = pinsOf((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
+      if (pins.length > 0) return pins;
+    } catch {
+      // fall through to the package-name route
+    }
+  }
   try {
-    mod = (await import(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>;
+    return pinsOf((await importLexiconPackage(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>);
+  } catch {
+    return [];
+  }
+}
+
+/** The module a lexicon directory's package.json exposes as ".", or null when it declares none. */
+function lexiconEntry(lexiconDir: string): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(join(lexiconDir, "package.json"), "utf-8")) as {
+      main?: string;
+      exports?: Record<string, unknown> | string;
+    };
+    let rel: unknown = pkg.main;
+    const root = typeof pkg.exports === "string" ? pkg.exports : pkg.exports?.["."];
+    if (typeof root === "string") rel = root;
+    else if (root && typeof root === "object") {
+      const conds = root as Record<string, unknown>;
+      rel = conds.development ?? conds.default ?? conds.import ?? rel;
+    }
+    if (typeof rel !== "string") return null;
+    const abs = resolve(lexiconDir, rel);
+    return existsSync(abs) ? abs : null;
   } catch {
     return null;
   }
-  for (const value of Object.values(mod)) {
-    if (isLexiconPlugin(value) && value.upstreamPin) return value.upstreamPin;
+}
+
+/**
+ * The lexicon name a directory holds, from its package.json
+ * (`@intentius/chant-lexicon-<name>`), falling back to the directory name.
+ */
+export function lexiconNameOf(lexiconDir: string): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(lexiconDir, "package.json"), "utf-8")) as { name?: string };
+    const m = /^@intentius\/chant-lexicon-(.+)$/.exec(pkg.name ?? "");
+    if (m) return m[1]!;
+  } catch {
+    // no package.json
   }
-  return null;
+  return resolve(lexiconDir).split("/").pop() ?? lexiconDir;
 }
 
 /** Build a concrete `PinLocation` (absolute path + patterns) from a lexicon's descriptor and its checkout dir. */
@@ -221,38 +314,26 @@ function pinLocationFrom(pin: UpstreamPin, lexiconDir: string): PinLocation {
 
 // ── Real upstream resolvers ───────────────────────────────────────────
 
+export interface LatestTagOptions {
+  /** Only keep tags ending with this suffix. */
+  tagSuffix?: string;
+  /** Map a raw tag to a version, or null to skip it (see `UpstreamPin.upstream.tagVersion`). */
+  tagVersion?: (tag: string) => string | null;
+  /** Only keep versions whose major equals this one's. */
+  sameMajorAs?: string;
+}
+
 /**
- * Fetch GitHub releases or tags from the given repo and return the
- * latest stable version tag (highest semver, no pre-release).
- *
- * `kind` selects whether to use the releases API (which has published
- * stable releases) or the tags API (which has every git tag).
- *
- * `tagSuffix` filters tags to only those ending with the given string
- * (e.g. "-ee" for GitLab).
+ * Pick the highest stable version from a list of GitHub release or tag items.
+ * Pure: the network lives in `latestGitHubRelease`.
  */
-async function latestGitHubRelease(
-  owner: string,
-  repo: string,
+export function pickLatest(
+  items: ReadonlyArray<{ tag_name?: string; name?: string; prerelease?: boolean }>,
   kind: "releases" | "tags",
-  tagSuffix?: string,
-): Promise<string | null> {
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  const url = `https://api.github.com/repos/${owner}/${repo}/${kind}?per_page=50`;
-
-  const resp = await fetchWithRetry(url, 4, 1000, { headers });
-
-  const items = (await resp.json()) as Array<{
-    tag_name?: string;
-    name?: string;
-    prerelease?: boolean;
-  }>;
+  opts: LatestTagOptions = {},
+): string | null {
+  const { tagSuffix, tagVersion } = opts;
+  const major = opts.sameMajorAs !== undefined ? majorOf(opts.sameMajorAs, tagVersion) : undefined;
 
   let best: string | null = null;
   let bestParsed: number[] | null = null;
@@ -270,11 +351,15 @@ async function latestGitHubRelease(
     // Apply optional suffix filter (e.g. "-ee" for GitLab)
     if (tagSuffix && !rawTag.endsWith(tagSuffix)) continue;
 
-    const parsed = parseVersion(rawTag);
+    const candidate = tagVersion ? tagVersion(rawTag) : rawTag;
+    if (!candidate) continue;
+
+    const parsed = parseVersion(candidate);
     if (!parsed) continue;
+    if (major !== undefined && parsed[0] !== major) continue;
 
     if (!bestParsed || compareVersionTuples(parsed, bestParsed) > 0) {
-      best = rawTag;
+      best = candidate;
       bestParsed = parsed;
     }
   }
@@ -282,9 +367,59 @@ async function latestGitHubRelease(
   return best;
 }
 
+/** First numeric segment of a pinned value, which may be a mapped version or a raw tag. */
+function majorOf(value: string, tagVersion?: (tag: string) => string | null): number | undefined {
+  const parsed = parseVersion(value) ?? (tagVersion ? parseVersion(tagVersion(value) ?? "") : null);
+  return parsed?.[0];
+}
+
+const TAG_PAGE_SIZE = 100;
+const TAG_MAX_PAGES = 20;
+
+/**
+ * Fetch GitHub releases or tags from the given repo and return the
+ * latest stable version tag (highest semver, no pre-release).
+ *
+ * `kind` selects whether to use the releases API (which has published
+ * stable releases) or the tags API (which has every git tag).
+ *
+ * `tagSuffix` filters tags to only those ending with the given string
+ * (e.g. "-ee" for GitLab). `tagVersion` and `sameMajorAs` are described on
+ * `UpstreamPin.upstream`; with `tagVersion` every page of tags is read.
+ */
+async function latestGitHubRelease(
+  owner: string,
+  repo: string,
+  kind: "releases" | "tags",
+  opts: LatestTagOptions = {},
+): Promise<string | null> {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  type Item = { tag_name?: string; name?: string; prerelease?: boolean };
+  const paged = kind === "tags" && opts.tagVersion !== undefined;
+  const perPage = paged ? TAG_PAGE_SIZE : 50;
+  const items: Item[] = [];
+  for (let page = 1; page <= (paged ? TAG_MAX_PAGES : 1); page++) {
+    const url = `https://api.github.com/repos/${owner}/${repo}/${kind}?per_page=${perPage}&page=${page}`;
+    const resp = await fetchWithRetry(url, 4, 1000, { headers });
+    const batch = (await resp.json()) as Item[];
+    items.push(...batch);
+    if (batch.length < perPage) break;
+  }
+
+  return pickLatest(items, kind, opts);
+}
+
 /** Build the real GitHub-backed upstream resolver from a lexicon's declared `upstream` descriptor. */
-function resolverFor(pin: UpstreamPin): UpstreamResolver {
-  return () => latestGitHubRelease(pin.upstream.owner, pin.upstream.repo, pin.upstream.kind, pin.upstream.tagSuffix);
+export function resolverFor(pin: UpstreamPin, from: string): UpstreamResolver {
+  const { owner, repo, kind, tagSuffix, tagVersion, trackMajor } = pin.upstream;
+  return () =>
+    latestGitHubRelease(owner, repo, kind, { tagSuffix, tagVersion, sameMajorAs: trackMajor ? from : undefined });
 }
 
 // ── Main function ─────────────────────────────────────────────────────
@@ -301,19 +436,53 @@ function resolverFor(pin: UpstreamPin): UpstreamResolver {
  * without any lasting change to the working tree.
  */
 export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promise<UpgradeCheckResult> {
-  const { lexiconDir, lexicon, force = false, verbose = false, skipBuild, skipBundle, skipLint } = opts;
+  const selected = await selectPins(opts);
+  if ("error" in selected) return selected.error;
+  return checkOnePin(selected.pins[0]!, opts, selected.multiple);
+}
 
-  const pin = await loadUpstreamPin(lexicon);
-  if (!pin) {
-    return {
-      lexicon,
-      hasUpgrade: false,
-      from: "(unknown)",
-      to: null,
-      validation: null,
-      fetchError: `Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable), or its plugin package could not be loaded.`,
-    };
+/**
+ * Check every pin the plugin declares (or the one named by `opts.pin`), one
+ * result each, in declaration order. A plugin with one pin gives one result,
+ * the same as `checkPinnedUpgrade`. Pins are checked one after another: each
+ * dry-run bump edits and reverts a file, and regenerates.
+ */
+export async function checkPinnedUpgrades(opts: CheckPinnedUpgradeOptions): Promise<UpgradeCheckResult[]> {
+  const selected = await selectPins({ ...opts, pin: opts.pin });
+  if ("error" in selected) return [selected.error];
+  const results: UpgradeCheckResult[] = [];
+  for (const labeled of selected.pins) results.push(await checkOnePin(labeled, opts, selected.multiple));
+  return results;
+}
+
+/** Choose the pins to check: all of them, or the one `opts.pin` names. */
+async function selectPins(
+  opts: CheckPinnedUpgradeOptions,
+): Promise<{ pins: LabeledPin[]; multiple: boolean } | { error: UpgradeCheckResult }> {
+  const { lexiconDir, lexicon } = opts;
+  const fail = (fetchError: string): { error: UpgradeCheckResult } => ({
+    error: { lexicon, hasUpgrade: false, from: "(unknown)", to: null, validation: null, fetchError },
+  });
+  const all = await loadUpstreamPins(lexicon, lexiconDir);
+  if (all.length === 0) {
+    return fail(
+      `Lexicon "${lexicon}" declares no upstreamPin, so there is no pinned upstream version to check (see lexicon-authoring/generate, "Pinning the upstream schema"), or its plugin could not be loaded from ${lexiconDir}.`,
+    );
   }
+  const labels = all.map((p) => p.label);
+  const dup = labels.find((l, i) => labels.indexOf(l) !== i);
+  if (dup) return fail(`Lexicon "${lexicon}" declares two pins labelled "${dup}"; each pin's label must be unique.`);
+  const multiple = all.length > 1;
+  if (opts.pin === undefined) return { pins: all, multiple };
+  const chosen = all.find((p) => p.label === opts.pin);
+  if (!chosen) return fail(`Lexicon "${lexicon}" has no pin labelled "${opts.pin}". Pins: ${labels.join(", ")}.`);
+  return { pins: [chosen], multiple };
+}
+
+async function checkOnePin(labeled: LabeledPin, opts: CheckPinnedUpgradeOptions, multiple: boolean): Promise<UpgradeCheckResult> {
+  const { lexiconDir, lexicon, force = false, verbose = false, skipBuild, skipBundle, skipLint } = opts;
+  const { pin } = labeled;
+  const tag = multiple ? { pin: labeled.label } : {};
   const location = pinLocationFrom(pin, lexiconDir);
 
   // Read current pin
@@ -321,6 +490,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   if (!from) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: false,
       from: "(unknown)",
       to: null,
@@ -330,13 +500,14 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   }
 
   // Query upstream
-  const resolver = opts.resolverOverride ?? resolverFor(pin);
+  const resolver = opts.resolverOverride ?? resolverFor(pin, from);
   let latestTag: string | null;
   try {
     latestTag = await resolver();
   } catch (e) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: false,
       from,
       to: null,
@@ -345,14 +516,33 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
     };
   }
 
-  if (!latestTag || !isNewer(latestTag, from)) {
+  // The pin may hold the raw tag (REL_18_6) where the resolver returns the mapped version (18.6).
+  const fromVersion = parseVersion(from) ? from : (pin.upstream.tagVersion?.(from) ?? from);
+  if (!latestTag || !isNewer(latestTag, fromVersion)) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: false,
       from,
       to: latestTag,
       validation: null,
       fetchError: null,
+    };
+  }
+
+  // A pin the descriptor's `replace` cannot move alone (a companion digest,
+  // say): report the new version and how to move it. Editing the version
+  // line only would leave a pin that fails generation.
+  if (pin.alsoMoves) {
+    return {
+      lexicon,
+      ...tag,
+      hasUpgrade: true,
+      from,
+      to: latestTag,
+      validation: null,
+      fetchError: null,
+      manualPin: { file: pin.file, instructions: pin.alsoMoves },
     };
   }
 
@@ -363,6 +553,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   } catch (e) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: true,
       from,
       to: latestTag,
@@ -389,6 +580,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
 
   return {
     lexicon,
+    ...tag,
     hasUpgrade: true,
     from,
     to: latestTag,
@@ -414,9 +606,14 @@ export async function applyPinnedVersionBump(
   lexicon: LexiconId,
   lexiconDir: string,
   newVersion: string,
+  pinLabel?: string,
 ): Promise<{ filePath: string }> {
-  const pin = await loadUpstreamPin(lexicon);
+  const pins = await loadUpstreamPins(lexicon, lexiconDir);
+  const pin = (pinLabel === undefined ? pins[0] : pins.find((p) => p.label === pinLabel))?.pin;
   if (!pin) throw new Error(`Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable).`);
+  if (pin.alsoMoves) {
+    throw new Error(`Lexicon "${lexicon}" cannot have its pin rewritten generically: ${pin.alsoMoves}`);
+  }
   const location = pinLocationFrom(pin, lexiconDir);
   applyVersionBump(location, newVersion);
   return { filePath: location.filePath };

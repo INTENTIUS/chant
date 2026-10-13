@@ -1,25 +1,37 @@
-import { resolve, dirname } from "node:path";
+import { lexiconNames } from "../../lexicon-module";
+import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
-import { discoverOps } from "../../op/discover";
-import type { OpConfig } from "../../op/types";
+import { loadChantConfig, resolveAutoReleaseDisabled, InvalidChantConfigError, type ChantConfig } from "../../config";
+import { discoverOps, discoverStewards } from "../../op/discover";
+import { stewardWorkHolder } from "../../op/work-lease-run";
+import { DRIFT_EXIT_CODE, type OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
-import { approveCommand } from "../../op/gate";
-import { writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
+import { approveCommand, describeGateMismatch, gateIsSealed } from "../../op/gate";
+import { summaryLedgerPrefix, writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
-import { renderHuman, renderJson } from "../../op/local-output";
+import { pointAnswerCommand, renderHuman, renderJson } from "../../op/local-output";
 import { loadPlugins } from "../plugins";
 import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
+import { stewardBesideFor, stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
+import { holdBesideLease } from "../../op/steward-beside";
+import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
+import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
+import { StaleLockError } from "../../lifecycle/git";
+import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
+import { ledgerRecordingOff, noRecordEndNote, noRecordStartNote, resetNoRecordLedger, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
+import { isComponentList, type ComponentRunPlan } from "../../components/cli-support";
+import type { ReleaseRecord } from "../../lifecycle/release-ledger";
+import { runOpGenerate } from "./run-generate";
 
 /**
  * The exit code a run that stopped at an unapproved gate uses (#2119).
@@ -59,6 +71,40 @@ function resolveGatedExitCode(ctx: CommandContext): number | undefined {
 }
 
 /**
+ * Whether a settled run's records carry a true `Drift` outcome (#3675) — the
+ * one `lifecycleDiff` surfaces through `outcomeAttribute` on a WatchOp,
+ * ApplyOp, ReconcileOp or ConvergeOp step.
+ */
+export function runFoundDrift(records: readonly StepRecord[] | undefined): boolean {
+  for (const record of records ?? []) {
+    const outcomes = record.outcomes ?? (record.outcome ? [record.outcome] : []);
+    if (outcomes.some((o) => o.name === "Drift" && o.value === true)) return true;
+  }
+  return false;
+}
+
+/**
+ * The exit code for a completed run (#3675): 0, or {@link DRIFT_EXIT_CODE}
+ * when the run found drift and either `--fail-on-drift` or the Op's own
+ * `failOn: "drift"` asked for drift to fail the job. Says why on stderr when
+ * it remaps, since every step in the run succeeded.
+ */
+export function completedRunExitCode(
+  opName: string,
+  config: Pick<OpConfig, "failOn">,
+  failOnDriftFlag: boolean | undefined,
+  records: readonly StepRecord[] | undefined,
+): number {
+  if (!(failOnDriftFlag || config.failOn === "drift")) return 0;
+  if (!runFoundDrift(records)) return 0;
+  const why = failOnDriftFlag ? "--fail-on-drift" : `the Op declares failOn: "drift"`;
+  console.error(formatWarning({
+    message: `Op "${opName}" found drift; exiting ${DRIFT_EXIT_CODE} because ${why}`,
+  }));
+  return DRIFT_EXIT_CODE;
+}
+
+/**
  * What a gated run leaves behind for CI, beyond the stderr block the renderers
  * already print (#2243): the same gate, approve command and ledger path
  * appended to whatever file `GITHUB_STEP_SUMMARY` names, so the run page says
@@ -68,8 +114,8 @@ function resolveGatedExitCode(ctx: CommandContext): number | undefined {
  * passes `--gated-exit 0` reports success, and the one line that explains why
  * a zero-exit run applied nothing belongs next to the gate itself.
  */
-function reportGatedRun(summary: GatedRunSummary, exitCode: number): void {
-  writeGatedRunSummary(summary);
+async function reportGatedRun(summary: GatedRunSummary, exitCode: number): Promise<void> {
+  writeGatedRunSummary({ ...summary, sealed: await gateIsSealed(summary.gate) });
   if (exitCode !== GATED_EXIT_CODE) {
     console.error(formatInfo(
       `gated: exiting ${exitCode} because --gated-exit asked for it. Nothing after the gate ran.`,
@@ -99,10 +145,12 @@ function refuseDurableComponentSubcommand(what: string, hint: string): number {
 /**
  * Resolve the one runtime this invocation talks to.
  *
- * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`);
- * without it, core's built-in `local` provider runs the Op in this process.
- * Every `chant run` subcommand goes through whichever comes back, so there is
- * one dispatch path rather than a branch per runtime.
+ * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`).
+ * Without it, `run.on` in `chant.config.ts` does (#2523), and without either,
+ * core's built-in `local` provider runs the Op in this process. `local`, from
+ * either place, names the built-in provider. Every `chant run` subcommand goes
+ * through whichever comes back, so there is one dispatch path rather than a
+ * branch per runtime.
  *
  * A lexicon already loaded into the command context wins the lookup — that is
  * how a test hands in a stub, and how a command that loaded plugins for its
@@ -112,22 +160,20 @@ function refuseDurableComponentSubcommand(what: string, hint: string): number {
  *
  * Returns `undefined` after printing an actionable error — an unconfigured
  * name is answered with the configured list, a configured lexicon that hosts
- * nothing is named outright.
+ * nothing is named outright. A `run.on` default gets the same messages as
+ * `--on`, labelled `run.on` and the config file instead of `--on`.
  */
 async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider | undefined> {
-  const on = ctx.args.on;
+  const choice = await chooseOpRuntime(ctx);
+  if (!choice) return undefined;
+  const { on, source, configured } = choice;
   if (!on || on === "local") return createLocalOpRuntime({ projectPath: resolve(".") });
 
-  // Read the configured list straight from `chant.config.ts` rather than
-  // through `resolveProjectLexicons`: `--on` names a *configured* lexicon, and
-  // that helper's fallback is a source scan of the whole project, which is a
-  // long wait to be told a name is wrong.
-  let configured: string[] = [];
-  try {
-    configured = (await loadChantConfig(resolve("."))).config.lexicons ?? [];
-  } catch {
-    // No/unreadable chant.config.ts — the error below says so by listing nothing.
-  }
+  // How the error names the choice, and how to get the built-in runtime back.
+  const label = source === "flag" ? `--on ${on}` : `run.on "${on}" in ${choice.configFile}`;
+  const fallback = source === "flag"
+    ? "Omit --on to run on the built-in local runtime."
+    : `Fix \`run.on\` in ${choice.configFile}, or pass --on local to run on the built-in local runtime.`;
 
   let plugin = ctx.plugins.find((p) => p.name === on);
   if (!plugin && configured.includes(on)) {
@@ -137,23 +183,81 @@ async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider 
   if (!plugin) {
     const known = [...new Set([...ctx.plugins.map((p) => p.name), ...configured])];
     console.error(formatError({
-      message: `--on ${on}: "${on}" is not a configured lexicon`,
+      message: `${label}: "${on}" is not a configured lexicon`,
       hint: known.length > 0
-        ? `Configured lexicons: ${known.join(", ")}. Omit --on to run on the built-in local runtime.`
-        : "chant.config.ts configures no lexicons. Omit --on to run on the built-in local runtime.",
+        ? `Configured lexicons: ${known.join(", ")}. ${fallback}`
+        : `chant.config.ts configures no lexicons. ${fallback}`,
     }));
     return undefined;
   }
 
   if (!plugin.opRuntime) {
     console.error(formatError({
-      message: `--on ${on}: lexicon "${on}" does not host Op runs`,
-      hint: "It declares no opRuntime. Omit --on to run on the built-in local runtime.",
+      message: `${label}: lexicon "${on}" does not host Op runs`,
+      hint: `It declares no opRuntime. ${fallback}`,
     }));
     return undefined;
   }
 
   return plugin.opRuntime;
+}
+
+/** Which runtime name an invocation asked for, and where the name came from. */
+interface OpRuntimeChoice {
+  /** The runtime name; `undefined` or `"local"` is the built-in runtime. */
+  on: string | undefined;
+  /** `flag` for `--on`, `config` for `run.on`, `default` when neither named one. */
+  source: "flag" | "config" | "default";
+  /** The lexicons `chant.config.ts` configures. */
+  configured: string[];
+  /** The config file's name, for messages about `run.on`. */
+  configFile: string;
+}
+
+/**
+ * The runtime name `--on`, then `run.on` in `chant.config.ts` (#2523), then
+ * the built-in default pick, without loading any lexicon.
+ *
+ * Reads the configured list straight from `chant.config.ts` rather than
+ * through `resolveProjectLexicons`: `--on` names a *configured* lexicon, and
+ * that helper's fallback is a source scan of the whole project, which is a
+ * long wait to be told a name is wrong.
+ *
+ * A config that fails to load leaves the flag's choice alone, as before. With
+ * no flag, a config whose `run` block is invalid is refused (printed, then
+ * `undefined`): running the Op locally would hide that the project asked for
+ * another runtime. Any other load failure falls back to the built-in runtime,
+ * which is what a project with no `run.on` got before. `quiet` skips printing
+ * that refusal, for a caller that only peeks at the choice and leaves the
+ * reporting to {@link resolveOpRuntime}.
+ */
+async function chooseOpRuntime(ctx: CommandContext, quiet = false): Promise<OpRuntimeChoice | undefined> {
+  const flag = ctx.args.on;
+  if (flag === "local") return { on: "local", source: "flag", configured: [], configFile: "chant.config.ts" };
+
+  let configured: string[] = [];
+  let configuredOn: string | undefined;
+  let configFile = "chant.config.ts";
+  try {
+    const { config, configPath } = await loadChantConfig(resolve("."));
+    configured = lexiconNames(config.lexicons ?? []);
+    configuredOn = config.run?.on;
+    if (configPath) configFile = basename(configPath);
+  } catch (err) {
+    if (!flag && err instanceof InvalidChantConfigError && err.key === "run") {
+      if (quiet) return undefined;
+      console.error(formatError({
+        message: err.message,
+        hint: "`run.on` names the runtime that hosts this project's Op runs: a configured lexicon with an opRuntime, or \"local\". Fix it, or pass --on to pick the runtime for this run.",
+      }));
+      return undefined;
+    }
+    // No/unreadable chant.config.ts: an `--on` error says so by listing nothing.
+  }
+
+  if (flag) return { on: flag, source: "flag", configured, configFile };
+  if (configuredOn) return { on: configuredOn, source: "config", configured, configFile };
+  return { on: undefined, source: "default", configured, configFile };
 }
 
 /** An ISO-8601 instant trimmed to what a table cell has room for. */
@@ -386,6 +490,8 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
     note: ctx.args.note,
     url: ctx.args.url,
     plan: ctx.args.plan,
+    ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
+    ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
   });
   if (!outcome.ok) return 1;
 
@@ -397,7 +503,10 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
   }
 
   try {
-    await runtime.resolveGate(opName, gate, outcome.record);
+    // `--env` on the approve line names the environment the woken run runs
+    // in (#3539); without it the runtime keeps the gated run's.
+    if (ctx.args.env !== undefined) await runtime.resolveGate(opName, gate, outcome.record, { env: ctx.args.env });
+    else await runtime.resolveGate(opName, gate, outcome.record);
   } catch (err) {
     console.error(formatWarning({
       message:
@@ -523,7 +632,145 @@ function refusesPolicyGateUnderSandbox(ctx: CommandContext, config: OpConfig, op
   return true;
 }
 
+/** What `stewardTurnGate` decided before `chant run <op>` is allowed to start. */
+type StewardTurnGate =
+  | { ok: true; release?: () => Promise<void> }
+  | { ok: false; message: string; hint: string };
+
+/**
+ * `chant run <op>` for an Op a declared steward lists is one of that
+ * steward's turns, not a run beside it (#2750, follow-up to #2731).
+ *
+ * On fountain, the run belongs on the steward's thread: without `--on
+ * fountain` this refuses outright, naming the command that posts it there
+ * instead (the fountain runtime's own turn already refuses a busy teammate,
+ * unretried — see chant-fountain-ops).
+ *
+ * In the local form, the run takes the steward's turn lease
+ * (`../../op/operator.ts`'s `acquireStewardTurn`) — the same lease a round's
+ * scheduled tick holds for the length of its own run. Held already, this
+ * waits up to {@link STEWARD_TURN_WAIT_MS} (long enough to ride out a race
+ * with a turn that's just ending) and then refuses, naming the steward and
+ * its holder. It never queues past that: a round's own leases skip and
+ * report rather than wait (`../../op/operator.ts`'s module doc), and a
+ * foreground CLI blocked with no visibility for however long a scheduled
+ * turn takes would be a worse answer than a clear refusal with a retry in
+ * hand. Ctrl-C already means "abort my own run" here; it must not also mean
+ * "give up waiting for someone else's turn".
+ *
+ * An Op the steward runs beside its turns (#2861) takes the Op's own lease
+ * instead, renewed for as long as the run lasts, and never the turn: the run
+ * is one at a time with the runs the operator starts of it, and holds none
+ * of the steward's other Ops up. Held already, it refuses at once, naming
+ * the holder.
+ *
+ * `undefined` (via the caller checking `owner`) when no steward lists this
+ * op — the ordinary, untouched path.
+ */
+async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<StewardTurnGate | undefined> {
+  const { stewards } = await discoverStewards().catch(() => ({ stewards: new Map<string, { declaration: StewardDeclaration }>() }));
+  let owner: StewardDeclaration | undefined;
+  for (const { declaration } of stewards.values()) {
+    if (declaration.ops.some((op) => op.name === opName)) {
+      owner = declaration;
+      break;
+    }
+  }
+  if (!owner) return undefined;
+
+  const env = ctx.args.env ?? DEFAULT_STEWARD_ENV;
+  const form = stewardFormFor(owner, env);
+
+  if (form === "fountain") {
+    // `run.on: "fountain"` asks for the steward's thread as much as the flag
+    // does (#2523).
+    if ((await chooseOpRuntime(ctx, true))?.on === "fountain") return { ok: true };
+    return {
+      ok: false,
+      message: `Op "${opName}" is one of steward "${owner.name}"'s Ops, which runs on fountain in environment "${env}"`,
+      hint:
+        `Run \`chant run ${opName} --on fountain\` so it posts to "${owner.name}"'s thread. ` +
+        `A plain \`chant run ${opName}\` would run it outside that thread, beside the steward instead of one of its turns.`,
+    };
+  }
+
+  if (stewardBesideFor(owner, opName)) return besideLeaseGate(opName, owner.name, ctx);
+
+  const holder = currentHolderId();
+  let turn: AcquireLeaseResult;
+  try {
+    turn = await acquireStewardTurn(owner.name, holder, { waitMs: STEWARD_TURN_WAIT_MS });
+  } catch (err) {
+    // Not turn contention — the acquire attempt itself failed (most likely a
+    // StaleLockError, a `.lock` left behind by a killed operator process).
+    // Report it as a refusal rather than letting it propagate uncaught out
+    // of `runOpOnRuntime`, before that function's own try/catch even starts.
+    return {
+      ok: false,
+      message: `Op "${opName}" is one of steward "${owner.name}"'s turns, and its lease could not be read`,
+      hint:
+        `${err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err)} ` +
+        `This can happen when an operator process was killed mid-write; check refs/chant/lease/_turns/${owner.name} for a stale lock.`,
+    };
+  }
+  if (!turn.acquired) {
+    const heldBy = turn.heldBy?.holder;
+    return {
+      ok: false,
+      message:
+        `Op "${opName}" is one of steward "${owner.name}"'s turns, and a turn is in progress` +
+        (heldBy ? ` (held by ${heldBy})` : ""),
+      hint:
+        `Wait for the turn to finish and re-run \`chant run ${opName}\`, or check \`chant operator status --steward ${owner.name}\`. ` +
+        `If it looks stuck, stop the operator process holding it (Ctrl-C, or kill it) — its lease also expires on its own.`,
+    };
+  }
+  const lease = turn.lease!;
+  const stewardName = owner.name;
+  return { ok: true, release: async () => { await releaseLease(stewardTurnLeaseName(stewardName), holder, lease.token).catch(() => false); } };
+}
+
+/**
+ * The lease a `chant run` of an Op beside a steward's turns holds (#2861):
+ * the Op's own, as `--holder` (the operator passes `<steward>/<op>@<its
+ * holder>`) or this process.
+ */
+async function besideLeaseGate(opName: string, steward: string, ctx: CommandContext): Promise<StewardTurnGate> {
+  const holder = ctx.args.holder ?? currentHolderId();
+  let held;
+  try {
+    held = await holdBesideLease(opName, holder);
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Op "${opName}" runs beside steward "${steward}"'s turns, and its lease could not be read`,
+      hint:
+        `${err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err)} ` +
+        `This can happen when a process was killed mid-write; check refs/chant/lease/${opName} for a stale lock.`,
+    };
+  }
+  if (!held.acquired) {
+    return {
+      ok: false,
+      message: `Op "${opName}" runs beside steward "${steward}"'s turns, one run at a time, and a run of it is in progress` +
+        (held.heldBy ? ` (held by ${held.heldBy})` : ""),
+      hint: `Wait for that run to end and re-run \`chant run ${opName}\`; \`chant workspace status --json\` lists it under the steward. Its lease expires on its own if the process holding it died.`,
+    };
+  }
+  return { ok: true, release: held.release };
+}
+
 export async function runOp(ctx: CommandContext): Promise<number> {
+  if (ctx.args.generate) {
+    if (ctx.args.components) {
+      console.error(formatError({
+        message: "`chant run --components --generate` is not a command",
+        hint: "Generate a component pipeline with `chant build --components --generate <lexicon>`, or Op pipelines with `chant run --generate <provider>`.",
+      }));
+      return 1;
+    }
+    return runOpGenerate(ctx);
+  }
   if (ctx.args.components && ctx.args.report) {
     console.error(formatError({
       message: "--report is not supported with --components",
@@ -576,13 +823,16 @@ export async function runOp(ctx: CommandContext): Promise<number> {
  * ledger for work `chant run --components` records. Each result is filtered on
  * its own `ok`, so a fan-out that partly succeeded records exactly the
  * components that did.
+ *
+ * Returns the records it wrote, for `--digest-file` (#2602).
  */
 export async function recordAutoReleasesForRun(
   results: DriverComponentResult[],
   env: string,
   runId: string,
   disabled: boolean,
-): Promise<void> {
+): Promise<ReleaseRecord[]> {
+  const recorded: ReleaseRecord[] = [];
   for (const componentResult of results) {
     if (!componentResult.ok) continue;
     const outcome = await maybeRecordAutoRelease(
@@ -602,6 +852,7 @@ export async function recordAutoReleasesForRun(
         message: `release record for "${componentResult.component}"@${env} was not recorded: ${outcome.error}`,
       }));
     } else if (outcome.recorded) {
+      recorded.push(outcome.record);
       console.error(formatInfo(
         `Recorded release: ${formatBold(componentResult.component)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
       ));
@@ -621,14 +872,16 @@ export async function recordAutoReleasesForRun(
       ));
     }
   }
+  return recorded;
 }
 
-// ── chant run --components <name|all> ────────────────────────────────────────
+// ── chant run --components <name|all|a,b,c> ──────────────────────────────────
 
 /**
- * `chant run --components <name|all> [--env <env>]` (#585) — the interpret
- * driver's CLI entrypoint, and since #2116 the only component run path there
- * is. `args.path` is the component name (or `all`), matching `chant run
+ * `chant run --components <name|all|a,b,c> [--env <env>]` (#585) — the
+ * interpret driver's CLI entrypoint, and since #2116 the only component run
+ * path there is. `args.path` is the component name (or `all`, or a comma list
+ * that also runs what the named components depend on, #3950), matching `chant run
  * <name>`'s Op-dispatch convention exactly (`args.path` is the Op name there
  * too) rather than a project directory — components are always discovered from
  * the current working directory, the same way Op discovery (`discoverOps()`)
@@ -659,11 +912,52 @@ export async function recordAutoReleasesForRun(
  * auto-release check below used to apply itself) and reused for that check,
  * rather than loaded a second time.
  */
-export async function runOpComponents(ctx: CommandContext): Promise<number> {
+export function runOpComponents(ctx: CommandContext): Promise<number> {
+  return withRecordingChoice(ctx, () => runComponentSelection(ctx));
+}
+
+/**
+ * Run `run` with recording off when `--no-record` or `CHANT_NO_RECORD` asks
+ * for it (#3955), and say so before it starts and after it ends, whatever
+ * the outcome. The flag sets `CHANT_NO_RECORD` for the length of the run, so
+ * the ledger seam (`../../lifecycle/git.ts`) and every chant process a step
+ * starts see the same choice. A run with recording on is untouched.
+ */
+async function withRecordingChoice(ctx: CommandContext, run: () => Promise<number>): Promise<number> {
+  const flagged = ctx.args.noRecord === true;
+  if (!flagged && !ledgerRecordingOff()) return run();
+  const source = flagged ? "--no-record" : `${NO_RECORD_ENV}=${process.env[NO_RECORD_ENV]}`;
+  const prior = process.env[NO_RECORD_ENV];
+  if (flagged) process.env[NO_RECORD_ENV] = "1";
+  resetNoRecordLedger();
+  console.error(formatWarning({ message: noRecordStartNote(source) }));
+  try {
+    return await run();
+  } finally {
+    console.error(formatWarning({ message: noRecordEndNote(source) }));
+    resetNoRecordLedger();
+    if (flagged) {
+      if (prior === undefined) delete process.env[NO_RECORD_ENV];
+      else process.env[NO_RECORD_ENV] = prior;
+    }
+  }
+}
+
+/** A run that records nothing stays in this process (#3955): a runtime that runs it elsewhere would record there. */
+function refusesNoRecordOn(runtime: Pick<OpRuntimeProvider, "name">): boolean {
+  if (!ledgerRecordingOff() || runtime.name === "local") return false;
+  console.error(formatError({
+    message: `--no-record runs on the local runtime; the "${runtime.name}" runtime records the run where it executes it`,
+    hint: `Omit --on to run it here without recording, or drop --no-record (and ${NO_RECORD_ENV}).`,
+  }));
+  return true;
+}
+
+async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
   if (!selector || selector === ".") {
     console.error(formatError({
-      message: "Component name is required: chant run --components <name|all>",
+      message: "Component name is required: chant run --components <name|all|a,b,c>",
       hint: "Run `chant list --components` to see available components.",
     }));
     return 1;
@@ -686,6 +980,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   const runtime = await resolveOpRuntime(ctx);
   if (!runtime) return 1;
+  if (refusesNoRecordOn(runtime)) return 1;
   if (!runtime.runComponents) {
     console.error(formatError({
       message: `--components is not supported on the "${runtime.name}" runtime`,
@@ -716,12 +1011,22 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
+  // A list (#3950) pulls in what its components depend on; say which ones and
+  // in what order before the first one runs. stderr, so --json and
+  // --progress-json keep stdout to themselves.
+  const onPlan = isComponentList(selector)
+    ? (plan: ComponentRunPlan) => {
+        console.error(formatInfo(`run order: ${plan.waves.map((wave) => wave.join(" + ")).join(", then ")}`));
+        if (plan.added.length > 0) console.error(formatInfo(`added as dependencies: ${plan.added.join(", ")}`));
+      }
+    : undefined;
   const result = await runtime.runComponents(projectPath, selector, {
     env: ctx.args.env,
     componentOutputs: seededOutputs,
     onProgress,
     sandbox: ctx.args.sandbox,
     buildParams: paramsResolution.provenance,
+    ...(onPlan ? { onPlan } : {}),
   });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
@@ -748,20 +1053,28 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     console.error(formatWarning({
       message: `component "${result.gated.component}" is gated on "${gate.gate}" — pending approval`,
     }));
-    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate)}`));
+    // #2574: an approval stands, but for another plan or for none. Say so,
+    // with the command that replaces it.
+    const sealed = await gateIsSealed(gate.gate);
+    if (result.gated.mismatch) {
+      console.error(formatWarning({ message: describeGateMismatch(gate.op, gate.gate, result.gated.mismatch, sealed) }));
+    }
+    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate, gate.environment, undefined, sealed)}`));
     if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
     console.error(formatInfo(`expires : ${gate.expiresAt}`));
     // #2310: this run's own append reached only the local chant/lifecycle
     // branch. The gate is still right to stand, but an operator elsewhere
     // cannot see the pending fact to approve it, and nothing else here says
     // why not.
-    if (result.gated.pushed === false) {
+    if (result.gated.pushed === false && isLifecycleLocalNote(result.gated.pushWarning)) {
+      console.error(formatInfo(LIFECYCLE_LOCAL_NOTE));
+    } else if (result.gated.pushed === false) {
       console.error(formatWarning({
         message: `the pending fact was not pushed to the remote: ${result.gated.pushWarning ?? "recorded locally only"}`,
         hint: "an operator working from a clone of the remote cannot approve it until it does",
       }));
     }
-    reportGatedRun(
+    await reportGatedRun(
       {
         op: gate.op,
         gate: gate.gate,
@@ -770,6 +1083,8 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
         ...(gate.url ? { url: gate.url } : {}),
         ...(result.gated.pushed === false ? { pushed: false, pushWarning: result.gated.pushWarning } : {}),
         ...(gate.planDigest ? { planDigest: gate.planDigest } : {}),
+        ...(await summaryLedgerPrefix()),
+        ...(gate.environment ? { environment: gate.environment } : {}),
       },
       gatedExit,
     );
@@ -777,8 +1092,18 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   }
 
   if (result.success && result.run) {
-    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
-    await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
+    // #3955: a run that records nothing has no release to report either.
+    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
+    const recorded = await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
+    // `--digest-file` (#2602): the releases this run recorded, one
+    // `<component>=<digest>` line each, the form `chant components promote
+    // --digest` takes. A generated promote job reads it to promote exactly
+    // what this job built, not whatever is latest in the environment.
+    if (ctx.args.digestFile) {
+      const digestPath = resolve(ctx.args.digestFile);
+      mkdirSync(dirname(digestPath), { recursive: true });
+      writeFileSync(digestPath, recorded.map((r) => `${r.component}=${r.digest}\n`).join(""));
+    }
   }
 
   return result.success ? 0 : 1;
@@ -796,7 +1121,11 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
  * what they were before the seam existed; a runtime that reports only a state
  * gets the terser render instead.
  */
-export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
+export function runOpOnRuntime(ctx: CommandContext): Promise<number> {
+  return withRecordingChoice(ctx, () => runOpOnResolvedRuntime(ctx));
+}
+
+async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
   if (!opName || opName === ".") {
     console.error(formatError({
@@ -829,41 +1158,81 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   // Pre-flight: --sandbox cannot cover a policyGate step (#2003).
   if (refusesPolicyGateUnderSandbox(ctx, config, opName)) return 1;
 
+  // A hand run of an Op a declared steward lists is one of that steward's
+  // turns, not a run beside it (#2750). `undefined` when no steward lists
+  // this op at all — the ordinary path.
+  const stewardGate = await stewardTurnGate(opName, ctx);
+  if (stewardGate && !stewardGate.ok) {
+    console.error(formatError({ message: stewardGate.message, hint: stewardGate.hint }));
+    return 1;
+  }
+
   const runtime = await resolveOpRuntime(ctx);
-  if (!runtime) return 1;
+  if (!runtime || refusesNoRecordOn(runtime)) {
+    await stewardGate?.release?.();
+    return 1;
+  }
+
+  // The work lease (#2748). `--work` names the item an Op with a work lease
+  // runs under; it is taken where the run executes, which for a hosted
+  // runtime that carries it (fountain, #3555) is not this process.
+  const work = await resolveRunWork(ctx, config, runtime);
+  if (work === null) {
+    await stewardGate?.release?.();
+    return 1;
+  }
 
   // `--progress-json` streams one NDJSON StepRecord per settled step, fed by
   // whatever the runtime reports through `progress`.
   const progress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
 
-  // Ctrl-C aborts in-flight activities (kills their child processes) instead of
-  // orphaning them. The handler is removed in `finally` so it never leaks.
+  // Ctrl-C, or a SIGTERM (the signal a steward's operator sends this process
+  // when it runs beside the steward's turns and the operator itself stops,
+  // and what a plain `kill <pid>` sends with no signal named), aborts
+  // in-flight activities (kills their child processes) instead of orphaning
+  // them. `process.on`, not `.once` (chant#2872's shape, here too): a second
+  // signal arriving before the `finally` below has released this run's lease
+  // (`stewardGate`, for a beside run) must not fall through to Node's default
+  // disposition and skip that release. `stopping` makes a repeat a no-op; the
+  // listeners are removed only after the release, at the very end of
+  // `finally`, not before it.
   const controller = new AbortController();
+  let stopping = false;
   const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
     console.error(formatWarning({ message: "interrupted — stopping Op" }));
     controller.abort();
   };
-  process.once("SIGINT", onSigint);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigint);
 
   try {
+    // `--param name=value` reaches the runtime (#3539). The local runtime
+    // has no use for it; fountain reads `agent` to pick the steward and posts
+    // the rest on the command line it hands the sandbox.
+    const params = parseParamFlags(ctx.args.param);
     const handle = await runtime.start(config, {
       env: ctx.args.env,
+      ...(params ? { params } : {}),
       ...(ctx.args.profile !== undefined ? { profile: ctx.args.profile } : {}),
       progress,
       signal: controller.signal,
+      ...(work ? { work } : {}),
     });
     const status = await handle.result();
 
     if (status.result) {
       // The executor's own render already prints a gate, its approve line
       // and its expiry (#2119).
-      if (ctx.args.json) renderJson(status.result); else renderHuman(status.result);
+      const sealed = status.result.gate ? await gateIsSealed(status.result.gate.gate) : false;
+      if (ctx.args.json) renderJson(status.result, undefined, sealed); else renderHuman(status.result, undefined, sealed);
     } else {
       renderRuntimeStatus("Op", opName, runtime.name, status);
       if (status.state === "gated" && status.gate) {
         console.error(formatWarning({
           message: `Op "${opName}" is waiting on gate "${status.gate.name}"`,
-          hint: `Record the resolution with: ${approveCommand(opName, status.gate.name)}`,
+          hint: `Record the resolution with: ${approveCommand(opName, status.gate.name, undefined, undefined, await gateIsSealed(status.gate.name))}`,
         }));
       }
     }
@@ -878,7 +1247,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
       const pending = status.result?.gate;
       const gate = pending?.gate ?? status.gate?.name;
       if (gate) {
-        reportGatedRun(
+        await reportGatedRun(
           {
             op: opName,
             gate,
@@ -891,23 +1260,101 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
               ? { pushed: false, pushWarning: status.result.gatePushWarning }
               : {}),
             ...(pending?.planDigest ? { planDigest: pending.planDigest } : {}),
+            ...(await summaryLedgerPrefix()),
           },
           gatedExit,
         );
       }
       return gatedExit;
     }
-    return status.state === "completed" ? 0 : 1;
+    // A run waiting on an open decision point (#2749) is waiting on a person,
+    // like a gated one, and exits with the same code. Its answer comes through
+    // hud or `points answer`, never a `chant approve`.
+    if (status.state === "waiting") {
+      if (!status.result && status.point) {
+        console.error(formatWarning({
+          message: `Op "${opName}" is waiting on decision point "${status.point.point}" (${status.point.id})`,
+          hint: `A person answers it with: ${pointAnswerCommand(status.point.id)}`,
+        }));
+      }
+      return gatedExit;
+    }
+    if (status.state !== "completed") return 1;
+    // A completed run that found drift exits 2 when asked to (#3675), so a
+    // scheduled drift job turns red without a script that reads the ledger.
+    return completedRunExitCode(opName, config, ctx.args.failOnDrift, status.result?.records ?? status.records);
   } catch (err) {
     if (err instanceof OpRunFailure) {
-      if (ctx.args.json) renderJson(err.result); else renderHuman(err.result);
+      const sealed = err.result.gate ? await gateIsSealed(err.result.gate.gate) : false;
+      if (ctx.args.json) renderJson(err.result, undefined, sealed); else renderHuman(err.result, undefined, sealed);
       return 1;
     }
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   } finally {
+    // The turn is over, win or lose — free it so the steward's next round,
+    // or the next hand run, doesn't wait out this run's own TTL (#2750). The
+    // listeners stay registered until after this release (chant#2872): it is
+    // itself async, and removing them first would let a repeat signal in
+    // that window fall through to Node's default disposition and skip it.
+    await stewardGate?.release?.();
     process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
   }
+}
+
+/**
+ * The work item and holder a `chant run` passes to the runtime (#2748), or
+ * `null` after printing why the run is refused. The holder is `--holder`, or,
+ * for an Op a steward lists, `<steward>/<op>@<process>` so `workspace status`
+ * shows the lease beside the steward's Ops, or this process's id.
+ *
+ * A non-local runtime takes `--work` only when it declares `carriesWork`
+ * (#3555), and then gets just what the caller named: the holder is chosen
+ * where the run executes, not after this process.
+ */
+async function resolveRunWork(
+  ctx: CommandContext,
+  config: OpConfig,
+  provider: Pick<OpRuntimeProvider, "name" | "carriesWork">,
+): Promise<{ item?: string; holder?: string } | undefined | null> {
+  const runtime = provider.name;
+  const item = ctx.args.work;
+  if (!config.workLease) {
+    if (item === undefined) return undefined;
+    console.error(formatError({
+      message: `--work ${item}: Op "${config.name}" declares no work lease`,
+      hint: "Declare workLease on the Op to run it under a work item's lease.",
+    }));
+    return null;
+  }
+  if (runtime !== "local" && provider.carriesWork !== true && (item !== undefined || ctx.args.holder !== undefined)) {
+    console.error(formatError({
+      message: `--work and --holder run on the local runtime; "${runtime}" takes the work lease where it executes the run`,
+      hint: "Omit --on, or name the item in the Op's workLease.",
+    }));
+    return null;
+  }
+  if (runtime !== "local" && provider.carriesWork === true) {
+    const holderArg = ctx.args.holder;
+    if (item === undefined && holderArg === undefined) return undefined;
+    return { ...(item !== undefined ? { item } : {}), ...(holderArg !== undefined ? { holder: holderArg } : {}) };
+  }
+  let holder = ctx.args.holder;
+  if (holder === undefined) {
+    try {
+      const { stewards } = await discoverStewards();
+      for (const { declaration } of stewards.values()) {
+        if (declaration.ops.some((op) => op.name === config.name)) {
+          holder = stewardWorkHolder(declaration.name, config.name);
+          break;
+        }
+      }
+    } catch {
+      // No steward can be read: the run holds the lease as this process.
+    }
+  }
+  return { ...(item !== undefined ? { item } : {}), ...(holder !== undefined ? { holder } : {}) };
 }
 
 // ── fallback ────────────────────────────────────────────────────────────────���─

@@ -29,7 +29,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
-import type { Hcl2Json } from "@intentius/chant/terraform/parse";
+import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import type { TerraformRootConfig } from "../config";
 import { LIVE_TYPE, parseTerraformRootDir } from "./parse";
 import { descendModules, resolveCallModuleType, type CallModuleType } from "./descend";
@@ -56,7 +56,13 @@ export interface RenderTerraformRootsOptions {
    * `../` is parsed as a child scope of the root that calls it.
    */
   callModuleType?: CallModuleType;
-  /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktf/hcl2json`. */
+  /**
+   * `terraform.moduleRoot` (#2874): the directory module sources may resolve
+   * within, absolute or relative to {@link projectRoot}. Unset, the project
+   * root is the boundary, as it always was.
+   */
+  moduleRoot?: string;
+  /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktn/hcl2json`. */
   hcl2json?: Hcl2Json;
 }
 
@@ -86,7 +92,7 @@ export async function renderTerraformRoots(
     }
 
     try {
-      const modeOptions = { binary: opts.binary, workspace: root.workspace, delete: root.delete };
+      const modeOptions = { binary: opts.binary, workspace: root.workspace, delete: root.delete, configEstate: root.estate };
       const parsed = await parseTerraformRootDir(dir, name, opts.hcl2json, modeOptions);
       for (const [key, entity] of parsed) entities.set(key, entity);
 
@@ -97,6 +103,7 @@ export async function renderTerraformRoots(
         dir,
         root: name,
         projectRoot: opts.projectRoot,
+        ...(opts.moduleRoot !== undefined ? { moduleRoot: isAbsolute(opts.moduleRoot) ? opts.moduleRoot : resolve(opts.projectRoot, opts.moduleRoot) } : {}),
         callModuleType: callModuleType.effective,
         hcl2json: opts.hcl2json,
         modeOptions,

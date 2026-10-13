@@ -5,6 +5,7 @@
  * and code generation for Docker Compose and Dockerfile resources.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
@@ -15,6 +16,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { dockerSerializer } from "./serializer";
 import { noLatestTagRule } from "./lint/rules/no-latest-tag";
+import { perKindOrderRule } from "./lint/rules/per-kind-order";
 import { dockerCompletions } from "./lsp/completions";
 import { dockerHover } from "./lsp/hover";
 import { DockerTemplateParser, DockerTemplateGenerator } from "./import/adapter";
@@ -32,7 +34,7 @@ export const dockerPlugin: LexiconPlugin = {
   serializer: dockerSerializer,
 
   lintRules(): LintRule[] {
-    return [noLatestTagRule];
+    return [noLatestTagRule, perKindOrderRule];
   },
 
   postSynthChecks() {
@@ -159,6 +161,10 @@ export const api = new Service({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

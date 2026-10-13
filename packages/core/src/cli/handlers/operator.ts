@@ -6,11 +6,13 @@
  * `run.ts`'s `runOpLocal` shape (SIGINT → AbortController, `loadActivities`/
  * `loadProfiles` from the project's configured lexicons).
  */
+import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { build } from "../../build";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
-import { discoverOps } from "../../op/discover";
+import { discoverOps, discoverStewards } from "../../op/discover";
+import { pickSteward, stewardBesideOf, stewardFormFor, stewardLeaseName, stewardTurnOps, DEFAULT_STEWARD_ENV } from "../../op/steward";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { parseDuration } from "../../op/local-executor";
 import {
@@ -20,34 +22,27 @@ import {
   formatRoundLine,
   formatSignalLine,
   DEFAULT_OPERATOR_INTERVAL_MS,
+  acquireStewardLease,
+  createBesideState,
+  waitForBesideRuns,
   type ChangeSubscriber,
   type OperatorSignalEvent,
   type OperatorTickEvent,
 } from "../../op/operator";
-import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
+import { readLease, releaseLease, currentHolderId, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
-import { readRunLedger } from "../../lifecycle/run-ledger";
+import { readRunLedger, runEnvOf } from "../../lifecycle/run-ledger";
 import type { OpRunRecord } from "../../op/runtime";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
-import {
-  currentGateOrigin, isModelAuthored, sameOriginRefusal, UNATTESTED_APPROVER, type GateOrigin,
-} from "../../lifecycle/gate-origin";
-import {
-  appendGateResolution, appendPendingGate, readGateResolutions, readGateLedger,
-  latestResolutionSince, latestPendingGate, isPendingGateExpired,
-  resolveApprovalUrl, isApprovalUrl,
-} from "../../lifecycle/gate-ledger";
-import { isPlanDigest } from "../../lifecycle/plan-digest";
-import { FAN_OUT_GATE_OP } from "../../op/gate-name";
-import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
-import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
+import { readGateResolutions, readGateLedger, latestResolutionSince, latestPendingGate, isPendingGateExpired } from "../../lifecycle/gate-ledger";
+import { formatError, formatWarning, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
 /** Load the activities a local tick needs, the same way a local run does: core's base activities plus whatever the project's configured lexicons contribute. Best-effort on the lexicon list — an unreadable `chant.config.ts` falls back to base activities only. */
 async function loadOperatorActivities() {
   let lexicons: string[] = [];
   try {
-    lexicons = (await loadChantConfig(process.cwd())).config.lexicons ?? [];
+    lexicons = lexiconNames((await loadChantConfig(process.cwd())).config.lexicons ?? []);
   } catch {
     // No/invalid chant.config — fall back to base activities only.
   }
@@ -106,7 +101,7 @@ async function collectOperatorSubscribers(
     // subscription may watch.
     const entities = new Map<string, Map<string, { entityType: string; props: Record<string, unknown> }>>();
     for (const [name, entity] of buildResult.entities) {
-      if (!isResourceDeclarable(entity)) continue;
+      if (!isObservableDeclarable(entity)) continue;
       let perLexicon = entities.get(entity.lexicon);
       if (!perLexicon) entities.set(entity.lexicon, (perLexicon = new Map()));
       perLexicon.set(name, {
@@ -124,6 +119,7 @@ async function collectOperatorSubscribers(
   }
 }
 
+
 // ── chant operator ──────────────────────────────────────────────────────────
 
 /**
@@ -135,6 +131,7 @@ async function collectOperatorSubscribers(
  * leaving the daemon running); omitted, the daemon loops until Ctrl-C.
  */
 export async function runOperator(ctx: CommandContext): Promise<number> {
+  if (ctx.args.steward !== undefined) return runStewardOperator(ctx);
   const { ops, errors } = await discoverConvergeOps({ env: ctx.args.env });
   for (const err of errors) console.error(formatWarning({ message: err }));
 
@@ -159,11 +156,21 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
   const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
 
   const controller = new AbortController();
+  // `process.on`, not `.once`: a `.once` listener is gone the instant it
+  // fires, so a second SIGINT arriving while shutdown is still in flight
+  // (the `finally` below hasn't run yet) has no listener left and takes
+  // Node's default disposition — the process ends right there, before
+  // whatever the `finally` was going to do. Kept registered for the whole
+  // shutdown and only removed once it's actually over; `stopping` makes a
+  // repeat signal a no-op rather than a second `abort()`/log line (#2872).
+  let stopping = false;
   const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
     console.error(formatWarning({ message: "interrupted — stopping operator" }));
     controller.abort();
   };
-  process.once("SIGINT", onSigint);
+  process.on("SIGINT", onSigint);
 
   const printRound = (events: OperatorTickEvent[]) => {
     for (const event of events) console.error(formatInfo(formatRoundLine(event)));
@@ -195,7 +202,167 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
     });
     return 0;
   } finally {
+    // Only when no signal started this shutdown. After one did, the process
+    // exits right after this returns, and removing the listener would put
+    // SIGINT back to its default disposition for that last stretch: a repeat
+    // signal arriving there ends the process by signal instead of the exit
+    // code (see the steward's `finally` below).
+    if (!stopping) process.removeListener("SIGINT", onSigint);
+  }
+}
+
+// ── chant operator --steward ────────────────────────────────────────────────
+
+/**
+ * `chant operator --steward [<name>] [--env <env>] [--interval] [--lease-ttl]
+ * [--once]` (#2731) — a steward's local form. The same Ops the steward runs on
+ * Fountain, on the same crons, one at a time, each under its operator lease,
+ * and the whole process under the steward's own lease.
+ *
+ * Refuses, before ticking anything:
+ * - an environment whose form is `fountain`, because there the composite's
+ *   Agent and Teammate are the steward and this process would be a second
+ *   writer beside them;
+ * - a steward whose lease another live process holds (a second local
+ *   operator for it).
+ */
+export async function runStewardOperator(ctx: CommandContext): Promise<number> {
+  const { stewards, errors, conflicts } = await discoverStewards();
+  for (const err of errors) console.error(formatWarning({ message: err }));
+  for (const conflict of conflicts) console.error(formatError({ message: conflict }));
+
+  const picked = pickSteward(stewards, ctx.args.steward ?? "");
+  if (typeof picked === "string") {
+    console.error(formatError({ message: picked }));
+    return 1;
+  }
+  const steward = picked;
+  const env = ctx.args.env ?? DEFAULT_STEWARD_ENV;
+  const form = stewardFormFor(steward, env);
+  if (form !== "local") {
+    console.error(formatError({
+      message: `steward "${steward.name}" runs on ${form} in environment "${env}", so a local operator for it would be a second writer`,
+      hint: `Its turns run on the fountain teammate "${steward.name}". Run this in an environment the declaration's form makes local, or change the form.`,
+    }));
+    return 1;
+  }
+
+  let activities, profiles;
+  try {
+    [activities, profiles] = await loadOperatorActivities();
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  const intervalMs = ctx.args.interval ? parseDuration(ctx.args.interval) : DEFAULT_OPERATOR_INTERVAL_MS;
+  const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
+  const holder = currentHolderId();
+
+  const controller = new AbortController();
+  // `process.on`, not `.once` (#2872): a supervisor that signals both a
+  // process group and a child sends a second SIGTERM close behind the
+  // first. A `.once` listener has already unregistered itself by then, so
+  // that second signal takes Node's default disposition and ends the
+  // process immediately — before the `finally` below releases the
+  // steward's lease. Kept registered for the whole shutdown and removed
+  // only once it's over, so a second, third or later signal is a no-op
+  // (`stopping` guards against re-aborting or re-logging) rather than a
+  // fast exit that skips the release.
+  //
+  // Registered before the steward's lease is taken, not after: the lease is
+  // visible to other readers as soon as its ref is written, and the acquire
+  // goes on to push it. A SIGTERM in that stretch found no listener and ended
+  // the process by signal with the lease still held (the
+  // operator-steward-signal e2e test failed this way). Caught here, it aborts
+  // the controller, the loop below starts no round, and the `finally`
+  // releases the lease.
+  let stopping = false;
+  const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
+    console.error(formatWarning({ message: "interrupted — stopping steward" }));
+    controller.abort();
+  };
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigint);
+
+  // Refuse a second local operator up front rather than letting it loop on
+  // `steward-busy` rounds: one steward is one writer.
+  const first = await acquireStewardLease(steward.name, holder, { ttlMs: leaseTtlMs }).catch((err: unknown) => {
     process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
+    throw err;
+  });
+  if (!first.acquired) {
+    console.error(formatError({
+      message: `steward "${steward.name}" is already running (lease held by ${first.heldBy?.holder ?? "another process"} until ${first.heldBy?.expiresAt ?? "?"})`,
+      hint: "One steward is one writer. Stop the other operator, or wait for its lease to expire.",
+    }));
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
+    return 1;
+  }
+
+  const printRound = (events: OperatorTickEvent[]) => {
+    for (const event of events) console.error(formatInfo(formatRoundLine(event)));
+  };
+
+  const turnOps = stewardTurnOps(steward);
+  const scheduled = turnOps.filter((op) => op.schedule !== undefined);
+  const beside = stewardBesideOf(steward).map((b) => b.op);
+  try {
+    if (ctx.args.once) {
+      // One round, and the runs it started beside the turns (#2861) to their end.
+      const besideState = createBesideState();
+      const events = await runOperatorRound({ steward, holder, leaseTtlMs, activities, profiles, signal: controller.signal, besideState, stewardEnv: env });
+      printRound(events);
+      await waitForBesideRuns(besideState);
+      const ended = besideState.ended.splice(0);
+      printRound(ended);
+      return events.some((e) => e.kind === "tick-failed" || e.kind === "steward-busy" || e.kind === "ready-failed") ||
+        ended.some((e) => e.kind === "beside-ended" && e.code !== 0 && e.code !== 3)
+        ? 1
+        : 0;
+    }
+    console.error(formatInfo(
+      `chant operator: steward ${steward.name} (local) runs ${scheduled.length} scheduled Op(s) of ${turnOps.length} as its turns` +
+        (beside.length > 0 ? `, and ${beside.join(", ")} beside them` : "") +
+        `, checking every ${intervalMs}ms (Ctrl-C to stop)`,
+    ));
+    await runOperatorForever({
+      steward,
+      stewardEnv: env,
+      holder,
+      intervalMs,
+      leaseTtlMs,
+      activities,
+      profiles,
+      signal: controller.signal,
+      onRound: printRound,
+    });
+    return 0;
+  } finally {
+    // The listeners stay registered through this whole `finally`, not just
+    // the `try` above (#2872): the lease release below is itself async (two
+    // more git plumbing calls), and a repeat signal landing in that window
+    // is exactly the shape the issue reported — removing the listeners
+    // first, before awaiting the release, would reopen the same hole one
+    // step later. `stopping` (set already) makes every repeat here a no-op.
+    // A courtesy: the lease expires on its own if this never runs.
+    const { record } = await readLease(stewardLeaseName(steward.name)).catch(() => ({ record: undefined }));
+    if (record?.holder === holder) await releaseLease(stewardLeaseName(steward.name), holder, record.token).catch(() => false);
+    // Removed only when no signal started this shutdown. After one did, the
+    // CLI goes on to `flushAndExit` (../main.ts) and `process.exit`, and
+    // removing the last SIGTERM listener hands the signal back to its
+    // default disposition for that stretch: a repeat SIGTERM arriving there
+    // ended the process by signal (exit code null) with the lease already
+    // released. That was the operator-steward-signal e2e test's intermittent
+    // failure; a SIGTERM every 2ms after the first hit it 8 runs of 8.
+    if (!stopping) {
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigint);
+    }
   }
 }
 
@@ -302,6 +469,12 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
 export interface StandaloneGateLine {
   op: string;
   gate: string;
+  /**
+   * The Op whose newest run stopped at this gate, when the gate is a
+   * command's own rather than the Op's (#2779): a step running `chant
+   * workspace upgrade` stops its run at `workspace-upgrade` / `<scope>`.
+   */
+  run?: string;
   description?: string;
   expiresAt: string;
   url?: string;
@@ -347,6 +520,32 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
     }
   }
 
+  // A gate a command decided inside an Op's step (#2779) is recorded under
+  // the command's op, which is not an `*.op.ts`, so the loop above never
+  // reads it. The Op's newest run names it; list it against that Op while it
+  // still stands.
+  for (const [opName, discovered] of [...allOps.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    let newest: OpRunRecord | undefined;
+    try {
+      newest = (await readRunLedger(runEnvOf(discovered.config), opName)).records.at(-1);
+    } catch {
+      continue;
+    }
+    const gateOp = newest?.status === "gated" ? newest.gate?.op : undefined;
+    if (!newest?.gate || !gateOp || gateOp === opName) continue;
+    const record = (await pendingGatesFor(gateOp)).find((r) => r.gate === newest.gate!.name);
+    if (!record || covered.has(`${gateOp} ${record.gate}`)) continue;
+    covered.add(`${gateOp} ${record.gate}`);
+    standalone.push({
+      op: gateOp,
+      gate: record.gate,
+      run: opName,
+      expiresAt: record.expiresAt,
+      ...(record.description ? { description: record.description } : {}),
+      ...(record.url ? { url: record.url } : {}),
+    });
+  }
+
   if (ops.length === 0 && standalone.length === 0) {
     console.error(formatWarning({ message: "No ConvergeOp declarations found" }));
     return 0;
@@ -383,7 +582,7 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
   if (standalone.length > 0) {
     console.log(formatBold("pending gates (no converge tick)"));
     for (const g of standalone) {
-      console.log(`  - ${g.op} gate "${g.gate}" — resolve: chant approve ${g.op} ${g.gate}`);
+      console.log(`  - ${g.op} gate "${g.gate}"${g.run ? ` (Op ${g.run}'s run stopped here)` : ""} — resolve: chant approve ${g.op} ${g.gate}`);
       if (g.description) console.log(`    ${g.description}`);
       console.log(`    expires: ${g.expiresAt}`);
       if (g.url) console.log(`    approve at: ${g.url}`);
@@ -583,311 +782,11 @@ export async function runOperatorLog(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
-// ── chant approve <op> <gate> ───────────────────────────────────────────────
-
-/**
- * `chant approve <op> <gate> [--actor <name>] [--note <text>] [--url <url>]
- * [--expire]` — record the out-of-band resolution fact for a gate a run
- * stopped at (issue #1485: "resolution is an out-of-band act that writes the
- * counterpart fact"). Per that issue's leaning on open question 3 ("local
- * trust in v1"), this performs no authorization check beyond "you can run
- * `chant approve` locally".
- *
- * Since #2119 this closes the loop rather than just narrating it: the next
- * `chant run <op>` reads the resolution, finds it newer than the gate's
- * pending fact, and walks through.
- *
- * `--expire` is the other half — clear a standing pending fact *without*
- * approving anything, for a gate that was recorded against a run nobody
- * intends to finish. It writes no resolution; it appends a pending fact that
- * is already expired, which supersedes the standing one on an append-only
- * ledger, so the next run decides the gate from scratch.
- */
-/** The ledger branch, named in the warnings below so a reader can go look at it. */
-const LIFECYCLE_BRANCH = "chant/lifecycle";
-
-/**
- * Push the ledger and say so when it does not land (#2309 review, refs #2310).
- *
- * Both write paths here used `pushLifecycle().catch(() => undefined)` and then
- * printed unconditional success and exited 0. A rejected push — a stale lease,
- * no credentials, no network — therefore read as a completed approval, which
- * is the one thing an approval must never do: the operator walks away
- * believing the gate is answered for everybody, while the resolution exists
- * only in their own checkout.
- *
- * The append is still a correct *local* fact, so this is a warning and not a
- * failure; the exit code is unchanged.
- */
-async function reportedPush(consequence: string): Promise<boolean> {
-  try {
-    const pushed = await pushLifecycle();
-    if (pushed) return true;
-    console.error(formatWarning({
-      message: `No remote is configured, so nothing was pushed. ${consequence}`,
-    }));
-    return false;
-  } catch (err) {
-    console.error(formatWarning({
-      message: `The push to the remote was rejected: ${err instanceof Error ? err.message : String(err)}`,
-      hint: consequence,
-    }));
-    return false;
-  }
-}
-
-export async function runApprove(ctx: CommandContext): Promise<number> {
-  const opName = ctx.args.path;
-  const gate = ctx.args.extraPositional;
-  if (!opName || opName === "." || !gate) {
-    console.error(formatError({ message: "Usage: chant approve <op> <gate>" }));
-    return 1;
-  }
-
-  if (ctx.args.expire) {
-    // Same guard as the approve path below (#2303): `--expire` reads the
-    // standing fact and appends beside it, so a clone that never fetched the
-    // branch would both fail to see the fact it is expiring and replace the
-    // branch with the expiry alone.
-    try {
-      await requireLifecycleLedger();
-    } catch (err) {
-      console.error(formatError({
-        message: `Cannot expire the gate: ${err instanceof Error ? err.message : String(err)}`,
-      }));
-      return 1;
-    }
-    const now = new Date().toISOString();
-    const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
-    if (!standing || isPendingGateExpired(standing, now)) {
-      console.error(formatWarning({
-        message: `Gate "${gate}" on "${opName}" has no standing pending fact — nothing to expire`,
-      }));
-      return 0;
-    }
-    await appendPendingGate({
-      op: opName,
-      gate,
-      timestamp: now,
-      expiresAt: now,
-      ...(standing.description ? { description: standing.description } : {}),
-    });
-    const pushed = await reportedPush(
-      `The expiry is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
-        `a run in another checkout still sees the old pending fact.`,
-    );
-    console.error(formatSuccess(
-      `Gate "${gate}" on "${opName}" expired at ${now} — not approved` +
-        (pushed ? "" : " (local only — the push did not land)"),
-    ));
-    console.error(formatInfo(
-      opName === FAN_OUT_GATE_OP
-        ? `The next \`chant components fan-out\` decides this gate from scratch and records a fresh pending fact.`
-        : `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
-    ));
-    return 0;
-  }
-
-  // `--approver` wins over `--actor`, the same precedence `chant run approve`
-  // has applied since #2126 (`../handlers/run.ts`'s `runOpApprove`). Reading
-  // only `--actor` here meant every README that teaches `--approver you`
-  // recorded the shell user instead (#2192).
-  const outcome = await recordGateApproval(opName, gate, {
-    actor: ctx.args.approver ?? ctx.args.actor,
-    note: ctx.args.note,
-    url: ctx.args.url,
-    plan: ctx.args.plan,
-    allowSameOrigin: ctx.args.allowSameOrigin,
-  });
-  if (!outcome.ok) return 1;
-
-  console.error(formatInfo(
-    `This records the resolution as a fact; it does not itself re-run anything. ` +
-      (opName === FAN_OUT_GATE_OP
-        ? `Repeat the \`chant components fan-out\` command and it walks through gate "${gate}".`
-        : `Run \`chant run ${opName}\` and it walks through gate "${gate}".`),
-  ));
-  return 0;
-}
-
-/** What a caller supplies alongside the op and gate names. */
-export interface GateApprovalOptions {
-  /**
-   * The channel this resolution arrived on (chant#2384). Defaults to the
-   * process's own — `"cli"` unless an entry point declared otherwise — and is
-   * a parameter only so a caller that knows better can say so.
-   */
-  origin?: GateOrigin;
-  /**
-   * Record a resolution that the same-origin rule would refuse (chant#2384).
-   *
-   * There is a legitimate case: a single operator driving an agent, who wants
-   * the model's run resolved from the same session and accepts what that
-   * means. The override exists so that is a deliberate act with a trace on the
-   * record, rather than the default.
-   */
-  allowSameOrigin?: boolean;
-  /** `--actor`/`--approver`; falls back to the CI or shell identity. */
-  actor?: string;
-  /** `--note` — free-text prose. */
-  note?: string;
-  /** `--url` — the approval surface, validated as absolute http/https. */
-  url?: string;
-  /**
-   * `--plan <digest>` (#2300) — the plan this approval is for. Omitted, the
-   * digest is read off the gate's standing pending fact, so the common path
-   * stays one command: run, read what it planned, approve it.
-   */
-  plan?: string;
-}
-
-export type GateApprovalOutcome =
-  | { ok: true; record: GateResolutionRecord }
-  | { ok: false };
-
-/**
- * The ledger write behind `chant approve` — extracted so `chant run approve`
- * (#2121) records the identical fact before waking the runtime that hosts the
- * gated run, instead of growing a second, drifting writer.
- *
- * Prints the same warning for an undiscovered op and the same success line as
- * `chant approve` always did; the caller adds whatever it does next.
- *
- * Since #2300 the resolution names the plan it approves. By default that is
- * the standing pending fact's plan — the one the gated run produced — so the
- * common path is still `chant run`, read, `chant approve`. With no pending
- * fact and no `--plan`, this refuses: there is nothing on the ledger saying
- * what would be approved, and writing a resolution anyway is what made an
- * approval mean "the next run" instead of "this plan".
- */
-export async function recordGateApproval(
-  opName: string,
-  gate: string,
-  opts: GateApprovalOptions,
-): Promise<GateApprovalOutcome> {
-  const { ops } = await discoverOps();
-  // `fan-out` is the op name every `chant components fan-out` gate is recorded
-  // under (../handlers/fan-out.ts). It is a command rather than a declaration,
-  // so there is no `*.op.ts` to find and nothing is wrong when none is there.
-  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP) {
-    console.error(formatWarning({
-      message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
-    }));
-  }
-
-  // Read the branch before appending to it (#2303 finding 2). Without this,
-  // an approve in a clone that never fetched `chant/lifecycle` builds its
-  // commit from an empty tree with no parent and replaces the branch with a
-  // single commit holding only this resolution — the pending fact it is
-  // answering is discarded rather than appended to.
-  try {
-    await requireLifecycleLedger();
-  } catch (err) {
-    console.error(formatError({
-      message: `Cannot record the approval: ${err instanceof Error ? err.message : String(err)}`,
-      hint: "The pending fact this answers lives on that branch; appending without it would drop it.",
-    }));
-    return { ok: false };
-  }
-
-  // #2028: the resolution's link is typed. `--url` wins; otherwise, running
-  // inside the PR/MR job that carries the change is itself the address, the
-  // same env fallback `--actor` uses. `--note` stays free-text prose.
-  const url = opts.url ?? resolveApprovalUrl();
-  if (url && !isApprovalUrl(url)) {
-    console.error(formatError({
-      message: `--url must be an absolute http/https URL (got "${url}")`,
-      hint: "Pass the PR/MR link, or omit --url and put prose in --note.",
-    }));
-    return { ok: false };
-  }
-
-  // #2300: an approval is for a plan, so this command has to know which one.
-  // `--plan` names it outright; otherwise it comes off the gate's standing
-  // pending fact — the plan the run that stopped at this gate produced, which
-  // is the plan whoever is typing this just read. There is deliberately no
-  // third fallback: approving with no plan in sight is the behaviour
-  // INTENTIUS/choudoufu#1026 measured, where the resolution authorised the
-  // next run rather than anything anyone had seen.
-  let planDigest: string | undefined;
-  if (opts.plan !== undefined) {
-    if (!isPlanDigest(opts.plan)) {
-      console.error(formatError({
-        message: `--plan must be a plan digest ("sha256:" and 64 hex characters), got "${opts.plan}"`,
-        hint: "Copy it from the gated run's `plan :` line, or from the pending-gate summary. It is not a plan file path.",
-      }));
-      return { ok: false };
-    }
-    planDigest = opts.plan;
-  } else {
-    const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
-    if (!standing) {
-      console.error(formatError({
-        message: `Gate "${gate}" on "${opName}" has no pending fact, so there is no plan to approve`,
-        hint:
-          `Run \`chant run ${opName}\` first — it plans, stops at the gate, and records the plan this ` +
-          `approval would be for. To approve a plan you already have the digest for, pass ` +
-          `\`--plan <digest>\`.`,
-      }));
-      return { ok: false };
-    }
-    planDigest = standing.planDigest;
-  }
-
-  // chant#2384 — the gate's whole value is that its two halves have different
-  // authors. At a shell they do: a person runs, reads the plan, and approves.
-  // On MCP and ACP the person's only act was launching the server, and every
-  // call after is the model's, so a gate reached over one of those channels and
-  // resolved over the same one has no second party in it. Refused by default,
-  // the way #2300 refuses a plan nobody approved.
-  const origin = opts.origin ?? currentGateOrigin();
-  const standingForOrigin = latestPendingGate((await readGateLedger(opName)).pending, gate);
-  const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
-  if (refusal && !opts.allowSameOrigin) {
-    console.error(formatError({
-      message: `Gate "${gate}" on "${opName}" cannot be resolved from here: ${refusal}`,
-      hint:
-        `Approve it from a channel the run did not come from — \`chant approve ${opName} ${gate}\` ` +
-        `at a shell is the usual one. If resolving from the same channel genuinely is the intent, ` +
-        `pass --allow-same-origin, which records that it was deliberate.`,
-    }));
-    return { ok: false };
-  }
-
-  const resolvedBy = opts.actor
-    ?? (isModelAuthored(origin)
-      // A channel that cannot attest to a name does not get to write one down.
-      // "unattested" reads as what it is; a name the model chose would read in
-      // the ledger exactly like a name a person gave.
-      ? UNATTESTED_APPROVER
-      : process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown");
-
-  const { record } = await appendGateResolution({
-    op: opName,
-    gate,
-    resolvedBy,
-    timestamp: new Date().toISOString(),
-    ...(opts.note ? { note: opts.note } : {}),
-    ...(url ? { url } : {}),
-    ...(planDigest !== undefined ? { planDigest } : {}),
-    origin,
-    ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
-  });
-  const pushed = await reportedPush(
-    `The resolution is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
-      `a run in another checkout will not see it.`,
-  );
-
-  console.error(formatSuccess(
-    `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}` +
-      (record.url ? ` (${record.url})` : "") +
-      (pushed ? "" : " (local only — the push did not land)"),
-  ));
-  if (record.planDigest) {
-    console.error(formatInfo(
-      `This approves the plan ${record.planDigest}, and only that plan. A run whose fresh plan ` +
-        "differs refuses rather than applying it.",
-    ));
-  }
-  return { ok: true, record };
-}
+// `chant approve` lives in ./approve.ts (#3896); these re-exports keep its importers unchanged.
+export {
+  runApprove,
+  recordGateApproval,
+  describeApprovalProgress,
+  type GateApprovalOptions,
+  type GateApprovalOutcome,
+} from "./approve";

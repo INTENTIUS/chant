@@ -60,3 +60,32 @@ deploy-job:
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL021: expanded variables (#3256)", () => {
+  test("reads the value:/description: form by variable name", () => {
+    const yaml = `variables:
+  DEPLOY_ENV:
+    value: staging
+    description: Target environment
+
+deploy:
+  script:
+    - ./deploy.sh $DEPLOY_ENV
+`;
+    expect(checkUnusedVariables(yaml)).toHaveLength(0);
+  });
+
+  test("reports an unused expanded variable by its name", () => {
+    const yaml = `variables:
+  UNUSED_ENV:
+    value: staging
+    description: Never read
+
+deploy:
+  script:
+    - ./deploy.sh
+`;
+    const diags = checkUnusedVariables(yaml);
+    expect(diags.map((d) => d.entity)).toEqual(["UNUSED_ENV"]);
+  });
+});

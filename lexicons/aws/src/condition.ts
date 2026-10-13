@@ -10,6 +10,7 @@
 
 import { DECLARABLE_MARKER, isDeclarable, type Declarable } from "@intentius/chant/declarable";
 import { isIntrinsic, type Intrinsic } from "@intentius/chant/intrinsic";
+import { getLogicalName } from "@intentius/chant/utils";
 
 export const CONDITION_ENTITY_TYPE = "AWS::CloudFormation::Condition";
 
@@ -19,15 +20,28 @@ export class Condition implements Declarable {
   readonly entityType = CONDITION_ENTITY_TYPE;
   /** The boolean expression: an `Equals`/`And`/`Or`/`Not` intrinsic. */
   readonly expression: Intrinsic;
+  /** The condition's key in the template's `Conditions`, when it is not the
+   * export name. A template may use one name for a condition and a
+   * parameter; a module cannot export both under that name (#3604). */
+  readonly name?: string;
 
-  constructor(expression: Intrinsic) {
+  constructor(expression: Intrinsic, options?: { name?: string }) {
     if (!isIntrinsic(expression)) {
       throw new Error(
         "new Condition(expression): expression must be a condition intrinsic (Equals, And, Or, Not)",
       );
     }
     this.expression = expression;
+    if (options?.name !== undefined) this.name = options.name;
   }
+}
+
+/**
+ * The name a condition has in the template: its `name` option, else the
+ * logical name discovery gave it (the export name).
+ */
+export function conditionName(condition: Condition, entityNames?: Map<unknown, string>): string {
+  return condition.name ?? entityNames?.get(condition) ?? getLogicalName(condition);
 }
 
 /**

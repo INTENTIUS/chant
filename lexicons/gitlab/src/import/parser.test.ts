@@ -15,10 +15,11 @@ test-job:
     - npm test
 `;
     const ir = parser.parse(yaml);
-    expect(ir.resources).toHaveLength(1);
-    expect(ir.resources[0].type).toBe("GitLab::CI::Job");
-    expect(ir.resources[0].properties.stage).toBe("test");
-    expect(ir.resources[0].properties.script).toEqual(["npm test"]);
+    expect(ir.resources).toHaveLength(2);
+    expect(ir.resources[0].type).toBe("GitLab::CI::Pipeline");
+    expect(ir.resources[1].type).toBe("GitLab::CI::Job");
+    expect(ir.resources[1].properties.stage).toBe("test");
+    expect(ir.resources[1].properties.script).toEqual(["npm test"]);
   });
 
   test("parses multiple jobs", () => {
@@ -134,9 +135,24 @@ test-job:
     - npm test
 `;
     const ir = parser.parse(yaml);
-    // Only the job should be in resources (not stages, variables, include)
+    // Only the job is a Job; stages, variables and include are the Pipeline (#3742)
     const jobs = ir.resources.filter((r) => r.type === "GitLab::CI::Job");
     expect(jobs).toHaveLength(1);
+    expect(ir.resources[0]).toEqual({
+      logicalId: "pipeline",
+      type: "GitLab::CI::Pipeline",
+      properties: { include: [{ local: "shared.yml" }], stages: ["test"], variables: { NODE_ENV: "production" } },
+    });
+  });
+
+  test("a job named pipeline keeps its name; the Pipeline takes another (#3742)", () => {
+    const ir = parser.parse(`stages: [test]\npipeline:\n  stage: test\n  script: [x]\n`);
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["pipelineConfig", "pipeline"]);
+  });
+
+  test("a file with no include, stages or variables has no Pipeline", () => {
+    const ir = parser.parse(`job:\n  script: [x]\n`);
+    expect(ir.resources.map((r) => r.type)).toEqual(["GitLab::CI::Job"]);
   });
 
   test("handles JSON input", () => {
@@ -145,7 +161,7 @@ test-job:
       "test-job": { stage: "test", script: ["npm test"] },
     });
     const ir = parser.parse(json);
-    expect(ir.resources).toHaveLength(1);
+    expect(ir.resources.map((r) => r.type)).toEqual(["GitLab::CI::Pipeline", "GitLab::CI::Job"]);
   });
 
   test("returns empty parameters (GitLab CI has no parameters)", () => {

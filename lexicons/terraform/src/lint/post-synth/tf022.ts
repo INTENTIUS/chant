@@ -50,7 +50,7 @@ export const tf022: PostSynthCheck = {
             "characters, redacted here). The value is in git history, in state, and in plan output. " +
             "Replace it with a reference: a `sensitive` variable, or a data source that reads the " +
             "value from a secret manager at apply time.",
-          entity: `${block.key}.${attr.path}`,
+          entity: block.key,
           lexicon: "terraform",
         });
       }

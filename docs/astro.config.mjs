@@ -3,12 +3,14 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import rehypeBaseUrl from '../packages/core/src/codegen/rehype-base-url.mjs';
+import remarkAgentPrompt from './src/remark-agent-prompt.mjs';
 
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://intentius.io',
 	base: '/chant',
 	markdown: {
+		remarkPlugins: [remarkAgentPrompt],
 		rehypePlugins: [[rehypeBaseUrl, { base: '/chant' }]],
 	},
 	redirects: {
@@ -23,6 +25,8 @@ export default defineConfig({
 		starlight({
 			title: 'chant',
 			customCss: ['./src/styles/custom.css'],
+			// The title gets the page's agent prompt, when it has a `prompt:`.
+			components: { PageTitle: './src/components/PageTitle.astro' },
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/intentius/chant' }],
 			head: [
 				{
@@ -59,6 +63,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
+						{ label: 'Agent Observability on k3d', slug: 'tutorials/agent-observability' },
 						{ label: 'Carve out of Terraform', slug: 'tutorials/terraform-carve-out' },
 						{ label: 'Run Ops on a Fountain Steward', slug: 'tutorials/fountain-steward' },
 						{
@@ -126,15 +131,29 @@ export default defineConfig({
 								{ label: 'Watch Mode', slug: 'configuration/watch' },
 								{ label: 'Ops', slug: 'guide/ops' },
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
+								{ label: 'Drift Back to Source', slug: 'guide/drift-to-source' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
+								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
+								{ label: 'Op Waves', slug: 'guide/op-waves' },
+								{ label: 'Notify', slug: 'guide/notify' },
 							],
 						},
 						{
 							label: 'Components',
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
+								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
+							],
+						},
+						{
+							label: 'Workspaces',
+							items: [
+								{ label: 'Asking How a File Got This Way', slug: 'guide/tracing-intent' },
+								{ label: 'Work Items', slug: 'guide/work-items' },
+								{ label: 'Decision Points', slug: 'guide/decision-points' },
+								{ label: 'Recording Decisions by Hand', slug: 'guide/recording-decisions-by-hand' },
 							],
 						},
 						{
@@ -195,6 +214,19 @@ export default defineConfig({
 					items: [
 						{ label: 'Project Structure', slug: 'getting-started/project-structure' },
 						{ label: 'Network Egress', slug: 'reference/network-egress' },
+						{ label: 'Behaviour Coverage', slug: 'reference/behaviour-coverage' },
+						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
+						{ label: 'Change-Set Document', slug: 'reference/change-set' },
+						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
+						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
+						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
+						{ label: 'Workspace Kinds', slug: 'reference/workspace-kinds' },
+						{ label: 'Workspace Read Contract', slug: 'reference/workspace-read-contract' },
+						{ label: 'Workspace Writer Conformance', slug: 'reference/workspace-writer-conformance' },
+						{ label: 'Broker Protocol', slug: 'reference/broker-protocol' },
+						{ label: 'Decision Record Kind', slug: 'reference/decision-kind' },
+						{ label: 'Decision Review Views', slug: 'reference/decision-review-views' },
+						{ label: 'Owners of the Workspace Boundary', slug: 'reference/boundary' },
 						{
 							label: 'CLI',
 							items: [
@@ -206,9 +238,12 @@ export default defineConfig({
 								{ label: 'describe', slug: 'cli/describe' },
 								{ label: 'search', slug: 'cli/search' },
 								{ label: 'vendor', slug: 'cli/vendor' },
+								{ label: 'generate', slug: 'cli/codegen' },
 								{ label: 'import', slug: 'cli/import' },
 								{ label: 'carve advise', slug: 'cli/carve' },
 								{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },
+								{ label: 'change-set summary', slug: 'cli/change-set' },
+								{ label: 'ci', slug: 'cli/ci' },
 								{ label: 'audit', slug: 'cli/audit' },
 								{ label: 'migrate', slug: 'cli/migrate' },
 								{ label: 'update', slug: 'cli/update' },
@@ -216,6 +251,32 @@ export default defineConfig({
 								{ label: 'run', slug: 'cli/run' },
 								{ label: 'operator', slug: 'cli/operator' },
 								{ label: 'graph', slug: 'cli/graph' },
+								{ label: 'workspace init', slug: 'cli/workspace-init' },
+								{ label: 'workspace ls', slug: 'cli/workspace-ls' },
+								{ label: 'workspace status', slug: 'cli/workspace-status' },
+								{ label: 'workspace records', slug: 'cli/workspace-records' },
+								{ label: 'workspace work', slug: 'cli/workspace-work' },
+								{ label: 'workspace runs', slug: 'cli/workspace-runs' },
+								{ label: 'workspace box', slug: 'cli/workspace-box' },
+								{ label: 'workspace member and host', slug: 'cli/workspace-member' },
+								{ label: 'workspace wip', slug: 'cli/workspace-wip' },
+								{ label: 'workspace points', slug: 'cli/workspace-points' },
+								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
+								{ label: 'workspace pin', slug: 'cli/workspace-pin' },
+								{ label: 'workspace agent', slug: 'cli/workspace-agent' },
+								{ label: 'workspace signers', slug: 'cli/workspace-signers' },
+								{ label: 'workspace evidence', slug: 'cli/workspace-evidence' },
+								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
+								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
+								{ label: 'workspace adopt-lineage', slug: 'cli/workspace-adopt-lineage' },
+								{ label: 'workspace versions', slug: 'cli/workspace-versions' },
+								{ label: 'workspace export', slug: 'cli/workspace-export' },
+								{ label: 'workspace check', slug: 'cli/workspace-check' },
+								{ label: 'workspace patch', slug: 'cli/workspace-patch' },
+								{ label: 'workspace build', slug: 'cli/workspace-build' },
+								{ label: 'workspace lint', slug: 'cli/workspace-lint' },
+								{ label: 'workspace audit', slug: 'cli/workspace-audit' },
+								{ label: 'workspace graph', slug: 'cli/workspace-graph' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },
 								{ label: 'components', slug: 'cli/components' },
@@ -317,6 +378,10 @@ export default defineConfig({
 								{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 								{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
 								{ label: 'Docker', link: '/lexicons/docker/' },
+								{ label: 'OpenTelemetry Collector', link: '/lexicons/otel/' },
+								{ label: 'Grafana', link: '/lexicons/grafana/' },
+								{ label: 'Prometheus', link: '/lexicons/prometheus/' },
+								{ label: 'SQL (ClickHouse)', link: '/lexicons/sql/' },
 								{ label: 'Render', link: '/lexicons/render/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },
 								{ label: 'augur (behaviour)', link: '/lexicons/augur/' },

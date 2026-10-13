@@ -1,0 +1,231 @@
+{
+  "jobs": [
+    {
+      "label": "decide, waits",
+      "job": {
+        "wave": 3,
+        "decide": true
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 3,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-3",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "members": [
+            {
+              "member": "t3",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "migrate"
+            },
+            {
+              "member": "t1",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "migrate"
+            }
+          ],
+          "status": "waiting",
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "migrations",
+            "gate": "migrations-wave-3",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+            "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve migrations migrations-wave-3 --plan jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+        }
+      },
+      "ledger": {
+        "appended": [
+          {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "migrations",
+            "gate": "migrations-wave-3",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+            "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+          }
+        ],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 3,
+      "logs": 1
+    },
+    {
+      "label": "share 1 of a waiting decision",
+      "job": {
+        "wave": 3,
+        "share": 1
+      },
+      "result": {
+        "exitCode": 3,
+        "applied": [],
+        "failed": [],
+        "moved": [],
+        "hooks": [],
+        "decision": {
+          "wave": 3,
+          "name": "prod",
+          "op": "migrations",
+          "gate": "migrations-wave-3",
+          "policy": "always",
+          "approval": "ledger",
+          "policySource": "base",
+          "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+          "members": [
+            {
+              "member": "t3",
+              "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "op": "migrate"
+            },
+            {
+              "member": "t1",
+              "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "op": "migrate"
+            },
+            {
+              "member": "t2",
+              "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "op": "migrate"
+            }
+          ],
+          "status": "waiting",
+          "pendingFact": {
+            "version": 1,
+            "kind": "pending",
+            "approvalMode": "ledger",
+            "op": "migrations",
+            "gate": "migrations-wave-3",
+            "timestamp": "2026-10-11T00:00:00.000Z",
+            "expiresAt": "2026-10-13T00:00:00.000Z",
+            "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+            "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+          },
+          "recorded": true,
+          "waitingSince": "2026-10-11T00:00:00.000Z",
+          "approve": "chant approve migrations migrations-wave-3 --plan jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+        }
+      },
+      "ledger": {
+        "appended": [],
+        "resolved": [],
+        "applied": []
+      },
+      "calls": 0,
+      "logs": 1
+    }
+  ],
+  "calls": [
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t3",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t3.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t1",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t1.plan.json"
+      ]
+    },
+    {
+      "argv": [
+        "tool",
+        "plan",
+        "t2",
+        "--out",
+        ".chant/op-waves/migrations/wave-3/t2.plan.json"
+      ]
+    }
+  ],
+  "logs": [
+    "Nothing in wave 3 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-3 --plan jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e (with --resume, the approval also starts this job again)",
+    "wave 3 (prod) is waiting on migrations-wave-3; nothing applied. chant approve migrations migrations-wave-3 --plan jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+  ],
+  "files": {
+    ".chant/op-waves/migrations/wave-3/t1.plan.json": {
+      "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    ".chant/op-waves/migrations/wave-3/t2.plan.json": {
+      "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    ".chant/op-waves/migrations/wave-3/t3.plan.json": {
+      "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    ".chant/op-waves/migrations/wave-3.json": {
+      "wave": 3,
+      "name": "prod",
+      "op": "migrations",
+      "gate": "migrations-wave-3",
+      "policy": "always",
+      "approval": "ledger",
+      "policySource": "base",
+      "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e",
+      "members": [
+        {
+          "member": "t3",
+          "planDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "op": "migrate"
+        },
+        {
+          "member": "t1",
+          "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "op": "migrate"
+        },
+        {
+          "member": "t2",
+          "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "op": "migrate"
+        }
+      ],
+      "status": "waiting",
+      "pendingFact": {
+        "version": 1,
+        "kind": "pending",
+        "approvalMode": "ledger",
+        "op": "migrations",
+        "gate": "migrations-wave-3",
+        "timestamp": "2026-10-11T00:00:00.000Z",
+        "expiresAt": "2026-10-13T00:00:00.000Z",
+        "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+        "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+      },
+      "recorded": true,
+      "waitingSince": "2026-10-11T00:00:00.000Z",
+      "approve": "chant approve migrations migrations-wave-3 --plan jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
+    }
+  }
+}

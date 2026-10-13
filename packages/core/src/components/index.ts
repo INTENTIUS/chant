@@ -14,6 +14,7 @@ export {
   type Gate,
   type Phase,
   type Component,
+  type ComponentEnvironmentDeclaration,
   phase,
   gate,
   stackOutput,

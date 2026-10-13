@@ -1,3 +1,5 @@
+import type { EmbeddedContentResolver } from "./embedded";
+
 /**
  * Intermediate representation of a template parameter
  */
@@ -7,6 +9,9 @@ export interface ParameterIR {
   readonly description?: string;
   readonly defaultValue?: unknown;
   readonly required?: boolean;
+  /** What the value is checked against, under the source format's own keys
+   * and as written (CloudFormation `AllowedValues`, `MinLength`, `NoEcho`). */
+  readonly constraints?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -20,6 +25,11 @@ export interface ResourceIR {
   /** Name of the condition gating this resource (CloudFormation `Condition`
    * key, or equivalent), when the source template declares one (#2069). */
   readonly condition?: string;
+  /** Resource-level attributes other than the condition, under the source
+   * format's own keys (CloudFormation `DependsOn`, `DeletionPolicy`,
+   * `UpdateReplacePolicy`, `UpdatePolicy`, `CreationPolicy`). Values are
+   * parsed value trees, like {@link properties}. */
+  readonly attributes?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -64,13 +74,47 @@ export interface TemplateIR {
 }
 
 /**
+ * What `chant import` hands a parser besides the content (#2962).
+ */
+export interface ParseContext {
+  /**
+   * Resolves content embedded in the template's resources (a collector
+   * config in a ConfigMap) to a reference to declarations the owning
+   * lexicon imports. Absent outside `chant import`; a parser then keeps
+   * embedded content as written.
+   */
+  readonly embedded?: EmbeddedContentResolver;
+}
+
+/** A value a parser option takes. */
+export type ParserOptionValue = string | number | boolean;
+
+/** The options `chant import --parser-option` hands a lexicon's parser, by name. */
+export type ParserOptions = Record<string, ParserOptionValue>;
+
+/**
+ * One option a lexicon's parser accepts, declared by `LexiconPlugin.parserOptions()`.
+ * `chant import --parser-option <name>[=<value>]` is checked against this list and
+ * the value is converted to `type` before `templateParser(options)` sees it.
+ */
+export interface ParserOptionSpec {
+  /** The key after `--parser-option`, e.g. "acceptLossyV1". */
+  name: string;
+  /** `boolean` takes `true`/`false`, and a bare `--parser-option name` means true. */
+  type: "boolean" | "string" | "number";
+  /** One line, shown when the option is refused and in the docs. */
+  description: string;
+}
+
+/**
  * Interface for template parsers that convert external formats to IR
  */
 export interface TemplateParser {
   /**
    * Parse template content into intermediate representation
    * @param content - Raw template content (JSON, YAML, etc.)
+   * @param context - What `chant import` provides beyond the content; parsers may ignore it
    * @returns Intermediate representation of the template
    */
-  parse(content: string): TemplateIR;
+  parse(content: string, context?: ParseContext): TemplateIR;
 }

@@ -1,10 +1,11 @@
+import { lexiconNames } from "../../lexicon-module";
 import { resolve } from "node:path";
 import { commandBuildParams } from "../build-params-cli";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { deepDiffForLexicon, type DeclaredEntities } from "../../lifecycle/deep-observe";
-import { countUnclaimed, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
+import { countUnclaimed, countPending, countPropertyDrift, countHeld, suspiciousHeld, type DeepDiffResult, type DeepEntityHeld } from "../../lifecycle/deep-diff";
 import { describePathOrigin, getPathProvenance, getProvenance, type EntityProvenance } from "../../provenance";
 import { resolveDeepDrift, resolveDriftedField, type FieldReconcile } from "../../fold-provenance";
 import {
@@ -17,8 +18,8 @@ import {
   type DeviationToAccept,
   type ObservationBaseline,
 } from "../../lifecycle/observation-baseline";
-import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
-import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
+import { computeBuildDigest, declaredDefinitions, diffDigests } from "../../lifecycle/digest";
+import { diffLive, diffLiveArtifacts, diffSnapshots, missingRow, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, renderChangeSetMarkdown, gitlabMrReport, unobservedPlanNotice, type ChangeSet, type HeldEntitySet } from "../../lifecycle/change-set";
 import { mergeReceiptEntries, observedValueResolver, planReceipts, readReceiptValue, type ReceiptReading } from "../../lifecycle/receipt-plan";
 import { annotateDisruption, disruptionNotices } from "../../lifecycle/disruption";
@@ -40,8 +41,9 @@ import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, resolveO
 import { unknownEnvError, isProdLikeEnvironment } from "../../env";
 import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
+import { resolveBuildModes, resolveProjectBuildOptions } from "../build-options";
 import { applyLiveEndpoint } from "../../live-endpoint";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
@@ -377,11 +379,22 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   const endpointResult = applyLiveEndpoint(config.environments, environment, liveLexicons);
   if (endpointResult.notice) console.error(formatWarning({ message: endpointResult.notice }));
 
-  const diffBuildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve("."));
+  // The build `chant build` would produce for this project (#2002's one
+  // place), so the diff folds by default as `chant build` does. A run build
+  // cannot say which composite argument produced a field, so without this
+  // every composite field in the live diff read as unknown (#3597).
+  const projectRoot = resolve(".");
+  const diffBuildOptions = resolveProjectBuildOptions({
+    config,
+    configDir: projectRoot,
+    plugins,
+    modes: resolveBuildModes(config, { fold: args.fold, sandbox: args.sandbox }),
+    buildParams: declaredParams,
+  });
 
   try {
     for (const target of targets) {
-      const buildResult = await build(target.root, targetSerializers, undefined, { buildParams: declaredParams, buildRoots: diffBuildRoots });
+      const buildResult = await build(target.root, targetSerializers, undefined, diffBuildOptions);
       if (buildResult.errors.length > 0) {
         const label = target.stack ? `stack "${target.stack}"` : "project";
         console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
@@ -433,6 +446,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
           baseline,
           updateBaseline: args.updateBaseline,
           ...(args.namespace ? { namespace: args.namespace } : {}),
+          projectRoot,
         });
         totalDrift += r.totalDrift;
         totalUnobserved += r.totalUnobserved;
@@ -559,7 +573,7 @@ interface BetweenDiffArgs {
 async function runLifecycleDiffBetween(args: BetweenDiffArgs): Promise<number> {
   await fetchLifecycle();
   const { config } = await loadChantConfig(resolve("."));
-  const lexicons = args.lexiconFilter ? [args.lexiconFilter] : config.lexicons ?? [];
+  const lexicons = args.lexiconFilter ? [args.lexiconFilter] : lexiconNames(config.lexicons ?? []);
   if (lexicons.length === 0) {
     console.error(formatError({ message: "No lexicons to diff — pass a lexicon or declare `lexicons` in chant.config." }));
     return 1;
@@ -686,6 +700,8 @@ interface LiveDiffArgs {
   /** `--namespace <ns>` (#1629): where to read entities that declare no
    * namespace of their own. */
   namespace?: string;
+  /** Directory source locations in the report are printed relative to (#3597). */
+  projectRoot?: string;
 }
 
 interface LiveDiffOutcome {
@@ -811,13 +827,14 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
     }
 
     // Build per-lexicon entity index. Resource declarables only — outputs,
-    // parameters and serializer directives have no live counterpart, and a
+    // parameters, serializer directives and property-kind declarables (read
+    // inside their parent, #3001) have no live counterpart of their own, and a
     // declared name the reader can never resolve reads as missing (see
     // lifecycle/observe.ts).
     const declared = new Set<string>();
     const entities: DeclaredEntities = new Map();
     for (const [name, entity] of args.buildResult.entities) {
-      if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
+      if (entity.lexicon === lexiconName && isObservableDeclarable(entity)) {
         declared.add(name);
         // Path origins are carried across explicitly (#1443): this map is plain
         // objects, and the symbol-keyed provenance channel does not survive it.
@@ -859,7 +876,17 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
       });
       const observedNow = observed.resources;
       const observedThen = prevSnapshot?.resources;
-      const diff = diffLive({ declared, observedNow, observedThen, unobserved: observed.unobserved, queried: observed.queried });
+      const diff = diffLive({
+        declared,
+        observedNow,
+        observedThen,
+        unobserved: observed.unobserved,
+        queried: observed.queried,
+        // What each create would create (#3652), so the diff, and the plan
+        // digest ApplyOp's gate binds to it, moves when a missing entity's
+        // declaration does.
+        definitions: declaredDefinitions(entities),
+      });
       // Unobserved entities are deliberately NOT drift: a hole in the read is
       // not a change in the cloud. They are reported separately (#1089) so a
       // "no drift detected" line can never be built on top of a failed read.
@@ -886,7 +913,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
           componentStacks: args.componentStacks,
           baseline: baselineForLexicon(args.baseline, lexiconName),
         });
-        totalDrift += countPropertyDrift(deep);
+        totalDrift += countPropertyDrift(deep) + countPending(deep);
         // Only count a deep hole for an entity the thin read *did* resolve —
         // otherwise one unreadable entity is counted twice.
         totalUnobserved += deep.unobserved.filter((u) => !observed.unobserved[u.name]).length;
@@ -900,8 +927,8 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
         if (args.json) {
           const entry = (byLexicon[lexiconName] ??= {});
           entry.deep = deep;
-          entry.reconcile = resolveDeepDrift(deep.drifted, provenanceOf);
-        } else renderDeepDiff(lexiconName, deep, provenanceOf);
+          entry.reconcile = resolveDeepDrift(deep.drifted, provenanceOf, { root: args.projectRoot });
+        } else renderDeepDiff(lexiconName, deep, provenanceOf, args.projectRoot);
         // Printed on stderr regardless of `--json` (#2162), same reason the
         // unobserved/disruption notices are: a shape with no column for
         // "suspicious" must not read as clean.
@@ -969,12 +996,15 @@ function renderDeepDiff(
   lexiconName: string,
   deep: DeepDiffResult,
   provenanceOf: (entity: string) => EntityProvenance | undefined = () => undefined,
+  projectRoot?: string,
 ): void {
   const drift = countPropertyDrift(deep);
   const unclaimedCount = countUnclaimed(deep);
   const heldCount = countHeld(deep);
+  const pendingCount = countPending(deep);
   if (
     drift === 0 &&
+    pendingCount === 0 &&
     heldCount === 0 &&
     unclaimedCount === 0 &&
     deep.accepted.length === 0 &&
@@ -989,6 +1019,7 @@ function renderDeepDiff(
   console.log(
     `${drift} property drift across ${deep.drifted.length} resource(s), ` +
       `${acceptedCount} accepted, ${deep.unchanged.length} unchanged` +
+      (pendingCount > 0 ? `, ${pendingCount} pending` : "") +
       (heldCount > 0 ? `, ${heldCount} held` : "") +
       (unclaimedCount > 0 ? `, ${unclaimedCount} unclaimed` : "") +
       (deep.unobserved.length > 0 ? `, ${deep.unobserved.length} unobserved` : ""),
@@ -1011,23 +1042,37 @@ function renderDeepDiff(
         // Both sides of the attribution, where each is known (#1443/#1189).
         const from = change.origin ? ` [from: ${describePathOrigin(change.origin)}]` : "";
         const owner = change.owner ? ` [owner: ${change.owner}]` : "";
-        console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}`);
+        const seen = change.seenOn ? ` [seen on: ${change.seenOn}]` : "";
+        console.log(`      ${change.path}: ${declared} → ${live}${baseline}${from}${owner}${seen}`);
         // chant #2161 — what may be done about it, when the origin says
         // something today's behaviour would get wrong. A field the author
         // declared directly is left unremarked: editing it IS today's
         // behaviour, and saying so on every row would bury the two that matter.
-        const { resolution } = resolveDriftedField({
+        // #3597 — the line before the proposal names the composite call and
+        // the argument behind the field, with the file and line it was written on.
+        const { resolution, summary } = resolveDriftedField({
           entity: entity.name,
+          entityType: entity.type,
           path: change.path,
           ...("declared" in change ? { declared: change.declared } : {}),
           ...("live" in change ? { live: change.live } : {}),
           ...(change.origin ? { origin: change.origin } : {}),
           ...(provenance ? { provenance } : {}),
+          ...(projectRoot ? { root: projectRoot } : {}),
         });
         if (resolution.kind !== "edit-declaration") {
+          console.log(`        ${summary}`);
           console.log(`        ${resolution.description}`);
         }
       }
+    }
+  }
+  if (pendingCount > 0) {
+    // #3706: changes an apply would make that no declared property shows
+    // (privileges granted by hand). Printed, so the plan digest moves with them.
+    console.log(formatBold("\nPENDING (changes an apply would make that no declared property shows):"));
+    for (const p of deep.pending ?? []) {
+      console.log(`  ~ ${p.subject}: ${p.change}${p.entities && p.entities.length > 0 ? ` [from: ${p.entities.join(", ")}]` : ""}`);
     }
   }
   if (deep.unclaimed.length > 0) {
@@ -1105,10 +1150,7 @@ function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiff
   if (diff.missing.length > 0) {
     console.log(formatBold("\nMISSING (declared, provider reports not in cloud):"));
     for (const name of diff.missing) {
-      // The address the read actually went to (#1620) — the line between "not
-      // there" and "looked in the wrong place" (a defaulted namespace, say).
-      const queried = diff.queried?.[name];
-      console.log(`  - ${name}${queried ? ` [queried ${queried}]` : ""}`);
+      console.log(missingRow(diff, name));
     }
   }
   if (diff.orphan.length > 0) {
@@ -1288,11 +1330,11 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // A receipt has no `props` payload of its own but is declared, diffed,
         // and observed like any resource (#1832) — it joins the declared axis
         // so its lexicon's observation can confirm presence or absence.
-        if (entity.lexicon === lexiconName && (isResourceDeclarable(entity) || isEffectReceipt(entity))) {
+        if (entity.lexicon === lexiconName && (isObservableDeclarable(entity) || isEffectReceipt(entity))) {
           declared.add(name);
           entities.set(name, {
             entityType: entity.entityType,
-            props: (isResourceDeclarable(entity) && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+            props: (isObservableDeclarable(entity) && entity.props != null ? entity.props : {}) as Record<string, unknown>,
           });
         }
       }
@@ -1392,6 +1434,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // The resolved read address rides every entry, not just unobserved
         // ones — the diff path already passes it (#1620); plan lost it.
         queried: observed.queried,
+        // A create carries its declaration's fingerprint (#3652), so the
+        // plan's digest moves when what it would create does.
+        definitions: declaredDefinitions(entities),
       }, {
         // Attribution survives the flat merge below (#1674).
         lexicon: lexiconName,

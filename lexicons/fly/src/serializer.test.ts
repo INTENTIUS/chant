@@ -146,14 +146,14 @@ describe("fly serializer", () => {
     });
   });
 
-  it("emits the Certificate create body (createCertificateRequest: hostname) under the app", () => {
+  it("emits the Certificate create body (createAcmeCertificateRequest: hostname) at /certificates/acme (#3114)", () => {
     const entities = stack(
       ["app", new App({ name: "my-app" })],
       ["cert", new Certificate({ hostname: "example.com" })],
     );
     const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.cert).toEqual({
-      endpoint: "/v1/apps/my-app/certificates",
+      endpoint: "/v1/apps/my-app/certificates/acme",
       method: "POST",
       body: { hostname: "example.com" },
     });
@@ -170,6 +170,21 @@ describe("fly serializer", () => {
       method: "POST",
       body: { value: "s3cret" },
       applyOnly: true,
+    });
+  });
+
+  it("marks a value-less Secret mustExist and takes its name from `name` (#2516)", () => {
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["dbUrl", new Secret({ name: "DATABASE_URL" })],
+    );
+    const out = JSON.parse(flySerializer.serialize(entities) as string);
+    expect(out.dbUrl).toEqual({
+      endpoint: "/v1/apps/my-app/secrets/DATABASE_URL",
+      method: "POST",
+      body: {},
+      applyOnly: true,
+      mustExist: true,
     });
   });
 });

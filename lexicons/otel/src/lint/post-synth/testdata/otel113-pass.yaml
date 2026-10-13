@@ -1,0 +1,21 @@
+# OTEL113 passing fixture: the same two pipelines chained one way only.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+
+exporters:
+  debug: {}
+
+connectors:
+  forward/ab: {}
+
+service:
+  pipelines:
+    traces/a:
+      receivers: [otlp]
+      exporters: [forward/ab]
+    traces/b:
+      receivers: [forward/ab]
+      exporters: [debug]

@@ -20,7 +20,8 @@
     "node_modules",
     "dist",
     "docs",
-    "src/cli/commands/__fixtures__/**/*"
+    "src/cli/commands/__fixtures__/**/*",
+    "src/workspace/conformance/__fixture__/**/*"
   ],
   "tsc-alias": {
     "resolveFullPaths": true

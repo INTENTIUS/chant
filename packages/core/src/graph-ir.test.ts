@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildGraphIr } from "./graph-ir";
+import { applyLexiconOutputs, buildGraphIr } from "./graph-ir";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
 import { LexiconOutput } from "./lexicon-output";
@@ -285,5 +285,110 @@ describe("entity-declared references and stacks", () => {
     expect(ir.groups.byStack).toEqual({ app: ["app/vpc"], gcp: ["plain"], network: ["network/vpc"] });
     expect(ir.groups.byLexicon).toEqual({ gcp: ["plain"], hcl: ["app/vpc", "network/vpc"] });
     expect(ir.nodes.find((n) => n.id === "app/vpc")!.attrs).not.toHaveProperty("stack");
+  });
+});
+
+describe("whole declarables held in an entity's fields (#3257)", () => {
+  /** An entity shaped like the sql lexicon's: props non-enumerable, `dependsOn` enumerable. */
+  function holder(dependsOn: unknown[], extra: object = {}) {
+    const e = decl({ lexicon: "sql", entityType: "ClickHouse::Table", ...extra });
+    Object.defineProperty(e, "dependsOn", { value: dependsOn, enumerable: true });
+    return e;
+  }
+
+  test("draws an edge to each node named directly in an enumerable array", () => {
+    const db = decl({ lexicon: "sql", entityType: "ClickHouse::Database" });
+    const target = holder([db]);
+    const events = holder([db]);
+    const mv = holder([db, target, events]);
+    const entities = new Map<string, Declarable>([
+      ["analytics", db],
+      ["dailyActive", target],
+      ["events", events],
+      ["dailyActiveMv", mv],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    const dep = (from: string, to: string) => ({ from, to, kind: "ref", viaAttr: "dependsOn" });
+    expect(ir.edges).toEqual([
+      dep("dailyActive", "analytics"),
+      dep("dailyActiveMv", "analytics"),
+      dep("dailyActiveMv", "dailyActive"),
+      dep("dailyActiveMv", "events"),
+      dep("events", "analytics"),
+    ]);
+  });
+
+  test("does not walk into the referenced node, and projects it as a $ref", () => {
+    const db = decl({ lexicon: "sql", entityType: "ClickHouse::Database", props: { name: "analytics" } });
+    const events = holder([db]);
+    const entities = new Map<string, Declarable>([
+      ["analytics", db],
+      ["events", events],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.nodes.find((n) => n.id === "events")!.attrs.dependsOn).toEqual([{ $ref: "analytics" }]);
+  });
+
+  test("an AttrRef and the whole node to the same target collapse to one edge", () => {
+    const db = decl({ lexicon: "sql", entityType: "ClickHouse::Database" });
+    const events = decl({ lexicon: "sql", entityType: "ClickHouse::Table" });
+    const mv = holder([events, new AttrRef(events, "user_id")]);
+    const entities = new Map<string, Declarable>([
+      ["analytics", db],
+      ["events", events],
+      ["mv", mv],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toEqual([{ from: "mv", to: "events", kind: "ref", viaAttr: "dependsOn" }]);
+  });
+
+  test("ignores a self reference, and still descends into an inlined property-kind resource", () => {
+    const self: Declarable = holder([]);
+    (self as unknown as { dependsOn: unknown[] }).dependsOn.push(self);
+    const vpc = decl({ lexicon: "aws", entityType: "Vpc" });
+    const inline = decl({
+      lexicon: "aws",
+      entityType: "Listener_Action",
+      kind: "property",
+      props: { vpc: new AttrRef(vpc, "Id") },
+    });
+    const lb = decl({ lexicon: "aws", entityType: "Lb", props: { actions: [inline] } });
+    const entities = new Map<string, Declarable>([
+      ["self", self],
+      ["vpc", vpc],
+      ["lb", lb],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toEqual([{ from: "lb", to: "vpc", kind: "ref", viaAttr: "actions" }]);
+  });
+});
+
+describe("applyLexiconOutputs (#3931)", () => {
+  test("adds each reported output to exports on the node that declares it, keeping a hand-written export", () => {
+    const orders = decl({ lexicon: "sql", entityType: "Postgres::Table", props: {} });
+    const ir = buildGraphIr(new Map<string, Declarable>([["orders", orders]]));
+    const withOutputs = applyLexiconOutputs({ ...ir, exports: [{ name: "public.orders", node: "orders", attr: "name" }] }, [
+      {
+        outputs: [
+          { name: "public.orders", entity: "orders" },
+          { name: "public.orders.buyer_id", entity: "orders", previously: ["public.orders.customer_id"] },
+          { name: "other.thing", entity: "notANode" },
+        ],
+      },
+    ]);
+    expect(withOutputs.exports).toEqual([
+      { name: "other.thing" },
+      { name: "public.orders", node: "orders", attr: "name" },
+      { name: "public.orders.buyer_id", node: "orders", previously: ["public.orders.customer_id"] },
+    ]);
+    expect(applyLexiconOutputs(ir, [{ outputs: [] }])).toBe(ir);
   });
 });

@@ -94,7 +94,7 @@ permissions:
 jobs:
   app-plan:
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: '${{ vars.AWS_PLAN_ROLE_ARN }}'
@@ -131,10 +131,9 @@ On GitLab the same mode writes a merge-request note instead, by the same
 recipe: `reconcilePr` reads the merge request out of `CI_MERGE_REQUEST_IID`
 and the project out of `CI_MERGE_REQUEST_PROJECT_ID`, finds its own note by
 the marker and edits it (chant #2256). See "The same pair on GitLab" below.
-On Forgejo it is still refused rather than approximated: the activity's
-GitHub half shells to `gh`, and chant carries no Forgejo client that would
-post the equivalent comment, so the forgejo Op generator says so by name at
-build time.
+On Forgejo the same comment goes through the same forge client, over
+Forgejo's `/api/v1` (chant #3757), so the forgejo Op generator emits the mode
+as the github one does.
 
 Only the human plan is ever posted, on either half. `terraform show -json`
 over a plan file carries resource attribute values, provider secrets among

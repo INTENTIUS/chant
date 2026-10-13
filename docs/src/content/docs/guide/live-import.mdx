@@ -27,6 +27,7 @@ Unlike `chant lifecycle` observation, which only ever reads scrubbed metadata, l
 | `-d, --lexicon <name>` | restrict to one lexicon (e.g. `aws`, `k8s`) |
 | `--owned` | only chant-owned resources (carrying the [ownership marker](/chant/configuration/config-file/#ownership)) |
 | `--verbatim` | keep server-defaulted fields instead of stripping to declared shape |
+| `--skip-undeclarable` | import what can be declared, and warn about each live object no declaration can hold instead of failing |
 
 ## Per-provider fidelity
 

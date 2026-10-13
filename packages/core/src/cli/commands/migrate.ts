@@ -12,6 +12,7 @@ import { formatError, formatInfo } from "../format";
 import { formatSarif } from "../reporters/stylish";
 import type { LexiconPlugin } from "../../lexicon";
 import type { LintRule, LintDiagnostic } from "../../lint/rule";
+import { ensureTypeScriptLoader } from "../../ts-loader";
 
 export interface MigrateCliOpts {
   sourceFile: string;
@@ -235,6 +236,7 @@ async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
   // lexicons ship their own migrate paths.
   if (targetLexicon === "gitlab") {
     try {
+      ensureTypeScriptLoader();
       const mod = await import("@intentius/chant-lexicon-gitlab/migrate/from-github/rules");
       return (mod as { MIGRATION_RULES: LintRule[] }).MIGRATION_RULES;
     } catch {

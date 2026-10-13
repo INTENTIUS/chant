@@ -3,12 +3,16 @@ export { Parameter } from "./parameter";
 
 // Condition (#2068) — the Conditions-section declarable
 export { Condition, isCondition, CONDITION_ENTITY_TYPE } from "./condition";
+// Mapping — the Mappings-section declarable, read with FindInMap
+export { Mapping, isMapping, MAPPING_ENTITY_TYPE } from "./mapping";
 
 // Default Tags
 export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
 export type { DefaultTags, TagEntry } from "./default-tags";
 export { templateTransform, isTemplateTransform, TEMPLATE_TRANSFORM_MARKER } from "./template-transform";
 export type { TemplateTransform } from "./template-transform";
+export { templateDescription, templateMetadata, isTemplateSection, TEMPLATE_SECTION_MARKER } from "./template-sections";
+export type { TemplateSection } from "./template-sections";
 
 // Effect receipts (#1835, epic #1703): the aws materialization row
 // (`AWS::SSM::Parameter`, plain String, path derived from the ownership
@@ -125,6 +129,12 @@ export {
   AndIntrinsic,
   OrIntrinsic,
   NotIntrinsic,
+  FindInMap,
+  FindInMapIntrinsic,
+  ImportValue,
+  ImportValueIntrinsic,
+  Cidr,
+  CidrIntrinsic,
 } from "./intrinsics";
 export type { ConditionOperand } from "./intrinsics";
 

@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-render",
-  "version": "0.73.0",
+  "version": "0.124.23",
   "type": "module",
   "files": [
     "src/",
@@ -40,7 +40,7 @@
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "devDependencies": {
     "@intentius/chant": "*",
@@ -48,8 +48,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.73.0",
-    "typescript": "^5.9.3"
+    "@intentius/chant": "^0.124.23"
   },
   "description": "Render (render.com) lexicon for chant — services, datastores, env groups, projects as typed TypeScript, applied straight to the Render API",
   "license": "Apache-2.0",

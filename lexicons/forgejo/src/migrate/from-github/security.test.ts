@@ -7,7 +7,7 @@ function analyze(yaml: string) {
 }
 
 describe("analyzeForgejoSecurity — fate classes", () => {
-  test("workflow-level permissions is lost", () => {
+  test("workflow-level permissions needs review", () => {
     const records = analyze(`on: push
 permissions:
   contents: read
@@ -19,7 +19,7 @@ jobs:
 `);
     const perm = records.filter((r) => r.rule === "MIG-FJ-PERMISSIONS");
     expect(perm).toHaveLength(1);
-    expect(perm[0].security.fate).toBe("lost");
+    expect(perm[0].security.fate).toBe("needs-review");
   });
 
   test("continue-on-error is lost (job and step)", () => {

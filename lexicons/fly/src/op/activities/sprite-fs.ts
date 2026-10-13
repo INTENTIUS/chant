@@ -8,11 +8,16 @@
  * read/write move raw file bytes in the body (not JSON), so these use a small
  * raw HTTP client (`SpritesRawHttp`) rather than the JSON `SpritesHttp` the
  * lifecycle activities use; path/mode/mkdir/recursive ride as query params.
- * Endpoint + bearer resolution mirror `sprites.ts` — an explicit `endpoint` /
- * `token` wins, then `SPRITES_BASE_URL` / `SPRITES_API_TOKEN`.
+ * Endpoint + bearer resolution go through `sprites.ts`'s shared resolvers
+ * (`resolveSpritesEndpoint`/`resolveSpritesToken`) — an explicit `endpoint` /
+ * `token` wins, then `SPRITES_BASE_URL`/`SPRITES_API_URL`, then
+ * `SPRITES_API_TOKEN`/its `SPRITE_TOKEN` alias (#2711, #2765: this module
+ * used to read `SPRITES_API_TOKEN` directly, missing the alias the other
+ * Sprites activities honor).
  */
 
-import { resolveSpritesEndpoint } from "./sprites";
+import { resolveSpritesEndpoint, resolveSpritesToken } from "./sprites";
+import { logProgress } from "./progress";
 
 function safeJson(text: string): unknown {
   try {
@@ -62,13 +67,18 @@ export type SpritesRawHttp = (
  * Default `fetch`-based raw client. Sends the body as-is with an
  * `application/octet-stream` content-type and `Authorization: Bearer <token>`
  * when a token is set (real Sprites); the fake ignores the token. The token
- * defaults to `SPRITES_API_TOKEN` at call time. `fetchImpl` is injectable.
+ * resolves through `resolveSpritesToken` at call time — `SPRITES_API_TOKEN`,
+ * then its `SPRITE_TOKEN` alias (#2711, #2765) — the same resolver
+ * `sprites.ts`'s `defaultSpritesHttp` uses, so every fs activity
+ * (`spriteWriteFile`, `spriteReadFile`, `spriteListDir`, `spriteRemove`)
+ * authenticates the same way the lifecycle activities do. `fetchImpl` is
+ * injectable.
  */
 export function defaultSpritesRawHttp(token?: string, fetchImpl: typeof fetch = fetch): SpritesRawHttp {
   return async (method, url, body, headers, signal) => {
     const h: Record<string, string> = { ...headers };
     if (body !== undefined) h["content-type"] = "application/octet-stream";
-    const tok = token ?? process.env.SPRITES_API_TOKEN;
+    const tok = resolveSpritesToken(token);
     if (tok) h["authorization"] = `Bearer ${tok}`;
     const res = await fetchImpl(url, {
       method,
@@ -157,7 +167,7 @@ export async function spriteWriteFile(
   if (res.status >= 300) {
     throw new Error(`sprite ${args.id} write ${args.path} failed (${res.status}): ${res.text}`);
   }
-  console.log(`wrote: sprite/${args.id}:${args.path} (${args.content.length}b)`);
+  logProgress(`wrote: sprite/${args.id}:${args.path} (${args.content.length}b)`);
   return {};
 }
 
@@ -212,6 +222,6 @@ export async function spriteRemove(
   if (res.status >= 300 && res.status !== 404) {
     throw new Error(`sprite ${args.id} remove ${args.path} failed (${res.status}): ${res.text}`);
   }
-  console.log(`removed: sprite/${args.id}:${args.path}`);
+  logProgress(`removed: sprite/${args.id}:${args.path}`);
   return {};
 }

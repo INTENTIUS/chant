@@ -7,6 +7,7 @@
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Ingress, Certificate } from "../generated";
+import type { MemberDefaults } from "./member-defaults";
 
 export interface SecureIngressHost {
   /** Hostname (e.g., "api.example.com"). */
@@ -37,8 +38,8 @@ export interface SecureIngressProps {
   namespace?: string;
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
-    ingress?: Partial<Record<string, unknown>>;
-    certificate?: Partial<Record<string, unknown>>;
+    ingress?: MemberDefaults<"Ingress">;
+    certificate?: MemberDefaults<"Certificate">;
   };
 }
 

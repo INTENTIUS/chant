@@ -1,0 +1,53 @@
+---
+title: "Other Panel and Datasource Plugins"
+description: "Add a panel plugin or a datasource's query class that chant doesn't ship, with definePanel and defineQuery"
+diataxis: how-to
+order: 5
+---
+
+The built-in panels and query classes are defined through `definePanel` and `defineQuery`. A plugin chant doesn't ship uses the same two functions and gets the same layout, serialization and checks.
+
+## A panel plugin
+
+```ts
+import { definePanel } from "@intentius/chant-lexicon-grafana";
+
+interface ClockOptions {
+  mode?: "time" | "countdown";
+  clockType?: "24 hour" | "12 hour";
+  countdownSettings?: { endCountdownTime?: string; endText?: string };
+}
+
+export const ClockPanel = definePanel<ClockOptions>()({
+  type: "grafana-clock-panel",
+  className: "ClockPanel",
+  description: "Clock",
+  defaultSize: { w: 6, h: 4 },
+});
+```
+
+The second type parameter types `fieldConfig.defaults.custom`. `type` is the plugin id Grafana stores; redefining a built-in id throws.
+
+## A datasource's queries
+
+```ts
+import { defineQuery } from "@intentius/chant-lexicon-grafana";
+
+interface SplunkQueryModel {
+  rawQuery: string;
+  queryType?: "search" | "metrics";
+  refId?: string;
+}
+
+export const SplunkQuery = defineQuery<SplunkQueryModel>()({
+  datasourceType: "grafana-splunk-datasource",
+  className: "SplunkQuery",
+  expressionField: "rawQuery",
+});
+```
+
+`new SplunkQuery({ datasource })` accepts only a `grafana-splunk-datasource` datasource, and GRAF101 to GRAF103 check its targets like any other. A datasource type chant ships a class for (see [Queries and Datasources](../queries-and-datasources/#queries)) cannot be redefined.
+
+## What is not checked
+
+A definition without a `schema` gets no GRAF107 check for its options or queries, since the lexicon has nothing pinned to check them against. Its TypeScript type is the only contract.

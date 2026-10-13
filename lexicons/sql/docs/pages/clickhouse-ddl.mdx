@@ -1,0 +1,207 @@
+---
+title: "Declaring ClickHouse Tables and Views"
+description: "ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates: the tags, tables over table functions, materialized views, dictionaries, functions, the kinds that are not declared, and what each kind of interpolation means"
+diataxis: how-to
+order: 1
+label: "Declaring Tables and Views"
+group: "ClickHouse"
+---
+
+A ClickHouse object is declared as its own DDL, inside a `database`, `table`, `view`, `dictionary` or `func` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:
+
+```ts
+import { database, table, view } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const analytics = database`CREATE DATABASE analytics ENGINE = Atomic`;
+
+export const events = table`
+  CREATE TABLE ${analytics}.events (
+    user_id  UUID,
+    kind     LowCardinality(String),
+    ts       DateTime CODEC(Delta, ZSTD(3))
+  )
+  ENGINE = MergeTree
+  PARTITION BY toYYYYMM(ts)
+  ORDER BY (user_id, kind, ts)`;
+
+export const byKind = view`
+  CREATE VIEW ${analytics}.by_kind AS
+  SELECT ${events.columns.kind} AS kind, count() AS n
+  FROM ${events}
+  GROUP BY kind`;
+```
+
+`chant build` parses each template when it folds the file, without running it, into one entity. The export name (`events`) is the object's identity in chant; the name in the SQL (`analytics.events`) is its name in the database. A changed SQL name under the same export is a rename, not a drop and a create.
+
+## The tags
+
+| Tag | Statement | Entity type |
+|---|---|---|
+| `database` | `CREATE DATABASE` | `ClickHouse::Database` |
+| `table` | `CREATE TABLE` | `ClickHouse::Table` |
+| `view` | `CREATE VIEW` | `ClickHouse::View` |
+| `view` | `CREATE MATERIALIZED VIEW` | `ClickHouse::MaterializedView` |
+| `dictionary` | `CREATE DICTIONARY` | `ClickHouse::Dictionary` |
+| `func` | `CREATE FUNCTION` | `ClickHouse::Function` |
+
+Users, roles, row policies, quotas, settings profiles and grants have tags of their own: see [Access Control](../clickhouse-access/).
+
+Each template holds exactly one statement of its tag's kind. `OR REPLACE`, `IF NOT EXISTS` and `ON CLUSTER` are read, and so are a `COMMENT` on the object and on each column.
+
+A table's definition is read clause by clause: columns with type, `DEFAULT`, `MATERIALIZED`, `ALIAS` or `EPHEMERAL` expression, codec, TTL and comment; the engine and its arguments; `ORDER BY`, `PRIMARY KEY`, `PARTITION BY` and `SAMPLE BY`; the table TTL; `SETTINGS`; skip indexes, projections and constraints. Expressions are kept as written. A skip index and a projection are parts of their table: declare them in its column list, and a plan adds or drops each with `ALTER TABLE` (SQLCH204, SQLCH214). `CREATE INDEX` on its own is refused for that reason.
+
+## Tables over table functions
+
+A table can be declared over a table function (`numbers`, `remote`, `s3`, `url` and the rest), with or without its columns:
+
+```ts
+export const nums = table`CREATE TABLE ${analytics}.nums AS numbers(10)`;
+
+export const remoteEvents = table`
+  CREATE TABLE ${analytics}.remote_events (user_id UUID, kind String)
+  AS remote('replica-2:9000', 'analytics', 'events')
+  COMMENT 'events on the second replica'`;
+```
+
+Such a table has no engine and stores nothing: the function is its storage, so the tag refuses an `ENGINE`, `ORDER BY` or `SETTINGS` beside it. The server infers the columns when the declaration lists none and prints them back, so a declaration without a column list is not compared on its columns; one that lists them is. A changed call or column list is SQLCH219, sent as `CREATE OR REPLACE TABLE`; a changed comment is SQLCH203. A table with data of its own becoming one would lose that data, so that change is a rebuild (SQLCH223). An import reads the server's form, `CREATE TABLE t (cols) AS f(...)`, and writes it as declared.
+
+The other `CREATE TABLE ... AS` forms copy something once and keep no link to it, so the server prints the copy as if it were written out, and each is refused with why: `AS other_table` (copies another table's columns and engine), `AS SELECT` and a table declared with no column list (`ENGINE = ... AS SELECT`, which creates the table and fills it once), `CLONE AS` (copies the data too) and `EMPTY AS SELECT`. Declare the columns, and fill the table with `INSERT ... SELECT` or a materialized view.
+
+## Materialized views
+
+A materialized view is an insert trigger on the table it selects from. Declare it with the `view` tag. The usual form writes into a target table that is declared on its own:
+
+```ts
+export const dailyActive = table`
+  CREATE TABLE ${analytics}.daily_active (
+    day    Date,
+    kind   LowCardinality(String),
+    users  AggregateFunction(uniq, UUID)
+  )
+  ENGINE = AggregatingMergeTree
+  ORDER BY (day, kind)`;
+
+export const dailyActiveMv = view`
+  CREATE MATERIALIZED VIEW ${analytics}.daily_active_mv TO ${dailyActive} AS
+  SELECT
+    toDate(${events.columns.ts}) AS day,
+    ${events.columns.kind} AS kind,
+    uniqState(${events.columns.user_id}) AS users
+  FROM ${events}
+  GROUP BY day, kind`;
+```
+
+`TO ${dailyActive}` is a reference, so the build creates the target before the view, and the view's output columns are checked against the target's (SQLCH110). Alias each select item to a target column; the target matches them by name. A `TO` written as a plain name (`TO analytics.daily_active`) is kept as that name and makes no dependency.
+
+The other forms parse too:
+
+- Without `TO`, the view keeps its rows in an inner table, declared inline with `ENGINE = ... ORDER BY ...`. Its engine and keys are fixed like any table's, so changing them is a rebuild (SQLCH243). `POPULATE` and `EMPTY` are read.
+- A refreshable materialized view, `CREATE MATERIALIZED VIEW ... REFRESH EVERY 1 HOUR [APPEND] TO ...`, keeps its `REFRESH` clause; changing the schedule is metadata only (SQLCH244). The server prints its column list right after the schedule (`REFRESH EVERY 1 HOUR (a UInt64) ENGINE = ...`) and adds a `DEFINER`; the schedule is read up to the column list, and the `DEFINER` the server adds is not drift.
+- `DEFINER` and `SQL SECURITY` are read. SQLCH116 flags `SQL SECURITY DEFINER` with no `DEFINER`.
+
+A plain view stores nothing, and changing its query is metadata only (SQLCH240). Changing a materialized view's query is metadata only too (SQLCH241); changing its `TO` target is a rebuild (SQLCH242).
+
+## Dictionaries
+
+A dictionary is a key-value lookup that ClickHouse loads from a source and keeps in memory. Declare it with the `dictionary` tag:
+
+```ts
+import { dictionary } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const ratesDict = dictionary`
+  CREATE DICTIONARY ${analytics}.rates_dict (
+    code  String,
+    rate  Float64 DEFAULT 1
+  )
+  PRIMARY KEY code
+  SOURCE(CLICKHOUSE(TABLE 'rates' DB 'analytics'))
+  LAYOUT(COMPLEX_KEY_HASHED())
+  LIFETIME(MIN 0 MAX 300)`;
+```
+
+The tag reads each attribute (type, `DEFAULT`, `EXPRESSION`, and the `HIERARCHICAL`, `BIDIRECTIONAL`, `INJECTIVE` and `IS_OBJECT_ID` flags), `PRIMARY KEY`, `SOURCE`, `LAYOUT`, `LIFETIME`, `RANGE`, `SETTINGS` and `COMMENT`. A dictionary has no source, layout or key by default, so the tag refuses one without them. Its attributes are columns: `${ratesDict.columns.rate}` is a reference like a table's column.
+
+The source names its table as strings (`TABLE 'rates' DB 'analytics'`), since the server takes no other form there, so it makes no dependency. A dictionary loads lazily, so it may be created before its source table.
+
+The server prints a dictionary back its own way: the source's and the layout's key words upper case, `LIFETIME(300)` as `LIFETIME(MIN 0 MAX 300)`, a `PASSWORD` as `'[HIDDEN]'`. A plan compares the declaration and the server's copy with these undone. A changed comment is metadata only (SQLCH203). Any other change is SQLCH245: the applier sends `CREATE OR REPLACE DICTIONARY`, and the dictionary loads again from its source. A prune drops a dictionary chant created before the tables it reads.
+
+A password written in the source is part of the declaration and of the build output. Use a named collection on the server instead (`SOURCE(CLICKHOUSE(NAME rates_source))`) to keep it out of the project.
+
+## Functions
+
+A SQL user-defined function is a lambda with a name. Declare it with the `func` tag:
+
+```ts
+import { func } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const linear = func`CREATE FUNCTION linear AS (x, k, b) -> k*x + b`;
+```
+
+A function belongs to no database, so its name is never qualified. A plan reads the functions the build declares and no others: a function made by hand is never listed or dropped. The server prints the expression its own way (`((k * x) + b)`), and a plan asks the server's formatter whether the two are the same expression. A changed expression is SQLCH260, sent as `CREATE OR REPLACE FUNCTION`.
+
+A function has no comment, so it cannot carry chant's ownership marker. Chant replaces a declared function when its declaration changes, and never drops one; drop a function the build no longer declares by hand. A function is not in any database, so a `Replicated` database's log does not carry it. In the `replicated` topology a function goes `ON CLUSTER` the topology's cluster, when one is named. With none, apply to each replica.
+
+## Kinds that are not declared
+
+The pinned server (26.8) has `CREATE` statements chant does not declare. A template, a `.sql` file or an import holding one fails with the kind's name and the reason, never as a parse error:
+
+| Statement | Why |
+|---|---|
+| `CREATE LIVE VIEW` | the pinned server no longer has live views; a refreshable materialized view replaces them |
+| `CREATE WINDOW VIEW` | experimental, and refused by the pinned server under its default query analyzer |
+| `CREATE TEMPORARY TABLE` | lives for one session, never in the catalog a plan reads |
+| `CREATE NAMED COLLECTION` | holds credentials, which are the environment's and never in a build; the server hides the values, so a plan could not compare them either |
+| `CREATE MASKING POLICY` | ClickHouse Cloud only |
+| `CREATE WORKLOAD`, `CREATE RESOURCE` | server-level scheduling, configured with the server |
+| `CREATE HANDLER` | server-level HTTP configuration |
+| `CREATE [UNIQUE \| HYPOTHETICAL] INDEX` | a skip index belongs to its table's column list; a hypothetical index is a session's what-if |
+| `CREATE TABLE ... AS <table>`, `AS SELECT`, `CLONE AS`, `EMPTY AS` | a one-off copy the server keeps no link to (see above) |
+
+## Interpolations
+
+What an interpolation means depends on its value:
+
+| Value | Means | Renders as |
+|---|---|---|
+| a `database`, `table` or `view` entity | a reference to that object | its name, database-qualified when the DDL qualifies it |
+| `entity.columns.<name>` | a reference to one column | the column's name |
+| a string | SQL text, spliced into the statement before it is parsed | itself |
+| a number, a bigint, a boolean, `null` | a literal | `42`, `true`, `NULL` |
+| `literal(value)` | a string literal | `'quoted and escaped'` |
+
+Any other value, such as an object, an array or `undefined`, fails the build with the template line it is on.
+
+### Columns go through `.columns`
+
+Columns are reached through `.columns`, and only there. The entity's own fields (`kind`, `lexicon`, `entityType`, `props`, `sqlName`, `dependsOn`) would otherwise collide with real column names. `${events.kind}` is the string `"resource"`, which the tag would splice in as SQL text, so SQLCH003 flags it in lint. `${events.user_id}` is `undefined`, and the tag refuses it with a message naming `.columns`. A misspelled column, `${events.columns.usr_id}`, is `undefined` too and refused at build; column names are not checked by the TypeScript compiler.
+
+### A string is SQL text
+
+A plain string is spliced into the statement as SQL, before the statement is parsed. That is what lets a composite or a shared constant supply a name, a type, an engine, a clause or an expression:
+
+```ts
+const engine = "ReplacingMergeTree(updated_at)";
+const days = 30;
+
+export const users = table`
+  CREATE TABLE ${analytics}.users (id UUID, plan String, updated_at DateTime)
+  ENGINE = ${engine}
+  ORDER BY id
+  TTL updated_at + INTERVAL ${days} DAY`;
+```
+
+A syntax error inside spliced text is reported against that interpolation. When a string is a value rather than SQL, say so with `literal()`: `DEFAULT ${literal(plan)}` writes `DEFAULT 'free'`, where `DEFAULT ${plan}` writes `DEFAULT free`, an expression naming a column called `free`. `literal()` folds as a call, so it can sit inside a template in a file that folds.
+
+### Escapes
+
+A template literal cannot hold a bare backquote or `${`. Write them as `` \` `` and `\${`; the tags undo both escapes before parsing, and so does lint.
+
+## What the build records
+
+References become dependency edges and, for a view, column lineage. See [References and Lineage](../references-and-lineage/).
+
+## Checks
+
+A clause chant's parser does not know yet, such as one a new server release adds, does not fail the build: the statement is kept and sent as written, the build warns naming the clause, and a plan classes a change to it as one to review (SQLCH290). [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls between such a clause and SQL that is wrong.
+
+Lint parses every template as you type: SQLCH001 reports a statement that does not parse at the token, SQLCH002 a `Nullable` column in a sort or primary key, and SQLCH003 a column written without `.columns`. The build then runs the post-synth checks, SQL101 and SQLCH101 to SQLCH127, against what the pinned server accepts. For each column that means its type's family, parameters and `Nullable` nesting, its codec's name and parameters, and the functions its `DEFAULT`, `MATERIALIZED`, `ALIAS`, `EPHEMERAL` and TTL expressions call; a column declared twice fails too. Column names inside those expressions are left to the server. [Lint Rules and Checks](../lint-rules/) lists each one.

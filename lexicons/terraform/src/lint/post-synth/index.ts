@@ -27,6 +27,23 @@ import { tf025 } from "./tf025";
 import { tf026 } from "./tf026";
 import { tf027 } from "./tf027";
 import { tf028 } from "./tf028";
+import { tf029 } from "./tf029";
+import { tf030 } from "./tf030";
+import { tf031 } from "./tf031";
+import { tf032 } from "./tf032";
+import { tf033 } from "./tf033";
+import { tf034 } from "./tf034";
+import { tf035 } from "./tf035";
+import { tf036 } from "./tf036";
+import { tf037 } from "./tf037";
+import { tf038 } from "./tf038";
+import { tf039 } from "./tf039";
+import { tf040 } from "./tf040";
+import { tf041 } from "./tf041";
+import { tf042 } from "./tf042";
+import { tf043 } from "./tf043";
+import { tf044 } from "./tf044";
+import { tf045 } from "./tf045";
 
 export const postSynthChecks: PostSynthCheck[] = [
   tf001,
@@ -56,4 +73,21 @@ export const postSynthChecks: PostSynthCheck[] = [
   tf026,
   tf027,
   tf028,
+  tf029,
+  tf030,
+  tf031,
+  tf032,
+  tf033,
+  tf034,
+  tf035,
+  tf036,
+  tf037,
+  tf038,
+  tf039,
+  tf040,
+  tf041,
+  tf042,
+  tf043,
+  tf044,
+  tf045,
 ];

@@ -1,0 +1,85 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the SQL lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The SQL lexicon provides **64** rules: 9 lint rules and 55 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `SQLCH001` | error | correctness | the DDL in a ClickHouse template (`database`, `table`, `view`, `dictionary`, `func`, `user`, `role`, `policy`, `grant`) does not parse, or holds another statement than its tag. |
+| `SQLCH002` | error | correctness | a `Nullable` column in a table's sort key or primary key. |
+| `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
+| `SQLCH004` | error | correctness | a typed ClickHouse tag whose type argument does not name the |
+| `SQLPG001` | error | correctness | the DDL in a Postgres template does not parse, or does not hold |
+| `SQLPG002` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
+| `SQLPG003` | warning | correctness | an object named in a string where Postgres reads a `regclass`: |
+| `SQLPG004` | error | correctness | a declared extension the configured provider does not allow. |
+| `SQLPG005` | error | correctness | a typed Postgres tag whose type argument does not name the object |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `SQL101` | Two exports declare the same object |
+| `SQL102` | sql-types.d.ts differs from what the build declares |
+| `SQLCH101` | A ClickHouse object names an engine the pinned server does not have |
+| `SQLCH102` | A PRIMARY KEY is not a prefix of ORDER BY |
+| `SQLCH103` | An engine's version, sign or is_deleted column has an unsupported type |
+| `SQLCH104` | A MergeTree engine argument names a column the table does not declare |
+| `SQLCH105` | A table key clause names a column the table does not declare |
+| `SQLCH106` | A skip index expression names a column the table does not declare |
+| `SQLCH107` | A TTL expression is built on a column that is not a Date or DateTime |
+| `SQLCH108` | CREATE OR REPLACE TABLE in a database that is not Atomic |
+| `SQLCH109` | A materialized view selects * |
+| `SQLCH110` | A materialized view writes a column its TO target does not declare |
+| `SQLCH111` | A String column limited to a few values is not LowCardinality |
+| `SQLCH112` | A PARTITION BY expression is finer than a day |
+| `SQLCH113` | A MergeTree table declares no sort key |
+| `SQLCH114` | A column codec is not one the pinned server has |
+| `SQLCH115` | A secret- or PII-named column carries no comment, TTL or encryption |
+| `SQLCH116` | A view is SQL SECURITY DEFINER with no DEFINER |
+| `SQLCH117` | A MergeTree setting is obsolete at the pinned server |
+| `SQLCH118` | A MergeTree setting is not one the pinned server has |
+| `SQLCH119` | An object uses a deprecated or experimental engine |
+| `SQLCH120` | A MergeTree engine uses the deprecated positional arguments |
+| `SQLCH121` | A column type names a family the pinned server does not have |
+| `SQLCH122` | A column type's parameters do not fit its family |
+| `SQLCH123` | A Nullable wraps a type ClickHouse does not allow inside Nullable |
+| `SQLCH124` | A table declares a column twice |
+| `SQLCH125` | A codec parameter is outside what the codec takes |
+| `SQLCH126` | A GRANT column list names a column the table does not declare |
+| `SQLCH127` | An expression calls a function the pinned server does not have |
+| `SQLPG101` | A table declares no primary key |
+| `SQLPG102` | A foreign key's referencing columns have no index |
+| `SQLPG103` | A serial column where an identity column is preferred |
+| `SQLPG104` | A timestamp column without time zone |
+| `SQLPG105` | A json column where jsonb fits |
+| `SQLPG106` | A char(n) column |
+| `SQLPG107` | A money column |
+| `SQLPG108` | A varchar(n) column with a habitual length limit |
+| `SQLPG109` | An index duplicates a constraint or another index |
+| `SQLPG110` | A btree index is a prefix of another index |
+| `SQLPG111` | A materialized view has no unique index, so it cannot refresh concurrently |
+| `SQLPG112` | A secret- or PII-named column with no comment on it or its table |
+| `SQLPG113` | An object is in the public schema though the project declares schemas |
+| `SQLPG114` | A storage parameter the object's kind or the target major does not accept |
+| `SQLPG115` | A feature newer than the target major |
+| `SQLPG116` | An extension the target major no longer ships |
+| `SQLPG117` | A view without security_invoker runs with its owner's privileges |
+| `SQLPG118` | A table uses INHERITS where declarative partitioning replaced it |
+| `SQLPG119` | A column, domain or sequence type the target major does not have |
+| `SQLPG120` | A type modifier that does not fit the type |
+| `SQLPG121` | An identity column whose type is not smallint, integer or bigint |
+| `SQLPG122` | A table declares a column twice, or an enum lists a label twice |
+| `SQLPG123` | A key, index or grant column list names a column the table does not declare |
+| `SQLPG124` | A foreign key names a column the referenced table lacks, or one of another type category |
+| `SQLPG125` | An index access method or operator class the target major does not have, or not for that method |
+| `SQLPG126` | An expression calls a function the target major does not have |

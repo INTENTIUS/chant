@@ -11,11 +11,13 @@
 
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
-import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
+import type { SerializeContext, Serializer, SerializerResult } from "@intentius/chant/serializer";
+import { mergeResourceAttributes, RELEASE_ATTRIBUTES_VARIABLE, telemetryEnvironment, type TelemetryAttribution } from "@intentius/chant/telemetry-attribution";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
+import { EXEC_FORM_STEPS, PER_KIND_ORDER, STEP_INSTRUCTIONS } from "./dockerfile-order";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -70,10 +72,15 @@ function preprocessIntrinsics(value: unknown): unknown {
 // ── Visitor ───────────────────────────────────────────────────────
 
 function dockerVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
+  const dockerfiles = new Set<string>();
+  for (const [entity, name] of entityNames) {
+    if ((entity as unknown as Record<string, unknown>).entityType === "Docker::Dockerfile") dockerfiles.add(name);
+  }
   return {
     attrRef: (name, _attr) => name,
-    // For Dockerfile references, emit the filename
-    resourceRef: (name) => `Dockerfile.${name}`,
+    // A Dockerfile reference is its filename. Any other entity (a config, a
+    // secret, a volume) is referenced by its key in the compose file.
+    resourceRef: (name) => (dockerfiles.has(name) ? `Dockerfile.${name}` : name),
     propertyDeclarable: (entity, walk) => {
       const props = getProps(entity);
       const result: Record<string, unknown> = {};
@@ -92,6 +99,59 @@ function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unkn
   return walkValue(preprocessed, entityNames, dockerVisitor(entityNames));
 }
 
+// ── Telemetry attribution (#2558, D22) ────────────────────────────
+
+/** The digest of an image reference pinned with `@sha256:...`, or undefined. */
+function imageDigest(image: unknown): string | undefined {
+  if (typeof image !== "string") return undefined;
+  const at = image.lastIndexOf("@");
+  return at === -1 ? undefined : image.slice(at + 1);
+}
+
+/** Compose's reference to the release attributes a deploy exports (#3061, ws-081), empty when unset. */
+const RELEASE_REF = `\${${RELEASE_ATTRIBUTES_VARIABLE}:-}`;
+
+/** A resource-attributes value that ends with the release reference, once. */
+function withReleaseRef(value: string): string {
+  return value.includes(RELEASE_REF) ? value : `${value}${RELEASE_REF}`;
+}
+
+/**
+ * Stamp one service's attributes as `OTEL_SERVICE_NAME` and
+ * `OTEL_RESOURCE_ATTRIBUTES` in its environment. A value the service already
+ * sets is kept: its own `OTEL_SERVICE_NAME` wins, and its own resource
+ * attributes keep their keys while the missing ones are appended.
+ *
+ * `OTEL_RESOURCE_ATTRIBUTES` ends with `${CHANT_RELEASE_ATTRIBUTES:-}`, which
+ * Compose fills from the environment of `docker compose up`: a release deploy
+ * exports `service.version` and `vcs.ref.head.revision` there (#3061,
+ * ws-081), and any other `up` leaves it empty, so this output does not change
+ * with a release.
+ */
+function stampTelemetry(service: Record<string, unknown>, name: string, telemetry: TelemetryAttribution): void {
+  const version = imageDigest(service.image);
+  const vars = telemetryEnvironment(telemetry, { service: name, decl: name, ...(version ? { version } : {}) });
+  const env = service.environment;
+  if (Array.isArray(env)) {
+    const entries = env.map(String);
+    const has = (key: string) => entries.findIndex((e) => e === key || e.startsWith(`${key}=`));
+    if (has("OTEL_SERVICE_NAME") === -1) entries.push(`OTEL_SERVICE_NAME=${vars.OTEL_SERVICE_NAME}`);
+    const at = has("OTEL_RESOURCE_ATTRIBUTES");
+    if (at === -1) entries.push(`OTEL_RESOURCE_ATTRIBUTES=${withReleaseRef(vars.OTEL_RESOURCE_ATTRIBUTES)}`);
+    else if (entries[at]!.includes("=")) {
+      entries[at] = `OTEL_RESOURCE_ATTRIBUTES=${withReleaseRef(mergeResourceAttributes(entries[at]!.slice(entries[at]!.indexOf("=") + 1), vars.OTEL_RESOURCE_ATTRIBUTES))}`;
+    }
+    service.environment = entries;
+    return;
+  }
+  const map: Record<string, unknown> = env && typeof env === "object" ? { ...(env as Record<string, unknown>) } : {};
+  if (!("OTEL_SERVICE_NAME" in map)) map.OTEL_SERVICE_NAME = vars.OTEL_SERVICE_NAME;
+  const own = map.OTEL_RESOURCE_ATTRIBUTES;
+  if (own === undefined) map.OTEL_RESOURCE_ATTRIBUTES = withReleaseRef(vars.OTEL_RESOURCE_ATTRIBUTES);
+  else if (typeof own === "string") map.OTEL_RESOURCE_ATTRIBUTES = withReleaseRef(mergeResourceAttributes(own, vars.OTEL_RESOURCE_ATTRIBUTES));
+  service.environment = map;
+}
+
 // ── Compose serialization ─────────────────────────────────────────
 
 function serializeCompose(
@@ -102,6 +162,7 @@ function serializeCompose(
   secrets: Map<string, Declarable>,
   defaultLabels: Record<string, string>,
   entityNames: Map<Declarable, string>,
+  telemetry?: TelemetryAttribution,
 ): string {
   const doc: Record<string, unknown> = {};
 
@@ -119,6 +180,7 @@ function serializeCompose(
       for (const [k, v] of Object.entries(props)) {
         if (v !== undefined && v !== null) cleaned[k] = v;
       }
+      if (telemetry) stampTelemetry(cleaned, name, telemetry);
       servicesSection[name] = cleaned;
     }
     doc.services = servicesSection;
@@ -189,13 +251,13 @@ function emitComposeDocument(doc: Record<string, unknown>): string {
   for (const key of ORDER) {
     if (key in doc && doc[key] !== undefined) {
       emitted.add(key);
-      sections.push(`${key}:` + emitYAML(doc[key], 1));
+      sections.push(emitYAMLEntry(key, doc[key]));
     }
   }
 
   for (const [key, value] of Object.entries(doc)) {
     if (!emitted.has(key) && value !== undefined) {
-      sections.push(`${key}:` + emitYAML(value, 1));
+      sections.push(emitYAMLEntry(key, value));
     }
   }
 
@@ -204,36 +266,55 @@ function emitComposeDocument(doc: Record<string, unknown>): string {
 
 // ── Dockerfile serialization ──────────────────────────────────────
 
-function serializeDockerfile(entity: Declarable): string {
+function serializeDockerfile(name: string, entity: Declarable): string {
   const props = getProps(entity);
   const lines: string[] = [];
 
+  // ARGs before the first FROM: global build args a FROM line can use.
+  if (props.globalArgs !== undefined && props.globalArgs !== null) {
+    if (!Array.isArray(props.globalArgs)) {
+      throw new Error(`Dockerfile.${name}: globalArgs must be a list of ARG values, like ["NODE_VERSION=20"]`);
+    }
+    for (const arg of props.globalArgs) lines.push(`ARG ${arg}`);
+  }
+
   // Multi-stage build via stages[]
   if (Array.isArray(props.stages) && props.stages.length > 0) {
-    for (const stage of props.stages as Array<Record<string, unknown>>) {
-      emitStage(stage, lines);
+    if (props.steps !== undefined) {
+      throw new Error(`Dockerfile.${name}: steps belongs on each stage when stages is set, not on the Dockerfile`);
     }
+    (props.stages as Array<Record<string, unknown>>).forEach((stage, i) => {
+      emitStage(stage, lines, `Dockerfile.${name} stage ${stage.as ? `"${stage.as}"` : i + 1}`);
+    });
     return lines.join("\n") + "\n";
   }
 
   // Single-stage build
-  emitStage(props, lines);
+  emitStage(props, lines, `Dockerfile.${name}`);
   return lines.join("\n") + "\n";
 }
 
-function emitStage(stage: Record<string, unknown>, lines: string[]): void {
+function emitStage(stage: Record<string, unknown>, lines: string[], where: string): void {
   // FROM must be first
   if (stage.from) {
     const as = stage.as ? ` AS ${stage.as}` : "";
     lines.push(`FROM ${stage.from}${as}`);
   }
 
-  const INSTRUCTION_ORDER = [
-    "arg", "env", "workdir", "user", "run", "copy", "add",
-    "expose", "volume", "label", "entrypoint", "cmd", "healthcheck",
-  ];
+  if (stage.steps !== undefined && stage.steps !== null) {
+    const perKind = PER_KIND_ORDER.filter((k) => stage[k] !== undefined && stage[k] !== null);
+    if (perKind.length > 0) {
+      throw new Error(
+        `${where}: steps can't be combined with the per-kind fields (${perKind.join(", ")}). Move them into steps, in the order they should run.`,
+      );
+    }
+    if (!Array.isArray(stage.steps)) throw new Error(`${where}: steps must be a list`);
+    stage.steps.forEach((step, i) => lines.push(emitStep(step, `${where} step ${i + 1}`)));
+    return;
+  }
 
-  for (const instr of INSTRUCTION_ORDER) {
+  // No steps: the per-kind fields, in the fixed order they have always had.
+  for (const instr of PER_KIND_ORDER) {
     const value = stage[instr];
     if (value === undefined || value === null) continue;
 
@@ -249,6 +330,33 @@ function emitStage(stage: Record<string, unknown>, lines: string[]): void {
   }
 }
 
+/** One step, `{ run: "npm ci" }`, as its Dockerfile line, `RUN npm ci`. */
+function emitStep(step: unknown, where: string): string {
+  if (typeof step !== "object" || step === null || Array.isArray(step)) {
+    throw new Error(`${where}: a step is an object naming one instruction, like { run: "npm ci" }`);
+  }
+  const keys = Object.keys(step).filter((k) => (step as Record<string, unknown>)[k] !== undefined);
+  if (keys.length !== 1) {
+    throw new Error(
+      `${where}: a step names exactly one instruction, found ${keys.length === 0 ? "none" : keys.join(", ")}. Split it into one step per instruction.`,
+    );
+  }
+  const key = keys[0]!;
+  if (!STEP_INSTRUCTIONS.has(key)) {
+    throw new Error(`${where}: "${key}" is not a Dockerfile instruction a step can name (FROM is the stage's from field)`);
+  }
+  const value = (step as Record<string, unknown>)[key];
+  const keyword = key.toUpperCase();
+  if (Array.isArray(value)) {
+    if (!EXEC_FORM_STEPS.has(key)) {
+      throw new Error(`${where}: ${keyword} takes a string; only RUN, CMD, ENTRYPOINT and SHELL take an exec-form array`);
+    }
+    return `${keyword} ${JSON.stringify(value.map(String))}`;
+  }
+  if (typeof value === "string" || typeof value === "number") return `${keyword} ${value}`;
+  throw new Error(`${where}: ${keyword} needs a string value`);
+}
+
 // ── Serializer ────────────────────────────────────────────────────
 
 export const dockerSerializer: Serializer = {
@@ -258,6 +366,7 @@ export const dockerSerializer: Serializer = {
   serialize(
     entities: Map<string, Declarable>,
     _outputs?: LexiconOutput[],
+    context?: SerializeContext,
   ): string | SerializerResult {
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
@@ -305,7 +414,7 @@ export const dockerSerializer: Serializer = {
 
     const composeYaml = serializeCompose(
       services, volumes, networks, configs, secrets,
-      defaultLabels, entityNames,
+      defaultLabels, entityNames, context?.telemetry,
     );
 
     if (dockerfiles.size === 0) {
@@ -314,7 +423,7 @@ export const dockerSerializer: Serializer = {
 
     const files: Record<string, string> = {};
     for (const [name, entity] of dockerfiles) {
-      files[`Dockerfile.${name}`] = serializeDockerfile(entity);
+      files[`Dockerfile.${name}`] = serializeDockerfile(name, entity);
     }
 
     return { primary: composeYaml, files };

@@ -27,11 +27,28 @@ import { fileURLToPath } from "node:url";
  */
 const SRC = fileURLToPath(new URL("../", import.meta.url));
 
+/**
+ * Run `read`, or return undefined when the path is gone. Other test files
+ * create and delete fixtures under src while this one walks it
+ * (lint/config.test.ts's `__test_config__`, chant#2870), so an entry listed a
+ * moment ago may no longer exist.
+ */
+function unlessGone<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+}
+
 /** Every TypeScript file under core's src, tests and fixtures included. */
 function sourceFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
+  return (unlessGone(() => readdirSync(dir)) ?? []).flatMap((entry) => {
     const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return entry === "node_modules" ? [] : sourceFiles(path);
+    const stat = unlessGone(() => statSync(path));
+    if (stat === undefined) return [];
+    if (stat.isDirectory()) return entry === "node_modules" ? [] : sourceFiles(path);
     return /\.(ts|mts|cts)$/.test(entry) ? [path] : [];
   });
 }
@@ -40,7 +57,8 @@ describe("source files are text, not binary (chant#2280)", () => {
   test("no shipped source file contains a NUL byte", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {
-      const buf = readFileSync(file);
+      const buf = unlessGone(() => readFileSync(file));
+      if (buf === undefined) continue;
       const at = buf.indexOf(0);
       if (at !== -1) offenders.push(`${relative(SRC, file)} (first at byte ${at})`);
     }

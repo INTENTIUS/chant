@@ -1,9 +1,11 @@
 import { describe, test, expect } from "vitest";
 import { eq, gt, run, report, when } from "../converge-rule";
-import type { ConvergeSymptom } from "../../lifecycle/symptoms";
+import { parseResourceObservation, type ConvergeSymptom, type ObservedResource, type ResourceSymptom } from "../../lifecycle/symptoms";
 import type { ConvergeTickRecord, ConvergeRuleOutcome } from "../../lifecycle/converge-ledger";
 import {
   planConvergeTick,
+  planResourceTick,
+  consecutiveResourceFires,
   verbClassAllowedToDispatch,
   enforceVerbClassAtDispatch,
   sanitizeOneLine,
@@ -352,5 +354,57 @@ describe("classifyDispatchFailure", () => {
     expect(classifyDispatchFailure("Error: op \"fountain-apply\" not found")).toBeUndefined();
     expect(classifyDispatchFailure("kubectl: connection refused")).toBeUndefined();
     expect(classifyDispatchFailure("")).toBeUndefined();
+  });
+});
+
+describe("planResourceTick — rules evaluated once per observed resource (#2778)", () => {
+  const restart = when<ResourceSymptom>(eq("status", "drifted"), run("restart-service"), { id: "restart-drifted", why: "Restart a drifted service." });
+  const unknownR = when<ResourceSymptom>(eq("status", "unknown"), report("not observed"), { id: "report-unknown", why: "unknown never remediates." });
+  const resources: ObservedResource[] = [
+    { name: "app", status: "drifted", detail: "stopped" },
+    { name: "hud", status: "in-sync" },
+    { name: "door", status: "drifted" },
+    { name: "site", status: "unknown", detail: "no health" },
+  ];
+
+  test("a fired run() is planned for each drifted resource, and names it", () => {
+    const plan = planResourceTick("box", resources, [restart, unknownR], [], "box-converge", "apply", 3);
+    expect(plan.firedRuleIds).toEqual(["restart-drifted", "report-unknown"]);
+    expect(plan.outcomes).toEqual([
+      { ruleId: "restart-drifted", resource: "app", action: "ran", op: "restart-service" },
+      { ruleId: "restart-drifted", resource: "door", action: "ran", op: "restart-service" },
+      { ruleId: "report-unknown", resource: "site", action: "reported", reason: "not observed" },
+    ]);
+  });
+
+  test("unknown never remediates, the dial and the budget hold per tick", () => {
+    const anyStatus = when<ResourceSymptom>(eq("env", "box"), run("restart-service"), { id: "restart-all", why: "x" });
+    const plan = planResourceTick("box", [{ name: "site", status: "unknown" }], [anyStatus], [], "box-converge", "apply", 3);
+    expect(plan.outcomes[0]).toMatchObject({ action: "reported", resource: "site", reason: expect.stringMatching(/unknown never remediates/) });
+    expect(planResourceTick("box", resources, [restart], [], "box-converge", "observe", 3).outcomes.map((o) => o.action)).toEqual(["reported", "reported"]);
+    expect(planResourceTick("box", resources, [restart], [], "box-converge", "apply", 1).outcomes.map((o) => o.action)).toEqual(["ran", "skipped-budget"]);
+  });
+
+  test("flap damping counts one rule's fires for one resource, on this op's ticks", () => {
+    const fired = (resource: string, op = "box-converge") =>
+      tick({ op, firedRuleIds: ["restart-drifted"], outcomes: [{ ruleId: "restart-drifted", action: "ran", op: "restart-service", resource }] });
+    const prior = [fired("app"), fired("app"), fired("hud", "other-converge"), fired("app")];
+    expect(consecutiveResourceFires(prior, "box-converge", "restart-drifted", "app")).toBe(3);
+    expect(consecutiveResourceFires(prior, "box-converge", "restart-drifted", "door")).toBe(0);
+    const plan = planResourceTick("box", resources, [restart], prior, "box-converge", "apply", 3);
+    expect(plan.outcomes.map((o) => [o.resource, o.action])).toEqual([["app", "skipped-flap"], ["door", "ran"]]);
+  });
+});
+
+describe("parseResourceObservation (#2778)", () => {
+  test("reads an observation, or a shell result that prints one, and refuses anything else", () => {
+    const observation = { resources: [{ name: "app", status: "drifted", detail: "stopped" }] };
+    expect(parseResourceObservation(observation)).toEqual(observation);
+    expect(parseResourceObservation({ stdout: JSON.stringify(observation), stderr: "", exitCode: 0 })).toEqual(observation);
+    expect(() => parseResourceObservation({ stdout: "nope", stderr: "", exitCode: 0 })).toThrow(/not JSON/);
+    expect(() => parseResourceObservation({})).toThrow(/no `resources` array/);
+    expect(() => parseResourceObservation({ resources: [{ name: "app", status: "down" }] })).toThrow(/in-sync, drifted or unknown/);
+    expect(() => parseResourceObservation({ resources: [{ status: "drifted" }] })).toThrow(/has no name/);
+    expect(() => parseResourceObservation({ resources: [{ name: "a", status: "drifted" }, { name: "a", status: "in-sync" }] })).toThrow(/twice/);
   });
 });

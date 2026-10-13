@@ -19,11 +19,13 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
-import { isAttrRefLike, getLogicalName } from "@intentius/chant/utils";
+import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
-import { isCondition } from "./condition";
+import { conditionName, isCondition } from "./condition";
+import { isMapping } from "./mapping";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { isTemplateTransform } from "./template-transform";
+import { isTemplateSection } from "./template-sections";
 import { loadTaggableResources } from "./taggable";
 
 /**
@@ -42,6 +44,7 @@ interface CFTemplate {
   Metadata?: Record<string, unknown>;
   Transform?: string | string[];
   Parameters?: Record<string, CFParameter>;
+  Mappings?: Record<string, unknown>;
   Conditions?: Record<string, unknown>;
   Resources: Record<string, CFResource>;
   Outputs?: Record<string, CFOutput>;
@@ -57,12 +60,24 @@ interface CFParameter {
   AllowedValues?: unknown[];
   AllowedPattern?: string;
   ConstraintDescription?: string;
-  MaxLength?: number;
-  MaxValue?: number;
-  MinLength?: number;
-  MinValue?: number;
-  NoEcho?: boolean;
+  MaxLength?: number | string;
+  MaxValue?: number | string;
+  MinLength?: number | string;
+  MinValue?: number | string;
+  NoEcho?: boolean | string;
 }
+
+/** Parameter constraint options and the CloudFormation keys they emit as. */
+const PARAMETER_CONSTRAINT_KEYS = [
+  ["allowedValues", "AllowedValues"],
+  ["allowedPattern", "AllowedPattern"],
+  ["constraintDescription", "ConstraintDescription"],
+  ["minLength", "MinLength"],
+  ["maxLength", "MaxLength"],
+  ["minValue", "MinValue"],
+  ["maxValue", "MaxValue"],
+  ["noEcho", "NoEcho"],
+] as const;
 
 /**
  * CloudFormation resource
@@ -314,6 +329,22 @@ function serializeToTemplate(
     template.Transform = transforms;
   }
 
+  // Template-level Description and Metadata declarations. Declared Metadata
+  // keys come first; the ownership marker and receipt rows written above are
+  // chant's own and win on a key collision.
+  const declaredMetadata: Record<string, unknown> = {};
+  for (const [, entity] of entities) {
+    if (!isTemplateSection(entity)) continue;
+    if (entity.section === "Description") {
+      template.Description = entity.value as string;
+    } else {
+      Object.assign(declaredMetadata, toCFValue(entity.value, entityNames) as Record<string, unknown>);
+    }
+  }
+  if (Object.keys(declaredMetadata).length > 0) {
+    template.Metadata = { ...declaredMetadata, ...(template.Metadata ?? {}) };
+  }
+
   // Process entities
   for (const [name, entity] of entities) {
     // Skip StackOutput entities — they go in the Outputs section
@@ -327,7 +358,7 @@ function serializeToTemplate(
     }
 
     // Skip TemplateTransform entities — lifted to the top-level Transform above
-    if (isTemplateTransform(entity)) {
+    if (isTemplateTransform(entity) || isTemplateSection(entity)) {
       continue;
     }
 
@@ -348,14 +379,27 @@ function serializeToTemplate(
         param.Default = entity.defaultValue;
       }
 
+      const constraints = (entity as { constraints?: Record<string, unknown> }).constraints;
+      if (constraints) {
+        for (const [option, key] of PARAMETER_CONSTRAINT_KEYS) {
+          if (constraints[option] !== undefined) (param as unknown as Record<string, unknown>)[key] = constraints[option];
+        }
+      }
+
       template.Parameters[name] = param;
+    } else if (isMapping(entity)) {
+      // Mapping declarable -> Mappings section, read with FindInMap.
+      if (!template.Mappings) {
+        template.Mappings = {};
+      }
+      template.Mappings[entity.name ?? name] = toCFValue(entity.map, entityNames);
     } else if (isCondition(entity)) {
       // Condition declarable → Conditions section (#2068), lifted the way
       // Parameter is lifted into Parameters above.
       if (!template.Conditions) {
         template.Conditions = {};
       }
-      template.Conditions[name] = toCFValue(entity.expression, entityNames);
+      template.Conditions[entity.name ?? name] = toCFValue(entity.expression, entityNames);
     } else if (isChildProject(entity)) {
       // ChildProjectInstance → AWS::CloudFormation::Stack resource
       const childProject = entity as ChildProjectInstance;
@@ -409,7 +453,7 @@ function serializeToTemplate(
         // as well as a name string (#2068).
         if (attrs.Condition) {
           resource.Condition = isCondition(attrs.Condition)
-            ? entityNames.get(attrs.Condition) ?? getLogicalName(attrs.Condition)
+            ? conditionName(attrs.Condition, entityNames)
             : attrs.Condition as string;
         }
         if (attrs.DeletionPolicy) resource.DeletionPolicy = attrs.DeletionPolicy as string;
@@ -489,10 +533,11 @@ function serializeToTemplate(
       const condition = (stackOutput as { condition?: unknown }).condition;
       if (condition) {
         output.Condition = isCondition(condition)
-          ? entityNames.get(condition) ?? getLogicalName(condition)
+          ? conditionName(condition, entityNames)
           : condition as string;
       }
-      template.Outputs[name] = output;
+      // Read defensively, like exportName: the name option postdates older cores.
+      template.Outputs[(stackOutput as { name?: string }).name ?? name] = output;
     }
   }
 
@@ -515,7 +560,29 @@ function serializeToTemplate(
     template.Outputs = { ...template.Outputs, ...extraOutputs };
   }
 
+  refuseImportEnvelopes(template);
   return template;
+}
+
+/**
+ * Throw on an import IR envelope (`{ "__intrinsic": "FindInMap", ... }`) in
+ * the synthesized template. It is not CloudFormation, and a build that wrote
+ * one used to exit 0 with a template CloudFormation rejects.
+ */
+function refuseImportEnvelopes(value: unknown, path: string[] = []): void {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => refuseImportEnvelopes(item, [...path, String(i)]));
+    return;
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.__intrinsic === "string") {
+    throw new Error(
+      `${path.join(".")}: { __intrinsic: "${obj.__intrinsic}" } is an import envelope, not CloudFormation; ` +
+        `write the ${obj.__intrinsic} intrinsic instead`,
+    );
+  }
+  for (const [key, v] of Object.entries(obj)) refuseImportEnvelopes(v, [...path, key]);
 }
 
 /**

@@ -345,16 +345,55 @@ The test suite is designed to run in continuous integration:
 - Deterministic results with automatic cleanup
 - Exit code 0 on success, non-zero on failure
 
-Example CI configuration:
+### Unit and end-to-end tests
 
-```yaml
-# GitHub Actions example
-- name: Run tests
-  run: npx vitest run
+`vitest.config.ts` defines two projects (#2817):
 
-- name: Generate coverage
-  run: npx vitest run --coverage --coverage-reporter=lcov
+- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 5 second budget (#3793; 15 before), set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
+- `e2e`: every `*.e2e.test.ts` under `packages/`, `lexicons/` and `test/`, and the corpus walkers in `examples/*.e2e.test.ts`. These spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects. They have no budget beyond their own timeouts.
+
+```bash
+npx vitest run                    # both projects
+npx vitest run --project unit     # the unit tests only
+npx vitest run --project e2e      # the end-to-end tests only
+CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run path/to/file.test.ts   # no budget, for a debugger
 ```
+
+A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it. The 5 second budget comes from CI runs (#3793): in three runs every test left in the unit project took under 2 seconds on a loaded 4-core runner, and in the next runs some of those reached 3.7 seconds when a worker loaded a large module cold. 5 seconds leaves 2.5x headroom over the slowest typical time.
+
+### What runs when
+
+Every pull request gets the fast checks and nothing else. The end-to-end project runs on `main` before a release can tag a commit. The other large suites run only when a person starts them.
+
+`.github/workflows/chant.yml` runs on every pull request and on every push to main:
+
+| Job | What it runs |
+|---|---|
+| `lexicon-artifacts` | each lexicon's `generate` and `bundle`, once, cached under a hash of their inputs |
+| `check` | typechecks, the boundary guards, lint, depcheck, and the example build, local Op run and supply-chain guards (seconds each) |
+| `test-shard (1/4)` to `(4/4)` | `npx vitest run --project unit --shard=N/4` |
+| `test` | passes only when all four shards passed |
+| `trust` | `chant workspace verify` against the base branch (pull requests only) |
+| `validate` | each lexicon's `validate` and `build` with the release gate armed, then the lexicon completeness contract |
+
+Branch protection requires `check`, `test` and `validate`. The `test` job is how the shards become required.
+
+`lexicon-artifacts` builds what the unit tests and typechecks read with `scripts/ci-lexicon-artifacts.sh --steps generate,bundle`: each lexicon's `generate` one at a time, then every `bundle` with one lexicon per CPU. It caches `lexicons/*/src/generated` and `lexicons/*/dist` under a hash of the lexicon sources, core's source, the lockfile and the script, and skips the build when a cache with that key exists. `check`, the shards and `validate` restore that cache instead of building it again. The shards keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
+
+`.github/workflows/release-suites.yml` runs the e2e project in three shards on `main` every three hours, and when a person starts it. Its `suites` job is a required phase of `ci.green` in `chant.workspace.json`, beside `check`, `test` and `validate`, so `chant ci tick` tags a commit `ci/green/<sha>` only when the long suites passed on it, and `just release` tags the newest such commit. Start the workflow by hand to make main's head releasable without waiting for the schedule.
+
+Locally the same fast gate is `just check`: the core typecheck, lint, `just test` (the unit project) and the lexicon contract. A change merges on it.
+
+### Large suites
+
+`just test-e2e` runs the e2e project locally. The suites below gate nothing and run only when a person starts them. On GitHub each is a `workflow_dispatch` workflow with no push, pull request or schedule trigger:
+
+| Workflow | Jobs |
+|---|---|
+| `large-suites.yml` | `test-binaries` (the tests against real otelcol-contrib, promtool, amtool and tofu), `smoke-npm` (the npm tarball Docker smoke). Pick one or `all` when you start it. |
+| `helm-survey.yml` | the pinnability survey over the upstream chart corpus |
+
+Locally the `just` targets for the large suites start with `scripts/human-gate.sh`: `test-e2e`, `smoke`, `smoke-workspace`, `smoke-npm`, `smoke-build-examples`, `smoke-npm-registry`, `smoke-sql-registry`, `helm-survey`, `bench`, `leftness-capture`, `testing-harness-e2e` and every runtime and cloud `*-e2e` target. At a terminal it asks you to type `run`. Without a terminal on stdin and stdout, which covers scripts, pipes and coding agents, it prints a STOP message and exits 3. A coding agent that hits it does not run the suite, does not work around the gate and does not wait for anyone to run it; it merges on the fast gates and goes on. The gate lets a GitHub Actions run through (`GITHUB_ACTIONS=true` with `GITHUB_RUN_ID` set), so a dispatched workflow can call the same targets.
 
 ## Smoke Tests (Docker)
 
@@ -461,10 +500,10 @@ How confident can we be that published npm packages actually work for end users?
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
-| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). Publish workflow runs `prepack` + `npx vitest run` as a gate. Run `just smoke` locally before releases. |
+| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). The publish workflow checks that the released commit's `chant` run passed (`scripts/publish-verify-ci.sh`), and each package's `npm pack` in the publish step re-runs its `prepack`. Run `just smoke` locally before releases. |
 | `integrity.json` never verified at runtime | Low | `verifyIntegrity()` exists in `lexicon-integrity.ts` but `loadPlugin()` in `cli/plugins.ts` doesn't call it. Defense-in-depth, not a correctness issue. |
 | Lexicon tarballs include entire `src/` | Low | Ships codegen scripts, fetch utilities, and test files. Bloats tarballs but doesn't break anything. Could narrow `"files"` in package.json. |
-| Sequential publish — partial failure risk | Low | If npm goes down mid-publish, some packages may be at different versions. `scripts/publish-packages.sh` skips any package already at its version, so re-running the workflow republishes only the stragglers. (There is no `--tolerate-republish` flag; that was never implemented.) |
+| Partly visible release | Low | By default `scripts/publish-packages.sh` publishes to `latest` in dependency layers and waits for each layer's metadata before the next, so a range consumer installing mid-release can get a mix of new and old packages for 10 to 30 minutes. Re-running the workflow skips any package already at its version, so it republishes only the stragglers. Staged publishing closes most of that window, and is off unless the repository variable `CHANT_STAGED_PUBLISH` is `1` (#3903). Staged, the script publishes every package under the `next` dist-tag, waits until each version's metadata lists it and its tarball answers 200, and only then moves `latest`: core and k8s-client first, then the lexicons, then the lexicons that peer on another lexicon. npm, pnpm, bun and yarn all install the `latest`-tagged version when it satisfies the range, so a staged package is invisible to range consumers. A failure before the tag move leaves `latest` on the previous release, and a re-run only moves the tags. Moving tags over OIDC needs "Allow npm dist-tag" on each package's trusted-publisher record, so set the variable after #3904. `DRY_RUN=plan` prints what either mode would do. |
 
 ## Troubleshooting
 

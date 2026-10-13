@@ -23,8 +23,17 @@ okf_version: '0.2'
 * [DKRD003](/rules/DKRD003.md) - Service exposes SSH port (22) externally — this is a security risk
 * [DKRD010](/rules/DKRD010.md) - apt-get install without --no-install-recommends adds unnecessary packages
 * [DKRD011](/rules/DKRD011.md) - Prefer COPY over ADD when not fetching URLs or extracting archives
-* [DKRD012](/rules/DKRD012.md) - Dockerfile has no USER instruction — container runs as root
+* [DKRD012](/rules/DKRD012.md) - Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
+* [DKRD013](/rules/DKRD013.md) - Whole build context copied before a dependency install — every source change re-runs the install
+* [DKRD014](/rules/DKRD014.md) - RUN needs root but comes after USER switched to a non-root user
+* [DKRD015](/rules/DKRD015.md) - More than one CMD or ENTRYPOINT in a stage — only the last one takes effect
+* [DKRD016](/rules/DKRD016.md) - COPY --from names a stage that is not defined before it
+* [DKRD017](/rules/DKRD017.md) - ARG before the first FROM is not used by any FROM or stage
+* [DKRD018](/rules/DKRD018.md) - Relative WORKDIR before any absolute WORKDIR in the stage
+* [DKRD019](/rules/DKRD019.md) - ADD fetches a remote URL without --checksum
+* [DKRD020](/rules/DKRD020.md) - apt-get update in a different RUN from apt-get install — the install can use a stale package index
 * [DKRS001](/rules/DKRS001.md) - No Latest Tag
+* [DKRS002](/rules/DKRS002.md) - Per-kind Dockerfile fields written in a different order
 ",
     "path": "index.md",
   },
@@ -119,20 +128,140 @@ Prefer COPY over ADD when not fetching URLs or extracting archives
     "content": "---
 type: post-synth-check
 title: DKRD012
-description: Dockerfile has no USER instruction — container runs as root
+description: Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
 id: DKRD012
 severity: error
 category: post-synth
 lexicon: docker
 docs: https://intentius.io/chant/lexicons/docker/rules/
 ---
-Dockerfile has no USER instruction — container runs as root
+Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
 
 ## Applies to
 
 - [Dockerfile](/types/Dockerfile.md)
 ",
     "path": "rules/DKRD012.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD013
+description: Whole build context copied before a dependency install — every source change re-runs the install
+id: DKRD013
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Whole build context copied before a dependency install — every source change re-runs the install
+",
+    "path": "rules/DKRD013.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD014
+description: RUN needs root but comes after USER switched to a non-root user
+id: DKRD014
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+RUN needs root but comes after USER switched to a non-root user
+",
+    "path": "rules/DKRD014.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD015
+description: More than one CMD or ENTRYPOINT in a stage — only the last one takes effect
+id: DKRD015
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+More than one CMD or ENTRYPOINT in a stage — only the last one takes effect
+",
+    "path": "rules/DKRD015.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD016
+description: COPY --from names a stage that is not defined before it
+id: DKRD016
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+COPY --from names a stage that is not defined before it
+",
+    "path": "rules/DKRD016.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD017
+description: ARG before the first FROM is not used by any FROM or stage
+id: DKRD017
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+ARG before the first FROM is not used by any FROM or stage
+",
+    "path": "rules/DKRD017.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD018
+description: Relative WORKDIR before any absolute WORKDIR in the stage
+id: DKRD018
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Relative WORKDIR before any absolute WORKDIR in the stage
+",
+    "path": "rules/DKRD018.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD019
+description: ADD fetches a remote URL without --checksum
+id: DKRD019
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+ADD fetches a remote URL without --checksum
+",
+    "path": "rules/DKRD019.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD020
+description: apt-get update in a different RUN from apt-get install — the install can use a stale package index
+id: DKRD020
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+apt-get update in a different RUN from apt-get install — the install can use a stale package index
+",
+    "path": "rules/DKRD020.md",
   },
   {
     "content": "---
@@ -155,6 +284,25 @@ No Latest Tag
   },
   {
     "content": "---
+type: lint-rule
+title: DKRS002
+description: Per-kind Dockerfile fields written in a different order
+id: DKRS002
+severity: warning
+category: correctness
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+Per-kind Dockerfile fields written in a different order
+
+## Applies to
+
+- [Dockerfile](/types/Dockerfile.md)
+",
+    "path": "rules/DKRS002.md",
+  },
+  {
+    "content": "---
 type: resource-type
 title: DockerConfig
 description: A config definition in Docker Compose
@@ -166,10 +314,13 @@ A config definition in Docker Compose
 
 ## Properties
 
-- \`file\` (\`string\`): Path to the config file
-- \`external\` (\`boolean\`): Whether the config is external
-- \`labels\` (\`Record<string, string>\`): Config labels
-- \`name\` (\`string\`): Custom config name
+- \`name\` (\`ComposeString\`): Custom name for this config.
+- \`content\` (\`ComposeString\`): Inline content of the config.
+- \`environment\` (\`ComposeString\`): Name of an environment variable from which to get the config value.
+- \`file\` (\`ComposeString\`): Path to a file containing the config value.
+- \`external\` (\`boolean | ComposeString | { name?: ComposeString }\`): Specifies that this config already exists and was created outside of Compose.
+- \`labels\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Add metadata to the config using labels.
+- \`template_driver\` (\`ComposeString\`): Driver to use for templating the config's value.
 ",
     "path": "types/DockerConfig.md",
   },
@@ -200,10 +351,13 @@ A Dockerfile definition with ordered build instructions
 - \`entrypoint\`: Set the entrypoint executable
 - \`cmd\`: Default command arguments
 - \`healthcheck\`: Health check instruction
+- \`globalArgs\`: ARG instructions written before the first FROM
+- \`steps\`: Instructions after FROM, written in the order given; one instruction per step
 
 ## Governed by
 
-- [DKRD012](/rules/DKRD012.md): Dockerfile has no USER instruction — container runs as root
+- [DKRD012](/rules/DKRD012.md): Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root
+- [DKRS002](/rules/DKRS002.md): Per-kind Dockerfile fields written in a different order
 ",
     "path": "types/Dockerfile.md",
   },
@@ -220,10 +374,14 @@ A secret definition in Docker Compose
 
 ## Properties
 
-- \`file\` (\`string\`): Path to the secret file
-- \`external\` (\`boolean\`): Whether the secret is external
-- \`labels\` (\`Record<string, string>\`): Secret labels
-- \`name\` (\`string\`): Custom secret name
+- \`name\` (\`ComposeString\`): Custom name for this secret.
+- \`environment\` (\`ComposeString\`): Name of an environment variable from which to get the secret value.
+- \`file\` (\`ComposeString\`): Path to a file containing the secret value.
+- \`external\` (\`boolean | ComposeString | { name?: ComposeString }\`): Specifies that this secret already exists and was created outside of Compose.
+- \`labels\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Add metadata to the secret using labels.
+- \`driver\` (\`ComposeString\`): Specify which secret driver should be used for this secret.
+- \`driver_opts\` (\`Record<string, ComposeString | number>\`): Specify driver-specific options.
+- \`template_driver\` (\`ComposeString\`): Driver to use for templating the secret's value.
 ",
     "path": "types/DockerSecret.md",
   },
@@ -240,12 +398,16 @@ A network definition in Docker Compose
 
 ## Properties
 
-- \`driver\` (\`string\`): Network driver
-- \`driver_opts\` (\`Record<string, string>\`): Driver options
-- \`external\` (\`boolean\`): Whether the network is external
-- \`labels\` (\`Record<string, string>\`): Network labels
-- \`internal\` (\`boolean\`): Restrict external access
-- \`ipam\` (\`object\`): IP address management
+- \`name\` (\`ComposeString\`): Custom name for this network.
+- \`driver\` (\`ComposeString\`): Specify which driver should be used for this network. Default is 'bridge'.
+- \`driver_opts\` (\`Record<string, ComposeString | number>\`): Specify driver-specific options defined as key/value pairs.
+- \`ipam\` (\`{ driver?: ComposeString; config?: Array<{ subnet?: ComposeString; ip_range?: ComposeString; gateway?: ComposeString; aux_addresses?: Record<string, ComposeString>; [key: \`x-\${string}\`]: unknown }>; options?: Record<string, ComposeString>; [key: \`x-\${string}\`]: unknown }\`): Custom IP Address Management configuration for this network.
+- \`external\` (\`boolean | ComposeString | { name?: ComposeString; [key: \`x-\${string}\`]: unknown }\`): Specifies that this network already exists and was created outside of Compose.
+- \`internal\` (\`boolean | ComposeString\`): Create an externally isolated network.
+- \`enable_ipv4\` (\`boolean | ComposeString\`): Enable IPv4 networking.
+- \`enable_ipv6\` (\`boolean | ComposeString\`): Enable IPv6 networking.
+- \`attachable\` (\`boolean | ComposeString\`): If true, standalone containers can attach to this network.
+- \`labels\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Add metadata to the network using labels.
 ",
     "path": "types/Network.md",
   },
@@ -262,21 +424,99 @@ A containerized service definition in Docker Compose
 
 ## Properties
 
-- \`image\` (\`string\`): Container image to use
-- \`build\` (\`object\`): Build configuration
-- \`command\` (\`string | string[]\`): Override the default command
-- \`entrypoint\` (\`string | string[]\`): Override the default entrypoint
-- \`environment\` (\`Record<string, string>\`): Environment variables
-- \`ports\` (\`string[]\`): Published ports
-- \`volumes\` (\`string[]\`): Volume mounts
-- \`networks\` (\`string[]\`): Networks to attach
-- \`depends_on\` (\`string[] | Record<string, { condition: "service_started" | "service_healthy" | "service_completed_successfully"; restart?: boolean; required?: boolean }>\`): Service dependencies (short list-form, or long form with a wait condition)
-- \`restart\` (\`string\`): Restart policy
-- \`labels\` (\`Record<string, string>\`): Container labels
-- \`healthcheck\` (\`object\`): Health check configuration
-- \`deploy\` (\`object\`): Swarm deployment configuration
-- \`secrets\` (\`string[]\`): Secrets to expose
-- \`configs\` (\`string[]\`): Configs to expose
+- \`develop\` (\`{ watch?: Array<{ ignore?: ComposeString | Array<ComposeString>; include?: ComposeString | Array<ComposeString>; path: ComposeString; action: "rebuild" | "sync" | "restart" | "sync+restart" | "sync+exec"; target?: ComposeString; exec?: { command: null | ComposeString | Array<ComposeString>; user?: ComposeString; privileged?: boolean | ComposeString; working_dir?: ComposeString; environment?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; [key: \`x-\${string}\`]: unknown }; initial_sync?: boolean; [key: \`x-\${string}\`]: unknown }>; [key: \`x-\${string}\`]: unknown } | null\`)
+- \`deploy\` (\`{ mode?: ComposeString; endpoint_mode?: ComposeString; replicas?: number | ComposeString; labels?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; rollback_config?: { parallelism?: number | ComposeString; delay?: ComposeString; failure_action?: ComposeString; monitor?: ComposeString; max_failure_ratio?: number | ComposeString; order?: "start-first" | "stop-first"; [key: \`x-\${string}\`]: unknown }; update_config?: { parallelism?: number | ComposeString; delay?: ComposeString; failure_action?: ComposeString; monitor?: ComposeString; max_failure_ratio?: number | ComposeString; order?: "start-first" | "stop-first"; [key: \`x-\${string}\`]: unknown }; resources?: { limits?: { cpus?: number | ComposeString; memory?: ComposeString; pids?: number | ComposeString; [key: \`x-\${string}\`]: unknown }; reservations?: { cpus?: number | ComposeString; memory?: ComposeString; generic_resources?: Array<{ discrete_resource_spec?: { kind?: ComposeString; value?: number | ComposeString; [key: \`x-\${string}\`]: unknown }; [key: \`x-\${string}\`]: unknown }>; devices?: Array<{ capabilities: Array<ComposeString>; count?: ComposeString | number; device_ids?: Array<ComposeString>; driver?: ComposeString; options?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; [key: \`x-\${string}\`]: unknown }>; [key: \`x-\${string}\`]: unknown }; [key: \`x-\${string}\`]: unknown }; restart_policy?: { condition?: ComposeString; delay?: ComposeString; max_attempts?: number | ComposeString; window?: ComposeString; [key: \`x-\${string}\`]: unknown }; placement?: { constraints?: Array<ComposeString>; preferences?: Array<{ spread?: ComposeString; [key: \`x-\${string}\`]: unknown }>; max_replicas_per_node?: number | ComposeString; [key: \`x-\${string}\`]: unknown }; [key: \`x-\${string}\`]: unknown } | null\`)
+- \`annotations\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`)
+- \`attach\` (\`boolean | ComposeString\`)
+- \`build\` (\`ComposeString | { context?: ComposeString; dockerfile?: ComposeString; dockerfile_inline?: ComposeString; entitlements?: Array<ComposeString>; args?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; ssh?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; labels?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; cache_from?: Array<ComposeString>; cache_to?: Array<ComposeString>; no_cache?: boolean | ComposeString; no_cache_filter?: ComposeString | Array<ComposeString>; additional_contexts?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; network?: ComposeString; provenance?: ComposeString | boolean; sbom?: ComposeString | boolean; pull?: boolean | ComposeString; target?: ComposeString; shm_size?: number | ComposeString; extra_hosts?: Record<string, ComposeString | Array<ComposeString>> | Array<ComposeString>; isolation?: ComposeString; privileged?: boolean | ComposeString; secrets?: Array<ComposeString | { source?: ComposeString; target?: ComposeString; uid?: ComposeString; gid?: ComposeString; mode?: number | ComposeString; [key: \`x-\${string}\`]: unknown }>; tags?: Array<ComposeString>; ulimits?: Record<string, number | ComposeString | { hard: number | ComposeString; soft: number | ComposeString; [key: \`x-\${string}\`]: unknown }>; platforms?: Array<ComposeString>; [key: \`x-\${string}\`]: unknown }\`): Configuration options for building the service's image.
+- \`blkio_config\` (\`{ device_read_bps?: Array<{ path?: ComposeString; rate?: number | ComposeString }>; device_read_iops?: Array<{ path?: ComposeString; rate?: number | ComposeString }>; device_write_bps?: Array<{ path?: ComposeString; rate?: number | ComposeString }>; device_write_iops?: Array<{ path?: ComposeString; rate?: number | ComposeString }>; weight?: number | ComposeString; weight_device?: Array<{ path?: ComposeString; weight?: number | ComposeString }> }\`): Block IO configuration for the service.
+- \`cap_add\` (\`Array<ComposeString>\`): Add Linux capabilities. For example, 'CAP_SYS_ADMIN', 'SYS_ADMIN', or 'NET_ADMIN'.
+- \`cap_drop\` (\`Array<ComposeString>\`): Drop Linux capabilities. For example, 'CAP_SYS_ADMIN', 'SYS_ADMIN', or 'NET_ADMIN'.
+- \`cgroup\` (\`"host" | "private"\`): Specify the cgroup namespace to join. Use 'host' to use the host's cgroup namespace, or 'private' to use a private cgroup namespace.
+- \`cgroup_parent\` (\`ComposeString\`): Specify an optional parent cgroup for the container.
+- \`command\` (\`null | ComposeString | Array<ComposeString>\`): Override the default command declared by the container image, for example 'CMD' in Dockerfile.
+- \`configs\` (\`Array<ComposeString | { source?: ComposeString; target?: ComposeString; uid?: ComposeString; gid?: ComposeString; mode?: number | ComposeString; [key: \`x-\${string}\`]: unknown }>\`): Grant access to Configs on a per-service basis.
+- \`container_name\` (\`ComposeString\`): Specify a custom container name, rather than a generated default name.
+- \`cpu_count\` (\`ComposeString | number\`): Number of usable CPUs.
+- \`cpu_percent\` (\`ComposeString | number\`): Percentage of CPU resources to use.
+- \`cpu_shares\` (\`number | ComposeString\`): CPU shares (relative weight) for the container.
+- \`cpu_quota\` (\`number | ComposeString\`): Limit the CPU CFS (Completely Fair Scheduler) quota.
+- \`cpu_period\` (\`number | ComposeString\`): Limit the CPU CFS (Completely Fair Scheduler) period.
+- \`cpu_rt_period\` (\`number | ComposeString\`): Limit the CPU real-time period in microseconds or a duration.
+- \`cpu_rt_runtime\` (\`number | ComposeString\`): Limit the CPU real-time runtime in microseconds or a duration.
+- \`cpus\` (\`number | ComposeString\`): Number of CPUs to use. A floating-point value is supported to request partial CPUs.
+- \`cpuset\` (\`ComposeString\`): CPUs in which to allow execution (0-3, 0,1).
+- \`credential_spec\` (\`{ config?: ComposeString; file?: ComposeString; registry?: ComposeString; [key: \`x-\${string}\`]: unknown }\`): Configure the credential spec for managed service account.
+- \`depends_on\` (\`Array<ComposeString> | Record<string, { restart?: boolean | ComposeString; required?: boolean; condition: "service_started" | "service_healthy" | "service_completed_successfully"; [key: \`x-\${string}\`]: unknown }>\`): Express dependency between services. Service dependencies cause services to be started in dependency order. The dependent service will wait for the dependency to be ready before starting.
+- \`device_cgroup_rules\` (\`Array<ComposeString>\`): Add rules to the cgroup allowed devices list.
+- \`devices\` (\`Array<ComposeString | { source: ComposeString; target?: ComposeString; permissions?: ComposeString; [key: \`x-\${string}\`]: unknown }>\`): List of device mappings for the container.
+- \`dns\` (\`ComposeString | Array<ComposeString>\`): Custom DNS servers to set for the service container.
+- \`dns_opt\` (\`Array<ComposeString>\`): Custom DNS options to be passed to the container's DNS resolver.
+- \`dns_search\` (\`ComposeString | Array<ComposeString>\`): Custom DNS search domains to set on the service container.
+- \`domainname\` (\`ComposeString\`): Custom domain name to use for the service container.
+- \`entrypoint\` (\`null | ComposeString | Array<ComposeString>\`): Override the default entrypoint declared by the container image, for example 'ENTRYPOINT' in Dockerfile.
+- \`env_file\` (\`ComposeString | Array<ComposeString | { path: ComposeString; format?: ComposeString; required?: boolean | ComposeString }>\`): Add environment variables from a file or multiple files. Can be a single file path or a list of file paths.
+- \`label_file\` (\`ComposeString | Array<ComposeString>\`): Add metadata to containers using files containing Docker labels.
+- \`environment\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Add environment variables. You can use either an array or a list of KEY=VAL pairs.
+- \`expose\` (\`Array<ComposeString | number>\`): Expose ports without publishing them to the host machine - they'll only be accessible to linked services.
+- \`extends\` (\`ComposeString | { service: ComposeString; file?: ComposeString }\`): Extend another service, in the current file or another file.
+- \`provider\` (\`{ type: ComposeString; options?: Record<string, ComposeString | number | boolean | Array<ComposeString | number | boolean>>; [key: \`x-\${string}\`]: unknown }\`): Specify a service which will not be manage by Compose directly, and delegate its management to an external provider.
+- \`external_links\` (\`Array<ComposeString>\`): Link to services started outside this Compose application. Specify services as <service_name>:<alias>.
+- \`extra_hosts\` (\`Record<string, ComposeString | Array<ComposeString>> | Array<ComposeString>\`): Add hostname mappings to the container network interface configuration.
+- \`gpus\` (\`"all" | Array<{ capabilities?: Array<ComposeString>; count?: ComposeString | number; device_ids?: Array<ComposeString>; driver?: ComposeString; options?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString> }>\`): Define GPU devices to use. Can be set to 'all' to use all GPUs, or a list of specific GPU devices.
+- \`group_add\` (\`Array<ComposeString | number>\`): Add additional groups which user inside the container should be member of.
+- \`healthcheck\` (\`{ disable?: boolean | ComposeString; interval?: ComposeString; retries?: number | ComposeString; test?: ComposeString | Array<ComposeString>; timeout?: ComposeString; start_period?: ComposeString; start_interval?: ComposeString; [key: \`x-\${string}\`]: unknown }\`): Configure a health check for the container to monitor its health status.
+- \`hostname\` (\`ComposeString\`): Define a custom hostname for the service container.
+- \`image\` (\`ComposeString\`): Specify the image to start the container from. Can be a repository/tag, a digest, or a local image ID.
+- \`init\` (\`boolean | ComposeString\`): Run as an init process inside the container that forwards signals and reaps processes.
+- \`ipc\` (\`ComposeString\`): IPC sharing mode for the service container. Use 'host' to share the host's IPC namespace, 'service:[service_name]' to share with another service, or 'shareable' to allow other services to share this service's IPC namespace.
+- \`isolation\` (\`ComposeString\`): Container isolation technology to use. Supported values are platform-specific.
+- \`labels\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Add metadata to containers using Docker labels. You can use either an array or a list.
+- \`links\` (\`Array<ComposeString>\`): Link to containers in another service. Either specify both the service name and a link alias (SERVICE:ALIAS), or just the service name.
+- \`logging\` (\`{ driver?: ComposeString; options?: Record<string, ComposeString | number | null>; [key: \`x-\${string}\`]: unknown }\`): Logging configuration for the service.
+- \`mac_address\` (\`ComposeString\`): Container MAC address to set.
+- \`mem_limit\` (\`number | ComposeString\`): Memory limit for the container. A string value can use suffix like '2g' for 2 gigabytes.
+- \`mem_reservation\` (\`ComposeString | number\`): Memory reservation for the container.
+- \`mem_swappiness\` (\`number | ComposeString\`): Container memory swappiness as percentage (0 to 100).
+- \`memswap_limit\` (\`number | ComposeString\`): Amount of memory the container is allowed to swap to disk. Set to -1 to enable unlimited swap.
+- \`network_mode\` (\`ComposeString\`): Network mode. Values can be 'bridge', 'host', 'none', 'service:[service name]', or 'container:[container name]'.
+- \`models\` (\`Array<ComposeString> | Record<string, { endpoint_var?: ComposeString; model_var?: ComposeString; [key: \`x-\${string}\`]: unknown } | null>\`): AI Models to use, referencing entries under the top-level models key.
+- \`networks\` (\`Array<ComposeString> | Record<string, { aliases?: Array<ComposeString>; interface_name?: ComposeString; ipv4_address?: ComposeString; ipv6_address?: ComposeString; link_local_ips?: Array<ComposeString>; mac_address?: ComposeString; driver_opts?: Record<string, ComposeString | number>; priority?: number; gw_priority?: number; [key: \`x-\${string}\`]: unknown } | null>\`): Networks to join, referencing entries under the top-level networks key. Can be a list of network names or a mapping of network name to network configuration.
+- \`oom_kill_disable\` (\`boolean | ComposeString\`): Disable OOM Killer for the container.
+- \`oom_score_adj\` (\`ComposeString | number\`): Tune host's OOM preferences for the container (accepts -1000 to 1000).
+- \`pid\` (\`ComposeString | null\`): PID mode for container.
+- \`pids_limit\` (\`number | ComposeString\`): Tune a container's PIDs limit. Set to -1 for unlimited PIDs.
+- \`platform\` (\`ComposeString\`): Target platform to run on, e.g., 'linux/amd64', 'linux/arm64', or 'windows/amd64'.
+- \`ports\` (\`Array<number | ComposeString | { name?: ComposeString; mode?: ComposeString; host_ip?: ComposeString; target?: number | ComposeString; published?: ComposeString | number; protocol?: ComposeString; app_protocol?: ComposeString; [key: \`x-\${string}\`]: unknown }>\`): Expose container ports. Short format ([HOST:]CONTAINER[/PROTOCOL]).
+- \`pre_start\` (\`Array<{ command?: null | ComposeString | Array<ComposeString>; image?: ComposeString; user?: ComposeString; privileged?: boolean | ComposeString; working_dir?: ComposeString; environment?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; per_replica?: boolean | ComposeString; [key: \`x-\${string}\`]: unknown }>\`): Init containers to run to completion before the service container is started. Each step runs in its own ephemeral container, in declared order; a non-zero exit fails the bring-up of the service and its dependents.
+- \`post_start\` (\`Array<{ command: null | ComposeString | Array<ComposeString>; user?: ComposeString; privileged?: boolean | ComposeString; working_dir?: ComposeString; environment?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; [key: \`x-\${string}\`]: unknown }>\`): Commands to run after the container starts. If any command fails, the container stops.
+- \`pre_stop\` (\`Array<{ command: null | ComposeString | Array<ComposeString>; user?: ComposeString; privileged?: boolean | ComposeString; working_dir?: ComposeString; environment?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; [key: \`x-\${string}\`]: unknown }>\`): Commands to run before the container stops. If any command fails, the container stop is aborted.
+- \`privileged\` (\`boolean | ComposeString\`): Give extended privileges to the service container.
+- \`profiles\` (\`Array<ComposeString>\`): List of profiles for this service. When profiles are specified, services are only started when the profile is activated.
+- \`pull_policy\` (\`ComposeString\`): Policy for pulling images. Options include: 'always', 'never', 'if_not_present', 'missing', 'build', or time-based refresh policies.
+- \`pull_refresh_after\` (\`ComposeString\`): Time after which to refresh the image. Used with pull_policy=refresh.
+- \`read_only\` (\`boolean | ComposeString\`): Mount the container's filesystem as read only.
+- \`restart\` (\`ComposeString\`): Restart policy for the service container. Options include: 'no', 'always', 'on-failure', and 'unless-stopped'.
+- \`runtime\` (\`ComposeString\`): Runtime to use for this container, e.g., 'runc'.
+- \`scale\` (\`number | ComposeString\`): Number of containers to deploy for this service.
+- \`security_opt\` (\`Array<ComposeString>\`): Override the default labeling scheme for each container.
+- \`shm_size\` (\`number | ComposeString\`): Size of /dev/shm. A string value can use suffix like '2g' for 2 gigabytes.
+- \`secrets\` (\`Array<ComposeString | { source?: ComposeString; target?: ComposeString; uid?: ComposeString; gid?: ComposeString; mode?: number | ComposeString; [key: \`x-\${string}\`]: unknown }>\`): Grant access to Secrets on a per-service basis.
+- \`sysctls\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Kernel parameters to set in the container. You can use either an array or a list.
+- \`stdin_open\` (\`boolean | ComposeString\`): Keep STDIN open even if not attached.
+- \`stop_grace_period\` (\`ComposeString\`): Time to wait for the container to stop gracefully before sending SIGKILL (e.g., '1s', '1m30s').
+- \`stop_signal\` (\`ComposeString\`): Signal to stop the container (e.g., 'SIGTERM', 'SIGINT').
+- \`storage_opt\` (\`Record<string, unknown>\`): Storage driver options for the container.
+- \`tmpfs\` (\`ComposeString | Array<ComposeString>\`): Mount a temporary filesystem (tmpfs) into the container. Can be a single value or a list.
+- \`tty\` (\`boolean | ComposeString\`): Allocate a pseudo-TTY to service container.
+- \`ulimits\` (\`Record<string, number | ComposeString | { hard: number | ComposeString; soft: number | ComposeString; [key: \`x-\${string}\`]: unknown }>\`): Override the default ulimits for a container.
+- \`use_api_socket\` (\`boolean\`): Bind mount Docker API socket and required auth.
+- \`user\` (\`ComposeString\`): Username or UID to run the container process as.
+- \`uts\` (\`ComposeString\`): UTS namespace to use. 'host' shares the host's UTS namespace.
+- \`userns_mode\` (\`ComposeString\`): User namespace to use. 'host' shares the host's user namespace.
+- \`volumes\` (\`Array<ComposeString | { type: "bind" | "volume" | "tmpfs" | "cluster" | "npipe" | "image"; source?: ComposeString; target?: ComposeString; read_only?: boolean | ComposeString; consistency?: ComposeString; bind?: { propagation?: ComposeString; create_host_path?: boolean | ComposeString; recursive?: "enabled" | "disabled" | "writable" | "readonly"; selinux?: "z" | "Z"; [key: \`x-\${string}\`]: unknown }; volume?: { labels?: Record<string, ComposeString | number | boolean | null> | Array<ComposeString>; nocopy?: boolean | ComposeString; subpath?: ComposeString; [key: \`x-\${string}\`]: unknown }; tmpfs?: { size?: number | ComposeString; mode?: number | ComposeString; [key: \`x-\${string}\`]: unknown }; image?: { subpath?: ComposeString; [key: \`x-\${string}\`]: unknown }; [key: \`x-\${string}\`]: unknown }>\`): Mount host paths or named volumes accessible to the container. Short syntax (VOLUME:CONTAINER_PATH[:MODE])
+- \`volumes_from\` (\`Array<ComposeString>\`): Mount volumes from another service or container. Optionally specify read-only access (ro) or read-write (rw).
+- \`working_dir\` (\`ComposeString\`): The working directory in which the entrypoint or command will be run
 
 ## Governed by
 
@@ -299,11 +539,11 @@ A named volume definition in Docker Compose
 
 ## Properties
 
-- \`driver\` (\`string\`): Volume driver
-- \`driver_opts\` (\`Record<string, string>\`): Driver options
-- \`external\` (\`boolean\`): Whether the volume is external
-- \`labels\` (\`Record<string, string>\`): Volume labels
-- \`name\` (\`string\`): Custom volume name
+- \`name\` (\`ComposeString\`): Custom name for this volume.
+- \`driver\` (\`ComposeString\`): Specify which volume driver should be used for this volume.
+- \`driver_opts\` (\`Record<string, ComposeString | number>\`): Specify driver-specific options.
+- \`external\` (\`boolean | ComposeString | { name?: ComposeString; [key: \`x-\${string}\`]: unknown }\`): Specifies that this volume already exists and was created outside of Compose.
+- \`labels\` (\`Record<string, ComposeString | number | boolean | null> | Array<ComposeString>\`): Add metadata to the volume using labels.
 
 ## Governed by
 

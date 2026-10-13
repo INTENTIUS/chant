@@ -144,6 +144,16 @@ export interface DiscoveryOptions {
   lexicons?: readonly string[];
 
   /**
+   * chant#3612 — package specifiers to follow a bare import into, verbatim,
+   * alongside whatever {@link lexicons} names. The same allowlist
+   * `FoldProjectOptions.lexiconPackages` gives `foldProject` (chant#2438), so
+   * a build over a host of its own folds the files `foldProject` folds. A
+   * chant project never needs it: its packages are `lexicons`. Only
+   * meaningful when {@link fold} is set. Default: none.
+   */
+  lexiconPackages?: readonly string[];
+
+  /**
    * chant #1045 Phase 2 — opt-in: whatever would otherwise reach the
    * in-process `importModule` step (every file, when {@link fold} isn't set;
    * only the per-file run-fallback remainder, when it is) instead runs
@@ -289,8 +299,9 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
         buildParamValuesMap,
         options.lexicons,
         options.sandbox === true,
-        [],
+        options.lexiconPackages ?? [],
         options.executing === true,
+        files,
       )
     : undefined;
   if (options?.fold) {

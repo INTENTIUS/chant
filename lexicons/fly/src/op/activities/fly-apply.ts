@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker } from "@intentius/chant/ownership";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "../../ownership";
+import { logProgress } from "./progress";
 import {
   applyResult,
   type ApplyResult,
@@ -50,7 +51,15 @@ export interface FlapsRequest {
    * POSTs these and excludes them from any drift/diff.
    */
   applyOnly?: boolean;
+  /**
+   * A Secret declared without a value: set outside chant. `flyApply` never
+   * POSTs it; it checks the app has the secret and fails naming it if not.
+   */
+  mustExist?: boolean;
 }
+
+// Progress lines go to stderr (#2516); the helper is shared with the Sprites activities.
+export { logProgress } from "./progress";
 
 /** The serializer's whole output: entity name → flaps create request. */
 export type FlyPlan = Record<string, FlapsRequest>;
@@ -111,9 +120,13 @@ export function isIpRequest(req: FlapsRequest): boolean {
   return /^\/v1\/apps\/[^/]+\/ip_assignments\/?$/.test(req.endpoint);
 }
 
-/** True when a request creates a Certificate (`.../certificates`). Pure. */
+/**
+ * True when a request creates a Certificate: `.../certificates/acme`, or the
+ * bare `.../certificates` that plans built before #3114 carry. Both apply the
+ * same way, through {@link applyCert}. Pure.
+ */
 export function isCertRequest(req: FlapsRequest): boolean {
-  return /^\/v1\/apps\/[^/]+\/certificates\/?$/.test(req.endpoint);
+  return /^\/v1\/apps\/[^/]+\/certificates(\/acme)?\/?$/.test(req.endpoint);
 }
 
 /** True when a request sets a Secret (`.../secrets/{name}`). Pure. */
@@ -235,6 +248,9 @@ const ipUrl = (base: string, app: string, ip: string): string => `${ipsUrl(base,
 const certsUrl = (base: string, app: string): string => `${appUrl(base, app)}/certificates`;
 const certUrl = (base: string, app: string, hostname: string): string =>
   `${certsUrl(base, app)}/${encodeURIComponent(hostname)}`;
+// Certificates are listed at `.../certificates` but created at `.../acme`:
+// flaps has no POST on the list path and answers one with 404 (#3114).
+const acmeCertUrl = (base: string, app: string): string => `${certsUrl(base, app)}/acme`;
 const secretsUrl = (base: string, app: string): string => `${appUrl(base, app)}/secrets`;
 const secretUrl = (base: string, app: string, secretName: string): string =>
   `${secretsUrl(base, app)}/${encodeURIComponent(secretName)}`;
@@ -487,22 +503,103 @@ export async function applyMachine(
   return { action: "updated", id: m.id, name };
 }
 
-/** Lease → destroy → wait for the machine to be reaped. */
+/** How {@link destroyMachine} treats a machine that is still running. */
+export interface DestroyOpts extends WaitOpts {
+  /**
+   * Destroy with `?force=true`, which kills a running machine at once, instead
+   * of stopping it first. Default false: stop, wait for `stopped`, then delete.
+   */
+  force?: boolean;
+  /** The machine's last listed state. It decides whether a stop is needed first; unknown means try the delete. */
+  state?: string;
+  /** The machine's name, for error messages. */
+  name?: string;
+}
+
+/**
+ * States flaps destroys without `force`. A started machine answers a bare
+ * DELETE with 412 failed_precondition (#3115).
+ */
+const DESTROYABLE_STATES = new Set(["stopped", "suspended", "failed", "created"]);
+
+/** True when a destroy response is flaps refusing a machine that is not stopped. Pure. */
+export function isNotStoppedRefusal(status: number, text: string): boolean {
+  return status === 412 || (status >= 400 && /failed_precondition/.test(text));
+}
+
+/**
+ * Stop a machine under a lease, then wait for `stopped` with no lease held (a
+ * slow stop can outlive the lease TTL). A machine already `stopping` is only
+ * waited on. A wait that runs out fails naming the machine.
+ */
+async function stopForDestroy(
+  ctx: ApplyCtx,
+  app: string,
+  id: string,
+  http: FlyHttp,
+  signal: AbortSignal | undefined,
+  opts: DestroyOpts,
+  state: string | undefined,
+): Promise<void> {
+  const label = opts.name ? `${app}/${opts.name} (${id})` : `${app}/${id}`;
+  if (state !== "stopping") {
+    const res = await withLease(ctx, app, id, http, signal, (nonce) =>
+      http("POST", `${machineUrl(ctx.base, app, id)}/stop`, undefined, { [LEASE_NONCE_HEADER]: nonce }, signal),
+    );
+    if (res.status === 404) return;
+    if (res.status >= 300) throw new Error(`machine ${label} stop before destroy failed (${res.status}): ${res.text}`);
+  }
+  const { timeoutSecs, intervalMs, deadlineMs } = opts;
+  try {
+    await waitForMachine(ctx, app, id, "", http, signal, { timeoutSecs, intervalMs, deadlineMs, state: "stopped" });
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `machine ${label} did not stop, so it was not destroyed (${why}). ` +
+        `Check the machine, or destroy it with force: true to kill it without a stop.`,
+    );
+  }
+}
+
+/**
+ * Destroy a machine and wait for it to be reaped. flaps refuses a bare DELETE
+ * on a running machine (412, #3115), so by default a machine that is not
+ * stopped is stopped first (each mutation under a lease), and a 412 from the
+ * delete (a machine that started after it was listed) gets one stop and retry.
+ * With `force`, the delete carries `?force=true` and no stop is sent.
+ */
 export async function destroyMachine(
   ctx: ApplyCtx,
   app: string,
   id: string,
   http: FlyHttp,
   signal?: AbortSignal,
-  opts: WaitOpts = {},
+  opts: DestroyOpts = {},
 ): Promise<void> {
-  const res = await withLease(ctx, app, id, http, signal, (nonce) =>
-    http("DELETE", machineUrl(ctx.base, app, id), undefined, { [LEASE_NONCE_HEADER]: nonce }, signal),
-  );
-  if (res.status >= 300 && res.status !== 404) {
-    throw new Error(`machine ${app}/${id} destroy failed (${res.status}): ${res.text}`);
+  const { force, state } = opts;
+  const label = opts.name ? `${app}/${opts.name} (${id})` : `${app}/${id}`;
+  const waitOpts = { timeoutSecs: opts.timeoutSecs, intervalMs: opts.intervalMs, deadlineMs: opts.deadlineMs };
+  const gone = state === "destroyed" || state === "destroying";
+
+  if (!gone) {
+    if (!force && state !== undefined && !DESTROYABLE_STATES.has(state)) {
+      await stopForDestroy(ctx, app, id, http, signal, opts, state);
+    }
+    const url = force ? `${machineUrl(ctx.base, app, id)}?force=true` : machineUrl(ctx.base, app, id);
+    const del = () =>
+      withLease(ctx, app, id, http, signal, (nonce) =>
+        http("DELETE", url, undefined, { [LEASE_NONCE_HEADER]: nonce }, signal),
+      );
+    let res = await del();
+    if (!force && isNotStoppedRefusal(res.status, res.text)) {
+      await stopForDestroy(ctx, app, id, http, signal, opts, undefined);
+      res = await del();
+    }
+    if (res.status >= 300 && res.status !== 404) {
+      throw new Error(`machine ${label} destroy failed (${res.status}): ${res.text}`);
+    }
   }
-  await waitForMachine(ctx, app, id, "", http, signal, { ...opts, state: "destroyed" });
+  await waitForMachine(ctx, app, id, "", http, signal, { ...waitOpts, state: "destroyed" });
 }
 
 /** Delete an app (idempotent; a 404 means it is already gone). */
@@ -522,7 +619,8 @@ export async function deleteApp(
  * Owned-only prune (D2): for one app, destroy the chant-owned machines whose
  * name is not in `keep`. An unmarked machine (no `managed-by: chant`) is never
  * touched, so it survives an apply that would otherwise delete it. Machines
- * already tearing down are skipped.
+ * already tearing down are skipped. A running machine is stopped before it is
+ * destroyed unless `opts.force` is set (see {@link destroyMachine}).
  */
 export async function pruneMachines(
   ctx: ApplyCtx,
@@ -530,14 +628,14 @@ export async function pruneMachines(
   keep: Set<string>,
   http: FlyHttp,
   signal?: AbortSignal,
-  opts: WaitOpts = {},
+  opts: WaitOpts & { force?: boolean } = {},
 ): Promise<Array<{ app: string; name: string; id: string }>> {
   const pruned: Array<{ app: string; name: string; id: string }> = [];
   for (const m of await listMachines(ctx, app, http, signal)) {
     if (!isChantOwned(m.config?.metadata) || keep.has(m.name)) continue;
     if (m.state === "destroyed" || m.state === "destroying") continue;
-    await destroyMachine(ctx, app, m.id, http, signal, opts);
-    console.log(`pruned: ${app}/${m.name} (${ctx.base})`);
+    await destroyMachine(ctx, app, m.id, http, signal, { ...opts, state: m.state, name: m.name });
+    logProgress(`pruned: ${app}/${m.name} (${ctx.base})`);
     pruned.push({ app, name: m.name, id: m.id });
   }
   return pruned;
@@ -627,13 +725,49 @@ export async function listIps(ctx: ApplyCtx, app: string, http: FlyHttp, signal?
   return body?.ips ?? [];
 }
 
-/** List an app's live certificates (`{ certificates: [...] }`). */
+/**
+ * The page size asked of the certificate list. Fly pages it whether or not a
+ * `limit` is given (default 25, max 500), so asking for the max keeps the
+ * common case to one request.
+ */
+export const CERT_PAGE_LIMIT = 500;
+
+/**
+ * The most certificate pages {@link listCerts} reads before it gives up. At
+ * {@link CERT_PAGE_LIMIT} per page that is 100,000 certificates, far past any
+ * real app, so hitting it means the API never stopped handing out a cursor.
+ */
+export const MAX_CERT_PAGES = 200;
+
+/**
+ * List an app's live certificates, every page of them (#3224). Fly answers
+ * `{ certificates, next_cursor?, total_count }` and pages the list even
+ * without a `limit`; this follows `next_cursor` until it is absent. A cursor
+ * the API already handed out, or more than {@link MAX_CERT_PAGES} pages,
+ * throws rather than looping or returning a partial list, because callers
+ * read "not listed" as "absent" (re-apply creates it, prune skips it).
+ */
 export async function listCerts(ctx: ApplyCtx, app: string, http: FlyHttp, signal?: AbortSignal): Promise<FlapsCert[]> {
-  const res = await http("GET", certsUrl(ctx.base, app), undefined, undefined, signal);
-  if (res.status === 404) return [];
-  if (res.status >= 300) throw new Error(`certificate list failed for ${app} (${res.status}): ${res.text}`);
-  const body = parseJson(res.text) as { certificates?: FlapsCert[] } | undefined;
-  return body?.certificates ?? [];
+  const certs: FlapsCert[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_CERT_PAGES; page++) {
+    const q = new URLSearchParams({ limit: String(CERT_PAGE_LIMIT) });
+    if (cursor !== undefined) q.set("cursor", cursor);
+    const res = await http("GET", `${certsUrl(ctx.base, app)}?${q.toString()}`, undefined, undefined, signal);
+    // A 404 on the first page is an absent app; on a later one the list is
+    // half-read, so it is an error like any other.
+    if (res.status === 404 && page === 0) return [];
+    if (res.status >= 300) throw new Error(`certificate list failed for ${app} (${res.status}): ${res.text}`);
+    const body = parseJson(res.text) as { certificates?: FlapsCert[]; next_cursor?: string } | undefined;
+    certs.push(...(body?.certificates ?? []));
+    const next = body?.next_cursor;
+    if (!next) return certs;
+    if (seen.has(next)) throw new Error(`certificate list for ${app} repeated cursor ${JSON.stringify(next)} after ${page + 1} page(s)`);
+    seen.add(next);
+    cursor = next;
+  }
+  throw new Error(`certificate list for ${app} still had a next_cursor after ${MAX_CERT_PAGES} pages`);
 }
 
 /** List an app's live secrets (`{ secrets: [...] }`; digests only, never values). */
@@ -679,7 +813,11 @@ export async function applyIp(
   return { action: "created", type };
 }
 
-/** Create a certificate if absent (idempotent by hostname). */
+/**
+ * Create an ACME certificate if absent (idempotent by hostname). Always POSTs
+ * `{ hostname }` to `.../certificates/acme`, whatever endpoint the plan entry
+ * names, so a plan built before #3114 applies correctly too.
+ */
 export async function applyCert(
   ctx: ApplyCtx,
   app: string,
@@ -692,9 +830,40 @@ export async function applyCert(
   if ((await listCerts(ctx, app, http, signal)).some((c) => c.hostname === hostname)) {
     return { action: "noop", hostname };
   }
-  const res = await http("POST", certsUrl(ctx.base, app), req.body, undefined, signal);
+  const res = await http("POST", acmeCertUrl(ctx.base, app), { hostname }, undefined, signal);
   if (res.status >= 300) throw new Error(`certificate ${app}/${hostname} create failed (${res.status}): ${res.text}`);
   return { action: "created", hostname };
+}
+
+/**
+ * True when a plan entry is a Secret with no value, which apply must never
+ * POST. Plans built before `mustExist` existed mark it with an empty body.
+ * Pure.
+ */
+export function isValuelessSecret(req: FlapsRequest): boolean {
+  return isSecretRequest(req) && (req.mustExist === true || req.body.value === undefined);
+}
+
+/**
+ * Check a value-less secret (set outside chant) exists on the app. Never
+ * POSTs. Throws naming the secret when the app does not have it.
+ */
+export async function checkSecretExists(
+  ctx: ApplyCtx,
+  app: string,
+  name: string,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<{ action: "exists"; name: string }> {
+  const live = await listSecrets(ctx, app, http, signal);
+  if (!live.some((s) => s.name === name)) {
+    throw new Error(
+      `secret ${app}/${name} is declared without a value, so it must already exist, ` +
+        `and app ${app} does not have it. Set it with \`fly secrets set ${name}=...\` ` +
+        `or give the Secret a value.`,
+    );
+  }
+  return { action: "exists", name };
 }
 
 /**
@@ -727,7 +896,7 @@ export async function pruneVolumes(
     if (keep.has(v.name)) continue;
     const res = await http("DELETE", volumeUrl(ctx.base, app, v.id), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`volume ${app}/${v.name} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: volume/${app}/${v.name} (${ctx.base})`);
+    logProgress(`pruned: volume/${app}/${v.name} (${ctx.base})`);
     pruned.push({ app, name: v.name, id: v.id });
   }
   return pruned;
@@ -746,7 +915,7 @@ export async function pruneIps(
     if (keep.has(ipType(ip.shared, ip.ip))) continue;
     const res = await http("DELETE", ipUrl(ctx.base, app, ip.ip), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`ip ${app}/${ip.ip} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: ip/${app}/${ip.ip} (${ctx.base})`);
+    logProgress(`pruned: ip/${app}/${ip.ip} (${ctx.base})`);
     pruned.push({ app, address: ip.ip });
   }
   return pruned;
@@ -765,7 +934,7 @@ export async function pruneCerts(
     if (keep.has(c.hostname)) continue;
     const res = await http("DELETE", certUrl(ctx.base, app, c.hostname), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`certificate ${app}/${c.hostname} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: certificate/${app}/${c.hostname} (${ctx.base})`);
+    logProgress(`pruned: certificate/${app}/${c.hostname} (${ctx.base})`);
     pruned.push({ app, hostname: c.hostname });
   }
   return pruned;
@@ -787,7 +956,7 @@ export async function pruneSecrets(
     if (keep.has(s.name)) continue;
     const res = await http("DELETE", secretUrl(ctx.base, app, s.name), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`secret ${app}/${s.name} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: secret/${app}/${s.name} (${ctx.base})`);
+    logProgress(`pruned: secret/${app}/${s.name} (${ctx.base})`);
     pruned.push({ app, name: s.name });
   }
   return pruned;
@@ -797,7 +966,14 @@ export async function pruneSecrets(
 
 export interface FlyApplyArgs {
   /** Path to the #738 serializer's JSON output (entity name → flaps request). */
-  planPath: string;
+  planPath?: string;
+  /**
+   * The plan itself, in place of `planPath` (#2736): a caller that changes the
+   * declared plan before applying it (the release a Machine serves, stamped
+   * into its metadata) passes it here rather than writing a file that may
+   * hold Secret values.
+   */
+  plan?: FlyPlan;
   /** flaps endpoint override (D3). Default: `FLY_FLAPS_BASE_URL` env, else real Fly. */
   endpoint?: string;
   /** Bearer token for real Fly. Default: `FLY_API_TOKEN`. mudflaps ignores it. */
@@ -810,6 +986,12 @@ export interface FlyApplyArgs {
    * default.
    */
   prune?: boolean;
+  /**
+   * Destroy machines (prune, `flyDelete`) with `?force=true`, killing a running
+   * machine at once. Default false: stop it, wait for `stopped`, then destroy,
+   * so it can shut down on its configured kill signal and timeout.
+   */
+  force?: boolean;
   /** Wait-loop tuning (mainly for tests). */
   wait?: WaitOpts;
 }
@@ -835,13 +1017,18 @@ export interface FlyApplyArgs {
  * because the serializer produced it and the two being out of sync is a bug in
  * the lexicon, not a resource the user declined.
  */
+function readPlanFile(planPath: string | undefined): FlyPlan {
+  if (!planPath) throw new Error("flyApply needs a plan: pass planPath (the fly build output) or plan");
+  return parsePlan(readFileSync(planPath, "utf8"));
+}
+
 export function toApplyResult(result: {
   apps: Array<{ app: string; created: boolean }>;
   machines: Array<{ app: string; name: string; action: "created" | "updated" | "noop" }>;
   volumes: Array<{ app: string; name: string; action: "created" | "noop" }>;
   ips: Array<{ app: string; type: string; action: "created" | "noop" }>;
   certs: Array<{ app: string; hostname: string; action: "created" | "noop" }>;
-  secrets: Array<{ app: string; name: string }>;
+  secrets: Array<{ app: string; name: string; action?: "set" | "exists" }>;
   pruned: Array<{ app: string; name: string; id: string }>;
   prunedVolumes: Array<{ app: string; name: string; id: string }>;
   prunedIps: Array<{ app: string; address: string }>;
@@ -861,9 +1048,14 @@ export function toApplyResult(result: {
     ...result.volumes.map((x) => ({ kind: "volume", name: x.name, action: act(x.action) })),
     ...result.ips.map((x) => ({ kind: "ip", name: x.type, action: act(x.action) })),
     ...result.certs.map((x) => ({ kind: "cert", name: x.hostname, action: act(x.action) })),
-    // Secrets are apply-only (D7) — POSTed every run, never read back, so there
-    // is no unchanged to report.
-    ...result.secrets.map((x) => ({ kind: "secret", name: x.name, action: "updated" as const })),
+    // Secrets are apply-only (D7) — POSTed every run, never read back, so a
+    // set secret reports updated. A value-less secret is only checked, so it
+    // reports unchanged.
+    ...result.secrets.map((x) => ({
+      kind: "secret",
+      name: x.name,
+      action: (x.action === "exists" ? "unchanged" : "updated") as AppliedResource["action"],
+    })),
   ];
   const pruned: PrunedResource[] = [
     ...result.pruned.map((x) => ({ kind: "machine", name: x.name, deleted: true })),
@@ -885,14 +1077,14 @@ export async function flyApply(
   volumes: Array<{ app: string; name: string; action: "created" | "noop" }>;
   ips: Array<{ app: string; type: string; action: "created" | "noop" }>;
   certs: Array<{ app: string; hostname: string; action: "created" | "noop" }>;
-  secrets: Array<{ app: string; name: string }>;
+  secrets: Array<{ app: string; name: string; action?: "set" | "exists" }>;
   pruned: Array<{ app: string; name: string; id: string }>;
   prunedVolumes: Array<{ app: string; name: string; id: string }>;
   prunedIps: Array<{ app: string; address: string }>;
   prunedCerts: Array<{ app: string; hostname: string }>;
   prunedSecrets: Array<{ app: string; name: string }>;
 }> {
-  const plan = parsePlan(readFileSync(args.planPath, "utf8"));
+  const plan = args.plan ?? readPlanFile(args.planPath);
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
   const opts = args.wait ?? {};
 
@@ -934,7 +1126,7 @@ export async function flyApply(
   const apps: Array<{ app: string; created: boolean }> = [];
   for (const req of appReqs) {
     const result = await applyApp(ctx, req, http, signal);
-    console.log(`${result.created ? "created" : "unchanged"}: app/${result.app} (${ctx.base})`);
+    logProgress(`${result.created ? "created" : "unchanged"}: app/${result.app} (${ctx.base})`);
     apps.push(result);
   }
 
@@ -966,7 +1158,7 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const result = await applyVolume(ctx, app, entityName, req, http, signal);
     track(keepVolumes, app, result.name);
-    console.log(`${result.action}: volume/${app}/${result.name} (${ctx.base})`);
+    logProgress(`${result.action}: volume/${app}/${result.name} (${ctx.base})`);
     volumes.push({ app, name: result.name, action: result.action });
   }
 
@@ -976,7 +1168,7 @@ export async function flyApply(
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     track(keepMachines, app, name);
     const result = await applyMachine(ctx, app, entityName, req, http, signal, opts);
-    console.log(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
+    logProgress(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
   }
 
@@ -986,7 +1178,7 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const result = await applyIp(ctx, app, req, http, signal);
     track(keepIps, app, result.type);
-    console.log(`${result.action}: ip/${app}/${result.type} (${ctx.base})`);
+    logProgress(`${result.action}: ip/${app}/${result.type} (${ctx.base})`);
     ips.push({ app, type: result.type, action: result.action });
   }
 
@@ -995,19 +1187,22 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const result = await applyCert(ctx, app, req, http, signal);
     track(keepCerts, app, result.hostname);
-    console.log(`${result.action}: certificate/${app}/${result.hostname} (${ctx.base})`);
+    logProgress(`${result.action}: certificate/${app}/${result.hostname} (${ctx.base})`);
     certs.push({ app, hostname: result.hostname, action: result.action });
   }
 
-  // Secrets are apply-only (D7): always set, never read back for a diff.
-  const secrets: Array<{ app: string; name: string }> = [];
+  // Secrets are apply-only (D7): a secret with a value is set every run and
+  // never read back for a diff. A value-less one is only checked for.
+  const secrets: Array<{ app: string; name: string; action: "set" | "exists" }> = [];
   for (const [, req] of secretReqs) {
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const name = secretNameSegment(req.endpoint);
     track(keepSecrets, app, name);
-    const result = await applySecret(ctx, app, name, req, http, signal);
-    console.log(`set: secret/${app}/${result.name} (${ctx.base})`);
-    secrets.push({ app, name: result.name });
+    const result = isValuelessSecret(req)
+      ? await checkSecretExists(ctx, app, name, http, signal)
+      : await applySecret(ctx, app, name, req, http, signal);
+    logProgress(`${result.action}: secret/${app}/${result.name} (${ctx.base})`);
+    secrets.push({ app, name: result.name, action: result.action });
   }
 
   const pruned: Array<{ app: string; name: string; id: string }> = [];
@@ -1017,7 +1212,7 @@ export async function flyApply(
   const prunedSecrets: Array<{ app: string; name: string }> = [];
   if (args.prune) {
     for (const [app, keep] of keepMachines) {
-      pruned.push(...(await pruneMachines(ctx, app, keep, http, signal, opts)));
+      pruned.push(...(await pruneMachines(ctx, app, keep, http, signal, { ...opts, force: args.force })));
     }
     for (const [app, keep] of keepVolumes) {
       prunedVolumes.push(...(await pruneVolumes(ctx, app, keep, http, signal)));
@@ -1038,7 +1233,8 @@ export async function flyApply(
 
 /**
  * The inverse of {@link flyApply}: destroy the machines the plan declares, then
- * delete the apps (dependents before their app). Idempotent — already-absent
+ * delete the apps (dependents before their app). A running machine is stopped
+ * first unless `args.force` is set. Idempotent — already-absent
  * resources are a no-op. `http` is injectable for tests.
  */
 export async function flyDelete(
@@ -1046,7 +1242,7 @@ export async function flyDelete(
   signal?: AbortSignal,
   http: FlyHttp = defaultFlyHttp(args.token),
 ): Promise<{ machines: Array<{ app: string; name: string }>; apps: Array<{ app: string; deleted: boolean }> }> {
-  const plan = parsePlan(readFileSync(args.planPath, "utf8"));
+  const plan = args.plan ?? readPlanFile(args.planPath);
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
   const opts = args.wait ?? {};
 
@@ -1064,14 +1260,14 @@ export async function flyDelete(
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     const live = (await listMachines(ctx, app, http, signal)).find((m) => m.name === name);
     if (!live) continue;
-    await destroyMachine(ctx, app, live.id, http, signal, opts);
+    await destroyMachine(ctx, app, live.id, http, signal, { ...opts, force: args.force, state: live.state, name });
     machines.push({ app, name });
   }
 
   const apps: Array<{ app: string; deleted: boolean }> = [];
   for (const req of appReqs) {
     const result = await deleteApp(ctx, appNameFromRequest(req), http, signal);
-    console.log(`${result.deleted ? "deleted" : "absent"}: app/${result.app} (${ctx.base})`);
+    logProgress(`${result.deleted ? "deleted" : "absent"}: app/${result.app} (${ctx.base})`);
     apps.push(result);
   }
 
