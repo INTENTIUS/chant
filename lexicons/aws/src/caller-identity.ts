@@ -20,12 +20,24 @@
  *
  * ## Credentials
  *
- * `resolveCredentials` (./api/sigv4.ts) reads `AWS_ACCESS_KEY_ID` /
- * `AWS_SECRET_ACCESS_KEY` and nothing else — no profile file, no IMDS, no
- * container endpoint, deliberately. `AWS_PROFILE` alone therefore signs
- * nothing, and against real AWS the call comes back unauthorized. That is
- * reported as `no-credentials` naming the profile, which is a far better
- * answer than an empty stack read an hour later.
+ * Resolved the way the AWS CLI resolves them (#3954), by
+ * `./api/credential-chain.ts`: environment keys, then the profile
+ * `AWS_PROFILE` names (or `default`) from the shared config and credentials
+ * files, through static keys, `role_arn`, SSO sessions and
+ * `credential_process`. Before #3954 only the environment keys were read, so
+ * `AWS_PROFILE=dev` on an SSO session answered "no identity is configured"
+ * while `aws sts get-caller-identity` answered with a principal. An expired
+ * SSO session is `no-credentials` naming `aws sso login --profile <p>`.
+ *
+ * The native read transport still signs with environment keys only
+ * (`resolveCredentials` in ./api/sigv4.ts; #3958). So a profile-sourced row says
+ * what the CLI, and anything shelling out to it, would act as; it does not
+ * yet say what `describeResources` signs with. The `source` column names the
+ * profile, so the difference is visible.
+ *
+ * Against an endpoint override the chain is not walked: the emulator call is
+ * unsigned whatever resolves, and a whoami against Floci should not start an
+ * SSO refresh or a `credential_process`.
  *
  * No credential value is ever returned. The identity is the principal ARN the
  * service itself answers with, and the scope is an account and a region.
@@ -39,7 +51,7 @@ import {
   serviceUrl,
   type AwsReadClientOptions,
 } from "./api/read-client";
-import { resolveCredentials } from "./api/sigv4";
+import { resolveCredentialChain, type CredentialChainOptions } from "./api/credential-chain";
 
 /** The region the read transport falls back to when no stack declares one. */
 const DEFAULT_REGION = "us-east-1";
@@ -62,9 +74,9 @@ function regionSource(declared: string | undefined, env: Record<string, string |
   return "chant default (no stacks[].region)";
 }
 
-/** Where the signature came from, without any part of the credential itself. */
-function credentialSource(env: Record<string, string | undefined>): string | undefined {
-  if (!resolveCredentials(undefined, env)) return undefined;
+/** The environment-key label, used against an endpoint override where the chain is not walked. */
+function envCredentialLabel(env: Record<string, string | undefined>): string | undefined {
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return undefined;
   return env.AWS_SESSION_TOKEN
     ? "env AWS_ACCESS_KEY_ID + AWS_SESSION_TOKEN"
     : "env AWS_ACCESS_KEY_ID";
@@ -73,6 +85,12 @@ function credentialSource(env: Record<string, string | undefined>): string | und
 /** Options this module needs beyond the contract — the injectable transport, for tests. */
 export interface CallerIdentityOptions extends DescribeIdentityOptions {
   client?: AwsReadClientOptions;
+  /**
+   * The credential chain's seams: shared-file reads, the SSO and
+   * `credential_process` transports, the clock. Its `env` defaults to the
+   * client's, and its STS transport to the client's `http`.
+   */
+  chain?: CredentialChainOptions;
 }
 
 /**
@@ -91,19 +109,23 @@ export async function describeIdentity(options: CallerIdentityOptions): Promise<
   const region = client.region ?? DEFAULT_REGION;
   const endpoint = serviceUrl("sts", override, client.region);
 
-  const credential = credentialSource(env);
   // Against an emulator the call is unsigned by design (Floci verifies no
   // signature), so an absent credential is not yet a refusal — the emulator
-  // answers with the identity it models. Against real AWS it is.
-  if (!credential && !override) {
-    return {
-      unresolved: {
-        reason: "no-credentials",
-        detail: env.AWS_PROFILE
-          ? `no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the environment; AWS_PROFILE=${env.AWS_PROFILE} is set, but chant's native transport reads only the environment credentials, not the profile file`
-          : "no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the environment",
-      },
-    };
+  // answers with the identity it models — and the chain is not walked.
+  let credential: string | undefined;
+  if (override) {
+    credential = envCredentialLabel(env);
+  } else if (client.credentials) {
+    credential = "credentials injected by the caller";
+  } else {
+    const chain = await resolveCredentialChain({
+      env,
+      ...options.chain,
+      sts: { ...(client.http ? { http: client.http } : {}), ...options.chain?.sts, env },
+    });
+    if ("unresolved" in chain) return { unresolved: chain.unresolved };
+    credential = chain.resolved.source;
+    client.credentials = chain.resolved.credentials;
   }
 
   let identity;

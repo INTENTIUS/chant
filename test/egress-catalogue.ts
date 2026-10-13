@@ -422,6 +422,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The aws lexicon's read transport, signed with SigV4 and retargetable at a local emulator; there is no AWS SDK in the tree.",
   },
   {
+    file: "lexicons/aws/src/api/credential-chain.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the AWS IAM Identity Center portal (`portal.sso.<region>.amazonaws.com`) and SSO OIDC (`oidc.<region>.amazonaws.com`)",
+    why: "`chant lifecycle whoami` resolves an SSO profile as the AWS CLI does (#3954): it refreshes an expired cached session token through OIDC when it can, then trades the token for role credentials. A `credential_process` profile runs the configured command, which may reach whatever it reaches.",
+  },
+  {
     file: "lexicons/aws/src/op/activities/aws-apply.ts",
     primitives: ["fetch"],
     phase: "apply",
