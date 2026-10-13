@@ -25,7 +25,6 @@ import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor"
 import { loadActivityContracts } from "../activity-contract-registry";
 import { resumeGatesOf } from "../gate-checkpoint";
 import { stepHeartbeatMs } from "../step-console";
-import { runComponents } from "../../components/cli-support";
 import { discoverOps } from "../discover";
 import { readRunLedger, runEnvOf, DEFAULT_RUN_ENV } from "../../lifecycle/run-ledger";
 import type { OpConfig } from "../types";
@@ -237,7 +236,10 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
       );
     },
 
-    runComponents(path, selector, options) {
+    async runComponents(path, selector, options) {
+      // Imported here, not at the top: the components driver is most of core's components tree, and this module is
+      // re-exported by `@intentius/chant/op`, which every `*.op.ts` imports (#3982).
+      const { runComponents } = await import("../../components/cli-support");
       return runComponents(path, selector, options);
     },
   };

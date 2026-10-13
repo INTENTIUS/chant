@@ -18,6 +18,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const coreRoot = resolve(import.meta.dirname, "..", "..");
@@ -37,12 +38,13 @@ const TRACER = `
 import { registerHooks } from "node:module";
 import { appendFileSync } from "node:fs";
 const out = process.env.CHANT_TRACE_OUT;
-const seen = { chantSrc: 0, chantDist: 0, tsx: 0 };
+const seen = { chantSrc: 0, chantDist: 0, tsx: 0, typescript: 0, dist: [] };
 registerHooks({
   load(url, context, next) {
     if (url.includes("/@intentius/chant/src/")) seen.chantSrc++;
-    else if (url.includes("/@intentius/chant/dist/")) seen.chantDist++;
+    else if (url.includes("/@intentius/chant/dist/")) { seen.chantDist++; seen.dist.push(url.slice(url.indexOf("/@intentius/chant/dist/") + 23)); }
     else if (url.includes("/node_modules/tsx/")) seen.tsx++;
+    else if (url.includes("/node_modules/typescript/")) seen.typescript++;
     return next(url, context);
   },
 });
@@ -59,14 +61,15 @@ interface Run {
   status: number | null;
   stdout: string;
   stderr: string;
-  loaded: { chantSrc: number; chantDist: number; tsx: number };
+  /** Counts of what loaded, plus each compiled module's path under `dist/`. */
+  loaded: { chantSrc: number; chantDist: number; tsx: number; typescript: number; dist: string[] };
 }
 
-function run(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}): Run {
+function run(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}, command = chant): Run {
   const traceOut = join(scratch, `trace-${Math.random().toString(36).slice(2)}.jsonl`);
   const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv, NODE_OPTIONS: `--import ${tracer}`, CHANT_TRACE_OUT: traceOut };
   delete env.CHANT_ENV;
-  const result = spawnSync(chant, args, { cwd, env, encoding: "utf-8" });
+  const result = spawnSync(command, args, { cwd, env, encoding: "utf-8" });
   const lines = readFileSync(traceOut, "utf-8").trim().split("\n");
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, loaded: JSON.parse(lines[0]!) as Run["loaded"] };
 }
@@ -199,6 +202,19 @@ describe("the installed chant CLI (#3878)", () => {
     const status = JSON.parse(r.stdout) as { members: Array<{ name: string; stewards: unknown[] }> };
     expect(status.members.map((m) => [m.name, m.stewards])).toEqual([["app", []]]);
     expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0 });
+  });
+
+  test("importing the op entry loads the Op authoring surface, not lint, the LSP, codegen or typescript (#3982)", () => {
+    // Every *.op.ts imports @intentius/chant/op, so this is what a steward-index miss in `workspace status` pays per
+    // member with Op files. The base activities, which reach lint and typescript, load only when an Op runs.
+    const entry = join(project, "node_modules", "@intentius", "chant", "dist", "op", "index.js");
+    const script = `const op = await import(${JSON.stringify(pathToFileURL(entry).href)});\n` +
+      `if (typeof op.Op !== "function" || typeof op.factoryOp !== "function" || typeof op.declareSteward !== "function") process.exit(2);\n`;
+    const r = run(project, ["--input-type=module", "-e", script], {}, process.execPath);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0, typescript: 0 });
+    const heavy = r.loaded.dist.filter((path) => /^(lint|lsp|codegen|mcp|audit|fold|cli)\//.test(path) || path === "index.js" || path === "op/activities/index.js");
+    expect(heavy).toEqual([]);
   });
 
   test("build loads the TypeScript lexicon and project through tsx, against the one compiled core", () => {
