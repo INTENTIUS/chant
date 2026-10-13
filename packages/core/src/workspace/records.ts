@@ -626,12 +626,17 @@ export interface LoadedRecordKind {
  * Import the kind file at `path` through the path loader lexicons use (#2520).
  * The kind is registered under a name no lexicon package can have (npm names
  * hold no `:`), imported and unregistered again, so no lexicon lookup sees it.
+ *
+ * A kind file is a data-only ES module, so a `.mjs`, `.cjs` or `.js` one loads
+ * with plain node and only a TypeScript one registers tsx (#3276). That keeps
+ * `workspace ls`, `status` and `records` from paying for tsx's loader thread
+ * on every read.
  */
 export async function importKindModule(path: string): Promise<Record<string, unknown>> {
   const name = `record-kind:${path}`;
   registerLexiconDeclarations([{ name, module: path }], dirname(path));
   try {
-    const mod = await importLexiconModule(name);
+    const mod = await importLexiconModule(name, { typeScript: !/\.[cm]?js$/.test(path) });
     if (!mod) throw new Error(`${path} was not registered`);
     return mod;
   } finally {

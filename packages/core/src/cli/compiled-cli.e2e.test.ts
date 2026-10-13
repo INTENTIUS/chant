@@ -7,7 +7,9 @@
  * Each run is traced through a load hook that NODE_OPTIONS hands to the CLI's
  * node, so the test can say what loaded: none of chant's TypeScript source,
  * ever, and tsx only for a command that imports TypeScript (here the
- * lexicon and the project source).
+ * lexicon and the project source). tsx's ESM hooks run on a thread of their
+ * own, about 200 MB of the process (#3276), so a workspace read must not
+ * register it either.
  *
  * End to end because it packs, installs from the registry and spawns the CLI.
  */
@@ -20,12 +22,14 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const coreRoot = resolve(import.meta.dirname, "..", "..");
 const renderRoot = resolve(coreRoot, "..", "..", "lexicons", "render");
+const referenceDecisions = resolve(coreRoot, "..", "..", "reference-workspace", "decisions");
 const version = (JSON.parse(readFileSync(join(coreRoot, "package.json"), "utf-8")) as { version: string }).version;
 
 let scratch: string;
 let project: string;
 let cjsProject: string;
 let waves: string;
+let workspace: string;
 let chant: string;
 let tracer: string;
 
@@ -126,6 +130,31 @@ beforeAll(() => {
   writeFileSync(join(waves, ".gitignore"), ".chant/\n");
   git("add", "-A");
   git("commit", "-qm", "ignore");
+
+  // A workspace whose declaration names a .mjs record kind, with a member
+  // that has a chant.config.ts, for the workspace reads below (#3276).
+  workspace = join(scratch, "workspace");
+  mkdirSync(join(workspace, "decisions"), { recursive: true });
+  mkdirSync(join(workspace, "app"));
+  for (const file of ["decision.kind.mjs", "decision.schema.json", "ref-001-how-the-app-is-deployed.md"]) {
+    writeFileSync(join(workspace, "decisions", file), readFileSync(join(referenceDecisions, file)));
+  }
+  writeFileSync(
+    join(workspace, "chant.workspace.json"),
+    JSON.stringify({
+      name: "e2e",
+      schema: 1,
+      members: [{ name: "app", dir: "app", kind: "chant" }],
+      records: [{ kind: "decisions/decision.kind.mjs" }],
+    }),
+  );
+  writeFileSync(join(workspace, "app", "chant.config.ts"), `export default { lexicons: [] as string[] };\n`);
+  symlinkSync(join(project, "node_modules"), join(workspace, "node_modules"), "dir");
+  const wsGit = (...args: string[]) => execFileSync("git", ["-c", "user.email=e2e@chant", "-c", "user.name=e2e", ...args], { cwd: workspace, stdio: "ignore" });
+  wsGit("init", "-q", "-b", "main");
+  writeFileSync(join(workspace, ".gitignore"), "node_modules\n");
+  wsGit("add", "-A");
+  wsGit("commit", "-qm", "workspace");
 }, 600_000);
 
 afterAll(() => {
@@ -145,6 +174,21 @@ describe("the installed chant CLI (#3878)", () => {
     const r = run(waves, ["run", "wave", "--spec", "waves.json", "--wave", "1", "--json"]);
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ exitCode: 0 });
+    expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0 });
+  });
+
+  test("workspace ls reads a .mjs record kind from a member with a chant.config.ts without loading tsx", () => {
+    const r = run(join(workspace, "app"), ["workspace", "ls", "--json"]);
+    expect(r.status, r.stderr).toBe(0);
+    const ls = JSON.parse(r.stdout) as { workspace: { records: Array<{ name: string; kind: string | null }> } };
+    expect(ls.workspace.records.map((k) => k.kind)).toEqual(["decision"]);
+    expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0 });
+  });
+
+  test("workspace records reads the declared .mjs kind's records without loading tsx", () => {
+    const r = run(join(workspace, "app"), ["workspace", "records", "--json"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("ref-001");
     expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0 });
   });
 
