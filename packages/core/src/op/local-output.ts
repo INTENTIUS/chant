@@ -28,6 +28,10 @@ function formatDuration(ms: number): string {
  * stays clean for piping (the `--json` renderer owns stdout).
  */
 export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed = false): void {
+  // #3947: a run that resumed at a gate says where it picked up.
+  if (result.resumed) {
+    write(`[resume] at gate "${result.resumed.gate}", from run ${result.resumed.run}'s checkpoint ${result.resumed.checkpoint}`);
+  }
   let currentPhase: string | undefined;
   for (const record of result.records) {
     if (record.phase !== currentPhase) {
@@ -36,7 +40,9 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed 
     }
     const mark = record.status === "ok" ? "✓" : record.status === "fail" ? "✗" : "•";
     const call = `${record.fn}(${formatArgs(record.args ?? {})})`;
-    if (record.status === "skipped") {
+    if (record.status === "skipped" && record.resumed) {
+      write(`  ${mark} ${call}   from run ${record.resumed.run}`);
+    } else if (record.status === "skipped") {
       write(`  ${mark} ${call}   skipped`);
     } else {
       write(`  ${mark} ${call}   ${formatDuration(record.durationMs)}`);
@@ -72,6 +78,8 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed 
     write(`[work] nothing claimed: ${work.refusal}`);
   }
 
+  for (const note of result.resumeNotes ?? []) write(`[resume] ${note}`);
+
   const total = `${(result.totalMs / 1000).toFixed(1)}s`;
   if (result.status === "ok") {
     write(`Op "${result.op}" completed in ${total}`);
@@ -104,6 +112,8 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed 
   write(`  approve : ${approveCommand(gate.op, gate.gate, undefined, gate.planDigest, sealed)}`);
   if (gate.url) write(`  approve at: ${gate.url}`);
   write(`  expires : ${gate.expiresAt}`);
+  // #3947: the approval also lets the next run start here.
+  if (gate.checkpointDigest) write(`  resume  : once approved, the next run starts at this gate (checkpoint ${gate.checkpointDigest})`);
   // #2310: this run's own append reached only the local chant/lifecycle
   // branch, not the remote. The pending fact is still correct — the gate is
   // still right to stand — but an operator working from a clone of the
@@ -139,7 +149,9 @@ export function renderJson(result: OpRunResult, write: Writer = stdout, sealed =
   const push = result.gatePushed === false
     ? { pushed: false, pushWarning: result.gatePushWarning ?? "the pending fact was recorded locally only" }
     : {};
-  write(JSON.stringify({ ...result.record, ...approve, ...push }));
+  // #3947: why a gate that resumes did not, beside the record like `push`.
+  const notes = result.resumeNotes ? { resumeNotes: result.resumeNotes } : {};
+  write(JSON.stringify({ ...result.record, ...approve, ...push, ...notes }));
 }
 
 export type { OpRunResult, StepRecord };

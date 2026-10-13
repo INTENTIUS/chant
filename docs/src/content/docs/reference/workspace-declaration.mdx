@@ -304,6 +304,8 @@ chant approve web ship --env prod --plan <digest> --actor github:alice --sign ~/
 
 The seal is an ssh signature in the `chant-gate` namespace over the op or component, the gate, the environment, the plan digest, the approver and the time, so it can't be moved to another plan or gate.
 
+An approval of a gate that resumes ([Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate), [#3947](https://github.com/INTENTIUS/chant/issues/3947)) also carries the digest of the checkpoint its run stored. Its seal is version 2: the signature covers one more line, `checkpoint <digest>`, after the others, and the seal records `version: 2`. Changing or removing the digest then stops the seal verifying, so the step outputs a resumed run carries on with are the ones the approver signed for. An approval with no checkpoint digest is sealed as before.
+
 ## CI
 
 `ci.green` says which commits passed CI ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). [`chant ci tick`](/chant/cli/ci/) tags each passing commit, and people and tools read the newest one from git with `chant ci last-green`, without asking the forge.

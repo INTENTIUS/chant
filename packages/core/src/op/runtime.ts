@@ -59,6 +59,8 @@ export interface OpRunStepRecord {
   point?: WaitingPoint;
   /** The gate this step's command stopped at (#2779), for a step skipped because of it. */
   gate?: { op: string; gate: string };
+  /** The run whose checkpoint supplied this step's output, for a step a resumed run skipped (#3947). */
+  resumed?: { run: string; gate: string };
 }
 
 /** One phase's steps and the verdict they add up to. */
@@ -151,6 +153,12 @@ export interface OpRunRecord {
   point?: WaitingPoint & { since: string };
   /** The steward whose turn the run was, when a steward ran it (#2749). */
   steward?: string;
+  /**
+   * The gate this run resumed at (#3947), the run whose checkpoint it carried
+   * on from, and the checkpoint's digest. Absent on a run that started at the
+   * first phase.
+   */
+  resumed?: { gate: string; run: string; checkpoint: string };
 }
 
 /** An {@link OpRunRecord} before the ledger stamps its version and mints an id. */

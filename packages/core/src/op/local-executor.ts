@@ -14,6 +14,12 @@
  * ledger, so `chant approve <op> <gate>` followed by `chant run <op>` is the
  * whole loop.
  *
+ * A gate with `resume: true` (#3947) also stores a checkpoint of the step
+ * outputs the steps after it read, and the next run after the approval starts
+ * at the gate instead of the first phase. It re-runs the step that produced
+ * the gate's plan first, and starts at the first phase after all when the
+ * plan moved. See `./gate-checkpoint.ts`.
+ *
  * The executor is deliberately decoupled from any lexicon: activity
  * implementations and profiles are passed in (loaded dynamically by the CLI),
  * so core never statically depends on one.
@@ -47,6 +53,11 @@ import { RunWorkLease, LEASE_LOST, workLeaseProblems, workLeaseNeedsRunItem, typ
 import { WORK_LEASE_STEP_ID } from "./types";
 import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
 import { runEnvOf } from "../lifecycle/run-ledger";
+import { getHeadCommit } from "../lifecycle/git";
+import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
+import type { GateCheckpoint } from "../lifecycle/gate-checkpoint";
+import type { ActivityContract } from "./activity-contract";
+import { buildGateCheckpoint, decideGateResume, resumeGatesOf, type GateResumeDecision, type ResumeGate } from "./gate-checkpoint";
 
 export { parseDuration } from "./duration";
 
@@ -105,6 +116,12 @@ export interface StepRecord {
    * approve` takes. The step's status is `skipped` and the run's is `gated`.
    */
   gate?: { op: string; gate: string };
+  /**
+   * Set on a step this run did not execute because it resumed at a gate
+   * (#3947): the run whose checkpoint supplied the step's output, and the
+   * gate. The step's status is `skipped`.
+   */
+  resumed?: { run: string; gate: string };
 }
 
 export interface OpRunResult {
@@ -151,6 +168,18 @@ export interface OpRunResult {
    * was released and with which outcome, or why it was lost.
    */
   workLease?: WorkLeaseRunResult;
+  /**
+   * Set when this run resumed at an approved gate (#3947): the gate, the run
+   * whose checkpoint it carried on from, and that checkpoint's digest.
+   */
+  resumed?: { gate: string; run: string; checkpoint: string };
+  /**
+   * Why a gate that resumes did not (#3947), one line each: an approved gate
+   * whose checkpoint failed a check, so the run started at the first phase,
+   * or a gate this run stopped at that stored no checkpoint. Absent when
+   * there is nothing to say.
+   */
+  resumeNotes?: string[];
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────��─
@@ -547,6 +576,14 @@ interface GateContext {
   points?: GatePointAsker;
   /** The environment the run was started for, a point gate's `gate.env` input. */
   env?: string;
+  /** The Op's gates that resume (#3947), and what a checkpoint at one needs. Absent when it has none. */
+  resume?: {
+    config: OpConfig;
+    gates: Map<GateStep, ResumeGate>;
+    commit: string | undefined;
+    contracts?: ReadonlyMap<string, ActivityContract>;
+    note: (line: string) => void;
+  };
 }
 
 /**
@@ -679,6 +716,22 @@ async function runGateStep(
   const resolvedPlan = resolveStepOutputRefs(step.plan, resultsById);
   const planDigest = typeof resolvedPlan === "string" && resolvedPlan !== "" ? resolvedPlan : undefined;
   const approval = resolveGateApproval(step, resultsById);
+  // #3947: a gate that resumes stores the outputs the steps after it read.
+  const resumeAt = gates.resume?.gates.get(step);
+  let checkpoint: GateCheckpoint | undefined;
+  let blocked: string | undefined;
+  if (resumeAt && gates.resume) {
+    const built = buildGateCheckpoint(gates.resume.config, resumeAt, {
+      runId: gates.runId ?? "",
+      commit: gates.resume.commit,
+      ...(gates.env !== undefined ? { environment: gates.env } : {}),
+      ...(planDigest !== undefined ? { planDigest } : {}),
+      outputs: resultsById,
+      ...(gates.resume.contracts ? { contracts: gates.resume.contracts } : {}),
+    });
+    if ("blocked" in built) blocked = built.blocked;
+    else checkpoint = built.checkpoint;
+  }
   let check: GateCheck;
   try {
     check = await evaluateGate(gates.port, {
@@ -690,6 +743,7 @@ async function runGateStep(
       ...(planDigest !== undefined ? { planDigest } : {}),
       ...(approval ? { approval } : {}),
       ...(gates.now ? { now: gates.now } : {}),
+      ...(checkpoint ? { checkpoint } : {}),
     });
   } catch (err) {
     // Deciding a gate reads and writes the `chant/lifecycle` branch, so it
@@ -737,6 +791,7 @@ async function runGateStep(
     };
   }
 
+  if (blocked) gates.resume?.note(`gate "${gateName(step)}" stored no checkpoint, so it won't resume: ${blocked}`);
   const refusal = check.mismatch
     ? { refusal: describeGateMismatch(gates.op, gateName(step), check.mismatch, await gateIsSealed(gateName(step))) }
     : {};
@@ -952,6 +1007,8 @@ async function runEffectStep(
 /**
  * Run a phase. Throws `PhaseFailure` (with the records so far) if any step
  * fails, or `GateStop` if a `gate` step in it is still pending approval.
+ * `from` starts a sequential phase at that step, for a run that resumes at a
+ * gate in it (#3947); the steps before it are the caller's to record.
  */
 async function runPhase(
   phase: PhaseDefinition,
@@ -960,6 +1017,7 @@ async function runPhase(
   resultsById: Map<string, unknown>,
   gates: GateContext,
   signal?: AbortSignal,
+  from = 0,
 ): Promise<StepRecord[]> {
   if (phase.parallel) {
     const eff = phase.steps.find(isEffect);
@@ -1039,7 +1097,7 @@ async function runPhase(
     }
   };
 
-  for (let i = 0; i < steps.length; i++) {
+  for (let i = from; i < steps.length; i++) {
     const step = steps[i];
     // The work lease (#2748): claimed here when it is due, and checked before
     // every step, so no step starts once the lease is lost.
@@ -1184,6 +1242,19 @@ export interface RunOpOptions {
   stepOutput?: (line: string) => void;
   /** How long a step may be quiet before the still-running line. Default 60s; `0` turns it off. */
   stepHeartbeatMs?: number;
+  /**
+   * The commit the checkout is at, for an Op with a gate that resumes
+   * (#3947). A checkpoint records it and a resumed run must match it.
+   * Default: `git rev-parse HEAD` in `cwd`, and none when that fails, so no
+   * gate resumes.
+   */
+  commit?: string;
+  /**
+   * The activity contracts the run knows (#3947). A gate that resumes stores
+   * no output a contract marks secret, and doesn't resume when a later step
+   * needs one. The local runtime passes the configured lexicons' contracts.
+   */
+  contracts?: ReadonlyMap<string, ActivityContract>;
 }
 
 /**
@@ -1355,12 +1426,12 @@ async function runOpInTurn(
   const start = Date.now();
   // Each phase's wall-clock time, for the run record and the in-flight one.
   const phaseDurations: Record<string, number> = {};
-  const timedPhase = async (phase: PhaseDefinition, ctx: GateContext, phaseSignal: AbortSignal | undefined): Promise<StepRecord[]> => {
+  const timedPhase = async (phase: PhaseDefinition, ctx: GateContext, phaseSignal: AbortSignal | undefined, from = 0): Promise<StepRecord[]> => {
     const live = currentLiveRun();
     const t0 = Date.now();
     live?.phaseStarted(phase.name);
     try {
-      const ran = await runPhase(phase, activities, profiles, resultsById, ctx, phaseSignal);
+      const ran = await runPhase(phase, activities, profiles, resultsById, ctx, phaseSignal, from);
       live?.phaseEnded(phase.name, phaseVerdict(ran), Date.now() - t0);
       return ran;
     } finally {
@@ -1389,6 +1460,7 @@ async function runOpInTurn(
       ...(gate ? { gate: { name: gate.gate, since: gate.timestamp, ...(gate.op !== config.name ? { op: gate.op } : {}) } } : {}),
       ...(point ? { point: { ...point, since: ended } } : {}),
       ...(options.steward ? { steward: options.steward } : {}),
+      ...(resumed ? { resumed } : {}),
       phaseDurations,
     });
     const record: OpRunRecord = { version: 1, ...input, id: runId };
@@ -1406,10 +1478,96 @@ async function runOpInTurn(
   // values before reaching an activity function — see `runStep`.
   const resultsById = new Map<string, unknown>();
 
+  // #3947: the gates that resume. Each stores a checkpoint when the run stops
+  // at it, and the run may start at one of them.
+  let resumed: OpRunResult["resumed"];
+  const resumeNotes: string[] = [];
+  const resumeGates = resumeGatesOf(config);
+  if (resumeGates.length > 0) {
+    gates.resume = {
+      config,
+      gates: new Map(resumeGates.map((g) => [g.step, g])),
+      commit: options.commit ?? (await getHeadCommit(options.cwd ? { cwd: options.cwd } : undefined).catch(() => undefined)),
+      ...(options.contracts ? { contracts: options.contracts } : {}),
+      note: (line) => resumeNotes.push(line),
+    };
+  }
+  const resumeFields = (): Pick<OpRunResult, "resumed" | "resumeNotes"> => ({
+    ...(resumed ? { resumed } : {}),
+    ...(resumeNotes.length > 0 ? { resumeNotes: [...resumeNotes] } : {}),
+  });
+
+  /**
+   * Resume at the gate `decision` names (#3947): seed the checkpoint's
+   * outputs, record every step before the gate as resumed, and run the step
+   * that produced the gate's plan again. Returns where the phases pick up, or
+   * undefined when the plan moved and the run starts at the first phase.
+   */
+  const resumeAt = async (
+    decision: Extract<GateResumeDecision, { kind: "resume" }>,
+  ): Promise<{ phaseIndex: number; stepIndex: number } | undefined> => {
+    const { gate, checkpoint } = decision;
+    for (const [id, value] of Object.entries(checkpoint.outputs)) resultsById.set(id, value);
+    const marker = { run: checkpoint.runId, gate: gate.name };
+    const prefix: StepRecord[] = [];
+    for (const [pi, phase] of config.phases.entries()) {
+      if (pi > gate.phaseIndex) break;
+      const steps = pi < gate.phaseIndex ? phase.steps : phase.parallel ? [] : phase.steps.slice(0, gate.stepIndex);
+      for (const [si, step] of steps.entries()) {
+        if (gate.planStep && pi === gate.planStep.phaseIndex && si === gate.planStep.stepIndex) {
+          const ran = await runStep(gate.planStep.step, phase.name, activities, profiles, resultsById, stepSignal);
+          prefix.push(ran.record);
+          if (ran.record.status === "fail" || ran.pending || ran.record.point) {
+            for (const r of prefix) gates.onRecord?.(r);
+            if (ran.pending) throw new GateStop(prefix, ran.pending, phase.name);
+            if (ran.record.point) throw new PointStop(prefix, ran.record.point, phase.name);
+            throw new PhaseFailure(prefix);
+          }
+          continue;
+        }
+        const skipped = isEffect(step)
+          ? skippedRecord(phase.name, `effect:${step.receipt.name}`)
+          : isGate(step)
+            ? skippedRecord(phase.name, gateFn(step))
+            : skippedRecord(phase.name, step.fn, step.args);
+        prefix.push({ ...skipped, resumed: marker });
+      }
+    }
+    // The plan the run would approve now against the one approved: a moved
+    // plan is live drift since the approval, and starts the run over.
+    const resolved = resolveStepOutputRefs(gate.step.plan, resultsById);
+    const planned = typeof resolved === "string" && resolved !== "" ? resolved : undefined;
+    if (!samePlanDigest(planned, decision.pending.planDigest)) {
+      resultsById.clear();
+      resumeNotes.push(
+        `gate "${gate.name}" is approved, and the run starts at the first phase: the plan moved since the approval ` +
+          `(approved ${describePlanDigest(decision.pending.planDigest)}, planned ${planned ?? "(none)"})`,
+      );
+      return undefined;
+    }
+    records.push(...prefix);
+    for (const r of prefix) gates.onRecord?.(r);
+    resumed = { gate: gate.name, run: checkpoint.runId, checkpoint: decision.digest };
+    return { phaseIndex: gate.phaseIndex, stepIndex: config.phases[gate.phaseIndex]!.parallel ? 0 : gate.stepIndex };
+  };
+
   try {
-    for (const phase of config.phases) {
+    let from: { phaseIndex: number; stepIndex: number } | undefined;
+    if (gates.resume) {
+      const decision = await decideGateResume(gates.port, config, {
+        now: options.now ?? new Date().toISOString(),
+        commit: gates.resume.commit,
+        ...(options.env !== undefined ? { environment: options.env } : {}),
+      });
+      if (decision.kind === "refused") {
+        resumeNotes.push(`gate "${decision.gate}" is approved, and the run starts at the first phase: ${decision.reason}`);
+      } else if (decision.kind === "resume") {
+        from = await resumeAt(decision);
+      }
+    }
+    for (let pi = from?.phaseIndex ?? 0; pi < config.phases.length; pi++) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await timedPhase(phase, gates, stepSignal)));
+      records.push(...(await timedPhase(config.phases[pi]!, gates, stepSignal, pi === from?.phaseIndex ? from.stepIndex : 0)));
     }
     // The last renewal before the run is recorded (#2748): a run whose lease
     // was lost is never recorded as done.
@@ -1429,6 +1587,7 @@ async function runOpInTurn(
         startedAt,
         record,
         ...(await finishWork("ok")),
+        ...resumeFields(),
       };
     }
 
@@ -1447,6 +1606,7 @@ async function runOpInTurn(
         point: err.question,
         record,
         ...(await finishWork("waiting")),
+        ...resumeFields(),
       };
     }
 
@@ -1467,6 +1627,7 @@ async function runOpInTurn(
         ...(err.pushWarning ? { gatePushWarning: err.pushWarning } : {}),
         record,
         ...(await finishWork("gated")),
+        ...resumeFields(),
       };
     }
 
@@ -1541,6 +1702,7 @@ async function runOpInTurn(
         startedAt,
         record: failed,
         ...(await finishWork("fail")),
+        ...resumeFields(),
       },
       { cause: err },
     );
@@ -1555,6 +1717,7 @@ async function runOpInTurn(
     startedAt,
     record,
     ...(await finishWork("ok")),
+    ...resumeFields(),
   };
 }
 

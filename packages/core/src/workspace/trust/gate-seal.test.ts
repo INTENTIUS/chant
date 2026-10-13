@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealRefusal, sshKeyFingerprint, verifySshSignatureWith, type GateSigners, type SealedGateApproval } from "./gate-seal";
+import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealRefusal, gateSealVersion, sshKeyFingerprint, verifySshSignatureWith, type GateSigners, type SealedGateApproval } from "./gate-seal";
 import { checkGateSeal } from "./seal";
 import { emptyPolicy, parseAllowedSigners, type TrustPolicy } from "./policy";
 import { hasSshKeygen } from "./test-repo";
@@ -96,7 +96,7 @@ describe.skipIf(!hasSshKeygen)("an SSHSIG checked with node:crypto", () => {
     const policy = policyOf(`alice ${k.pub}\n`);
     const seal = { signer: "alice", key: "SHA256:x", signature };
     expect(both(policy, { ...a, seal })).toEqual({ ours: null, keygen: true });
-    for (const edited of [{ planDigest: "jcs1-sha256:other" }, { timestamp: "2026-10-12T00:00:00.000Z" }, { relayedBy: "bot" }, { environment: "prod" }]) {
+    for (const edited of [{ planDigest: "jcs1-sha256:other" }, { timestamp: "2026-10-12T00:00:00.000Z" }, { relayedBy: "bot" }, { environment: "prod" }, { checkpointDigest: "jcs1-sha256:added" }]) {
       const res = both(policy, { ...a, ...edited, seal });
       expect(res.keygen).toBe(false);
       expect(res.ours).toMatch(/does not verify for alice/);
@@ -134,6 +134,33 @@ describe.skipIf(!hasSshKeygen)("an SSHSIG checked with node:crypto", () => {
     const a = approval({ resolvedBy: "github:Alice" });
     const seal = { signer: "github:alice", key: "k", signature: sign(k, gateSealPayload(a)) };
     expect(both(policyOf(`github:alice ${k.pub}\n`), { ...a, seal })).toEqual({ ours: null, keygen: true });
+  });
+});
+
+// #3947: seal version 2 signs the checkpoint digest as one more line, so the
+// outputs a resumed run carries on with are covered, and a version 1 payload
+// is unchanged.
+describe("seal version 2 covers the checkpoint", () => {
+  test("the payload adds a checkpoint line only when the approval carries one", () => {
+    const a = approval({ relayedBy: "bot" });
+    expect(gateSealVersion(a)).toBe(1);
+    expect(gateSealPayload(a).toString()).toBe("migrations\nmigrations-wave-1\n\njcs1-sha256:abc\nalice\n2026-10-11T00:00:00.000Z\nrelayed-by bot");
+    const b = approval({ relayedBy: "bot", checkpointDigest: "jcs1-sha256:cp" });
+    expect(gateSealVersion(b)).toBe(2);
+    expect(gateSealPayload(b).toString()).toBe(`${gateSealPayload(a).toString()}\ncheckpoint jcs1-sha256:cp`);
+  });
+
+  test.skipIf(!hasSshKeygen)("a version 2 seal verifies, and swapping or removing the checkpoint stops it", () => {
+    const k = key("alice-cp", ["-t", "ed25519"]);
+    const a = approval({ checkpointDigest: "jcs1-sha256:cp" });
+    const seal = { signer: "alice", key: "SHA256:x", signature: sign(k, gateSealPayload(a)), version: 2 };
+    const policy = policyOf(`alice ${k.pub}\n`);
+    expect(both(policy, { ...a, seal })).toEqual({ ours: null, keygen: true });
+    for (const edited of [{ checkpointDigest: "jcs1-sha256:other" }, { checkpointDigest: undefined }]) {
+      const res = both(policy, { ...a, ...edited, seal });
+      expect(res.keygen).toBe(false);
+      expect(res.ours).toMatch(/does not verify for alice/);
+    }
   });
 });
 

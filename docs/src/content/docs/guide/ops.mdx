@@ -248,6 +248,47 @@ The digest covers the change set: the addresses, the actions and the values that
 
 `chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly, and takes either spelling of a digest: `jcs1-sha256:` and the hex, or the bare `sha256:` an older run recorded ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
 
+### Resuming at the approved gate
+
+By default the run after `chant approve` starts again at the first phase, and every step before the gate runs a second time. A gate with `resume: true` picks up where the gated run stopped ([#3947](https://github.com/INTENTIUS/chant/issues/3947)). A value a step produced before the gate then reaches the steps after it through `stepOutput`, such as the snapshot id an apply and its rollback both need:
+
+```typescript
+const snapshot = activity("snapshotStack", { stack: "web" }, { id: "snapshot" });
+const plan = activity("planUpgrade", { stack: "web" }, { id: "plan" });
+
+export default Op({
+  name: "upgrade-web",
+  overview: "Upgrade the web stack behind an approval",
+  phases: [
+    phase("Prepare", [snapshot]),
+    phase("Plan", [plan]),
+    phase("Gate", [gate("approve-upgrade", { plan: plan.out.planDigest, resume: true })]),
+    phase("Apply", [activity("applyUpgrade", { snapshot: snapshot.out.id })]),
+  ],
+  onFailure: [phase("Rollback", [activity("restoreSnapshot", { snapshot: snapshot.out.id })])],
+});
+```
+
+When the run stops at the gate, it writes a checkpoint to `chant/lifecycle` at `_gates/<op>/checkpoints/<runId>.json`. The checkpoint holds the outputs that cross the gate: each output of a step before the gate that a step at or after it reads, including `onFailure` steps and the gate's own `approval` context. Here that is `snapshot` alone. The pending fact carries the checkpoint's digest as `checkpointDigest`, and the gated run prints it on a `resume` line. `chant approve` copies the digest onto the approval along with the plan digest. A `--plan` that names another plan copies none.
+
+The next `chant run` finds the approval and resumes. It records the steps before the gate as skipped, each naming the run whose checkpoint supplied its output. It runs the step the gate's `plan` names again and decides the gate as usual, then carries on with the phases after it. `chant run` prints `[resume] at gate ...`, and the run ledger record keeps the same facts under `resumed`. A run that fails after the gate runs its `onFailure` phases with the checkpoint's values.
+
+The run starts at the first phase instead, and prints a `[resume]` line saying why, when one of these checks fails:
+
+| Check | Why it matters |
+|---|---|
+| The re-run plan step gives the approved digest | The live system or the configuration changed since the approval |
+| The checkout is at the commit the gated run was at | The Op or the code its steps run may have changed |
+| The run's `--env` is the gated run's | The outputs belong to another environment |
+| The checkpoint file matches the digest on the approval | Someone with push access changed the stored values after the approval |
+| The pending fact names the checkpoint's run and hasn't expired | The approval answers that run's stop |
+
+On GitHub a job rerun runs at the same commit, so `chant run resume` resumes at the gate. On Forgejo a rerun runs at the branch head, so a new commit starts the run at the first phase.
+
+The checkpoint never stores an output an activity contract marks secret (`activityContract(name, args, returns, { secret: ["token"] })`, or `secret: true` for the whole return value). A gate whose later steps read one does not resume, and the gated run says so. The values in a checkpoint are as readable as anything else on `chant/lifecycle`, so a step should pass a secret by reference, such as a secret store path. An approval sealed with `chant approve --sign` covers the checkpoint digest too. That is seal version 2, described in [Identity](/chant/reference/workspace-declaration/#identity).
+
+Only a gate at the top of a main phase resumes. A gate in `onFailure` or inside an effect can't, nor can one that asks a decision point or sits in an Op with a `workLease`. When the gate's `plan` is a step-output reference, the step it names must run before the gate. OPS016 refuses the rest at build. When several gates resume, the run picks the last approved one. A run that resumed at one gate and then stopped at a later one resumes at the later one next time. While the pending fact stands and its approval counts, a run that resumed and then failed can be run again from the same gate.
+
 ### What an activity knows about its run
 
 An activity is called with its arguments and an abort signal. `currentOpRun()` from `@intentius/chant/op` returns the run around it ([#2522](https://github.com/INTENTIUS/chant/issues/2522)):

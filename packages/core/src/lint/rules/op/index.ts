@@ -14,6 +14,7 @@ import { ops012 } from "./ops012-activity-contract";
 import { ops013 } from "./ops013-step-output-ref";
 import { ops014 } from "./ops014-converge-rule-refusals";
 import { ops015 } from "./ops015-gate-approval";
+import { ops016 } from "./ops016-gate-resume";
 import { sys010Check } from "./sys010-key-over-plain-http";
 import type { DecideBackend } from "../../../op/decide-config";
 
@@ -21,6 +22,7 @@ export { ops012 } from "./ops012-activity-contract";
 export { ops013 } from "./ops013-step-output-ref";
 export { ops014 } from "./ops014-converge-rule-refusals";
 export { ops015 } from "./ops015-gate-approval";
+export { ops016 } from "./ops016-gate-resume";
 export { sys010, sys010Check } from "./sys010-key-over-plain-http";
 
 export interface CoreOpCheckOptions {
@@ -30,9 +32,9 @@ export interface CoreOpCheckOptions {
 
 /**
  * Core's own post-synth checks over the Op model: OPS012, OPS013, OPS014,
- * OPS015, and SYS010 over the `decide` steps and the configured decide
+ * OPS015, OPS016, and SYS010 over the `decide` steps and the configured decide
  * backends.
  */
 export function coreOpChecks(opts: CoreOpCheckOptions = {}): PostSynthCheck[] {
-  return [ops012, ops013, ops014, ops015, sys010Check(opts.decideBackends)];
+  return [ops012, ops013, ops014, ops015, ops016, sys010Check(opts.decideBackends)];
 }

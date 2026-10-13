@@ -139,6 +139,12 @@ export interface GateResolutionRecord {
    */
   planDigest?: string;
   /**
+   * The checkpoint this approval lets a run resume from (#3947), copied off
+   * the pending fact it answers. Set only on an approval of a gate that
+   * resumes (`resume: true`) whose run stored a checkpoint. A seal covers it.
+   */
+  checkpointDigest?: string;
+  /**
    * The environment this approval is for (#2574), copied off the pending fact
    * it answers. Set for a component gate, whose ledger is keyed by component
    * rather than by environment. A component gate counts only a resolution
@@ -211,6 +217,12 @@ export interface GateApprovalSeal {
   signer: string;
   key: string;
   signature: string;
+  /**
+   * The seal's version (#3947). `2` on a seal over an approval that carries a
+   * `checkpointDigest`, whose payload signs the digest as one more line.
+   * Absent on every other seal, which is version 1.
+   */
+  version?: 2;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;
@@ -278,6 +290,16 @@ export interface PendingGateRecord {
    * binds one since #2574.
    */
   planDigest?: string;
+  /**
+   * The digest of the checkpoint the run stored when it stopped here (#3947),
+   * on a gate that resumes (`resume: true`). The file is at
+   * `_gates/<op>/checkpoints/<runId>.json` (`./gate-checkpoint.ts`). `chant
+   * approve` copies it onto the approval, and a run resumes at this gate only
+   * from a checkpoint that matches it. Absent when the gate doesn't resume,
+   * or when its run could not store one, such as when an output it needs is
+   * secret.
+   */
+  checkpointDigest?: string;
   /**
    * The environment the run reached this gate in (#2574). Set by the
    * component driver, whose gate ledger is keyed by component, so pending
@@ -467,6 +489,12 @@ export function parseGateLedger(
       // approval is bound to.
       const rawEnv: unknown = (parsed as { environment?: unknown }).environment;
       if (rawEnv !== undefined && typeof rawEnv !== "string") {
+        malformed++;
+        continue;
+      }
+      // #3947: and for the checkpoint an approval lets a run resume from.
+      const rawCheckpoint: unknown = (parsed as { checkpointDigest?: unknown }).checkpointDigest;
+      if (rawCheckpoint !== undefined && typeof rawCheckpoint !== "string") {
         malformed++;
         continue;
       }

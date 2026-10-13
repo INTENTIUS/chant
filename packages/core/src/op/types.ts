@@ -298,6 +298,20 @@ export interface GateStepBase {
    * `./gate-point.ts`.
    */
   point?: string | GatePoint;
+  /**
+   * A run that stops at this gate can be resumed here once it is approved
+   * (#3947), rather than starting again at the first phase. The run stores
+   * the step outputs a later step references in a checkpoint on
+   * `chant/lifecycle`, and the next run after `chant approve` re-runs the
+   * step that produced the gate's `plan`, checks the checkpoint, and carries
+   * on from the gate. Any check that fails starts the run at the first phase,
+   * and the run says why. See `./gate-checkpoint.ts`.
+   *
+   * Only a gate at the top of a main phase resumes, and not one that asks a
+   * decision point or sits in an Op with a `workLease`. OPS016 refuses the
+   * rest at build.
+   */
+  resume?: boolean;
 }
 
 /**

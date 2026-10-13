@@ -72,6 +72,7 @@ export {
   GATE_SEAL_NAMESPACE,
   gateSealPayload,
   gateSealRefusal,
+  gateSealVersion,
   sshKeyFingerprint,
   verifySshSignatureWith,
   type GateSigners,

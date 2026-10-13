@@ -257,6 +257,18 @@ describe("op.json IR", () => {
     expect(serializeOpIR(reconstructed)).toBe(text);
   });
 
+  // #3947: a gate that resumes says so in op.json, for a runtime that reads it.
+  it("carries a gate's resume through op.json and back", () => {
+    const config: OpConfig = {
+      name: "live-apply",
+      overview: "o",
+      phases: [phase("Gate", [{ kind: "gate", gate: "approve-live-apply", resume: true }])],
+    };
+    const text = serializeOpIR(config);
+    expect((JSON.parse(text) as OpIR).phases[0].steps[0]).toMatchObject({ kind: "gate", resume: true });
+    expect(opConfigFromIR(JSON.parse(text) as OpIR).phases[0]!.steps[0]).toMatchObject({ kind: "gate", resume: true });
+  });
+
   it("round-trips a minimal Op (no gate, effect, onFailure or labels) too", () => {
     const original: OpConfig = { name: "minimal", overview: "o", phases: [phase("Only", [shell("echo hi")])] };
     const text = serializeOpIR(original);
