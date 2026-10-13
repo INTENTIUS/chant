@@ -44,7 +44,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | studio | behold | plugin |
 |---|---|---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 16 | 5 | 3 | 1 | 1 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 63 | 0 | 0 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 64 | 0 | 0 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 | 0 | 0 |
 | record kind | none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party | 7 | 0 | 0 | 0 | 1 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 | 0 | 0 |
@@ -129,6 +129,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace points ask` | chant | points-write.schema.json | Asks a point's table, model and quorum deciders for one set of inputs and records the answer, proposed when a model gave it; chant calls no model, and a backend's response is handed in with --response. An ad-hoc point's question and candidates come with the ask, with --candidates, and the record keeps them as asked (#3403). |
 | workspace command | `workspace points answer` | chant | points-write.schema.json | Records people's answer to an open question, or their confirmation of a model's proposal, once the point's quorum is met, with their note (#3351). |
 | workspace command | `workspace points retract` | chant | points-write.schema.json | Takes people's answer back once the point's quorum is met: the question is escalated to people again, and the answer, its note, and who retracted it, when and why stay in the record's retractions (#3351, ws-084). |
+| workspace command | `workspace points withdraw` | chant | points-write.schema.json | Closes an open question that no longer applies, such as one about a work item its author changed: the record keeps its state with who withdrew it, the day and the reason, points --open leaves it out, and asking it again opens it again (#2888). |
 | workspace command | `workspace agent` | chant | agent.schema.json | Prints an agent session from the declaration at base: the members it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, so a session that resumes rebuilds its context from the repository alone (#2548, ws-067, ws-101). |
 | workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
 | workspace command | `workspace signers` | chant | signers.schema.json | Shows the signer set's versions along the base's first-parent line, each signed by a threshold of the one before, and writes and signs the rotation file for the next version. |

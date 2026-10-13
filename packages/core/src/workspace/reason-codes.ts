@@ -161,7 +161,7 @@ export const REASONS = {
   "answer-in-steward-turn": "The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell.",
   "answer-never-over-mcp": "The answer or retraction came over MCP or ACP, or from a process a session on one started, and the question constrains a gate that is never resolved there: a person answers it at a shell or through hud (#3817).",
   "answer-not-answered": "points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351).",
-  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a relay, a retraction or an ad-hoc question's asked: copy the schema anew to turn it on (#3351, #3402, #3403).",
+  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a relay, a retraction, an ad-hoc question's asked or a withdrawal: copy the schema anew to turn it on (#3351, #3402, #3403, #2888).",
   "point-candidates-invalid": "points ask names an ad-hoc point without --candidates, a declared point with them, or candidates that are not a question and criteria of the point's question type (#3403).",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
