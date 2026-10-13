@@ -44,14 +44,14 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | studio | behold | plugin |
 |---|---|---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 16 | 5 | 3 | 1 | 1 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 63 | 0 | 0 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 64 | 0 | 0 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 | 0 | 0 |
 | record kind | none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party | 7 | 0 | 0 | 0 | 1 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 216 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 217 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 51 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -129,6 +129,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace points ask` | chant | points-write.schema.json | Asks a point's table, model and quorum deciders for one set of inputs and records the answer, proposed when a model gave it; chant calls no model, and a backend's response is handed in with --response. An ad-hoc point's question and candidates come with the ask, with --candidates, and the record keeps them as asked (#3403). |
 | workspace command | `workspace points answer` | chant | points-write.schema.json | Records people's answer to an open question, or their confirmation of a model's proposal, once the point's quorum is met, with their note (#3351). |
 | workspace command | `workspace points retract` | chant | points-write.schema.json | Takes people's answer back once the point's quorum is met: the question is escalated to people again, and the answer, its note, and who retracted it, when and why stay in the record's retractions (#3351, ws-084). |
+| workspace command | `workspace points withdraw` | chant | points-write.schema.json | Closes an open question that no longer applies, such as one about a work item its author changed: the record keeps its state with who withdrew it, the day and the reason, points --open leaves it out, and asking it again opens it again (#2888). |
 | workspace command | `workspace agent` | chant | agent.schema.json | Prints an agent session from the declaration at base: the members it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, so a session that resumes rebuilds its context from the repository alone (#2548, ws-067, ws-101). |
 | workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
 | workspace command | `workspace signers` | chant | signers.schema.json | Shows the signer set's versions along the base's first-parent line, each signed by a threshold of the one before, and writes and signs the rotation file for the next version. |
@@ -259,6 +260,7 @@ Each row follows, in the order of the table above.
 | reason code | `seal-signature-invalid` | chant | records.schema.json | The seal is malformed, names a signer other than the reviewer or author, or its signature does not verify over the verdict or record. |
 | reason code | `seal-unverifiable` | chant | records.schema.json | Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed. |
 | reason code | `record-unattested` | chant | points-write.schema.json, points.schema.json, records.schema.json | A signers file is active at base, and the record names an author whose seal does not verify: it has none, the author has no key in the file, or the signature fails. |
+| reason code | `record-ratified-below-quorum` | chant | points-write.schema.json, points.schema.json, records.schema.json | The record is in its kind's ratified state, and its quorum is not met: it was written to that state by hand. It stays valid. |
 | reason code | `change-uncovered` | chant | changes.schema.json | A path the diff changes is covered by no current decided record and no open work item, by path or by its member. |
 | reason code | `change-out-of-scope` | chant | changes.schema.json | A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its out_of_scope. |
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |

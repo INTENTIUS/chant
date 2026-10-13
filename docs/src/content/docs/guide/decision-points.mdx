@@ -157,6 +157,14 @@ chant workspace points answer slice-tier-074b660bbaad --answer large --by alice
 
 The retracted answer stays in the record's `retractions` with who gave it, its note, and who took it back, when and why.
 
+A question can also stop applying before anyone answers it. When a work item's author changes the item while a question about it is escalated, the next ask is a new question with a new id, and the first one stays open. Whoever asked withdraws it, and `points --open` leaves it out from then on ([#2888](https://github.com/INTENTIUS/chant/issues/2888)):
+
+```bash
+chant workspace points withdraw understand-3f9a1c0d7e2b --by factory --note "W-001 changed"
+```
+
+A withdrawal needs no quorum, since it answers nothing. Asking the same question again opens it again.
+
 ## Ask a point from an Op
 
 An Op asks a point from one of its activities with `askPointInRun` from `@intentius/chant/op` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The [`decide` activity](#the-decide-activity) calls it. An answered question returns its answer, and the Op goes on. An escalated or proposed question is still open, so the activity throws `PointWait`. The run then ends with status `waiting`, the way a gate ends it with `gated`. No later step runs, no `onFailure` phase runs, and the run's ledger record names the question as `point`. `chant run` exits 3. Nothing waits in the meantime. Once a person has answered, the next run asks the same point with the same inputs and reads the answer from its record.

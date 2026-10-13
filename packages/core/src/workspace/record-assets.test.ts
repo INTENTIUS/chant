@@ -181,6 +181,20 @@ describe("chant workspace records checks each pin", () => {
     expect(pinFile("ws/design/screens/home.png", root)).toEqual({ path: "design/screens/home.png", sha256: sha(PNG) });
     expect(pinFile("design", join(root, "ws"))).toEqual({ error: "design is not a file" });
   });
+
+  test("records pin takes the workspace above the current directory or the kind file, not the nested one above the file (#3038)", () => {
+    const root = repo({
+      "chant.workspace.json": declaration([{ name: "template", dir: "template", kind: "other", because: "a template" }]),
+      "template/chant.workspace.json": declaration([{ name: "box", dir: "box", kind: "other", because: "the box" }]),
+      "template/box/builder.mjs": "export {};\n",
+      "decisions/decision.kind.mjs": KIND,
+    });
+    const hash = sha("export {};\n");
+    expect(pinFile("template/box/builder.mjs", root)).toEqual({ path: "template/box/builder.mjs", sha256: hash });
+    expect(pinFile("box/builder.mjs", join(root, "template"))).toEqual({ path: "box/builder.mjs", sha256: hash });
+    expect(pinFile("box/builder.mjs", join(root, "template"), "../decisions/decision.kind.mjs")).toEqual({ path: "template/box/builder.mjs", sha256: hash });
+    expect(pinFile("chant.workspace.json", root, "template/box/builder.mjs")).toMatchObject({ error: expect.stringContaining("not a file path inside the workspace") });
+  });
 });
 
 describe("chant workspace graph --kind", () => {

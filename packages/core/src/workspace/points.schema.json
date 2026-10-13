@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json",
   "title": "chant workspace points output",
-  "description": "What `chant workspace points --json` prints (ws-058, #2739): the decision points each declared answer kind's points file declares, and the questions asked of them, each an answer record. A question is open while it is escalated to people, or proposed by a model and not yet confirmed; it carries any model's answer with its confidence and threshold, so a reader can prompt a person. With --open only open questions are listed. chant never calls a model to print this. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists, each in the one closed list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2739; a chant without it refuses the command.",
+  "description": "What `chant workspace points --json` prints (ws-058, #2739): the decision points each declared answer kind's points file declares, and the questions asked of them, each an answer record. A question is open while it is escalated to people, or proposed by a model and not yet confirmed, and not withdrawn (#2888); it carries any model's answer with its confidence and threshold, so a reader can prompt a person. With --open only open questions are listed. chant never calls a model to print this. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists, each in the one closed list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2739; a chant without it refuses the command.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -95,7 +95,8 @@
             "open",
             "escalated",
             "proposed",
-            "answered"
+            "answered",
+            "withdrawn"
           ],
           "properties": {
             "points": {
@@ -121,6 +122,11 @@
             "answered": {
               "type": "integer",
               "minimum": 0
+            },
+            "withdrawn": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Questions withdrawn because they no longer apply (#2888), whatever their state; none of them is open."
             }
           }
         }
@@ -765,6 +771,38 @@
             }
           }
         },
+        "withdrawn": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Who withdrew the question, when and why (points withdraw, #2888): an open question that no longer applies, such as one about a work item its author changed. A withdrawn question keeps its state and is not open. null when it was not withdrawn, and absent from a chant before it.",
+          "required": [
+            "by",
+            "on",
+            "note"
+          ],
+          "properties": {
+            "by": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "on": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
         "asked": {
           "description": "An ad-hoc point's question as its ask gave it (points ask --candidates, #3403): the question's text, and its criteria, what each candidate means, in the point's question type's shape. People's answer is one of the candidates. null for a declared point's question, and absent from a chant before it.",
           "oneOf": [
@@ -825,7 +863,8 @@
                   "answer-points-unreadable",
                   "answer-point-unknown",
                   "answer-point-changed",
-                  "record-unattested"
+                  "record-unattested",
+                  "record-ratified-below-quorum"
                 ]
               },
               "message": {
