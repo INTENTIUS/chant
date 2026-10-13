@@ -476,6 +476,27 @@ describe("chant workspace upgrade", () => {
     expect(isGovernancePath("src/main.ts")).toBe(false);
   });
 
+  test("the quorum counts the gates in a workspace member's Op files (#2892)", async () => {
+    const op = (overview: string): string =>
+      `export default { props: { name: "release", overview: ${JSON.stringify(overview)}, phases: [{ name: "Ship", steps: [{ kind: "gate", name: "ship", approval: { quorum: { count: 2, roles: ["maintainer"] } } }] }] } };\n`;
+    // A template whose Op lives in a member, and a project made from it.
+    release("v1.1.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+      "delivery/ops/release.op.ts": op("v1"),
+    });
+    proj = join(root, "members");
+    expect((await initFromCommand({ from: `${tpl}@v1.1.0`, path: proj })).error).toBeUndefined();
+    git(proj, ["init", "-q", "-b", "main"]);
+    commitProject("init from v1.1");
+    release("v2.0.0", { "delivery/ops/release.op.ts": op("v2") });
+    const port = ledger();
+    const result = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port, now: "2026-09-23T10:00:00.000Z" });
+    expect(result.outcome).toBe("gated");
+    expect(result.staged!.governance).toMatchObject({ paths: ["delivery/ops/release.op.ts"], approval: { mode: "log-only", quorum: { count: 2, roles: ["maintainer"] } } });
+    expect(port.pending[0].approval).toEqual({ mode: "log-only", quorum: { count: 2, roles: ["maintainer"] } });
+  });
+
   test("refuses a scope with uncommitted changes, and a scope that does not exist", async () => {
     put(proj, "README.md", "dirty\n");
     await expect(stageUpgrade({ root: proj, to: "v1.0.0" })).rejects.toThrow(/uncommitted changes/);

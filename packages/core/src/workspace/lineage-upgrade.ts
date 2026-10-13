@@ -571,22 +571,30 @@ export function isGovernancePath(path: string): boolean {
  * strictest gate declared at HEAD in any Op file the patch changes, at least
  * one. The Op files are read from the project's tree, which the upgrade
  * requires to match HEAD for every path the patch touches.
+ *
+ * Discovery runs from each changed Op file's own directory, so it finds the
+ * file under the project that owns it. Run from a workspace root, it would
+ * skip every member's Op files (#2892).
  */
-async function rulesAtHead(root: string, repo: string, paths: string[]): Promise<ResolvedGateApproval> {
+async function rulesAtHead(repo: string, paths: string[]): Promise<ResolvedGateApproval> {
   const opFiles = new Set(paths.filter((p) => GOVERNANCE[0].test(p)));
   let count = 1;
   let roles: string[] | undefined;
   if (opFiles.size > 0) {
     const { discoverOps } = await import("../op/discover");
-    const { ops } = await discoverOps({ cwd: root });
-    for (const { config, filePath } of ops.values()) {
-      const rel = relative(repo, filePath).split(sep).join("/");
-      if (!opFiles.has(rel)) continue;
-      for (const approval of gateApprovals(config)) {
-        const need = approval.quorum?.count ?? 1;
-        if (need > count) {
-          count = need;
-          roles = approval.quorum?.roles;
+    const dirs = new Set([...opFiles].map((p) => dirname(join(repo, p))));
+    for (const dir of dirs) {
+      if (!existsSync(dir)) continue;
+      const { ops } = await discoverOps({ cwd: dir });
+      for (const { config, filePath } of ops.values()) {
+        const rel = relative(repo, filePath).split(sep).join("/");
+        if (!opFiles.has(rel)) continue;
+        for (const approval of gateApprovals(config)) {
+          const need = approval.quorum?.count ?? 1;
+          if (need > count) {
+            count = need;
+            roles = approval.quorum?.roles;
+          }
         }
       }
     }
@@ -854,7 +862,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       if (touched.length > 0) {
         throw new UpgradeError(`the upgrade changes governance files that have uncommitted edits (${touched.map((l) => l.slice(3)).join(", ")}). Commit them first: their gates are read at HEAD.`);
       }
-      governance = { paths: governed, approval: await rulesAtHead(root, repo, governed), rules: head };
+      governance = { paths: governed, approval: await rulesAtHead(repo, governed), rules: head };
     }
 
     // 5. Checks.
