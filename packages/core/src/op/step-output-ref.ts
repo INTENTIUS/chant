@@ -23,15 +23,20 @@
  * Scope, kept deliberately tight (see the issue's "Open questions"):
  *  - same-Op only — no cross-Op plumbing (that needs a durable place to put
  *    the value, which #1290 explicitly defers).
- *  - main `phases` only — a step inside `onFailure` or nested inside an
- *    `EffectStep` can neither produce nor consume a step-output reference.
- *    `onFailure` compensation runs only when something upstream already
- *    failed, so a main-phase step's captured result isn't reliably
- *    available there; an effect step's nested steps run only when the
- *    receipt comparison mismatches, so a value it produces isn't reliably
- *    available to anything outside it either. Both are conditional
- *    execution paths, which is exactly the class of thing #1290 keeps out
- *    of an Op's inert-data model.
+ *  - producers are the top-level activity steps of the main `phases`. A step
+ *    in `onFailure` or nested inside an `EffectStep` produces nothing another
+ *    step may reference: an effect's nested steps run only when the receipt
+ *    comparison mismatches, so a value one of them returns isn't reliably
+ *    there for anything else (#3948 decision A7, "for now").
+ *  - consumers are those producers, plus (#3948) every activity step in
+ *    `onFailure` and every activity step nested inside an effect. An
+ *    `onFailure` step may reference any main-phase producer. Compensation
+ *    runs after a failure, so its producer may never have completed; the
+ *    executor then skips the compensation step and records why (decision
+ *    A6), rather than calling it with an `undefined` in place of the value.
+ *    A step nested inside an effect may reference a producer that runs
+ *    before the effect, and the executor folds the resolved values into the
+ *    effect's expectation, so a changed value re-fires the effect.
  *  - producer must run to completion before the consumer starts: an earlier
  *    phase, or an earlier step within the same non-parallel phase. Two
  *    steps in the same parallel phase run concurrently (`Promise.all`) with
@@ -243,24 +248,61 @@ function locateStepOutputRefPath(value: unknown, target: StepOutputRef, path: st
 // ── Validation ──────────────────────────────────────────────────────────────
 
 interface StepLocation {
+  /** Index into `phases`; every `onFailure` phase sits after all of them. */
   phaseIndex: number;
+  /** Index into the phase's `steps`. A step nested in an effect takes the effect's. */
   stepIndex: number;
   parallel: boolean;
   step: ActivityStep;
+  phaseName: string;
 }
 
-/** Top-level `ActivityStep`s of `phases`, in authored (phase, then step) order — gates, effects, and steps nested inside an effect are not producers or consumers (see the module doc's scope note). */
+/** Top-level `ActivityStep`s of `phases`, in authored (phase, then step) order: the producers (see the module doc's scope note). */
 function locateActivitySteps(phases: PhaseDefinition[]): StepLocation[] {
   const locations: StepLocation[] = [];
   phases.forEach((phase, phaseIndex) => {
-    let stepIndex = 0;
-    for (const step of phase.steps) {
-      if (step.kind !== "activity") continue;
-      locations.push({ phaseIndex, stepIndex, parallel: phase.parallel === true, step });
-      stepIndex++;
-    }
+    phase.steps.forEach((step, stepIndex) => {
+      if (step.kind !== "activity") return;
+      locations.push({ phaseIndex, stepIndex, parallel: phase.parallel === true, step, phaseName: phase.name });
+    });
   });
   return locations;
+}
+
+/**
+ * Every activity step that may hold a reference (#3948): the producers, each
+ * step nested inside an effect of a main phase, and every activity step of
+ * `onFailure`, effect-nested ones included. An `onFailure` step is placed after
+ * every main phase, so any main-phase producer precedes it.
+ */
+function locateConsumers(config: Pick<OpConfig, "phases" | "onFailure">): StepLocation[] {
+  const consumers: StepLocation[] = [];
+  const visit = (phases: PhaseDefinition[], offset: number) => {
+    phases.forEach((phase, i) => {
+      const at = { phaseIndex: offset + i, parallel: phase.parallel === true, phaseName: phase.name };
+      phase.steps.forEach((step, stepIndex) => {
+        if (step.kind === "activity") consumers.push({ ...at, stepIndex, step });
+        if (step.kind === "effect") {
+          for (const nested of step.steps) if (nested.kind === "activity") consumers.push({ ...at, stepIndex, step: nested });
+        }
+      });
+    });
+  };
+  visit(config.phases, 0);
+  visit(config.onFailure ?? [], config.phases.length);
+  return consumers;
+}
+
+/** Ids of the activity steps nested inside an effect, in any phase. Nothing may reference them (#3948 decision A7). */
+function effectNestedIds(config: Pick<OpConfig, "phases" | "onFailure">): Set<string> {
+  const ids = new Set<string>();
+  for (const phase of [...config.phases, ...(config.onFailure ?? [])]) {
+    for (const step of phase.steps) {
+      if (step.kind !== "effect") continue;
+      for (const nested of step.steps) if (nested.kind === "activity" && nested.id) ids.add(nested.id);
+    }
+  }
+  return ids;
 }
 
 /** True when `producer` is guaranteed to have completed before `consumer` starts. */
@@ -268,10 +310,6 @@ function producerPrecedes(producer: StepLocation, consumer: StepLocation): boole
   if (producer.phaseIndex !== consumer.phaseIndex) return producer.phaseIndex < consumer.phaseIndex;
   if (producer.parallel) return false; // same parallel phase — Promise.all, no ordering guarantee
   return producer.stepIndex < consumer.stepIndex;
-}
-
-function effectNestedActivitySteps(phase: PhaseDefinition): ActivityStep[] {
-  return phase.steps.flatMap((s) => (s.kind === "effect" ? s.steps.filter((n) => n.kind === "activity") : []));
 }
 
 /** `byId`/`duplicateIds` over an Op's top-level main-phase activity steps — shared by {@link validateStepOutputRefScope} and {@link validateStepOutputRefs}. */
@@ -298,46 +336,28 @@ function indexById(locations: StepLocation[]): { byId: Map<string, StepLocation>
  * a public export a caller can invoke directly, bypassing that lint pass —
  * this is its own defense-in-depth.
  *
- * Flags:
- *  - a reference authored inside `onFailure`, or inside an `EffectStep`'s
- *    nested steps — out of scope by design (see the module doc); flagged
- *    explicitly here rather than left to fall through as "unknown producer",
+ * Consumers are the main-phase activity steps, the steps nested inside an
+ * effect, and every `onFailure` activity step (#3948). Flags:
+ *  - a reference to a step nested inside an effect step, from anywhere
+ *    (#3948 decision A7) — flagged explicitly here rather than left to fall
+ *    through as "unknown producer",
  *  - a reference to an unregistered step id (no step in scope declares it),
  *  - a duplicate step id (ambiguous producer),
  *  - a reference to a step that does not precede the referencing step
  *    (a later phase, a later step in the same phase, itself, or a step in
- *    the same parallel phase).
+ *    the same parallel phase). A step nested inside an effect takes the
+ *    effect's position, so it may reference only a step that runs before
+ *    the effect. An `onFailure` step comes after every main phase.
  */
 export function validateStepOutputRefScope(
   config: Pick<OpConfig, "name" | "phases" | "onFailure"> & Partial<Pick<OpConfig, "workLease">>,
 ): ActivityContractIssue[] {
   const issues: ActivityContractIssue[] = [];
 
-  const flagOutOfScope = (steps: ActivityStep[], phaseName: string, reason: string) => {
-    for (const step of steps) {
-      for (const ref of collectStepOutputRefs(step.args)) {
-        issues.push({
-          opName: config.name,
-          phase: phaseName,
-          fn: step.fn,
-          message: `references step "${ref.step}"'s output, but ${reason}`,
-        });
-      }
-    }
-  };
-  for (const phase of config.onFailure ?? []) {
-    const steps = phase.steps.filter((s): s is ActivityStep => s.kind === "activity").concat(effectNestedActivitySteps(phase));
-    flagOutOfScope(steps, phase.name, "step-output references are not supported in onFailure compensation phases");
-  }
-  for (const phase of config.phases) {
-    flagOutOfScope(effectNestedActivitySteps(phase), phase.name, "step-output references are not supported for a step nested inside an effect step");
-  }
+  const { byId, duplicateIds } = indexById(locateActivitySteps(config.phases));
+  const nestedIds = effectNestedIds(config);
 
-  const locations = locateActivitySteps(config.phases);
-  const { byId, duplicateIds } = indexById(locations);
-  const phaseNameOf = (loc: StepLocation): string => config.phases[loc.phaseIndex]!.name;
-
-  for (const consumer of locations) {
+  for (const consumer of locateConsumers(config)) {
     const refs = collectStepOutputRefs(consumer.step.args);
     for (const ref of refs) {
       // The run's work lease (#2748) is published under a reserved id once it
@@ -346,7 +366,7 @@ export function validateStepOutputRefScope(
       if (duplicateIds.has(ref.step)) {
         issues.push({
           opName: config.name,
-          phase: phaseNameOf(consumer),
+          phase: consumer.phaseName,
           fn: consumer.step.fn,
           message: `references step id "${ref.step}", but that id is used by more than one step in this Op — ids must be unique`,
         });
@@ -357,9 +377,11 @@ export function validateStepOutputRefScope(
       if (!producer) {
         issues.push({
           opName: config.name,
-          phase: phaseNameOf(consumer),
+          phase: consumer.phaseName,
           fn: consumer.step.fn,
-          message: `references unknown step id "${ref.step}" — no step in this Op's main phases declares that id`,
+          message: nestedIds.has(ref.step)
+            ? `references step "${ref.step}", which is nested inside an effect step — a step inside an effect runs only when the effect fires, so no other step can reference its output`
+            : `references unknown step id "${ref.step}" — no step in this Op's main phases declares that id`,
         });
         continue;
       }
@@ -373,7 +395,7 @@ export function validateStepOutputRefScope(
               : `step "${ref.step}" does not run before this step`;
         issues.push({
           opName: config.name,
-          phase: phaseNameOf(consumer),
+          phase: consumer.phaseName,
           fn: consumer.step.fn,
           message: `references ${reason} — a step can only reference an earlier step's output`,
         });
@@ -385,10 +407,10 @@ export function validateStepOutputRefScope(
 }
 
 /**
- * Validate every step-output reference in an Op's main phases against a
- * contract map and the Op's own step ordering. Scope: `config.phases` only
- * (never `onFailure`, never a step nested inside an `EffectStep` — see the
- * module doc). Layers contract-based checks on top of {@link
+ * Validate every step-output reference in an Op against a contract map and
+ * the Op's own step ordering, over the consumers {@link
+ * validateStepOutputRefScope} covers (see the module doc). Layers
+ * contract-based checks on top of {@link
  * validateStepOutputRefScope}'s scope/ordering checks.
  *
  * Flags everything {@link validateStepOutputRefScope} does, plus:
@@ -404,11 +426,9 @@ export function validateStepOutputRefs(
 ): ActivityContractIssue[] {
   const issues = validateStepOutputRefScope(config);
 
-  const locations = locateActivitySteps(config.phases);
-  const { byId, duplicateIds } = indexById(locations);
-  const phaseNameOf = (loc: StepLocation): string => config.phases[loc.phaseIndex]!.name;
+  const { byId, duplicateIds } = indexById(locateActivitySteps(config.phases));
 
-  for (const consumer of locations) {
+  for (const consumer of locateConsumers(config)) {
     const refs = collectStepOutputRefs(consumer.step.args);
     for (const ref of refs) {
       // Already flagged by validateStepOutputRefScope — nothing to validate
@@ -421,7 +441,7 @@ export function validateStepOutputRefs(
       if (!producerContract) {
         issues.push({
           opName: config.name,
-          phase: phaseNameOf(consumer),
+          phase: consumer.phaseName,
           fn: consumer.step.fn,
           message: `references step "${ref.step}"'s output, but "${producer.step.fn}" has no registered activity contract to validate the reference against`,
         });
@@ -430,7 +450,7 @@ export function validateStepOutputRefs(
       if (!producerContract.returns) {
         issues.push({
           opName: config.name,
-          phase: phaseNameOf(consumer),
+          phase: consumer.phaseName,
           fn: consumer.step.fn,
           message: `references step "${ref.step}"'s output, but "${producer.step.fn}"'s contract declares no return schema`,
         });
@@ -439,7 +459,7 @@ export function validateStepOutputRefs(
       if (ref.path && !pathExistsInSchema(producerContract.returns as z.ZodTypeAny, ref.path)) {
         issues.push({
           opName: config.name,
-          phase: phaseNameOf(consumer),
+          phase: consumer.phaseName,
           fn: consumer.step.fn,
           message: `references step "${ref.step}"'s output path "${ref.path}", which does not exist on "${producer.step.fn}"'s declared return type`,
         });
@@ -466,7 +486,7 @@ export function validateStepOutputRefs(
           if (consumerKind && producerKind && consumerKind !== producerKind) {
             issues.push({
               opName: config.name,
-              phase: phaseNameOf(consumer),
+              phase: consumer.phaseName,
               fn: consumer.step.fn,
               message: `references step "${ref.step}"'s output path "${ref.path}" (${producerKind}), but arg "${argPath.join(".")}" on "${consumer.step.fn}" declares ${consumerKind} — type mismatch`,
             });

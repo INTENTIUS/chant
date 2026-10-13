@@ -12,6 +12,7 @@ import {
   EXISTENCE_EXPECTATION,
   receiptExpectation,
   resolveReceiptExpectation,
+  withStepOutputs,
   collectEffectReceipts,
   type EffectReceiptDeclaration,
 } from "../effect-receipt";
@@ -68,6 +69,14 @@ describe("planReceipts", () => {
 
     expect(entries[0].action).toBe("noop");
     expect(entries[0].effect).toBe("seed");
+  });
+
+  it("a value an effect step wrote with step outputs is a noop when its declared part matches (#3948)", () => {
+    const r = EffectReceipt("seeded", { effect: "seed", flavor: "hash", inputs: { rows: 10 } });
+    const readings = new Map<string, ReceiptReading>([
+      ["seeded", { observed: true, present: true, value: withStepOutputs(receiptExpectation(r), "sha256:abc"), lexicon: "aws" }],
+    ]);
+    expect(planReceipts(receiptsOf(["seeded", r]), readings, noRefs)[0].action).toBe("noop");
   });
 
   it("matching existence receipt is a clean noop", () => {

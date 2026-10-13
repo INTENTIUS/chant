@@ -459,6 +459,71 @@ describe("runOpLocally — gate as fact (#2119)", () => {
   });
 });
 
+describe("runOpLocally — step-output references in onFailure (#3948)", () => {
+  const failing: ActivityFn = async () => { throw new Error("boom"); };
+
+  test("a compensation step receives the value a main-phase step returned", async () => {
+    const received: unknown[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["deploy", async () => ({ previous: "v1" })],
+      ["migrate", failing],
+      ["restore", async (args) => { received.push(args); }],
+    ]);
+    const config = op({
+      phases: [
+        { name: "Deploy", steps: [{ kind: "activity", fn: "deploy", id: "deploy" }] },
+        { name: "Migrate", steps: [{ kind: "activity", fn: "migrate" }] },
+      ],
+      onFailure: [{ name: "Rollback", steps: [{ kind: "activity", fn: "restore", args: { revision: stepOutput("deploy", "previous") } }] }],
+    });
+    const err = await runOpLocally(config, activities, PROFILES).catch((e) => e);
+    expect(err).toBeInstanceOf(OpRunFailure);
+    expect(received).toEqual([{ revision: "v1" }]);
+  });
+
+  test("a compensation step whose source step did not complete is skipped, and the record says why (A6)", async () => {
+    const ran: string[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["deploy", failing],
+      ["restore", async () => void ran.push("restore")],
+      ["notify", async () => void ran.push("notify")],
+    ]);
+    const config = op({
+      phases: [{ name: "Deploy", steps: [{ kind: "activity", fn: "deploy", id: "deploy" }] }],
+      onFailure: [{ name: "Rollback", steps: [
+        { kind: "activity", fn: "restore", args: { revision: stepOutput("deploy", "previous") } },
+        { kind: "activity", fn: "notify" },
+      ] }],
+    });
+    const err = await runOpLocally(config, activities, PROFILES).catch((e) => e);
+    expect(err).toBeInstanceOf(OpRunFailure);
+    // The skip is not a failure of compensation: the next step still runs.
+    expect(ran).toEqual(["notify"]);
+    const restore = err.result.records.find((r: { fn: string }) => r.fn === "restore");
+    expect(restore.status).toBe("skipped");
+    expect(restore.refusal).toMatch(/step "deploy" did not complete/);
+  });
+
+  test("the skip applies in a parallel compensation phase too", async () => {
+    const ran: string[] = [];
+    const activities = new Map<string, ActivityFn>([
+      ["deploy", failing],
+      ["restore", async () => void ran.push("restore")],
+      ["notify", async () => void ran.push("notify")],
+    ]);
+    const config = op({
+      phases: [{ name: "Deploy", steps: [{ kind: "activity", fn: "deploy", id: "deploy" }] }],
+      onFailure: [{ name: "Rollback", parallel: true, steps: [
+        { kind: "activity", fn: "restore", args: { revision: stepOutput("deploy") } },
+        { kind: "activity", fn: "notify" },
+      ] }],
+    });
+    const err = await runOpLocally(config, activities, PROFILES).catch((e) => e);
+    expect(ran).toEqual(["notify"]);
+    expect(err.result.records.find((r: { fn: string }) => r.fn === "restore").status).toBe("skipped");
+  });
+});
+
 describe("runOpLocally — step-output references (#1290)", () => {
   test("a later step receives the producer's resolved value, not the placeholder", async () => {
     const received: unknown[] = [];

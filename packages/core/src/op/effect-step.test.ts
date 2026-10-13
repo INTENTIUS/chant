@@ -12,7 +12,8 @@
  *   differing receipts as findings and never writes.
  */
 import { describe, test, expect, vi } from "vitest";
-import { EffectReceipt, receiptExpectation, EXISTENCE_EXPECTATION } from "../effect-receipt";
+import { EffectReceipt, receiptExpectation, EXISTENCE_EXPECTATION, declaredExpectation, withStepOutputs } from "../effect-receipt";
+import { stepOutput } from "./step-output-ref";
 import { INTRINSIC_MARKER, type Intrinsic } from "../intrinsic";
 import { effect, phase } from "./builders";
 import {
@@ -322,5 +323,98 @@ describe("runOpLocally — effect steps", () => {
     await expect(
       runOpLocally(config, activityMap(store, { runSeed: async () => {} }), PROFILES),
     ).rejects.toThrow(/parallel phase/);
+  });
+});
+
+// ── Step outputs inside an effect (#3948) ───────────────────────────────────
+
+describe("runOpLocally — an effect's nested steps read step outputs (#3948)", () => {
+  function refOp(): OpConfig {
+    return {
+      name: "seed-op",
+      overview: "",
+      phases: [
+        phase("Pick", [{ kind: "activity", fn: "pick", id: "pick" }]),
+        phase("Seed", [effect(seeded, [step("runSeed", { file: stepOutput("pick", "file") })])]),
+      ],
+    };
+  }
+
+  test("the resolved value reaches the nested step, and the receipt holds its digest", async () => {
+    const { store, values } = memStore();
+    const received: unknown[] = [];
+    let file = "a.sql";
+    const activities = activityMap(store, {
+      pick: async () => ({ file }),
+      runSeed: async (args) => void received.push(args),
+    });
+    const first = await runOpLocally(refOp(), activities, PROFILES);
+    expect(first.status).toBe("ok");
+    expect(received).toEqual([{ file: "a.sql" }]);
+    const written = values.get("seeded")!;
+    expect(written).not.toBe(receiptExpectation(seeded));
+    expect(declaredExpectation(written)).toBe(receiptExpectation(seeded));
+
+    // The same value: the receipt matches and the effect is skipped.
+    const second = await runOpLocally(refOp(), activities, PROFILES);
+    expect(received).toHaveLength(1);
+    expect(second.records.find((r) => r.fn === "receiptRead")?.outcome).toEqual({ name: "EffectApplied", value: true });
+
+    // A changed value fires the effect again, though the declared inputs did not change.
+    file = "b.sql";
+    await runOpLocally(refOp(), activities, PROFILES);
+    expect(received).toEqual([{ file: "a.sql" }, { file: "b.sql" }]);
+    expect(values.get("seeded")).not.toBe(written);
+  });
+
+  test("a receipt written before the effect read outputs re-fires the effect once", async () => {
+    const { store, values } = memStore({ seeded: receiptExpectation(seeded) });
+    const ran = vi.fn();
+    const activities = activityMap(store, { pick: async () => ({ file: "a.sql" }), runSeed: async () => { ran(); } });
+    await runOpLocally(refOp(), activities, PROFILES);
+    expect(ran).toHaveBeenCalledTimes(1);
+    expect(declaredExpectation(values.get("seeded")!)).toBe(receiptExpectation(seeded));
+  });
+
+  test("an existence receipt takes no outputs: it says the effect ran once", async () => {
+    const booted = EffectReceipt("booted", { effect: "bootstrap", flavor: "existence" });
+    const config: OpConfig = {
+      name: "boot-op",
+      overview: "",
+      phases: [
+        phase("Pick", [{ kind: "activity", fn: "pick", id: "pick" }]),
+        phase("Boot", [effect(booted, [step("boot", { file: stepOutput("pick", "file") })])]),
+      ],
+    };
+    const { store, values } = memStore();
+    const activities = activityMap(store, { pick: async () => ({ file: "a.sql" }), boot: async () => {} });
+    await runOpLocally(config, activities, PROFILES);
+    expect(values.get("booted")).toBe(EXISTENCE_EXPECTATION);
+  });
+
+  test("an effect in onFailure whose source step did not complete is skipped whole (A6)", async () => {
+    const config: OpConfig = {
+      name: "seed-op",
+      overview: "",
+      phases: [phase("Pick", [{ kind: "activity", fn: "pick", id: "pick" }])],
+      onFailure: [phase("Undo", [effect(seeded, [step("unseed", { file: stepOutput("pick", "file") })])])],
+    };
+    const { store, writes } = memStore();
+    const ran = vi.fn();
+    const activities = activityMap(store, { pick: async () => { throw new Error("boom"); }, unseed: async () => { ran(); } });
+    const failure = (await runOpLocally(config, activities, PROFILES).catch((e) => e)) as OpRunFailure;
+    expect(failure).toBeInstanceOf(OpRunFailure);
+    expect(ran).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+    const skipped = failure.result.records.find((r) => r.fn === "effect:seeded");
+    expect(skipped?.status).toBe("skipped");
+    expect(skipped?.refusal).toMatch(/step "pick" did not complete/);
+  });
+
+  test("receiptStaleness compares the declared part of a value written with outputs", async () => {
+    const expected = receiptExpectation(seeded);
+    const { store } = memStore({ seeded: withStepOutputs(expected, "sha256:abc") });
+    const { receiptStaleness } = receiptActivities(store);
+    expect(await receiptStaleness({ receipts: [receiptCheckInput(seeded)] })).toEqual({ stale: false, findings: [] });
   });
 });

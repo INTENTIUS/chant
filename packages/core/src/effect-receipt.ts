@@ -66,6 +66,28 @@ export const EFFECT_RECEIPT_ENTITY_TYPE = "Chant::EffectReceipt";
  */
 export const EXISTENCE_EXPECTATION = "chant.effect-receipt:exists";
 
+const OUTPUTS_SEPARATOR = "+outputs=";
+
+/**
+ * A receipt expectation with the digest of the step outputs its effect read
+ * appended (#3948). The effect step writes this value, so the next run fires
+ * again when one of those outputs changed, though the declared inputs did not.
+ */
+export function withStepOutputs(expectation: string, outputs: string): string {
+  return `${expectation}${OUTPUTS_SEPARATOR}${outputs}`;
+}
+
+/**
+ * The part of a stored receipt value that the declared inputs determine: the
+ * value without any step-output digest {@link withStepOutputs} appended. The
+ * plan and `receiptStaleness` compare this part, since step outputs exist only
+ * while the Op runs.
+ */
+export function declaredExpectation(value: string): string {
+  const at = value.indexOf(OUTPUTS_SEPARATOR);
+  return at < 0 ? value : value.slice(0, at);
+}
+
 /**
  * An effect receipt declaration — a Declarable, so discovery collects it,
  * `chant list` shows it, and (unlike a secret declaration) serialization
