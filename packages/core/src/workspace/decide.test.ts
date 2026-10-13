@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runDeclarationChecks } from "./checks";
 import { cleanScratch, commitAll, contract, REPO, repo } from "./__fixtures__/contract-repo";
-import { answerFields, answerPoint, askPoint, reasonFields, retractAnswer, type PointsWriteDocument } from "./decide";
+import { answerFields, answerPoint, askPoint, reasonFields, retractAnswer, withdrawQuestion, type PointsWriteDocument } from "./decide";
 import pointAnswerSchema from "./point-answer.schema.json";
 import { responseAsk, workspacePoints } from "./points-cli";
 import pointsSchema from "./points.schema.json";
@@ -293,13 +293,13 @@ describe("the intent walk's points, a note on an answer, and retracting it (#335
   });
 
   test("a workspace whose answer schema predates notes and retractions refuses them, rather than dropping them", () => {
-    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true, relayedBy: true, asked: true });
+    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true, relayedBy: true, asked: true, withdrawn: true });
     const old = JSON.parse(JSON.stringify(pointAnswerSchema));
     delete old.properties.note;
     delete old.properties.retractions;
     delete old.properties.relayed_by;
     delete old.properties.asked;
-    expect(answerFields(old)).toEqual({ note: false, retractions: false, relayedBy: false, asked: false });
+    expect(answerFields(old)).toEqual({ note: false, retractions: false, relayedBy: false, asked: false, withdrawn: true });
   });
 
   test("an answer relayed for a person records who relayed it, and a retraction keeps it (#3402)", async () => {
@@ -393,6 +393,90 @@ describe("an ad-hoc question whose candidates come with the ask (#3403)", () => 
     writeFileSync(schemaFile, JSON.stringify(old, null, 2));
     try {
       expect(refused(await askPoint({ cwd: root, point: "agent-question", inputs: { "ask.id": "req-3" }, candidates: room }))).toBe("answer-field-unsupported");
+    } finally {
+      writeFileSync(schemaFile, original);
+    }
+  });
+});
+
+describe("withdrawing an open question that no longer applies (#2888)", () => {
+  const item = (title: string) => ({
+    "work-item.state": "proposed",
+    "work-item.title": title,
+    "work-item.source.ask.said": "make the port configurable",
+    "work-item.source.ask.by": "alice",
+    "work-item.source.ask.via": "hud",
+    "work-item.acceptance": [],
+  });
+
+  test("the earlier question about a changed item is withdrawn, and --open leaves it out", async () => {
+    const first = ok(await askPoint({ cwd: root, point: "understand", inputs: item("Configurable port"), subject: "W-101", on }));
+    expect(first.question).toMatchObject({ state: "escalated", open: true, withdrawn: null });
+    // The author changes the item: the next ask is another question about W-101, and both are open.
+    const second = ok(await askPoint({ cwd: root, point: "understand", inputs: item("Make the server port configurable"), subject: "W-101", on }));
+    expect(second.id).not.toBe(first.id);
+    const openAbout = async () => {
+      const listed = await workspacePoints({ cwd: root, open: true });
+      read.expectValid(listed);
+      if ("error" in listed) throw new Error(listed.error.message);
+      return listed.questions.filter((q) => q.subject === "W-101").map((q) => q.id);
+    };
+    expect((await openAbout()).sort()).toEqual([first.id, second.id].sort());
+
+    const withdrawn = ok(await withdrawQuestion({ cwd: root, id: first.id, by: ["factory"], note: `W-101 changed; ${second.id} asks it now.`, on: "2026-09-26" }));
+    expect(withdrawn).toMatchObject({ verb: "withdraw", written: true });
+    expect(withdrawn.question).toMatchObject({ state: "escalated", open: false, answer: null, withdrawn: { by: ["factory"], on: "2026-09-26", note: `W-101 changed; ${second.id} asks it now.` } });
+    expect(withdrawn.question.title).toMatch(/: withdrawn$/);
+    expect(fm(first.path)).toContain('withdrawn:\n  by:\n    - "factory"');
+    expect(await openAbout()).toEqual([second.id]);
+  });
+
+  test("a withdrawn question is closed: nobody answers it, and refusals", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "understand", inputs: item("Refusals"), on }));
+    expect(refused(await withdrawQuestion({ cwd: root, id: asked.id, by: [" "] }))).toBe("write-usage-invalid");
+    expect(ok(await withdrawQuestion({ cwd: root, id: asked.id, by: ["factory"], dryRun: true }))).toMatchObject({ verb: "withdraw", written: false, question: { open: false } });
+    expect(fm(asked.path)).not.toContain("withdrawn:");
+    ok(await withdrawQuestion({ cwd: root, id: asked.id, by: ["factory"], on }));
+    expect(refused(await answerPoint({ cwd: root, id: asked.id, answer: "proceed", by: ["alice"] }))).toBe("record-closed");
+    expect(refused(await withdrawQuestion({ cwd: root, id: asked.id, by: ["factory"] }))).toBe("record-closed");
+    const table = ok(await askPoint({ cwd: root, point: "slice-tier", inputs: { "work-item.fits_small": true }, on }));
+    expect(refused(await withdrawQuestion({ cwd: root, id: table.id, by: ["factory"] }))).toBe("record-closed");
+    const all = await workspacePoints({ cwd: root });
+    if ("error" in all) throw new Error(all.error.message);
+    expect(all.summary.withdrawn).toBe(all.questions.filter((q) => q.withdrawn !== null).length);
+    expect(all.summary.withdrawn).toBeGreaterThan(0);
+  });
+
+  test("asking a withdrawn question again opens it again", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "understand", inputs: item("Port, again"), subject: "W-102", on }));
+    ok(await withdrawQuestion({ cwd: root, id: asked.id, by: ["factory"], on }));
+    // The item changed back: the same inputs ask the same question.
+    const again = ok(await askPoint({ cwd: root, point: "understand", inputs: item("Port, again"), on: "2026-09-27" }));
+    expect(again).toMatchObject({ id: asked.id, reused: false, written: true, question: { state: "escalated", open: true, withdrawn: null, subject: "W-102", askedOn: "2026-09-27" } });
+    expect(fm(asked.path)).not.toContain("withdrawn:");
+  });
+
+  test("a retracted question withdrawn and asked again is open for people again, its retractions kept", async () => {
+    const inputs = { "region.id": "region:app/server.mjs:1-1", "node.id": "decision:ref-009" };
+    const asked = ok(await askPoint({ cwd: root, point: "intent-origin", inputs, on }));
+    ok(await answerPoint({ cwd: root, id: asked.id, answer: "incidental", by: ["alice"], on }));
+    ok(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"], on }));
+    ok(await withdrawQuestion({ cwd: root, id: asked.id, by: ["factory"], on }));
+    const again = ok(await askPoint({ cwd: root, point: "intent-origin", inputs, on }));
+    expect(again).toMatchObject({ reused: false, question: { state: "escalated", open: true, withdrawn: null, retractions: [{ answer: "incidental" }] } });
+    expect(again.question.title).toMatch(/: open for people$/);
+  });
+
+  test("a workspace whose answer schema predates withdrawn refuses to withdraw", async () => {
+    expect(answerFields(pointAnswerSchema).withdrawn).toBe(true);
+    const asked = ok(await askPoint({ cwd: root, point: "understand", inputs: item("Old schema"), on }));
+    const schemaFile = join(root, "answers", "answer.schema.json");
+    const original = readFileSync(schemaFile, "utf-8");
+    const old = JSON.parse(original);
+    delete old.properties.withdrawn;
+    writeFileSync(schemaFile, JSON.stringify(old, null, 2));
+    try {
+      expect(refused(await withdrawQuestion({ cwd: root, id: asked.id, by: ["factory"] }))).toBe("answer-field-unsupported");
     } finally {
       writeFileSync(schemaFile, original);
     }

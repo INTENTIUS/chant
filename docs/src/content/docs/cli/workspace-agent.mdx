@@ -52,3 +52,5 @@ reload    chant workspace agent app --json; chant workspace records --current --
 |---|---|
 | 0 | The session was printed |
 | 1 | No name was given and `CHANT_AGENT` is unset. Or the declaration can't be read, with its reason code, or it declares no such session (`agent-unknown`) |
+
+When there is no declaration at base or in the working tree, the error is `declaration-missing`. A working-tree declaration that fails validation is `declaration-invalid`, and the message gives the problem and where it is, as the other workspace reads report it ([#3433](https://github.com/INTENTIUS/chant/issues/3433)).

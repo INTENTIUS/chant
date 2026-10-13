@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json",
   "title": "chant workspace points ask, answer and retract output",
-  "description": "What `chant workspace points ask`, `points answer` and `points retract` print (ws-058, #2739, #3351): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met, with their note. retract takes an answer back once the quorum is met: the question is escalated to people again and the answer moves into its retractions (ws-084). Nothing is committed to the working branch, and nothing is written on a refusal or with --dry-run. In a steward's turn a new record goes on the lifecycle ledger instead of the working tree (#2786), as a commit on chant/lifecycle, and a record already held there is rewritten there. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
+  "description": "What `chant workspace points ask`, `points answer`, `points retract` and `points withdraw` print (ws-058, #2739, #3351, #2888): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met, with their note. retract takes an answer back once the quorum is met: the question is escalated to people again and the answer moves into its retractions (ws-084). withdraw closes an open question that no longer applies, with who withdrew it, when and why; asking it again opens it again (#2888). Nothing is committed to the working branch, and nothing is written on a refusal or with --dry-run. In a steward's turn a new record goes on the lifecycle ledger instead of the working tree (#2786), as a commit on chant/lifecycle, and a record already held there is rewritten there. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -38,7 +38,8 @@
           "enum": [
             "ask",
             "answer",
-            "retract"
+            "retract",
+            "withdraw"
           ]
         },
         "kind": {
@@ -507,6 +508,38 @@
             }
           }
         },
+        "withdrawn": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Who withdrew the question, when and why (points withdraw, #2888): an open question that no longer applies, such as one about a work item its author changed. A withdrawn question keeps its state and is not open. null when it was not withdrawn, and absent from a chant before it.",
+          "required": [
+            "by",
+            "on",
+            "note"
+          ],
+          "properties": {
+            "by": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "on": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
         "asked": {
           "description": "An ad-hoc point's question as its ask gave it (points ask --candidates, #3403): the question's text, and its criteria, what each candidate means, in the point's question type's shape. People's answer is one of the candidates. null for a declared point's question, and absent from a chant before it.",
           "oneOf": [
@@ -567,7 +600,8 @@
                   "answer-points-unreadable",
                   "answer-point-unknown",
                   "answer-point-changed",
-                  "record-unattested"
+                  "record-unattested",
+                  "record-ratified-below-quorum"
                 ]
               },
               "message": {
@@ -598,7 +632,8 @@
           "enum": [
             "ask",
             "answer",
-            "retract"
+            "retract",
+            "withdraw"
           ]
         },
         "error": {

@@ -34,6 +34,7 @@
 import { AttrRef } from "../attrref";
 import {
   EXISTENCE_EXPECTATION,
+  declaredExpectation,
   resolveReceiptExpectation,
   type EffectReceiptDeclaration,
   type ReceiptInputResolver,
@@ -198,7 +199,9 @@ export function planReceipts(
       continue;
     }
 
-    if (reading.value === expectation) {
+    // A value an effect step wrote with the digest of the step outputs it read
+    // (#3948) is compared on its declared part: outputs exist only at run.
+    if (typeof reading.value === "string" && declaredExpectation(reading.value) === expectation) {
       entries.push({ ...base, action: "noop", evidence });
       continue;
     }

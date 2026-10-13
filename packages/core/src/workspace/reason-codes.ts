@@ -112,6 +112,7 @@ export const REASONS = {
   "seal-unverifiable": "Nothing here can say whose seal it is: there is no signers file at base, ssh-keygen is not installed, or the record came back in a return sealed by a signer no admission lists yet.",
   // A record whose author seal is not attested under a signers file at base (records, #2688). A warning: the record is still read.
   "record-unattested": "A signers file is active at base, and the record names an author whose seal does not verify: it has none, the author has no key in the file, or the signature fails.",
+  "record-ratified-below-quorum": "The record is in its kind's ratified state (reviews.ratified), and its quorum is not met: it was written to that state by hand, past the check of records new and amend. It is still read, and stays valid.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",
@@ -161,7 +162,7 @@ export const REASONS = {
   "answer-in-steward-turn": "The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell.",
   "answer-never-over-mcp": "The answer or retraction came over MCP or ACP, or from a process a session on one started, and the question constrains a gate that is never resolved there: a person answers it at a shell or through hud (#3817).",
   "answer-not-answered": "points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351).",
-  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a relay, a retraction or an ad-hoc question's asked: copy the schema anew to turn it on (#3351, #3402, #3403).",
+  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a relay, a retraction, an ad-hoc question's asked or a withdrawal: copy the schema anew to turn it on (#3351, #3402, #3403, #2888).",
   "point-candidates-invalid": "points ask names an ad-hoc point without --candidates, a declared point with them, or candidates that are not a question and criteria of the point's question type (#3403).",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",

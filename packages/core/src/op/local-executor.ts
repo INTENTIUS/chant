@@ -29,7 +29,9 @@ import { outcomeAttributesOf } from "./types";
 import type { OpConfig, PhaseDefinition, ActivityStep, GateStep, EffectStep, StepDefinition } from "./types";
 import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activity-registry";
 import type { ReceiptReadResult } from "./receipt-store";
-import { isStepOutputRef } from "./step-output-ref";
+import { collectStepOutputRefs, isStepOutputRef } from "./step-output-ref";
+import { canonicalJson } from "../effect-receipt";
+import { contentDigest } from "../content-digest";
 import { parseDuration } from "./duration";
 import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
@@ -307,6 +309,48 @@ function resolveStepOutputRefs(value: unknown, resultsById: ReadonlyMap<string, 
   return value;
 }
 
+/** The activity steps a step runs: itself, or an effect's nested ones. */
+function activitiesOf(step: ActivityStep | EffectStep): ActivityStep[] {
+  return isEffect(step) ? step.steps.filter(isActivity) : [step];
+}
+
+/**
+ * The first step a compensation step references that has not completed in
+ * this run (#3948 decision A6), or `undefined` when every one did. A failure
+ * can stop the run before the step that a rollback reads, and calling the
+ * rollback with `undefined` in place of that value would undo the wrong
+ * thing, or nothing, while reporting `ok`.
+ */
+function unfinishedSource(step: ActivityStep | EffectStep, resultsById: ReadonlyMap<string, unknown>): string | undefined {
+  for (const activity of activitiesOf(step)) {
+    const missing = collectStepOutputRefs(activity.args).find((ref) => !resultsById.has(ref.step));
+    if (missing) return missing.step;
+  }
+  return undefined;
+}
+
+/** The skipped record of a compensation step whose source did not complete. */
+function unfinishedSourceRecord(step: ActivityStep | EffectStep, phaseName: string, source: string): StepRecord {
+  const record = isEffect(step) ? skippedRecord(phaseName, `effect:${step.receipt.name}`) : skippedRecord(phaseName, step.fn, step.args);
+  return { ...record, refusal: `step "${source}" did not complete in this run, so this compensation step, which reads its output, was skipped` };
+}
+
+/**
+ * The digest of the step outputs an effect's nested steps read (#3948), or
+ * `undefined` when they read none. The receipt store folds it into the
+ * expectation, so a changed value re-fires the effect instead of the receipt
+ * matching on the declared inputs alone. An existence receipt says only that
+ * the effect ran once, so it takes none.
+ */
+function effectOutputsDigest(step: EffectStep, resultsById: ReadonlyMap<string, unknown>): string | undefined {
+  if (step.receipt.flavor === "existence") return undefined;
+  const read = activitiesOf(step).flatMap((a) =>
+    collectStepOutputRefs(a.args).map((ref) => ({ step: ref.step, path: ref.path ?? "", value: resolveStepOutputRefs(ref, resultsById) })),
+  );
+  if (read.length === 0) return undefined;
+  return contentDigest(canonicalJson(read));
+}
+
 /**
  * Find the first `policyGate` step anywhere in the Op (phases + `onFailure`,
  * including steps nested inside effect steps), if any.
@@ -493,13 +537,14 @@ async function runStep(
 /** The step data the executor synthesizes to read a receipt through the store
  * activities (`receiptRead`/`receiptWrite` — provided by the receipt row's
  * lexicon, #1835, or a mock store in tests via `receiptActivities`). */
-function receiptReadStep(step: EffectStep): ActivityStep {
+function receiptReadStep(step: EffectStep, outputs?: string): ActivityStep {
   return {
     kind: "activity",
     fn: "receiptRead",
     args: {
       receipt: step.receipt,
       ...(step.expectation !== undefined ? { expectation: step.expectation } : {}),
+      ...(outputs !== undefined ? { outputs } : {}),
     },
     profile: "fastIdempotent",
     outcomeAttribute: { name: "EffectApplied", from: "applied" },
@@ -525,6 +570,8 @@ interface GateContext {
   passed?: PassedGate[];
   /** The run's hold on its work item's lease (#2748). Absent in compensation phases, which run whatever the lease did. */
   work?: RunWorkLease;
+  /** Set in `onFailure` phases (#3948): a step whose referenced step did not complete is skipped. */
+  compensating?: boolean;
   /** How a gate that names a decision point asks it (#3170). */
   points?: GatePointAsker;
   /** The environment the run was started for, a point gate's `gate.env` input. */
@@ -845,7 +892,15 @@ async function runEffectStep(
 }> {
   const records: StepRecord[] = [];
 
-  const read = await runStep(receiptReadStep(step), phaseName, activities, profiles, resultsById, signal);
+  let outputs: string | undefined;
+  try {
+    outputs = effectOutputsDigest(step, resultsById);
+  } catch (err) {
+    // A resolved value JSON cannot hold (canonicalJson refuses it) would be a wrong expectation.
+    pushRecord(records, gates, { phase: phaseName, fn: `effect:${step.receipt.name}`, args: {}, status: "fail", durationMs: 0, error: errMessage(err) });
+    return { records, failed: true };
+  }
+  const read = await runStep(receiptReadStep(step, outputs), phaseName, activities, profiles, resultsById, signal);
   pushRecord(records, gates, read.record);
   if (read.record.status === "fail") return { records, failed: true };
 
@@ -1008,7 +1063,10 @@ async function runPhase(
       }
     }
     const steps = phase.steps.filter(isActivity);
-    const settled = await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)));
+    const settled = await Promise.all(steps.map((s) => {
+      const source = gates.compensating ? unfinishedSource(s, resultsById) : undefined;
+      return source ? { record: unfinishedSourceRecord(s, phase.name, source) } as RanStep : runStep(s, phase.name, activities, profiles, resultsById, signal);
+    }));
     const ran = settled.map((r) => r.record);
     for (const r of ran) gates.onRecord?.(r);
     const records = gateRecords.concat(ran);
@@ -1067,6 +1125,11 @@ async function runPhase(
         skipRemaining(i + 1);
         throw new PointStop(records, record.point, phase.name);
       }
+      continue;
+    }
+    const source = gates.compensating ? unfinishedSource(step, resultsById) : undefined;
+    if (source) {
+      pushRecord(records, gates, unfinishedSourceRecord(step, phase.name, source));
       continue;
     }
     if (isEffect(step)) {
@@ -1605,7 +1668,7 @@ async function runOpInTurn(
     // Compensation: run onFailure phases in reverse order (best-effort). Skipped
     // on abort (Ctrl-C) — the user asked to stop, so don't start new work.
     // It runs whatever the work lease did, so it takes no work boundary.
-    const compensation: GateContext = { ...gates, work: undefined };
+    const compensation: GateContext = { ...gates, work: undefined, compensating: true };
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {

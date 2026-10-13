@@ -371,6 +371,24 @@ describe("chant workspace agent: what a session reloads from (#2548)", () => {
     agent.expectValid(doc);
     expect(code(doc)).toBe("agent-unknown");
   });
+
+  test("a declaration that fails validation is declaration-invalid, with the problem, not declaration-missing (#3433)", async () => {
+    const broken = JSON.stringify({ name: "studio", schema: 1, members: [{ name: "app", dir: "app" }], agents: AGENTS });
+    for (const committed of [false, true]) {
+      const dir = repo({ "chant.workspace.json": broken, "app/server.mjs": "export {};\n" }, committed);
+      if (committed) git(dir, "branch", "-M", "main");
+      const doc = await agentSession({ cwd: dir, name: "app-agent" });
+      agent.expectValid(doc);
+      expect(code(doc), committed ? "committed on main" : "uncommitted").toBe("declaration-invalid");
+      expect("error" in doc ? doc.error.message : "").toMatch(/kind/);
+    }
+  });
+
+  test("no declaration at all is still declaration-missing", async () => {
+    const doc = await agentSession({ cwd: repo({ "app/server.mjs": "export {};\n" }), name: "app-agent" });
+    agent.expectValid(doc);
+    expect(code(doc)).toBe("declaration-missing");
+  });
 });
 
 describe("principal classes a plugin defines (#3080)", () => {

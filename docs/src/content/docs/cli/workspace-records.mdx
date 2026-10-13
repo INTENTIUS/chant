@@ -13,7 +13,7 @@ This command is the first slice of workspace records ([#2546](https://github.com
 ```
 chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
 chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
-chant workspace records pin <path>
+chant workspace records pin <path> [--kind <kind file>]
 chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]
 chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--expect <digest>] [--sign [<key file>]] [--dry-run]
 chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--expect <digest>] [--sign [<key file>]] [--dry-run]
@@ -66,6 +66,8 @@ export const recordKind = {
   source: { field: "source" },
 };
 ```
+
+A kind file written in JavaScript (`.mjs`, `.cjs` or `.js`) is imported by plain node. Only a TypeScript kind file loads chant's TypeScript loader, which costs an installed chant about 200 MB, so the workspace reads stay small on a workspace whose kinds are JavaScript ([#3276](https://github.com/INTENTIUS/chant/issues/3276)). A JavaScript kind file can still import a `.ts` file whose types node can strip, but not one that needs tsx, such as an extensionless import. `records`, `points`, `ls` and `status` also skip the `chant.config.ts` of the member they run in.
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
@@ -444,6 +446,8 @@ $ chant workspace records pin design/screens/home.json
 
 `sha256sum design/screens/home.json` (or `shasum -a 256` on macOS), run from the workspace root, gives the same hash.
 
+`pin` prints from the root that records use. Given `--kind <kind file>`, that root comes from the kind file as above. Without it, the root is the workspace nearest above the current directory, so a nested workspace the file sits in (a `template/` with its own `chant.workspace.json`) does not shorten the path: `pin template/box/builder.mjs` run from the outer workspace's root prints `template/box/builder.mjs`. Only when no workspace is above the current directory does `pin` take the one nearest above the file.
+
 Every read checks each pin against the tree it reads: the working tree, or the commit under `--at`. The result is on the record in `assets`, one entry per pin with its `state`:
 
 | State | The file | Warning |
@@ -594,7 +598,7 @@ echo '{"state": "ratified"}' | chant workspace records amend ws-052 --kind docs/
 
 When the kind's `reviews` names a `ratified` state, `records amend` and `records new` refuse to write a record in that state unless its quorum is met, with `ratify-quorum-not-met`, and nothing is written. The quorum is computed on the record as it would be written, by the rules above: the need from the declaration in the working tree, and agents and seals from the policy at base. So verdicts on text the same amendment changes don't count, and neither do the decider's own. The message gives the count and each verdict that did not count, with its reason. A quorum met with objections is met, so the record can be ratified. Its open concerns stay listed in `openConcerns`. Such a kind leaves the state out of the digest. The ratified record's verdicts therefore still count, and `records --json` shows its quorum met.
 
-There is no quorum to check for a kind without `reviews` or one whose `reviews` names no `ratified` state. `records amend` moves its records to any state the approval rule allows. chant checks the quorum only when a record is written through `records new` or `records amend`. A file edited by hand to `ratified` is read as written.
+There is no quorum to check for a kind without `reviews` or one whose `reviews` names no `ratified` state. `records amend` moves its records to any state the approval rule allows. A file edited by hand to `ratified` gets past that check. `records` reads it as written, computes its quorum the same way, and warns with `record-ratified-below-quorum` when the quorum is not met. The record stays valid, and the warning names the count and each verdict that did not count.
 
 `records review` only appends the verdict. It doesn't change the state when the verdict meets the quorum, because a review changes only the reviews block. Whether to ratify over open concerns is for a person to decide.
 
@@ -848,6 +852,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `work-done-unpinned` | is a done work record with an empty evidence list, so nothing shows the work was done |
 | `work-closed-without-date` | is a done or dropped work record with no `closed_on` |
 | `record-unattested` | names an author (the kind's `reviews.decider` field), and a signers file is active at base, and its author seal doesn't verify. It is still read, and stays valid ([Sealing a record](#sealing-a-record)) |
+| `record-ratified-below-quorum` | is in its kind's ratified state (`reviews.ratified`), and its quorum is not met: it was edited to that state by hand. It is still read, and stays valid ([Ratifying](#ratifying)) |
 | `source-transcript-drift` | pins a transcript in its source block that can be read here and hashes to something else ([Where a proposal came from](#where-a-proposal-came-from)) |
 | `work-acceptance-unmet` | is a done work record with an acceptance criterion that no passing evidence of its verification meets. `check` fails on it as `WSP117` |
 | `work-acceptance-self-verified` | is a work record with a passing `manual` verdict by its implementer, which does not count |

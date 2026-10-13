@@ -16,6 +16,12 @@ import { join } from "node:path";
  *   run added entries. At about a million entries every tsx start took
  *   minutes and the suite failed on timeouts.
  * - the `chant-*` directories tests create with mkdtemp and do not all remove.
+ * - chant's cache directory (chant #2876, #2891). `chant workspace graph` and
+ *   `chant workspace status` keep caches under `$CHANT_CACHE_DIR`, else in
+ *   the user's home. CHANT_CACHE_DIR points at `<dir>/chant-cache`, so tests,
+ *   and the chant processes they start, never touch the user's cache. It is
+ *   set here rather than in the config's `test.env` because the config is
+ *   read before this runs, when `tmpdir()` is still the machine's.
  *
  * A run killed before teardown leaves its directory behind; the next run
  * removes any such directory older than a day.
@@ -36,11 +42,18 @@ export default function setup(): (() => void) | undefined {
   sweepStale(parent);
 
   const dir = mkdtempSync(join(parent, PREFIX));
-  const saved = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP, [MARK]: undefined };
+  const saved = {
+    TMPDIR: process.env.TMPDIR,
+    TMP: process.env.TMP,
+    TEMP: process.env.TEMP,
+    CHANT_CACHE_DIR: process.env.CHANT_CACHE_DIR,
+    [MARK]: undefined,
+  };
   process.env[MARK] = dir;
   process.env.TMPDIR = dir;
   process.env.TMP = dir;
   process.env.TEMP = dir;
+  process.env.CHANT_CACHE_DIR = join(dir, "chant-cache");
 
   return () => {
     for (const [key, value] of Object.entries(saved)) {

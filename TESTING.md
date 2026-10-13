@@ -99,6 +99,8 @@ test("manual cleanup", async () => {
 
 **Example**: See `packages/core/src/discovery/files.test.ts`
 
+Each vitest run sets `TMPDIR` to a directory of its own, `chant-run-*` in the machine's temp directory, and removes it when the run ends (`test/per-run-tmpdir.setup.ts`). `CHANT_CACHE_DIR` points at `chant-cache` inside it, so the caches `chant workspace graph` and `chant workspace status` keep are thrown away with the run and never reach `~/.cache/chant`. A test that needs its own cache sets `CHANT_CACHE_DIR` itself, as `packages/core/src/workspace/steward-index.test.ts` does.
+
 ### Mock Object Factories
 
 Use mock factories from `@intentius/chant-test-utils` to create test objects (see [Core Concepts](docs/src/content/docs/guides/core-concepts.md#declarables) for declarable type details):

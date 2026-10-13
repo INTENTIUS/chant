@@ -4,7 +4,8 @@
  * {@link askPoint} asks a point's deciders for one set of inputs and records
  * the answer in the answer kind's records directory, {@link answerPoint}
  * records people's answer to an open question, with an optional note, and
- * {@link retractAnswer} takes an answer back (#3351). Each writes one Markdown
+ * {@link retractAnswer} takes an answer back (#3351), and {@link withdrawQuestion}
+ * closes an open question that no longer applies (#2888). Each writes one Markdown
  * record or none, never commits, and goes through the checks every records write goes
  * through (`records-write.ts`): the record is read back with the kind's schema
  * before it is written, and no other record may become invalid.
@@ -32,6 +33,14 @@
  * its note move into the record's `retractions` with who retracted it, when
  * and why. Asking a retracted question again returns it as it stands, since
  * people took it back from the deciders; people answer it again.
+ *
+ * An open question that no longer applies, such as one about a work item its
+ * author changed while it was escalated, is withdrawn (#2888): it keeps its
+ * state, with who withdrew it, when and why as `withdrawn`, is no longer open,
+ * and nobody answers it. A changed item is another question with another id,
+ * so nothing closes the earlier one on its own; whoever asked withdraws it.
+ * Asking a withdrawn question again opens it again, as when the item changes
+ * back.
  *
  * Each write holds the working tree's write lock (#3173, ws-089) from the first read
  * to the write, so two answers to one question are never both taken from the
@@ -95,11 +104,11 @@ import { RefCASConflictError } from "../lifecycle/git";
 import { readLedgerAnswers, refreshLedger, withLedgerAnswers, writeLedgerAnswer, type LedgerAnswers } from "./answers-ledger";
 import { currentGateOrigin, isModelAuthored, type GateOrigin } from "../lifecycle/gate-origin";
 
-/** The version of the write documents `points ask`, `points answer` and `points retract` print. */
+/** The version of the write documents `points ask`, `points answer`, `points retract` and `points withdraw` print. */
 export const POINTS_WRITE_CONTRACT_VERSION = 1;
 export const POINTS_WRITE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json";
 
-/** Why `points ask`, `points answer` or `points retract` wrote nothing. Closed: a reader may switch on it. */
+/** Why `points ask`, `points answer`, `points retract` or `points withdraw` wrote nothing. Closed: a reader may switch on it. */
 export const POINTS_WRITE_ERROR_CODES = [
   ...LOAD_ERROR_CODES,
   "write-usage-invalid",
@@ -129,7 +138,7 @@ export const POINTS_WRITE_ERROR_CODES = [
   "principal-unidentified",
   /** `points retract` names a question that has no answer: escalated or proposed (#3351). */
   "answer-not-answered",
-  /** The answer kind's schema copy has no `note`, `retractions`, `relayed_by` or `asked` field for what the write was given (#3351, #3402, #3403). */
+  /** The answer kind's schema copy has no `note`, `retractions`, `relayed_by`, `asked` or `withdrawn` field for what the write was given (#3351, #3402, #3403, #2888). */
   "answer-field-unsupported",
   /** An ad-hoc point was asked without its question and candidates, a declared point with them, or they don't fit the point's question type (#3403). */
   "point-candidates-invalid",
@@ -158,7 +167,7 @@ export interface QuestionView {
   /** What the question is about, the record's first `constrains` entry, or null. */
   subject: string | null;
   state: "escalated" | "proposed" | "answered";
-  /** Not answered yet: escalated to people, or proposed by a model and waiting for a person to confirm it. */
+  /** Not answered yet: escalated to people, or proposed by a model and waiting for a person to confirm it, and not withdrawn (#2888). */
   open: boolean;
   questionType: string;
   candidates: (string | boolean)[];
@@ -194,6 +203,8 @@ export interface QuestionView {
   relayedBy: string | null;
   /** Answers people took back, oldest first (`points retract`, #3351). Empty when none was. */
   retractions: RetractionView[];
+  /** Who withdrew the question, when and why, when it no longer applies (`points withdraw`, #2888), or null. A withdrawn question is not open. */
+  withdrawn: { by: string[]; on: string | null; note: string | null } | null;
   /**
    * An ad-hoc point's question as its ask gave it (#3403): the question's text
    * and its criteria, what each candidate means. null for a declared point's
@@ -255,6 +266,14 @@ function retractionsOf(d: Record<string, unknown>): RetractionView[] {
     }));
 }
 
+/** The record's `withdrawn`, as a view, or null. */
+function withdrawnOf(d: Record<string, unknown>): QuestionView["withdrawn"] {
+  const w = d.withdrawn;
+  if (w === null || typeof w !== "object" || Array.isArray(w)) return null;
+  const r = w as Record<string, unknown>;
+  return { by: Array.isArray(r.by) ? r.by.filter((x): x is string => typeof x === "string") : [], on: typeof r.on === "string" ? r.on : null, note: typeof r.note === "string" ? r.note : null };
+}
+
 /** The harness a steward's question names in its source block (#2749). */
 export const STEWARD_HARNESS = "chant-steward";
 
@@ -304,6 +323,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     }
   }
   const constrains = Array.isArray(d.constrains) ? d.constrains.filter((c): c is string => typeof c === "string") : [];
+  const withdrawn = withdrawnOf(d);
   return {
     id: entry.id,
     path: entry.path,
@@ -311,7 +331,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     title: str(d.title) ?? "",
     subject: constrains[0] ?? null,
     state,
-    open: state !== "answered",
+    open: state !== "answered" && withdrawn === null,
     questionType: str(d.question_type) ?? "",
     candidates: Array.isArray(d.candidates) ? (d.candidates as (string | boolean)[]) : [],
     inputs: d.inputs !== null && typeof d.inputs === "object" && !Array.isArray(d.inputs) ? (d.inputs as Record<string, unknown>) : {},
@@ -332,6 +352,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     note: str(d.note),
     relayedBy: str(d.relayed_by),
     retractions: retractionsOf(d),
+    withdrawn,
     asked: askedOf(d) ?? null,
     askedBy: askedByOf(d),
     ledger,
@@ -341,9 +362,9 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
 }
 
 /** The write verbs of `points`. */
-export type PointsWriteVerb = "ask" | "answer" | "retract";
+export type PointsWriteVerb = "ask" | "answer" | "retract" | "withdraw";
 
-/** What `points ask`, `points answer` and `points retract` print. */
+/** What `points ask`, `points answer`, `points retract` and `points withdraw` print. */
 export type PointsWriteDocument =
   | {
       $schema: string;
@@ -460,7 +481,7 @@ const show = (answer: string | boolean, type: string): string => (type === "noul
 
 /** A record's title: the point's title, or an ad-hoc question's own text (#3403), what it is about, and where it stands. */
 function titleFor(point: Point, subject: string | undefined, state: string, answer: string | boolean | undefined, asked?: Asked): string {
-  const outcome = state === "escalated" ? "open for people" : state === "proposed" ? `${show(answer!, point.question.type)}, proposed` : show(answer!, point.question.type);
+  const outcome = state === "withdrawn" ? "withdrawn" : state === "escalated" ? "open for people" : state === "proposed" ? `${show(answer!, point.question.type)}, proposed` : show(answer!, point.question.type);
   return `${asked ? asked.question : point.title}${subject ? ` (${subject})` : ""}: ${outcome}`;
 }
 
@@ -639,9 +660,25 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
       question: questionView(entry, point, extra.ledger !== undefined ? extra.ledger : heldAt(entry))!,
       ...(extra.text !== undefined ? { text: extra.text } : {}),
     });
-    if (existing && existing.data !== null && (existing.state === "answered" || existing.state === "proposed")) return done(existing, { reused: true, written: false });
+    /** A retracted question withdrawn and now asked again: open for people again, as it stood before it was withdrawn (#2888). */
+    const reopen = async (entry: RecordEntry & { data: Record<string, unknown> }): Promise<PointsWriteDocument> => {
+      const { withdrawn: _, ...rest } = entry.data;
+      const subject = Array.isArray(rest.constrains) && typeof rest.constrains[0] === "string" ? (rest.constrains[0] as string) : undefined;
+      const title = titleFor(point, subject, String(rest.state), rest.answer as string | boolean | undefined, asked);
+      const data = recordData(o, { ...rest, title });
+      const text = renderRecord(data, body(point, title, asked));
+      const message = `Decision point ${opts.point}: asked again${subject ? ` (${subject})` : ""}`;
+      const wrote = await write(o, before, entry.path, text, false, !!opts.dryRun, { source: read, ledger, onLedger: toLedger || ledger.byPath.has(entry.path), message, who: { verb: "points ask", by: steward?.name ?? null } });
+      return done({ ...entry, data, valid: true, reasons: [], warnings: wrote.warnings }, { reused: false, written: !opts.dryRun, ledger: wrote.ledger, ...(opts.dryRun ? { text } : {}) });
+    };
+    // A withdrawn question is asked again (#2888): it applies again, so it is open again.
+    const withdrawn = existing !== undefined && existing.data !== null && existing.data.withdrawn !== undefined;
+    if (existing && existing.data !== null && !withdrawn && (existing.state === "answered" || existing.state === "proposed")) return done(existing, { reused: true, written: false });
     // People took a retracted question back from the deciders (ws-084): they answer it again, and asking returns it as it stands.
-    if (existing && existing.data !== null && Array.isArray(existing.data.retractions) && existing.data.retractions.length > 0) return done(existing, { reused: true, written: false });
+    if (existing && existing.data !== null && Array.isArray(existing.data.retractions) && existing.data.retractions.length > 0) {
+      if (!withdrawn) return done(existing, { reused: true, written: false });
+      return reopen(existing as RecordEntry & { data: Record<string, unknown> });
+    }
 
     let result: ChainResult;
     try {
@@ -651,7 +688,7 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
       throw err;
     }
     // A standing escalation is kept while the chain still escalates.
-    if (existing && existing.data !== null && result.status === "escalated") return done(existing, { reused: true, written: false });
+    if (existing && existing.data !== null && !withdrawn && result.status === "escalated") return done(existing, { reused: true, written: false });
 
     const on = opts.on ?? today();
     const state = result.status;
@@ -731,15 +768,16 @@ export interface AnswerPointOptions {
 
 /**
  * Whether an answer kind's schema copy takes the fields of #3351 (`note` on an
- * answer, and `retractions`), of #3402 (`relayed_by`) and of #3403 (`asked`).
- * A copy of point-answer.schema.json from before them refuses a note, a
- * retraction, a relay or an ad-hoc ask with `answer-field-unsupported`, rather
+ * answer, and `retractions`), of #3402 (`relayed_by`), of #3403 (`asked`) and
+ * of #2888 (`withdrawn`). A copy of point-answer.schema.json from before them
+ * refuses a note, a retraction, a relay, an ad-hoc ask or a withdrawal with
+ * `answer-field-unsupported`, rather
  * than dropping what a person wrote or the question an agent asked.
  */
-export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean; relayedBy: boolean; asked: boolean } {
+export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean; relayedBy: boolean; asked: boolean; withdrawn: boolean } {
   const props = schema.properties as Record<string, unknown> | undefined;
   const has = (key: string): boolean => props !== undefined && props !== null && typeof props === "object" && Object.prototype.hasOwnProperty.call(props, key);
-  return { note: has("note"), retractions: has("retractions"), relayedBy: has("relayed_by"), asked: has("asked") };
+  return { note: has("note"), retractions: has("retractions"), relayedBy: has("relayed_by"), asked: has("asked"), withdrawn: has("withdrawn") };
 }
 
 /** A note as given, trimmed, or undefined when it is empty. */
@@ -943,6 +981,9 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     const d = target.data;
     if (target.state === "answered") {
       throw new PointsWriteError("record-closed", `${opts.id} is answered, and an answer never changes in place: retract it with \`points retract ${opts.id}\` and answer again, ask again with other inputs, or change the point, which asks the question anew`);
+    }
+    if (d.withdrawn !== undefined) {
+      throw new PointsWriteError("record-closed", `${opts.id} was withdrawn, so nobody answers it: ask it again with \`points ask\`, which opens it again, when it applies again`);
     }
     const note = noteOf(opts.note);
     if (note !== undefined && !answerFields(o.loaded.schema).note) {
@@ -1149,5 +1190,89 @@ async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWr
     };
   } catch (err) {
     return failure("retract", err);
+  }
+}
+
+// ── points withdraw ──────────────────────────────────────────────────────────
+
+export interface WithdrawQuestionOptions {
+  cwd: string;
+  /** The answer record's id. */
+  id: string;
+  /** Who withdraws the question, such as the factory that asked it. At least one. */
+  by: string[];
+  /** Why, such as the question that asks about the subject now. */
+  note?: string;
+  kind?: string;
+  on?: string;
+  dryRun?: boolean;
+}
+
+/**
+ * Close an open question that no longer applies: `points withdraw` (#2888).
+ * A run asks about a work item whose author then changes it, so the next ask
+ * is another question, and the first one would wait on people forever. The
+ * question keeps its state, escalated or proposed, and gains `withdrawn`: who
+ * withdrew it, when and why. It is no longer open, so `points --open` leaves
+ * it out, and `points answer` refuses it. Asking it again opens it again.
+ *
+ * Withdrawing answers nothing and passes no gate, so it needs no quorum, and
+ * the asker withdraws its own question, a steward's turn or an MCP session
+ * included. An answered question is not withdrawn: people retract it.
+ */
+export async function withdrawQuestion(opts: WithdrawQuestionOptions): Promise<PointsWriteDocument> {
+  try {
+    return await withWriteLock(opts.cwd, { verb: "points withdraw", by: (opts.by ?? []).join(", ") || null }, opts.dryRun, () => withdrawQuestionLocked(opts));
+  } catch (err) {
+    return failure("withdraw", err);
+  }
+}
+
+async function withdrawQuestionLocked(opts: WithdrawQuestionOptions): Promise<PointsWriteDocument> {
+  try {
+    const by = [...new Set((opts.by ?? []).map((b) => b.trim()).filter((b) => b !== ""))];
+    if (by.length === 0) throw new PointsWriteError("write-usage-invalid", "--by <name> is required: who withdraws the question");
+    refuseUnidentified(scopeSource(opts.cwd), by, "--by");
+    const found = await findQuestion(opts.cwd, opts.kind, opts.id);
+    const { opened, before, target } = found;
+    const ledger = found.read.ledger;
+    const { o } = opened;
+    const d = target.data;
+    if (target.state === "answered") {
+      throw new PointsWriteError("record-closed", `${opts.id} is answered, so it is not withdrawn: people take the answer back with \`points retract ${opts.id}\``);
+    }
+    if (d.withdrawn !== undefined) throw new PointsWriteError("record-closed", `${opts.id} is withdrawn already`);
+    if (!answerFields(o.loaded.schema).withdrawn) {
+      throw new PointsWriteError("answer-field-unsupported", `the ${o.loaded.kind.name} kind's schema has no withdrawn field, so ${opts.id} can't record that it no longer applies: copy point-answer.schema.json from @intentius/chant anew`);
+    }
+    const name = String(d.point);
+    const point = pointOf(opened.points, name);
+    if (!point) throw new PointsWriteError("point-unknown", `${opts.id} asks ${name}, which ${opened.pointsFile} no longer declares`);
+    const on = opts.on ?? today();
+    const note = noteOf(opts.note);
+    const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
+    const asked = askedOf(d);
+    const title = titleFor(point, subject, "withdrawn", undefined, asked);
+    const data = recordData(o, { ...d, title, withdrawn: Object.fromEntries(Object.entries({ by, on, note }).filter(([, v]) => v !== undefined)) });
+    const text = renderRecord(data, body(point, title, asked));
+    const onLedger = ledger.byPath.has(target.path);
+    const message = `Decision point ${name}: withdrawn by ${by.join(", ")}${subject ? ` (${subject})` : ""}`;
+    const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message, who: { verb: "points withdraw", by: by.join(", ") } });
+    const entry: RecordEntry = { ...target, data, valid: true, reasons: [], warnings: wrote.warnings };
+    return {
+      $schema: POINTS_WRITE_SCHEMA_ID,
+      contract: POINTS_WRITE_CONTRACT_VERSION,
+      verb: "withdraw",
+      kind: o.view,
+      id: opts.id,
+      path: target.path,
+      reused: false,
+      written: !opts.dryRun,
+      dryRun: !!opts.dryRun,
+      question: questionView(entry, point, onLedger ? (wrote.ledger ?? ledger.byPath.get(target.path)?.ledger ?? null) : null)!,
+      ...(opts.dryRun ? { text } : {}),
+    };
+  } catch (err) {
+    return failure("withdraw", err);
   }
 }

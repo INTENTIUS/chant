@@ -52,11 +52,24 @@ const wrap = (err: unknown): PostgresQueryError => {
   return new PostgresQueryError(e.message ?? String(err), e.code, e.position !== undefined ? Number(e.position) : undefined);
 };
 
+/**
+ * The URL with libpq's meaning of `sslmode`. pg-connection-string reads
+ * `sslmode=require` as verify-full unless `uselibpqcompat=true` is set, so an
+ * RDS host without its CA bundle, or a tunnel whose host name doesn't match
+ * the certificate, fails to connect. In psql, `require` encrypts without
+ * verifying, and a profile url means what it means there. A url that sets
+ * `uselibpqcompat` itself is left alone.
+ */
+export function withLibpqSslMode(url: URL): URL {
+  if (url.searchParams.has("sslmode") && !url.searchParams.has("uselibpqcompat")) url.searchParams.set("uselibpqcompat", "true");
+  return url;
+}
+
 /** Connect to `endpoint` and set the catalog-reading session up. */
 export async function connectPostgres(endpoint: PostgresEndpoint, options: { applicationName?: string } = {}): Promise<PostgresClient> {
   const pg = await pgModule();
   // node-postgres lets the connection string's fields win over the config's, so the credentials go into the URL.
-  const url = new URL(endpoint.url);
+  const url = withLibpqSslMode(new URL(endpoint.url));
   if (endpoint.user !== undefined) url.username = encodeURIComponent(endpoint.user);
   const password = endpoint.token ? await endpoint.token.get() : endpoint.password;
   if (password !== undefined) url.password = encodeURIComponent(password);

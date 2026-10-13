@@ -6,12 +6,12 @@
  * The points come from each record kind the declaration names with an
  * `answers` block, or from `--kind`, and the questions are that kind's
  * records. A question is open while it is escalated to people or proposed by a
- * model and not yet confirmed, and it lists any model's answer with its
+ * model and not yet confirmed, and not withdrawn (#2888), and it lists any model's answer with its
  * confidence, so a reader such as hud can prompt a person and an MCP client
  * can see it. With `--open`, only open questions are listed. It never writes
  * and never calls a model.
  *
- * `points ask`, `points answer` and `points retract` are the writes, in
+ * `points ask`, `points answer`, `points retract` and `points withdraw` are the writes, in
  * `decide.ts`.
  */
 
@@ -21,7 +21,7 @@ import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
-import { answerPoint, askPoint, questionView, retractAnswer, POINTS_WRITE_CONTRACT_VERSION, POINTS_WRITE_SCHEMA_ID, type PointsWriteDocument, type PointsWriteVerb, type QuestionView } from "./decide";
+import { answerPoint, askPoint, questionView, retractAnswer, withdrawQuestion, POINTS_WRITE_CONTRACT_VERSION, POINTS_WRITE_SCHEMA_ID, type PointsWriteDocument, type PointsWriteVerb, type QuestionView } from "./decide";
 import { candidates, inputOutput, pointsFileOf, pointVersion, quorumOf, readPointsThrough, type Decider, type ModelAsk, type WireAnswer } from "./points";
 import type { ReasonCode } from "./reason-codes";
 import { gitRevisionSource, workingTreeSource } from "./record-source";
@@ -107,7 +107,8 @@ export type PointsDocument =
       sources: SourceView[];
       points: PointView[];
       questions: QuestionView[];
-      summary: { points: number; questions: number; open: number; escalated: number; proposed: number; answered: number };
+      /** escalated, proposed and answered count by state, withdrawn ones included; withdrawn counts the questions withdrawn (#2888). */
+      summary: { points: number; questions: number; open: number; escalated: number; proposed: number; answered: number; withdrawn: number };
     }
   | { $schema: string; contract: number; chant: string; error: { code: WorkspaceErrorCode; message: string; location: ErrorLocation | null } };
 
@@ -197,7 +198,7 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
     sources,
     points,
     questions,
-    summary: { points: points.length, questions: questions.length, open: questions.filter((q) => q.open).length, escalated: count("escalated"), proposed: count("proposed"), answered: count("answered") },
+    summary: { points: points.length, questions: questions.length, open: questions.filter((q) => q.open).length, escalated: count("escalated"), proposed: count("proposed"), answered: count("answered"), withdrawn: questions.filter((q) => q.withdrawn !== null).length },
   };
 }
 
@@ -228,7 +229,7 @@ export function formatPoints(doc: Extract<PointsDocument, { points: unknown }>):
   lines.push("");
   for (const q of doc.questions) {
     const model = q.model && q.state !== "answered" ? `  model ${JSON.stringify(q.model.answer)} at ${q.model.confidence ?? "?"}${q.model.observed ? "" : `, below ${q.model.threshold ?? "?"}`}` : "";
-    lines.push(`${q.id}  ${q.state}  ${q.title}${model}`);
+    lines.push(`${q.id}  ${q.withdrawn ? "withdrawn" : q.state}  ${q.title}${model}`);
   }
   const n = doc.summary.questions;
   lines.push(doc.open ? `${n} open ${n === 1 ? "question" : "questions"}` : `${n} ${n === 1 ? "question" : "questions"}, ${doc.summary.open} open`);
@@ -252,6 +253,7 @@ const USAGE = [
   "chant workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]",
   "chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--resume] [--dry-run]",
   "chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
+  "chant workspace points withdraw <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
 ].join("\n");
 
 function usage(verb: PointsWriteVerb, message: string): PointsWriteDocument {
@@ -276,7 +278,7 @@ function readJson(verb: PointsWriteVerb, flag: string, value: string, cwd: strin
   }
 }
 
-/** `chant workspace points`, and its `ask`, `answer` and `retract` verbs. */
+/** `chant workspace points`, and its `ask`, `answer`, `retract` and `withdraw` verbs. */
 export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const cwd = process.cwd();
@@ -324,8 +326,14 @@ export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
     if (!args.bys || args.bys.length === 0) return print(usage("retract", "--by <name> is required, once for each person who takes the answer back"));
     return print(await retractAnswer({ cwd, id, by: args.bys, note: args.note, kind: args.kind, dryRun: args.dryRun }));
   }
+  if (verb === "withdraw") {
+    const id = args.extraPositional2;
+    if (!id) return print(usage("withdraw", "withdraw needs the question's id"));
+    if (!args.bys || args.bys.length === 0) return print(usage("withdraw", "--by <name> is required: who withdraws the question"));
+    return print(await withdrawQuestion({ cwd, id, by: args.bys, note: args.note, kind: args.kind, dryRun: args.dryRun }));
+  }
   if (verb !== undefined) {
-    console.error(formatError({ message: `chant workspace points takes no argument but ask, answer or retract (got ${verb})`, hint: USAGE }));
+    console.error(formatError({ message: `chant workspace points takes no argument but ask, answer, retract or withdraw (got ${verb})`, hint: USAGE }));
     return 1;
   }
   const doc = await workspacePoints({ cwd, at: args.at, open: args.open, kind: args.kind });

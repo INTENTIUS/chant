@@ -11,13 +11,14 @@ chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
 chant workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--store <tree|ledger>] [--kind <kind file>] [--dry-run]
 chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--resume] [--dry-run]
 chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
+chant workspace points withdraw <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
 ```
 
 ## Description
 
 A decision point is a question the workspace asks of its own graph again and again, declared in a points file that an answer kind names ([ws-058](https://github.com/INTENTIUS/chant/issues/2738)). [Decision Points](/chant/guide/decision-points/) shows how to declare one. This page is the command reference.
 
-`chant workspace points` reads every record kind the declaration names with an `answers` block, or the one `--kind` names. For each kind it lists the declared points and the questions asked of them. Each question is one answer record. It is open while it is `escalated` to people or `proposed` by a model and not yet confirmed. `--open` lists only the open ones. `--at <rev>` reads the points file and the records at a commit, as [`records --at`](/chant/cli/workspace-records/) does.
+`chant workspace points` reads every record kind the declaration names with an `answers` block, or the one `--kind` names. For each kind it lists the declared points and the questions asked of them. Each question is one answer record. It is open while it is `escalated` to people or `proposed` by a model and not yet confirmed, unless it was withdrawn. `--open` lists only the open ones. `--at <rev>` reads the points file and the records at a commit, as [`records --at`](/chant/cli/workspace-records/) does.
 
 ```
 slice-tier  choice  Which builder tier builds this work item  (table, model, quorum)
@@ -81,7 +82,22 @@ People who give the answer a model proposed confirm it, and the model stays the 
 
 Retracting counts `--by` toward the point's quorum as an answer does, and a steward's turn is refused with `answer-in-steward-turn`. A question that has no answer is `answer-not-answered`. `--dry-run` prints what would be written.
 
-A workspace whose `answer.schema.json` copy predates `note` and `retractions` refuses `--note` on an answer, and any retraction, with `answer-field-unsupported`, rather than drop what a person wrote. A copy that predates `relayed_by` refuses `--relayed-by` the same way. Copying `point-answer.schema.json` anew turns them on.
+## Withdrawing a question
+
+`points withdraw <id> --by <name>` closes an open question that no longer applies ([#2888](https://github.com/INTENTIUS/chant/issues/2888)). The usual case is a work item its author changed while a question about it was escalated. The question's id hashes the item's fields, so the next ask about the item is a new question with a new id, and the first one would wait on people forever. Whoever asked, such as the factory, withdraws the earlier one:
+
+```
+chant workspace points withdraw understand-3f9a1c0d7e2b --by factory \
+  --note "W-001 changed; understand-8b21e4f6a903 asks it now"
+```
+
+The record keeps its state, `escalated` or `proposed`, and gains a `withdrawn` block holding who withdrew it (`by`), the day (`on`) and the reason (`note`). Its title ends in `withdrawn`. It is no longer open, so `points --open` and hud leave it out, and `points answer` refuses it with `record-closed`. If the item changes back, asking with the same inputs opens the question again and drops the block.
+
+A withdrawal answers nothing and passes no gate, so it needs no quorum, and a steward or an MCP client may withdraw its own question. An answered question is refused with `record-closed`, since people retract an answer instead, and so is one withdrawn already. Under `identity.attribution: "identified"` each `--by` must be a checkable principal. With `--dry-run` the document carries the new text and the file is left alone.
+
+chant does not withdraw a question on its own when a new one about the same subject and point is asked. Two open questions about one subject can both stand, such as two runs waiting at the same gate, or two ad-hoc asks kept apart by a request id, so only the asker knows the earlier one no longer applies.
+
+A workspace whose `answer.schema.json` copy predates `note` and `retractions` refuses `--note` on an answer, and any retraction, with `answer-field-unsupported`, rather than drop what a person wrote. A copy that predates `relayed_by` refuses `--relayed-by` the same way, and one that predates `withdrawn` refuses `points withdraw`. Copying `point-answer.schema.json` anew turns them on.
 
 ## Output
 
@@ -89,7 +105,7 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 
 | Field | Meaning |
 |---|---|
-| `state`, `open` | `escalated`, `proposed` or `answered`. Open until answered. |
+| `state`, `open` | `escalated`, `proposed` or `answered`. Open until answered or withdrawn. |
 | `answer`, `decider` | The answer and who gave it: a table row, a model with its backend and model id, or a quorum with who answered. |
 | `reason` | The model's explanation of a proposal, or of a proposal a person confirmed. null when the model gave none or a model did not decide. |
 | `model` | Any model's answer, with `confidence`, `threshold`, `model`, `observed` and `reason`. It is observed for a proposal. For an escalated question it is the last answer below a threshold. |
@@ -97,11 +113,12 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 | `note` | What the people who answered wrote with their answer, or null. |
 | `relayedBy` | Who relayed the answer for the people who gave it (`--relayed-by`), or null. |
 | `retractions` | Each answer people took back, oldest first: `answer`, `decider`, `answeredBy`, `answeredOn`, `answerNote`, `answerRelayedBy`, and the retraction's `by`, `on` and `note`. Empty when none was. |
+| `withdrawn` | Who withdrew the question, when and why: `{ by, on, note }`, or null. A withdrawn question keeps its `state` and is not open. `summary.withdrawn` counts them. |
 | `asked` | An ad-hoc question's text and criteria, as its ask gave them: `{ question, criteria }`. null for a declared point's question. |
 | `current` | The point is still declared as it was when asked. |
 | `warnings` | The `answer-` codes: the points file can't be read, the point is gone, or it changed. |
 
-`ask`, `answer` and `retract` print one document of `points-write.schema.json`, with `verb`, the question as `points` lists it, `reused` and `written`. A refusal has `error: { code, message }` and exits 1.
+`ask`, `answer`, `retract` and `withdraw` print one document of `points-write.schema.json`, with `verb`, the question as `points` lists it, `reused` and `written`. A refusal has `error: { code, message }` and exits 1.
 
 | Code | When |
 |---|---|
@@ -115,8 +132,8 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 | `quorum-not-met` | Too few people count toward the quorum. |
 | `answer-in-steward-turn` | The answer came from a steward's turn, which never answers a question. |
 | `answer-never-over-mcp` | The answer came over MCP or ACP, and the question's gate is never resolved there. |
-| `record-closed` | The question is already answered. Retract the answer first. |
+| `record-closed` | The question is already answered, so retract the answer first, or it was withdrawn. |
 | `answer-not-answered` | `retract` names a question with no answer. |
-| `answer-field-unsupported` | The kind's schema copy has no `note`, `retractions`, `relayed_by` or `asked` field. |
+| `answer-field-unsupported` | The kind's schema copy has no `note`, `retractions`, `relayed_by`, `asked` or `withdrawn` field. |
 
-`chant serve mcp` serves the read as the `workspace-points` tool, the answer as `points-answer` and the retraction as `points-retract`.
+`chant serve mcp` serves the read as the `workspace-points` tool, the answer as `points-answer` and the retraction as `points-retract`. Its `points-withdraw` tool withdraws a question.
