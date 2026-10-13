@@ -4,13 +4,15 @@
  *
  * The base activities are core's own (`./activities`): plain async functions
  * taking a single args object, with no workflow engine anywhere in the call
- * path. They are imported statically, so `loadActivities([])` works in a
- * project that has installed nothing but chant. Product-specific appliers stay
+ * path. They ship with core, so `loadActivities([])` works in a project that
+ * has installed nothing but chant. They are imported when activities are
+ * loaded, not when this module is: their implementations reach lint, codegen
+ * and `typescript`, and every `*.op.ts` imports `@intentius/chant/op`, which
+ * re-exports this module (#3982). Product-specific appliers stay
  * in their owning lexicon (#809) and are pulled in dynamically per the
  * project's configured lexicon list.
  */
 
-import * as baseActivities from "./activities";
 import { ACTIVITY_PROFILES, type ActivityProfile } from "./activity-profiles";
 import { importLexiconModule, importLexiconPackage } from "../lexicon-module";
 
@@ -63,13 +65,13 @@ function collectActivities(mod: Record<string, unknown>, into: Map<string, Activ
  * lexicon's activity of the same name; otherwise a later lexicon's export
  * replaces an earlier one's.
  *
- * Never throws: the base library is a static import, so there is no "no
+ * Never throws: the base library ships with core, so there is no "no
  * activities registered" state to report.
  */
 export async function loadActivities(lexicons: string[] = []): Promise<Map<string, ActivityFn>> {
   const activities = new Map<string, ActivityFn>();
 
-  collectActivities(baseActivities as unknown as Record<string, unknown>, activities);
+  collectActivities((await import("./activities")) as unknown as Record<string, unknown>, activities);
 
   for (const name of lexicons) {
     try {
