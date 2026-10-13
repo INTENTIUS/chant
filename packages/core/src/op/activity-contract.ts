@@ -89,6 +89,26 @@ export interface ActivityContract<Args = unknown, Return = unknown> {
    * stack members internally) simply declares none.
    */
   entities?: string[];
+  /**
+   * What the activity returns that is secret (#3947): `true` for the whole
+   * return value, or the names of its top-level fields that are. A gate that
+   * resumes never stores a secret output in its checkpoint, so a gate whose
+   * later steps reference one doesn't resume, and OPS016 says so at build.
+   */
+  secret?: true | string[];
+}
+
+/**
+ * Whether a reference into `contract`'s return value at `path` reads a value
+ * the contract marks secret (#3947). A whole-value reference reads every
+ * field, so it is secret when any field is.
+ */
+export function readsSecretOutput(contract: Pick<ActivityContract, "secret"> | undefined, path?: string): boolean {
+  const secret = contract?.secret;
+  if (secret === undefined) return false;
+  if (secret === true) return true;
+  if (!path) return secret.length > 0;
+  return secret.includes(path.split(".")[0]!);
 }
 
 /** Declare an activity contract. */
@@ -96,7 +116,7 @@ export function activityContract<ArgsSchema extends z.ZodTypeAny, ReturnSchema e
   name: string,
   args: ArgsSchema,
   returns?: ReturnSchema,
-  opts?: { entities?: string[] },
+  opts?: { entities?: string[]; secret?: true | string[] },
 ): ActivityContract<z.infer<ArgsSchema>, ReturnSchema extends z.ZodTypeAny ? z.infer<ReturnSchema> : unknown> {
   return {
     [CONTRACT_BRAND]: true,
@@ -104,6 +124,7 @@ export function activityContract<ArgsSchema extends z.ZodTypeAny, ReturnSchema e
     args,
     ...(returns ? { returns } : {}),
     ...(opts?.entities && opts.entities.length > 0 ? { entities: opts.entities } : {}),
+    ...(opts?.secret === true || (Array.isArray(opts?.secret) && opts.secret.length > 0) ? { secret: opts!.secret } : {}),
   } as ActivityContract<z.infer<ArgsSchema>, ReturnSchema extends z.ZodTypeAny ? z.infer<ReturnSchema> : unknown>;
 }
 

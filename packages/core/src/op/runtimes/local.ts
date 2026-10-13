@@ -22,6 +22,8 @@ import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { loadActivities, loadProfiles } from "../activity-registry";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor";
+import { loadActivityContracts } from "../activity-contract-registry";
+import { resumeGatesOf } from "../gate-checkpoint";
 import { stepHeartbeatMs } from "../step-console";
 import { runComponents } from "../../components/cli-support";
 import { discoverOps } from "../discover";
@@ -139,6 +141,8 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
       }
 
       const [activities, profiles] = await Promise.all([loadActivities(lexicons), loadProfiles()]);
+      // #3947: a gate that resumes stores no output a contract marks secret.
+      const contracts = resumeGatesOf(op).length > 0 ? await loadActivityContracts(lexicons) : undefined;
 
       // A caller that names the run (#3539: `chant acp` on fountain passes the
       // conversation id) gets its id on the record; otherwise one is minted.
@@ -179,6 +183,7 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
               stepOutput: (line) => process.stderr.write(`${line}\n`),
               stepHeartbeatMs: stepHeartbeatMs(process.env, (message) => process.stderr.write(`warning: ${message}\n`)),
               ...(startOpts.work ? { work: startOpts.work } : {}),
+              ...(contracts ? { contracts } : {}),
               onWorkLeaseWarning: (message) =>
                 process.stderr.write(`warning: "${op.name}" could not renew its work lease, retrying at the next beat: ${message}\n`),
             },

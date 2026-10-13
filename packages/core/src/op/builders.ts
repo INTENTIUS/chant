@@ -138,7 +138,7 @@ export function activity(
  */
 export function gate(
   name: string,
-  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"]; approval?: GateStep["approval"]; point?: GateStep["point"] },
+  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"]; approval?: GateStep["approval"]; point?: GateStep["point"]; resume?: boolean },
 ): GateStep {
   if (opts?.approval !== undefined) {
     const problems = gateApprovalProblems(opts.approval);
@@ -156,6 +156,7 @@ export function gate(
     ...(opts?.plan !== undefined ? { plan: opts.plan } : {}),
     ...(opts?.approval !== undefined ? { approval: opts.approval } : {}),
     ...(opts?.point !== undefined ? { point: opts.point } : {}),
+    ...(opts?.resume ? { resume: true } : {}),
   };
 }
 

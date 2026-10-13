@@ -55,6 +55,7 @@ import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requ
 import { parseDuration } from "./duration";
 import { resolveGateRunLocator } from "./gate-run-locator";
 import { refuseGateWithoutRecording } from "../lifecycle/no-record";
+import { gateCheckpointDigest, gateCheckpointText, readGateCheckpointText, writeGateCheckpoint, type GateCheckpoint } from "../lifecycle/gate-checkpoint";
 
 /**
  * What appending a pending fact learned about reaching the remote.
@@ -100,6 +101,15 @@ export interface GateLedgerPort {
   readApplied?(op: string): Promise<AppliedGateRecord[]>;
   /** Record that a wave is about to apply under an approval (#3784), which spends it. */
   appendApplied?(record: AppliedGateRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
+  /**
+   * Store the checkpoint of a run that stops at a gate that resumes (#3947),
+   * at `_gates/<op>/checkpoints/<runId>.json`. Written before the pending
+   * fact that names its digest, and pushed with it. Absent on a port that
+   * keeps none, and the gate then doesn't resume.
+   */
+  writeCheckpoint?(checkpoint: GateCheckpoint): Promise<void>;
+  /** The text of a run's checkpoint, or null when there is none (#3947). */
+  readCheckpoint?(op: string, runId: string): Promise<string | null>;
 }
 
 /** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
@@ -148,6 +158,13 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       const { record } = await appendPendingGate(input, opts);
       return { record, ...(await pushLifecycleReport(opts)) };
     },
+    async writeCheckpoint(checkpoint) {
+      await writeGateCheckpoint(checkpoint, opts);
+    },
+    async readCheckpoint(op, runId) {
+      await requireLifecycleLedger(opts);
+      return readGateCheckpointText(op, runId, opts);
+    },
     async readApplied(op) {
       await requireLifecycleLedger(opts);
       const { dir, file } = appliedGatePath(op);
@@ -181,16 +198,30 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
 export function memoryGateLedgerPort(
   seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[]; applied?: AppliedGateRecord[] } = {},
-): GateLedgerPort & { appended: PendingGateRecord[]; resolved: GateResolutionRecord[]; applied: AppliedGateRecord[] } {
+): GateLedgerPort & {
+  appended: PendingGateRecord[];
+  resolved: GateResolutionRecord[];
+  applied: AppliedGateRecord[];
+  /** Checkpoint texts by `<op>/<runId>` (#3947). */
+  checkpoints: Map<string, string>;
+} {
   const resolutions = [...(seed.resolutions ?? [])];
   const pending = [...(seed.pending ?? [])];
   const appended: PendingGateRecord[] = [];
   const resolved: GateResolutionRecord[] = [];
   const applied: AppliedGateRecord[] = [...(seed.applied ?? [])];
+  const checkpoints = new Map<string, string>();
   return {
     appended,
     resolved,
     applied,
+    checkpoints,
+    async writeCheckpoint(checkpoint) {
+      checkpoints.set(`${checkpoint.op}/${checkpoint.runId}`, gateCheckpointText(checkpoint));
+    },
+    async readCheckpoint(op, runId) {
+      return checkpoints.get(`${op}/${runId}`) ?? null;
+    },
     async readApplied(op) {
       return applied.filter((a) => a.op === op);
     },
@@ -271,6 +302,13 @@ export interface GateCheckInput {
   fields?: Record<string, unknown>;
   /** The pending fact it records carries `neverOverMcp` (#3821, chant#3485). */
   neverOverMcp?: boolean;
+  /**
+   * The checkpoint of a run at a gate that resumes (#3947). Given, a pending
+   * fact this records first stores it through the port's `writeCheckpoint`
+   * and carries its digest as `checkpointDigest`. A standing fact with no
+   * checkpoint is recorded again, so the gate gets one.
+   */
+  checkpoint?: GateCheckpoint;
 }
 
 /**
@@ -614,11 +652,22 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // The same holds for the approval block (#2508): a pending fact recorded
   // under another policy version or another context would have `chant
   // approve` evaluate the policy against something this run no longer has.
+  // #3947: and for the checkpoint, so a gate that resumes gets one. A fact
+  // that already carries a checkpoint stands: an approval copies that one.
   if (
     standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) &&
-    sameApproval(standing.approval, input.approval)
+    sameApproval(standing.approval, input.approval) &&
+    (input.checkpoint === undefined || port.writeCheckpoint === undefined || standing.checkpointDigest !== undefined)
   ) {
     return { satisfied: false, pending: standing, recorded: false, ...asMismatch };
+  }
+
+  // The checkpoint is written before the fact that names it, so a fact never
+  // points at a file that isn't there.
+  let checkpointDigest: string | undefined;
+  if (input.checkpoint !== undefined && port.writeCheckpoint) {
+    checkpointDigest = gateCheckpointDigest(input.checkpoint);
+    await port.writeCheckpoint(input.checkpoint);
   }
 
   const url = resolveApprovalUrl();
@@ -637,6 +686,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(url ? { url } : {}),
     ...(resume ? { resume } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
+    ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(env !== undefined ? { environment: env } : {}),
     ...(input.approval ? { approval: input.approval } : {}),
     ...(input.neverOverMcp ? { neverOverMcp: true as const } : {}),

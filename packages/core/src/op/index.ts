@@ -156,9 +156,12 @@ export type {
 export { renderHuman, renderJson } from "./local-output";
 export {
   activityContract, isActivityContract, collectActivityContracts, validateActivitySteps, KNOWN_ACTIVITY_PROFILES,
-  pathExistsInSchema,
+  pathExistsInSchema, readsSecretOutput,
 } from "./activity-contract";
 export type { ActivityContract, ActivityContractIssue } from "./activity-contract";
+export { validateGateResume, resumeGatesOf, decideGateResume } from "./gate-checkpoint";
+export type { ResumeGate, GateResumeDecision } from "./gate-checkpoint";
+export type { GateCheckpoint } from "../lifecycle/gate-checkpoint";
 export { stepOutput, isStepOutputRef, collectStepOutputRefs, validateStepOutputRefs, validateStepOutputRefScope, makeOutProxy } from "./step-output-ref";
 export type { StepOutputRef, WithStepRefs } from "./step-output-ref";
 export type { NamedActivityStep } from "./builders";

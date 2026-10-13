@@ -87,6 +87,8 @@ export function buildRunRecord(
     gate?: OpRunRecord["gate"];
     point?: OpRunRecord["point"];
     steward?: string;
+    /** The gate the run resumed at, for a run that resumed (#3947). */
+    resumed?: OpRunRecord["resumed"];
     /** Each phase's wall-clock time, by name, as the executor measured it. */
     phaseDurations?: Record<string, number>;
   },
@@ -112,6 +114,7 @@ export function buildRunRecord(
       ...(record.refusal !== undefined ? { refusal: record.refusal } : {}),
       ...(record.point ? { point: record.point } : {}),
       ...(record.gate ? { gate: record.gate } : {}),
+      ...(record.resumed ? { resumed: record.resumed } : {}),
     });
     if (record.outcome) outcomes[record.outcome.name] = record.outcome.value;
   }
@@ -134,6 +137,7 @@ export function buildRunRecord(
     ...(times.gate ? { gate: times.gate } : {}),
     ...(times.point ? { point: times.point } : {}),
     ...(times.steward ? { steward: times.steward } : {}),
+    ...(times.resumed ? { resumed: times.resumed } : {}),
   };
 }
 

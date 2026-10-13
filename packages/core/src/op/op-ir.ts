@@ -151,6 +151,8 @@ export interface OpIRGateStep {
   approval?: GateStep["approval"];
   /** The decision point the gate asks (#3170), carried as authored. Absent on a gate that `chant approve` passes. */
   point?: GateStep["point"];
+  /** The gate resumes once approved (#3947). Absent on a gate that starts its run again at the first phase. */
+  resume?: true;
 }
 
 export interface OpIREffectStep {
@@ -263,6 +265,7 @@ function irGateStep(step: GateStep): OpIRGateStep {
     ...(step.plan !== undefined ? { plan: step.plan } : {}),
     ...(step.approval !== undefined ? { approval: step.approval } : {}),
     ...(step.point !== undefined ? { point: step.point } : {}),
+    ...(step.resume ? { resume: true as const } : {}),
   };
 }
 
@@ -419,6 +422,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       ...(step.plan !== undefined ? { plan: step.plan } : {}),
       ...(step.approval !== undefined ? { approval: step.approval } : {}),
       ...(step.point !== undefined ? { point: step.point } : {}),
+      ...(step.resume ? { resume: true } : {}),
     };
   }
   return {
