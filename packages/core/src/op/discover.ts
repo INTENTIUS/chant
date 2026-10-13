@@ -57,22 +57,29 @@ async function findDiscoveryRoot(cwd?: string): Promise<string> {
   return gitRoot;
 }
 
+const isOpFile = (name: string, full: string): boolean =>
+  name.endsWith(".op.ts") && !name.endsWith(".test.ts") && !name.endsWith(".spec.ts") && !hasDiscoveryMarkerSync(full);
+
 /**
  * Every `*.op.ts` file below the Op root, through the one discovery walk
  * (`../discovery/walk.ts`, #2527). The walk down stops at child projects
  * whatever the root is, so a configless layout whose Op root is the git root
  * no longer collects its sibling projects' Ops. The project's
  * `exclude`/`include` globs and the skip marker apply.
+ *
+ * The globs come from evaluating the project config, which registers tsx
+ * (#3976), so they are resolved only when an Op file could be found. A walk
+ * that includes `**` first reaches every path any `include` could re-admit,
+ * and stops at the first Op file. When it finds none, no globs could find
+ * one either.
  */
 async function collectOpFiles(root: string): Promise<string[]> {
-  return walkDiscovery({
-    walker: "ops",
-    root,
-    globs: await resolveDiscoveryGlobs(root),
-    excludeDirs: await workspaceMemberDirs(root),
-    accept: (name, full) =>
-      name.endsWith(".op.ts") && !name.endsWith(".test.ts") && !name.endsWith(".spec.ts") && !hasDiscoveryMarkerSync(full),
-  });
+  const excludeDirs = await workspaceMemberDirs(root);
+  // A limit of 0 ends the walk at the first file it accepts.
+  const any = { max: 0, truncated: false };
+  walkDiscovery({ walker: "ops", root, globs: { root, exclude: [], include: ["**"] }, excludeDirs, limit: any, accept: isOpFile });
+  if (!any.truncated) return [];
+  return walkDiscovery({ walker: "ops", root, globs: await resolveDiscoveryGlobs(root), excludeDirs, accept: isOpFile });
 }
 
 /** The `OpConfig` behind an exported value, or `undefined` when the value is not an Op. An Op entity carries its config on `.props` (`./resource.ts`); `name` and `phases` are what every consumer of a discovered Op reads. */
