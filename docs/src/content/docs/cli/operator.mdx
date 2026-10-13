@@ -122,6 +122,8 @@ Each tick line carries the tick's own id in brackets, so an outcome can be trace
 
 Record a gate's out-of-band resolution — the durable counterpart to a converge tick's `gated` outcome (see the [Operator guide's Gate-as-fact section](/chant/guide/operator/#gate-as-fact)).
 
+The approval copies the plan digest off the gate's standing pending fact, and the checkpoint digest too when the gate resumes (`resume: true`, [#3947](https://github.com/INTENTIUS/chant/issues/3947)). The next `chant run` then starts at the gate rather than the first phase ([Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate)). `--sign` covers the checkpoint digest as well.
+
 ```bash
 chant approve fountain-apply rollout-gate
 chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"

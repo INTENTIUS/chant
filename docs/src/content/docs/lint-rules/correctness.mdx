@@ -366,3 +366,27 @@ gate("ship", { approval: { policy: gatePolicy("ship", shipPolicies), mode: "enfo
 ```
 
 ---
+
+## OPS016: Gate That Can't Resume
+
+`chant build` refuses a gate with `resume: true` ([#3947](https://github.com/INTENTIUS/chant/issues/3947)) that a run could not resume at, since the run would otherwise start at the first phase again without a word. [Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate) in the guide explains how a run resumes. OPS016 reports each gate that breaks one of these rules:
+
+- the gate is in an `onFailure` phase or inside an effect
+- the gate asks a decision point
+- the Op declares a `workLease`
+- the gate's `plan` names a step that does not run before it at the top of a main phase, so a resumed run can't plan again
+- a step after the gate reads an output that its producer's activity contract marks `secret`, which a checkpoint never stores
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers OPS016: mintToken's contract marks "value" secret
+const token = activity("mintToken", {}, { id: "token" });
+phase("Gate", [gate("approve", { plan: plan.out.planDigest, resume: true })]),
+phase("Apply", [activity("applyIt", { token: token.out.value })]),
+```
+
+```typescript
+// ✅ Fixed: pass a reference to the secret, such as its store path
+phase("Apply", [activity("applyIt", { tokenPath: token.out.path })]),
+```
