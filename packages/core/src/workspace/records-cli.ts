@@ -337,6 +337,16 @@ export async function quorumOptionsFor(loaded: LoadedRecordKind, tree: Workspace
 }
 
 /**
+ * What a quorum that is not met lacks, for `ratify-quorum-not-met` and
+ * `record-ratified-below-quorum` (#2873, #2878): the need, the agreeing
+ * verdicts that count, and each verdict that does not count, with why.
+ */
+export function quorumShortfall(q: Quorum): string {
+  const notCounted = q.notCounted.length > 0 ? ` (not counted: ${q.notCounted.map((v) => `${v.reviewer}, ${v.reason!.code}`).join("; ")})` : "";
+  return `its quorum needs ${q.need} agreeing verdicts that count, and it has ${q.agreed}${notCounted}`;
+}
+
+/**
  * Where a kind's pinned paths resolve: the workspace whose declaration sits
  * nearest above the kind file, when it is inside the repository, or else the
  * repository root. Relative to `root`, with / separators.
@@ -446,10 +456,16 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       // Returned work (#2552): its seals verify against the signers admitted for its return too.
       const recordPolicy = p.returned ? returnedPolicy(policy, p.returned.id) : policy;
       const options = p.returned ? await quorumOptionsFor(loaded, tree, recordPolicy) : quorumOptions;
+      const quorum = options ? computeQuorum(loaded.kind, r, options) : null;
+      const ratified = loaded.kind.reviews?.ratified;
+      if (quorum && !quorum.met && ratified !== undefined && r.state === ratified) {
+        // Written to the ratified state by hand, past the check of records new and amend (#2878).
+        r.warnings.push({ code: "record-ratified-below-quorum", message: `${r.id ?? r.path} is ${ratified}, and ${quorumShortfall(quorum)}` });
+      }
       records.push({
         ...r,
         provenance: p,
-        ...(options ? { quorum: computeQuorum(loaded.kind, r, options) } : {}),
+        ...(options ? { quorum } : {}),
         ...(seals ? authorSeal(loaded.kind, r, recordPolicy, seals.checkRecordSeal) : {}),
       });
     }

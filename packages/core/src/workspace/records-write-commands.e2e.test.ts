@@ -419,6 +419,38 @@ describe("ratifying against the quorum (#2873)", () => {
     expect(code(doc)).toBe("ratify-quorum-not-met");
   });
 
+  test("a record edited by hand to ratified below its quorum reads with record-ratified-below-quorum, and stays valid (#2878)", async () => {
+    const read = async (id: string, kind = KIND) => {
+      const doc = await queryRecords({ kind, cwd: dir });
+      if ("error" in doc) throw new Error(doc.error.message);
+      return doc.records.find((r) => r.id === id)!;
+    };
+    const warned = (r: { warnings: { code: string }[] }) => r.warnings.some((w) => w.code === "record-ratified-below-quorum");
+    // A decided record below its quorum is not warned about.
+    await agree("alice");
+    await agree("lex00");
+    expect(warned(await read("ws-001"))).toBe(false);
+    writeFileSync(join(dir, "decisions", "ws-001-one.md"), text("ws-001-one.md").replace('state: "decided"', 'state: "ratified"'));
+    const r = await read("ws-001");
+    expect(r).toMatchObject({ state: "ratified", valid: true, reasons: [] });
+    expect(r.quorum).toMatchObject({ need: 2, agreed: 1, met: false });
+    expect(r.warnings.find((w) => w.code === "record-ratified-below-quorum")!.message).toBe(
+      "ws-001 is ratified, and its quorum needs 2 agreeing verdicts that count, and it has 1 (not counted: lex00, review-decider)",
+    );
+    // A record ratified through amend at its quorum carries no such warning.
+    put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
+    await agree("alice", "ws-006");
+    await agree("bob", "ws-006");
+    expect(await ratify("ws-006")).toMatchObject({ changed: ["state", "closed_digest"] });
+    expect(warned(await read("ws-006"))).toBe(false);
+    // A kind without reviews.ratified never warns: ws-003 opened ratified with no verdicts.
+    expect(warned(await read("ws-003"))).toBe(true);
+    // A kind module is cached by its path, so the kind without it is a second file.
+    const kindFile = join(dir, "decisions", "decision.kind.mjs");
+    writeFileSync(join(dir, "decisions", "plain.kind.mjs"), readFileSync(kindFile, "utf-8").replace(', ratified: "ratified" }', " }"));
+    expect(warned(await read("ws-003", "decisions/plain.kind.mjs"))).toBe(false);
+  });
+
   test("records new refuses a record that opens ratified below its quorum", async () => {
     const fresh = decision({ title: "Straight in", state: "ratified" });
     delete fresh.id;

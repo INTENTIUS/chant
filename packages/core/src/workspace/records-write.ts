@@ -61,7 +61,7 @@ import {
   type RecordEntry,
   type RecordWarning,
 } from "./records";
-import { declaredKindFiles, pinRoot, quorumOptionsFor, realpathOr } from "./records-cli";
+import { declaredKindFiles, pinRoot, quorumOptionsFor, quorumShortfall, realpathOr } from "./records-cli";
 import { policyAtBase, resolveBase } from "./trust/provenance";
 import { WorkspaceReadError } from "./declaration";
 import { findSessionKinds, headCommit, sessionKindsFor } from "./session-kinds";
@@ -516,10 +516,9 @@ async function refuseRatifyBelowQuorum(o: Opened, written: RecordEntry, id: stri
   const options = await quorumOptionsFor(o.loaded, tree, policy);
   const q = options ? computeQuorum(o.loaded.kind, written, options) : null;
   if (q === null || q.met) return;
-  const notCounted = q.notCounted.length > 0 ? ` (not counted: ${q.notCounted.map((v) => `${v.reviewer}, ${v.reason!.code}`).join("; ")})` : "";
   throw new RecordWriteError(
     "ratify-quorum-not-met",
-    `${id} can't be ${ratified} yet: its quorum needs ${q.need} agreeing verdicts that count, and it has ${q.agreed}${notCounted}. Add verdicts with chant workspace records review ${id} --verdict agree --by <reviewer>, then set ${o.loaded.kind.stateField} to ${ratified} again`,
+    `${id} can't be ${ratified} yet: ${quorumShortfall(q)}. Add verdicts with chant workspace records review ${id} --verdict agree --by <reviewer>, then set ${o.loaded.kind.stateField} to ${ratified} again`,
   );
 }
 
