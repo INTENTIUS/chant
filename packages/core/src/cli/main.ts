@@ -1226,16 +1226,18 @@ export const commandRegistry: CommandDef[] = [
 
   // Workspace reads (#2524). Imported on first use, so a level-0 command never
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
-  { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
+  // #3276 — records, points, ls and status read the declaration and never the
+  // config of the member they run in, so they skip its load (and tsx with it).
+  { name: "workspace records", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
   // ws-058 (#2739) — decision points and the questions asked of them; never calls a model.
-  { name: "workspace points", handler: async (ctx) => (await import("../workspace/points-cli")).runWorkspacePoints(ctx) },
+  { name: "workspace points", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/points-cli")).runWorkspacePoints(ctx) },
   { name: "workspace init", handler: async (ctx) => (await import("../workspace/init")).runWorkspaceInit(ctx) },
-  { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
+  { name: "workspace ls", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
   // #2732 — the work lease: claim, renew and release a work item.
   { name: "workspace work", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/work-cli")).runWorkspaceWork(ctx) },
   // #3033 — the agent run record: what each run cost and which commits it made. chant records runs and never starts one.
   { name: "workspace runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/runs-cli")).runWorkspaceRuns(ctx) },
-  { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
+  { name: "workspace status", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   // #2551 — adopt a lineage, the hash index it matches against, and the versions of a family of workspaces.

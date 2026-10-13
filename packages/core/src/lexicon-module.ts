@@ -176,12 +176,19 @@ export function resetLexiconModules(): void {
  * Import the module a path-declared lexicon names. Returns `undefined` when
  * `name` is package-backed, so a caller falls through to its package import.
  * An import failure is thrown with the declared path in the message.
+ *
+ * `typeScript: false` imports it with plain node, without registering tsx
+ * (#3276): tsx's ESM hooks run on a thread of their own, which costs the
+ * compiled CLI about 200 MB, so a caller whose module is JavaScript says so.
  */
-export async function importLexiconModule(name: string): Promise<Record<string, unknown> | undefined> {
+export async function importLexiconModule(
+  name: string,
+  options: { typeScript?: boolean } = {},
+): Promise<Record<string, unknown> | undefined> {
   const path = modulePaths.get(name);
   if (path === undefined) return undefined;
   try {
-    ensureTypeScriptLoader();
+    if (options.typeScript !== false) ensureTypeScriptLoader();
     return esModuleNamespace((await import(path)) as Record<string, unknown>);
   } catch (err) {
     throw new Error(
