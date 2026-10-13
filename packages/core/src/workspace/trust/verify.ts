@@ -8,6 +8,12 @@
  * that touches those files must be attested by a signer the base policy
  * trusts, and by an admin when the base policy grants the admin role.
  *
+ * The write scope is policy too (#3079): when the workspace declaration at
+ * base has a `writeScope` or `agents` block, a commit that changes either
+ * block, or removes the declaration, is a protected write on the same terms.
+ * Other edits to the declaration are not. The declaration is found from
+ * `cwd`, as `chant workspace check --changes` finds it.
+ *
  * Attestation is opt-in (#2525 rule 6). Without a signers file at base the
  * check passes and says so, unless `--require attested` asks for more.
  *
@@ -22,6 +28,11 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { posix } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { DECLARATION_FILES, WorkspaceReadError } from "../declaration";
+import { parseJsonText } from "../jsonc";
+import { locateWorkspace } from "../which-chant";
 import { type CommitAttestor, type ProvenanceLevel } from "./attestor";
 import { policyAtBase, commitProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./provenance";
 import { policyWriters, protectedPaths, type ExcludedSigner, type TrustPolicy } from "./policy";
@@ -41,6 +52,8 @@ export interface CommitVerdict extends RecordProvenance {
 export interface ProtectedWrite {
   commit: string;
   paths: string[];
+  /** For a declaration write (#3079): the scope blocks the commit changes. */
+  blocks?: ScopeBlock[];
   level: ProvenanceLevel;
   principal?: string;
   allowed: boolean;
@@ -68,6 +81,12 @@ export interface ChangeReport {
   protectedChanged: string[];
   protectedWrites: ProtectedWrite[];
   /**
+   * The workspace declaration at base, when it has a scope block (#3079): its
+   * path from the repository root, the blocks it has, and the blocks that
+   * differ between the merge base and head.
+   */
+  declaration: { path: string; blocks: ScopeBlock[]; changed: ScopeBlock[] } | null;
+  /**
    * When the change edits the signer set (#2553): the version it proposes and
    * who signed it, or, when the new set is refused, the version it had to
    * follow and why.
@@ -80,6 +99,8 @@ export interface ChangeReport {
 
 export interface VerifyOptions {
   repo: string;
+  /** Where to look for the workspace declaration, as `check --changes` does; the repository root by default. */
+  cwd?: string;
   base?: string;
   head?: string;
   require?: VerifyRequirement;
@@ -104,6 +125,51 @@ export function commitsTouching(repo: string, range: string, paths: string[]): M
     else if (line && wanted.has(line)) out.set(commit, [...(out.get(commit) ?? []), line]);
   }
   return out;
+}
+
+/** The declaration blocks whose change is a protected write (#3079). */
+export type ScopeBlock = "writeScope" | "agents";
+const SCOPE_BLOCKS: readonly ScopeBlock[] = ["writeScope", "agents"];
+
+/** The scope blocks of the declaration in `dir` at `rev`: absent ones undefined, or the text when it can't be read. */
+type ScopeState = { blocks: Partial<Record<ScopeBlock, unknown>> } | { unreadable: string };
+
+function scopeState(repo: string, rev: string, dir: string): ScopeState {
+  const present = DECLARATION_FILES.map((name) => ({ name, text: fileAt(repo, rev, posix.join(dir, name)) })).filter((f) => f.text !== undefined);
+  if (present.length === 0) return { blocks: {} };
+  if (present.length > 1) return { unreadable: present.map((f) => f.text).join("\0") };
+  const parsed = parseJsonText(present[0].text!, { jsonc: present[0].name.endsWith(".jsonc") });
+  if (!parsed.ok || typeof parsed.value !== "object" || parsed.value === null || Array.isArray(parsed.value)) return { unreadable: present[0].text! };
+  const obj = parsed.value as Record<string, unknown>;
+  return { blocks: Object.fromEntries(SCOPE_BLOCKS.filter((b) => obj[b] !== undefined).map((b) => [b, obj[b]])) };
+}
+
+/** The scope blocks that differ between two states; all of them when either can't be read and the texts differ. */
+function changedBlocks(a: ScopeState, b: ScopeState): ScopeBlock[] {
+  if ("unreadable" in a || "unreadable" in b) {
+    return "unreadable" in a && "unreadable" in b && a.unreadable === b.unreadable ? [] : [...SCOPE_BLOCKS];
+  }
+  return SCOPE_BLOCKS.filter((k) => !isDeepStrictEqual(a.blocks[k], b.blocks[k]));
+}
+
+/**
+ * The directory, from the repository root, of the declaration found from
+ * `cwd` at `base`, with the scope blocks it has there. Null when there is no
+ * declaration, or one with neither block: then nothing in it is protected. A
+ * declaration that can't be read at base counts as having both.
+ */
+function scopedDeclarationAt(repo: string, cwd: string, base: string): { dir: string; blocks: ScopeBlock[] } | null {
+  let dir: string;
+  try {
+    const root = locateWorkspace(cwd, base).root;
+    dir = root === "." ? "" : root;
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) return null;
+    throw err;
+  }
+  const state = scopeState(repo, base, dir);
+  const blocks = "unreadable" in state ? [...SCOPE_BLOCKS] : SCOPE_BLOCKS.filter((b) => b in state.blocks);
+  return blocks.length > 0 ? { dir, blocks } : null;
 }
 
 /** Whether a merge commit changes nothing beyond what its parents bring. */
@@ -134,6 +200,7 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     protectedPaths: protectedPaths(policy),
     protectedChanged: [],
     protectedWrites: [],
+    declaration: null,
     rotation: null,
     notes: [],
     failures: [],
@@ -157,7 +224,8 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
 
   // Every commit in the change, oldest first, with its parents.
   const listing = git(repo, ["rev-list", "--reverse", "--parents", `${base.commit}..${head}`]).split("\n").filter(Boolean);
-  const parentsOf = new Map(listing.map((l) => { const [c, ...p] = l.split(" "); return [c, p.length] as const; }));
+  const parentList = new Map(listing.map((l) => { const [c, ...p] = l.split(" "); return [c, p] as const; }));
+  const parentsOf = new Map([...parentList].map(([c, p]) => [c, p.length] as const));
   report.runs = changeRuns(repo, [...parentsOf.keys()], policy.runners);
   if (opts.require === "attested-runs") {
     if (policy.runners.length === 0 && report.runs.commits.length > 0) {
@@ -204,23 +272,48 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
   }
 
   // Protected writes: every commit that touches the policy needs a writer's signature.
+  const writers = policyWriters(policy);
+  const judge = (commit: string, paths: string[], blocks?: ScopeBlock[]) => {
+    const v = verdicts.get(commit) ?? { ...commitProvenance(repo, policy, commit, opts.attestors), commit, subject: "" };
+    const allowed = v.level === "attested" && v.principal !== undefined && writers.has(v.principal);
+    const who = policy.roles.admin?.length ? "an admin the policy at base names" : "a signer the policy at base lists";
+    const what = blocks ? `${paths.join(", ")} (${blocks.join(", ")})` : paths.join(", ");
+    const reason = allowed
+      ? `signed by ${v.principal}, ${who.replace(/^an? /, "")}`
+      : v.level === "attested"
+        ? `signed by ${v.principal}, who is not ${who}`
+        : `${what} is protected and needs a signature by ${who}: ${v.reason}`;
+    report.protectedWrites.push({ commit, paths, ...(blocks ? { blocks } : {}), level: v.level, ...(v.principal ? { principal: v.principal } : {}), allowed, reason });
+    if (!allowed) report.failures.push(`${commit.slice(0, 8)} changes ${what}: ${reason}`);
+  };
   if (changedPaths.length > 0) {
-    const writers = policyWriters(policy);
     const touching = commitsTouching(repo, `${base.commit}..${head}`, report.protectedPaths);
     if (touching.size === 0) {
       report.failures.push(`the policy files ${changedPaths.join(", ")} differ from base, and no commit in the change accounts for it`);
     }
-    for (const [commit, paths] of touching) {
-      const v = verdicts.get(commit) ?? { ...commitProvenance(repo, policy, commit, opts.attestors), commit, subject: "" };
-      const allowed = v.level === "attested" && v.principal !== undefined && writers.has(v.principal);
-      const who = policy.roles.admin?.length ? "an admin the policy at base names" : "a signer the policy at base lists";
-      const reason = allowed
-        ? `signed by ${v.principal}, ${who.replace(/^an? /, "")}`
-        : v.level === "attested"
-          ? `signed by ${v.principal}, who is not ${who}`
-          : `${paths.join(", ")} is protected and needs a signature by ${who}: ${v.reason}`;
-      report.protectedWrites.push({ commit, paths, level: v.level, ...(v.principal ? { principal: v.principal } : {}), allowed, reason });
-      if (!allowed) report.failures.push(`${commit.slice(0, 8)} changes ${paths.join(", ")}: ${reason}`);
+    for (const [commit, paths] of touching) judge(commit, paths);
+  }
+
+  // The write scope in the declaration at base (#3079): a commit that changes writeScope or agents.
+  const scoped = scopedDeclarationAt(repo, opts.cwd ?? repo, base.commit);
+  if (scoped) {
+    const files = DECLARATION_FILES.map((name) => posix.join(scoped.dir, name));
+    const changed = changedBlocks(scopeState(repo, mergeBase, scoped.dir), scopeState(repo, head, scoped.dir));
+    report.declaration = { path: files.find((f) => fileAt(repo, base.commit!, f) !== undefined) ?? files[0], blocks: scoped.blocks, changed };
+    if (changed.length > 0) {
+      let accounted = false;
+      for (const [commit, paths] of commitsTouching(repo, `${base.commit}..${head}`, files)) {
+        const after = scopeState(repo, commit, scoped.dir);
+        // A merge changes a block only when it differs from every parent.
+        const per = (parentList.get(commit) ?? []).map((p) => new Set(changedBlocks(scopeState(repo, p, scoped.dir), after)));
+        const blocks = SCOPE_BLOCKS.filter((b) => per.length > 0 && per.every((s) => s.has(b)));
+        if (blocks.length === 0) continue;
+        accounted = true;
+        judge(commit, paths, blocks);
+      }
+      if (!accounted) {
+        report.failures.push(`${changed.join(" and ")} in ${report.declaration.path} differ from base, and no commit in the change accounts for it`);
+      }
     }
   }
 

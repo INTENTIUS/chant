@@ -26,6 +26,7 @@ export async function runWorkspaceVerify(ctx: CommandContext): Promise<number> {
   }
   const report = verifyChange({
     repo,
+    cwd: process.cwd(),
     base: args.base,
     head: args.head,
     require: args.require === "attested" || args.require === "attested-runs" ? args.require : undefined,
@@ -49,7 +50,7 @@ function printReport(r: ChangeReport): void {
     lines.push(`  ${c.commit.slice(0, 8)}  ${c.level}${who}  ${c.subject}${note}`);
   }
   for (const c of r.runs.commits) lines.push(`  ${c.commit.slice(0, 8)}  agent run ${c.runs.join(", ") || c.run}: ${c.attested ? "attested" : "not attested"}, ${c.reason}`);
-  for (const w of r.protectedWrites) lines.push(`  protected write ${w.commit.slice(0, 8)} ${w.paths.join(", ")}: ${w.allowed ? "allowed" : "refused"}, ${w.reason}`);
+  for (const w of r.protectedWrites) lines.push(`  protected write ${w.commit.slice(0, 8)} ${w.paths.join(", ")}${w.blocks ? ` (${w.blocks.join(", ")})` : ""}: ${w.allowed ? "allowed" : "refused"}, ${w.reason}`);
   if (r.rotation && "to" in r.rotation) lines.push(`  signer set: version ${r.rotation.from} to ${r.rotation.to}, signed by ${r.rotation.signedBy.join(", ")}`);
   for (const n of r.notes) lines.push(n);
   console.log(lines.join("\n"));

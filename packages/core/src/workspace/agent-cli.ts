@@ -91,6 +91,8 @@ export async function agentSession(q: { cwd: string; name: string }): Promise<Ag
   try {
     const source = scopeSource(q.cwd);
     if (source.declaration === null || source.from === null) {
+      // A declaration that is there but fails validation says so (#3433).
+      if (source.failure && source.failure.code !== "declaration-missing") throw source.failure;
       throw new WorkspaceReadError("declaration-missing", "no chant.workspace.json or .jsonc between this directory and the git root, so no agent session is declared");
     }
     const decl = source.declaration;

@@ -1003,3 +1003,13 @@ describe("chant workspace check --generated (#2641)", () => {
     expect(() => parseArgs(["workspace", "check", "--generated=yes"])).toThrow();
   });
 });
+
+describe("chant --help", () => {
+  test("lists every top-level command in the registry", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    const help = source.slice(source.indexOf("function printHelp("), source.indexOf("Options:", source.indexOf("function printHelp(")));
+    const listed = new Set([...help.matchAll(/^ {2}([a-z][a-z-]*)\b/gm)].map((m) => m[1]));
+    const commands = new Set(commandRegistry.map((def) => def.name.split(" ")[0]));
+    expect([...commands].filter((name) => !listed.has(name))).toEqual([]);
+  });
+});

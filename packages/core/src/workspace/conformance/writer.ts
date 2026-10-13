@@ -614,7 +614,7 @@ export function isReadCall(argv: readonly string[]): boolean {
     case "runs":
       return !["start", "end", "record"].includes(sub ?? "");
     case "points":
-      return !["ask", "answer", "retract"].includes(sub ?? "");
+      return !["ask", "answer", "retract", "withdraw"].includes(sub ?? "");
     case "work":
       return sub === "history";
     case "wip":

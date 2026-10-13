@@ -167,7 +167,12 @@ Commands:
                         okf emits an OKF v0.2 knowledge bundle — one markdown
                         concept per entity + index.md; -o <dir> writes the
                         bundle tree, otherwise JSON path→content on stdout)
-  generate              Generate typed code from sources chant.config declares
+  search "<query>"      Answer an estate question with a few matching rows
+                        instead of a graph dump (kind:, tag:, attr:, ->/<- edge
+                        terms; --live or --at <ref> with --env <name> reads the
+                        estate or a recorded snapshot; --show <attr>,
+                        --check-live, --check-snapshot, --fail-on-drift)
+  generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
                         output no longer matches its sources, as build does
@@ -402,9 +407,11 @@ Workspace (level 1, #2524):
                         state transitions, new verdicts, new supersessions
                         and changed pins. A session id compares the commits
                         the session opened and closed at
-  workspace records pin <path>
+  workspace records pin <path> [--kind <kind file>]
                         Print the path from the workspace root and the
-                        sha256 of a file, for a decision's evidence pin
+                        sha256 of a file, for a decision's evidence pin. The
+                        root is the kind file's workspace with --kind, else
+                        the workspace above the current directory
   workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
                         Write one new record in the kind's directory from
                         the JSON fields given, after validating them as
@@ -559,6 +566,11 @@ Workspace (level 1, #2524):
   workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Take an answer back: the question is open for people
                         again, and the answer stays in its retractions
+  workspace points withdraw <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+                        Close an open question that no longer applies, such as
+                        one about a work item its author changed: points --open
+                        leaves it out, nobody answers it, and asking it again
+                        opens it again (#2888)
   workspace pin <path> [--json]
                         Print the integrity value that pins the plugin at
                         <path>, to put in a path pin of chant.workspace.json.
