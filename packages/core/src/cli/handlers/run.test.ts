@@ -61,6 +61,7 @@ vi.mock("node:fs", async () => {
   };
 });
 vi.mock("../../components/cli-support", () => ({
+  isComponentList: (selector: string) => selector.includes(","),
   runComponents: (...args: unknown[]) => runComponentsMock(...args),
   listComponents: (...args: unknown[]) => listComponentsMock(...args),
 }));
@@ -1274,6 +1275,25 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     expect(exit).toBe(0);
     expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {}, buildParams: [] });
     expect(discoverOpsMock).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  test("a list selector prints the resolved order and the added dependencies before running (#3950)", async () => {
+    discoverOpsMock.mockReset();
+    const stderr = makeStderrSpy();
+    let printedBeforeRun = "";
+    runComponentsMock.mockImplementation(async (_path: string, _selector: string, options: { onPlan?: (plan: unknown) => void }) => {
+      options.onPlan?.({ order: ["db", "api", "web"], waves: [["db"], ["api", "web"]], added: ["db"] });
+      printedBeforeRun = stderr.join("\n");
+      return { success: true, selected: ["db", "api", "web"], run: { order: ["db", "api", "web"], waves: [["db"], ["api", "web"]], results: [], ok: true, status: "ok" } };
+    });
+
+    const exit = await runOp({ args: makeArgs({ path: "api,web", components: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "api,web", expect.objectContaining({ onPlan: expect.any(Function) }));
+    expect(printedBeforeRun).toContain("run order: db, then api + web");
+    expect(printedBeforeRun).toContain("added as dependencies: db");
     vi.restoreAllMocks();
   });
 
