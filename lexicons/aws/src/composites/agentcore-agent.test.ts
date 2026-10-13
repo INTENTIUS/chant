@@ -6,7 +6,8 @@ import { AttrRef } from "@intentius/chant/attrref";
 // reaching into core directly here mirrors nested-stack-integration.test.ts's
 // precedent for aws-lexicon integration-style tests.
 import { resolveAttrRefs } from "../../../../packages/core/src/discovery/resolve";
-import { AgentCoreAgent, agentCoreDefaultEndpointArn } from "./agentcore-agent";
+import { AgentCoreAgent, agentCoreDefaultEndpointArn, type AgentCoreAgentProps } from "./agentcore-agent";
+import { Runtime } from "../generated";
 import { Split, Ref } from "../intrinsics";
 import { awsSerializer } from "../serializer";
 
@@ -260,6 +261,30 @@ describe("AgentCoreAgent", () => {
     });
     const endpointProps = (instance.endpoint as any).props;
     expect(endpointProps.Description).toBe("prod alias");
+  });
+
+  test("defaults.runtime takes PlatformVersion, typed, and it reaches the template (#3953)", () => {
+    // Typed on purpose: the backfilled property must be accepted without a cast.
+    const runtimeDefaults: AgentCoreAgentProps["defaults"] = { runtime: { PlatformVersion: "2" } };
+    const expanded = expandComposite("agent", AgentCoreAgent({ ...baseProps, defaults: runtimeDefaults }));
+    resolveAttrRefs(expanded);
+    const template = JSON.parse(awsSerializer.serialize(expanded) as string);
+    expect(template.Resources.agentRuntime.Properties.PlatformVersion).toBe("2");
+  });
+
+  test("a Runtime built directly with PlatformVersion emits it (#3953)", () => {
+    const runtime = new Runtime({
+      AgentRuntimeName: "support_agent",
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: baseProps.containerUri } },
+      NetworkConfiguration: { NetworkMode: "PUBLIC" },
+      RoleArn: "arn:aws:iam::123456789012:role/agent",
+      PlatformVersion: "2",
+    });
+    const template = JSON.parse(awsSerializer.serialize(new Map([["agentRuntime", runtime]])) as string);
+    expect(template.Resources.agentRuntime).toMatchObject({
+      Type: "AWS::BedrockAgentCore::Runtime",
+      Properties: { AgentRuntimeName: "support_agent", PlatformVersion: "2" },
+    });
   });
 
   test("serializes to a valid CloudFormation template with the expected resource types", () => {

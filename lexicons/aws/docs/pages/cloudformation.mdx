@@ -65,6 +65,14 @@ Each entry records where its values came from, either a botocore service model o
 
 Narrowing a property is a breaking change for anyone passing a value the union omits, even though every such value was already rejected at deploy. Overlay changes therefore ship with a release of the lexicon, and the release notes name what newly fails to compile.
 
+## Properties newer than the pinned spec
+
+Generation reads a pinned copy of the Registry schema (`src/spec/pin.ts`), so a property AWS adds after the pin was accepted is missing from the generated types until the pin moves. Moving the pin regenerates every resource type, so it is its own change. When one property is needed sooner, `src/codegen/property-overlay.json` backfills it: each entry names a CloudFormation type, a top-level property, the schema fragment copied from the live Registry schema, and the date it was read. `src/codegen/property-overlay.ts` adds the property to the raw schema before parsing, so it reaches the generated declaration and the lexicon registry exactly as a spec property would.
+
+The first entry is `PlatformVersion` on `AWS::BedrockAgentCore::Runtime`, a string that updates in place. It can be set on `Runtime` directly or through `AgentCoreAgent`'s `defaults.runtime`.
+
+The rules match the enum overlay. Once the spec declares the property, the spec's schema is used and the entry is reported as redundant so it can be retired, and an entry on a type the spec does not contain fails the generate. The overlay cannot mark a property create-only, so it only takes properties that update in place.
+
 ## Imports and cross-file references
 
 Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and cross-file references are standard imports:
