@@ -53,7 +53,7 @@ The second run stages the upgrade again. The approval counts only when the new p
 
 ### Governance changes
 
-A patch that changes a governance file needs human approval. The governance files are `*.op.ts` Op files, `chant.config.*`, `chant.workspace.json`, CI workflows (`.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/`, `.gitlab-ci.yml`) and `CODEOWNERS`. Approvals by an agent do not count. The number of approvals needed is read at HEAD: the highest quorum of any gate in the Op files the patch changes, and at least one. Op files the upgrade would write never decide their own gate.
+A patch that changes a governance file needs human approval. The governance files are `*.op.ts` Op files, `chant.config.*`, `chant.workspace.json`, CI workflows (`.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/`, `.gitlab-ci.yml`) and `CODEOWNERS`. Approvals by an agent do not count. The number of approvals needed is read at HEAD: the highest quorum of any gate in the Op files the patch changes, and at least one. That includes Op files inside workspace members: each one is read under the member project that holds it. Op files the upgrade would write never decide their own gate.
 
 ### Manual steps
 

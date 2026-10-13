@@ -352,16 +352,26 @@ export interface ScopeSource {
   policy: TrustPolicy;
   /** The principal classes: the core four and those the declaration's pins supply, path pins read where the declaration was (#3080). */
   classes: ClassRegistry;
+  /** Why the working tree's declaration couldn't be read when `declaration` is null: declaration-missing, or declaration-invalid with the problem (#3433). */
+  failure?: WorkspaceReadError;
 }
 
-function readAt(cwd: string, at?: string): { declaration: Declaration; rootOnDisk: string; root: string; tree: WorkspaceTree } | null {
+type ReadAt = { declaration: Declaration; rootOnDisk: string; root: string; tree: WorkspaceTree };
+
+/** The declaration at `at` (the working tree without it), or the read error that says why there is none. */
+function readOrFailure(cwd: string, at?: string): ReadAt | WorkspaceReadError {
   try {
     const located = locateWorkspace(cwd, at);
     return { declaration: readDeclaration(located.tree), rootOnDisk: located.rootOnDisk, root: located.root, tree: located.tree };
   } catch (err) {
-    if (err instanceof WorkspaceReadError) return null;
+    if (err instanceof WorkspaceReadError) return err;
     throw err;
   }
+}
+
+function readAt(cwd: string, at?: string): ReadAt | null {
+  const read = readOrFailure(cwd, at);
+  return read instanceof WorkspaceReadError ? null : read;
 }
 
 /**
@@ -375,7 +385,7 @@ export function scopeSource(cwd: string, at?: string): ScopeSource {
   const top = gitRoot(cwd);
   const base = top ? resolveBase(top, at) : null;
   const policy = top && base ? policyAtBase(top, base) : emptyPolicy(null);
-  const withClasses = (read: NonNullable<ReturnType<typeof readAt>>) => {
+  const withClasses = (read: ReadAt) => {
     const { tree, ...rest } = read;
     return { ...rest, classes: loadClassRegistry(read.declaration.pins, read.rootOnDisk, { tree }).registry };
   };
@@ -383,8 +393,9 @@ export function scopeSource(cwd: string, at?: string): ScopeSource {
     const atBase = readAt(cwd, base.commit);
     if (atBase) return { ...withClasses(atBase), from: "base", policy };
   }
-  const here = readAt(cwd);
-  return here ? { ...withClasses(here), from: "working-tree", policy } : { declaration: null, from: null, rootOnDisk: null, root: null, policy, classes: coreClassRegistry() };
+  const here = readOrFailure(cwd);
+  if (here instanceof WorkspaceReadError) return { declaration: null, from: null, rootOnDisk: null, root: null, policy, classes: coreClassRegistry(), failure: here };
+  return { ...withClasses(here), from: "working-tree", policy };
 }
 
 const toPosix = (p: string) => (sep === "/" ? p : p.split(sep).join("/"));

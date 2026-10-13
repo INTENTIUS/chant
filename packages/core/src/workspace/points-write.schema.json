@@ -600,7 +600,8 @@
                   "answer-points-unreadable",
                   "answer-point-unknown",
                   "answer-point-changed",
-                  "record-unattested"
+                  "record-unattested",
+                  "record-ratified-below-quorum"
                 ]
               },
               "message": {

@@ -112,6 +112,7 @@ export const REASONS = {
   "seal-unverifiable": "Nothing here can say whose seal it is: there is no signers file at base, ssh-keygen is not installed, or the record came back in a return sealed by a signer no admission lists yet.",
   // A record whose author seal is not attested under a signers file at base (records, #2688). A warning: the record is still read.
   "record-unattested": "A signers file is active at base, and the record names an author whose seal does not verify: it has none, the author has no key in the file, or the signature fails.",
+  "record-ratified-below-quorum": "The record is in its kind's ratified state (reviews.ratified), and its quorum is not met: it was written to that state by hand, past the check of records new and amend. It is still read, and stays valid.",
   // A records read that fails (records).
   "kind-unreadable": "The record kind file is missing or could not be imported.",
   "kind-invalid": "The record kind file exports no recordKind, or its shape is wrong.",
