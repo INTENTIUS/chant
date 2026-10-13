@@ -74,6 +74,7 @@ const BOOLEAN_FLAGS = new Set([
   "--generated",
   "--decide",
   "--record-plans",
+  "--loopback",
 ]);
 
 /**
@@ -261,6 +262,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error("--port needs a port: --port <container-port>=<host-port>");
       (result.port ??= []).push(value);
+    } else if (arg === "--image") {
+      result.image = args[++i];
+      if (!result.image || result.image.startsWith("-")) throw new Error("--image needs an image reference: --image <name>:<tag>");
+    } else if (arg === "--network") {
+      result.network = args[++i];
+      if (!result.network || result.network.startsWith("-")) throw new Error("--network needs a Docker network name: --network <name>");
+    } else if (arg === "--setting") {
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--setting needs a value: --setting <KEY>=<VALUE>");
+      (result.setting ??= []).push(value);
+    } else if (arg === "--loopback") {
+      result.loopback = true;
     } else if (arg === "--promote-to") {
       result.promoteTo = args[++i];
       if (!result.promoteTo || result.promoteTo.startsWith("-")) throw new Error("--promote-to needs an environment: --promote-to <env>");

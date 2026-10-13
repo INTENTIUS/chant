@@ -42,6 +42,13 @@ export interface EmulatorSpec {
   /** Extra `docker run` args inserted before the image (e.g. a socket mount). */
   runArgs?: readonly string[];
   /**
+   * The prefix every key of {@link EmulatorUpArgs.settings} must start with,
+   * e.g. `FLOCI_` (#3952). Settings reach the container as `-e KEY=VALUE`, and
+   * the prefix keeps them to the emulator's own configuration instead of
+   * arbitrary env. An emulator without one takes no settings.
+   */
+  settingsPrefix?: string;
+  /**
    * Where {@link image} is published, so how far behind the pin is can be
    * answered (#1345).
    *
@@ -245,6 +252,43 @@ export interface EmulatorUpArgs {
   intervalMs?: number;
   /** Additional `docker run` args for this call (after `spec.runArgs`, before the image). */
   extraArgs?: readonly string[];
+  /** Docker network the container joins (`--network <name>`) (#3952). */
+  network?: string;
+  /**
+   * Emulator settings passed as `-e KEY=VALUE` (#3952). Every key must start
+   * with the spec's {@link EmulatorSpec.settingsPrefix}; see {@link checkSettings}.
+   */
+  settings?: Record<string, string>;
+  /** Publish the port on 127.0.0.1 only, instead of every host interface (#3952). */
+  loopback?: boolean;
+}
+
+/**
+ * Refuse settings an emulator does not take (#3952): a key outside the spec's
+ * {@link EmulatorSpec.settingsPrefix}, a key that is not an env-var name, or
+ * any setting at all for an emulator that declares no prefix. Throws with the
+ * first problem found.
+ */
+export function checkSettings(spec: EmulatorSpec, settings: Record<string, string> | undefined): void {
+  const keys = Object.keys(settings ?? {});
+  if (keys.length === 0) return;
+  const prefix = spec.settingsPrefix;
+  if (!prefix) {
+    throw new Error(`emulator "${spec.name}" takes no settings; got ${keys.join(", ")}`);
+  }
+  for (const key of keys) {
+    if (!key.startsWith(prefix) || key.length === prefix.length || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`emulator "${spec.name}": setting ${key} is not a ${prefix}* variable; only ${prefix}<NAME> keys reach the container`);
+    }
+  }
+}
+
+/**
+ * Quote one `docker run` word for the shell `up` runs it through: a setting's
+ * value or a network name can hold spaces or shell syntax.
+ */
+function shellWord(word: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The shared lifecycle a per-cloud wrapper adapts. */
@@ -277,10 +321,14 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     const name = args.name ?? spec.name;
     const port = args.port ?? spec.containerPort;
     const image = args.image ?? spec.image;
+    checkSettings(spec, args.settings);
+    const bind = args.loopback ? `127.0.0.1:${port}:${spec.containerPort}` : `${port}:${spec.containerPort}`;
     return [
-      "docker", "run", "-d", "--rm", "--name", name, "-p", `${port}:${spec.containerPort}`,
+      "docker", "run", "-d", "--rm", "--name", name, "-p", bind,
+      ...(args.network ? ["--network", args.network] : []),
+      ...Object.entries(args.settings ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
       ...(spec.runArgs ?? []), ...(args.extraArgs ?? []), image,
-    ].join(" ");
+    ].map(shellWord).join(" ");
   };
   const existsCommand = (name: string): string => `docker ps -q -f name=${name}`;
   const rmCommand = (name: string): string => `docker rm -f ${name}`;
@@ -314,6 +362,8 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     const port = args.port ?? spec.containerPort;
     const timeoutMs = args.timeoutMs ?? 60_000;
     const intervalMs = args.intervalMs ?? 2_000;
+    // Before the reuse check, so a bad key is refused whether or not a container runs.
+    checkSettings(spec, args.settings);
 
     let running = false;
     try {
@@ -330,6 +380,12 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
       // Progress → stderr, so a `--json` consumer (chant emulator, behold) reads
       // clean JSON on stdout. runOp/Op activities capture both streams regardless.
       console.error(`emulator container "${name}" already running — reusing`);
+      if (args.image || args.network || args.loopback || Object.keys(args.settings ?? {}).length) {
+        console.error(
+          `emulator "${name}": the image, network, settings and loopback options apply when a container starts, not to this running one. ` +
+            `Run \`chant emulator down\` first to start it with them.`,
+        );
+      }
       let published: PublishedAddress[] = [];
       try {
         const { stdout } = await execFileAsync("docker", ["port", name, `${spec.containerPort}/tcp`], { signal });

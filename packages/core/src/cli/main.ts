@@ -810,7 +810,8 @@ Lexicon development:
 Local:
   emulator <up|down|status>  Boot/stop/inspect configured lexicons' local
                            emulators (Floci etc.); --lexicon <name>, --json,
-                           --port; \`chant emulator --help\` lists ports and logins
+                           --port, --image, --network, --setting, --loopback;
+                           \`chant emulator --help\` lists ports and logins
 
 Servers:
   serve lsp             Start the LSP server (stdio)
