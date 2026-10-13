@@ -184,6 +184,8 @@ After `chant approve workspace-upgrade .` the next run runs the command again. T
 
 ### Reporting progress from a shell step
 
+`chant run` prints a shell step's output on stderr as each line arrives, as `[<phase>] <step> | <line>`, and prints `[<phase>] <step>: still running after <n>s` for a step that has been quiet for 60 seconds (`CHANT_STEP_HEARTBEAT` sets the interval). A watchdog that reads the run's output sees a long step working. See [`run <name>`](/chant/cli/run/#run-name).
+
 A run started by `chant run` or a steward keeps an in-flight record while it runs, which `chant workspace status --json` shows as the Op's `inFlight`. A shell step's command finds the record's activity file in `CHANT_RUN_ACTIVITY` and the run's id in `CHANT_RUN_ID`. Each line it appends is one activity line, either plain text or `{"at": "<ISO-8601>", "text": "..."}`:
 
 ```sh

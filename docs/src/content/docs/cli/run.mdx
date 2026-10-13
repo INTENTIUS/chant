@@ -93,6 +93,16 @@ chant run alb-deploy --json       # the run's ledger record on stdout
 chant run alb-deploy --on fountain
 ```
 
+The phase and step summary is printed when the run ends. While a step runs, the local runtime prints its output on stderr as each line arrives ([#3956](https://github.com/INTENTIUS/chant/issues/3956)). Each line a shell step's command writes, on stdout or stderr, is printed as `[<phase>] <step> | <line>`. `<step>` is the step's `id`, or its call as the summary prints it, such as `shellCmd(cmd=npm test)`, when it has none. A step that prints nothing for 60 seconds, such as an activity that only returns a value or a command that is quiet, gets `[<phase>] <step>: still running after <n>s` each time another 60 seconds pass. `CHANT_STEP_HEARTBEAT` sets that interval as a duration (`30s`, `5m`), and `0` or `off` turns the line off. Stdout stays the `--json` record's and `--progress-json`'s, so neither changes. The step's published `stdout` and `stderr` still hold the command's whole output.
+
+```text
+[Seed] wait-agent | waiting for the agent
+[Seed] wait-agent: still running after 60s
+[Seed] wait-agent | agent ready
+[phase] Seed
+  ✓ shellCmd(cmd=./seed.sh)   75.2s
+```
+
 A `gate` in the Op stops the run pending a resolution on the gate ledger. The run prints the gate's description and the `chant approve` line, and exits **3** — deliberately not 1, so a CI job can report "waiting on approval" rather than a failure. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact).
 
 An activity that asks a [decision point](/chant/guide/decision-points/) whose question is still open, escalated to people or proposed by a model, stops the run the same way, with status `waiting` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The run prints the question's id and the `chant workspace points answer` line, records the question on its ledger record as `point`, and exits **3**, which `--gated-exit` remaps too. No later step and no `onFailure` phase runs. Once a person has answered, the next run asks the same point with the same inputs and reads the answer.
