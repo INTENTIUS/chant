@@ -16,7 +16,7 @@ chant run log <name> [flags]
 chant run wave --spec <file> --wave <k> [--decide | --share <i>] [--base <ref>]
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
 chant run wave --spec <file> --record-plans
-chant run --components <name|all> [flags]
+chant run --components <name|all|a,b,c> [flags]
 chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 ```
 
@@ -224,16 +224,23 @@ A gate that asks a decision point counts as answered once its question has an an
 
 `--record-plans`, in a pull request's pipeline, plans every wave at the pull request's head and records each wave's digest on `chant/lifecycle`. A wave whose `approval` is `pr-review` compares its digest with that record after the merge ([Which approvals count](/chant/guide/op-waves/#which-approvals-count)).
 
-### `run --components <name|all>`
+### `run --components <name|all|a,b,c>`
 
 Run a discovered [component](/chant/components/orchestration/)'s `deploy` composition on the same in-process executor an Op uses. `all` runs every discovered component in dependency order (parallel-safe waves); a single name runs just that component.
+
+A comma-separated list runs the named components and everything they depend on through `dependsOn`, transitively, in the order `all` would give them. The whole set runs in one process, so the release records it writes come from one run rather than from several runs racing on the ledger. Before the first component starts, the command prints the resolved order on stderr, wave by wave, along with the dependencies it pulled in that the list did not name:
 
 ```bash
 chant run --components search-service --env staging
 chant run --components all --env production
+chant run --components web,worker --env staging
+# run order: cache + db, then api + worker, then web
+# added as dependencies: api, cache, db
 ```
 
 A component whose `enabled` is `false` under this run's parameters sits out of `all`. A component that depends on it still runs, and its dependency on the disabled one is dropped, since `dependsOn` only orders the run. Naming a disabled component on its own fails with the reason. A pipeline from [`chant build --components --generate <lexicon>`](/chant/cli/build/#generate-mode-ci-pipelines-from-components) takes the same components.
+
+A list is refused before anything runs when it names a component that does not exist, names one that is disabled (`enabled: false`) under this run's parameters, or contains `all`. The refusal names each offending component. A disabled component that is only a dependency is dropped the same way `all` drops it. A `dependsOn` entry that matches no discovered component fails the run up front, as it does under `all`. The single-name form still runs just that component and leaves its dependencies to earlier jobs, which is what a generated pipeline's per-component job relies on.
 
 A `gate` anywhere in a component's composition stops that component pending `chant approve <component> <gate> --env <env>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval. The approval counts only for that environment and that plan, as [Gate approvals and environments](/chant/components/orchestration/#gate-approvals-and-environments) explains.
 

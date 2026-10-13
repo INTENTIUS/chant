@@ -278,8 +278,11 @@ Ops:
                         declares a schedule or from --spec <file.json>.
                         Files go to the forge's own directory unless
                         --output <dir>; --format json prints them instead
-  run --components <name|all>  Run discovered Component(s) through the interpret
-                        driver on the local executor (--env <env>; #585).
+  run --components <name|all|a,b,c>  Run discovered Component(s) through the
+                        interpret driver on the local executor (--env <env>;
+                        #585). A comma list also runs what the named
+                        components depend on, in dependency order, in one
+                        run, and prints that order first (#3950).
                         On success, auto-emits a release-ledger record per
                         component that published a digest (default: on;
                         --no-release-record to opt out; #597)

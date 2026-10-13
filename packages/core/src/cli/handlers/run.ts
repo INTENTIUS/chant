@@ -28,6 +28,7 @@ import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
+import { isComponentList, type ComponentRunPlan } from "../../components/cli-support";
 import type { ReleaseRecord } from "../../lifecycle/release-ledger";
 import { runOpGenerate } from "./run-generate";
 
@@ -873,12 +874,13 @@ export async function recordAutoReleasesForRun(
   return recorded;
 }
 
-// ── chant run --components <name|all> ────────────────────────────────────────
+// ── chant run --components <name|all|a,b,c> ──────────────────────────────────
 
 /**
- * `chant run --components <name|all> [--env <env>]` (#585) — the interpret
- * driver's CLI entrypoint, and since #2116 the only component run path there
- * is. `args.path` is the component name (or `all`), matching `chant run
+ * `chant run --components <name|all|a,b,c> [--env <env>]` (#585) — the
+ * interpret driver's CLI entrypoint, and since #2116 the only component run
+ * path there is. `args.path` is the component name (or `all`, or a comma list
+ * that also runs what the named components depend on, #3950), matching `chant run
  * <name>`'s Op-dispatch convention exactly (`args.path` is the Op name there
  * too) rather than a project directory — components are always discovered from
  * the current working directory, the same way Op discovery (`discoverOps()`)
@@ -913,7 +915,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
   if (!selector || selector === ".") {
     console.error(formatError({
-      message: "Component name is required: chant run --components <name|all>",
+      message: "Component name is required: chant run --components <name|all|a,b,c>",
       hint: "Run `chant list --components` to see available components.",
     }));
     return 1;
@@ -966,12 +968,22 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
+  // A list (#3950) pulls in what its components depend on; say which ones and
+  // in what order before the first one runs. stderr, so --json and
+  // --progress-json keep stdout to themselves.
+  const onPlan = isComponentList(selector)
+    ? (plan: ComponentRunPlan) => {
+        console.error(formatInfo(`run order: ${plan.waves.map((wave) => wave.join(" + ")).join(", then ")}`));
+        if (plan.added.length > 0) console.error(formatInfo(`added as dependencies: ${plan.added.join(", ")}`));
+      }
+    : undefined;
   const result = await runtime.runComponents(projectPath, selector, {
     env: ctx.args.env,
     componentOutputs: seededOutputs,
     onProgress,
     sandbox: ctx.args.sandbox,
     buildParams: paramsResolution.provenance,
+    ...(onPlan ? { onPlan } : {}),
   });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
