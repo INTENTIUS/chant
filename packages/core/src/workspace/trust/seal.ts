@@ -32,7 +32,7 @@ import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
 import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "./gate-seal";
 
-export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, type SealedGateApproval } from "./gate-seal";
+export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "./gate-seal";
 
 /** The ssh signature namespace of a verdict seal. */
 export const REVIEW_SEAL_NAMESPACE = "chant-review";

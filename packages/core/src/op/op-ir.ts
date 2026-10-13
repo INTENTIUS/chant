@@ -153,6 +153,8 @@ export interface OpIRGateStep {
   point?: GateStep["point"];
   /** The gate resumes once approved (#3947). Absent on a gate that starts its run again at the first phase. */
   resume?: true;
+  /** The gate's old names (#3949), carried as authored. Absent on a gate that has none. */
+  aliases?: GateStep["aliases"];
 }
 
 export interface OpIREffectStep {
@@ -266,6 +268,7 @@ function irGateStep(step: GateStep): OpIRGateStep {
     ...(step.approval !== undefined ? { approval: step.approval } : {}),
     ...(step.point !== undefined ? { point: step.point } : {}),
     ...(step.resume ? { resume: true as const } : {}),
+    ...(step.aliases !== undefined && step.aliases.length > 0 ? { aliases: step.aliases } : {}),
   };
 }
 
@@ -423,6 +426,7 @@ function opStepFromIR(step: OpIRStep): StepDefinition {
       ...(step.approval !== undefined ? { approval: step.approval } : {}),
       ...(step.point !== undefined ? { point: step.point } : {}),
       ...(step.resume ? { resume: true } : {}),
+      ...(step.aliases !== undefined && step.aliases.length > 0 ? { aliases: step.aliases } : {}),
     };
   }
   return {

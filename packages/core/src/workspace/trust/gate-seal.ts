@@ -39,7 +39,28 @@ export interface SealedGateApproval {
   timestamp: string;
   /** The checkpoint the approval lets a run resume from (#3947), when it carries one. */
   checkpointDigest?: string;
+  /** The line a carried approval came from (#3949): the names and time its seal was made under. */
+  carriedFrom?: { op: string; gate: string; timestamp: string; checkpointDigest?: string };
   seal?: unknown;
+}
+
+/**
+ * The approval as it was sealed (#3949). A carried approval is recorded
+ * under a gate's new name and the time it was carried, and its seal was
+ * made over the line it came from, so its op, gate, time and checkpoint
+ * digest are read off `carriedFrom`. Any other approval is returned as it is.
+ */
+export function sealedFieldsOf(a: SealedGateApproval): SealedGateApproval {
+  const from = a.carriedFrom;
+  if (from === undefined) return a;
+  const { carriedFrom: _from, checkpointDigest: _checkpoint, ...rest } = a;
+  return {
+    ...rest,
+    op: from.op,
+    gate: from.gate,
+    timestamp: from.timestamp,
+    ...(from.checkpointDigest !== undefined ? { checkpointDigest: from.checkpointDigest } : {}),
+  };
 }
 
 /**
@@ -47,8 +68,9 @@ export interface SealedGateApproval {
  * checkpoint digest, which the payload signs, and 1 otherwise. `chant approve
  * --sign` records 2 on the seal; a seal records no version for 1.
  */
-export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest">): 1 | 2 {
-  return a.checkpointDigest !== undefined ? 2 : 1;
+export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest" | "carriedFrom">): 1 | 2 {
+  const checkpoint = a.carriedFrom !== undefined ? a.carriedFrom.checkpointDigest : a.checkpointDigest;
+  return checkpoint !== undefined ? 2 : 1;
 }
 
 /**
@@ -65,8 +87,12 @@ export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest">)
  * `checkpoint <digest>`, last. The values the steps after the gate read are
  * then covered by the seal too, and removing or swapping the digest stops it
  * verifying. An approval with none signs what a version 1 seal signed.
+ *
+ * A carried approval (#3949) signs what the line it came from signed: see
+ * {@link sealedFieldsOf}.
  */
-export function gateSealPayload(a: SealedGateApproval): Buffer {
+export function gateSealPayload(approval: SealedGateApproval): Buffer {
+  const a = sealedFieldsOf(approval);
   const relay = a.relayedBy !== undefined ? `\nrelayed-by ${a.relayedBy}` : "";
   const checkpoint = gateSealVersion(a) === 2 ? `\ncheckpoint ${a.checkpointDigest}` : "";
   return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}${checkpoint}`, "utf-8");

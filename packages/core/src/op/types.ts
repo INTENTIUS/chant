@@ -312,6 +312,24 @@ export interface GateStepBase {
    * rest at build.
    */
   resume?: boolean;
+  /**
+   * The names this gate had before an Op was restructured (#3949), so the
+   * approvals already recorded under them still count. `op` defaults to this
+   * Op. An approval recorded under an alias counts toward this gate when it
+   * answers that name's standing pending fact, the fact hasn't expired, it
+   * is for the plan this run planned and the same environment, it hasn't
+   * been spent, it passes this gate's `identity.gates` rule, and a person
+   * made it. The run then writes it again under this gate's name, citing
+   * the line it came from (`carriedFrom`). Only a gate bound to a `plan`
+   * takes aliases, and OPS017 refuses an alias that is still a gate.
+   */
+  aliases?: GateAlias[];
+}
+
+/** A name a gate had before (#3949): a gate of `op`, or of the gate's own Op when `op` is absent. */
+export interface GateAlias {
+  op?: string;
+  gate: string;
 }
 
 /**

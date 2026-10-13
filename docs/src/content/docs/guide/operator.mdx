@@ -173,6 +173,8 @@ Each ledger entry's `source` names its line: `path`, `line` (the file's line num
 
 `seal` records how an approval was authorised. A line that came through a pull request review (`via: "pr-review"`, or a `review` field) is `review` even if `chant approve` also sealed it, because the review is what let it through. A sealed line that did not come through a review is `sealed`, and a line with neither is `unsigned`. Any line that carries a seal also gets `sealed: true` and its `signer`, so a sealed review keeps both facts.
 
+An approval a run carried from a gate's alias ([#3949](https://github.com/INTENTIUS/chant/issues/3949)) is an `approved` entry with `carriedFrom: { op, gate, at }`. Its request is the old name's pending fact, so pass the old Op's ledger too. With it, a missing request is an `approval-without-request` gap, and a cited line that isn't in the old ledger is a `carried-without-source` gap. Without the old ledger neither is checked.
+
 ## `chant operator status`
 
 Everything below is read from the `chant/lifecycle` orphan branch alone — no daemon needs to be running, and nothing here queries a live cluster:

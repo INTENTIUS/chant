@@ -56,6 +56,7 @@ import { parseDuration } from "./duration";
 import { resolveGateRunLocator } from "./gate-run-locator";
 import { refuseGateWithoutRecording } from "../lifecycle/no-record";
 import { gateCheckpointDigest, gateCheckpointText, readGateCheckpointText, writeGateCheckpoint, type GateCheckpoint } from "../lifecycle/gate-checkpoint";
+import type { ResolvedGateAlias } from "./gate-alias";
 
 /**
  * What appending a pending fact learned about reaching the remote.
@@ -309,6 +310,17 @@ export interface GateCheckInput {
    * checkpoint is recorded again, so the gate gets one.
    */
   checkpoint?: GateCheckpoint;
+  /**
+   * The gate's old names (#3949), each with its Op filled in
+   * (`resolveGateAliases` in `./gate-alias.ts`). Read only on a gate bound
+   * to a plan. A person's approval recorded under one counts toward this
+   * gate when it answers that name's standing pending fact, the fact hasn't
+   * expired, it is for `planDigest` and `environment`, neither name has
+   * spent it, and it passes this gate's approval rule. An approval this
+   * counts is written again under this gate (`carriedFrom`), and a line
+   * carried earlier counts only while its alias is still declared.
+   */
+  aliases?: readonly ResolvedGateAlias[];
 }
 
 /**
@@ -373,11 +385,14 @@ export type GateCheck =
       /**
        * Set on a gate that declares `approval` (#2508). `"quorum"` when enough
        * human approvals were recorded, `"policy"` when an `enforce`-mode permit
-       * passed it on its own.
+       * passed it on its own. `"alias"` (#3949) when an approval recorded
+       * under one of the gate's aliases counted, on any gate.
        */
-      via?: "quorum" | "policy";
+      via?: "quorum" | "policy" | "alias";
       /** Every approval that counted toward the quorum. Set with `via`. */
       approvals?: GateResolutionRecord[];
+      /** The approvals this run carried from an alias and wrote under the gate's name (#3949). Set when `via` is `"alias"`. */
+      carried?: GateResolutionRecord[];
     }
   | {
       satisfied: false;
@@ -538,6 +553,103 @@ export function humanQuorumSince(pending: readonly PendingGateRecord[], standing
   return anchor.timestamp;
 }
 
+/**
+ * The approvals that answer `standing` (#3949): of its gate, environment and
+ * plan, recorded since it, or on a gate with an `approval` block since the
+ * human quorum's anchor ({@link humanQuorumSince}). The rule
+ * `resolutionAnswering` (`./gate-resume.ts`) decides by, without the tally:
+ * each one counts on its own toward a gate an alias names.
+ */
+export function approvalsAnswering(
+  resolutions: readonly GateResolutionRecord[],
+  standing: PendingGateRecord,
+  pending: readonly PendingGateRecord[] = [standing],
+): GateResolutionRecord[] {
+  const since = new Date(standing.approval ? humanQuorumSince(pending, standing) : standing.timestamp).getTime();
+  return resolutions.filter(
+    (r) =>
+      r.gate === standing.gate && r.environment === standing.environment && samePlanDigest(r.planDigest, standing.planDigest) &&
+      new Date(r.timestamp).getTime() >= since,
+  );
+}
+
+/**
+ * The line a run writes for an approval it carries from an alias (#3949):
+ * the approval under `op`/`gate` at `now`, citing the line it came from.
+ * The approver, plan, environment, relay and seal are the original's. A
+ * policy decision is left behind, since it was evaluated against another
+ * gate, and so is a checkpoint digest, which moves onto `carriedFrom`: the
+ * approver saw that checkpoint, not one this gate stores, so a carried
+ * approval never lets a run resume.
+ */
+export function carriedApproval(r: GateResolutionRecord, op: string, gate: string, now: string): GateResolutionInput {
+  return {
+    op,
+    gate,
+    resolvedBy: r.resolvedBy,
+    ...(r.relayedBy !== undefined ? { relayedBy: r.relayedBy } : {}),
+    timestamp: now,
+    ...(r.note ? { note: r.note } : {}),
+    ...(r.url ? { url: r.url } : {}),
+    ...(r.planDigest !== undefined ? { planDigest: r.planDigest } : {}),
+    ...(r.environment !== undefined ? { environment: r.environment } : {}),
+    ...(r.origin ? { origin: r.origin } : {}),
+    ...(r.sameOriginOverride ? { sameOriginOverride: true } : {}),
+    approver: approverOf(r),
+    ...(r.seal ? { seal: r.seal } : {}),
+    carriedFrom: {
+      op: r.op,
+      gate: r.gate,
+      timestamp: r.timestamp,
+      ...(r.checkpointDigest !== undefined ? { checkpointDigest: r.checkpointDigest } : {}),
+    },
+  };
+}
+
+/**
+ * The approvals recorded under `input.aliases` that may count toward this
+ * gate (#3949), oldest first. Each answers its alias's standing pending
+ * fact, which hasn't expired and was recorded for this plan and
+ * environment. Each is a person's, is spent under neither name, hasn't been
+ * carried already (`ledger` is this gate's own, so a carried line that was
+ * spent keeps its original from being carried again), and passes `rule`,
+ * whose seal check reads the names the approval was signed under. One the
+ * rule refuses is added to `refused`.
+ */
+async function aliasApprovals(
+  port: GateLedgerPort,
+  input: GateCheckInput & { aliases: readonly ResolvedGateAlias[] },
+  ledger: readonly GateResolutionRecord[],
+  rule: GateApprovalRule | null,
+  now: string,
+  refused: GateRefusedApproval[],
+): Promise<GateResolutionRecord[]> {
+  const at = (iso: string) => new Date(iso).getTime();
+  const carried = ledger.filter((r) => r.gate === input.gate && r.carriedFrom !== undefined);
+  const wasCarried = (r: GateResolutionRecord) =>
+    carried.some((c) => c.carriedFrom!.op === r.op && c.carriedFrom!.gate === r.gate && at(c.carriedFrom!.timestamp) === at(r.timestamp) && c.resolvedBy === r.resolvedBy);
+  const ledgers = new Map<string, Awaited<ReturnType<GateLedgerPort["read"]>>>();
+  const out: GateResolutionRecord[] = [];
+  for (const alias of input.aliases) {
+    let other = ledgers.get(alias.op);
+    if (!other) ledgers.set(alias.op, (other = await port.read(alias.op)));
+    const pending = other.pending.filter((p) => p.environment === input.environment);
+    const standing = latestPendingGate(pending, alias.gate);
+    if (!standing || isPendingGateExpired(standing, now) || !samePlanDigest(standing.planDigest, input.planDigest)) continue;
+    const spent = alias.op === input.op && input.spent ? input.spent : ((await port.readApplied?.(alias.op)) ?? []);
+    for (const r of approvalsAnswering(other.resolutions, standing, pending)) {
+      if (r.carriedFrom !== undefined || approverOf(r).kind !== "human" || isApprovalSpent(spent, r) || wasCarried(r)) continue;
+      const reason = rule?.refuses(r) ?? null;
+      if (reason !== null) {
+        refused.push({ resolution: r, reason: `carried from ${alias.op}/${alias.gate}: ${reason}` });
+        continue;
+      }
+      out.push(r);
+    }
+  }
+  return out.sort((a, b) => at(a.timestamp) - at(b.timestamp));
+}
+
 /** Whether two resolved approval blocks are the same, so a standing pending fact still describes this gate. */
 function sameApproval(a: ResolvedGateApproval | undefined, b: ResolvedGateApproval | undefined): boolean {
   return JSON.stringify(a ?? null, sortedJsonReplacer) === JSON.stringify(b ?? null, sortedJsonReplacer);
@@ -584,6 +696,9 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   const rule = (await port.approvalRule?.(input.gate)) ?? null;
   const standing = latestPendingGate(pending, input.gate);
   const since = standing?.timestamp ?? EPOCH;
+  // #3949: aliases admit only approvals of this run's plan, and carrying one writes a line.
+  const aliases = input.planDigest !== undefined && port.appendResolution ? (input.aliases ?? []) : [];
+  const aliased = (from: { op: string; gate: string }) => aliases.some((a) => a.op === from.op && a.gate === from.gate);
   // #3841: an approval of this plan the rule refuses is named, so a wait says why.
   const refused: GateRefusedApproval[] = [];
   const resolutions = (
@@ -591,6 +706,8 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       ? ledger.resolutions
       : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env)
   )
+    // #3949: a carried approval counts only while the gate still names its alias.
+    .filter((r) => r.gate !== input.gate || r.carriedFrom === undefined || aliased(r.carriedFrom))
     .filter((r) => input.spent === undefined || r.gate !== input.gate || !isApprovalSpent(input.spent, r))
     .filter((r) => {
       if (rule === null || r.gate !== input.gate) return true;
@@ -599,7 +716,15 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       if (samePlanDigest(r.planDigest, input.planDigest) && new Date(r.timestamp).getTime() >= new Date(since).getTime()) refused.push({ resolution: r, reason });
       return false;
     });
+  const fromAliases = aliases.length > 0 ? await aliasApprovals(port, { ...input, aliases }, ledger.resolutions, rule, now, refused) : [];
   refused.sort((a, b) => new Date(a.resolution.timestamp).getTime() - new Date(b.resolution.timestamp).getTime());
+
+  // #3949: write the approvals that counted from an alias under this gate.
+  const carry = async (records: readonly GateResolutionRecord[]): Promise<GateResolutionRecord[]> => {
+    const written: GateResolutionRecord[] = [];
+    for (const r of records) written.push((await port.appendResolution!(carriedApproval(r, input.op, input.gate, now))).record);
+    return written;
+  };
 
   let mismatched: GateResolutionRecord | undefined;
   let quorum: GateQuorumProgress | undefined;
@@ -625,9 +750,28 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     }
     mismatched = tally.mismatched;
     quorum = { approvers: tally.counted.map((r) => r.resolvedBy), need: tally.need };
+    // #3949: old and new approvals add up toward one quorum, each approver once.
+    const counted = new Set(tally.counted.map((r) => r.resolvedBy));
+    const extra = fromAliases.filter((r) => !counted.has(r.resolvedBy));
+    if (extra.length > 0) {
+      const asCarried = new Map(extra.map((r) => [{ version: 1, ...carriedApproval(r, input.op, input.gate, now) } as GateResolutionRecord, r]));
+      const combined = tallyGateApprovals([...resolutions, ...asCarried.keys()], input.gate, since, input.planDigest, input.approval, humansSince);
+      if (combined.counted.length >= combined.need) {
+        const written = await carry(combined.counted.filter((r) => asCarried.has(r)).map((r) => asCarried.get(r)!));
+        const approvals = [...combined.counted.filter((r) => !asCarried.has(r)), ...written];
+        return { satisfied: true, resolution: written[written.length - 1]!, via: "alias", approvals, carried: written };
+      }
+      quorum = { approvers: combined.counted.map((r) => r.resolvedBy), need: combined.need };
+    }
   } else {
     const found = latestResolutionForPlan(resolutions, input.gate, since, input.planDigest);
     if (found.resolution) return { satisfied: true, resolution: found.resolution };
+    // #3949: else the newest approval an alias admits passes it, written under this gate.
+    const newest = fromAliases[fromAliases.length - 1];
+    if (newest) {
+      const written = await carry([newest]);
+      return { satisfied: true, resolution: written[0]!, via: "alias", carried: written };
+    }
     mismatched = found.mismatched;
   }
 

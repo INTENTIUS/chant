@@ -13,7 +13,7 @@ import { loadComponentChecks } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
 import type { RollbackPolicy } from "../../components/capability";
-import { coreOpChecks } from "../../lint/rules/op";
+import { coreOpChecks, workspaceIdentityGates } from "../../lint/rules/op";
 import { loadActivityContracts } from "../../op/activity-contract-registry";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import { rule } from "../../lint/declarative";
@@ -627,8 +627,10 @@ async function runOpCheckDiagnostics(
     .then((loaded) => loaded.config.decide?.backends)
     .catch(() => undefined);
 
+  // OPS017 (#3949) reads the workspace's identity.gates, when an Op has gate aliases.
+  const identityGates = await workspaceIdentityGates(findProjectRoot(infraPath), entities);
   const raw = runPostSynthChecks(
-    coreOpChecks({ decideBackends }),
+    coreOpChecks({ decideBackends, ...(identityGates ? { identityGates } : {}) }),
     {
       outputs: new Map(),
       entities: entities as Map<string, never>,

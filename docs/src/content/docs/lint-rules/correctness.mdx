@@ -390,3 +390,23 @@ phase("Apply", [activity("applyIt", { token: token.out.value })]),
 // ✅ Fixed: pass a reference to the secret, such as its store path
 phase("Apply", [activity("applyIt", { tokenPath: token.out.path })]),
 ```
+
+## OPS017: Unsafe Gate Alias
+
+`chant build` refuses a gate's `aliases` ([#3949](https://github.com/INTENTIUS/chant/issues/3949)) when one approval could answer two gates, or when an approval that needed a seal would count without one. [Renaming a gate](/chant/guide/ops/#renaming-a-gate) in the guide explains what an alias admits. It reports a gate when:
+
+- it has aliases but no `plan`, or asks a decision point
+- an alias names a gate that still exists in an Op in the build
+- two gates list the same alias
+- the workspace's `identity.gates` names an alias, and the new gate has no entry, or lacks the class the alias's entry names
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers OPS017: upgrade-tier-1 still has its approve gate
+phase("Wave 1", [gate("approve-tier-1", { plan: plan.out.planDigest, aliases: [{ op: "upgrade-tier-1", gate: "approve" }] })]),
+```
+
+```typescript
+// ✅ Fixed: delete the upgrade-tier-1 Op once its gate moves here
+```

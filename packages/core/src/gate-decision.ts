@@ -73,6 +73,7 @@ export {
   gateSealPayload,
   gateSealRefusal,
   gateSealVersion,
+  sealedFieldsOf,
   sshKeyFingerprint,
   verifySshSignatureWith,
   type GateSigners,

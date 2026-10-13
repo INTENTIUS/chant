@@ -124,6 +124,8 @@ Record a gate's out-of-band resolution — the durable counterpart to a converge
 
 The approval copies the plan digest off the gate's standing pending fact, and the checkpoint digest too when the gate resumes (`resume: true`, [#3947](https://github.com/INTENTIUS/chant/issues/3947)). The next `chant run` then starts at the gate rather than the first phase ([Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate)). `--sign` covers the checkpoint digest as well.
 
+An approval of a gate that a newer gate lists as an alias ([#3949](https://github.com/INTENTIUS/chant/issues/3949)) is recorded under the old name while the newer gate has no standing pending fact, and the command says which gate the next run counts it toward. Once the newer gate records a pending fact, `chant approve` refuses and names that gate's own `chant approve` line ([Renaming a gate](/chant/guide/ops/#renaming-a-gate)).
+
 ```bash
 chant approve fountain-apply rollout-gate
 chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"

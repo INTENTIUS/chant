@@ -975,6 +975,51 @@ describe("runApprove — the approval copies the checkpoint a resumed run carrie
   });
 });
 
+/** #3949 — once a gate that aliases this one has a standing fact, approve that gate. */
+describe("runApprove — an approval under a gate's alias (#3949)", () => {
+  const merged = {
+    config: {
+      name: "upgrade",
+      overview: "upgrade every tier",
+      phases: [{ name: "Wave 1", steps: [{ kind: "gate", gate: "approve-tier-1", plan: PLAN_A, aliases: [{ op: "upgrade-tier-1", gate: "approve" }] }] }],
+    },
+  };
+  const fact = (op: string, gate: string) => ({
+    version: 1, kind: "pending", op, gate, timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", planDigest: PLAN_A,
+  });
+  const ledgers = (byOp: Record<string, unknown[]>) =>
+    readGateLedgerMock.mockImplementation(async (op: string) => ({ resolutions: [], pending: byOp[op] ?? [], malformed: 0 }));
+
+  test("refuses and names the new gate once it has a standing pending fact", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([["upgrade", merged]]), errors: [] });
+    ledgers({ "upgrade-tier-1": [fact("upgrade-tier-1", "approve")], upgrade: [fact("upgrade", "approve-tier-1")] });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "upgrade-tier-1", extraPositional: "approve", actor: "alex" }))).toBe(1);
+    const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(out).toContain('is now gate "approve-tier-1" on "upgrade"');
+    expect(out).toContain("chant approve upgrade approve-tier-1");
+    expect(out).not.toContain("was not found among discovered");
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  test("records the approval while the new gate has none, and says where it counts", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([["upgrade", merged]]), errors: [] });
+    ledgers({ "upgrade-tier-1": [fact("upgrade-tier-1", "approve")] });
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "upgrade-tier-1", gate: "approve", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", planDigest: PLAN_A },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "upgrade-tier-1", extraPositional: "approve", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ op: "upgrade-tier-1", gate: "approve", planDigest: PLAN_A }));
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain('is an alias of gate "approve-tier-1" on "upgrade"');
+    errSpy.mockRestore();
+  });
+});
+
 /**
  * #2574 — a component's gate ledger holds every environment's pending facts.
  * The approval records the environment it answers, and `--env` picks it.
