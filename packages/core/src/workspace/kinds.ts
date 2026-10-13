@@ -128,7 +128,23 @@ export interface MemberKind {
   graph?: KindGraph;
   /** The fields a member entry of this kind may set, with their defaults (#3151); unset, the kind declares none. */
   fields?: Record<string, KindField>;
+  /**
+   * The link reader chant runs over a member's own files (#3932), by name, from
+   * {@link KIND_LINK_READERS}. It derives the member's links offline, from
+   * files it parses as data; unset, the member's links are only those its
+   * entry states.
+   */
+  reader?: KindLinkReaderName;
 }
+
+/**
+ * The link readers chant ships (#3932). A kind names one in its kinds file as
+ * `reader`. The readers are chant's own code, not the package's: a kinds file
+ * stays data, and chant never imports the package that supplies it. Closed:
+ * a kind naming another reader is kept without one, and the load reports it.
+ */
+export const KIND_LINK_READERS = ["dbt-project"] as const;
+export type KindLinkReaderName = (typeof KIND_LINK_READERS)[number];
 
 export interface KindRegistry {
   get(name: string): MemberKind | undefined;
@@ -384,7 +400,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField> }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField>; reader?: string }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -408,7 +424,11 @@ export function parseKindData(text: string, source: string): KindData {
       source,
       ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
       ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
+      ...(k.reader && (KIND_LINK_READERS as readonly string[]).includes(k.reader) ? { reader: k.reader as KindLinkReaderName } : {}),
     });
+    if (k.reader && !(KIND_LINK_READERS as readonly string[]).includes(k.reader)) {
+      problems.push(`${source}: kind ${k.name} names link reader ${k.reader}, which this chant does not have (it has ${KIND_LINK_READERS.join(", ")}); the kind is kept, and its members' links are only those their entries state`);
+    }
     for (const problem of fieldDefaultProblems(k.fields ?? {})) problems.push(`${source}: kind ${k.name} ${problem}`);
   }
   return { kinds, problems };

@@ -239,6 +239,34 @@ describe("runComponentDeploy — gate as fact (#2119)", () => {
     return { registry, calls, rolledBack };
   }
 
+  // #3955: a run that records nothing cannot spend an approval or leave a
+  // pending fact, so the gate fails even with an approval standing for it.
+  it("fails at the gate under CHANT_NO_RECORD, writing nothing and running nothing after it", async () => {
+    const { registry, calls } = registryWithCalls();
+    const port = memoryGateLedgerPort({
+      resolutions: [{ op: "neo4j-cluster", gate: "approve-node-1", resolvedBy: "alice", timestamp: NOW, environment: "dev" } as never],
+    });
+    process.env.CHANT_NO_RECORD = "1";
+    let result;
+    try {
+      result = await runComponentDeploy(
+        gatedComponent(), { env: "dev", component: "neo4j-cluster" }, registry, {}, undefined,
+        { port, now: NOW },
+      );
+    } finally {
+      delete process.env.CHANT_NO_RECORD;
+    }
+
+    expect(result.status).toBe("fail");
+    expect(port.appended).toHaveLength(0);
+    // A failure, so the component unwinds as any failed step would; nothing after the gate ran.
+    expect(calls).not.toContain("code-deploy");
+    const gate = result.records.find((r) => r.kind === "gate:approve-node-1");
+    expect(gate).toMatchObject({ status: "fail" });
+    expect(gate!.error).toContain("cannot be passed under --no-record");
+    expect(result.records.find((r) => r.kind === "code-deploy")).toMatchObject({ status: "skipped" });
+  });
+
   it("ends gated, records the pending fact, and runs nothing after the gate", async () => {
     const { registry, calls, rolledBack } = registryWithCalls();
     const port = memoryGateLedgerPort();

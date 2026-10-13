@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-08T22:47:35.273Z",
+  "generatedAt": "2026-10-13T00:53:02.267Z",
   "entries": {
     "ACL": {
       "kind": "resource",
@@ -61971,6 +61971,7 @@
         "LastUpdatedAt:false",
         "LifecycleConfiguration:false",
         "NetworkConfiguration:true",
+        "PlatformVersion:false",
         "ProtocolConfiguration:false",
         "RequestHeaderConfiguration:false",
         "RoleArn:true",

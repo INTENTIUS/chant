@@ -61,6 +61,7 @@ vi.mock("node:fs", async () => {
   };
 });
 vi.mock("../../components/cli-support", () => ({
+  isComponentList: (selector: string) => selector.includes(","),
   runComponents: (...args: unknown[]) => runComponentsMock(...args),
   listComponents: (...args: unknown[]) => listComponentsMock(...args),
 }));
@@ -1277,6 +1278,25 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     vi.restoreAllMocks();
   });
 
+  test("a list selector prints the resolved order and the added dependencies before running (#3950)", async () => {
+    discoverOpsMock.mockReset();
+    const stderr = makeStderrSpy();
+    let printedBeforeRun = "";
+    runComponentsMock.mockImplementation(async (_path: string, _selector: string, options: { onPlan?: (plan: unknown) => void }) => {
+      options.onPlan?.({ order: ["db", "api", "web"], waves: [["db"], ["api", "web"]], added: ["db"] });
+      printedBeforeRun = stderr.join("\n");
+      return { success: true, selected: ["db", "api", "web"], run: { order: ["db", "api", "web"], waves: [["db"], ["api", "web"]], results: [], ok: true, status: "ok" } };
+    });
+
+    const exit = await runOp({ args: makeArgs({ path: "api,web", components: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "api,web", expect.objectContaining({ onPlan: expect.any(Function) }));
+    expect(printedBeforeRun).toContain("run order: db, then api + web");
+    expect(printedBeforeRun).toContain("added as dependencies: db");
+    vi.restoreAllMocks();
+  });
+
   // chant #1116 — the component driver never checked --report, so it was
   // silently ignored and the command fell through to a real dispatch.
   // Hard-error instead, before runComponents is ever reached.
@@ -1927,5 +1947,111 @@ describe("runOp: --fail-on-drift (#3675)", () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map([driftOp("watch", true, { failOn: "drift" })]), errors: [] });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(await runOp({ args: makeArgs({ path: "watch" }), plugins: [], serializers: [] })).toBe(2);
+  });
+});
+
+/**
+ * chant #3955 — `--no-record` runs every step and records nothing on
+ * `chant/lifecycle`. The run says so before it starts and after it ends, a
+ * gate fails rather than recording a pending fact nobody could approve, and
+ * a runtime that would record elsewhere is refused.
+ */
+describe("runOp --no-record (#3955)", () => {
+  const START = "not recording (--no-record)";
+  const END = "not recorded (--no-record): nothing went on chant/lifecycle and nothing was pushed";
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    runComponentsMock.mockReset();
+    maybeRecordAutoReleaseMock.mockReset();
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
+    gateLedger = memoryGateLedgerPort();
+    delete process.env.CHANT_NO_RECORD;
+  });
+
+  afterEach(() => {
+    delete process.env.CHANT_NO_RECORD;
+    vi.restoreAllMocks();
+  });
+
+  test("an Op runs, the run says at its start and end that nothing was recorded, and the flag does not outlive it", async () => {
+    let during: string | undefined;
+    discoverOpsMock.mockImplementation(async () => {
+      during = process.env.CHANT_NO_RECORD;
+      return { ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", profile: "atMostOnce", args: { cmd: "true" } }])]), errors: [] };
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "hello", noRecord: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(during).toBe("1");
+    expect(process.env.CHANT_NO_RECORD).toBeUndefined();
+    expect(stderr[0]).toContain(START);
+    expect(stderr.at(-1)).toContain(END);
+  });
+
+  test("a gate fails the run and leaves no pending fact, and the end line still prints", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [{ kind: "gate", gate: "approve-prod" }])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "gated", noRecord: true, gatedExit: 0 }), plugins: [], serializers: [] });
+
+    // A failure, not a gated stop: --gated-exit cannot turn it green.
+    expect(exit).toBe(1);
+    expect(gateLedger.appended).toHaveLength(0);
+    expect(stderr.at(-1)).toContain(END);
+  });
+
+  test("CHANT_NO_RECORD does the same without the flag, names itself, and stays set", async () => {
+    process.env.CHANT_NO_RECORD = "1";
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("hello", [])]), errors: [] });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(stderr[0]).toContain("not recording (CHANT_NO_RECORD=1)");
+    expect(process.env.CHANT_NO_RECORD).toBe("1");
+  });
+
+  test("a runtime other than local is refused before the run starts", async () => {
+    const start = vi.fn();
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"] } });
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", on: "stub", noRecord: true }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", start } } as never], serializers: [],
+    });
+
+    expect(exit).toBe(1);
+    expect(start).not.toHaveBeenCalled();
+    expect(stderr.join("\n")).toContain('--no-record runs on the local runtime; the "stub" runtime records the run where it executes it');
+  });
+
+  test("--components records no release and persists no manifest", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: true,
+      selected: ["svc"],
+      run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
+    });
+    maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", noRecord: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(maybeRecordAutoReleaseMock.mock.calls[0][1]).toMatchObject({ disabled: true });
+    expect(maybePersistBuildManifestMock.mock.calls[0][1]).toMatchObject({ disabled: true });
+    expect(stderr[0]).toContain(START);
+    expect(stderr.at(-1)).toContain(END);
   });
 });

@@ -53,7 +53,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 216 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 51 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
@@ -453,6 +453,7 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP096` `link-duplicate` | chant | check.schema.json | A link is stated once: no consumer lists the same member and output twice. |
 | WSP check | `WSP097` `outputs-not-listable` | chant | check.schema.json | An entry lists outputs only when its kind takes them from the entry: other, or a kind from a package. A chant member's outputs are read from its source, and a nested workspace exposes none. |
 | WSP check | `WSP098` `link-protocol-misplaced` | chant | check.schema.json | A link states a protocol only when it is a telemetry link: protocol is the OTLP protocol the consumer sends to the producer's collector, and no other link kind has one. |
+| WSP check | `WSP099` `kind-reader-gap` | chant | check.schema.json | A kind's link reader reads a member's own files without guessing. A value it would have to render, such as a Jinja template in a dbt source, is reported with its file and line, and the links it would state are left unchecked. |
 | WSP check | `WSP101` `generated-drift` | chant | check.schema.json | A generated file is what its generator writes. Declared generators run only with --generated. |
 | WSP check | `WSP102` `generated-missing` | chant | check.schema.json | Every declared generated file exists. |
 | WSP check | `WSP103` `generator-failed` | chant | check.schema.json | A declared generator runs, exits 0 and writes the file. |

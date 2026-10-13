@@ -17,6 +17,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { emitYAMLEntry } from "@intentius/chant/yaml";
+import { EXEC_FORM_STEPS, PER_KIND_ORDER, STEP_INSTRUCTIONS } from "./dockerfile-order";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -265,36 +266,55 @@ function emitComposeDocument(doc: Record<string, unknown>): string {
 
 // ── Dockerfile serialization ──────────────────────────────────────
 
-function serializeDockerfile(entity: Declarable): string {
+function serializeDockerfile(name: string, entity: Declarable): string {
   const props = getProps(entity);
   const lines: string[] = [];
 
+  // ARGs before the first FROM: global build args a FROM line can use.
+  if (props.globalArgs !== undefined && props.globalArgs !== null) {
+    if (!Array.isArray(props.globalArgs)) {
+      throw new Error(`Dockerfile.${name}: globalArgs must be a list of ARG values, like ["NODE_VERSION=20"]`);
+    }
+    for (const arg of props.globalArgs) lines.push(`ARG ${arg}`);
+  }
+
   // Multi-stage build via stages[]
   if (Array.isArray(props.stages) && props.stages.length > 0) {
-    for (const stage of props.stages as Array<Record<string, unknown>>) {
-      emitStage(stage, lines);
+    if (props.steps !== undefined) {
+      throw new Error(`Dockerfile.${name}: steps belongs on each stage when stages is set, not on the Dockerfile`);
     }
+    (props.stages as Array<Record<string, unknown>>).forEach((stage, i) => {
+      emitStage(stage, lines, `Dockerfile.${name} stage ${stage.as ? `"${stage.as}"` : i + 1}`);
+    });
     return lines.join("\n") + "\n";
   }
 
   // Single-stage build
-  emitStage(props, lines);
+  emitStage(props, lines, `Dockerfile.${name}`);
   return lines.join("\n") + "\n";
 }
 
-function emitStage(stage: Record<string, unknown>, lines: string[]): void {
+function emitStage(stage: Record<string, unknown>, lines: string[], where: string): void {
   // FROM must be first
   if (stage.from) {
     const as = stage.as ? ` AS ${stage.as}` : "";
     lines.push(`FROM ${stage.from}${as}`);
   }
 
-  const INSTRUCTION_ORDER = [
-    "arg", "env", "workdir", "user", "run", "copy", "add",
-    "expose", "volume", "label", "entrypoint", "cmd", "healthcheck",
-  ];
+  if (stage.steps !== undefined && stage.steps !== null) {
+    const perKind = PER_KIND_ORDER.filter((k) => stage[k] !== undefined && stage[k] !== null);
+    if (perKind.length > 0) {
+      throw new Error(
+        `${where}: steps can't be combined with the per-kind fields (${perKind.join(", ")}). Move them into steps, in the order they should run.`,
+      );
+    }
+    if (!Array.isArray(stage.steps)) throw new Error(`${where}: steps must be a list`);
+    stage.steps.forEach((step, i) => lines.push(emitStep(step, `${where} step ${i + 1}`)));
+    return;
+  }
 
-  for (const instr of INSTRUCTION_ORDER) {
+  // No steps: the per-kind fields, in the fixed order they have always had.
+  for (const instr of PER_KIND_ORDER) {
     const value = stage[instr];
     if (value === undefined || value === null) continue;
 
@@ -308,6 +328,33 @@ function emitStage(stage: Record<string, unknown>, lines: string[]): void {
       lines.push(`${keyword} ${value}`);
     }
   }
+}
+
+/** One step, `{ run: "npm ci" }`, as its Dockerfile line, `RUN npm ci`. */
+function emitStep(step: unknown, where: string): string {
+  if (typeof step !== "object" || step === null || Array.isArray(step)) {
+    throw new Error(`${where}: a step is an object naming one instruction, like { run: "npm ci" }`);
+  }
+  const keys = Object.keys(step).filter((k) => (step as Record<string, unknown>)[k] !== undefined);
+  if (keys.length !== 1) {
+    throw new Error(
+      `${where}: a step names exactly one instruction, found ${keys.length === 0 ? "none" : keys.join(", ")}. Split it into one step per instruction.`,
+    );
+  }
+  const key = keys[0]!;
+  if (!STEP_INSTRUCTIONS.has(key)) {
+    throw new Error(`${where}: "${key}" is not a Dockerfile instruction a step can name (FROM is the stage's from field)`);
+  }
+  const value = (step as Record<string, unknown>)[key];
+  const keyword = key.toUpperCase();
+  if (Array.isArray(value)) {
+    if (!EXEC_FORM_STEPS.has(key)) {
+      throw new Error(`${where}: ${keyword} takes a string; only RUN, CMD, ENTRYPOINT and SHELL take an exec-form array`);
+    }
+    return `${keyword} ${JSON.stringify(value.map(String))}`;
+  }
+  if (typeof value === "string" || typeof value === "number") return `${keyword} ${value}`;
+  throw new Error(`${where}: ${keyword} needs a string value`);
 }
 
 // ── Serializer ────────────────────────────────────────────────────
@@ -376,7 +423,7 @@ export const dockerSerializer: Serializer = {
 
     const files: Record<string, string> = {};
     for (const [name, entity] of dockerfiles) {
-      files[`Dockerfile.${name}`] = serializeDockerfile(entity);
+      files[`Dockerfile.${name}`] = serializeDockerfile(name, entity);
     }
 
     return { primary: composeYaml, files };

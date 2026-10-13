@@ -228,6 +228,28 @@ export async function computeComponentGraph(
 /** A generate-mode target lexicon name — any lexicon whose plugin implements `generateComponentPipeline` (gitlab, github, and forgejo today). */
 export type GenerateLexicon = string;
 
+/**
+ * The components an "all" run takes, in `discovered` order (chant #1522). A
+ * seam-gated component (`enabled: false`, computed from this run's own
+ * params) sits out: the run deploys the estate the parameters describe, not
+ * the units the seams turned off. A disabled dependency is satisfied
+ * vacuously, since ordering is dependsOn's only meaning, so it is also
+ * stripped from the survivors' dependsOn rather than failing wave resolution
+ * as an unknown name. `chant run --components all`, a component list's
+ * dependency closure (#3950) and the generated pipelines (#3951) all select
+ * through this.
+ */
+export function withoutDisabled<T extends { name: string; dependsOn?: string[] }>(
+  discovered: ReadonlyArray<{ name: string; enabled?: boolean }>,
+  components: T[],
+): T[] {
+  const disabled = new Set(discovered.filter((c) => c.enabled === false).map((c) => c.name));
+  if (disabled.size === 0) return components;
+  return components
+    .filter((c) => !disabled.has(c.name))
+    .map((c) => (c.dependsOn?.some((d) => disabled.has(d)) ? { ...c, dependsOn: c.dependsOn.filter((d) => !disabled.has(d)) } : c));
+}
+
 /** Result of `chant build --components --generate <lexicon>`. */
 export interface GenerateComponentsResult {
   success: boolean;
@@ -301,11 +323,13 @@ export async function generateComponentsPipeline(
     return { success: false, error: result.errors.map((e) => e.message).join("\n") };
   }
 
-  const driverComponents: DriverComponent[] = [...result.components.values()].map(({ component }) => ({
-    name: component.name,
-    dependsOn: component.dependsOn,
-    deploy: component.deploy,
-  }));
+  // #3951: the pipeline holds the jobs `chant run --components all` would
+  // run, so a disabled component has no job and no other job needs it.
+  const discovered = [...result.components.values()].map(({ component }) => component);
+  const driverComponents = withoutDisabled(
+    discovered,
+    discovered.map((component) => ({ name: component.name, dependsOn: component.dependsOn, deploy: component.deploy })),
+  );
 
   try {
     const { yaml, stages, jobs, env } = plugin.generateComponentPipeline(driverComponents, options);
@@ -404,7 +428,7 @@ export interface RunComponentsOptions {
   /**
    * Opt-in structured progress observer (`chant run --components <name|all>
    * --progress-json`, see ./run-progress.ts). Threaded straight through to
-   * `runInterpretDriver` for `selector === "all"`; for a single-component
+   * `runInterpretDriver` for `"all"` and a list; for a single-component
    * selector (which bypasses `runInterpretDriver` — see the docstring above),
    * this function emits the same `run-start`/`wave-start`/`component-start`/
    * …/`run-done` envelope itself, treating the one component as a run with a
@@ -431,6 +455,12 @@ export interface RunComponentsOptions {
   /** Where a `gate` step's facts are read and written (#2119). Defaults to the `chant/lifecycle` orphan branch; a test passes `memoryGateLedgerPort()` from `../op/gate.ts`. */
   gates?: GateLedgerPort;
   /**
+   * Called once for a list selector (`a,b,c`, #3950) with the resolved run
+   * order, waves and the dependencies the list pulled in, after selection and
+   * before the first component runs. The CLI prints it.
+   */
+  onPlan?: (plan: ComponentRunPlan) => void;
+  /**
    * The commit the run deploys, for the workloads' `vcs.ref.head.revision`
    * (#3061). Default: `git rev-parse HEAD` in the project, or nothing outside
    * a checkout. `null` passes none.
@@ -438,7 +468,15 @@ export interface RunComponentsOptions {
   revision?: string | null;
 }
 
-/** Result of `chant run --components <name|all>`. */
+/** The resolved order of a list run (#3950), reported through `RunComponentsOptions.onPlan`. */
+export interface ComponentRunPlan {
+  order: string[];
+  waves: string[][];
+  /** Dependencies the list did not name but the run includes. */
+  added: string[];
+}
+
+/** Result of `chant run --components <name|all|a,b,c>`. */
 export interface RunComponentsResult {
   success: boolean;
   /** The driver's run result, when the run reached the driver (even on a failed component). */
@@ -468,6 +506,10 @@ export interface RunComponentsResult {
  *  - `selector === "all"`: resolves the whole set's dependency order/waves
  *    and dispatches every component through `runInterpretDriver`, in the same
  *    order `chant graph --components` reports.
+ *  - a list (`a,b,c`, #3950): the named components plus everything they
+ *    depend on, through the same `runInterpretDriver` path as `"all"`, so the
+ *    subset runs in the order `"all"` would give it, in one process. The
+ *    resolved order goes to `onPlan` before the first component starts.
  *  - a single name: dispatches just that component via `runComponentDeploy`,
  *    without requiring the rest of its `dependsOn` graph to be present in
  *    this invocation. This mirrors generate mode's per-job invocation model
@@ -483,17 +525,24 @@ export interface RunComponentsResult {
  * stops the run there with `gated` set, which the CLI turns into exit code 3
  * and the `chant approve` line.
  */
-/** Result of resolving a `<name|all>` selector against discovered components. */
+/** Result of resolving a `<name|all|a,b,c>` selector against discovered components. */
 export interface ResolvedComponentTargets {
   success: boolean;
   targets: DriverComponent[];
+  /** For a list selector (#3950): the dependencies the closure added that the list did not name, in discovery order. */
+  added?: string[];
   error?: string;
 }
 
+/** Whether `selector` is a comma-separated component list (#3950), as opposed to `all` or one name. */
+export function isComponentList(selector: string): boolean {
+  return selector.includes(",");
+}
+
 /**
- * Discover every component under `path` and resolve `selector` (`"all"` or a
- * single component name) to the `DriverComponent`(s) to run, with no gate
- * check and no dispatch — just discovery + selection, factored out of
+ * Discover every component under `path` and resolve `selector` (`"all"`, a
+ * single component name, or a comma-separated list, #3950) to the
+ * `DriverComponent`(s) to run, with no gate check and no dispatch — just discovery + selection, factored out of
  * `runComponents` so another entrypoint can reuse the exact same selection
  * semantics without inheriting the run itself.
  */
@@ -512,19 +561,9 @@ export async function resolveComponentTargets(
   const discovered = [...result.components.values()].map(({ component }) => component);
   const all = discovered.map((component) => toDriverComponent(component));
 
-  if (selector === "all") {
-    // chant #1522 — a seam-gated component (`enabled: false`, computed from
-    // this run's own params) sits out of "all": the run deploys the estate
-    // the parameters describe, not the units the seams turned off. A disabled
-    // dependency is satisfied vacuously — ordering is dependsOn's only
-    // semantics — so it is also stripped from the survivors' dependsOn,
-    // rather than failing wave resolution as an unknown name.
-    const disabled = new Set(discovered.filter((c) => c.enabled === false).map((c) => c.name));
-    const targets = all
-      .filter((c) => !disabled.has(c.name))
-      .map((c) => (c.dependsOn?.some((d) => disabled.has(d)) ? { ...c, dependsOn: c.dependsOn.filter((d) => !disabled.has(d)) } : c));
-    return { success: true, targets };
-  }
+  if (isComponentList(selector)) return resolveComponentList(selector, discovered, all);
+
+  if (selector === "all") return { success: true, targets: withoutDisabled(discovered, all) };
 
   const found = all.find((c) => c.name === selector);
   const disabledByName = discovered.find((c) => c.name === selector && c.enabled === false);
@@ -546,6 +585,65 @@ export async function resolveComponentTargets(
     };
   }
   return { success: true, targets: [found] };
+}
+
+/**
+ * A list selector (`a,b,c`, #3950): the named components plus every component
+ * they depend on, transitively, so the list runs as one dependency-ordered
+ * set. Refused before anything runs when a name is unknown, disabled, or `all`
+ * (which already means every component). Dependencies are followed through
+ * `withoutDisabled`, the selection `"all"` uses, so a disabled *dependency*
+ * is dropped and stripped from dependsOn exactly as `"all"` drops it. A
+ * dependsOn name that matches no discovered component is left in place, so
+ * wave resolution reports it as `"all"` would.
+ */
+function resolveComponentList(
+  selector: string,
+  discovered: ReadonlyArray<{ name: string; enabled?: boolean }>,
+  all: DriverComponent[],
+): ResolvedComponentTargets {
+  const names = [...new Set(selector.split(",").map((n) => n.trim()).filter((n) => n.length > 0))];
+  if (names.length === 0) {
+    return { success: false, targets: [], error: `Component list "${selector}" names no components.` };
+  }
+  if (names.includes("all")) {
+    return { success: false, targets: [], error: `"all" cannot be part of a component list; pass --components all on its own, or name the components.` };
+  }
+  // An explicit ask for a unit the parameters excluded is a mistake to
+  // surface, not to skip silently, as it is for a single name.
+  const off = names.filter((n) => discovered.some((c) => c.name === n && c.enabled === false));
+  if (off.length > 0) {
+    const one = off.length === 1;
+    return {
+      success: false,
+      targets: [],
+      error: `${one ? "Component" : "Components"} ${off.map((n) => `"${n}"`).join(", ")} ${one ? "is" : "are"} disabled under this run's parameters (enabled: false). Enable the seam ${one ? "it is" : "they are"} gated on, or leave ${one ? "it" : "them"} out of the list.`,
+    };
+  }
+  const unknown = names.filter((n) => !all.some((c) => c.name === n));
+  if (unknown.length > 0) {
+    const known = all.map((c) => c.name).sort().join(", ");
+    return {
+      success: false,
+      targets: [],
+      error: `${unknown.length === 1 ? "Component" : "Components"} ${unknown.map((n) => `"${n}"`).join(", ")} not found.${known ? ` Known components: ${known}` : " No components discovered."}`,
+    };
+  }
+
+  const enabled = withoutDisabled(discovered, all);
+  const byName = new Map(enabled.map((c) => [c.name, c]));
+  const included = new Set<string>();
+  const visit = (name: string): void => {
+    const component = byName.get(name);
+    if (!component || included.has(name)) return;
+    included.add(name);
+    for (const dep of component.dependsOn ?? []) visit(dep);
+  };
+  for (const name of names) visit(name);
+
+  const targets = enabled.filter((c) => included.has(c.name));
+  const named = new Set(names);
+  return { success: true, targets, added: targets.map((c) => c.name).filter((n) => !named.has(n)) };
 }
 
 export async function runComponents(
@@ -595,7 +693,14 @@ export async function runComponents(
   const releaseIdentity = () => (revision ? { revision } : {});
 
   try {
-    if (selector === "all") {
+    if (selector === "all" || isComponentList(selector)) {
+      if (isComponentList(selector) && options.onPlan) {
+        // Resolved here, before dispatch, so the order is printed before any
+        // component runs. A cycle or unknown dependency throws the same error
+        // `runInterpretDriver` would, caught below.
+        const graph = resolveComponentGraph(resolvedTargets);
+        options.onPlan({ order: graph.order, waves: graph.waves, added: resolved.added ?? [] });
+      }
       const run = await runInterpretDriver(resolvedTargets, registry, {
         env,
         releaseIdentity,

@@ -42,7 +42,7 @@ vi.mock("node:child_process", async () => {
   return { ...actual, exec: execWithCustom, execFile: execFileWithCustom };
 });
 
-const { runEmulator, formatEmulatorHelp, parsePortMappings } = await import("./emulator");
+const { runEmulator, formatEmulatorHelp, parsePortMappings, parseUpOptions } = await import("./emulator");
 
 function cap(): EmulatorCapability {
   return {
@@ -284,5 +284,65 @@ describe("chant emulator --port and --help (#3673)", () => {
     expect(help).toContain("env: POSTGRES_URL=http://localhost:5432");
     expect(help.split("\n").length).toBeLessThan(40);
     expect(formatEmulatorHelp([])).toContain("No lexicon configured for this project has a local emulator.");
+  });
+});
+
+describe("chant emulator up --image, --network, --setting, --loopback (#3952)", () => {
+  const floci = (): EmulatorCapability => ({ ...cap(), spec: { ...cap().spec, settingsPrefix: "FLOCI_" } });
+  const other = (): EmulatorCapability => ({
+    spec: { name: "chant-floci-az", image: "floci/floci-az:1.0.0", containerPort: 4577, healthPath: "/health" },
+    env: () => ({}),
+  });
+
+  beforeEach(() => {
+    upMock.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  test("up passes each option to the lifecycle", async () => {
+    stderr();
+    upMock.mockResolvedValue({ endpoint: "http://localhost:4566" });
+    const exit = await runEmulator({
+      args: makeArgs({
+        path: "up", image: "floci/floci:1.6.0", network: "loom", loopback: true,
+        setting: ["FLOCI_STORAGE_MODE=memory", "FLOCI_X=a=b"], port: ["4567"],
+      }),
+      plugins: [plugin("aws", floci())],
+      serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect(upMock).toHaveBeenCalledWith({
+      image: "floci/floci:1.6.0", network: "loom", loopback: true,
+      settings: { FLOCI_STORAGE_MODE: "memory", FLOCI_X: "a=b" }, port: 4567,
+    });
+  });
+
+  test("a setting no selected emulator takes is refused before anything starts", async () => {
+    const err = stderr();
+    const exit = await runEmulator({
+      args: makeArgs({ path: "up", setting: ["HOME=/tmp"] }),
+      plugins: [plugin("aws", floci())],
+      serializers: [],
+    });
+    expect(exit).toBe(1);
+    expect(upMock).not.toHaveBeenCalled();
+    expect(err.join("\n")).toContain("--setting HOME: no selected emulator takes it; the selected ones take FLOCI_* (chant-floci)");
+  });
+
+  test("settings go only to the emulator whose prefix matches; --image needs one emulator", () => {
+    const a = floci();
+    const b = other();
+    const opts = parseUpOptions({ setting: ["FLOCI_A=1"], network: "n" }, [a, b]);
+    expect(opts.get(a)).toEqual({ network: "n", settings: { FLOCI_A: "1" } });
+    expect(opts.get(b)).toEqual({ network: "n" });
+    expect(() => parseUpOptions({ image: "x:1" }, [a, b])).toThrow(/--image x:1 is ambiguous with 2 emulators/);
+    expect(() => parseUpOptions({ setting: ["FLOCI_A"] }, [a])).toThrow(/expected <KEY>=<VALUE>/);
+  });
+
+  test("the options apply to up only", async () => {
+    const err = stderr();
+    const exit = await runEmulator({ args: makeArgs({ path: "status", loopback: true }), plugins: [plugin("aws", floci())], serializers: [] });
+    expect(exit).toBe(1);
+    expect(err.join("\n")).toContain("--loopback applies to `chant emulator up` only");
   });
 });

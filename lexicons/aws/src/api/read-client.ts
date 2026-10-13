@@ -412,6 +412,60 @@ export async function getCallerIdentity(options: AwsReadClientOptions = {}): Pro
   return { arn: leaves.Arn ?? "", account: leaves.Account ?? "" };
 }
 
+/** Temporary credentials `sts:AssumeRole` hands back, with their expiry. */
+export interface AssumedRoleCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken: string;
+  expiration?: string;
+}
+
+/**
+ * `sts:AssumeRole` — the call behind a shared-config profile with `role_arn`
+ * (#3954). Signed with the source credentials the caller passes in
+ * `options.credentials`, on the same Query transport as
+ * {@link getCallerIdentity}. The response is credential material, so it goes
+ * back to the caller and never into an error message.
+ */
+export async function assumeRole(
+  params: { roleArn: string; sessionName: string; externalId?: string; durationSeconds?: number },
+  options: AwsReadClientOptions = {},
+): Promise<AssumedRoleCredentials> {
+  options = withEndpointOverride("sts", options);
+  const http = options.http ?? defaultHttp;
+  const url = serviceUrl("sts", options.endpoint, options.region);
+  const body = new URLSearchParams({
+    Action: "AssumeRole",
+    Version: STS_API_VERSION,
+    RoleArn: params.roleArn,
+    RoleSessionName: params.sessionName,
+    ...(params.externalId ? { ExternalId: params.externalId } : {}),
+    ...(params.durationSeconds ? { DurationSeconds: String(params.durationSeconds) } : {}),
+  }).toString();
+  const res = await http(
+    url,
+    {
+      headers: requestHeaders("sts", url, body, { "content-type": "application/x-www-form-urlencoded" }, options),
+      body,
+    },
+    options.signal,
+  );
+  const err = xmlError(res.text);
+  if (err || res.status >= 400) {
+    throw new AwsReadError(err?.message ?? `AssumeRole failed with HTTP ${res.status}`, res.status, err?.code);
+  }
+  const leaves = xmlLeaves(res.text.match(/<Credentials>([\s\S]*?)<\/Credentials>/)?.[1] ?? "");
+  if (!leaves.AccessKeyId || !leaves.SecretAccessKey || !leaves.SessionToken) {
+    throw new AwsReadError("AssumeRole answered without credentials", res.status);
+  }
+  return {
+    accessKeyId: leaves.AccessKeyId,
+    secretAccessKey: leaves.SecretAccessKey,
+    sessionToken: leaves.SessionToken,
+    ...(leaves.Expiration ? { expiration: leaves.Expiration } : {}),
+  };
+}
+
 /* ── Cloud Control ────────────────────────────────────────────────────────── */
 
 /** One live resource, as Cloud Control describes it. */

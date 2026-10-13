@@ -37,6 +37,7 @@ import type { FactoryView, ListingView } from "./box-factory";
 import type { Declaration } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { graphLinks, type LinkTableRow } from "./links";
+import type { KindLinkRead } from "./kind-link-readers";
 import type { RecordLinkRow } from "./record-assets";
 import type { ReasonCode } from "./reason-codes";
 import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRDanglingRef, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
@@ -321,12 +322,13 @@ function sorted(rec: Record<string, string[]>): Record<string, string[]> {
  * Compose the members' IRs into the workspace document. Members keep the
  * order they are given in. With `links`, the `links` section is filled from
  * the declaration; `kinds` lets a member that isn't composed but whose kind
- * lists its outputs (`other`, kinds from a package) be a link target.
+ * lists its outputs (`other`, kinds from a package) be a link target, and
+ * `read` holds the links each member's kind reader found in its files (#3932).
  */
 export function composeWorkspaceGraph(
   workspace: { name: string; root: string },
   inputs: ComposeInput[],
-  links?: { declaration: Declaration; kinds?: KindRegistry },
+  links?: { declaration: Declaration; kinds?: KindRegistry; read?: ReadonlyMap<string, KindLinkRead> },
 ): WorkspaceGraph {
   const nodes: ComposedNode[] = [];
   const edges: ComposedEdge[] = [];
@@ -391,7 +393,7 @@ export function composeWorkspaceGraph(
     exports,
     imports,
     links: links
-      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), collectors, exports, imports }, links.kinds)
+      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), collectors, exports, imports }, links.kinds, links.read)
       : [],
     collectors,
     records: [],

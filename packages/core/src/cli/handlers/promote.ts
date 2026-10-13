@@ -25,7 +25,7 @@ import {
   type ReleaseRecord,
   type ReleaseRecordInput,
 } from "../../lifecycle/release-ledger";
-import { resolveComponentTargets } from "../../components/cli-support";
+import { isComponentList, resolveComponentTargets } from "../../components/cli-support";
 import { applyConfigDefaults } from "../../components/config-defaults";
 import { fanOutRegistry } from "../../components/fan-out-support";
 import { renderDriverHuman } from "../../components/driver-output";
@@ -105,6 +105,12 @@ async function loadProject(ctx: CommandContext, selector: string) {
   });
   if (!paramsResolution.success) {
     for (const message of paramsResolution.errors) console.error(message);
+    return 1;
+  }
+  // A comma list is `chant run --components`' selector (#3950), which pulls in
+  // dependencies; promote, rollback and redeploy act on the one named component.
+  if (isComponentList(selector)) {
+    console.error(formatError({ message: `--component takes one component name, not a list ("${selector}")` }));
     return 1;
   }
   const targets = await resolveComponentTargets(projectPath, selector, args.sandbox, paramsResolution.provenance);

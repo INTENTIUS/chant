@@ -6,13 +6,14 @@ description: "Every lint rule and post-synth check provided by the Docker lexico
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-docker` — DO NOT EDIT.
     Edit lexicons/docker/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Docker lexicon provides **7** rules: 1 lint rule and 6 post-synth checks.
+The Docker lexicon provides **16** rules: 2 lint rules and 14 post-synth checks.
 
 ## Lint Rules
 
 | ID | Severity | Category | Description |
 |----|----------|----------|-------------|
 | `DKRS001` | warning | correctness | No Latest Tag |
+| `DKRS002` | warning | correctness | Per-kind Dockerfile fields written in a different order |
 
 ## Post-Synth Checks
 
@@ -25,4 +26,12 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `DKRD003` | Service exposes SSH port (22) externally — this is a security risk |
 | `DKRD010` | apt-get install without --no-install-recommends adds unnecessary packages |
 | `DKRD011` | Prefer COPY over ADD when not fetching URLs or extracting archives |
-| `DKRD012` | Dockerfile has no USER instruction — container runs as root |
+| `DKRD012` | Dockerfile's final stage has no USER instruction, or ends on USER root — container runs as root |
+| `DKRD013` | Whole build context copied before a dependency install — every source change re-runs the install |
+| `DKRD014` | RUN needs root but comes after USER switched to a non-root user |
+| `DKRD015` | More than one CMD or ENTRYPOINT in a stage — only the last one takes effect |
+| `DKRD016` | COPY --from names a stage that is not defined before it |
+| `DKRD017` | ARG before the first FROM is not used by any FROM or stage |
+| `DKRD018` | Relative WORKDIR before any absolute WORKDIR in the stage |
+| `DKRD019` | ADD fetches a remote URL without --checksum |
+| `DKRD020` | apt-get update in a different RUN from apt-get install — the install can use a stale package index |

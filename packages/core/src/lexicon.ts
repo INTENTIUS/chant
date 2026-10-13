@@ -23,7 +23,7 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
-import type { IREdge, LexiconGraphEdges } from "./graph-ir";
+import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
@@ -1449,6 +1449,31 @@ export interface LexiconPlugin {
    * reads. Omit for lexicons whose references are typed.
    */
   graphEdges?(entities: ReadonlyMap<string, Declarable>): LexiconGraphEdges | undefined;
+
+  /**
+   * The workspace outputs this lexicon's declarations expose (#3931): names
+   * another member's link may target, without anyone writing `output(...)`.
+   * The sql lexicon answers each table and view as `<schema>.<table>` and
+   * each column as `<schema>.<table>.<column>`.
+   *
+   * Called two ways, with the same answer expected from both:
+   *
+   * - by `chant workspace check`, offline, with the entities the member's
+   *   source folds to (`foldProject` under `sandbox`: no member code runs),
+   *   and `unread` listing the files that did not fold, with their text. A
+   *   file of this lexicon's among them is a gap: the list is then incomplete
+   *   and a link to a name not in it is unresolved rather than missing;
+   * - by `chant graph --format ir`, with the built entities and no `unread`.
+   *   The outputs land on the IR's `exports`, which `chant workspace graph`
+   *   resolves links against.
+   *
+   * Names come from the declarations as written in source, never from an
+   * environment's or profile's rendering, so they stay the same everywhere
+   * the member deploys. Pure: no I/O. Return `undefined` when the project
+   * declares nothing this lexicon reports. Omit for lexicons with no such
+   * declarations.
+   */
+  workspaceOutputs?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceOutputs | undefined;
 
   // LSP
   /** Provide completions for LSP */

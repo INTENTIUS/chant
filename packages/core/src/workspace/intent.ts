@@ -77,7 +77,7 @@ import { followSquashes, squashLineOrigins, type Forge, type SquashFollow } from
 import { memberDirOnDisk, memberSymbolResolvers, type SymbolPluginLoader } from "./lexicon-symbols";
 import { resolveSymbol, symbolResolverFor, type SymbolResolver } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
-import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
+import { joinPath, skippedDir, workingTree, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
 import { locateWorkspace, type LocatedWorkspace } from "./which-chant";
@@ -1722,7 +1722,12 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     try {
       const groups = resolveGroups(declaration, located.tree);
       const kindsRegistry = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
-      rows = resolveLinks(declaration, sourceMemberHandles(declaration, located.tree, groups, kindsRegistry)).filter((r) => r.origin === "declared");
+      const { gatherLexiconOutputs } = await import("./lexicon-outputs");
+      const lexiconOutputs = await gatherLexiconOutputs(located.rootOnDisk, declaration, located.at ? workingTree(located.rootOnDisk) : located.tree, groups, kindsRegistry, {
+        atRevision: located.at !== null,
+        ...(query.loadLexicon ? { load: query.loadLexicon as unknown as import("./lexicon-outputs").OutputsPluginLoader } : {}),
+      });
+      rows = resolveLinks(declaration, sourceMemberHandles(declaration, located.tree, groups, kindsRegistry, lexiconOutputs)).filter((r) => r.origin === "declared");
     } catch (err) {
       if (!(err instanceof WorkspaceReadError)) throw err;
     }

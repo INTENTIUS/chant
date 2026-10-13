@@ -155,6 +155,43 @@ export interface LexiconGraphReference {
   dangling?: boolean;
 }
 
+/**
+ * One output a lexicon reports for its own declarations (#3931): a name a
+ * workspace link may target, such as a sql table's `public.orders` or a
+ * column's `public.orders.customer_id`.
+ */
+export interface LexiconWorkspaceOutput {
+  /** The output's name, as a link's `output` names it. */
+  name: string;
+  /** The entity key that declares it. */
+  entity: string;
+  /**
+   * Names the output had before, from a rename hint in source (a sql
+   * `-- previously:` comment). A link to one of them is told where it went.
+   */
+  previously?: string[];
+}
+
+/** One file the reader was handed but could not read without running it (#3931). */
+export interface LexiconUnreadSource {
+  /** The file's path, as the caller names it in messages. */
+  file: string;
+  text: string;
+  /** Why it was not read: the fold's located reason. */
+  reason: string;
+}
+
+/** What a lexicon's `workspaceOutputs` hook returns (#3931). */
+export interface LexiconWorkspaceOutputs {
+  outputs: LexiconWorkspaceOutput[];
+  /**
+   * Why the list may be incomplete, one line each: a declaration whose name
+   * can't be known statically, a file of this lexicon's that did not fold, a
+   * view whose columns can't be derived. Empty or absent when it is complete.
+   */
+  gaps?: string[];
+}
+
 /** What a lexicon's `graphEdges` hook returns (#3910). */
 export interface LexiconGraphEdges {
   references: LexiconGraphReference[];
@@ -304,6 +341,8 @@ export interface IRExport {
   value?: unknown;
   /** The deployed stack that publishes it, on an observed graph (#1279). */
   stack?: string;
+  /** Names the output had before, from a rename hint a lexicon read (#3931). */
+  previously?: string[];
 }
 
 /** A cross-stack import this stack consumes — a `Parameter` fed from another
@@ -832,6 +871,32 @@ export function applyLexiconGraphEdges(ir: GraphIR, reports: readonly LexiconGra
   const out: GraphIR = { ...ir, edges, groups };
   if (dangling.length) out.dangling = dangling;
   return out;
+}
+
+/**
+ * Add the outputs the lexicons' `workspaceOutputs` hooks report (#3931) to a
+ * built IR's `exports`, each on the node that declares it. An output whose
+ * name is already exported (a hand-written `output()`) keeps the existing
+ * export. Pure. Returns `ir` itself when no report added anything.
+ */
+export function applyLexiconOutputs(ir: GraphIR, reports: readonly LexiconWorkspaceOutputs[]): GraphIR {
+  const nodeIds = new Set(ir.nodes.map((n) => n.id));
+  const names = new Set((ir.exports ?? []).map((e) => e.name));
+  const added: IRExport[] = [];
+  for (const report of reports) {
+    for (const o of report.outputs) {
+      if (names.has(o.name)) continue;
+      names.add(o.name);
+      added.push({
+        name: o.name,
+        ...(nodeIds.has(o.entity) ? { node: o.entity } : {}),
+        ...(o.previously && o.previously.length > 0 ? { previously: [...o.previously] } : {}),
+      });
+    }
+  }
+  if (added.length === 0) return ir;
+  const exports = [...(ir.exports ?? []), ...added].sort((a, b) => a.name.localeCompare(b.name));
+  return { ...ir, exports };
 }
 
 function danglingKey(d: IRDanglingRef): string {

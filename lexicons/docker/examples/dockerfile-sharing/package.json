@@ -1,0 +1,17 @@
+{
+  "name": "docker-dockerfile-sharing-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon docker -o dist/",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-docker": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

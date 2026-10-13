@@ -127,7 +127,7 @@ A declared link replaces the inferred edge it covers, so the same join never app
 | `consumer` | The member that reads the output |
 | `producer`, `output` | The member and output it reads. An ambiguous row has `candidates` instead, each with `producer`, `output`, `label` and `to` |
 | `kind` | The link kind, `output` or `telemetry` |
-| `origin` | `declared`, or `inferred:joinKey` |
+| `origin` | `declared`, `kind-reader` (read from the member's own files, with `reader`, `file` and `line`; [#3932](https://github.com/INTENTIUS/chant/issues/3932)), or `inferred:joinKey` |
 | `label` | `exact` or `folded`. A declared link is always `exact` |
 | `input` | The consumer's import an inferred join feeds, or `null` for a declared link |
 | `from`, `to` | The composed ids of the import and export nodes, when the IRs name them |

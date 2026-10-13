@@ -16,8 +16,17 @@ export interface FlociUpArgs {
   name?: string;
   /** Host port mapped to the emulator's `:4566`. Default: `4566`. */
   port?: number;
-  /** Floci image. Default: `floci/floci:latest`. */
+  /** Floci image. Default: the pinned `floci/floci:1.5.34`. */
   image?: string;
+  /** Docker network the container joins, e.g. a compose network other containers reach Floci on. */
+  network?: string;
+  /**
+   * Extra Floci settings, passed to the container as `-e KEY=VALUE`. Every key
+   * must start with `FLOCI_`; any other key is refused rather than passed on.
+   */
+  settings?: Record<string, string>;
+  /** Publish the port on 127.0.0.1 only, instead of every host interface. Default: `false`. */
+  loopback?: boolean;
   /** Mount the docker socket — Floci needs it for the ECR backing registry. Default: `false`. */
   dockerSocket?: boolean;
   /** `AWS_REGION` exported for subsequent steps. Default: `us-east-1`. */
@@ -60,6 +69,7 @@ const flociSpecFor = (readyService: string): EmulatorSpec => ({
   healthPath: "/_localstack/health",
   ready: (body) => isFlociReady(body, readyService),
   upstream: { repo: "floci-io/floci" },
+  settingsPrefix: "FLOCI_",
 });
 
 /** The Floci emulator spec — the aws plugin's `emulator` capability (#920). */
@@ -91,6 +101,9 @@ export function flociRunCommand(args: FlociUpArgs = {}): string {
     name: args.name,
     port: args.port,
     image: args.image,
+    network: args.network,
+    settings: args.settings,
+    loopback: args.loopback,
     extraArgs: args.dockerSocket ? [...DOCKER_SOCK] : [],
   });
 }
@@ -113,6 +126,9 @@ export async function flociUp(args: FlociUpArgs = {}, signal?: AbortSignal): Pro
       name: args.name,
       port: args.port,
       image: args.image,
+      network: args.network,
+      settings: args.settings,
+      loopback: args.loopback,
       timeoutMs: args.timeoutMs,
       intervalMs: args.intervalMs,
       extraArgs: args.dockerSocket ? [...DOCKER_SOCK] : [],

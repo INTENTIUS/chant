@@ -18,7 +18,7 @@ env("VAR", { default: "fallback" })     // → ${VAR:-fallback}
 env("VAR", { required: true })          // → ${VAR:?VAR is required}
 
 // Custom error message
-env("VAR", { required: "Set VAR to the database URL" })  // → ${VAR:?Set VAR to the database URL}
+env("VAR", { errorMessage: "Set VAR to the database URL" })  // → ${VAR:?Set VAR to the database URL}
 
 // Plain substitution (empty string allowed)
 env("VAR")                              // → ${VAR}

@@ -32,6 +32,32 @@ describe("flociRunCommand (#704)", () => {
   });
 });
 
+describe("flociRunCommand image, network, settings and loopback (#3952)", () => {
+  test("the default image stays the pinned one when only other options are given", () => {
+    expect(flociRunCommand({ network: "loom" }).endsWith("floci/floci:1.5.34")).toBe(true);
+  });
+
+  test("all four options together, in the argv docker gets", () => {
+    expect(
+      flociRunCommand({
+        image: "floci/floci:1.6.0",
+        network: "loom-local",
+        settings: { FLOCI_STORAGE_MODE: "memory" },
+        loopback: true,
+        dockerSocket: true,
+      }),
+    ).toBe(
+      "docker run -d --rm --name chant-floci -p 127.0.0.1:4566:4566 --network loom-local " +
+        "-e FLOCI_STORAGE_MODE=memory -v /var/run/docker.sock:/var/run/docker.sock floci/floci:1.6.0",
+    );
+  });
+
+  test("a setting that is not FLOCI_* is refused, not passed to the container", () => {
+    expect(() => flociRunCommand({ settings: { AWS_SECRET_ACCESS_KEY: "x" } })).toThrow(/not a FLOCI_\* variable/);
+    expect(FLOCI_SPEC.settingsPrefix).toBe("FLOCI_");
+  });
+});
+
 describe("flociRmCommand / flociExistsCommand (#704)", () => {
   test("rm force-removes the container", () => {
     expect(flociRmCommand("chant-floci")).toBe("docker rm -f chant-floci");

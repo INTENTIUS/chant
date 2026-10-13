@@ -25,6 +25,7 @@ import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activi
 import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
+import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
 import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
@@ -409,7 +410,8 @@ async function runStep(
   // The in-flight record names the step while it runs.
   const ended = currentLiveRun()?.stepStarted(step.fn, step.id);
   try {
-    return await attempts();
+    // #3956: its output printed as it arrives, and a line while it is quiet.
+    return await withStepConsole({ phase: phaseName, label: stepLabel(step.fn, args, step.id) }, attempts);
   } finally {
     ended?.();
   }
@@ -1109,6 +1111,16 @@ export interface RunOpOptions {
   work?: { item?: string; holder?: string };
   /** Called when a work-lease renewal fails without losing the lease; the next beat retries it. */
   onWorkLeaseWarning?: (message: string) => void;
+  /**
+   * Where a running step's output goes, line by line, as it arrives (#3956):
+   * `[<phase>] <step> | <line>` for each line a `shellCmd` command writes, and
+   * `[<phase>] <step>: still running after <n>s` for a step quiet for
+   * `stepHeartbeatMs` (./step-console.ts). The local runtime passes a writer
+   * to stderr. Omitted, nothing is printed while a step runs.
+   */
+  stepOutput?: (line: string) => void;
+  /** How long a step may be quiet before the still-running line. Default 60s; `0` turns it off. */
+  stepHeartbeatMs?: number;
 }
 
 /**
@@ -1165,9 +1177,14 @@ export async function runOpLocally(
       })
     : undefined;
   try {
+    const stepConsole = options.stepOutput
+      ? { write: options.stepOutput, ...(options.stepHeartbeatMs !== undefined ? { heartbeatMs: options.stepHeartbeatMs } : {}) }
+      : undefined;
     return await withLiveRun(live, () =>
-      withOpRunContext(run, () =>
-        runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) }, run),
+      withRunConsole(stepConsole, () =>
+        withOpRunContext(run, () =>
+          runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) }, run),
+        ),
       ),
     );
   } finally {

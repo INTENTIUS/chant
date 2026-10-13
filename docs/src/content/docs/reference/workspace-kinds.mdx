@@ -70,6 +70,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
 | `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
+| `kinds[].reader` | Optional. The link reader chant runs over a member's own files. See [Links read from a member's files](#links-read-from-a-members-files) |
 
 A probe needs at least one of `anyFile`, `anyBlock` and `anyJsonKey`, and it passes when any one does. All three only look at files directly in the directory, never below it.
 
@@ -127,6 +128,16 @@ A kind's members are directories chant can probe, but a directory of `.tf` files
 | `graph.config` | The lexicon's config namespace for the reader project. In every string key and value, `{member}` becomes the member's name, `{dir}` its absolute directory and `{workspace}` the absolute workspace root. Nothing else is interpreted |
 
 For each member, `chant workspace graph` writes a reader project in a temporary directory: a `chant.config.json` with `lexicons: [<lexicon>]` and `config` under the lexicon's key, and a `node_modules` link to the directory that holds the pinned package. The member's `chant graph --format ir` runs there, and the project is removed afterwards. Nothing is written under the workspace. The block is data like the rest of the file: listing a workspace still imports nothing, and only `graph` loads the lexicon.
+
+### Links read from a member's files
+
+Some members already say what they read, in files of their own. A dbt project names the tables it reads in its `sources:` YAML. A kind can name a link reader with `reader`, and chant runs it over each member's directory to derive the member's links ([#3932](https://github.com/INTENTIUS/chant/issues/3932)).
+
+The readers are chant's code, and the kinds file only names one. The file stays data, and chant still never imports the package that supplies it. A reader runs offline. It parses files as data and never runs the tool that owns them, so `chant workspace check` still starts no process and reaches no network. chant has one reader, `dbt-project`. A kind that names a reader this chant doesn't have is kept without one, with a `WSP002` problem, and its members' links are only those their entries state.
+
+A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
+
+A link names its producer when the member's fields say which member that is. When they don't, chant picks the one other member that exposes the output the link is anchored on (for a dbt column, its table). If none does and exactly one other member exposes outputs at all, the link goes to that member, so a dropped table is reported as missing from the only place it could be. Any other case is ambiguous (`WSP095`), and the message names the field that settles it.
 
 ### Which packages are read
 
@@ -224,6 +235,71 @@ Both kinds carry a `graph` block, so `chant workspace graph` reads their members
 ```
 
 The chant repo pins both by path and declares `examples/terraform-carve-out/terraform` as a `terraform` member.
+
+## dbt
+
+The sql lexicon ships a `dbt` kind, since a dbt project reads the tables a sql member declares ([#3932](https://github.com/INTENTIUS/chant/issues/3932)). A workspace that uses it pins `@intentius/chant-lexicon-sql`.
+
+| Part | Value |
+|---|---|
+| Package | `@intentius/chant-lexicon-sql` |
+| Precedence | 300 |
+| Probe | `anyFile: ["dbt_project.yml"]` |
+| Reader | `dbt-project` |
+| `fields.sqlMember` | The member whose tables the project's sources read. Unset, each source table links to the one member that exposes it |
+| `fields.dialect` | `postgres` (the default) or `clickhouse`: how source names are cased before they are matched |
+
+The kind exposes no outputs of its own yet. dbt models as outputs, so a downstream member can link to a model, are [#3935](https://github.com/INTENTIUS/chant/issues/3935).
+
+### How sources map to sql outputs
+
+The `dbt-project` reader parses `dbt_project.yml` and every `.yml` and `.yaml` file under the project's `model-paths` (`source-paths` in older projects, `models` when it names neither). It never runs dbt, never renders Jinja and never reads `profiles.yml` or a target, so the links are the same in every environment. A sql member exposes `<schema>.<table>` and `<schema>.<table>.<column>` for Postgres, and `<database>.<table>` and `<database>.<table>.<column>` for ClickHouse ([#3931](https://github.com/INTENTIUS/chant/issues/3931)). The reader turns each enabled source table into a link to the first, and each of its `columns` into a link to the second.
+
+| dbt | Output name part |
+|---|---|
+| `sources[].schema` | The schema, or for ClickHouse the database, which is how dbt-clickhouse reads a source's schema. Unset, the source's `name`, which is dbt's own fallback |
+| `sources[].database` | Not used. A Postgres output name has no database |
+| `sources[].tables[].identifier` | The table, when set |
+| `sources[].tables[].name` | The table, when `identifier` is unset |
+| `sources[].tables[].columns[].name` | The column |
+
+With the `postgres` dialect, names follow Postgres: an unquoted name folds to lowercase and a quoted one keeps its case. dbt quotes a source's schema and identifier on Postgres unless `quoting:` turns it off, in `dbt_project.yml`, on the source or on the table, and it quotes a column only with `quote: true`. With `clickhouse`, every name is kept as written.
+
+A source, table or column whose value is a Jinja template, such as `schema: "{{ target.schema }}"` or `{{ env_var('SCHEMA') }}`, is not resolved. The reader reports it as a `WSP099` gap at its line and leaves out the links it would state, rather than guess what a target would render. An `enabled` that is templated is a gap too, and an entry with `enabled: false` is skipped.
+
+When the sql member marks a column with a `-- previously:` comment, a source that still names the old column fails with a message that names the new one.
+
+dbt sources often point at views. A sql member exposes a view and its columns as outputs, and when a view's columns can't be read statically its outputs are incomplete. A link to such a column is then unresolved (`WSP094`), not missing.
+
+### A sql member and a dbt project
+
+```json
+{
+  "pins": [{ "package": "@intentius/chant-lexicon-sql", "version": "<installed version>" }],
+  "members": [
+    { "name": "db", "dir": "db", "kind": "chant" },
+    { "name": "analytics", "dir": "analytics", "kind": "dbt", "fields": { "sqlMember": "db" } }
+  ]
+}
+```
+
+`db` is a chant project that declares `public.orders` with `id` and `customer_id` columns through the sql lexicon. The dbt project reads it as a source:
+
+```yaml
+# analytics/models/staging/sources.yml
+version: 2
+
+sources:
+  - name: shop
+    schema: public
+    tables:
+      - name: orders
+        columns:
+          - name: id
+          - name: customer_id
+```
+
+`chant workspace check` resolves three links from `analytics` to `db`: `public.orders`, `public.orders.id` and `public.orders.customer_id`. Drop `customer_id` from the table in `db` and the check fails with `WSP093` at `analytics/models/staging/sources.yml:10`, the line that names the column.
 
 ## Overlapping probes
 
