@@ -17,30 +17,57 @@
  * | WSP096 | a consumer states the same link twice |
  * | WSP097 | an entry lists `outputs` for a kind that doesn't take them from the entry |
  * | WSP098 | a link states a `protocol` and its kind is not `telemetry` (#2558) |
+ * | WSP099 | a kind's link reader could not read part of a member's files without guessing (#3932) |
+ *
+ * Links a kind's reader finds in a member's own files (#3932), such as a dbt
+ * project's sources, are checked by WSP093 to WSP095 like declared ones, and
+ * their findings name the member's file and line instead of the declaration.
  */
 
 import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
 import type { Member } from "../declaration";
 import { sourceMemberHandles } from "../member-handles";
+import { readKindLinks, type KindLinkRead } from "../kind-link-readers";
 import { DEFAULT_LINK_KIND, LINK_KINDS, TELEMETRY_LINK_KIND, linkTargetProblem, resolveLinks, type AmbiguousRow, type LinkRow, type LinkTableRow } from "../links";
 
 const tables = new WeakMap<WorkspaceCheckContext, LinkTableRow[]>();
+const reads = new WeakMap<WorkspaceCheckContext, Map<string, KindLinkRead>>();
+
+/** What each member's kind reader found (#3932), read once per check run. */
+function kindReads(ctx: WorkspaceCheckContext): Map<string, KindLinkRead> {
+  let read = reads.get(ctx);
+  if (!read) {
+    read = readKindLinks(ctx.declaration, ctx.tree, ctx.kinds);
+    reads.set(ctx, read);
+  }
+  return read;
+}
 
 /** The link rows for a check run, resolved once and shared by every link check. */
 export function linkTable(ctx: WorkspaceCheckContext): LinkTableRow[] {
   let rows = tables.get(ctx);
   if (!rows) {
-    rows = resolveLinks(ctx.declaration, sourceMemberHandles(ctx.declaration, ctx.tree, ctx.groups, ctx.kinds));
+    rows = resolveLinks(ctx.declaration, sourceMemberHandles(ctx.declaration, ctx.tree, ctx.groups, ctx.kinds, ctx.facts?.lexiconOutputs), undefined, kindReads(ctx));
     tables.set(ctx, rows);
   }
   return rows;
 }
 
-const declaredRows = (ctx: WorkspaceCheckContext) => linkTable(ctx).filter((r): r is LinkRow => r.status !== "ambiguous" && r.origin === "declared");
+/** The declared links, and the links a kind's reader found: the rows a member states. */
+const statedRows = (ctx: WorkspaceCheckContext) => linkTable(ctx).filter((r): r is LinkRow => r.status !== "ambiguous" && r.origin !== "inferred:joinKey");
 
-function linkFinding(check: WorkspaceCheck, row: LinkRow, field: string, message: string): WorkspaceDiagnostic {
-  return { checkId: check.id, severity: check.severity, message, entity: row.consumer, pointer: `${row.pointer}/${field}` };
+/** A finding at a declared link's field in the declaration, or at the file and line a reader's link came from. */
+function linkFinding(check: WorkspaceCheck, ctx: WorkspaceCheckContext, row: LinkTableRow, field: string, message: string): WorkspaceDiagnostic {
+  const base = { checkId: check.id, severity: check.severity, message, entity: row.consumer };
+  if (row.origin === "kind-reader" && row.file !== undefined) {
+    const member = ctx.declaration.members.find((m) => m.name === row.consumer);
+    return { ...base, pointer: member?.pointer ?? "", treeFile: row.file, line: row.line ?? 1, column: 1 };
+  }
+  return { ...base, pointer: `${(row as LinkRow).pointer}/${field}` };
 }
+
+/** Where a reader's link came from, for its message; empty for a declared link. */
+const statedAt = (row: LinkRow) => (row.origin === "kind-reader" ? ` (read by ${row.reader} from ${row.file}:${row.line})` : "");
 
 const describeLink = (row: LinkRow) => `${row.consumer}'s link to ${row.producer} output ${row.output}`;
 
@@ -87,9 +114,9 @@ export const LINK_CHECKS: readonly WorkspaceCheck[] = [
     severity: "error",
     configurable: true,
     check(ctx) {
-      return declaredRows(ctx)
+      return statedRows(ctx)
         .filter((r) => r.status === "missing")
-        .map((r) => linkFinding(this, r, "output", `${describeLink(r)} does not resolve: ${r.reason}`));
+        .map((r) => linkFinding(this, ctx, r, "output", `${describeLink(r)}${statedAt(r)} does not resolve: ${r.reason}`));
     },
   },
   {
@@ -99,9 +126,9 @@ export const LINK_CHECKS: readonly WorkspaceCheck[] = [
     severity: "info",
     configurable: true,
     check(ctx) {
-      return declaredRows(ctx)
+      return statedRows(ctx)
         .filter((r) => r.status === "unresolved")
-        .map((r) => linkFinding(this, r, "output", `${describeLink(r)} is kept unresolved: ${r.reason}`));
+        .map((r) => linkFinding(this, ctx, r, "output", `${describeLink(r)}${statedAt(r)} is kept unresolved: ${r.reason}`));
     },
   },
   {
@@ -115,6 +142,10 @@ export const LINK_CHECKS: readonly WorkspaceCheck[] = [
       return linkTable(ctx)
         .filter((r): r is AmbiguousRow => r.status === "ambiguous")
         .map((r) => {
+          if (r.origin === "kind-reader") {
+            const choices = r.candidates.map((c) => c.producer).join(", ");
+            return linkFinding(this, ctx, r, "", `${r.consumer}'s link to ${r.input} (read by ${r.reader}) has no single producer: ${r.reason}${choices ? `. Candidates: ${choices}` : ""}`);
+          }
           const choices = r.candidates.map((c) => `${c.producer} output ${c.output} (${c.label})`).join(", ");
           const first = r.candidates[0];
           return {
@@ -199,6 +230,24 @@ export const LINK_CHECKS: readonly WorkspaceCheck[] = [
             pointer: `${l.pointer}/protocol`,
           })),
       );
+    },
+  },
+  {
+    id: "WSP099",
+    name: "kind-reader-gap",
+    description:
+      "A kind's link reader read every link in a member's files that it could read without guessing (#3932). A value it would have to render, such as a Jinja template in a dbt source, is reported here with its file and line, and the links it would state are not checked.",
+    severity: "info",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const [member, read] of kindReads(ctx)) {
+        const pointer = ctx.declaration.members.find((m) => m.name === member)?.pointer ?? "";
+        for (const gap of read.gaps) {
+          out.push({ checkId: this.id, severity: this.severity, message: `${member} (read by ${read.reader}): ${gap.message}`, entity: member, pointer, treeFile: gap.file, line: gap.line, column: 1 });
+        }
+      }
+      return out;
     },
   },
 ];

@@ -1,10 +1,12 @@
 ---
 title: "Compose Resources"
-description: "Service, Volume, Network, Config, and Secret constructors"
+description: "Service, Volume, Network, DockerConfig, and DockerSecret constructors"
 diataxis: reference
 ---
 
 All Compose resources are exported from `@intentius/chant-lexicon-docker`. The export variable name becomes the key in the output section.
+
+Each constructor's props are typed from the Compose spec (`ServiceProps`, `VolumeProps`, `NetworkProps`, `DockerConfigProps`, `DockerSecretProps`), so your editor completes the fields and a misspelled field or a wrong value type is a compile error. A string field also takes an `env()` value, or another entity, which is written as its name.
 
 ## Service
 
@@ -85,14 +87,14 @@ export const api = new Service({
 });
 ```
 
-## Config
+## DockerConfig
 
 Maps to `configs.<name>` in `docker-compose.yml`. Used for non-sensitive configuration files.
 
 ```typescript
-import { Config } from "@intentius/chant-lexicon-docker";
+import { DockerConfig } from "@intentius/chant-lexicon-docker";
 
-export const nginxConf = new Config({ file: "./nginx.conf" });
+export const nginxConf = new DockerConfig({ file: "./nginx.conf" });
 ```
 
 Mount it in a service:
@@ -117,18 +119,18 @@ export const app = new Service({
 });
 ```
 
-## Secret
+## DockerSecret
 
 Maps to `secrets.<name>` in `docker-compose.yml`. For sensitive values.
 
 ```typescript
-import { Secret } from "@intentius/chant-lexicon-docker";
+import { DockerSecret } from "@intentius/chant-lexicon-docker";
 
 // File-backed
-export const dbPassword = new Secret({ file: "./secrets/db_password.txt" });
+export const dbPassword = new DockerSecret({ file: "./secrets/db_password.txt" });
 
 // External (managed outside Compose)
-export const apiKey = new Secret({ external: true });
+export const apiKey = new DockerSecret({ external: true });
 ```
 
 Mount in a service:

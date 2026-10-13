@@ -50,6 +50,7 @@ import { topoSort } from "../codegen/topo-sort";
 import { kahnLayers } from "./layers";
 import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
+import { GateNotRecordableError } from "../lifecycle/no-record";
 import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
@@ -473,17 +474,29 @@ async function runPhase(
     const gateRecords: DriverStepRecord[] = [];
     for (const gate of phaseDef.steps.filter(isGateStep)) {
       const start = Date.now();
-      const check = await evaluateGate(gates.port, {
-        op: ctx.component,
-        gate: gateName(gate),
-        // #2574: an approval counts only for this environment and this plan.
-        environment: ctx.env,
-        ...(gates.planDigest !== undefined ? { planDigest: gates.planDigest } : {}),
-        ...(gate.description ? { description: gate.description } : {}),
-        ...(gate.timeout ? { timeout: gate.timeout } : {}),
-        ...(gates.now ? { now: gates.now } : {}),
-      });
       const base = { component: ctx.component, phase: phaseDef.phase, kind: `gate:${gateName(gate)}` };
+      let check: Awaited<ReturnType<typeof evaluateGate>>;
+      try {
+        check = await evaluateGate(gates.port, {
+          op: ctx.component,
+          gate: gateName(gate),
+          // #2574: an approval counts only for this environment and this plan.
+          environment: ctx.env,
+          ...(gates.planDigest !== undefined ? { planDigest: gates.planDigest } : {}),
+          ...(gate.description ? { description: gate.description } : {}),
+          ...(gate.timeout ? { timeout: gate.timeout } : {}),
+          ...(gates.now ? { now: gates.now } : {}),
+        });
+      } catch (err) {
+        // #3955: a run that records nothing fails at the gate, as the Op
+        // executor's gate step does, and the component unwinds like any failure.
+        if (!(err instanceof GateNotRecordableError)) throw err;
+        gateRecords.push({ ...base, status: "fail" as const, durationMs: Date.now() - start, error: err.message });
+        for (const skipped of phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s))) {
+          gateRecords.push(skippedRecord(skipped));
+        }
+        throw new StepFailure(gateRecords, []);
+      }
       if (!check.satisfied) {
         gateRecords.push({ ...base, status: "skipped" as const, durationMs: Date.now() - start });
         for (const skipped of phaseDef.steps.filter((s): s is DriverStep | DriverPhase => !isGateStep(s))) {

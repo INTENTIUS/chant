@@ -25,6 +25,7 @@ import { isInside, type Declaration, type ResolvedGroup } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { kindHandles, type MemberHandles } from "./links";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
+import type { MemberLexiconOutputs } from "./lexicon-outputs";
 
 const memberDir = (dir: string) => (dir === "." ? "" : dir);
 
@@ -60,7 +61,7 @@ function isSourceFile(name: string): boolean {
  * directories (other members, group matches), `node_modules`, dot
  * directories and build output.
  */
-function sourceFiles(tree: WorkspaceTree, dir: string, exclude: ReadonlySet<string>): string[] {
+export function sourceFiles(tree: WorkspaceTree, dir: string, exclude: ReadonlySet<string>): string[] {
   const out: string[] = [];
   const walk = (at: string) => {
     for (const e of tree.list(at) ?? []) {
@@ -189,17 +190,34 @@ export function readSourceHandles(tree: WorkspaceTree, dir: string, exclude: Rea
 }
 
 /**
+ * The directories inside member `m` that are not its source: other members'
+ * directories and example-group matches nested in it.
+ */
+export function memberExcludes(declaration: Declaration, groups: readonly ResolvedGroup[], m: Declaration["members"][number]): Set<string> {
+  const exclude = new Set<string>();
+  for (const o of declaration.members) if (o !== m && o.dir !== "." && isInside(o.dir, m.dir)) exclude.add(o.dir);
+  for (const g of groups) for (const dir of g.matches) if (isInside(dir, m.dir)) exclude.add(dir);
+  return exclude;
+}
+
+/**
  * Every member's handles, read in source for `chant workspace check`. A
  * `chant` member's outputs and parameters are parsed from its TypeScript
  * without running it; other kinds expose what the kind and the entry list.
  * A member whose directory is missing or whose kind is unknown is left out,
  * so links to it are unresolved.
+ *
+ * `lexiconOutputs` adds what the member's lexicons report about their own
+ * declarations (#3931, `./lexicon-outputs.ts`), gathered beforehand because
+ * reading them folds the member's files, which is asynchronous. Its gaps
+ * count as the member's.
  */
 export function sourceMemberHandles(
   declaration: Declaration,
   tree: WorkspaceTree,
   groups: readonly ResolvedGroup[],
   kinds: KindRegistry,
+  lexiconOutputs?: ReadonlyMap<string, MemberLexiconOutputs>,
 ): Map<string, MemberHandles> {
   const out = new Map<string, MemberHandles>();
   for (const m of declaration.members) {
@@ -210,16 +228,18 @@ export function sourceMemberHandles(
       out.set(m.name, listed);
     } else {
       // Other members' directories and group matches inside this one are not its source.
-      const exclude = new Set<string>();
-      for (const o of declaration.members) if (o !== m && o.dir !== "." && isInside(o.dir, m.dir)) exclude.add(o.dir);
-      for (const g of groups) for (const dir of g.matches) if (isInside(dir, m.dir)) exclude.add(dir);
-      const read = readSourceHandles(tree, memberDir(m.dir), exclude);
+      const read = readSourceHandles(tree, memberDir(m.dir), memberExcludes(declaration, groups, m));
+      const lexicon = lexiconOutputs?.get(m.name);
+      const gaps = [...read.gaps, ...(lexicon?.gaps ?? [])];
       out.set(m.name, {
         member: m.name,
-        outputs: read.outputs.map((o) => ({ name: o.name })),
+        outputs: [
+          ...read.outputs.map((o) => ({ name: o.name })),
+          ...(lexicon?.outputs ?? []).map((o) => ({ name: o.name, ...(o.previously?.length ? { previously: o.previously } : {}) })),
+        ],
         inputs: read.inputs.map((i) => ({ name: i.name })),
-        complete: read.gaps.length === 0,
-        why: read.gaps.length === 0 ? null : read.gaps.length === 1 ? read.gaps[0] : `${read.gaps[0]}, and ${read.gaps.length - 1} more`,
+        complete: gaps.length === 0,
+        why: gaps.length === 0 ? null : gaps.length === 1 ? gaps[0] : `${gaps[0]}, and ${gaps.length - 1} more`,
         exposesNone: false,
       });
     }

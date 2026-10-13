@@ -6,6 +6,14 @@ import { dkrd003 } from "./ssh-port-exposed";
 import { dkrd010 } from "./apt-no-recommends";
 import { dkrd011 } from "./prefer-copy";
 import { dkrd012 } from "./no-root-user";
+import { dkrd013 } from "./cache-busting-copy";
+import { dkrd014 } from "./root-after-user";
+import { dkrd015 } from "./repeated-cmd";
+import { dkrd016 } from "./copy-from-stage";
+import { dkrd017 } from "./unused-global-arg";
+import { dkrd018 } from "./relative-workdir";
+import { dkrd019 } from "./add-url-checksum";
+import { dkrd020 } from "./apt-update-alone";
 
 export const postSynthChecks: PostSynthCheck[] = [
   dkrd001,
@@ -14,4 +22,12 @@ export const postSynthChecks: PostSynthCheck[] = [
   dkrd010,
   dkrd011,
   dkrd012,
+  dkrd013,
+  dkrd014,
+  dkrd015,
+  dkrd016,
+  dkrd017,
+  dkrd018,
+  dkrd019,
+  dkrd020,
 ];

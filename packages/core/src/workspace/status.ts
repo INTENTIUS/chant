@@ -41,7 +41,7 @@ import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
-import { readCheckoutHead, type CheckoutHead } from "./records-checkout";
+import { readCheckoutHead, worktreeChanges, type CheckoutHead } from "./records-checkout";
 import { policyView, replicationState, type ReplicationState } from "./wip";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
@@ -400,7 +400,8 @@ async function shipView(member: Member, cwd: string, read: LedgerReader): Promis
   };
   // The commit must be here: a release from a commit this checkout never had says nothing about it.
   if (lines(["cat-file", "-e", `${last.gitSha}^{commit}`]) === null) return view;
-  const changed = lines(["diff", "--name-only", "-z", "--no-renames", last.gitSha, "--"]);
+  // A diff against the working tree writes the index; run it on a copy.
+  const changed = worktreeChanges(top, last.gitSha, ".") ?? null;
   const untracked = lines(["ls-files", "--others", "--exclude-standard", "-z"]);
   if (changed === null || untracked === null) return view;
   const bookkeeping = (path: string) => ship.bookkeeping.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));

@@ -306,6 +306,118 @@ describe("dockerSerializer.serialize — multi-stage Dockerfile", () => {
   });
 });
 
+// ── Dockerfile steps ──────────────────────────────────────────────
+
+describe("dockerSerializer.serialize — Dockerfile steps", () => {
+  const dockerfile = (props: Record<string, unknown>): string => {
+    const result = dockerSerializer.serialize(new Map<string, Declarable>([["app", new MockDockerfile(props)]]));
+    return (result as { files: Record<string, string> }).files["Dockerfile.app"]!;
+  };
+
+  test("steps are written in the order given, interleaving COPY and RUN", () => {
+    expect(dockerfile({
+      from: "node:20-alpine",
+      steps: [
+        { workdir: "/app" },
+        { copy: "package*.json ./" },
+        { run: "npm ci" },
+        { copy: ". ." },
+        { run: "npm run build" },
+        { user: "node" },
+        { cmd: ["node", "dist/index.js"] },
+      ],
+    })).toBe([
+      "FROM node:20-alpine",
+      "WORKDIR /app",
+      "COPY package*.json ./",
+      "RUN npm ci",
+      "COPY . .",
+      "RUN npm run build",
+      "USER node",
+      'CMD ["node","dist/index.js"]',
+      "",
+    ].join("\n"));
+  });
+
+  test("every instruction is available as a step, and ARG before FROM comes from globalArgs", () => {
+    expect(dockerfile({
+      globalArgs: ["NODE_VERSION=20"],
+      stages: [{
+        from: "node:${NODE_VERSION}-alpine",
+        as: "base",
+        steps: [
+          { shell: ["/bin/sh", "-eo", "pipefail", "-c"] },
+          { arg: "APP_ENV=production" },
+          { env: "NODE_ENV=$APP_ENV" },
+          { label: 'org.opencontainers.image.title="app"' },
+          { workdir: "/app" },
+          { add: "https://example.com/a.tgz /tmp/" },
+          { volume: "/data" },
+          { expose: 8080 },
+          { stopsignal: "SIGTERM" },
+          { healthcheck: "CMD wget -qO- http://localhost:8080/health || exit 1" },
+          { onbuild: "COPY . /app" },
+          { entrypoint: ["/sbin/tini", "--"] },
+          { cmd: "node index.js" },
+        ],
+      }],
+    })).toBe([
+      "ARG NODE_VERSION=20",
+      "FROM node:${NODE_VERSION}-alpine AS base",
+      'SHELL ["/bin/sh","-eo","pipefail","-c"]',
+      "ARG APP_ENV=production",
+      "ENV NODE_ENV=$APP_ENV",
+      'LABEL org.opencontainers.image.title="app"',
+      "WORKDIR /app",
+      "ADD https://example.com/a.tgz /tmp/",
+      "VOLUME /data",
+      "EXPOSE 8080",
+      "STOPSIGNAL SIGTERM",
+      "HEALTHCHECK CMD wget -qO- http://localhost:8080/health || exit 1",
+      "ONBUILD COPY . /app",
+      'ENTRYPOINT ["/sbin/tini","--"]',
+      "CMD node index.js",
+      "",
+    ].join("\n"));
+  });
+
+  test("per-kind fields keep their fixed order, byte for byte", () => {
+    expect(dockerfile({
+      from: "node:20-alpine",
+      cmd: "node index.js",
+      copy: [". ."],
+      run: ["npm ci"],
+      user: "node",
+      workdir: "/app",
+    })).toBe("FROM node:20-alpine\nWORKDIR /app\nUSER node\nRUN npm ci\nCOPY . .\nCMD node index.js\n");
+  });
+
+  test("a stage that mixes steps with per-kind fields is an error", () => {
+    expect(() => dockerfile({ from: "alpine:3.20", run: ["true"], steps: [{ user: "nobody" }] }))
+      .toThrow(/Dockerfile\.app: steps can't be combined with the per-kind fields \(run\)/);
+    expect(() => dockerfile({ stages: [{ from: "alpine:3.20", as: "b", copy: ["a b"], steps: [] }] }))
+      .toThrow(/stage "b": steps can't be combined/);
+  });
+
+  test("a step names exactly one known instruction", () => {
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{ run: "a", copy: "b" }] })).toThrow(/exactly one instruction, found run, copy/);
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{}] })).toThrow(/found none/);
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{ from: "x" }] })).toThrow(/"from" is not a Dockerfile instruction a step can name/);
+    expect(() => dockerfile({ from: "alpine:3.20", steps: [{ copy: ["a", "b"] }] })).toThrow(/COPY takes a string/);
+  });
+
+  test("steps on the Dockerfile itself with stages is an error", () => {
+    expect(() => dockerfile({ stages: [{ from: "alpine:3.20" }], steps: [{ run: "true" }] })).toThrow(/steps belongs on each stage/);
+  });
+
+  test("stages and step lists are plain values that can be shared and spread", () => {
+    const install = [{ copy: "package*.json ./" }, { run: "npm ci" }];
+    const base = { from: "node:20-alpine", as: "deps", steps: [{ workdir: "/app" }, ...install] };
+    expect(dockerfile({ stages: [base, { from: "node:20-alpine", steps: [{ copy: "--from=deps /app/node_modules ./node_modules" }] }] }))
+      .toBe("FROM node:20-alpine AS deps\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nFROM node:20-alpine\nCOPY --from=deps /app/node_modules ./node_modules\n");
+  });
+});
+
 // ── Name generation ───────────────────────────────────────────────
 
 describe("dockerSerializer.serialize — name gen", () => {

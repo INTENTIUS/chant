@@ -36,6 +36,24 @@ describe("EVL004: spread-non-const", () => {
     expect(evl004SpreadNonConstRule.check(ctx)).toHaveLength(0);
   });
 
+  test("allows spread from an imported binding (named, default, namespace member)", () => {
+    const ctx = createContext(`
+      import base, { steps } from "./shared";
+      import * as shared from "./shared";
+      const x = { ...base, ...shared.preset };
+      const y = [...steps, { run: "true" }];
+    `);
+    expect(evl004SpreadNonConstRule.check(ctx)).toHaveLength(0);
+  });
+
+  test("still flags a call on an imported function", () => {
+    const ctx = createContext(`
+      import { makeSteps } from "./shared";
+      const y = [...makeSteps("web")];
+    `);
+    expect(evl004SpreadNonConstRule.check(ctx)).toHaveLength(1);
+  });
+
   test("flags spread from let variable", () => {
     const ctx = createContext(`
       let base = { a: 1 };

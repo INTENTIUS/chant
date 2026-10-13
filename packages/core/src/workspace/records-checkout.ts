@@ -11,10 +11,15 @@
  *
  * Every git call here reads. None takes the index lock or refreshes the
  * index (`--no-optional-locks`), so a read leaves the checkout as it was,
- * `.git` included, which the reader conformance suite checks.
+ * `.git` included, which the reader conformance suite checks. A diff against
+ * the working tree is the exception git makes: it refreshes the index even
+ * then, so {@link worktreeChanges} runs it on a private copy.
  */
 
 import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { resolveBase, type BaseSource } from "./trust/provenance";
 
 /** Where a record's file stands against `HEAD`. */
@@ -52,6 +57,35 @@ function tryGit(top: string, args: string[]): string | undefined {
     return git(top, args);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * The paths under `spec` whose working-tree content differs from `rev`, or
+ * undefined when git can't say. `git diff <rev>` refreshes the index's stat
+ * data for a file touched without a change, and writes the index even under
+ * `--no-optional-locks` (git 2.54), so it runs against a copy of the index
+ * (`GIT_INDEX_FILE`) and the checkout's own index is never written.
+ */
+export function worktreeChanges(top: string, rev: string, spec: string): string[] | undefined {
+  const scratch = mkdtempSync(join(tmpdir(), "chant-index-"));
+  try {
+    const at = tryGit(top, ["rev-parse", "--git-path", "index"])?.trim();
+    const index = at ? (isAbsolute(at) ? at : join(top, at)) : undefined;
+    const copy = join(scratch, "index");
+    if (index && existsSync(index)) copyFileSync(index, copy);
+    const out = execFileSync("git", ["--no-optional-locks", "--literal-pathspecs", "diff", "--name-only", "-z", "--no-renames", rev, "--", spec], {
+      cwd: top,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 256 * 1024 * 1024,
+      env: { ...process.env, GIT_INDEX_FILE: copy },
+    });
+    return out.split("\0").filter(Boolean);
+  } catch {
+    return undefined;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
 
@@ -98,7 +132,7 @@ export function worktreeStates(
   const direct = (p: string) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/");
   const spec = dir === "." ? "." : dir;
   const atHead = new Set(zList(tryGit(top, ["ls-tree", "-r", "-z", "--name-only", head, "--", spec])).filter(direct));
-  const changed = new Set(zList(tryGit(top, ["diff", "--name-only", "-z", "--no-renames", head, "--", spec])));
+  const changed = new Set(worktreeChanges(top, head, spec) ?? []);
   for (const p of paths) states.set(p, !atHead.has(p) ? "new" : changed.has(p) ? "modified" : "committed");
   const present = new Set(paths);
   const deleted = [...atHead].filter((p) => !present.has(p) && match.test(p.slice(prefix.length))).sort();

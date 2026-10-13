@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
@@ -101,6 +101,10 @@ describe("records in the working tree (#3160)", () => {
     const { root } = repository();
     const path = join(root, file("001"));
     writeFileSync(path, decided("001"));
+    // Its stat data no longer matches the index on any clock, so a read that
+    // refreshes the index would write it (a CI runner was slow enough to).
+    const later = new Date(Date.now() + 5_000);
+    utimesSync(path, later, later);
     const index = join(root, ".git", "index");
     const before = { bytes: readFileSync(index), mtime: statSync(index).mtimeMs };
     const doc = result(await queryRecords({ kind: KIND, cwd: root, uncommitted: true }));

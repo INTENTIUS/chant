@@ -23,11 +23,13 @@ import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
 import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
 import { StaleLockError } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
+import { ledgerRecordingOff, noRecordEndNote, noRecordStartNote, resetNoRecordLedger, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
+import { isComponentList, type ComponentRunPlan } from "../../components/cli-support";
 import type { ReleaseRecord } from "../../lifecycle/release-ledger";
 import { runOpGenerate } from "./run-generate";
 
@@ -873,12 +875,13 @@ export async function recordAutoReleasesForRun(
   return recorded;
 }
 
-// ── chant run --components <name|all> ────────────────────────────────────────
+// ── chant run --components <name|all|a,b,c> ──────────────────────────────────
 
 /**
- * `chant run --components <name|all> [--env <env>]` (#585) — the interpret
- * driver's CLI entrypoint, and since #2116 the only component run path there
- * is. `args.path` is the component name (or `all`), matching `chant run
+ * `chant run --components <name|all|a,b,c> [--env <env>]` (#585) — the
+ * interpret driver's CLI entrypoint, and since #2116 the only component run
+ * path there is. `args.path` is the component name (or `all`, or a comma list
+ * that also runs what the named components depend on, #3950), matching `chant run
  * <name>`'s Op-dispatch convention exactly (`args.path` is the Op name there
  * too) rather than a project directory — components are always discovered from
  * the current working directory, the same way Op discovery (`discoverOps()`)
@@ -909,11 +912,52 @@ export async function recordAutoReleasesForRun(
  * auto-release check below used to apply itself) and reused for that check,
  * rather than loaded a second time.
  */
-export async function runOpComponents(ctx: CommandContext): Promise<number> {
+export function runOpComponents(ctx: CommandContext): Promise<number> {
+  return withRecordingChoice(ctx, () => runComponentSelection(ctx));
+}
+
+/**
+ * Run `run` with recording off when `--no-record` or `CHANT_NO_RECORD` asks
+ * for it (#3955), and say so before it starts and after it ends, whatever
+ * the outcome. The flag sets `CHANT_NO_RECORD` for the length of the run, so
+ * the ledger seam (`../../lifecycle/git.ts`) and every chant process a step
+ * starts see the same choice. A run with recording on is untouched.
+ */
+async function withRecordingChoice(ctx: CommandContext, run: () => Promise<number>): Promise<number> {
+  const flagged = ctx.args.noRecord === true;
+  if (!flagged && !ledgerRecordingOff()) return run();
+  const source = flagged ? "--no-record" : `${NO_RECORD_ENV}=${process.env[NO_RECORD_ENV]}`;
+  const prior = process.env[NO_RECORD_ENV];
+  if (flagged) process.env[NO_RECORD_ENV] = "1";
+  resetNoRecordLedger();
+  console.error(formatWarning({ message: noRecordStartNote(source) }));
+  try {
+    return await run();
+  } finally {
+    console.error(formatWarning({ message: noRecordEndNote(source) }));
+    resetNoRecordLedger();
+    if (flagged) {
+      if (prior === undefined) delete process.env[NO_RECORD_ENV];
+      else process.env[NO_RECORD_ENV] = prior;
+    }
+  }
+}
+
+/** A run that records nothing stays in this process (#3955): a runtime that runs it elsewhere would record there. */
+function refusesNoRecordOn(runtime: Pick<OpRuntimeProvider, "name">): boolean {
+  if (!ledgerRecordingOff() || runtime.name === "local") return false;
+  console.error(formatError({
+    message: `--no-record runs on the local runtime; the "${runtime.name}" runtime records the run where it executes it`,
+    hint: `Omit --on to run it here without recording, or drop --no-record (and ${NO_RECORD_ENV}).`,
+  }));
+  return true;
+}
+
+async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
   if (!selector || selector === ".") {
     console.error(formatError({
-      message: "Component name is required: chant run --components <name|all>",
+      message: "Component name is required: chant run --components <name|all|a,b,c>",
       hint: "Run `chant list --components` to see available components.",
     }));
     return 1;
@@ -936,6 +980,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   const runtime = await resolveOpRuntime(ctx);
   if (!runtime) return 1;
+  if (refusesNoRecordOn(runtime)) return 1;
   if (!runtime.runComponents) {
     console.error(formatError({
       message: `--components is not supported on the "${runtime.name}" runtime`,
@@ -966,12 +1011,22 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
+  // A list (#3950) pulls in what its components depend on; say which ones and
+  // in what order before the first one runs. stderr, so --json and
+  // --progress-json keep stdout to themselves.
+  const onPlan = isComponentList(selector)
+    ? (plan: ComponentRunPlan) => {
+        console.error(formatInfo(`run order: ${plan.waves.map((wave) => wave.join(" + ")).join(", then ")}`));
+        if (plan.added.length > 0) console.error(formatInfo(`added as dependencies: ${plan.added.join(", ")}`));
+      }
+    : undefined;
   const result = await runtime.runComponents(projectPath, selector, {
     env: ctx.args.env,
     componentOutputs: seededOutputs,
     onProgress,
     sandbox: ctx.args.sandbox,
     buildParams: paramsResolution.provenance,
+    ...(onPlan ? { onPlan } : {}),
   });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
@@ -1037,7 +1092,8 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   }
 
   if (result.success && result.run) {
-    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
+    // #3955: a run that records nothing has no release to report either.
+    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
     const recorded = await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote
@@ -1065,7 +1121,11 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
  * what they were before the seam existed; a runtime that reports only a state
  * gets the terser render instead.
  */
-export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
+export function runOpOnRuntime(ctx: CommandContext): Promise<number> {
+  return withRecordingChoice(ctx, () => runOpOnResolvedRuntime(ctx));
+}
+
+async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
   if (!opName || opName === ".") {
     console.error(formatError({
@@ -1108,7 +1168,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   }
 
   const runtime = await resolveOpRuntime(ctx);
-  if (!runtime) {
+  if (!runtime || refusesNoRecordOn(runtime)) {
     await stewardGate?.release?.();
     return 1;
   }

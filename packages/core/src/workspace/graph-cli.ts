@@ -36,6 +36,7 @@ import { openGraphCache, splitCached, storeReads, withoutUnits } from "./graph-c
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry } from "./kinds";
+import { readKindLinks } from "./kind-link-readers";
 import { prepareKindReaders, type PreparedReaders } from "./kind-readers";
 import { recordLinkRows } from "./record-assets";
 import { RecordReadError } from "./records";
@@ -258,7 +259,8 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
       member.stamp = split?.stamps.get(member.name) ?? null;
     }
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
-    const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
+    // A kind's link reader (#3932) reads the member's files in the tree read, as check does.
+    const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
     for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.

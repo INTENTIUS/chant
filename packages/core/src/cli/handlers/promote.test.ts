@@ -39,6 +39,7 @@ vi.mock("../../config", async () => {
 });
 
 vi.mock("../../components/cli-support", () => ({
+  isComponentList: (selector: string) => selector.includes(","),
   resolveComponentTargets: (...args: unknown[]) => resolveTargetsMock(...args),
 }));
 
@@ -284,6 +285,12 @@ describe("chant components rollback", () => {
       restores: { env: "prod", runId: "run-1", timestamp: "2026-01-01T00:00:00.000Z" },
     });
     expect(appendReleaseRecordMock.mock.calls[0][0]).not.toHaveProperty("promotedFrom");
+  });
+
+  test("a comma list is refused: rollback acts on one component (#3950)", async () => {
+    expect(await runComponentsRollback(rb({ component: "api,web" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--component takes one component name, not a list/);
+    expect(ran).toEqual([]);
   });
 
   test("a digest the environment never recorded fails clearly", async () => {

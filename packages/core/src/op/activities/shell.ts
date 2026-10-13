@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { GateWait, asPendingGate } from "../gate-wait";
 import type { PendingGateRecord } from "../../lifecycle/gate-ledger";
 import { liveRunEnv } from "../run-live";
+import { hasStepConsole, stepLineSplitter } from "../step-console";
 
 const execAsync = promisify(exec);
 
@@ -114,8 +115,17 @@ interface ExecFailure extends Error {
  */
 export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promise<ShellCmdResult> {
   const okExit = args.okExit ?? [0];
+  // #3956: under a step console (../step-console.ts) every line the command
+  // writes, stdout and stderr, is printed as it arrives; the result still
+  // carries both whole. Without one, stderr is printed when the command ends.
+  const streamed = hasStepConsole();
+  const printStderr = (text: string) => {
+    if (text && !streamed) console.error(text);
+  };
+  const out = stepLineSplitter();
+  const err = stepLineSplitter();
   try {
-    const { stdout, stderr } = await execAsync(args.cmd, {
+    const running = execAsync(args.cmd, {
       cwd: args.cwd,
       // In a run that keeps an in-flight record, CHANT_RUN_ACTIVITY names the
       // file the command appends activity lines to (../run-live.ts).
@@ -123,10 +133,22 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
       maxBuffer: MAX_STDOUT_BYTES,
       signal,
     });
-    if (stderr) console.error(stderr);
+    if (streamed) {
+      running.child.stdout?.on("data", (chunk: string | Buffer) => out.push(chunk));
+      running.child.stderr?.on("data", (chunk: string | Buffer) => err.push(chunk));
+    }
+    let settled: { stdout: string; stderr: string };
+    try {
+      settled = await running;
+    } finally {
+      out.end();
+      err.end();
+    }
+    const { stdout, stderr } = settled;
+    printStderr(stderr);
     return withJson({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 }, args);
-  } catch (err) {
-    const failure = err as ExecFailure;
+  } catch (caught) {
+    const failure = caught as ExecFailure;
     const exitCode = typeof failure.code === "number" ? failure.code : undefined;
     // A signal kill (Ctrl-C, the profile's timeout, a maxBuffer overflow) is
     // not an exit status the author declared anything about, so it rethrows
@@ -134,12 +156,12 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
     const died = failure.killed === true || typeof failure.signal === "string" || signal?.aborted === true;
     if (exitCode !== undefined && !died && args.gatedExit !== undefined && exitCode === args.gatedExit) {
       const stderrText = (failure.stderr ?? "").trim();
-      if (stderrText) console.error(stderrText);
+      printStderr(stderrText);
       throw new GateWait(await commandGate(args, (failure.stdout ?? "").trim(), exitCode));
     }
     if (exitCode !== undefined && !died && okExit.includes(exitCode)) {
       const stderrText = (failure.stderr ?? "").trim();
-      if (stderrText) console.error(stderrText);
+      printStderr(stderrText);
       return withJson({ stdout: (failure.stdout ?? "").trim(), stderr: stderrText, exitCode }, args);
     }
     if (exitCode !== undefined && !died) {

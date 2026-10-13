@@ -29,6 +29,7 @@ import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { POSTGRES_EMULATOR } from "./op/activities/postgres-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
+import { sqlWorkspaceOutputs } from "./workspace-outputs";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
 import { compositeCatalog } from "./composites/catalog";
 
@@ -190,6 +191,16 @@ export const sqlPlugin: LexiconPlugin = {
   async buildRoots(ctx) {
     const { sqlFilesBuildRoot } = await import("./files/build-root");
     return sqlFilesBuildRoot(ctx);
+  },
+
+  /**
+   * Each table and view, and each of their columns, as workspace outputs
+   * (`./workspace-outputs.ts`, #3931): `public.orders`,
+   * `public.orders.customer_id`. Another member's link to a dropped or
+   * renamed column then fails `chant workspace check`.
+   */
+  workspaceOutputs(entities, unread) {
+    return sqlWorkspaceOutputs(entities, unread);
   },
 
   /** One generator for both dialects: each IR resource's type says whose declarations it is. */

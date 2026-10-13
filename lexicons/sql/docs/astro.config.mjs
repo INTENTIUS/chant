@@ -67,6 +67,10 @@ export default defineConfig({
                               "slug": "project-policies"
                         },
                         {
+                              "label": "Tables and Columns as Workspace Outputs",
+                              "slug": "workspace-outputs"
+                        },
+                        {
                               "label": "ClickHouse",
                               "items": [
                                     {

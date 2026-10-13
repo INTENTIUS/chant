@@ -25,7 +25,7 @@ describe("docker OKF bundle", () => {
     expect(front.type).toBe("resource-type");
     expect(front.resource_type).toBe("Docker::Compose::Service");
     // Registry-carried property description reaches the concept body.
-    expect(service.body).toContain("- `image` (`string`): Container image to use");
+    expect(service.body).toContain("- `image` (`ComposeString`): Specify the image to start the container from.");
     // The no-latest-tag rule governs Service…
     expect(service.body).toContain("[DKRS001](/rules/DKRS001.md)");
     // …and points back at it.

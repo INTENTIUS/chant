@@ -30,5 +30,19 @@ export const dockerAuditLineage: Record<string, Lineage[]> = {
     { tool: "checkov", rule: "CKV_DOCKER_3", url: "https://www.checkov.io/5.Policy%20Index/dockerfile.html", relation: "equivalent" },
     { tool: "kics", rule: "missing_user_instruction", url: "https://docs.kics.io/latest/queries/dockerfile-queries/fd54f200-402c-4333-a5a4-36ef6709af2f/", relation: "equivalent" },
     { tool: "dockle", rule: "CIS-DI-0001", url: "https://github.com/goodwithtech/dockle/blob/master/CHECKPOINT.md#cis-di-0001", relation: "overlaps" },
+    { tool: "hadolint", rule: "DL3002", url: "https://github.com/hadolint/hadolint/wiki/DL3002", relation: "overlaps" },
+  ],
+  DKRD015: [
+    { tool: "hadolint", rule: "DL4003", url: "https://github.com/hadolint/hadolint/wiki/DL4003", relation: "overlaps" },
+    { tool: "hadolint", rule: "DL4004", url: "https://github.com/hadolint/hadolint/wiki/DL4004", relation: "overlaps" },
+  ],
+  DKRD016: [
+    { tool: "hadolint", rule: "DL3022", url: "https://github.com/hadolint/hadolint/wiki/DL3022", relation: "overlaps" },
+  ],
+  DKRD018: [
+    { tool: "hadolint", rule: "DL3000", url: "https://github.com/hadolint/hadolint/wiki/DL3000", relation: "overlaps" },
+  ],
+  DKRD020: [
+    { tool: "checkov", rule: "CKV_DOCKER_5", url: "https://www.checkov.io/5.Policy%20Index/dockerfile.html", relation: "overlaps" },
   ],
 };

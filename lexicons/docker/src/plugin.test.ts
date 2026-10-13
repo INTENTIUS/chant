@@ -17,6 +17,7 @@ describe("dockerPlugin", () => {
 
     const ruleIds = rules.map((r) => r.id);
     expect(ruleIds).toContain("DKRS001");
+    expect(ruleIds).toContain("DKRS002");
   });
 
   test("provides post-synth checks", () => {
@@ -30,6 +31,9 @@ describe("dockerPlugin", () => {
     expect(checkIds).toContain("DKRD010");
     expect(checkIds).toContain("DKRD011");
     expect(checkIds).toContain("DKRD012");
+    for (const id of ["DKRD013", "DKRD014", "DKRD015", "DKRD016", "DKRD017", "DKRD018", "DKRD019", "DKRD020"]) {
+      expect(checkIds).toContain(id);
+    }
   });
 
   test("provides intrinsics", () => {

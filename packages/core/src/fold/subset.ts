@@ -141,7 +141,9 @@ import { intrinsicCallFolds, intrinsicCallFoldsEagerly, type IntrinsicDef } from
  *      (`{...n}`) is shape-valid (`n` is a plain identifier) but `fold()`
  *      rejects it once it discovers `n` folds to a number, not an object.
  *      Only real evaluation catches this; EVL004 independently narrows
- *      spread sources to a stricter "traceable to a const" shape, which
+ *      spread sources to a stricter "traceable to a const" shape (a const
+ *      declared in the file, or an imported binding, which fold() resolves
+ *      from the exporting module's folded value), which
  *      catches most real-world misuse without evaluating, but is not a
  *      full substitute.
  *

@@ -422,6 +422,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The aws lexicon's read transport, signed with SigV4 and retargetable at a local emulator; there is no AWS SDK in the tree.",
   },
   {
+    file: "lexicons/aws/src/api/credential-chain.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the AWS IAM Identity Center portal (`portal.sso.<region>.amazonaws.com`) and SSO OIDC (`oidc.<region>.amazonaws.com`)",
+    why: "`chant lifecycle whoami` resolves an SSO profile as the AWS CLI does (#3954): it refreshes an expired cached session token through OIDC when it can, then trades the token for role credentials. A `credential_process` profile runs the configured command, which may reach whatever it reaches.",
+  },
+  {
     file: "lexicons/aws/src/op/activities/aws-apply.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -611,7 +618,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "Picks the `pr-forge.ts` client that `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` open their pull request through on Forgejo and GitLab, where `gh pr` cannot (#3798), and passes it the caller's `fetch`. GitHub, and a run outside CI, keep `gh`.",
   },
   {
-    file: "packages/core/src/op/gate-resume.ts",
+    file: "packages/core/src/gate-resume-run.ts",
     primitives: ["fetch"],
     phase: "apply",
     destination: "the forge that runs the job waiting at a gate: `$GITHUB_API_URL`, a Forgejo instance's API, or `$CI_API_V4_URL` on GitLab, as the pending fact recorded it",
@@ -621,7 +628,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     file: "packages/core/src/cli/handlers/gate-resume.ts",
     primitives: ["fetch"],
     phase: "apply",
-    destination: "the same forge as `packages/core/src/op/gate-resume.ts`, through it",
+    destination: "the same forge as `packages/core/src/gate-resume-run.ts`, through it",
     why: "The handlers of `chant approve --resume` and `chant run resume` (#3683) pass an injected `fetch` through to `resumeGateRun`; they open no connection of their own.",
   },
   {
