@@ -77,6 +77,10 @@ Each takes `ttlSeconds` to override its lifetime. The cloud sources run that clo
 
 The cloud sources are for Postgres. A ClickHouse profile takes the `command` source.
 
+## TLS
+
+A profile url's `sslmode` means what it means in psql. With `sslmode=require` the connection is encrypted and the server's certificate is not checked, so an RDS host works without its CA bundle, and so does a host reached through an SSM tunnel under another name. Use `sslmode=verify-full` to check the certificate and the host name. node-postgres reads `require` as `verify-full` on its own, so chant adds `uselibpqcompat=true` to a url that sets `sslmode`. A url that sets `uselibpqcompat` itself is passed through unchanged.
+
 ## What the data has not verified
 
 Every file lists in `toCheck` what its pages did not confirm, each with the page to check. As read on 2026-10-03:
