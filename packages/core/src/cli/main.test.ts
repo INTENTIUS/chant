@@ -406,6 +406,14 @@ describe("parseArgs", () => {
     expect(result.noReleaseRecord).toBeUndefined();
   });
 
+  test("parses --no-record for run <op> and run --components, apart from --no-release-record (#3955)", () => {
+    expect(parseArgs(["run", "smoke", "--no-record"])).toMatchObject({ path: "smoke", noRecord: true });
+    const components = parseArgs(["run", "--components", "svc", "--no-record"]);
+    expect(components).toMatchObject({ components: true, noRecord: true });
+    expect(components.noReleaseRecord).toBeUndefined();
+    expect(parseArgs(["run", "smoke"]).noRecord).toBeUndefined();
+  });
+
   // ── --progress-json (M3, behold roadmap) ─────────────────────────────────
 
   test("parses --progress-json for run --components", () => {

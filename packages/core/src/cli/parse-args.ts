@@ -54,6 +54,7 @@ const BOOLEAN_FLAGS = new Set([
   "--check",
   "--bump",
   "--no-release-record",
+  "--no-record",
   "--fold",
   "--no-fold",
   "--no-cache",
@@ -604,6 +605,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.compareTo = args[++i];
     } else if (arg === "--no-release-record") {
       result.noReleaseRecord = true;
+    } else if (arg === "--no-record") {
+      // `chant run <op|--components> --no-record` (#3955): write nothing to chant/lifecycle and push nothing.
+      result.noRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
     } else if (arg === "--no-cache") {

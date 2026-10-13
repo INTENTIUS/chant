@@ -55,7 +55,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { describeLifecyclePush, fetchLifecycleStatus, type LifecyclePushStatus, pushLifecycleStatus, readBlobBySha, RefCASConflictError, writeLedgerFiles } from "../lifecycle/git";
+import { describeLifecyclePush, fetchLifecycleStatus, ledgerRevision, type LifecyclePushStatus, pushLifecycleStatus, readBlobBySha, RefCASConflictError, writeLedgerFiles } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { sortedJsonReplacer } from "../utils";
 import { followSquashes, type SquashFollow } from "./squash";
@@ -509,7 +509,9 @@ async function appendRun(top: string, rootOnDisk: string, id: string, make: (exi
   let written: RunLine[] = [];
   let lastErr: unknown;
   for (let attempt = 1; attempt <= APPEND_RETRY_ATTEMPTS && commit === undefined; attempt++) {
-    const prior = git(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${LEDGER_BRANCH}:${path}`])?.trim() || null;
+    // #3955: in a run that records nothing, the run's own unrecorded tip.
+    const rev = await ledgerRevision(top);
+    const prior = git(top, ["rev-parse", "--verify", "--quiet", `${rev === LEDGER_BRANCH ? `refs/heads/${LEDGER_BRANCH}` : rev}:${path}`])?.trim() || null;
     const text = prior ? ((await readBlobBySha(prior, { cwd: top })) ?? "") : "";
     const existing = parseRunFile(text, id).lines;
     const lines = make(existing);

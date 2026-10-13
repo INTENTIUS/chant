@@ -137,6 +137,25 @@ Whenever a run is gated, `chant run` also appends a short markdown block to the 
 
 The [github Op generator](/chant/guide/ops/#scheduling-an-op) passes `--gated-exit 0` on `push`-triggered jobs and adds a follow-up job that posts the pending gate on the merged pull request, so a gated apply is a green run with a visible pending state rather than a red one.
 
+#### A test run: `--no-record`
+
+A test run or a claim run often should leave nothing on the ledger. `--no-record` runs every step and records nothing on the `chant/lifecycle` branch ([#3955](https://github.com/INTENTIUS/chant/issues/3955)). That includes the run's own record and any gate fact it would write. Nothing is pushed to the remote, a lease ref included. The run prints a line before its first step and another after its last, saying that nothing was recorded and how many ledger writes it dropped:
+
+```bash
+chant run smoke --no-record
+# warning: not recording (--no-record): nothing this run writes goes on chant/lifecycle, and nothing is pushed. A gate step fails.
+# ...
+# warning: not recorded (--no-record): nothing went on chant/lifecycle and nothing was pushed; 2 ledger writes were dropped (2 files).
+```
+
+Set `CHANT_NO_RECORD=1` once in a CI test job instead of passing the flag to each command. Every `chant` process that inherits it behaves the same way, including a `chant` command a step starts. An empty value, `0` or `false` leaves recording on.
+
+Each write still happens, in memory, so a later step in the same process reads what an earlier one wrote. An effect step finds its own receipt, and a work lease reads as held. The writes are dropped when the process ends, and the branch ref is never moved. A command that reads the branch with plain `git` does not see them.
+
+A gate step fails under `--no-record`, and the run handles it like any failing step: the steps after it don't run, `onFailure` runs, and the exit code is 1. It does not stop as gated, so `--gated-exit` doesn't apply. A standing approval doesn't pass the gate either. Passing it would apply under that approval without recording that the approval was used, so one approval could pass this run and the next recorded one. A pending fact it wrote could never be approved, since nobody else would see it. `chant approve` refuses while `CHANT_NO_RECORD` is set, for the same reason.
+
+The flag covers records only. A step that applies a stack, pushes a branch or calls an API still does so. `--no-record` runs on the local runtime only: with `--on <lexicon>` the hosting runtime records where it executes the run, so the combination is refused before anything starts.
+
 #### Drift as a failed job: `--fail-on-drift`
 
 A run whose `lifecycleDiff` step finds drift still completes, and exits 0. `--fail-on-drift` makes such a run exit **2** when its `Drift` outcome is true, so a scheduled drift job turns red without a script that reads the run ledger ([#3675](https://github.com/INTENTIUS/chant/issues/3675)):
@@ -254,6 +273,8 @@ A list is refused before anything runs when it names a component that does not e
 
 A `gate` anywhere in a component's composition stops that component pending `chant approve <component> <gate> --env <env>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval. The approval counts only for that environment and that plan, as [Gate approvals and environments](/chant/components/orchestration/#gate-approvals-and-environments) explains.
 
+Under [`--no-record`](#a-test-run---no-record) a component's gate fails instead, and the component unwinds as it would for any failed step. A successful run records no release and persists no build manifest.
+
 `--param name=value` and `--params-file <path>` bind declared build-time parameters for the component build, with the same precedence as [`chant build`](/chant/cli/build/#build-time-parameters). `--sandbox` runs any project source the driver has to execute in one isolated child process; an Op with a `policyGate` step is refused under `--sandbox`, since that gate builds the project in the chant process.
 
 #### Cross-job outputs: `--dump-outputs` and `--seed-outputs`
@@ -334,7 +355,7 @@ export default {
 };
 ```
 
-The `--no-release-record` flag always wins over config for that one invocation. See [Observability](/chant/components/observability/) for the release ledger this feeds, and [`chant components status`](/chant/cli/components/) to query it.
+The `--no-release-record` flag always wins over config for that one invocation. [`--no-record`](#a-test-run---no-record) also turns release recording off, along with everything else the run would write to the ledger. See [Observability](/chant/components/observability/) for the release ledger this feeds, and [`chant components status`](/chant/cli/components/) to query it.
 
 ## Flags
 
@@ -352,6 +373,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
 | `--output <dir>` | Where generated pipeline files go, instead of the forge's own directory (`run --generate`) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
+| `--no-record` | Run every step but record nothing on `chant/lifecycle` and push nothing; a gate step fails. `CHANT_NO_RECORD=1` does the same for every chant process that inherits it (`run <name>`, `run --components`, local runtime) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the run's ledger record as JSON on stdout (`run <name>`); the structured run result for `run --components` |
 | `--gated-exit <code>` | Exit code for a run that stopped at an unapproved gate, instead of the default 3. Only that outcome is remapped; a failure is still 1 |

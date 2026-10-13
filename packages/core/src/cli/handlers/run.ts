@@ -23,6 +23,7 @@ import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
 import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
 import { StaleLockError } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
+import { ledgerRecordingOff, noRecordEndNote, noRecordStartNote, resetNoRecordLedger, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
@@ -911,7 +912,48 @@ export async function recordAutoReleasesForRun(
  * auto-release check below used to apply itself) and reused for that check,
  * rather than loaded a second time.
  */
-export async function runOpComponents(ctx: CommandContext): Promise<number> {
+export function runOpComponents(ctx: CommandContext): Promise<number> {
+  return withRecordingChoice(ctx, () => runComponentSelection(ctx));
+}
+
+/**
+ * Run `run` with recording off when `--no-record` or `CHANT_NO_RECORD` asks
+ * for it (#3955), and say so before it starts and after it ends, whatever
+ * the outcome. The flag sets `CHANT_NO_RECORD` for the length of the run, so
+ * the ledger seam (`../../lifecycle/git.ts`) and every chant process a step
+ * starts see the same choice. A run with recording on is untouched.
+ */
+async function withRecordingChoice(ctx: CommandContext, run: () => Promise<number>): Promise<number> {
+  const flagged = ctx.args.noRecord === true;
+  if (!flagged && !ledgerRecordingOff()) return run();
+  const source = flagged ? "--no-record" : `${NO_RECORD_ENV}=${process.env[NO_RECORD_ENV]}`;
+  const prior = process.env[NO_RECORD_ENV];
+  if (flagged) process.env[NO_RECORD_ENV] = "1";
+  resetNoRecordLedger();
+  console.error(formatWarning({ message: noRecordStartNote(source) }));
+  try {
+    return await run();
+  } finally {
+    console.error(formatWarning({ message: noRecordEndNote(source) }));
+    resetNoRecordLedger();
+    if (flagged) {
+      if (prior === undefined) delete process.env[NO_RECORD_ENV];
+      else process.env[NO_RECORD_ENV] = prior;
+    }
+  }
+}
+
+/** A run that records nothing stays in this process (#3955): a runtime that runs it elsewhere would record there. */
+function refusesNoRecordOn(runtime: Pick<OpRuntimeProvider, "name">): boolean {
+  if (!ledgerRecordingOff() || runtime.name === "local") return false;
+  console.error(formatError({
+    message: `--no-record runs on the local runtime; the "${runtime.name}" runtime records the run where it executes it`,
+    hint: `Omit --on to run it here without recording, or drop --no-record (and ${NO_RECORD_ENV}).`,
+  }));
+  return true;
+}
+
+async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
   if (!selector || selector === ".") {
     console.error(formatError({
@@ -938,6 +980,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   const runtime = await resolveOpRuntime(ctx);
   if (!runtime) return 1;
+  if (refusesNoRecordOn(runtime)) return 1;
   if (!runtime.runComponents) {
     console.error(formatError({
       message: `--components is not supported on the "${runtime.name}" runtime`,
@@ -1049,7 +1092,8 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   }
 
   if (result.success && result.run) {
-    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
+    // #3955: a run that records nothing has no release to report either.
+    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
     const recorded = await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote
@@ -1077,7 +1121,11 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
  * what they were before the seam existed; a runtime that reports only a state
  * gets the terser render instead.
  */
-export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
+export function runOpOnRuntime(ctx: CommandContext): Promise<number> {
+  return withRecordingChoice(ctx, () => runOpOnResolvedRuntime(ctx));
+}
+
+async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
   if (!opName || opName === ".") {
     console.error(formatError({
@@ -1120,7 +1168,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   }
 
   const runtime = await resolveOpRuntime(ctx);
-  if (!runtime) {
+  if (!runtime || refusesNoRecordOn(runtime)) {
     await stewardGate?.release?.();
     return 1;
   }

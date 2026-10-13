@@ -867,6 +867,8 @@ chant looks up from a project's directory to the git root for a declaration. The
 
 A project with no declaration loads no workspace code for this lookup. When a declaration exists but can't be read, a ledger write fails with the read error instead of guessing the member. There is still one branch, so pushing it and refusing a stale push work as before. One commit can write the ledgers of several members.
 
+A run started with `chant run --no-record`, or with `CHANT_NO_RECORD=1` in its environment, writes none of these ([#3955](https://github.com/INTENTIUS/chant/issues/3955)). Its writes build commits in memory that the process drops when it ends. The branch ref doesn't move and nothing is pushed to the remote, so a lease ref stays in the checkout. Reads in the same process see the run's own writes, and a gate step fails because no approval can be recorded or spent. The [`chant run` reference](/chant/cli/run/#a-test-run---no-record) has the details.
+
 Receipts written by an `effect()` step are not on the branch. They live wherever the lexicon stores them, named by `ownership.stack` and environment, so distinct stacks keep members' receipts apart.
 
 Declaring a project as a member changes where it writes from then on. chant does not copy the records the project already wrote at the top of the branch. A project with history that becomes the root member `"."` keeps reading it.
