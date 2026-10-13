@@ -167,6 +167,14 @@ export interface ParsedArgs {
   env?: string;
   /** `chant emulator up --port <container-port>=<host-port>`, repeatable (#3673); a bare `<host-port>` when one emulator is selected. */
   port?: string[];
+  /** `chant emulator up --image <ref>` (#3952): the image to start, when one emulator is selected. */
+  image?: string;
+  /** `chant emulator up --network <name>` (#3952): the Docker network each started container joins. */
+  network?: string;
+  /** `chant emulator up --setting <KEY>=<VALUE>`, repeatable (#3952): an emulator setting such as `FLOCI_<NAME>`, passed as `-e`. */
+  setting?: string[];
+  /** `chant emulator up --loopback` (#3952): publish ports on 127.0.0.1 only. */
+  loopback?: boolean;
   /** `chant build --components --generate <lexicon> --promote-to <env>` (#2575) — add a promote job to the generated pipeline. */
   promoteTo?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */

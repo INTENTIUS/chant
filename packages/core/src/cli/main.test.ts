@@ -361,6 +361,22 @@ describe("parseArgs", () => {
 
   // ── --no-release-record (#597) ───────────────────────────────────────────
 
+  test("emulator up --image/--network/--setting/--loopback parse, and a missing value is refused (#3952)", () => {
+    const a = parseArgs([
+      "emulator", "up", "--image", "floci/floci:1.6.0", "--network", "loom",
+      "--setting", "FLOCI_A=1", "--setting", "FLOCI_B=2", "--loopback",
+    ]);
+    expect(a.image).toBe("floci/floci:1.6.0");
+    expect(a.network).toBe("loom");
+    expect(a.setting).toEqual(["FLOCI_A=1", "FLOCI_B=2"]);
+    expect(a.loopback).toBe(true);
+    expect(parseArgs(["emulator", "up", "--setting=FLOCI_A=1"]).setting).toEqual(["FLOCI_A=1"]);
+    expect(() => parseArgs(["emulator", "up", "--image"])).toThrow(/--image needs an image reference/);
+    expect(() => parseArgs(["emulator", "up", "--network", "--json"])).toThrow(/--network needs a Docker network name/);
+    expect(() => parseArgs(["emulator", "up", "--setting"])).toThrow(/--setting needs a value/);
+    expect(() => parseArgs(["emulator", "up", "--loopback=yes"])).toThrow();
+  });
+
   test("--promote-to <env> sets promoteTo, and a missing value is refused (#2575)", () => {
     expect(parseArgs(["build", "--components", "--generate", "github", "--promote-to", "prod"]).promoteTo).toBe("prod");
     expect(() => parseArgs(["build", "--components", "--generate", "github", "--promote-to"])).toThrow(/--promote-to needs an environment/);

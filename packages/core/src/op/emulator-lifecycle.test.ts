@@ -26,7 +26,7 @@ vi.mock("node:child_process", async () => {
   return { ...actual, exec: execStub, execFile: execFileStub };
 });
 
-const { clientHosts, emulatorLifecycle, endpointOnHost, hostPortInUse, parsePublishedAddresses, pickReachableEndpoint } =
+const { checkSettings, clientHosts, emulatorLifecycle, endpointOnHost, hostPortInUse, parsePublishedAddresses, pickReachableEndpoint } =
   await import("./emulator-lifecycle");
 
 describe("emulatorLifecycle command builders", () => {
@@ -58,6 +58,29 @@ describe("emulatorLifecycle command builders", () => {
     expect(e.runCommand({ extraArgs: ["-v", "/sock:/sock"] })).toBe(
       "docker run -d --rm --name n -p 80:80 --pull always -v /sock:/sock img:1",
     );
+  });
+
+  test("network, settings and loopback go before the image (#3952)", () => {
+    const e = emulatorLifecycle({ name: "n", image: "img:1", containerPort: 80, healthPath: "/h", settingsPrefix: "X_" });
+    expect(e.runCommand({ network: "loom", settings: { X_MODE: "memory", X_TTL: "30" }, loopback: true })).toBe(
+      "docker run -d --rm --name n -p 127.0.0.1:80:80 --network loom -e X_MODE=memory -e X_TTL=30 img:1",
+    );
+  });
+
+  test("a setting value with spaces or shell syntax is quoted as one word (#3952)", () => {
+    const e = emulatorLifecycle({ name: "n", image: "img:1", containerPort: 80, healthPath: "/h", settingsPrefix: "X_" });
+    expect(e.runCommand({ settings: { X_A: "a b; rm -rf /", X_B: "it's" } })).toBe(
+      "docker run -d --rm --name n -p 80:80 -e 'X_A=a b; rm -rf /' -e 'X_B=it'\\''s' img:1",
+    );
+  });
+
+  test("settings outside the prefix, or on a spec without one, are refused (#3952)", () => {
+    const e = emulatorLifecycle({ name: "n", image: "img:1", containerPort: 80, healthPath: "/h", settingsPrefix: "X_" });
+    expect(() => e.runCommand({ settings: { PATH: "/tmp" } })).toThrow(/setting PATH is not a X_\* variable/);
+    expect(() => e.runCommand({ settings: { X_: "1" } })).toThrow(/not a X_\* variable/);
+    expect(() => e.runCommand({ settings: { "X_A;B": "1" } })).toThrow(/not a X_\* variable/);
+    expect(() => emu.runCommand({ settings: { X_A: "1" } })).toThrow(/takes no settings/);
+    expect(() => checkSettings({ name: "n", image: "i", containerPort: 1, settingsPrefix: "X_" }, {})).not.toThrow();
   });
 
   test("exists / rm / health / endpoint", () => {
