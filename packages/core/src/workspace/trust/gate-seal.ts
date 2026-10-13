@@ -37,7 +37,18 @@ export interface SealedGateApproval {
   /** Who relayed the approval for `resolvedBy` (#3402), when someone did. */
   relayedBy?: string;
   timestamp: string;
+  /** The checkpoint the approval lets a run resume from (#3947), when it carries one. */
+  checkpointDigest?: string;
   seal?: unknown;
+}
+
+/**
+ * The version of a seal over `a` (#3947): 2 when the approval carries a
+ * checkpoint digest, which the payload signs, and 1 otherwise. `chant approve
+ * --sign` records 2 on the seal; a seal records no version for 1.
+ */
+export function gateSealVersion(a: Pick<SealedGateApproval, "checkpointDigest">): 1 | 2 {
+  return a.checkpointDigest !== undefined ? 2 : 1;
 }
 
 /**
@@ -48,10 +59,17 @@ export interface SealedGateApproval {
  * `relayed-by <principal>`, so the relay can't be added, changed or removed
  * after sealing; an approval nobody relayed signs the six lines it always did,
  * so seals made before #3402 still verify.
+ *
+ * Seal version 2 (#3947) adds the checkpoint a resumed run carries its step
+ * outputs from: an approval with a `checkpointDigest` signs one more line,
+ * `checkpoint <digest>`, last. The values the steps after the gate read are
+ * then covered by the seal too, and removing or swapping the digest stops it
+ * verifying. An approval with none signs what a version 1 seal signed.
  */
 export function gateSealPayload(a: SealedGateApproval): Buffer {
   const relay = a.relayedBy !== undefined ? `\nrelayed-by ${a.relayedBy}` : "";
-  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}`, "utf-8");
+  const checkpoint = gateSealVersion(a) === 2 ? `\ncheckpoint ${a.checkpointDigest}` : "";
+  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}${checkpoint}`, "utf-8");
 }
 
 // ── SSHSIG ───────────────────────────────────────────────────────────────

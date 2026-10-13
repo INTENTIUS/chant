@@ -358,6 +358,14 @@ export async function recordGateApproval(
     }
     planDigest = standing.planDigest;
   }
+  // #3947: a gate that resumes recorded a checkpoint with its pending fact.
+  // An approval of that fact's plan copies the checkpoint's digest, the way it
+  // copies the plan's, so the run that resumes checks the file against what
+  // was approved here. An approval of another plan copies none.
+  const checkpointDigest =
+    standing?.checkpointDigest !== undefined && samePlanDigest(planDigest, standing.planDigest)
+      ? standing.checkpointDigest
+      : undefined;
 
   // chant#2384 — the gate's whole value is that its two halves have different
   // authors. At a shell they do: a person runs, reads the plan, and approves.
@@ -457,11 +465,11 @@ export async function recordGateApproval(
   const timestamp = new Date().toISOString();
   let seal: GateResolutionRecord["seal"];
   if (opts.sign !== undefined) {
-    const { resolveSigningKey, sealGateApproval, SealError } = await import("../../workspace/trust/seal");
+    const { resolveSigningKey, sealGateApproval, gateSealVersion, SealError } = await import("../../workspace/trust/seal");
     try {
       const key = resolveSigningKey(opts.sign, cwd);
       try {
-        seal = sealGateApproval(key.file, {
+        const sealed = {
           op: opName,
           gate,
           ...(environment !== undefined ? { environment } : {}),
@@ -469,7 +477,10 @@ export async function recordGateApproval(
           resolvedBy,
           ...(relayedBy ? { relayedBy } : {}),
           timestamp,
-        });
+          ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+        };
+        // #3947: a seal over a checkpoint digest is seal version 2.
+        seal = { ...sealGateApproval(key.file, sealed), ...(gateSealVersion(sealed) === 2 ? { version: 2 as const } : {}) };
       } finally {
         key.cleanup();
       }
@@ -488,6 +499,7 @@ export async function recordGateApproval(
       resolvedBy,
       ...(relayedBy ? { relayedBy } : {}),
       timestamp,
+      ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
       seal,
     });
     if (why !== null) {
@@ -550,6 +562,7 @@ export async function recordGateApproval(
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
     ...(planDigest !== undefined ? { planDigest } : {}),
+    ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(environment !== undefined ? { environment } : {}),
     origin,
     ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
@@ -572,6 +585,12 @@ export async function recordGateApproval(
       `This approves the plan ${record.planDigest}` +
         (record.environment !== undefined ? ` in environment "${record.environment}"` : "") +
         ", and only that plan. A run whose fresh plan differs refuses rather than applying it.",
+    ));
+  }
+  if (record.checkpointDigest) {
+    console.error(formatInfo(
+      `The next run resumes at this gate from run ${standing?.runId ?? "(unknown)"}'s checkpoint ${record.checkpointDigest}, ` +
+        "after it plans again. A moved plan or another commit starts it at the first phase.",
     ));
   }
   if (approval) {

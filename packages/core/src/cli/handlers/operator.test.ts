@@ -929,6 +929,52 @@ describe("runApprove — the resolution names the plan it approves (#2300)", () 
   });
 });
 
+/** #3947 — a gate that resumes recorded a checkpoint, and its approval copies the digest. */
+describe("runApprove — the approval copies the checkpoint a resumed run carries on from (#3947)", () => {
+  const CHECKPOINT = `jcs1-sha256:${"c".repeat(64)}`;
+  const seedCheckpoint = () =>
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate", runId: "local-1",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+        planDigest: PLAN_A, checkpointDigest: CHECKPOINT,
+      }],
+      malformed: 0,
+    });
+
+  test("approving the standing fact copies its checkpoint digest and says the next run resumes", async () => {
+    seedCheckpoint();
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: {
+        version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex",
+        timestamp: "2026-01-01T00:00:00.000Z", planDigest: PLAN_A, checkpointDigest: CHECKPOINT,
+      },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_A, checkpointDigest: CHECKPOINT }));
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain(`resumes at this gate from run local-1's checkpoint ${CHECKPOINT}`);
+    errSpy.mockRestore();
+  });
+
+  test("an approval of another plan copies no checkpoint", async () => {
+    seedCheckpoint();
+    const other = `sha256:${"b".repeat(64)}`;
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", planDigest: other },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", plan: other }))).toBe(0);
+    expect(appendGateResolutionMock.mock.calls[0][0]).not.toHaveProperty("checkpointDigest");
+    errSpy.mockRestore();
+  });
+});
+
 /**
  * #2574 — a component's gate ledger holds every environment's pending facts.
  * The approval records the environment it answers, and `--env` picks it.
