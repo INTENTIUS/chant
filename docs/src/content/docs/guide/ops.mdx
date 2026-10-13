@@ -141,6 +141,8 @@ phase("Smoke", [
 
 The reference is inert until the run resolves it, so nothing is interpolated at build time, and OPS013 checks it against the producer's declared return type before `chant build` emits.
 
+A step in `onFailure` can read any main-phase step, and a step inside an `effect()` can read any step that runs before the effect ([#3948](https://github.com/INTENTIUS/chant/issues/3948)). A step inside an effect can't be read by anything else, because it runs only when the effect fires.
+
 `cmd` itself takes no references and stays a plain string. A value spliced into a command line is a quoting decision, and `env` carries the same value into the same command with the shell's own rules intact.
 
 A non-zero exit still fails the step. `okExit` names the codes that do not, which is what makes `exitCode` worth reading at all. A command that reports its answer through its exit status, the way `diff` and `grep` do, then becomes a value a later step can branch on rather than a failed run.
@@ -542,6 +544,8 @@ export default Op({
 ```
 
 A gate is not a failure, so a run that stops at one runs no `onFailure` phase. Nothing failed, so there is nothing to compensate for.
+
+A compensation step can read what a main-phase step returned, such as the revision a deploy replaced. The failure may have stopped the run before that step finished. In that case the compensation step is skipped rather than called without the value, its record says which step didn't complete, and the rest of compensation still runs. An `effect()` in `onFailure` whose steps read such a step is skipped as a whole.
 
 ## Continuous observation
 

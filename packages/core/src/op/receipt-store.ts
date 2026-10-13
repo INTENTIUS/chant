@@ -34,6 +34,8 @@ import {
   referenceInputPaths,
   type EffectReceiptDeclaration,
   type EffectReceiptFlavor,
+  declaredExpectation,
+  withStepOutputs,
 } from "../effect-receipt";
 
 /**
@@ -101,7 +103,14 @@ export function receiptCheckInput(receipt: EffectReceiptDeclaration): ReceiptChe
 // ── Activity contracts ────────────────────────────────────────────────────────
 
 /** Args of the `receiptRead` activity, as the effect step's codegen emits them. */
-export interface ReceiptReadArgs extends ReceiptCheckInput {}
+export interface ReceiptReadArgs extends ReceiptCheckInput {
+  /**
+   * The digest of the step outputs the effect's nested steps read (#3948),
+   * when they read any. Folded into the expectation by {@link withStepOutputs}.
+   */
+  outputs?: string;
+}
+
 
 /** Result of the `receiptRead` activity. `current` is `null` (not `undefined`)
  * for an absent receipt so the value survives JSON transport. */
@@ -183,7 +192,8 @@ export function receiptActivities(store: ReceiptStore, opts?: ReceiptActivityOpt
 
   return {
     async receiptRead(args: ReceiptReadArgs): Promise<ReceiptReadResult> {
-      const expectation = await expectationOf(args);
+      const declared = await expectationOf(args);
+      const expectation = args.outputs !== undefined ? withStepOutputs(declared, args.outputs) : declared;
       const current = await store.read(args.receipt);
       return { current: current ?? null, expectation, applied: current === expectation };
     },
@@ -201,7 +211,7 @@ export function receiptActivities(store: ReceiptStore, opts?: ReceiptActivityOpt
         const current = await store.read(input.receipt);
         if (current === undefined) {
           findings.push({ receipt: input.receipt.name, effect: input.receipt.effect, kind: "absent", expected });
-        } else if (current !== expected) {
+        } else if (declaredExpectation(current) !== expected) {
           findings.push({ receipt: input.receipt.name, effect: input.receipt.effect, kind: "differs", expected, current });
         }
       }

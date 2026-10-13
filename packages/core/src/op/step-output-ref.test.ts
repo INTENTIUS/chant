@@ -10,7 +10,7 @@ import { z } from "zod";
 import { activity, phase, effect } from "./builders";
 import type { OpConfig } from "./types";
 import { activityContract, type ActivityContract } from "./activity-contract";
-import { stepOutput, isStepOutputRef, collectStepOutputRefs, validateStepOutputRefs } from "./step-output-ref";
+import { stepOutput, isStepOutputRef, collectStepOutputRefs, validateStepOutputRefs, validateStepOutputRefScope } from "./step-output-ref";
 import { EffectReceipt } from "../effect-receipt";
 
 const lifecycleDiffContract = activityContract(
@@ -248,32 +248,6 @@ describe("validateStepOutputRefs() — structural coverage", () => {
     expect(issues.some((i) => i.message.includes("declares no return schema"))).toBe(true);
   });
 
-  it("flags a reference authored inside onFailure", () => {
-    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
-    const rollback = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
-    const config = opWith({ phases: [phase("P", [diff])], onFailure: [phase("Rollback", [rollback])] });
-    const contracts = new Map<string, ActivityContract>([
-      ["lifecycleDiff", lifecycleDiffContract],
-      ["applyStacks", applyStacksContract],
-    ]);
-    const issues = validateStepOutputRefs(config, contracts);
-    expect(issues.some((i) => i.message.includes("onFailure compensation"))).toBe(true);
-  });
-
-  it("flags a reference authored inside an effect step's nested steps", () => {
-    const receipt = EffectReceipt("seeded", { effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql", version: 3 } });
-    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
-    const nested = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
-    const effectStep = effect(receipt, [nested]);
-    const config = opWith({ phases: [phase("P", [diff, effectStep])] });
-    const contracts = new Map<string, ActivityContract>([
-      ["lifecycleDiff", lifecycleDiffContract],
-      ["applyStacks", applyStacksContract],
-    ]);
-    const issues = validateStepOutputRefs(config, contracts);
-    expect(issues.some((i) => i.message.includes("nested inside an effect step"))).toBe(true);
-  });
-
   it("reports every issue across multiple refs, not just the first", () => {
     const apply1 = activity("applyStacks", { stacks: stepOutput("nope1", "x") });
     const apply2 = activity("applyStacks", { stacks: stepOutput("nope2", "x") });
@@ -281,6 +255,76 @@ describe("validateStepOutputRefs() — structural coverage", () => {
     const issues = validateStepOutputRefs(config, new Map([["applyStacks", applyStacksContract]]));
     expect(issues.some((i) => i.message.includes("nope1"))).toBe(true);
     expect(issues.some((i) => i.message.includes("nope2"))).toBe(true);
+  });
+});
+
+// ── onFailure and effect steps (#3948) ───────────────────────────────────────
+
+describe("validateStepOutputRefs() — onFailure and effect steps (#3948)", () => {
+  const seeded = EffectReceipt("seeded", { effect: "db-seed", flavor: "hash", inputs: { file: "seed.sql", version: 3 } });
+  const contracts = new Map<string, ActivityContract>([
+    ["lifecycleDiff", lifecycleDiffContract],
+    ["applyStacks", applyStacksContract],
+  ]);
+
+  it("an onFailure step may reference any main-phase step", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const apply = activity("applyStacks", { stacks: ["a"] });
+    const rollback = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
+    const config = opWith({ phases: [phase("Diff", [diff]), phase("Apply", [apply])], onFailure: [phase("Rollback", [rollback])] });
+    expect(validateStepOutputRefs(config, contracts)).toEqual([]);
+  });
+
+  it("an onFailure step's reference is still checked against the producer's contract", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const rollback = activity("applyStacks", { stacks: stepOutput("diff", "nope") });
+    const config = opWith({ phases: [phase("P", [diff])], onFailure: [phase("Rollback", [rollback])] });
+    const issues = validateStepOutputRefs(config, contracts);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].phase).toBe("Rollback");
+    expect(issues[0].message).toMatch(/path "nope", which does not exist/);
+  });
+
+  it("an onFailure step cannot reference another onFailure step", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "undoDiff" });
+    const rollback = activity("applyStacks", { stacks: stepOutput("undoDiff", "driftedStacks") });
+    const config = opWith({ phases: [phase("P", [activity("applyStacks", { stacks: [] })])], onFailure: [phase("Rollback", [diff, rollback])] });
+    expect(validateStepOutputRefScope(config)[0].message).toMatch(/unknown step id "undoDiff"/);
+  });
+
+  it("a step inside an effect may reference a step that runs before the effect", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const nested = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
+    const config = opWith({ phases: [phase("P", [diff, effect(seeded, [nested])])] });
+    expect(validateStepOutputRefs(config, contracts)).toEqual([]);
+  });
+
+  it("a step inside an effect in onFailure may reference a main-phase step", () => {
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const nested = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
+    const config = opWith({ phases: [phase("P", [diff])], onFailure: [phase("Undo", [effect(seeded, [nested])])] });
+    expect(validateStepOutputRefs(config, contracts)).toEqual([]);
+  });
+
+  it("a step inside an effect cannot reference a step after the effect", () => {
+    const nested = activity("applyStacks", { stacks: stepOutput("diff", "driftedStacks") });
+    const diff = activity("lifecycleDiff", { env: "prod" }, { id: "diff" });
+    const config = opWith({ phases: [phase("P", [effect(seeded, [nested]), diff])] });
+    expect(validateStepOutputRefScope(config)[0].message).toMatch(/step "diff" does not run before this step/);
+  });
+
+  it("nothing can reference a step nested inside an effect (decision A7)", () => {
+    const inner = activity("lifecycleDiff", { env: "prod" }, { id: "inner" });
+    const sibling = activity("applyStacks", { stacks: stepOutput("inner", "driftedStacks") });
+    const later = activity("applyStacks", { stacks: stepOutput("inner", "driftedStacks") });
+    const rollback = activity("applyStacks", { stacks: stepOutput("inner", "driftedStacks") });
+    const config = opWith({
+      phases: [phase("P", [effect(seeded, [inner, sibling]), later])],
+      onFailure: [phase("Rollback", [rollback])],
+    });
+    const issues = validateStepOutputRefScope(config);
+    expect(issues).toHaveLength(3);
+    for (const issue of issues) expect(issue.message).toMatch(/"inner", which is nested inside an effect step/);
   });
 });
 
