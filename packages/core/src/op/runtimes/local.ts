@@ -22,6 +22,7 @@ import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { loadActivities, loadProfiles } from "../activity-registry";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "../local-executor";
+import { stepHeartbeatMs } from "../step-console";
 import { runComponents } from "../../components/cli-support";
 import { discoverOps } from "../discover";
 import { readRunLedger, runEnvOf, DEFAULT_RUN_ENV } from "../../lifecycle/run-ledger";
@@ -172,6 +173,11 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
                     `appended to the run ledger: ${err instanceof Error ? err.message : String(err)}\n`,
                 ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
+              // #3956: a running step's output, and a still-running line while
+              // it is quiet, on stderr as they happen; stdout stays the
+              // `--json` record's and `--progress-json`'s.
+              stepOutput: (line) => process.stderr.write(`${line}\n`),
+              stepHeartbeatMs: stepHeartbeatMs(process.env, (message) => process.stderr.write(`warning: ${message}\n`)),
               ...(startOpts.work ? { work: startOpts.work } : {}),
               onWorkLeaseWarning: (message) =>
                 process.stderr.write(`warning: "${op.name}" could not renew its work lease, retrying at the next beat: ${message}\n`),
