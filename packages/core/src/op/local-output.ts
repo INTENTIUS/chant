@@ -53,6 +53,10 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed 
     if (record.approval) {
       write(`    [approved] ${record.approval.resolvedBy} at ${record.approval.timestamp}` +
         (record.approval.url ? ` (${record.approval.url})` : ""));
+      // #3949: an approval carried from one of the gate's aliases names where it came from.
+      for (const c of record.approval.carriedFrom ?? []) {
+        write(`    [carried] ${c.resolvedBy}'s approval of ${c.op}/${c.gate} at ${c.timestamp}`);
+      }
     }
     if (record.refusal) {
       write(`    [refused] ${record.refusal}`);

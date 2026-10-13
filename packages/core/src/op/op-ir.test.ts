@@ -269,6 +269,19 @@ describe("op.json IR", () => {
     expect(opConfigFromIR(JSON.parse(text) as OpIR).phases[0]!.steps[0]).toMatchObject({ kind: "gate", resume: true });
   });
 
+  // #3949: a gate's aliases travel in op.json, so a runtime that reads it counts the same approvals.
+  it("carries a gate's aliases through op.json and back", () => {
+    const aliases = [{ op: "upgrade-tier-1", gate: "approve" }, { gate: "approve-old" }];
+    const config: OpConfig = {
+      name: "upgrade",
+      overview: "o",
+      phases: [phase("Gate", [{ kind: "gate", gate: "approve-tier-1", plan: "jcs1-sha256:" + "a".repeat(64), aliases }])],
+    };
+    const text = serializeOpIR(config);
+    expect((JSON.parse(text) as OpIR).phases[0].steps[0]).toMatchObject({ kind: "gate", aliases });
+    expect(opConfigFromIR(JSON.parse(text) as OpIR).phases[0]!.steps[0]).toMatchObject({ kind: "gate", aliases });
+  });
+
   it("round-trips a minimal Op (no gate, effect, onFailure or labels) too", () => {
     const original: OpConfig = { name: "minimal", overview: "o", phases: [phase("Only", [shell("echo hi")])] };
     const text = serializeOpIR(original);

@@ -210,6 +210,33 @@ export interface GateResolutionRecord {
    * `constrains` names the gate back (`gate:<op>/<gate>`).
    */
   answer?: GateAnswerRef;
+  /**
+   * The line this approval was carried from (#3949): an approval recorded
+   * under one of the gate's aliases, which a run counted toward the gate and
+   * wrote again under its new name. `op`, `gate` and `timestamp` name that
+   * line; `checkpointDigest` is the one it carried, if any, since a seal
+   * signs it. `resolvedBy`, the plan, the environment and the seal are the
+   * original's, and the seal verifies against the names in here. This
+   * record's own `timestamp` is when it was carried.
+   */
+  carriedFrom?: GateCarriedFrom;
+}
+
+/** Where a carried approval came from (#3949): the original line's op, gate and time, and its checkpoint digest when it had one. */
+export interface GateCarriedFrom {
+  op: string;
+  gate: string;
+  timestamp: string;
+  checkpointDigest?: string;
+}
+
+/** Whether `raw` is a {@link GateCarriedFrom}. */
+export function isGateCarriedFrom(raw: unknown): raw is GateCarriedFrom {
+  const c = raw as Partial<GateCarriedFrom> | null;
+  return (
+    !!c && typeof c === "object" && !Array.isArray(c) && typeof c.op === "string" && typeof c.gate === "string" &&
+    typeof c.timestamp === "string" && (c.checkpointDigest === undefined || typeof c.checkpointDigest === "string")
+  );
 }
 
 /** A gate approval's seal (#3163): who signed, the key's fingerprint (reported, never trusted), and the armored signature. */
@@ -513,6 +540,12 @@ export function parseGateLedger(
         continue;
       }
       if (typeof parsed.resolvedBy !== "string") {
+        malformed++;
+        continue;
+      }
+      // #3949: a carried approval's seal is checked against the line it cites, so the citation must be whole.
+      const rawCarried: unknown = (parsed as { carriedFrom?: unknown }).carriedFrom;
+      if (rawCarried !== undefined && !isGateCarriedFrom(rawCarried)) {
         malformed++;
         continue;
       }

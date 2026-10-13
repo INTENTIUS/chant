@@ -27,7 +27,7 @@ import { coreKnowledgeChecks } from "../../lint/knowledge-checks";
 import { applyConfiguredSeverity, applyConfiguredPreset, resolvePresetIds } from "../../lint/config";
 import { applyInlineSuppressions, type SuppressionMetaFinding } from "../../lint/suppressions";
 import type { Declarable } from "../../declarable";
-import { coreOpChecks } from "../../lint/rules/op";
+import { coreOpChecks, workspaceIdentityGates } from "../../lint/rules/op";
 import { loadPolicyChecks } from "../../lint/policy";
 import { armSandboxPolicyExecution, runProjectPolicies } from "../../lint/policy-sandbox";
 import { sortedJsonReplacer } from "../../utils";
@@ -588,7 +588,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // FULL build result regardless of which plugins loaded — same as the
   // receipt/output/knowledge checks above.
   if (result.errors.length === 0) {
-    const opDiags = runPostSynthChecks(coreOpChecks({ decideBackends: config.decide?.backends }), result, env, { activityContracts });
+    // OPS017 (#3949) reads the workspace's identity.gates, when an Op has gate aliases.
+    const identityGates = await workspaceIdentityGates(configDir, result.entities);
+    const opDiags = runPostSynthChecks(
+      coreOpChecks({ decideBackends: config.decide?.backends, ...(identityGates ? { identityGates } : {}) }),
+      result,
+      env,
+      { activityContracts },
+    );
     const { diagnostics: activeDiags, suppressed } = applyConfiguredSeverity(opDiags, config.lint?.rules);
     suppressedPostSynthCount += suppressed.length;
     for (const diag of activeDiags) {

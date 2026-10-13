@@ -515,6 +515,42 @@ An override is spent once a run applies under it. The same plan denied again wai
 
 Inside chant, `readOverrideLedger`, `recordOverrideDenial` and `recordOverridesApplied` in `lifecycle/override-ledger` read and write the same lines on `chant/lifecycle`.
 
+### Renaming a gate
+
+A gate is known by its Op's name and its own. The ledger is per Op (`_gates/<op>.jsonl`), and every decision reads the approvals of one gate name. Merging three per-tier upgrade Ops into one Op with a gate per wave therefore renames every gate, and the approvals already on the ledger stop counting. A gate lists its old names as `aliases` so those approvals still count after the restructure ([#3949](https://github.com/INTENTIUS/chant/issues/3949)):
+
+```typescript
+export default Op({
+  name: "upgrade",
+  overview: "Upgrade every tier, one wave each",
+  phases: [
+    phase("Plan", [plan]),
+    phase("Wave 1", [gate("approve-tier-1", { plan: plan.out.planDigest, aliases: [{ op: "upgrade-tier-1", gate: "approve" }] })]),
+    phase("Apply 1", [activity("applyTier", { tier: 1 })]),
+    phase("Wave 2", [gate("approve-tier-2", { plan: plan.out.planDigest, aliases: [{ op: "upgrade-tier-2", gate: "approve" }] })]),
+    phase("Apply 2", [activity("applyTier", { tier: 2 })]),
+  ],
+});
+```
+
+An alias names an Op and a gate. Leave `op` out for a gate renamed inside the same Op. When a run reaches the gate and nothing under its own name passes it, the run reads the old Op's ledger. An approval recorded there counts toward the new gate when all of these hold:
+
+- it answers the old name's standing pending fact, by the rule the old gate decided by
+- that pending fact hasn't expired, so the alias stops admitting anything once it does
+- its plan digest is the one this run planned, which is why only a gate with a `plan` takes aliases
+- it is for the environment this run is in
+- a wave hasn't spent it under either name
+- it passes the new gate's `identity.gates` rule, with its seal checked against the names it was signed under
+- a person made it, because a policy permit was evaluated against another gate and doesn't carry over
+
+On a gate with a quorum, approvals under the old and new names add up, and each approver counts once.
+
+The run then writes each approval it counted again, under the new gate's name. The new line copies the original approval except its policy decision, and adds `carriedFrom: { op, gate, timestamp }` to name the line it came from. Its own `timestamp` is when it was carried. The step record shows `via: "alias"` and lists the carried approvals under `carriedFrom`. Later runs read the carried line from the new Op's ledger like any other approval, while the gate still lists the alias. Remove the alias and the carried lines stop counting.
+
+A carried approval doesn't let a run resume at a gate with `resume: true`. Its approver saw the old gate's checkpoint and never the one the new gate stores. The old checkpoint digest moves onto `carriedFrom`, where the seal still covers it. The run starts at the first phase, and the carried approval passes the gate when the run gets there.
+
+`chant approve upgrade-tier-1 approve` keeps working until the new gate records a pending fact of its own. After that it refuses, naming `chant approve upgrade approve-tier-1` instead. [OPS017](/chant/lint-rules/correctness/#ops017-unsafe-gate-alias) refuses an alias that is still a gate somewhere in the build, an alias two gates claim, and a gate that drops an `identity.gates` rule its alias had.
+
 ## Running under a work lease
 
 An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item. An item id has to be a valid git ref name segment (letters, digits, `.`, `_` and `-`, no `..`, no trailing `.`, no `.lock` suffix), and a literal id that isn't is refused when the Op is built ([#2815](https://github.com/INTENTIUS/chant/issues/2815)).

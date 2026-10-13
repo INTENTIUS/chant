@@ -5,6 +5,7 @@
  * re-exports everything here.
  */
 import { discoverOps } from "../../op/discover";
+import { aliasingGate } from "../../op/gate-alias";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
 import {
   currentGateOrigin, isModelAuthored, sameOriginRefusal, UNATTESTED_APPROVER, type GateOrigin,
@@ -280,7 +281,9 @@ export async function recordGateApproval(
   // `fan-out` is the op name every `chant components fan-out` gate is recorded
   // under (../handlers/fan-out.ts). It is a command rather than a declaration,
   // so there is no `*.op.ts` to find and nothing is wrong when none is there.
-  if (!ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== OVERRIDE_GATE_OP) {
+  // #3949: a gate that lists this one as an alias, after an Op was restructured.
+  const successor = aliasingGate([...ops.values()].map((o) => o.config), opName, gate);
+  if (!successor && !ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== OVERRIDE_GATE_OP) {
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));
@@ -299,6 +302,26 @@ export async function recordGateApproval(
       hint: "The pending fact this answers lives on that branch; appending without it would drop it.",
     }));
     return { ok: false };
+  }
+
+  // #3949: an approval under an alias counts toward the new gate only while
+  // the new gate has no standing fact of its own. Once it has one, approve
+  // the gate the runs now stop at.
+  if (successor) {
+    const theirs = latestPendingGate((await readGateLedger(successor.op)).pending, successor.gate);
+    if (theirs && !isPendingGateExpired(theirs, new Date().toISOString())) {
+      console.error(formatError({
+        message:
+          `Gate "${gate}" on "${opName}" is now gate "${successor.gate}" on "${successor.op}", which lists it as an alias, ` +
+          `and "${successor.gate}" has a standing pending fact`,
+        hint: `Approve that gate instead: chant approve ${successor.op} ${successor.gate}`,
+      }));
+      return { ok: false };
+    }
+    console.error(formatInfo(
+      `Gate "${gate}" on "${opName}" is an alias of gate "${successor.gate}" on "${successor.op}": ` +
+        `the next run of ${successor.op} counts this approval there while the pending fact it answers stands and the plan is the same.`,
+    ));
   }
 
   // #2028: the resolution's link is typed. `--url` wins; otherwise, running

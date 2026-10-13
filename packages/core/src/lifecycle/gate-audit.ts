@@ -48,6 +48,13 @@
  * - `override`: an apply cites an override that no line holds.
  * - `malformed-line`: a line that is not a gate record. Its content is lost
  *   to the trail, so it is said.
+ * - `carried-without-source`: an approval carried from a gate's alias
+ *   (#3949, `carriedFrom`) whose cited line is not in the cited op's
+ *   ledger. Checked only when that ledger is passed in.
+ *
+ * A carried approval's request is the pending fact of the name it was
+ * carried from, in that op's ledger. When that ledger is not passed in,
+ * neither gap is looked for, and the entry's `carriedFrom` says where to look.
  *
  * ## Sources and ids
  *
@@ -211,13 +218,15 @@ export interface GateAuditEntry {
   subject?: "approval" | "override";
   /** An applied entry: the approval entry it ran under, if one is held. An override-spent entry: the override entry. */
   under?: string;
+  /** An approval a run carried from one of the gate's aliases (#3949): the op, gate and time of the line it came from. */
+  carriedFrom?: { op: string; gate: string; at: string };
   /** Everything else the line carries, such as `members`, `via` or a product's own fields. */
   detail: Record<string, unknown>;
   source: GateAuditSource;
 }
 
 export interface GateAuditGap {
-  kind: "approval-without-request" | "unsealed" | "approval" | "override" | "malformed-line";
+  kind: "approval-without-request" | "unsealed" | "approval" | "override" | "malformed-line" | "carried-without-source";
   op?: string;
   gate?: string;
   digest?: string;
@@ -284,7 +293,7 @@ type Row = Record<string, unknown>;
 
 const KNOWN = new Set([
   "version", "kind", "op", "gate", "resolvedBy", "relayedBy", "timestamp", "note", "url", "planDigest", "environment",
-  "approver", "seal", "review", "runId", "expiresAt", "description", "wave", "heldBy", "approvalMode", "rules", "pr", "head", "reviewers",
+  "approver", "seal", "review", "runId", "expiresAt", "description", "wave", "heldBy", "approvalMode", "rules", "pr", "head", "reviewers", "carriedFrom",
 ]);
 
 const waveOf = (v: unknown): { number: number; name: string; op?: string } | undefined => {
@@ -335,6 +344,11 @@ function approverOf(r: Row): GateAuditEntry["approver"] {
   return { kind: a.kind, ...(roles ? { roles } : {}) };
 }
 
+const carriedOf = (v: unknown): GateAuditEntry["carriedFrom"] => {
+  const c = v as { op?: unknown; gate?: unknown; timestamp?: unknown } | null;
+  return c && typeof c === "object" && typeof c.op === "string" && typeof c.gate === "string" && typeof c.timestamp === "string" ? { op: c.op, gate: c.gate, at: c.timestamp } : undefined;
+};
+
 const drop = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 
 const idOf = (...parts: unknown[]): string => contentDigest(canonicalJson(parts));
@@ -374,6 +388,19 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
   const keyed = (e: GateAuditEntry): GateAuditEntry => (rekey ? { ...e, id: rekey(e) } : e);
   const entries: GateAuditEntry[] = [];
   const gaps: GateAuditGap[] = [];
+
+  // #3949: every ledger's requests and approvals by op, for an approval carried from another op's gate.
+  const byOp = new Map<string, { requests: Seen[]; approvals: Row[] }>();
+  for (const ledger of input.ledgers) {
+    const held = byOp.get(ledger.op) ?? { requests: [], approvals: [] };
+    byOp.set(ledger.op, held);
+    for (const line of ledger.lines) {
+      const r = rowOf(line);
+      if (!r || line.removed || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+      if (r.kind === "pending") held.requests.push({ op: ledger.op, gate: r.gate, at: time(r.timestamp), ...(str(r.planDigest) ? { digest: str(r.planDigest) } : {}) });
+      else held.approvals.push(r);
+    }
+  }
 
   for (const ledger of input.ledgers) {
     const path = ledger.path ?? `_gates/${ledger.op}.jsonl`;
@@ -453,12 +480,22 @@ export function deriveGateAudit(input: GateAuditInput): { entries: GateAuditEntr
         at: String(r.timestamp),
         by: String(r.resolvedBy),
         seal,
-        ...drop({ sealed, signer, committedBy: line.added?.by, relayedBy: str(r.relayedBy), approver: approverOf(r), note: str(r.note), url: str(r.url), review: reviewOf(r), rules }),
+        ...drop({ sealed, signer, committedBy: line.added?.by, relayedBy: str(r.relayedBy), approver: approverOf(r), note: str(r.note), url: str(r.url), review: reviewOf(r), rules, carriedFrom: carriedOf(r.carriedFrom) }),
         detail: extra,
       });
       entries.push(entry);
 
-      if (!override) {
+      const carried = entry.carriedFrom;
+      if (!override && carried) {
+        const cited = byOp.get(carried.op);
+        const from = `${carried.op}/${carried.gate}`;
+        if (cited && !cited.approvals.some((a) => a.gate === carried.gate && time(String(a.timestamp)) === time(carried.at) && a.resolvedBy === r.resolvedBy)) {
+          gaps.push({ kind: "carried-without-source", op: ledger.op, gate, ...(digest ? { digest } : {}), detail: `${path} holds an approval of ${gate} by ${entry.by} carried from ${from} at ${carried.at}, and _gates/${carried.op}.jsonl holds no such approval` });
+        }
+        if (cited && !cited.requests.some((q) => q.gate === carried.gate && q.at <= time(carried.at) && compatible(q.digest, digest))) {
+          gaps.push({ kind: "approval-without-request", op: ledger.op, gate, ...(digest ? { digest } : {}), detail: `${path} holds an approval of ${gate} by ${entry.by} carried from ${from} at ${carried.at} with no pending fact of ${from}${digest ? " and digest" : ""} before it` });
+        }
+      } else if (!override) {
         const at = time(entry.at);
         const env = str(r.environment);
         const asked = requests.some((q) => q.gate === gate && q.at <= at && compatible(q.digest, digest) && (q.environment === undefined || env === undefined || q.environment === env));

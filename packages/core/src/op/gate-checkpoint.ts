@@ -278,9 +278,12 @@ export async function decideGateResume(
     const standing = latestPendingGate(ledger.pending, gate.name);
     const digest = standing?.checkpointDigest;
     if (!standing || digest === undefined) continue;
+    // #3949: an approval carried from an alias never saw this gate's
+    // checkpoint, so it doesn't let the run resume. The run starts at the
+    // first phase and the carried approval passes the gate when it gets there.
     const approved = ledger.resolutions.some(
       (r) =>
-        r.gate === gate.name && r.checkpointDigest === digest && at(r.timestamp) >= at(standing.timestamp) &&
+        r.gate === gate.name && r.carriedFrom === undefined && r.checkpointDigest === digest && at(r.timestamp) >= at(standing.timestamp) &&
         samePlanDigest(r.planDigest, standing.planDigest) && !isApprovalSpent(spent, r),
     );
     if (!approved) continue;

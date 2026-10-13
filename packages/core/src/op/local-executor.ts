@@ -37,6 +37,7 @@ import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
 import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
+import { resolveGateAliases } from "./gate-alias";
 import { gatePointOf } from "./gate-point";
 import { evaluatePointGate, workspaceGatePointAsker, type GatePointAsker } from "./gate-point-run";
 import type { ResolvedGateApproval } from "./gate-approval";
@@ -89,12 +90,17 @@ export interface StepRecord {
     resolvedBy: string;
     timestamp: string;
     url?: string;
-    /** On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. `"point"` on a gate that asks a decision point (#3170). */
-    via?: "quorum" | "policy" | "point";
+    /**
+     * On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. `"point"` on a gate that asks a decision point (#3170).
+     * `"alias"` (#3949) when an approval recorded under one of the gate's aliases counted, on any gate.
+     */
+    via?: "quorum" | "policy" | "point" | "alias";
     /** On a gate with a quorum (#2508): every approver who counted toward it. */
     approvers?: string[];
     /** On a gate that asks a decision point (#3170): the answer record that passed it, which the gate ledger's resolution cites too. */
     answer?: GateAnswerRef;
+    /** With `via: "alias"` (#3949): the approvals carried from an alias, each by the op, gate and time it was recorded under. */
+    carriedFrom?: Array<{ op: string; gate: string; resolvedBy: string; timestamp: string }>;
   };
   /**
    * Why a step declined to proceed on something that is not a failure
@@ -744,6 +750,7 @@ async function runGateStep(
       ...(approval ? { approval } : {}),
       ...(gates.now ? { now: gates.now } : {}),
       ...(checkpoint ? { checkpoint } : {}),
+      ...(step.aliases?.length ? { aliases: resolveGateAliases(step, gates.op) } : {}),
     });
   } catch (err) {
     // Deciding a gate reads and writes the `chant/lifecycle` branch, so it
@@ -775,6 +782,9 @@ async function runGateStep(
       ...(resolution.url ? { url: resolution.url } : {}),
       ...(check.via ? { via: check.via } : {}),
       ...(check.approvals ? { approvers: check.approvals.map((r) => r.resolvedBy) } : {}),
+      ...(check.carried?.length
+        ? { carriedFrom: check.carried.map((r) => ({ op: r.carriedFrom!.op, gate: r.carriedFrom!.gate, resolvedBy: r.resolvedBy, timestamp: r.carriedFrom!.timestamp })) }
+        : {}),
     };
     // #2522: a later step reads this gate's approval from the run context
     // rather than re-tallying the ledger, so it sees the decision this run made.

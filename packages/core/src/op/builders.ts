@@ -5,6 +5,7 @@ import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receip
 import { receiptCheckInput } from "./receipt-store";
 import { gateApprovalProblems } from "./gate-approval";
 import { gatePointProblems } from "./gate-point";
+import { gateAliasProblems } from "./gate-alias";
 import { makeOutProxy, stepOutput, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
 import type { ChantBuildArgs } from "./activities/build";
 import type { ShellCmdArgs } from "./activities/shell";
@@ -135,10 +136,23 @@ export function activity(
  * The point's deciders and quorum decide, `chant workspace points answer`
  * answers an open question, and the run passes on the answer. See
  * {@link GateStep.point}.
+ *
+ * Pass `aliases` to keep the approvals recorded under the gate's old names
+ * after an Op is restructured (#3949): `gate("approve-tier-1", { plan:
+ * plan.out.planDigest, aliases: [{ op: "upgrade-tier-1", gate: "approve" }] })`.
+ * A gate with aliases must bind a plan. See {@link GateStep.aliases}.
  */
 export function gate(
   name: string,
-  opts?: { timeout?: string; description?: string; plan?: GateStep["plan"]; approval?: GateStep["approval"]; point?: GateStep["point"]; resume?: boolean },
+  opts?: {
+    timeout?: string;
+    description?: string;
+    plan?: GateStep["plan"];
+    approval?: GateStep["approval"];
+    point?: GateStep["point"];
+    resume?: boolean;
+    aliases?: GateStep["aliases"];
+  },
 ): GateStep {
   if (opts?.approval !== undefined) {
     const problems = gateApprovalProblems(opts.approval);
@@ -146,6 +160,10 @@ export function gate(
   }
   if (opts?.point !== undefined) {
     const problems = gatePointProblems(opts.point, opts.approval !== undefined);
+    if (problems.length > 0) throw new Error(`gate(${JSON.stringify(name)}): ${problems[0]}`);
+  }
+  if (opts?.aliases !== undefined) {
+    const problems = gateAliasProblems(opts.aliases, { plan: opts.plan, point: opts.point });
     if (problems.length > 0) throw new Error(`gate(${JSON.stringify(name)}): ${problems[0]}`);
   }
   return {
@@ -157,6 +175,7 @@ export function gate(
     ...(opts?.approval !== undefined ? { approval: opts.approval } : {}),
     ...(opts?.point !== undefined ? { point: opts.point } : {}),
     ...(opts?.resume ? { resume: true } : {}),
+    ...(opts?.aliases !== undefined && opts.aliases.length > 0 ? { aliases: opts.aliases.map((a) => ({ ...(a.op !== undefined ? { op: a.op } : {}), gate: a.gate })) } : {}),
   };
 }
 
