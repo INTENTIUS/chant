@@ -66,6 +66,7 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `packages/core/src/components/verbs/cloud-executor.ts` | `node:net` | a declared cluster member's bolt port | The agnostic `wait-cluster-healthy` verb probes each member's port to decide quorum; injectable, so a test never opens a socket. |
 | `packages/core/src/components/verbs/wait-verify.ts` | `fetch` | the endpoint a component declares | `wait-endpoint` and `health-gate` poll the deployed thing they were pointed at; the fetcher is injectable for the same reason. |
 | `lexicons/aws/src/api/read-client.ts` | `fetch` | AWS Cloud Control and CloudFormation, or `AWS_ENDPOINT_URL` | The aws lexicon's read transport, signed with SigV4 and retargetable at a local emulator; there is no AWS SDK in the tree. |
+| `lexicons/aws/src/api/credential-chain.ts` | `fetch` | the AWS IAM Identity Center portal (`portal.sso.<region>.amazonaws.com`) and SSO OIDC (`oidc.<region>.amazonaws.com`) | `chant lifecycle whoami` resolves an SSO profile as the AWS CLI does (#3954): it refreshes an expired cached session token through OIDC when it can, then trades the token for role credentials. A `credential_process` profile runs the configured command, which may reach whatever it reaches. |
 | `lexicons/aws/src/op/activities/aws-apply.ts` | `fetch` | AWS Cloud Control, or `AWS_ENDPOINT_URL` | `awsApply` writes the change set the plan produced, over the same transport the read client uses. |
 | `lexicons/aws/src/receipt-store.ts` | `fetch` | AWS SSM Parameter Store, or `AWS_ENDPOINT_URL_SSM` | Effect receipts are read before an effect step and written after it succeeds; the store is the aws implementation of core's injectable receipt seam. |
 | `lexicons/aws/src/agentcore/trace-fetch.ts` | `fetch` | Bedrock AgentCore | `awsAgentCoreFetchTrace` pulls a session history and renders it as replay-trace text for a later cedar policy replay. |
@@ -206,7 +207,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**63 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
+**64 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 
