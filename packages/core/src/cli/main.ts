@@ -402,9 +402,11 @@ Workspace (level 1, #2524):
                         state transitions, new verdicts, new supersessions
                         and changed pins. A session id compares the commits
                         the session opened and closed at
-  workspace records pin <path>
+  workspace records pin <path> [--kind <kind file>]
                         Print the path from the workspace root and the
-                        sha256 of a file, for a decision's evidence pin
+                        sha256 of a file, for a decision's evidence pin. The
+                        root is the kind file's workspace with --kind, else
+                        the workspace above the current directory
   workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
                         Write one new record in the kind's directory from
                         the JSON fields given, after validating them as

@@ -78,7 +78,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
 const USAGE =
-  "chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review|close (#2670, #2693)";
+  "chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> [--kind <kind file>] | chant workspace records new|amend|review|close (#2670, #2693)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -635,12 +635,17 @@ async function raiseWorkGaps(loaded: LoadedRecordKind, records: RecordView[], op
 /**
  * `chant workspace records pin <path>`: the `{path, sha256}` a decision's
  * evidence entry holds for a file, with the path from the workspace root
- * (the nearest declaration above the file, or the repository root).
+ * records resolve pins in. With `kind`, that is the declaration nearest above
+ * the kind file, or the repository root, as {@link pinRoot} has it. Without,
+ * it is the declaration nearest above `cwd`, and only when there is none the
+ * one nearest above the file, so a workspace nested inside the current one is
+ * never taken for it (#3038).
  */
-export function pinFile(file: string, cwd: string): { path: string; sha256: string } | { error: string } {
+export function pinFile(file: string, cwd: string, kind?: string): { path: string; sha256: string } | { error: string } {
   const abs = realpathOr(resolve(cwd, file));
-  const top = gitRoot(dirname(abs));
-  const ws = findWorkspaceRoot(dirname(abs));
+  const from = kind === undefined ? dirname(abs) : dirname(resolve(cwd, kind));
+  const ws = kind === undefined ? (findWorkspaceRoot(cwd) ?? findWorkspaceRoot(from)) : findWorkspaceRoot(from);
+  const top = gitRoot(from);
   const base = ws ? realpathOr(ws.dir) : top ? realpathOr(top) : realpathOr(cwd);
   const path = relative(base, abs).split(sep).join("/");
   if (path.startsWith("..") || !isWorkspacePath(path)) return { error: `${file} is not a file path inside the workspace at ${base}` };
@@ -659,7 +664,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
       console.error(formatError({ message: "pin needs the path of a file", hint: USAGE }));
       return 1;
     }
-    const pin = pinFile(args.extraPositional2, process.cwd());
+    const pin = pinFile(args.extraPositional2, process.cwd(), args.kind);
     if ("error" in pin) {
       console.error(formatError({ message: pin.error, hint: USAGE }));
       return 1;
