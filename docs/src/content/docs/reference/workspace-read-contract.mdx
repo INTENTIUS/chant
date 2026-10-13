@@ -208,6 +208,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `seal-signature-invalid` | seal, `records` | The seal is malformed, names a signer other than the reviewer or author, or its signature doesn't verify over the verdict or record. |
 | `seal-unverifiable` | seal, `records` | Nothing here can say whose seal it is: there is no signers file at base, or `ssh-keygen` isn't installed. |
 | `record-unattested` | warning, `records` | A signers file is active at base, and the record names an author whose seal doesn't verify. The record's `attestation` says which seal code applies. The record stays valid. |
+| `record-ratified-below-quorum` | warning, `records` | The record is in its kind's ratified state (`reviews.ratified`), and its `quorum` isn't met, computed with the policy at base. The record stays valid. |
 | `kind-unreadable` | error, `records` and `work`; reason, `ls` | The record kind file is missing or could not be imported. |
 | `kind-invalid` | error, `records`; reason, `ls` | The record kind file exports no `recordKind`, or its shape is wrong. |
 | `schema-unreadable` | error, `records`; reason, `ls` | The schema file the kind names is missing or isn't JSON. |

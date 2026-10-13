@@ -147,8 +147,9 @@ export const SEAL_REASON_CODES = [
 export type SealCode = (typeof SEAL_REASON_CODES)[number];
 
 /**
- * A warning about a record's own seal (#2688), raised by `records` with the
- * policy at base, never by a write. Closed, like the reason codes.
+ * A warning `records` raises with the policy at base, never by a write: about
+ * a record's own seal (#2688), or a ratified record's quorum (#2878). Closed,
+ * like the reason codes.
  */
 export const SEAL_WARNING_CODES = [
   /**
@@ -158,6 +159,13 @@ export const SEAL_WARNING_CODES = [
    * fails. The record is still read, and still valid.
    */
   "record-unattested",
+  /**
+   * The record is in its kind's ratified state (`reviews.ratified`, #2873),
+   * and its quorum, computed as `records` computes it, is not met: it was
+   * written to that state by hand, past the check of `records new` and
+   * `amend`. The record is still read, and still valid (#2878).
+   */
+  "record-ratified-below-quorum",
 ] as const satisfies readonly ReasonCode[];
 export type SealWarningCode = (typeof SEAL_WARNING_CODES)[number];
 
@@ -201,7 +209,7 @@ export interface VerdictAttestation {
 }
 
 export interface RecordWarning {
-  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), an answer kind's those of `ANSWER_WARNING_CODES` (#2739), and `records` adds `SEAL_WARNING_CODES` (#2688). */
+  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), an answer kind's those of `ANSWER_WARNING_CODES` (#2739), and `records` adds `SEAL_WARNING_CODES` (#2688, #2878). */
   code: RecordWarningCode | WorkWarningCode | SealWarningCode | AnswerWarningCode;
   message: string;
 }

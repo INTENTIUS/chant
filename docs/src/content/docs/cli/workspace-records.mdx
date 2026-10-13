@@ -594,7 +594,7 @@ echo '{"state": "ratified"}' | chant workspace records amend ws-052 --kind docs/
 
 When the kind's `reviews` names a `ratified` state, `records amend` and `records new` refuse to write a record in that state unless its quorum is met, with `ratify-quorum-not-met`, and nothing is written. The quorum is computed on the record as it would be written, by the rules above: the need from the declaration in the working tree, and agents and seals from the policy at base. So verdicts on text the same amendment changes don't count, and neither do the decider's own. The message gives the count and each verdict that did not count, with its reason. A quorum met with objections is met, so the record can be ratified. Its open concerns stay listed in `openConcerns`. Such a kind leaves the state out of the digest. The ratified record's verdicts therefore still count, and `records --json` shows its quorum met.
 
-There is no quorum to check for a kind without `reviews` or one whose `reviews` names no `ratified` state. `records amend` moves its records to any state the approval rule allows. chant checks the quorum only when a record is written through `records new` or `records amend`. A file edited by hand to `ratified` is read as written.
+There is no quorum to check for a kind without `reviews` or one whose `reviews` names no `ratified` state. `records amend` moves its records to any state the approval rule allows. A file edited by hand to `ratified` gets past that check. `records` reads it as written, computes its quorum the same way, and warns with `record-ratified-below-quorum` when the quorum is not met. The record stays valid, and the warning names the count and each verdict that did not count.
 
 `records review` only appends the verdict. It doesn't change the state when the verdict meets the quorum, because a review changes only the reviews block. Whether to ratify over open concerns is for a person to decide.
 
@@ -848,6 +848,7 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `work-done-unpinned` | is a done work record with an empty evidence list, so nothing shows the work was done |
 | `work-closed-without-date` | is a done or dropped work record with no `closed_on` |
 | `record-unattested` | names an author (the kind's `reviews.decider` field), and a signers file is active at base, and its author seal doesn't verify. It is still read, and stays valid ([Sealing a record](#sealing-a-record)) |
+| `record-ratified-below-quorum` | is in its kind's ratified state (`reviews.ratified`), and its quorum is not met: it was edited to that state by hand. It is still read, and stays valid ([Ratifying](#ratifying)) |
 | `source-transcript-drift` | pins a transcript in its source block that can be read here and hashes to something else ([Where a proposal came from](#where-a-proposal-came-from)) |
 | `work-acceptance-unmet` | is a done work record with an acceptance criterion that no passing evidence of its verification meets. `check` fails on it as `WSP117` |
 | `work-acceptance-self-verified` | is a work record with a passing `manual` verdict by its implementer, which does not count |
