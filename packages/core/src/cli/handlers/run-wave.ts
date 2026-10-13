@@ -29,16 +29,16 @@ export async function runOpWaveCommand(ctx: CommandContext): Promise<number> {
   if (!specFile || args.wave === undefined) {
     console.error(formatError({
       message: "`chant run wave` needs --spec <file> and --wave <k>",
-      hint: "Run it as a generated Op waves pipeline does: chant run wave --spec <file> --wave <k> [--decide | --share <i>]",
+      hint: "Run it as a generated Op waves pipeline does: chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name> [--share <i>]]",
     }));
     return 1;
   }
-  if (args.decide && args.share !== undefined) {
-    console.error(formatError({ message: "--decide and --share are two different jobs; pass one" }));
+  if (args.decide && (args.share !== undefined || args.group !== undefined)) {
+    console.error(formatError({ message: `--decide and --${args.share !== undefined ? "share" : "group"} are two different jobs; pass one` }));
     return 1;
   }
   let spec: OpWavesSpec | undefined;
-  const job = args.share !== undefined ? { share: args.share } : {};
+  const job = { ...(args.share !== undefined ? { share: args.share } : {}), ...(args.group !== undefined ? { group: args.group } : {}) };
   try {
     const path = resolve(specFile);
     spec = parseOpWavesSpec(readFileSync(path, "utf-8"), `--spec ${specFile}`);
@@ -48,6 +48,7 @@ export async function runOpWaveCommand(ctx: CommandContext): Promise<number> {
       wave: args.wave,
       ...(args.decide ? { decide: true } : {}),
       ...(args.share !== undefined ? { share: args.share } : {}),
+      ...(args.group !== undefined ? { group: args.group } : {}),
       ...(args.base ? { base: args.base } : {}),
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));

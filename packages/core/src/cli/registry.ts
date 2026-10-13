@@ -268,6 +268,8 @@ export interface ParsedArgs {
   recordPlans?: boolean;
   /** `chant run wave --share <i>` (#3679) — apply share `i` of a decided wide wave. */
   share?: number;
+  /** `chant run wave --group <name>` (#3914) — apply one job group's runs of a decided wave. */
+  group?: string;
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**

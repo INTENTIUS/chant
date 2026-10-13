@@ -74,3 +74,50 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(() => generateGithubOpWavesPipeline({ ...waveLevel, hooks: { after: { apply: [{ command: ["./bin/smoke"], onFailure: "approve" }] } } }, { specFile: "waves.json" })).toThrow(/nothing left to hold/);
   });
 });
+
+describe("a runner per wave and job groups per wave (#3914)", () => {
+  const grouped: OpWavesSpec = {
+    ...spec,
+    runner: "plan",
+    waves: [
+      { name: "dev", runs: [{ target: "dev" }], gate: "never", runner: ["self-hosted", "dev"] },
+      {
+        name: "prod",
+        runs: [{ target: "us/a" }, { target: "us/b" }, { target: "eu/a" }],
+        variables: { STAGE: "apply" },
+        idTokens: { PLAN_TOKEN: "plan.example" },
+        jobs: [
+          { name: "us", runs: ["us/*"], shares: 2, runner: { group: "prod-apply", labels: ["linux"] }, environment: { name: "prod-us" }, variables: { REGION: "us" }, setup: [{ run: "echo us" }], idTokens: { CLOUD_TOKEN: "us.example" } },
+          { name: "eu", runs: ["eu/*"], runner: "eu-apply", environment: { name: "prod-eu" } },
+        ],
+      },
+    ],
+  };
+
+  test("the rendered pipeline matches its golden", async () => {
+    await expect(generateGithubOpWavesPipeline(grouped, { specFile: "waves.json" }).files[0]!.yaml).toMatchFileSnapshot("./__golden__/op-waves-jobs.yml");
+  });
+
+  test("runs-on, environment, variables, id-token and the group's command on each job", () => {
+    const { files, jobs } = generateGithubOpWavesPipeline(grouped, { specFile: "waves.json" });
+    expect(jobs.map((j) => j.jobName)).toEqual(["wave-1-dev", "wave-2-prod-decide", "wave-2-prod-us-share-1", "wave-2-prod-us-share-2", "wave-2-prod-eu"]);
+    const yaml = files[0]!.yaml;
+    expect(yaml).toMatch(/wave-1-dev:\n\s+runs-on:\n\s+- self-hosted\n\s+- dev\n/);
+    expect(yaml).toMatch(
+      /wave-2-prod-decide:\n\s+runs-on: plan\n[\s\S]*?permissions:\n\s+contents: write\n\s+id-token: write\n\s+env:\n\s+STAGE: apply\n\s+PLAN_TOKEN_AUDIENCE: plan.example\n/,
+    );
+    expect(yaml).toMatch(
+      /wave-2-prod-us-share-1:\n\s+runs-on:\n\s+group: prod-apply\n\s+labels:\n\s+- linux\n\s+needs:\n\s+- wave-2-prod-decide\n\s+container: node:22\n\s+environment:\n\s+name: prod-us\n\s+permissions:\n\s+contents: write\n\s+id-token: write\n\s+env:\n\s+STAGE: apply\n\s+REGION: us\n\s+CLOUD_TOKEN_AUDIENCE: us.example\n/,
+    );
+    expect(yaml).toContain("- run: echo us\n      - name: Apply share 1 of job group us of wave 2 (prod)\n        run: chant run wave --spec waves.json --wave 2 --group us --share 1\n");
+    // A group with no id tokens of its own gets the wave's.
+    expect(yaml).toMatch(/wave-2-prod-eu:\n\s+runs-on: eu-apply\n[\s\S]*?name: prod-eu\n\s+permissions:\n\s+contents: write\n\s+id-token: write\n\s+env:\n\s+STAGE: apply\n\s+PLAN_TOKEN_AUDIENCE: plan.example\n/);
+    expect(yaml).toContain("run: chant run wave --spec waves.json --wave 2 --group eu\n");
+  });
+
+  test("the spec's runner is the resume and record-plans jobs' too", () => {
+    const { files } = generateGithubOpWavesPipeline({ ...spec, runner: "plan", resume: { schedule: "*/10 * * * *" }, waves: spec.waves.map((w) => ({ ...w, approval: "pr-review" as const })) }, { specFile: "waves.json" });
+    expect(files.map((f) => f.name)).toEqual(["migrations.yml", "migrations-resume.yml", "migrations-plans.yml"]);
+    for (const f of files) expect(f.yaml).not.toContain("ubuntu-latest");
+  });
+});

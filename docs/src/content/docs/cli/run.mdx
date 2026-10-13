@@ -13,7 +13,7 @@ chant run status <name> [flags]
 chant run approve <op> <gate> [flags]
 chant run cancel <name> [flags]
 chant run log <name> [flags]
-chant run wave --spec <file> --wave <k> [--decide | --share <i>] [--base <ref>]
+chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name> [--share <i>]] [--base <ref>]
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
 chant run wave --spec <file> --record-plans
 chant run --components <name|all|a,b,c> [flags]
@@ -228,9 +228,10 @@ Plans, gates and applies one wave of an [Op waves](/chant/guide/op-waves/) spec.
 chant run wave --spec waves.json --wave 2
 chant run wave --spec waves.json --wave 3 --decide
 chant run wave --spec waves.json --wave 3 --share 1
+chant run wave --spec waves.json --wave 4 --group prod --share 2
 ```
 
-The wave's runs are planned with the spec's `plan` command, or with one `planWave` call. Its gate policy and its stage hooks are read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. A hook with `onFailure: approve` that fails makes the wave wait whatever its policy. `--json` prints the decision, which runs applied and how each hook ran.
+The wave's runs are planned with the spec's `plan` command, or with one `planWave` call. Its gate policy and its stage hooks are read from the spec file at `--base` (default: the spec's `base`, else `HEAD^1`). A wave the policy holds waits on `<gate>-wave-<k>` under op `<name>`, bound to the set digest over its runs' plan digests, and exits 3 until that digest is approved. `--decide` plans and decides without applying, for a wide wave's deciding job. `--share <i>` applies share `i` of a decided wide wave, refusing a run whose plan moved since the decision. `--group <name>` does the same for one [job group](/chant/guide/op-waves/#runners-and-job-groups) of a decided wave, and with `--share <i>` for one share of that group. A hook with `onFailure: approve` that fails makes the wave wait whatever its policy. `--json` prints the decision, which runs applied and how each hook ran.
 
 ### `run resume`
 
@@ -369,7 +370,8 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--wave <k>` | The wave to run, from 1 (`run wave`) |
 | `--decide` | Plan the wave and decide its gate without applying it (`run wave`) |
 | `--record-plans` | Plan every wave at a pull request's head and record the digests a `pr-review` wave compares (`run wave`) |
-| `--share <i>` | Apply share `i` of a decided wide wave (`run wave`) |
+| `--share <i>` | Apply share `i` of a decided wide wave, or with `--group`, of that job group (`run wave`) |
+| `--group <name>` | Apply one job group's runs of a decided wave (`run wave`) |
 | `--base <ref>` | The commit the wave's gate policy is read from (`run wave`) |
 | `--output <dir>` | Where generated pipeline files go, instead of the forge's own directory (`run --generate`) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |

@@ -15,7 +15,9 @@
  *  - the `setup` steps and `environment` a job may carry, checked once per
  *    forge ({@link assertSetupSteps}, {@link assertEnvironment},
  *    {@link gitlabSetupScript}, {@link assertGitlabEnvironment});
- *  - GitLab's `rules:` expressions and `id_tokens:` declaration.
+ *  - GitLab's `rules:` expressions and `id_tokens:` declaration;
+ *  - where a job runs and the id tokens it asks for (#3914), {@link githubRunsOn},
+ *    {@link gitlabTags}, {@link gitlabIdTokensDoc} and {@link idTokenAudienceEnv}.
  *
  * The Forgejo dialect (action refs, dropped `permissions:` and
  * `environment:`, the header note naming what was dropped) is the forgejo
@@ -96,10 +98,65 @@ export function dirnameOf(path: string): string {
   return i <= 0 ? "." : path.slice(0, i);
 }
 
+/**
+ * Where a generated job runs (#3914): a runner label, a list of labels the
+ * runner must all carry, or on GitHub a runner group with optional labels.
+ * `runs-on` on GitHub and Forgejo, `tags` on GitLab.
+ */
+export type CiRunner = string | readonly string[] | { group: string; labels?: readonly string[] };
+
+/** True when `runner` is a GitHub runner group, which only GitHub has. */
+export function isRunnerGroup(runner: CiRunner | undefined): runner is { group: string; labels?: readonly string[] } {
+  return runner !== undefined && typeof runner === "object" && !Array.isArray(runner);
+}
+
+/**
+ * Refuse a runner group on a forge that has none (#3914). `subject` and
+ * `field` name whose runner it is, such as `Op waves "x"` and `wave "prod"
+ * runner`.
+ */
+export function assertRunnerLabels(subject: string, field: string, runner: CiRunner | undefined, forge: "GitLab" | "Forgejo"): void {
+  if (!isRunnerGroup(runner)) return;
+  throw new Error(
+    `${subject}: ${field} is the runner group "${runner.group}", which only GitHub has. ` +
+      `${forge === "GitLab" ? "GitLab picks a runner by its tags" : "Forgejo picks a runner by its labels"}; give a label or a list of labels.`,
+  );
+}
+
+/**
+ * Each id token's audience as a variable, `<NAME>_AUDIENCE` (#3914). On
+ * GitHub and Forgejo the audience is chosen when the job requests the token,
+ * so the job reads it from there; GitLab declares it in `id_tokens:`
+ * ({@link gitlabIdTokensDoc}).
+ */
+export function idTokenAudienceEnv(idTokens: Readonly<Record<string, string>> | undefined): Record<string, string> {
+  return Object.fromEntries(Object.entries(idTokens ?? {}).map(([name, aud]) => [`${name}_AUDIENCE`, aud]));
+}
+
+/** A job's GitLab `id_tokens:` for `{ <variable>: <audience> }` (#3914), or undefined when there are none. */
+export function gitlabIdTokensDoc(idTokens: Readonly<Record<string, string>> | undefined): Record<string, { aud: string }> | undefined {
+  const entries = Object.entries(idTokens ?? {});
+  return entries.length > 0 ? Object.fromEntries(entries.map(([name, aud]) => [name, { aud }])) : undefined;
+}
+
+/** A job's GitLab `tags:` for `runner` (#3914), or undefined when it names none. */
+export function gitlabTags(runner: CiRunner | undefined): string[] | undefined {
+  if (runner === undefined || isRunnerGroup(runner)) return undefined;
+  return typeof runner === "string" ? [runner] : [...runner];
+}
+
 // ── GitHub Actions and Forgejo Actions ──────────────────────────────────────
 
 /** The runner label a generated job asks for; the Forgejo dialect rewrites it to the project's label. */
 export const GITHUB_RUNNER = "ubuntu-latest";
+
+/** A job's `runs-on` for `runner` (#3914): {@link GITHUB_RUNNER} when it names none. */
+export function githubRunsOn(runner: CiRunner | undefined): string | string[] | { group: string; labels?: string[] } {
+  if (runner === undefined) return GITHUB_RUNNER;
+  if (typeof runner === "string") return runner;
+  if (isRunnerGroup(runner)) return { group: runner.group, ...(runner.labels && runner.labels.length > 0 ? { labels: [...runner.labels] } : {}) };
+  return [...runner];
+}
 
 /** The job token, which GitHub and Forgejo both mint for every run. */
 export const GITHUB_JOB_TOKEN = "${{ github.token }}";

@@ -263,7 +263,8 @@ Ops:
   run wave --spec <file> --wave <k>  Plan, gate and apply wave k of an Op
                         waves spec (#3679): the job a generated waves
                         pipeline runs. --decide plans and decides only;
-                        --share <i> applies one share of a decided wave.
+                        --share <i> applies one share of a decided wave;
+                        --group <name> applies one job group's runs.
                         --record-plans (no --wave), in a pull request's
                         pipeline: plan every wave at its head and record the
                         digests a pr-review approval mode compares

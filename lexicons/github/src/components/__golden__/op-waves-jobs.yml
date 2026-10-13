@@ -1,0 +1,135 @@
+name: migrations
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: migrations
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  wave-1-dev:
+    runs-on:
+      - self-hosted
+      - dev
+    container: node:22
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Plan, gate and apply wave 1 (dev)
+        run: chant run wave --spec waves.json --wave 1
+  wave-2-prod-decide:
+    runs-on: plan
+    needs:
+      - wave-1-dev
+    container: node:22
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      STAGE: apply
+      PLAN_TOKEN_AUDIENCE: plan.example
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Plan wave 2 (prod) and decide its gate
+        run: chant run wave --spec waves.json --wave 2 --decide
+      - name: Keep wave 2's decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations/wave-2.json
+          if-no-files-found: ignore
+          include-hidden-files: true
+          overwrite: true
+  wave-2-prod-us-share-1:
+    runs-on:
+      group: prod-apply
+      labels:
+        - linux
+    needs:
+      - wave-2-prod-decide
+    container: node:22
+    environment:
+      name: prod-us
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      STAGE: apply
+      REGION: us
+      CLOUD_TOKEN_AUDIENCE: us.example
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Download wave 2's decision
+        uses: actions/download-artifact@v4
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations
+      - run: echo us
+      - name: Apply share 1 of job group us of wave 2 (prod)
+        run: chant run wave --spec waves.json --wave 2 --group us --share 1
+  wave-2-prod-us-share-2:
+    runs-on:
+      group: prod-apply
+      labels:
+        - linux
+    needs:
+      - wave-2-prod-decide
+    container: node:22
+    environment:
+      name: prod-us
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      STAGE: apply
+      REGION: us
+      CLOUD_TOKEN_AUDIENCE: us.example
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Download wave 2's decision
+        uses: actions/download-artifact@v4
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations
+      - run: echo us
+      - name: Apply share 2 of job group us of wave 2 (prod)
+        run: chant run wave --spec waves.json --wave 2 --group us --share 2
+  wave-2-prod-eu:
+    runs-on: eu-apply
+    needs:
+      - wave-2-prod-decide
+    container: node:22
+    environment:
+      name: prod-eu
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      STAGE: apply
+      PLAN_TOKEN_AUDIENCE: plan.example
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Download wave 2's decision
+        uses: actions/download-artifact@v4
+        with:
+          name: migrations-wave-2-decision
+          path: .chant/op-waves/migrations
+      - name: Apply job group eu of wave 2 (prod)
+        run: chant run wave --spec waves.json --wave 2 --group eu
