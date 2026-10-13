@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-grafana",
-  "version": "0.124.24",
+  "version": "0.124.25",
   "description": "Grafana lexicon for chant — typed dashboards, panels, queries and datasources, serialized to dashboard JSON and Grafana provisioning files",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -68,9 +68,9 @@
   "dependencies": {
     "@grafana/lezer-logql": "0.4.2",
     "@grafana/lezer-traceql": "1.0.3",
-    "@intentius/chant-lexicon-k8s": "^0.124.24",
-    "@intentius/chant-lexicon-otel": "^0.124.24",
-    "@intentius/chant-lexicon-prometheus": "^0.124.24",
+    "@intentius/chant-lexicon-k8s": "^0.124.25",
+    "@intentius/chant-lexicon-otel": "^0.124.25",
+    "@intentius/chant-lexicon-prometheus": "^0.124.25",
     "@lezer/lr": "^1.4.10",
     "ajv": "^8.20.0",
     "js-yaml": "^4.3.1"
@@ -83,7 +83,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.24",
+    "@intentius/chant": "^0.124.25",
     "zod": "^4.3.6"
   }
 }

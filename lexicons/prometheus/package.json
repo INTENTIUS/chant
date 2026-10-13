@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-prometheus",
-  "version": "0.124.24",
+  "version": "0.124.25",
   "description": "Prometheus lexicon for chant — typed recording and alerting rule groups and Alertmanager routing, serialized to a rule file and alertmanager.yml",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -74,7 +74,7 @@
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-otel": "^0.124.24",
+    "@intentius/chant-lexicon-otel": "^0.124.25",
     "@lezer/highlight": "^1.2.4",
     "@lezer/lr": "^1.4.10",
     "@prometheus-io/lezer-promql": "0.315.0",
@@ -88,6 +88,6 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.24"
+    "@intentius/chant": "^0.124.25"
   }
 }
