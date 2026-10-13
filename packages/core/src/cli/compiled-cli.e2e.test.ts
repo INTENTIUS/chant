@@ -62,9 +62,9 @@ interface Run {
   loaded: { chantSrc: number; chantDist: number; tsx: number };
 }
 
-function run(cwd: string, args: string[]): Run {
+function run(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}): Run {
   const traceOut = join(scratch, `trace-${Math.random().toString(36).slice(2)}.jsonl`);
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: `--import ${tracer}`, CHANT_TRACE_OUT: traceOut };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv, NODE_OPTIONS: `--import ${tracer}`, CHANT_TRACE_OUT: traceOut };
   delete env.CHANT_ENV;
   const result = spawnSync(chant, args, { cwd, env, encoding: "utf-8" });
   const lines = readFileSync(traceOut, "utf-8").trim().split("\n");
@@ -189,6 +189,15 @@ describe("the installed chant CLI (#3878)", () => {
     const r = run(join(workspace, "app"), ["workspace", "records", "--json"]);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("ref-001");
+    expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0 });
+  });
+
+  test("workspace status on a steward-index miss loads no tsx for a member without Op files (#3976)", () => {
+    // A cache dir of its own, so there is no index to read and the member's stewards are discovered.
+    const r = run(join(workspace, "app"), ["workspace", "status", "local", "--json"], { CHANT_CACHE_DIR: mkdtempSync(join(scratch, "cache-")) });
+    expect(r.status, r.stderr).toBe(0);
+    const status = JSON.parse(r.stdout) as { members: Array<{ name: string; stewards: unknown[] }> };
+    expect(status.members.map((m) => [m.name, m.stewards])).toEqual([["app", []]]);
     expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0 });
   });
 

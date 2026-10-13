@@ -170,3 +170,42 @@ describe("discoverOps: an Op may be exported by name (#2171)", () => {
     expect(errors[0]).toContain(`Duplicate Op name "twice" declared twice in`);
   });
 });
+
+/**
+ * #3976. Reading the project's `exclude`/`include` evaluates its config,
+ * which registers tsx, so discovery reads them only when an Op file could be
+ * found. An `exclude` that is not a list is an error whenever the config is
+ * read, which is how these tests tell whether it was.
+ */
+describe("discoverOps reads the config's globs only when there is an Op file (#3976)", () => {
+  let checkout: string;
+  beforeEach(() => {
+    checkout = realpathSync(mkdtempSync(join(tmpdir(), "chant-op-globs-")));
+    fakeGitRoot = checkout;
+    mkdirSync(join(checkout, "src"), { recursive: true });
+    writeFileSync(join(checkout, "src", "infra.ts"), "export const x = 1;\n");
+  });
+  afterEach(() => rmSync(checkout, { recursive: true, force: true }));
+
+  test("a project with no Op file has its config left unread", async () => {
+    writeFileSync(join(checkout, "chant.config.json"), JSON.stringify({ lexicons: ["aws"], exclude: 42 }));
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual([]);
+  });
+
+  test("with an Op file the config is read", async () => {
+    writeFileSync(join(checkout, "chant.config.json"), JSON.stringify({ lexicons: ["aws"], exclude: 42 }));
+    writeFileSync(join(checkout, "src", "run.op.ts"), OP_FILE("run"));
+    await expect(discoverOps({ cwd: checkout })).rejects.toThrow(/exclude/);
+  });
+
+  test("an Op file only `include` re-admits is still found", async () => {
+    writeFileSync(join(checkout, "chant.config.json"), JSON.stringify({ lexicons: ["aws"], include: [".ops"] }));
+    mkdirSync(join(checkout, ".ops"));
+    writeFileSync(join(checkout, ".ops", "hidden.op.ts"), OP_FILE("hidden"));
+    const { ops, errors } = await discoverOps({ cwd: checkout });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual(["hidden"]);
+  });
+});
