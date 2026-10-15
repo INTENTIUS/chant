@@ -28,7 +28,7 @@ The two kinds of Op need different runtimes because durability means something d
 
 Both are convergent verbs; what differs is who decides when they run. A pipeline Op runs because somebody or something asked for it, so what it needs from a runtime is a machine that is still standing when the ask arrives. A `ConvergeOp` runs because the world might have moved, so what it needs is a cadence and a lease. It is level-triggered in the Kubernetes-controller sense, comparing the live level of the world against the declared level, recomputed from scratch every time. Re-running one beats resuming one, so nothing here resumes a run.
 
-`chant operator` is the smallest thing that supplies the cadence and the lease: your own machine, or a CronJob, ticking on git alone. A [fountain steward](/chant/lexicons/fountain/steward/) is the same cadence hosted, with the environment's thread as the record. See [Ops as teammates](/chant/concepts/durable-workflows/) for how the pieces divide up.
+`chant operator` is the smallest thing that supplies the cadence and the lease: your own machine, or a CronJob, ticking on git alone. A [fountain steward](/chant/lexicons/fountain/steward/) hosts the run, with the environment's conversation as the record; its cadence still comes from a clock outside Managoat, which has no scheduler. See [Ops as teammates](/chant/concepts/durable-workflows/) for how the pieces divide up.
 
 <Aside type="tip" title="When a step genuinely cannot be re-run">
 Compensation and mid-sequence resumption are workarounds for non-idempotent
@@ -153,9 +153,9 @@ Anyone who can run `chant approve` locally can write one, the same trust
 boundary a local `git commit` already has, and [issue #1485](https://github.com/INTENTIUS/chant/issues/1485)
 scopes signed resolutions out on purpose. Re-running is also what clears a
 gate; nothing resumes a run in place. That holds on a hosted runtime too. A
-steward's turn ends at the gate rather than sitting on the thread waiting, and
-`chant run approve <op> <gate> --on fountain` posts `chant run <op>` back onto
-the thread once the resolution is written, so the sandbox re-runs and reads
+steward's turn ends at the gate rather than sitting in its conversation
+waiting, and `chant run approve <op> <gate> --on fountain` posts `chant run
+<op>` back into the conversation once the resolution is written, so the sandbox re-runs and reads
 the fact.
 </Aside>
 

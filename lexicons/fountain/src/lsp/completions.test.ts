@@ -18,8 +18,13 @@ describe("LSP completions", () => {
     const items = completions(ctx({ linePrefix: "export const e = new " }));
     const labels = items.map((i) => i.label);
 
-    for (const kind of ["Environment", "Vault", "Agent", "Teammate", "Schedule", "Webhook"]) {
+    for (const kind of ["Environment", "Vault", "Agent"]) {
       expect(labels).toContain(kind);
+    }
+    // Retired upstream (managoat/managoat#2793): still importable, so an old
+    // project builds far enough for FTN025, but never suggested.
+    for (const kind of ["Teammate", "Schedule", "Webhook"]) {
+      expect(labels).not.toContain(kind);
     }
     expect(items.every((i) => i.kind === "resource")).toBe(true);
   });
@@ -46,22 +51,14 @@ describe("LSP completions", () => {
     expect(items.every((i) => i.kind === "property")).toBe(true);
   });
 
-  it("offers unconstrained props on the new kinds", () => {
-    // `cron` and `url` carry an example rather than a pattern upstream, so
-    // constraint-derived completion would drop exactly the two props these
-    // kinds exist for.
-    const propsOf = (className: string) => {
-      const content = `const a = new ${className}({\n  `;
-      return completions(ctx({ content, position: { line: 1, character: 2 }, linePrefix: "  " })).map(
-        (i) => i.label,
-      );
-    };
-
-    expect(propsOf("Schedule")).toEqual(
-      expect.arrayContaining(["cron", "prompt", "teammate", "one_off", "enabled", "name"]),
+  it("offers unconstrained props, which constraint-derived completion would drop", () => {
+    const content = "const a = new Agent({\n  ";
+    const labels = completions(ctx({ content, position: { line: 1, character: 2 }, linePrefix: "  " })).map(
+      (i) => i.label,
     );
-    expect(propsOf("Webhook")).toEqual(expect.arrayContaining(["url", "event_types", "description"]));
-    expect(propsOf("Teammate")).toEqual(expect.arrayContaining(["agent", "environment", "vault", "name"]));
+    // Neither carries a constraint upstream, so only the generated `props`
+    // list puts them here.
+    expect(labels).toEqual(expect.arrayContaining(["system", "allowed_vault_ids"]));
   });
 
   it("returns nothing in an unrelated position", () => {

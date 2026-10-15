@@ -201,14 +201,15 @@ poor place to keep an hourly drift check, and `chant approve` on a production
 gate should leave a trail somebody else can read.
 
 `chant run <op> --on fountain` hands the same Op to a
-[fountain](https://github.com/managoat/fountain) teammate instead. The
-command line is posted to that teammate's thread, its sandbox runs it, and the
-record comes back in the shape a local run would have written. One teammate per
-environment, one thread, so the conversation is that environment's operational
-history.
+[Managoat](https://github.com/managoat/managoat) steward instead. The command
+line is posted to the steward's one long-lived conversation, its sandbox runs
+it, and the record comes back in the shape a local run would have written. One
+steward per environment, one conversation, so the conversation is that
+environment's operational history.
 
-The declaration is small — a `Steward` binds these Ops to a teammate, and turns
-each Op's own cron into a schedule on its thread:
+The declaration is small — a `Steward` binds these Ops to one agent. Managoat
+has no scheduler, so each Op's own cron fires from a clock outside it, a CI
+schedule or a CronJob that runs `chant run <op> --on fountain`:
 
 ```ts
 import { params } from "@intentius/chant/params";
@@ -224,7 +225,7 @@ const toolchain = new Environment({
   networking_config: { allowed_hosts: ["github.com", "registry.npmjs.org"] },
 });
 
-export const { agent, teammate, schedules } = Steward({
+export const { agent } = Steward({
   name: "getting-started-steward",
   environment: toolchain,
   vault: new Vault({ name: "getting-started-creds" }),
@@ -233,7 +234,7 @@ export const { agent, teammate, schedules } = Steward({
 ```
 
 ```bash
-chant run observe --on fountain           # a turn on the steward's thread
+chant run observe --on fountain           # a turn in the steward's conversation
 chant run deploy-gated --on fountain      # reaches the gate, ends the turn
 chant run approve deploy-gated approve-deploy --on fountain --approver you
 chant run status deploy-gated --on fountain
@@ -241,18 +242,18 @@ chant run status deploy-gated --on fountain
 
 `chant run approve ... --on fountain` does both halves itself: it writes the
 resolution to the gate ledger, the same fact a local `chant approve` writes,
-and then posts `chant run deploy-gated` back onto the steward's thread. The
+and then posts `chant run deploy-gated` back into the steward's conversation. The
 sandbox re-runs the op, reads the resolution off the ledger, walks through the
 gate and applies the manifests. `chant run status` reads that turn back as
 `completed`.
 
 The gate behaves exactly as it did on your laptop, which is the point of
 gate-as-fact: the run ends its turn with the approve line, and nothing — no
-machine, no thread, no process — is pinned by a decision nobody has made yet.
+machine, no conversation, no process — is pinned by a decision nobody has made yet.
 
 [`fountain-steward`](../fountain-steward/) is the worked example: five
-declarations, six fountain resources, and the ACP agent that makes a prompt on
-that thread a chant command line.
+declarations, three Managoat resources, and the ACP agent that makes a prompt
+in that conversation a chant command line.
 
 ## A standalone first taste
 

@@ -11,10 +11,9 @@ function entity(entityType: string, props: Record<string, unknown>): Declarable 
 /**
  * Every document in the emitted stream.
  *
- * `parseManifest` is the apply path's reader and keeps only the three kinds
- * `POST /api/apply` accepts, so it cannot see a Teammate, Schedule or Webhook
- * (that is #2127's work). Tests about what the serializer emits read the
- * documents directly.
+ * `parseManifest` is the apply path's reader and keeps only the kinds
+ * `POST /api/apply` accepts. Tests about what the serializer emits read the
+ * documents directly, so a document it should not have written shows up.
  */
 function documents(out: string): Array<{ kind: string; name: string; spec: Record<string, unknown> }> {
   return out
@@ -188,7 +187,7 @@ describe("fountain serializer", () => {
     expect(resources[1].spec.metadata).toEqual({ "managed-by": "chant" });
   });
 
-  it("emits all six kinds in dependency order, whatever order they were declared in", () => {
+  it("emits the three kinds in dependency order, whatever order they were declared in", () => {
     const env = entity("Fountain::V1::Environment", { name: "steward-env" });
     const vault = entity("Fountain::V1::Vault", { name: "steward-creds" });
     const agent = entity("Fountain::V1::Agent", {
@@ -197,65 +196,42 @@ describe("fountain serializer", () => {
       runtime_command: "chant acp",
       environment: env,
     });
-    const teammate = entity("Fountain::V1::Teammate", { name: "steward-seat", agent });
-    const schedule = entity("Fountain::V1::Schedule", {
-      name: "nightly-converge",
-      teammate,
-      cron: "0 3 * * *",
-      prompt: "chant run converge",
-    });
-    const webhook = entity("Fountain::V1::Webhook", {
-      name: "turn-done",
-      url: "https://example.com/hooks/fountain",
-      event_types: ["conversation.turn.done"],
-    });
 
     // Declared back to front — the serializer, not the author, fixes the order.
     const out = fountainSerializer.serialize(
       new Map([
-        ["webhook", webhook],
-        ["schedule", schedule],
-        ["teammate", teammate],
         ["agent", agent],
         ["vault", vault],
         ["env", env],
       ]),
     ) as string;
 
-    expect(documents(out).map((d) => d.kind)).toEqual([
-      "Environment",
-      "Vault",
-      "Agent",
-      "Teammate",
-      "Schedule",
-      "Webhook",
-    ]);
+    const docs = documents(out);
+    expect(docs.map((d) => d.kind)).toEqual(["Environment", "Vault", "Agent"]);
+    expect(docs[2].spec.environment).toBe("steward-env");
+    // The acp pair survives the round trip, so the instance gets both
+    // halves or neither.
+    expect(docs[2].spec.runtime_command).toBe("chant acp");
   });
 
-  it("resolves the new kinds' references to the referenced entity's name", () => {
+  // managoat/managoat#2793. Their routes answer 404, so a document for one
+  // would fail the apply partway through; FTN025 is what reports them.
+  it("leaves the retired kinds out of the manifest", () => {
     const agent = entity("Fountain::V1::Agent", { name: "steward", runtime: "acp", runtime_command: "chant acp" });
     const teammate = entity("Fountain::V1::Teammate", { name: "steward-seat", agent });
-    const schedule = entity("Fountain::V1::Schedule", {
-      name: "nightly",
-      teammate,
-      cron: "0 3 * * *",
-      prompt: "chant run converge",
-    });
+    const schedule = entity("Fountain::V1::Schedule", { name: "nightly", teammate, cron: "0 3 * * *" });
+    const webhook = entity("Fountain::V1::Webhook", { url: "https://example.com/hooks" });
 
     const out = fountainSerializer.serialize(
       new Map([
-        ["stewardAgent", agent],
-        ["stewardSeat", teammate],
+        ["webhook", webhook],
         ["nightly", schedule],
+        ["seat", teammate],
+        ["agent", agent],
       ]),
     ) as string;
 
-    const [runnable, seat, cadence] = documents(out);
-    expect(seat.spec.agent).toBe("steward");
-    expect(cadence.spec.teammate).toBe("steward-seat");
-    // The acp pair survives the round trip, so the instance gets both
-    // halves or neither.
-    expect(runnable.spec.runtime_command).toBe("chant acp");
+    expect(documents(out).map((d) => d.kind)).toEqual(["Agent"]);
   });
 
   it("keeps declaration order within one kind", () => {

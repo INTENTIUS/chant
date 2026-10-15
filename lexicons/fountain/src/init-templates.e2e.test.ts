@@ -4,7 +4,7 @@
  * `chant init --lexicon fountain --template steward` is only worth shipping if
  * what it writes builds, lints clean, and produces a manifest `fountainApply`
  * accepts. That is three separate ways to be wrong — a type error, a lint
- * finding, a manifest whose Teammate names an agent no route can resolve — and
+ * finding, a manifest with a kind Managoat no longer has a route for — and
  * none of them show up in a test that only asserts the template's text.
  *
  * So this materializes the template set to a real directory inside the
@@ -91,7 +91,7 @@ describe("the steward template", () => {
     expect(result.foldDecisions.filter((d) => d.mode !== "fold")).toEqual([]);
   });
 
-  it("builds the six kinds a steward is made of", async () => {
+  it("builds the three kinds a steward is made of", async () => {
     const result = await build(srcDir, [fountainSerializer], undefined, await declaredBuildOptions(srcDir));
     expect(result.errors).toEqual([]);
     const yaml = result.outputs.get("fountain") as string;
@@ -99,13 +99,10 @@ describe("the steward template", () => {
       "Environment",
       "Vault",
       "Agent",
-      "Teammate",
-      "Schedule",
-      "Schedule",
     ]);
     expect(yaml).toContain("runtime_command: chant acp");
-    expect(yaml).toContain("prompt: chant run prod-watch");
-    expect(yaml).toContain("prompt: chant run prod-converge");
+    // Every conversation gets a sandbox of its own (managoat/managoat#2793).
+    expect(yaml).not.toContain("sandbox_mode");
   });
 
   it("produces a manifest fountainApply accepts", async () => {
@@ -143,10 +140,6 @@ describe("the steward template", () => {
       "GET /api/agents": { status: 200, json: { data: [{ id: "a-1", name: "prod-steward" }] } },
       "GET /api/environments": { status: 200, json: { data: [{ id: "e-1", name: "prod-toolchain" }] } },
       "GET /api/vaults": { status: 200, json: { data: [{ id: "v-1", name: "prod-creds" }] } },
-      "GET /api/team": { status: 200, json: { data: [] } },
-      "POST /api/team": { status: 201, json: { data: { agent_id: "a-1" } } },
-      "GET /api/team/a-1/schedules": { status: 200, json: { data: [] } },
-      "POST /api/team/a-1/schedules": { status: 201, json: { data: { id: "s-1" } } },
     };
     const http: FountainHttp = async (method, path, body) => {
       calls.push({ method, path, body });
@@ -166,17 +159,13 @@ describe("the steward template", () => {
       "Environment/prod-toolchain",
       "Vault/prod-creds",
       "Agent/prod-steward",
-      "Teammate/prod-steward",
-      "Schedule/prod-steward-prod-watch",
-      "Schedule/prod-steward-prod-converge",
     ]);
-    // The bulk kinds go out first, then the team-side ones on their own routes.
     const applies = calls.filter((c) => c.path === "/api/apply");
     expect(applies).toHaveLength(2);
     // The agent reaches fountain with the vault's id, never its name — a name
     // in `allowed_vault_ids` is a 500 out of Ecto (#2166).
     const agent = (applies[1].body as { resources: Array<{ spec: Record<string, unknown> }> }).resources[0];
     expect(agent.spec.allowed_vault_ids).toEqual(["v-1"]);
-    expect(calls.filter((c) => c.method === "POST" && c.path.endsWith("/schedules"))).toHaveLength(2);
+    expect(calls.filter((c) => c.path.startsWith("/api/team"))).toEqual([]);
   });
 });

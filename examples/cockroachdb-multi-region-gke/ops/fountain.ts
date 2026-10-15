@@ -1,14 +1,15 @@
 /**
  * The steward for the prod estate: one writer for nine CockroachDB nodes.
  *
- * Four of this directory's Ops are listed. Two carry a cadence and become
- * `Schedule`s on the steward's thread — the converge tick that publishes the
- * UIs, and nothing else on a clock. `crdb-deploy` and `crdb-teardown` are
- * listed without one: they run when somebody asks, and listing them is what
- * tells `chant run crdb-deploy --on fountain` which thread the run belongs on.
+ * Four of this directory's Ops are listed. The converge tick that publishes
+ * the UIs carries a cadence, which a clock outside Managoat fires (a CI
+ * schedule or a CronJob that runs `chant run <op> --on fountain`): Managoat
+ * has no scheduler. `crdb-deploy` and `crdb-teardown` are listed without one:
+ * they run when somebody asks, and listing them is what tells `chant run
+ * crdb-deploy --on fountain` which conversation the run belongs on.
  *
- * The thread is the point. A registrar delegation, a certificate that took an
- * hour, a teardown someone ran on a Friday — all of it is one conversation in
+ * The conversation is the point. A registrar delegation, a certificate that
+ * took an hour, a teardown someone ran on a Friday — all of it is one conversation in
  * order, because every turn is one chant command line.
  */
 
@@ -70,7 +71,7 @@ export const prodCreds = new Vault({
   metadata: chantOwned,
 });
 
-export const { agent, teammate, schedules } = Steward({
+export const { agent } = Steward({
   name: "crdb-steward",
   environment: toolchain,
   vault: prodCreds,

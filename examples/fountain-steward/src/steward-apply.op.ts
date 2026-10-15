@@ -1,9 +1,8 @@
 // Reconcile the steward's own estate, behind a gate.
 //
-// No cadence: this one runs when someone asks for it, which is why the
-// Steward lists it without giving it a Schedule. Listing it is still what
-// tells `chant run steward-apply --on fountain` which thread the run belongs
-// on.
+// No cadence: this one runs when someone asks for it. Listing it on the
+// Steward is still what tells `chant run steward-apply --on fountain` which
+// conversation the run belongs in.
 //
 // The gate is a fact on chant's ledger, not a wait held open inside the
 // sandbox. A run that reaches it ends its turn with the approve line; a person

@@ -8,11 +8,9 @@ import { vaultShadowingCheck } from "./ftn014-vault-shadowing";
 import { mcpSecretEnvSubstitutionCheck } from "./ftn015-mcp-secret-env-substitution";
 import { runtimeModelValidCheck } from "./ftn016-runtime-model-valid";
 import { uniqueResourceNamesCheck } from "./ftn017-unique-resource-names";
-import { scheduleCronSyntaxCheck } from "./ftn020-schedule-cron-syntax";
-import { typedReferencesResolveCheck } from "./ftn021-typed-references-resolve";
-import { webhookUrlPublicHttpsCheck } from "./ftn022-webhook-url-public-https";
 import { acpRuntimeCommandCheck } from "./ftn023-acp-runtime-command";
 import { setupTimeoutRangeCheck } from "./ftn024-setup-timeout-range";
+import { removedUpstreamCheck } from "./ftn025-removed-upstream";
 
 export const postSynthChecks: PostSynthCheck[] = [
   networkingExplicitCheck,
@@ -23,9 +21,7 @@ export const postSynthChecks: PostSynthCheck[] = [
   mcpSecretEnvSubstitutionCheck,
   runtimeModelValidCheck,
   uniqueResourceNamesCheck,
-  scheduleCronSyntaxCheck,
-  typedReferencesResolveCheck,
-  webhookUrlPublicHttpsCheck,
   acpRuntimeCommandCheck,
   setupTimeoutRangeCheck,
+  removedUpstreamCheck,
 ];

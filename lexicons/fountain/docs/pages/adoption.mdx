@@ -4,13 +4,13 @@ description: "Live observation, import, and the graph edge fountain reconstructs
 diataxis: reference
 ---
 
-The lexicon reads live fountain state on three paths, across all six kinds: environments, vaults and agents from their own collections, teammates from `GET /api/team`, schedules from `GET /api/team/schedules`, webhook endpoints from `GET /api/webhooks`.
+The lexicon reads live Managoat state on three paths, across its three kinds: environments, vaults and agents, each from its own collection. Teams, schedules and webhooks were removed upstream ([managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)), so nothing reads them; a declared `Teammate`, `Schedule` or `Webhook` fails the build with FTN025 before any read.
 
 ## Drift
 
 `chant lifecycle diff --live` reports each declared entity as observed present, observed absent, or **not observed** with a reason. A read failure is never reported as an absence, which would propose a spurious create.
 
-This catches an out-of-band change to a locked environment, such as a UI edit that adds a secret, opens networking, or drops the marker. It also catches a schedule someone paused, a cron edited in the console, and a teammate rebound to another vault. Wire it into a scheduled watch and treat a hit as an incident.
+This catches an out-of-band change to a locked environment, such as a UI edit that adds a secret, opens networking, or drops the marker. It also catches an agent's model or vault allowlist edited in the console. Wire it into a scheduled watch and treat a hit as an incident.
 
 ### What identifies a resource
 
@@ -19,29 +19,18 @@ The read looks a resource up by the same key the serializer writes it under, so 
 | Kind | Key |
 |---|---|
 | Environment, Vault, Agent | the declared `name`, or the export name when there is none |
-| Teammate | the roster name |
-| Schedule | its teammate and its name together; a schedule's name is unique only within one teammate |
-| Webhook | its `url`, which is the only identity a webhook endpoint has |
-
-A declaration that resolves to no identity, such as a schedule whose `teammate` reference names nothing, is reported as a failed read rather than an absence, since nothing was ever asked.
 
 ### Who owns what
 
-Ownership comes from the `managed-by: chant` marker in a resource's `metadata`, and only environments, vaults and agents have one. The other three inherit or abstain:
-
-- A **teammate** and its **schedules** inherit the verdict of the agent behind them. chant's marker on the agent covers the teammate that agent is, and every schedule on its thread.
-- A **webhook** carries no metadata upstream, so its verdict is `unknown`. `--owned` withholds it rather than claiming it, and an undeclared webhook is never proposed for deletion.
+Ownership comes from the `managed-by: chant` marker in a resource's `metadata`. `--owned` claims only what carries it.
 
 ### What a change costs
 
-`chant lifecycle plan` annotates each pending update with its blast radius. For the team-side kinds the lexicon publishes a verdict; for the rest it says `unknown` rather than guess.
-
-- Editing a schedule's cron, prompt or enabled flag is **in-place**: it rewrites the row the scheduler reads on its next tick and interrupts nothing.
-- Moving a teammate's agent, environment or vault is **replace**. Those are what its persistent sandbox was provisioned from, and fountain retires the machine when one moves: the roster entry survives, the disk does not.
+`chant lifecycle plan` annotates each pending update with its blast radius where a lexicon publishes one. This lexicon publishes none. Its verdicts were for the team-side kinds, and an Agent edit reaches only conversations created after it, so a pending update says `unknown` rather than guess.
 
 ## Import
 
-`chant import --from` adopts UI-built resources into typed files. Server-written fields are stripped to the authored shape, and every server-resolved id is put back into the vocabulary an author writes: an agent's `environment_id` becomes the environment's name, a teammate's launch bindings become its environment and vault, a schedule's `agent_id` becomes the teammate whose thread it runs on. A schedule's generated name is qualified by its teammate and a webhook's by its url, because neither has a unique name of its own.
+`chant import --from` adopts UI-built resources into typed files. Server-written fields are stripped to the authored shape, and every server-resolved id is put back into the vocabulary an author writes: an agent's `environment_id` becomes the environment's name. Importing a manifest file written before the team kinds were removed skips its `Teammate`, `Schedule` and `Webhook` documents, since there is nothing on the instance for them to declare.
 
 Secrets do not round-trip: values are write-only upstream and secret keys are not on the typed request surface, so environments export without them and the caller is warned per environment that carried any. Re-declare them through your secret provider.
 

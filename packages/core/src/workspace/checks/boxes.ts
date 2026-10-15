@@ -28,15 +28,15 @@
  * listed here after these two.
  *
  * WSP125 (`box-fountain-callback-undeclared`, #2780) is the one credential a
- * box gets without asking. fountain v0.21.0 gives every persistent sandbox a
- * callback token scoped to its owner (`FOUNTAIN_TOKEN`, `sandbox_api_access:
- * owner`), and a fountain `Box` is always persistent, so its member's block
- * has to say so: the capability `fountain-callback`, brokered by `fountain`,
+ * box gets without asking. fountain gives every sandbox a callback token
+ * scoped to its owner (`FOUNTAIN_TOKEN`, `sandbox_api_access: owner`) unless
+ * its conversation asks for none, and a fountain `Box` runs with it, so its
+ * member's block has to say so: the capability `fountain-callback`, brokered by `fountain`,
  * with scope `owner`. It is named apart from `fountain`, the API access a
  * lobby may broker for the same box. A member builds a Box when one of its TypeScript or JavaScript files
  * imports `Box` from `@intentius/chant-lexicon-fountain` and calls it, read as
- * syntax and never run. Upstream, managoat/fountain#2497 asks for a way to run
- * a persistent agent with no callback token.
+ * syntax and never run. Upstream, managoat/fountain#2497 asked for a way to run
+ * a box's agent with no callback token.
  *
  * WSP126 (`box-intent-unknown`) and WSP127 (`box-intent-unconstrained`), #2850,
  * read the decision record a box block names as its intent (`box-intent.ts`).
@@ -75,7 +75,7 @@ export const WSP_BOX_FOUNTAIN_CALLBACK = "WSP125";
 export const WSP_BOX_INTENT_UNKNOWN = "WSP126";
 export const WSP_BOX_INTENT_UNCONSTRAINED = "WSP127";
 
-/** The fountain lexicon's package, whose `Box` composite runs a persistent sandbox. */
+/** The fountain lexicon's package, whose `Box` composite declares a box's agent. */
 const FOUNTAIN_LEXICON = "@intentius/chant-lexicon-fountain";
 
 /**
@@ -402,7 +402,7 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
     id: WSP_BOX_FOUNTAIN_CALLBACK,
     name: "box-fountain-callback-undeclared",
     description:
-      "A box member that builds a fountain Box declares the callback token fountain gives its persistent sandbox: the fountain-callback capability, brokered by fountain, with scope owner.",
+      "A box member that builds a fountain Box declares the callback token fountain gives its sandbox: the fountain-callback capability, brokered by fountain, with scope owner.",
     severity: "error",
     configurable: true,
     check(ctx) {
@@ -442,7 +442,7 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
           severity: this.severity,
           code: "box-fountain-callback-undeclared",
           message:
-            `box-fountain-callback-undeclared: member ${m.name} builds a fountain Box (${at.path}), and fountain v0.21.0 gives a persistent box's sandbox ` +
+            `box-fountain-callback-undeclared: member ${m.name} builds a fountain Box (${at.path}), and fountain gives a box's sandbox ` +
             `a callback token scoped to its owner (FOUNTAIN_TOKEN); ${why}. Declare ${expected} in the box block ` +
             `(managoat/fountain#2497 tracks running without it)`,
           entity: m.name,

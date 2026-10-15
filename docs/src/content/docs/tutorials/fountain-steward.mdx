@@ -1,6 +1,6 @@
 ---
 title: "Run ops on a fountain steward"
-description: "Declare one writer for an environment and run chant ops on its thread, with gates that stay on the chant ledger branch."
+description: "Declare one writer for an environment and run chant ops in its conversation, with gates that stay on the chant ledger branch."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/fountain-steward/.
@@ -13,10 +13,12 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 This tutorial declares a **steward**: one writer for an environment, running on
-fountain. A steward is an agent that speaks chant's own ACP server on a
-persistent sandbox, seated on a fountain team so it has a standing
-conversation. Every op you run against that environment becomes a turn on that
-conversation, so the thread is the environment's operational history.
+fountain. A steward is an agent that speaks chant's own ACP server, with one
+long-lived conversation that `chant run --on fountain` opens on the first run
+and resumes by its `channel_id` after that. Every op you run against that
+environment becomes a turn in that conversation, so the conversation is the
+environment's operational history, and its sandbox keeps its disk across park
+and wake.
 
 Steps 1 and 2 run offline. Steps 3 onward need a fountain instance and a token.
 
@@ -33,13 +35,13 @@ For the live half, a fountain endpoint and a token in `FOUNTAIN_TOKEN`. Mint
 one with `POST /api/auth/token` or from the account UI. A local
 `mix phx.server` fountain works the same way.
 
-<Aside type="caution" title="Needs fountain v0.21.0 or later">
-The lexicon is generated from fountain v0.21.0, the first release whose spec
-has the `runtime: "acp"` and `runtime_command` pair a steward sets. An older
-instance rejects the pair at apply. That release also carries the path for
-answering a gate as a fountain permission card
-([fountain#1635](https://github.com/managoat/fountain/issues/1635)), which chant
-does not use yet (chant#2391).
+<Aside type="caution" title="Generated from Managoat v0.29.0">
+The lexicon is generated from the Managoat v0.29.0 spec, which has no team
+and no persistent sandboxes, the two things an earlier steward was built on. A
+steward's `runtime: "acp"` and `runtime_command` pair needs an instance from
+v0.21.0 on, and an older one rejects the pair at apply.
+[Coming from Teammate, Schedule and Webhook](#coming-from-teammate-schedule-and-webhook)
+maps each removed construct to what replaced it.
 </Aside>
 
 ## 1. Scaffold the project
@@ -58,7 +60,7 @@ parameter.
 The steward itself is five lines:
 
 ```typescript
-export const { agent, teammate, schedules } = Steward({
+export const { agent } = Steward({
   name: "prod-steward",
   environment: toolchain,
   vault: prodCreds,
@@ -66,9 +68,9 @@ export const { agent, teammate, schedules } = Steward({
 });
 ```
 
-Each op is listed once. An op that carries a `schedule` gets a fountain
-`Schedule`; one without still appears on the steward, which is how a run of it
-knows which thread it belongs on.
+Each op is listed once, with or without a `schedule`. Listing it is how a run of
+it knows which conversation it belongs on. Managoat has no scheduler, so a
+cadence is data on the Op that a clock outside Managoat reads (step 7).
 
 ## 2. Build the manifest
 
@@ -76,9 +78,8 @@ knows which thread it belongs on.
 npx chant build src --lexicon fountain -o dist/fountain.yaml
 ```
 
-Six documents come out in dependency order: `Environment`, `Vault`, `Agent`,
-`Teammate`, and a `Schedule` per scheduled op. The agent carries the steward's
-defaults:
+Three documents come out in dependency order: `Environment`, `Vault` and
+`Agent`. The agent carries the steward's defaults:
 
 ```yaml
 kind: Agent
@@ -86,8 +87,7 @@ metadata:
   name: prod-steward
 spec:
   runtime: acp
-  runtime_command: chant acp
-  sandbox_mode: persistent
+  runtime_command: chant acp --steward prod-steward
   environment: prod-toolchain
   permission_policy:
     default: auto_allow
@@ -95,9 +95,11 @@ spec:
     - prod-creds
 ```
 
-`runtime_command: chant acp` is what makes a prompt on this thread a chant
-command line. `sandbox_mode: persistent` gives the steward one computer whose
-checkout and tool cache survive a turn ending. `auto_allow` is there because
+`runtime_command: chant acp --steward prod-steward` is what makes a prompt in
+this conversation a chant command line, and one of this steward's turns. The
+agent sets no `sandbox_mode`, because every Managoat conversation gets a sandbox
+of its own. The steward is one computer because every run goes to one
+conversation, whose sandbox keeps its checkout and tool cache. `auto_allow` is there because
 nobody is at the keyboard to answer a permission card; approvals belong to
 chant's gates, which step 5 covers.
 
@@ -107,8 +109,8 @@ Lint it before going further:
 npx chant lint src
 ```
 
-FTN020 checks the cron is five valid fields, FTN021 that the schedule's
-teammate resolves, FTN023 that an acp agent carries its command.
+FTN023 checks that an acp agent carries its command, and FTN025 that nothing
+uses a kind or value Managoat removed.
 
 ## 3. Apply it
 
@@ -117,18 +119,18 @@ export FOUNTAIN_TOKEN=...
 npx chant run steward-apply     # or call fountainApply directly
 ```
 
-`fountainApply` sends `Environment`, `Vault` and `Agent` through fountain's
-bulk `POST /api/apply`, then reconciles the teammate and the schedules through
-their own routes, matched by name. Running it a second time writes nothing.
+`fountainApply` sends `Environment`, `Vault` and `Agent` through Managoat's
+bulk `POST /api/apply` in one request. Running it a second time writes nothing.
 
-## 4. Run an op on the thread
+## 4. Run an op in the conversation
 
 ```bash
 npx chant run prod-watch --on fountain
 ```
 
-The line `chant run prod-watch` is posted to the steward's conversation, and
-the CLI tails the event stream until the turn settles. What comes back is the
+The line `chant run prod-watch` is posted to the steward's conversation, opened
+with `channel_id` `chant:steward:prod-steward` on the first run and resumed by
+it after that, and the CLI tails the event stream until the turn settles. What comes back is the
 same run record a local `chant run prod-watch` would have written.
 
 A quiet turn loses its connection after 60 seconds, which is fountain closing
@@ -136,20 +138,12 @@ an idle stream rather than the turn ending; the reader reconnects with
 `Last-Event-ID` and picks up what it missed.
 
 If the steward is already running something, the post is refused with the
-conversation's address:
+conversation's address rather than queued. That is the single-writer rule, and
+it is the reason one conversation is the right place for an op to run: two runs
+on one checkout would interleave. A cron fire that lands mid-turn gets the same
+refusal, which is why a steward's Ops schedule with `overlap: "skip"`.
 
-```
-fountain runtime: the steward "prod-steward" is running another op
-(https://fountain.inevitable.fyi/conversations/c_01J…). A teammate runs one
-turn at a time; wait for it to finish and run this again.
-```
-
-That is fountain's single-writer rule, and it is the reason a steward thread is
-the right place for an op to run: two runs on one checkout would interleave.
-The schedules are in-thread for the same reason, so a cron fire that lands
-mid-turn is dropped rather than opening a second machine.
-
-## 5. Read the thread back
+## 5. Read the conversation back
 
 ```bash
 npx chant run status prod-watch --on fountain
@@ -158,10 +152,10 @@ npx chant run list --on fountain
 ```
 
 `status` reads the latest turn that ran this op, `log` every turn, and `list`
-one row per declared Op, grouped by steward so a team of twenty ops costs one
-round trip.
+one row per declared Op, grouped by steward so twenty ops on one steward cost
+one round trip.
 
-Open the conversation in fountain's UI and you see the same history as prose:
+Open the conversation in Managoat and you see the same history as prose:
 one command line per turn, with each step of a run rendered as a tool call. The
 whole plan appears before the first step finishes, because an Op's declaration
 already says what the steps are.
@@ -180,17 +174,32 @@ Nothing is blocked, because the gate is a fact on chant's ledger branch rather
 than a wait held open inside the sandbox. No machine is pinned by a decision
 nobody has made yet.
 
-Record the resolution, then wake the thread:
+Record the resolution, then wake the conversation:
 
 ```bash
 npx chant approve steward-apply approve-steward-apply --approver you
 npx chant run approve steward-apply approve-steward-apply --on fountain
 ```
 
-The second command posts `chant run steward-apply` back onto the steward's
-thread, carrying `--approver` and `--url` so the thread names who resolved the
-gate, and `--on local` so the sandbox runs it rather than posting it again. The sandbox re-runs the op, reads the resolution off the ledger, and
+The second command posts `chant run steward-apply` back into the steward's
+conversation, carrying `--approver` and `--url` so the conversation names who
+resolved the gate, and `--on local` so the sandbox runs it rather than posting it again. The sandbox re-runs the op, reads the resolution off the ledger, and
 walks through the gate.
+
+## 7. Put the cadences on a clock
+
+Managoat has no scheduler. `prod-watch` and `prod-converge` carry their crons,
+and something outside Managoat fires them by running the same command you ran
+in step 4:
+
+- a CI schedule, such as a GitHub Actions `schedule:` trigger whose job runs
+  `npx chant run prod-watch --on fountain`;
+- a Kubernetes CronJob running that command line.
+
+[`chant operator --steward`](/chant/guide/operator/) runs a steward's Ops on
+their crons as well, but only in an environment whose form is `local`. Where the
+form is `fountain` it refuses to start, because the steward's conversation is
+the one writer there.
 
 ## Where the facts live
 
@@ -203,6 +212,32 @@ Two stores, each authoritative for one thing.
 | The declared shape of the estate | the repo |
 
 Nothing is written to both.
+
+## Coming from Teammate, Schedule and Webhook
+
+Earlier releases of the lexicon built the steward on fountain's team: the
+`Steward` composite also returned a `Teammate` seat, one `Schedule` per cadence
+and an optional `Webhook`, and its Agent ran with `sandbox_mode: persistent`.
+Managoat removed the team and its schedules, webhooks and persistent sandboxes,
+and their routes answer 404 or 422.
+[managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)
+tracks bringing chant along.
+
+`Teammate`, `Schedule` and `Webhook` are still exported, deprecated, so a
+project that declares one builds far enough for FTN025 to fail it with the
+replacement. The serializer leaves them out of the manifest, and `chant import`
+skips them in an old manifest.
+
+| Before | Now |
+|---|---|
+| A `Teammate` seat, and its `fountain:team` thread | One conversation per steward, opened and resumed by `channel_id` `chant:steward:<name>`. `chant run --on fountain` does it for you |
+| A `Schedule` per Op cadence | The cron stays on the Op. A CI schedule or a CronJob runs `chant run <op> --on fountain` on it, or `chant operator --steward` where the form is `local` |
+| A `Webhook` | Nothing. Read a run's outcome from `chant run status` or `chant run log`, or from the conversation's event stream |
+| `sandbox_mode: "persistent"` on an Agent | Drop it. The steward's conversation keeps its sandbox's disk across park and wake. FTN025 reports the old value |
+| `sandbox_provider: "daytona"` or `"runner"` | `"sprites"` or `"e2b"`, or leave it unset |
+| `fountain.profiles.<name>.team` | `fountain.profiles.<name>.steward`. `team` still works, and warns |
+| `const { agent, teammate, schedules, webhook } = Steward(...)` | `const { agent, declaration } = Steward(...)` |
+| FTN020, FTN021, FTN022 | Removed with the kinds they checked |
 
 ## Next
 

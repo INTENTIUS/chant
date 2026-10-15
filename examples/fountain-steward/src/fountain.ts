@@ -1,12 +1,15 @@
 /**
  * A fountain steward: one writer for the prod environment (chant #2115).
  *
- * The `Steward` composite turns three declarations into the whole operating
- * surface for one environment — an Agent that speaks ACP over `chant acp`, a
- * Teammate seat so it has a standing conversation, and one Schedule per op
- * that carries a cadence. Every run of every op listed below lands on that one
- * thread, which is what makes the thread the environment's history rather than
- * a place turns happen to appear.
+ * The `Steward` composite turns three declarations into the operating surface
+ * for one environment: an Agent that speaks ACP over `chant acp`, and the
+ * steward's declaration, which lists its Ops and their cadences. `chant run
+ * <op> --on fountain` sends every run of every op listed below to one
+ * long-lived conversation, resumed by its channel_id, which is what makes that
+ * conversation the environment's history rather than a place turns happen to
+ * appear. Managoat has no scheduler, so the cadences run from a clock outside
+ * it, such as a CI schedule or a CronJob that runs `chant run <op> --on
+ * fountain`.
  *
  * `chant init --lexicon fountain --template steward` scaffolds this shape.
  */
@@ -61,11 +64,10 @@ export const prodCreds = new Vault({
   metadata: chantOwned,
 });
 
-// The one writer. Two Schedules come out of this — one per op with a cadence —
-// plus the Agent and the Teammate seat that owns the thread. `steward-apply`
-// has no cadence and gets no Schedule, and is listed anyway so a run of it
-// knows which thread it belongs on.
-export const { agent, teammate, schedules } = Steward({
+// The one writer. The Agent is the one Managoat document that comes out of
+// this. `steward-apply` has no cadence and is listed anyway, so a run of it
+// knows which conversation it belongs on.
+export const { agent } = Steward({
   name: "prod-steward",
   environment: toolchain,
   vault: prodCreds,

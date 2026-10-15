@@ -13,18 +13,20 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 The [`fly-durable-deploy`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-durable-deploy)
-example runs a Fly Machines deploy on a schedule, unattended. The op is scheduled on a [fountain steward](/chant/lexicons/fountain/steward/):
-one teammate, one persistent machine, one thread carrying every deploy this app
-has had.
+example runs a Fly Machines deploy on a schedule, unattended. The op runs on a [fountain steward](/chant/lexicons/fountain/steward/):
+one agent and one long-lived conversation, whose sandbox carries every deploy
+this app has had.
 
 Where [`fly-deploy-rollback`](/chant/tutorials/fly-deploy-rollback/) uses a Sprite
 checkpoint as its recovery boundary, durability here comes from two properties
 that have nothing to do with a workflow engine.
 
-**The machine persists.** The steward's sandbox is `sandbox_mode: persistent`,
-so the checkout, the npm cache and the installed chant survive a turn ending. A
-turn is a command on a computer that was already there, not a container booted
-to run one deploy and thrown away.
+**The machine persists.** Every `chant run --on fountain` of the steward's ops
+goes to the same conversation, resumed by its `channel_id`, and a Managoat
+conversation's sandbox keeps its disk across park and wake. So the checkout, the
+npm cache and the installed chant survive a turn ending. A turn is a command on
+a computer that was already there, not a container booted to run one deploy
+and thrown away.
 
 **The op converges.** Build serializes `src/infra.ts` to the flaps plan; Deploy
 applies that plan to the Machines API and waits each machine to `started`.
@@ -52,18 +54,19 @@ export default Op({
 });
 ```
 
-`schedule` is data on the Op, not a resource. The flaps endpoint comes from
+`schedule` is data on the Op, not a resource. Managoat has no scheduler, so
+something outside it fires the cron: a CI schedule or a CronJob that runs
+`chant run fly-durable-deploy --on fountain`. The flaps endpoint comes from
 `FLY_FLAPS_BASE_URL`, which points at local mudflaps offline and at real Fly when unset.
 
 ## The steward
 
 `ops/fountain.ts` declares the machine that runs it. The `Steward` composite
-returns the `Agent`, the `Teammate`, and one `Schedule` per op that carries a
-cron (plus a `Webhook` when you declare one); the `Environment` and the `Vault`
-it reads are declared in the same file and emitted alongside them:
+returns the `Agent` and the steward's declaration; the `Environment` and the
+`Vault` it reads are declared in the same file and emitted alongside the Agent:
 
 ```ts
-export const { agent, teammate, schedules } = Steward({
+export const { agent } = Steward({
   name: "fly-steward",
   environment: toolchain,
   vault: flyCreds,
@@ -77,13 +80,13 @@ repo mounted at `/workspace/estate`, a setup script that installs chant, and
 (`api.machines.dev`, `github.com`, `registry.npmjs.org`). `flyCreds` is the
 `Vault` that holds `FLY_API_TOKEN`, which is set in fountain and never in the
 repo. The `Steward` reads the op's name and its cron off the declaration, so the
-cadence is written once, next to the op it paces.
+cadence is written once, next to the op it paces, for whatever clock fires it.
 
 `chant.config.ts` declares the fountain profile the CLI reads:
 
 ```ts
 fountain: {
-  profiles: { demo: { endpoint: "https://fountain.inevitable.fyi", token: { env: "FOUNTAIN_TOKEN" }, team: "fly-steward" } },
+  profiles: { demo: { endpoint: "https://fountain.inevitable.fyi", token: { env: "FOUNTAIN_TOKEN" }, steward: "fly-steward" } },
   defaultProfile: "demo",
 }
 ```
@@ -144,27 +147,19 @@ In a dev checkout, run through the workspace CLI:
 ```bash
 npm run build:fountain             # dist/fountain.yaml
 export FOUNTAIN_TOKEN=...          # the variable chant.config.ts names
-npm run lint                       # FTN001, FTN010, FTN020..FTN023
+npm run lint                       # FTN001, FTN010, FTN023..FTN025
 chant run fly-durable-deploy --on fountain
 ```
 
 `chant run … --on fountain` posts the command line `chant run fly-durable-deploy`
-to the steward's thread, tails the conversation's event stream, and hands back a
-record in the shape a local run would have written. Open the conversation in
-fountain's UI and every turn is one command somebody could have typed, so
-scrolling the thread is scrolling this app's deploy history.
+to the steward's conversation, tails its event stream, and hands back a record
+in the shape a local run would have written. Open the conversation in Managoat
+and every turn is one command somebody could have typed, so scrolling it is
+scrolling this app's deploy history.
 
-If the steward is mid-turn the post is refused rather than queued:
-
-```
-fountain runtime: the steward "fly-steward" is running another op
-(https://fountain.inevitable.fyi/conversations/c_01J…). A teammate runs one
-turn at a time; wait for it to finish and run this again.
-```
-
-A teammate runs one turn at a time, which is what keeps two deploys off one
-checkout, and it is also why the schedule is in-thread: a fire that lands
-mid-turn is dropped, and the next one re-applies everything anyway.
+If the steward is mid-turn the post is refused rather than queued. One turn at
+a time is what keeps two deploys off one checkout, and a cron fire that lands
+mid-turn gets the same refusal: the next one re-applies everything anyway.
 
 Point the sandbox at your own estate with the build parameter:
 
@@ -191,5 +186,5 @@ On the steward, the token lives in the `Vault` instead, and the op is unchanged.
 
 - [The Steward](/chant/lexicons/fountain/steward/) — which fountain noun answers which chant need
 - [Running an Op on fountain](/chant/lexicons/fountain/runtime/) — profiles, `status`, `log`, and the busy case
-- [`fountain-steward`](/chant/tutorials/fountain-steward/) — the fuller worked example: a watch, a converge and a gated apply on one thread
+- [`fountain-steward`](/chant/tutorials/fountain-steward/) — the fuller worked example: a watch, a converge and a gated apply in one conversation
 - [Ops as teammates](/chant/concepts/durable-workflows/) — where each half of an op's durability lives

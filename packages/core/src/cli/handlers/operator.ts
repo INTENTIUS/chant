@@ -221,8 +221,8 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
  *
  * Refuses, before ticking anything:
  * - an environment whose form is `fountain`, because there the composite's
- *   Agent and Teammate are the steward and this process would be a second
- *   writer beside them;
+ *   Agent and its conversation are the steward and this process would be a
+ *   second writer beside them;
  * - a steward whose lease another live process holds (a second local
  *   operator for it).
  */
@@ -242,7 +242,7 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
   if (form !== "local") {
     console.error(formatError({
       message: `steward "${steward.name}" runs on ${form} in environment "${env}", so a local operator for it would be a second writer`,
-      hint: `Its turns run on the fountain teammate "${steward.name}". Run this in an environment the declaration's form makes local, or change the form.`,
+      hint: `Its turns run in the fountain steward "${steward.name}"'s conversation. Run this in an environment the declaration's form makes local, or change the form.`,
     }));
     return 1;
   }
