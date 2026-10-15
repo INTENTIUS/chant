@@ -1,0 +1,52 @@
+{
+  "name": "@intentius/chant-lexicon-e2b",
+  "version": "0.124.27",
+  "type": "module",
+  "description": "e2b lexicon for chant — run Ops on a steward sandbox on E2B, or any API that speaks E2B's",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/INTENTIUS/chant#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/e2b"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": ["chant", "e2b", "sandbox", "ops"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "e2b": "^2.56.0"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.124.27",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3"
+  }
+}
