@@ -29,6 +29,7 @@
     "@intentius/chant-lexicon-cedar": "workspace:*",
     "@intentius/chant-lexicon-cpln": "workspace:*",
     "@intentius/chant-lexicon-docker": "*",
+    "@intentius/chant-lexicon-e2b": "workspace:*",
     "@intentius/chant-lexicon-fly": "*",
     "@intentius/chant-lexicon-forgejo": "*",
     "@intentius/chant-lexicon-fountain": "*",
