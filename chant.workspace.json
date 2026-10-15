@@ -205,6 +205,12 @@
       ]
     },
     {
+      "name": "lexicon-e2b",
+      "dir": "lexicons/e2b",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
       "name": "lexicon-fly",
       "dir": "lexicons/fly",
       "kind": "other",
