@@ -8,9 +8,9 @@ user-invocable: true
 
 ## What this lexicon covers
 
-[fountain](https://github.com/managoat/fountain) runs coding agents in sandboxed VMs. Six kinds are declarable, and this lexicon types all of them. `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config) are the workload layer; `Teammate` (an agent seated on the team, with a thread of its own), `Schedule` (a cron prompt into that thread) and `Webhook` (where the estate's events leave it) are the team, schedule and webhook routes. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
+[fountain](https://github.com/managoat/fountain) runs coding agents in sandboxed VMs. Three kinds are declarable: `Environment` (sandbox baseline), `Vault` (env-var overrides) and `Agent` (a runnable agent config). Managoat removed the team, its scheduler, webhooks and persistent sandboxes (managoat/managoat#2793): `Teammate`, `Schedule` and `Webhook` are still exported, but declaring one, or `sandbox_mode: "persistent"`, fails the build with FTN025, which names the replacement. Conversations are runs, not resources: start them with the `fountainRun` op, never declare them.
 
-The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim). `fountainApply` sends that same YAML to fountain's bulk `POST /api/apply` endpoint in one request: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker. Bulk apply covers Environment, Vault and Agent only — a Teammate, Schedule or Webhook document is emitted and valid, and applying it through its own route waits on chant #2127.
+The source of truth is the TypeScript in `src/`. `chant build` serializes it to fountain's own manifest YAML (ejectable — `fountain apply -f` accepts it verbatim). `fountainApply` sends that same YAML to fountain's bulk `POST /api/apply` endpoint in one request: create-if-new, update-by-name, opt-in owned-only prune keyed on the `managed-by: chant` metadata marker. A retired kind is never written to the manifest.
 
 ## Authoring
 
@@ -53,7 +53,7 @@ chant run prod-apply --env prod
 chant lifecycle diff --live
 ```
 
-That is the whole convention, and it is what makes the teammate's thread readable: each turn is a command someone could have typed, so scrolling the thread is scrolling the environment's shell history.
+That is the whole convention, and it is what makes the steward's conversation readable: each turn is a command someone could have typed, so scrolling the conversation is scrolling the environment's shell history.
 
 It is a command *line*, not a shell line. The text is split with quote awareness and nothing else — no `$VAR`, no `&&`, no pipes, no globbing — and the verb is resolved against chant's own command registry. `rm -rf /` is refused before anything runs, with the reason in the reply.
 
@@ -66,4 +66,4 @@ What a client sees:
 
 `--durable-requests` turns the gated reply into a `session/request_permission` with `allow_once`/`reject_once` and ends the turn `waiting`; the client answers on a later prompt carrying `_meta.chant.permission`, which records the resolution and re-runs. It is off by default because a request that outlives a turn needs fountain#1635, which v0.21.0 carries and chant does not answer through yet (chant#2391).
 
-The server does not redact. A step's output reaches the thread verbatim and fountain redacts secrets on the way in; chant never reads or prints the environment it was spawned with.
+The server does not redact. A step's output reaches the conversation verbatim and fountain redacts secrets on the way in; chant never reads or prints the environment it was spawned with.

@@ -23,14 +23,7 @@ describe("fountain coverage", () => {
     const report = computeFountainCoverage(spec, surface);
 
     expect(report.overallPct).toBe(100);
-    expect(report.modeledKinds.sort()).toEqual([
-      "Agent",
-      "Environment",
-      "Schedule",
-      "Teammate",
-      "Vault",
-      "Webhook",
-    ]);
+    expect(report.modeledKinds.sort()).toEqual(["Agent", "Environment", "Vault"]);
     for (const kind of report.kinds) {
       expect(kind.missing).toEqual([]);
       expect(kind.stale).toEqual([]);
@@ -46,7 +39,8 @@ describe("fountain coverage", () => {
 
   it("excludes only schemas the pinned spec still has", () => {
     // An exclusion for a schema upstream removed matches nothing and proves
-    // nothing. v0.21.0 dropped three that v0.16.0 had (#2505).
+    // nothing. v0.21.0 dropped three that v0.16.0 had (#2505), and v0.29.0
+    // dropped the team, schedule, webhook and billing schemas (managoat/managoat#2793).
     const schemas = (JSON.parse(spec) as { components: { schemas: Record<string, unknown> } }).components.schemas;
     const stale = Object.keys(EXCLUDED_KINDS).filter((name) => !(name in schemas));
     expect(stale).toEqual([]);

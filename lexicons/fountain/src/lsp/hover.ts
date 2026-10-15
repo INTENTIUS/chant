@@ -24,22 +24,10 @@ const KIND_NOTES: Record<string, string> = {
     "set `[]` when the reviewed environment must not be overridable at spawn.\n\n" +
     "`runtime: \"acp\"` launches `runtime_command` inside the sandbox and speaks " +
     "the Agent Client Protocol to it. FTN023 keeps the pair together and FTN016 " +
-    "rejects a model on it, since the command picks its own.",
-  Teammate:
-    "An Agent seated on the team, with a thread of its own. `agent` is a typed " +
-    "reference; `environment` and `vault` override the agent's own for this " +
-    "seat and must satisfy its allowlists. FTN021 rejects a dangling reference " +
-    "at build rather than at apply.",
-  Schedule:
-    "A cron prompt sent to a Teammate. `cron` is five fields in UTC (FTN020). " +
-    "`one_off: false` sends into the teammate's own thread — a busy teammate " +
-    "means the run is skipped, not queued; `one_off: true` opens a fresh " +
-    "conversation each fire.",
-  Webhook:
-    "A URL fountain POSTs lifecycle events to. FTN022 requires https and " +
-    "refuses loopback, link-local and RFC1918 targets — fountain refuses them " +
-    "again at request time. The signing secret is returned once at create and " +
-    "is never readable, so it is not part of the declared shape.",
+    "rejects a model on it, since the command picks its own.\n\n" +
+    "`sandbox_mode` is deprecated upstream: every conversation gets a sandbox of " +
+    "its own, and `persistent` is refused with 422 (FTN025). For a long-lived " +
+    "machine, resume one conversation by `channel_id`.",
 };
 
 /** Enum-valued props are worth spelling out inline — they are the typo surface. */

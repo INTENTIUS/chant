@@ -37,14 +37,20 @@ import { fetchWithCache } from "@intentius/chant/codegen/fetch";
  * from. v0.21.0 adds `setup_timeout_seconds` to Environment and describes the
  * acp runtime itself (`runtime: "acp"` and `runtime_command` on Agent, with
  * `model` no longer required), which chant had modeled as an extension until
- * then. Bumping this changes the generated surface, so it belongs in its own
- * commit with the regenerated snapshot beside it.
+ * then. v0.29.0 is the release after Managoat removed the team, schedules,
+ * webhooks, persistent sandboxes, the opencode runtime, credential sets and
+ * the daytona and runner providers (managoat/managoat#2793), so those kinds
+ * and fields are gone from the generated surface; `Teammate`, `Schedule` and
+ * `Webhook` survive only as the retired stubs in `retired.ts`. Bumping this
+ * changes the generated surface, so it belongs in its own commit with the
+ * regenerated snapshot beside it.
  */
-export const FOUNTAIN_SPEC_VERSION = "v0.21.0";
+export const FOUNTAIN_SPEC_VERSION = "v0.29.0";
 
-// The repository moved from BinaryBourbon to managoat. The old path still
-// answers with a redirect, but a pin should not depend on one (#2389).
-const SCHEMA_URL = `https://github.com/managoat/fountain/releases/download/${FOUNTAIN_SPEC_VERSION}/openapi.json`;
+// The repository moved from BinaryBourbon to managoat/fountain, then to
+// managoat/managoat. The old paths still answer with a redirect, but a pin
+// should not depend on one (#2389).
+const SCHEMA_URL = `https://github.com/managoat/managoat/releases/download/${FOUNTAIN_SPEC_VERSION}/openapi.json`;
 
 const CACHE_FILE = join(homedir(), ".chant", `fountain-openapi-${FOUNTAIN_SPEC_VERSION}.json`);
 

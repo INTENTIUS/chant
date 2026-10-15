@@ -155,7 +155,7 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/cli/lifecycle.mdx": {
-  "formatting/em-dash-density": 93,
+  "formatting/em-dash-density": 92,
   "claude/colon-reveal": 8,
   "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 2,
@@ -921,7 +921,7 @@
   "claude/colon-reveal": 6,
   "tricolon/comma-series": 2,
   "dead-metaphor/rare-lemma": 1,
-  "repetition/near-duplicate": 33,
+  "repetition/near-duplicate": 34,
   "claude/contrast-tail": 3,
   "claude-technical-vocabulary": 1,
   "anaphora/repeated-opening": 11,
@@ -1170,8 +1170,7 @@
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/tutorials/fly-durable-deploy.mdx": {
-  "formatting/em-dash-density": 7,
-  "tricolon/comma-series": 1
+  "formatting/em-dash-density": 7
  },
  "docs/src/content/docs/tutorials/fly-machines-reconcile.mdx": {
   "formatting/em-dash-density": 16,

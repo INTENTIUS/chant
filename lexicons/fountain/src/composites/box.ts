@@ -1,15 +1,23 @@
 /**
- * Box — a persistent machine that serves an app repo and its tools (#2705).
+ * Box — a long-lived machine that serves an app repo and its tools (#2705).
  *
  * A box is an `Environment` whose `setup_script` provisions the machine (for
  * an arugula studio box, the studio's `box/provision-template.sh`), an
- * `Agent` on a persistent sandbox provisioned from it, and optionally a
+ * `Agent` whose conversations are provisioned from it, and optionally a
  * `Vault` for the secrets every box of this kind shares. `repo` is optional:
  * when given, the Environment's `repositories` clones it in before setup
  * runs; when omitted (#2759 — a blank-slate app, such as the one hud's
  * `init` makes, has no git remote yet), the Environment holds no
- * `repositories` at all and `setup_script` still runs, against whatever
- * working tree is already on the sandbox (a self-hosted `runner`'s own).
+ * `repositories` at all and `setup_script` still runs on an empty sandbox.
+ *
+ * The machine is one conversation, not the agent (managoat/managoat#2793).
+ * Managoat gives every conversation a sandbox of its own (its ADR 0073) and
+ * refuses `sandbox_mode: "persistent"` with 422, so the Agent declares no
+ * `sandbox_mode`. A box's runtime opens one conversation per box and resumes
+ * it by `channel_id`; that conversation's sandbox keeps its disk across park
+ * and wake and is destroyed only when the conversation is terminated, which
+ * is the long-lived machine a persistent agent used to stand for (planter#59
+ * made the same move).
  *
  * ```ts
  * export const { environment, agent, vault } = Box({
@@ -24,12 +32,11 @@
  * ```
  *
  * Beside `Steward`: a steward is an environment's one writer, an `acp` agent
- * whose every turn is a chant command line, bound to a teammate with a
- * standing thread and schedules. A box is where people and their agents work
+ * whose every turn is a chant command line, run on one long-lived
+ * conversation of its own. A box is where people and their agents work
  * on an app: a conversational runtime (`claude` by default), the app repo
  * cloned in (when there is one), the provisioning script run as setup, and
- * one served port. It declares no teammate and no schedule, and nothing here
- * starts a conversation. Starting and reaping a box stays a runtime act, as
+ * one served port. Nothing here starts a conversation. Starting and reaping a box stays a runtime act, as
  * it is in hud's box runtime.
  *
  * The defaults are the closed ones, as `ConciergeStack`'s are, and loosening
@@ -38,7 +45,8 @@
  * (which FTN011 then warns about); `allowed_vault_ids` holds the box's own
  * vault, or nothing, until `allowedVaults` widens it; `sandbox_provider` is
  * unset (the instance default) until `sandboxProvider` names one of the
- * pinned spec's `sprites`, `e2b`, `daytona` or `runner`. `permission_policy`
+ * pinned spec's `sprites` or `e2b` (Managoat removed `daytona` and `runner`;
+ * FTN025 reports either on an Agent built some other way). `permission_policy`
  * has no default at all, because fountain's unset policy is `auto_allow` and
  * that should be a choice someone wrote down.
  *
@@ -56,13 +64,15 @@
  * workspace check` fails a box member whose files hold one
  * (`box-credential-declared`).
  *
- * One credential reaches the box anyway (#2780). fountain v0.21.0 gives every
+ * One credential reaches the box anyway (#2780). Managoat gives every
  * sandbox a callback token, `FOUNTAIN_TOKEN`, in the environment of each exec
  * it makes into it (the setup script's included), scoped to the owner
- * (`sandbox_api_access: owner`). Its opt-out, `sandbox_api_access: none`, is
- * refused for a persistent sandbox, and a box is always persistent, so no
- * option here can turn it off (managoat/fountain#2497). The composite records
- * it instead: the Agent's metadata carries `box-sandbox-api-access: owner`
+ * (`sandbox_api_access: owner`) unless the conversation opts out. The opt-out,
+ * `sandbox_api_access: none`, is a field of the conversation's launch, not of
+ * the Agent, and Managoat accepts it only for a fresh sandbox, never on a
+ * `channel_id` resume (managoat/fountain#2497). A box is resumed by
+ * `channel_id`, so no option here can turn it off. The composite records it
+ * instead: the Agent's metadata carries `box-sandbox-api-access: owner`
  * (`BOX_SANDBOX_API_ACCESS_METADATA_KEY`), and the member's `box` block is
  * expected to declare the capability that stands for it,
  * `BOX_FOUNTAIN_CALLBACK_CAPABILITY`: `fountain-callback`, brokered by fountain
@@ -74,7 +84,7 @@
  * ## The port
  *
  * fountain's `Environment` and `Agent` have no field for a served port (the
- * pinned spec, v0.21.0). The port is recorded in the metadata of both, under
+ * pinned spec, v0.29.0). The port is recorded in the metadata of both, under
  * `box-port`, and returned as `port`, so whatever builds the box's URL reads
  * it from the declaration or from fountain's own record without a guess.
  *
@@ -104,14 +114,15 @@ export const BOX_ALLOWED_VAULTS_METADATA_KEY = "box-allowed-vault-ids";
 
 /**
  * The metadata key a box agent's sandbox callback access is recorded under
- * (#2780): `owner`, the scope of the `FOUNTAIN_TOKEN` fountain v0.21.0 gives
- * every persistent sandbox.
+ * (#2780): `owner`, the scope of the `FOUNTAIN_TOKEN` Managoat gives every
+ * sandbox by default.
  */
 export const BOX_SANDBOX_API_ACCESS_METADATA_KEY = "box-sandbox-api-access";
 
 /**
- * The sandbox callback access a box has on the pinned spec: `owner`. fountain
- * v0.21.0 accepts `none` only for a fresh ephemeral sandbox (managoat/fountain#2497).
+ * The sandbox callback access a box has on the pinned spec: `owner`. Managoat
+ * accepts `none` only on a fresh sandbox's launch, and a box's conversation is
+ * resumed (managoat/fountain#2497).
  */
 export const BOX_SANDBOX_API_ACCESS = "owner";
 
@@ -127,7 +138,7 @@ export const BOX_FOUNTAIN_CALLBACK_CAPABILITY = {
 } as const;
 
 /** `Agent.sandbox_provider`'s values at the pinned spec. */
-export const BOX_SANDBOX_PROVIDERS = ["sprites", "e2b", "daytona", "runner"] as const;
+export const BOX_SANDBOX_PROVIDERS = ["sprites", "e2b"] as const;
 
 /** A sandbox backend, per the pinned spec's `sandbox_provider` enum. */
 export type BoxSandboxProvider = (typeof BOX_SANDBOX_PROVIDERS)[number];
@@ -138,8 +149,8 @@ export const BOX_DEFAULT_PORT = 8080;
 /** Where the app repo is cloned when no `mountPath` is given. */
 export const BOX_DEFAULT_MOUNT_PATH = "/workspace/app";
 
-/** A permission verdict, or a number of seconds under the `ask_timeout` key. */
-export type BoxPermissionPolicy = Record<string, "ask" | "auto_allow" | "auto_deny" | number>;
+/** A permission verdict per tool key, plus an optional `default`. */
+export type BoxPermissionPolicy = Record<string, "ask" | "auto_allow" | "auto_deny">;
 
 /** The app repo the box serves. Shape of fountain's `Repository`. */
 export interface BoxRepositoryOpts {
@@ -172,10 +183,9 @@ export interface BoxOpts {
   /** Setup exec timeout, 1 to 900 seconds (FTN024). fountain's default is 120. */
   setupTimeoutSeconds?: number;
   /** Agent runtime. Default `claude`. */
-  runtime?: "claude" | "codex" | "gemini" | "opencode";
+  runtime?: "claude" | "codex" | "gemini";
   /**
-   * Canonical provider/model_id. Required (#2776): fountain v0.21.0, the
-   * pinned spec, refuses an Agent with no model for every runtime but `acp`
+   * Canonical provider/model_id. Required (#2776): Managoat refuses an Agent with no model for every runtime but `acp`
    * (`model: can't be blank` at apply), and a Box's runtime is never `acp`.
    * FTN016 flags the same gap on an Agent built any other way.
    */
@@ -232,7 +242,7 @@ export function Box(opts: BoxOpts): BoxResources {
   // rather than at fountain's apply.
   if (typeof opts.model !== "string" || !opts.model.trim()) {
     throw new Error(
-      `Box "${opts.name}": model is required — fountain v0.21.0 refuses an Agent with no model ` +
+      `Box "${opts.name}": model is required — Managoat refuses an Agent with no model ` +
         `for the ${opts.runtime ?? "claude"} runtime. Pass a canonical provider/model_id.`,
     );
   }
@@ -275,7 +285,7 @@ export function Box(opts: BoxOpts): BoxResources {
     : undefined;
 
   // A Vault declaration rather than its `.id`, as in Steward: the manifest's
-  // reference form is the resource's name (FTN021), and an AttrRef would
+  // reference form is the resource's name, and an AttrRef would
   // serialize to the chant export name instead.
   const allowedVaults =
     opts.allowedVaults === "any" ? undefined : (opts.allowedVaults ?? (vault ? [vault] : []));
@@ -297,7 +307,6 @@ export function Box(opts: BoxOpts): BoxResources {
     name: opts.name,
     runtime: opts.runtime ?? "claude",
     model: opts.model,
-    sandbox_mode: "persistent",
     ...(opts.sandboxProvider !== undefined ? { sandbox_provider: opts.sandboxProvider } : {}),
     environment,
     permission_policy: opts.permissionPolicy,

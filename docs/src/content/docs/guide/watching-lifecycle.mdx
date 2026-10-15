@@ -47,7 +47,7 @@ Run it by hand whenever you want:
 chant run prod-watch         # one tick, right now
 ```
 
-Three readers turn the cadence into something that fires on its own. The [github](/chant/lexicons/github/) generator (`generateOpsPipeline`) synthesizes a cron-triggered workflow that runs `chant run prod-watch` in CI. [`chant operator`](/chant/guide/operator/) ticks it from a loop on a machine you already have. A fountain [`Steward`](/chant/lexicons/fountain/steward/) that lists the op turns the cron into a `Schedule` on its teammate, in-thread, so a fire that lands mid-turn is dropped rather than opening a second machine beside the first.
+Two readers turn the cadence into something that fires on its own. The [github](/chant/lexicons/github/) generator (`generateOpsPipeline`) synthesizes a cron-triggered workflow that runs `chant run prod-watch` in CI. [`chant operator`](/chant/guide/operator/) ticks it from a loop on a machine you already have. Managoat has no scheduler, so a fountain [`Steward`](/chant/lexicons/fountain/steward/) that lists the op takes the cron from one of those, or a CronJob, running `chant run prod-watch --on fountain`. A fire that lands mid-turn is refused rather than opening a second machine beside the first.
 
 ### What a tick does
 
@@ -91,7 +91,7 @@ chant run status prod-watch               # the latest one
 chant operator log --env prod             # every tick in the environment, one timeline
 ```
 
-Nothing has to be running to read any of that: the ledger is a branch in your own repo. When the op is hosted, its turn is also a message on the steward's thread, so the same tick is legible in fountain's UI as one command somebody could have typed. See [The Steward](/chant/lexicons/fountain/steward/) for which store owns what.
+Nothing has to be running to read any of that: the ledger is a branch in your own repo. When the op is hosted, its turn is also a message in the steward's conversation, so the same tick is legible in Managoat as one command somebody could have typed. See [The Steward](/chant/lexicons/fountain/steward/) for which store owns what.
 
 ## Smoke-testing the drift signal
 

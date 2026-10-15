@@ -36,14 +36,14 @@ describe("LSP hover", () => {
     const info = hover(ctx("Agent"));
 
     expect(info?.contents).toContain("allowed_vault_ids");
-    expect(info?.contents).toContain("`runtime`: `claude` | `codex` | `gemini` | `opencode` | `acp`");
+    expect(info?.contents).toContain("`runtime`: `claude` | `codex` | `gemini` | `acp`");
   });
 
-  it("documents the kinds added in v0.16.0", () => {
-    expect(hover(ctx("Teammate"))?.contents).toContain("Fountain::V1::Teammate");
-    expect(hover(ctx("Teammate"))?.contents).toContain("typed reference");
-    expect(hover(ctx("Schedule"))?.contents).toContain("five fields in UTC");
-    expect(hover(ctx("Webhook"))?.contents).toContain("RFC1918");
+  it("says sandbox_mode persistent is gone, and has nothing for the retired kinds (managoat/managoat#2793)", () => {
+    expect(hover(ctx("Agent"))?.contents).toContain("FTN025");
+    for (const kind of ["Teammate", "Schedule", "Webhook"]) {
+      expect(hover(ctx(kind))).toBeUndefined();
+    }
   });
 
   it("describes the acp runtime without calling it an extension", () => {

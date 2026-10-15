@@ -10,14 +10,13 @@
  * found by the `client_request_id` this sends with the prompt, and polled on
  * `GET .../turns` until it is `completed`, `failed` or `interrupted`.
  *
- * What fountain v0.21.0 can and cannot do here, which decides the arguments:
+ * What fountain v0.29.0 can and cannot do here, which decides the arguments:
  *
  * - A conversation that is `terminated` takes no more turns: the prompts route
- *   answers 410. `fountainRun` terminates an ephemeral agent's conversation
- *   once its turn ends (or at its deadline) by default, so a caller that wants a
- *   later turn runs the first one with `terminate: "never"` (a persistent
- *   agent's default) and ends the conversation itself, or with this op's
- *   `terminate`, after the last turn.
+ *   answers 410. `fountainRun` terminates a conversation once its turn ends
+ *   (or at its deadline) by default, so a caller that wants a later turn runs
+ *   the first one with `terminate: "never"` and ends the conversation itself,
+ *   or with this op's `terminate`, after the last turn.
  * - A turn has no tool allowlist of its own. The prompts route takes only the
  *   prompt, images and `client_request_id`; the tools a conversation may use are
  *   its agent's `permission_policy`, narrowed once at launch, and nothing on the

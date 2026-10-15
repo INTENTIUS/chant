@@ -2,48 +2,55 @@
  * Steward — the one writer for an environment (#2127, epic #2115).
  *
  * A steward is an `Agent` that speaks the Agent Client Protocol over `chant
- * acp` on a persistent sandbox, bound to the team as a `Teammate` so it has a
- * standing conversation, with a `Schedule` per scheduled op and an optional
- * `Webhook` for whoever has to hear about a turn. The teammate's thread is
- * that environment's operational history: every turn is one chant command
- * line, so scrolling the thread is scrolling what was done.
+ * acp`, whose turns all land on one long-lived conversation: `chant run <op>
+ * --on fountain` opens it the first time and resumes it after that, by
+ * `channel_id` `chant:steward:<name>`. That conversation is the
+ * environment's operational history: every turn is one chant command line,
+ * so scrolling it is scrolling what was done. Its sandbox keeps its disk
+ * across park and wake and is destroyed only when the conversation is
+ * terminated, so the checkout and tool cache survive a turn ending.
  *
  * ```ts
- * export const { agent, teammate, schedules, webhook } = Steward({
+ * export const { agent, declaration } = Steward({
  *   name: "prod-steward",
  *   environment: toolchain,
  *   vault: prodCreds,
  *   ops: [watch.op, converge.op, apply.op],
- *   webhook: { url: "https://hooks.example.com/chant" },
  * });
  * ```
  *
+ * ## What Managoat no longer does for it (managoat/managoat#2793)
+ *
+ * A steward used to be a persistent-sandbox Agent seated on the team as a
+ * `Teammate`, with a `Schedule` per scheduled op and an optional `Webhook`.
+ * Managoat removed all four: every conversation gets a sandbox of its own
+ * (its ADR 0073), and there is no team, no scheduler (ADR 0074) and no
+ * webhook. So the Agent declares no `sandbox_mode`, and nothing here declares
+ * a schedule. An Op's `schedule` stays on the declaration below, and a clock
+ * outside Managoat fires it: a CI `schedule:` or a CronJob running `chant run
+ * <op> --on fountain` (or `--on e2b`, which runs the Op on a sandbox of your
+ * own), or, in an environment whose form is `local`, `chant operator
+ * --steward`. `webhook` is refused by name; read a run's
+ * outcome from `chant run` or the conversation's event stream instead.
+ *
  * The defaults are the ones a machine that runs chant needs and no others:
- * `sandbox_mode: "persistent"` because the environment's checkout and tool
- * cache have to survive a turn ending, `permission_policy: { default:
- * "auto_allow" }` because there is nobody at the keyboard to answer a
- * permission card. Chant's own gates are still where a human belongs, and
- * that is enforced rather than assumed: a gate resolved from this session
- * would be answering a gate this session produced, which `recordGateApproval`
- * refuses (chant#2384's origin rule, reached through chant#2400). So
- * `auto_allow` decides ordinary tool calls and cannot clear a gate — the
- * resolution has to arrive on a channel this agent is not on, normally
- * `chant approve` at a shell, no `model`
- * because an `acp` agent's model is whatever the command it launches decides
- * to use, and no skills because a steward's competence is chant's op
- * definitions rather than prose.
+ * `permission_policy: { default: "auto_allow" }` because there is nobody at
+ * the keyboard to answer a permission card. Chant's own gates are still where
+ * a human belongs, and that is enforced rather than assumed: a gate resolved
+ * from this session would be answering a gate this session produced, which
+ * `recordGateApproval` refuses (chant#2384's origin rule, reached through
+ * chant#2400). So `auto_allow` decides ordinary tool calls and
+ * cannot clear a gate — the resolution has to arrive on a channel this agent
+ * is not on, normally `chant approve` at a shell. No `model`, because an `acp` agent's
+ * model is whatever the command it launches decides to use, and no skills
+ * because a steward's competence is chant's op definitions rather than prose.
  *
  * ## Why it refuses things
  *
- * Two stewards on one environment and vault is two writers on one machine,
- * which is the exact thing a single thread exists to prevent — fountain would
- * accept both, and their turns would interleave on the same checkout. An op
- * whose `schedule.overlap` is not `skip` asks for a backlog fountain has no
- * way to queue: a schedule that fires while the teammate is busy is dropped
- * with `teammate was busy`, so any other overlap policy would be a promise
- * the server does not keep. And a webhook url FTN022 would reject is refused
- * here rather than at synth, because a composite that constructed it would be
- * handing the author a lint error about a resource they never typed.
+ * Two stewards on one environment and vault is two writers on one checkout,
+ * which is the exact thing a single conversation exists to prevent —
+ * fountain would accept both, and their turns would interleave on the same
+ * environment.
  *
  * ## One steward whatever the preset (#2731)
  *
@@ -54,7 +61,7 @@
  * there `chant operator --steward <name>` runs the same Ops on the same crons,
  * one at a time, each under its operator lease and the whole process under the
  * steward's own. `chant operator --steward` refuses an environment whose form
- * is `fountain`, because this Agent and Teammate are the steward there. Export
+ * is `fountain`, because this Agent's conversation is the steward there. Export
  * `declaration` from an `*.op.ts` file so the operator and `chant workspace
  * status` find it.
  *
@@ -77,7 +84,7 @@
  * open ends the run as `waiting`, as a gate ends it as `gated`. The question
  * stays in the workspace, where `points --open`, `workspace status --json`
  * and hud find it, and a person answers it. It is never asked on this
- * thread, and `points answer` from this session is refused. The Op's next
+ * conversation, and `points answer` from this session is refused. The Op's next
  * turn reads the answer.
  *
  * ## The coding agent beside it
@@ -95,9 +102,7 @@
 
 import { declareSteward, type StewardDeclaration, type StewardFormSpec } from "@intentius/chant/op";
 import type { OpConfig, OpResource } from "@intentius/chant/op";
-import { Agent, Environment, Schedule, Teammate, Vault, Webhook } from "../generated/index";
-import { isPrivateHost } from "../lint/post-synth/ftn022-webhook-url-public-https";
-import { runPrompt } from "../op/run-prompt";
+import { Agent, Environment, Vault } from "../generated/index";
 import { propsOf } from "../entity-props";
 
 /**
@@ -118,17 +123,8 @@ function configOf(op: StewardOp): OpConfig {
   return (declared && typeof declared === "object" ? declared : op) as OpConfig;
 }
 
-/** The webhook a steward declares, if any. Shape of fountain's create request. */
-export interface StewardWebhookOpts {
-  /** Delivery target. https, and not a loopback, link-local or RFC1918 host. */
-  url: string;
-  /** Subscribed event types. fountain's own default when omitted. */
-  event_types?: string[];
-  description?: string;
-}
-
 export interface StewardOpts {
-  /** The steward's name — the Agent's, and the Teammate's. */
+  /** The steward's name — the Agent's, and its conversation's `channel_id` suffix. */
   name: string;
   /** The environment its computer is provisioned from: repo, chant, tooling. */
   environment: InstanceType<typeof Environment>;
@@ -145,17 +141,16 @@ export interface StewardOpts {
    */
   capabilities?: string[];
   /**
-   * The ops this steward runs. An op with a `schedule` gets a `Schedule`; one
-   * without is still listed, so `chant run <op> --on fountain` knows which
-   * thread the run belongs on.
+   * The ops this steward runs, so `chant run <op> --on fountain` knows which
+   * conversation the run belongs on. An op's `schedule` is carried on the
+   * declaration for a clock outside Managoat to fire; nothing here schedules it.
    */
   ops: StewardOp[];
-  webhook?: StewardWebhookOpts;
   /** Extra metadata merged over the `managed-by` marker on the Agent. */
   metadata?: Record<string, unknown>;
   /**
    * Where this steward runs (#2731). Default `fountain`: this composite's
-   * Agent and Teammate are the steward. A box whose preset has no Fountain in
+   * Agent, and its one conversation, are the steward. A box whose preset has no Fountain in
    * some environment names it here, e.g. `{ default: "fountain", environments:
    * { minimal: "local" } }`, and `chant operator --steward <name> --env minimal`
    * runs the same Ops there. The Fountain resources are declared either way; a
@@ -167,10 +162,6 @@ export interface StewardOpts {
 
 export interface StewardResources {
   agent: InstanceType<typeof Agent>;
-  teammate: InstanceType<typeof Teammate>;
-  /** One per op that carries a `schedule`, in `ops` order. */
-  schedules: InstanceType<typeof Schedule>[];
-  webhook?: InstanceType<typeof Webhook>;
   /**
    * The steward as core reads it (#2731): name, Ops and form. Export it from
    * an `*.op.ts` file so `chant operator --steward` and `chant workspace
@@ -199,15 +190,15 @@ export function stewardRuntimeCommand(name: string): string {
 // composite only ever sees its own call, so the binding it claims has to be
 // recorded somewhere the next call can see. The second is what
 // `op/runtime.ts` reads to send `chant run <op> --on fountain` to the right
-// thread without the author repeating the teammate name in a profile.
+// conversation without the author repeating the steward's name in a profile.
 
 /** `environment name \0 vault name` → the steward that claimed it. */
 const bindings = new Map<string, string>();
 
-/** Op name → the teammate whose thread it runs on. */
+/** Op name → the steward whose conversation it runs on. */
 const opStewards = new Map<string, string>();
 
-/** The teammate an Op runs on, when a `Steward` in this process declared one. */
+/** The steward an Op runs on, when a `Steward` in this process declared one. */
 export function stewardForOp(op: string): string | undefined {
   return opStewards.get(op);
 }
@@ -224,35 +215,22 @@ function nameOf(entity: unknown): string {
   return typeof declared === "string" ? declared : "";
 }
 
-/** Refuse a webhook url on exactly FTN022's terms, before the resource exists. */
-function checkWebhookUrl(steward: string, url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`Steward "${steward}": webhook url "${url}" is not a URL`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(
-      `Steward "${steward}": webhook url "${url}" is ${parsed.protocol.replace(":", "")}, not https — ` +
-        `turn payloads would cross the network in the clear`,
-    );
-  }
-  if (isPrivateHost(parsed.hostname)) {
-    throw new Error(
-      `Steward "${steward}": webhook url "${url}" targets the private host "${parsed.hostname}" — ` +
-        `fountain refuses loopback, link-local and RFC1918 delivery targets`,
-    );
-  }
-}
-
 export function Steward(opts: StewardOpts): StewardResources {
+  // The type no longer has it; this is for an untyped caller still passing
+  // the old option, so it fails at build with the reason rather than vanishing.
+  if ((opts as { webhook?: unknown }).webhook !== undefined) {
+    throw new Error(
+      `Steward "${opts.name}": webhook is gone — Managoat removed webhooks (managoat/managoat#2793). ` +
+        `Read a run's outcome from chant run, or from the conversation's event stream.`,
+    );
+  }
+
   const metadata = { "managed-by": "chant", ...(opts.metadata ?? {}) };
   const ops = opts.ops.map(configOf);
 
-  // One writer per environment. The binding is the pair the sandbox identity
-  // is keyed on upstream (agent, environment, vault), minus the agent — two
-  // agents sharing the rest are two processes on one checkout.
+  // One writer per environment. The binding is the environment and vault a
+  // steward's conversation is provisioned from — two agents sharing them are
+  // two processes writing one environment's records.
   const envName = nameOf(opts.environment);
   const vaultName = opts.vault ? nameOf(opts.vault) : "";
   const binding = `${envName}\0${vaultName}`;
@@ -265,19 +243,6 @@ export function Steward(opts: StewardOpts): StewardResources {
         `Give this one its own environment, or list its ops on "${claimed}".`,
     );
   }
-
-  for (const op of ops) {
-    const overlap = op.schedule?.overlap;
-    if (overlap !== undefined && overlap !== "skip") {
-      throw new Error(
-        `Steward "${opts.name}": op "${op.name}" schedules overlap "${overlap}" — ` +
-          `a fountain schedule that fires while the teammate is busy is dropped, ` +
-          `so "skip" is the only policy the server can honour.`,
-      );
-    }
-  }
-
-  if (opts.webhook) checkWebhookUrl(opts.name, opts.webhook.url);
 
   // The declaration core reads. Built here, before any resource, so a bad
   // name, a duplicate op or an unknown form is refused with nothing declared.
@@ -301,53 +266,20 @@ export function Steward(opts: StewardOpts): StewardResources {
     runtime: "acp",
     // The session is this steward's turn (chant#2749): see "Decision points".
     runtime_command: stewardRuntimeCommand(opts.name),
-    sandbox_mode: "persistent",
     environment: opts.environment,
     permission_policy: { default: "auto_allow" },
     // Scoped to the vault it was given, and to nothing when it was given
     // none: an empty list forbids a conversation attaching any vault at all,
     // which is the closed reading of "this machine holds these secrets". The
     // entry is the Vault declaration rather than its `.id` attribute, because
-    // the manifest's reference form is the resource's name (FTN021's rule)
-    // and an AttrRef would serialize to the chant export name instead.
+    // the manifest's reference form is the resource's name, and an AttrRef
+    // would serialize to the chant export name instead.
     allowed_vault_ids: opts.vault ? [opts.vault] : [],
     metadata,
   });
 
-  const teammate = new Teammate({
-    name: opts.name,
-    agent,
-    environment: opts.environment,
-    ...(opts.vault ? { vault: opts.vault } : {}),
-  });
-
-  const schedules: InstanceType<typeof Schedule>[] = [];
-  for (const op of ops) {
-    if (!op.schedule) continue;
-    schedules.push(
-      new Schedule({
-        name: `${opts.name}-${op.name}`,
-        teammate,
-        cron: op.schedule.cron,
-        prompt: runPrompt(op.name),
-        // In-thread, so a fire while the previous run is still going is
-        // dropped rather than opening a second computer beside the first.
-        one_off: false,
-        enabled: true,
-      }),
-    );
-  }
-
-  const webhook = opts.webhook
-    ? new Webhook({
-        url: opts.webhook.url,
-        ...(opts.webhook.event_types ? { event_types: opts.webhook.event_types } : {}),
-        ...(opts.webhook.description !== undefined ? { description: opts.webhook.description } : {}),
-      })
-    : undefined;
-
   bindings.set(binding, opts.name);
   for (const op of ops) opStewards.set(op.name, opts.name);
 
-  return { agent, teammate, schedules, ...(webhook ? { webhook } : {}), declaration };
+  return { agent, declaration };
 }

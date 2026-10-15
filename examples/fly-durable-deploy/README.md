@@ -1,15 +1,17 @@
 # fly-durable-deploy
 
-A Fly Machines deploy that keeps running without anybody minding it. The op is
-scheduled on a fountain steward: one teammate, one persistent machine, one
-thread carrying every deploy this app has had.
+A Fly Machines deploy that keeps running without anybody minding it. The op
+runs on a fountain steward: one agent, one long-lived conversation, and that
+conversation's sandbox carrying every deploy this app has had.
 
 Where [`fly-deploy-rollback`](../fly-deploy-rollback) uses a Sprite checkpoint as
 its recovery boundary, durability here comes from two properties that have
 nothing to do with a workflow engine.
 
-**The machine persists.** The steward's sandbox is `sandbox_mode: persistent`,
-so the checkout, the npm cache and the installed chant survive a turn ending.
+**The machine persists.** Every `chant run --on fountain` of the steward's ops
+goes to the same conversation, resumed by its `channel_id`, and a Managoat
+conversation's sandbox keeps its disk across park and wake. So the checkout,
+the npm cache and the installed chant survive a turn ending.
 A turn is a command on a computer that was already there, not a container
 booted to run one deploy and thrown away.
 
@@ -58,17 +60,17 @@ npm run lint
 chant run fly-durable-deploy --on fountain
 ```
 
-Four documents come out of `ops/fountain.ts`: the `Environment` the sandbox is
-provisioned from, the `Vault` that holds `FLY_API_TOKEN`, the `Agent` that
-speaks ACP over `chant acp`, and the `Teammate` seat that owns the thread —
-plus one `Schedule`, because the op carries a cron. `chant run … --on fountain`
-posts the command line to that thread and tails the turn; the record that comes
+Three documents come out of `ops/fountain.ts`: the `Environment` the sandbox
+is provisioned from, the `Vault` that holds `FLY_API_TOKEN`, and the `Agent`
+that speaks ACP over `chant acp`. `chant run … --on fountain` posts the command
+line to the steward's conversation and tails the turn; the record that comes
 back has the shape a local run would have written.
 
-If the steward is mid-turn the post is refused rather than queued. A teammate
-runs one turn at a time, which is what keeps two deploys off one checkout, and
-is also why the schedule is in-thread: a fire that lands mid-turn is dropped,
-and the next one re-applies everything anyway.
+Managoat has no scheduler, so the op's half-hourly cron fires from a clock
+outside it: a CI schedule or a CronJob that runs `chant run fly-durable-deploy
+--on fountain`. If the steward is mid-turn the post is refused rather than
+queued. One turn at a time is what keeps two deploys off one checkout, and a
+fire that lands mid-turn loses nothing: the next one re-applies everything.
 
 Point the sandbox at your own estate with the build parameter:
 
@@ -78,7 +80,7 @@ chant build ops --lexicon fountain -o dist/fountain.yaml \
 ```
 
 [`fountain-steward`](../fountain-steward/) is the fuller worked example of the
-same shape: a watch, a converge and a gated apply on one thread.
+same shape: a watch, a converge and a gated apply in one conversation.
 
 ## Real Fly
 

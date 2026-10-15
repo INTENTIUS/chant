@@ -24,7 +24,7 @@
  * tick after the NS records propagate is the one that publishes.
  *
  *   chant run crdb-publish-ui                 # here, once
- *   chant run crdb-publish-ui --on fountain   # on the steward's thread
+ *   chant run crdb-publish-ui --on fountain   # in the steward's conversation
  */
 
 import { Op, phase, shell, httpCheck } from "@intentius/chant/op";
@@ -69,7 +69,7 @@ export default Op({
     ]),
 
     // The nameservers to copy to your registrar. Printed on every run, so a
-    // dispatched tick leaves them in the thread rather than in somebody's
+    // dispatched tick leaves them in the conversation rather than in somebody's
     // scrollback from three days ago.
     phase("Nameservers", [
       shell(

@@ -52,7 +52,7 @@ A `ConvergeOp` that declares its own `schedule` cron is ticked on that cron rath
 
 #### `operator --steward [<name>]`
 
-Run a declared steward's local form instead of every ConvergeOp ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). A steward is the one writer for an environment: on Fountain it is the fountain lexicon's `Steward` Agent and Teammate, and on a box with no Fountain behind it, it is this command. The declaration is found in the project's `*.op.ts` files, from `declareSteward` in `@intentius/chant/op` or the fountain `Steward`'s `declaration`.
+Run a declared steward's local form instead of every ConvergeOp ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). A steward is the one writer for an environment: on Fountain it is the fountain lexicon's `Steward` Agent and its one long-lived conversation, and on a box with no Fountain behind it, it is this command. The declaration is found in the project's `*.op.ts` files, from `declareSteward` in `@intentius/chant/op` or the fountain `Steward`'s `declaration`.
 
 ```bash
 chant operator --steward                         # the project's only steward
@@ -60,7 +60,7 @@ chant operator --steward box-steward --env minimal
 chant operator --steward box-steward --once
 ```
 
-The command refuses to start when the steward's form in `--env` (default `local`) is `fountain`, since the Fountain teammate is the steward there, and when another live process holds the steward's lease, `refs/chant/lease/_stewards/<name>`. Each round renews that lease and then runs the steward's scheduled Ops, each on its own cron and under its own operator lease, as the ConvergeOp rounds above do. An Op with no schedule is left for someone to run by hand. Each run lands on the run ledger. A round that finds the steward's lease held by another process ticks nothing and prints `operator: steward <name> skipped=1(steward-lease-held:<holder>)`. `--interval`, `--lease-ttl` and `--once` work as they do without `--steward`. The steward's lease and the leases of the Ops it ticked are released on Ctrl-C or SIGTERM.
+The command refuses to start when the steward's form in `--env` (default `local`) is `fountain`, since the steward's Fountain conversation is the one writer there, and when another live process holds the steward's lease, `refs/chant/lease/_stewards/<name>`. Each round renews that lease and then runs the steward's scheduled Ops, each on its own cron and under its own operator lease, as the ConvergeOp rounds above do. An Op with no schedule is left for someone to run by hand. Each run lands on the run ledger. A round that finds the steward's lease held by another process ticks nothing and prints `operator: steward <name> skipped=1(steward-lease-held:<holder>)`. `--interval`, `--lease-ttl` and `--once` work as they do without `--steward`. The steward's lease and the leases of the Ops it ticked are released on Ctrl-C or SIGTERM.
 
 An Op that declares a [work lease](/chant/guide/ops/#running-under-a-work-lease) runs under it in a steward round too, claimed as `<steward>/<op>@<holder>` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). An Op that changes the checkout and declares no work lease is refused when the steward is declared, and a scheduled Op whose lease leaves the item to the run is refused the same way, since a scheduled run can't name one.
 

@@ -17,6 +17,10 @@ export {
 // Generated resources — Environment, Vault, Agent, and property types.
 export * from "./generated/index";
 
+// Kinds Managoat removed (managoat/managoat#2793). Declaring one fails the
+// build with FTN025, which names the replacement; the serializer never emits it.
+export { Teammate, Schedule, Webhook, RETIRED_KINDS } from "./retired";
+
 // Op activities — the native applier and conversation runner. Also
 // resolvable by name via loadActivities(["fountain"]).
 export { fountainApply, fountainRun, fountainPrompt, DEFAULT_FOUNTAIN_BASE_URL } from "./op/activities";
@@ -32,6 +36,7 @@ export type { FountainConfig, FountainProfile } from "./config";
 export {
   createFountainOpRuntime,
   defaultFountainSse,
+  stewardChannel,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
 } from "./op/runtime";
 export type { FountainOpRuntimeOptions, FountainSse, FountainSseEvent } from "./op/runtime";
@@ -40,7 +45,7 @@ export type { FountainOpRuntimeOptions, FountainSse, FountainSseEvent } from "./
 export { ConciergeStack } from "./composites/concierge-stack";
 export type { ConciergeStackOpts, ConciergeStackResources } from "./composites/concierge-stack";
 export { Steward, stewardForOp, stewardRuntimeCommand, STEWARD_RUNTIME_COMMAND } from "./composites/steward";
-export type { StewardOp, StewardOpts, StewardResources, StewardWebhookOpts } from "./composites/steward";
+export type { StewardOp, StewardOpts, StewardResources } from "./composites/steward";
 export {
   Box,
   BOX_PORT_METADATA_KEY,

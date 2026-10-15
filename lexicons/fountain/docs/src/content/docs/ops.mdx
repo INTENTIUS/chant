@@ -30,13 +30,9 @@ Endpoint and token resolution: explicit args win, then the named `fountain.profi
 
 ## fountainRun
 
-Conversations are runs, not resources, so they are started rather than declared. `fountainRun` resolves the agent by name, starts a conversation (optionally with a prompt and an allowlisted vault), and polls until the launch is done. What counts as done depends on the agent's `sandbox_mode` and on whether the launch has a prompt.
+Conversations are runs, not resources, so they are started rather than declared. `fountainRun` resolves the agent by name, starts a conversation (optionally with a prompt and an allowlisted vault), and polls until the launch is done: the conversation settles on `idle` with its latest turn ended, or reaches `completed`, `failed`, `timed_out` or `terminated`. `status` in the result is the turn's own outcome (`completed`, `failed` or `interrupted`), or the conversation's status.
 
-| Launch | Done when | `status` in the result |
-|---|---|---|
-| Ephemeral agent | The conversation settles on `idle` with its latest turn ended, or reaches `completed`, `failed`, `timed_out` or `terminated`. | The turn's own outcome (`completed`, `failed` or `interrupted`), or the conversation's status. |
-| Persistent agent, with a prompt | The conversation settles on `idle` (or one of the above). | The turn's own outcome: `completed`, `failed` or `interrupted`. |
-| Persistent agent, no prompt | The conversation's sandbox is `ready` or `failed` and no turn is running. fountain v0.21.0 leaves such a conversation `pending`, since no turn starts. | `provisioned`, or `failed` with `failedStage` naming the provisioning stage that failed. |
+Every conversation gets a sandbox of its own: Managoat removed persistent sandboxes ([managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)), so an agent with `sandbox_mode: "persistent"` fails the build with FTN025. To keep a machine across turns, run the first with `terminate: "never"` and send the later ones with `fountainPrompt`.
 
 An empty `prompt` counts as no prompt. The result also carries `sandboxId` and `spriteName` (fountain's `sandbox.sprite_name`), so a caller can reach the machine without listing `/api/sandboxes`. `spriteName` in the args passes through as fountain's `sprite_name`, the suffix of the machine's name, so a box's runtime can predict it.
 
@@ -44,8 +40,8 @@ An empty `prompt` counts as no prompt. The result also carries `sandboxId` and `
 |---|---|
 | `timeoutMs` | Deadline for the wait. Default 10 minutes. |
 | `pollMs` | Poll interval. Default 5 seconds. |
-| `sandboxApiAccess` | fountain's `sandbox_api_access`. `owner`, fountain's default, gives the sandbox a callback token (`FOUNTAIN_TOKEN`) scoped to the owner. `none` gives it none. fountain v0.21.0 accepts `none` only for a fresh ephemeral sandbox, so `fountainRun` refuses it for a persistent agent before starting anything ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). |
-| `terminate` | What happens to the conversation's machine when the wait ends: `always` (the ephemeral default) terminates it whether the turn ended or the deadline fired, `never` (the persistent default) leaves it, `on-deadline` terminates only a run whose turn never ended. Pass `never` on an ephemeral run to send it a later turn with `fountainPrompt`. |
+| `sandboxApiAccess` | fountain's `sandbox_api_access`. `owner`, fountain's default, gives the sandbox a callback token (`FOUNTAIN_TOKEN`) scoped to the owner. `none` gives it none. Managoat accepts `none` only for a fresh sandbox, never on a `channel_id` resume ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). |
+| `terminate` | What happens to the conversation's machine when the wait ends: `always` (the default) terminates it whether the turn ended or the deadline fired, `never` leaves it, `on-deadline` terminates only a run whose turn never ended. Pass `never` on an ephemeral run to send it a later turn with `fountainPrompt`. |
 
 Under `chant run` the executor calls these activities as `fn(args, signal)`. When the signal fires (the step's timeout, or Ctrl-C) `fountainRun` stops polling, applies the `terminate` policy as it does at its deadline, and the step fails.
 
@@ -73,11 +69,11 @@ const debrief = await fountainPrompt({ conversation: run.conversationId, prompt:
 
 The result is `{ conversationId, clientRequestId, turnId, turnNumber, status, interruptedByDeadline, limitReason, terminated }`. `limitReason` is fountain's `limit_reason`, a service limit that ended the turn, which makes even a `completed` turn incomplete. When the signal fires, `fountainPrompt` interrupts the turn, applies `terminate` as at its cap, and the step fails.
 
-What fountain v0.21.0 does not allow decides what this activity leaves out:
+What Managoat does not allow decides what this activity leaves out:
 
 | Not possible | Why, and what to do instead |
 |---|---|
-| A turn on a terminated conversation | The prompts route answers 410 once a conversation is `terminated`, and `fountainPrompt` fails saying so. `fountainRun` terminates an ephemeral agent's conversation at its deadline by default, so run the earlier turn with `terminate: "never"` and end the conversation after the last turn, with `terminate: "always"` here. |
+| A turn on a terminated conversation | The prompts route answers 410 once a conversation is `terminated`, and `fountainPrompt` fails saying so. `fountainRun` terminates the conversation at its deadline by default, so run the earlier turn with `terminate: "never"` and end the conversation after the last turn, with `terminate: "always"` here. |
 | A tool allowlist for one turn | The prompts route takes the prompt, images and `client_request_id`, nothing else. The tools a conversation may use are its agent's `permission_policy`, narrowed once by the launch's, and no call narrows them for one turn. Narrow the agent's policy, or launch a conversation with the policy the turn needs. |
 | A cap on the agent loop's iterations | fountain has no per-turn iteration cap. The cap here is time, `timeoutMs`. |
 

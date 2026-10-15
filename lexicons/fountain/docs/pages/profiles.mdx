@@ -20,7 +20,7 @@ export default {
       staging: {
         endpoint: "https://fountain-staging.example.com",
         token: { env: "FOUNTAIN_STAGING_TOKEN" },
-        team: "staging-steward",
+        steward: "staging-steward",
       },
       prod: {
         endpoint: "https://fountain.inevitable.fyi",
@@ -38,7 +38,8 @@ export default {
 |---|---|---|
 | `endpoint` | `string` | Base URL of the fountain instance this profile targets. |
 | `token` | `{ env: string }` | The name of the environment variable that holds the bearer token — never a literal value. FTN001 refuses a literal string here. |
-| `team` | `string` (optional) | The default steward — a `Teammate` name — that `chant run --on fountain` posts to when the op declares no steward of its own. |
+| `steward` | `string` (optional) | The default steward — the name of a `Steward` — that `chant run --on fountain` runs on when the op is listed on no steward of its own. The run resumes that steward's conversation by `channel_id` `chant:steward:<name>`. |
+| `team` | `string` (optional, deprecated) | The old name for `steward`, from when a steward was a team seat. Read as `steward`, with a warning. |
 
 An unknown key anywhere in `fountain` — a namespace-level typo, or one inside a profile — fails config load naming the key, the same way `forgejo` does (chant #1344).
 

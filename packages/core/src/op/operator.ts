@@ -399,8 +399,8 @@ const STEWARD_TURN_POLL_MS = 150;
  *
  * Contention never queues past `waitMs` (0 by default): consistent with a
  * round's own leases, which skip and report rather than wait (see this
- * module's doc), and with the fountain form, whose busy teammate is likewise
- * refused rather than retried. A caller that wants to ride out a race with a
+ * module's doc), and with the fountain form, whose busy steward conversation
+ * is likewise refused rather than retried. A caller that wants to ride out a race with a
  * turn about to end passes `waitMs`, and this polls every
  * {@link STEWARD_TURN_POLL_MS} until it acquires or the wait runs out.
  */

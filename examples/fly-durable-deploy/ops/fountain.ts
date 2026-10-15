@@ -2,16 +2,20 @@
  * The steward that owns this Fly app.
  *
  * Durability here is not a workflow engine replaying a half-finished run. It
- * is a persistent machine and a convergent op: the sandbox keeps its checkout
- * and its tool cache between turns, and every turn re-applies the whole plan.
+ * is a long-lived conversation and a convergent op: its sandbox keeps the
+ * checkout and the tool cache across park and wake, and every turn re-applies
+ * the whole plan.
  * A turn that dies halfway leaves the App and the Machine wherever it got to,
  * and the next fire — thirty minutes later, or a `chant run` someone types —
  * walks the same steps against that state and finishes the job. Nothing is
  * resumed because nothing needed to be: the deploy is the same shape at every
  * starting point.
  *
- * One thread carries all of it, so the conversation is this app's deploy
- * history rather than a place turns happen to appear.
+ * One conversation carries all of it, resumed by channel_id on every `chant
+ * run --on fountain`, so it is this app's deploy history rather than a place
+ * turns happen to appear. Managoat has no scheduler: the half-hourly cadence
+ * runs from a clock outside it, a CI schedule or a CronJob that runs `chant
+ * run fly-durable-deploy --on fountain`.
  */
 
 import { params } from "@intentius/chant/params";
@@ -62,9 +66,9 @@ export const flyCreds = new Vault({
   metadata: chantOwned,
 });
 
-// One writer for this app. The deploy op carries a half-hourly cron, so one
-// Schedule comes out of this alongside the Agent and the Teammate seat.
-export const { agent, teammate, schedules } = Steward({
+// One writer for this app. The deploy op carries a half-hourly cron, which the
+// steward's declaration lists for whatever clock fires it.
+export const { agent } = Steward({
   name: "fly-steward",
   environment: toolchain,
   vault: flyCreds,

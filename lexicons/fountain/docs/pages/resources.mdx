@@ -1,13 +1,12 @@
 ---
 title: "Resources"
-description: "The six fountain workload kinds the lexicon declares."
+description: "The three Managoat workload kinds the lexicon declares, and the three it retired."
 diataxis: reference
 ---
 
-The lexicon types six kinds. Environment, Vault and Agent are what `fountain
-apply` reconciles; Teammate, Schedule and Webhook are the team, schedule and
-webhook routes. Types are generated from a pinned fountain release's OpenAPI
-spec, so they track the real API. Conversations are deliberately **not** a
+The lexicon types three kinds, the three `fountain apply` reconciles:
+Environment, Vault and Agent. Types are generated from a pinned Managoat
+release's OpenAPI spec (v0.29.0), so they track the real API. Conversations are deliberately **not** a
 resource: they are runs with a status lifecycle, modeled as ops.
 
 ## Environment
@@ -42,51 +41,42 @@ allowlist.
 A named, re-runnable agent configuration: model, runtime, skills (inline
 SKILL.md or GitHub-sourced with a `ref` pin), MCP servers, and an optional
 `environment` reference — typed, so a dangling reference is a build error,
-not a 422 at apply time. `sandbox_mode` picks between a sandbox per
-conversation and one persistent computer per agent identity.
+not a 422 at apply time.
+
+`sandbox_mode` is still in the spec, deprecated: every conversation gets a
+sandbox of its own, and Managoat refuses `persistent` with 422. FTN025 reports
+it at build, and so does a `sandbox_provider` of `daytona` or `runner` and the
+`opencode` runtime, which Managoat also removed. For a long-lived machine,
+resume one conversation by `channel_id`: its sandbox keeps its disk across
+park and wake.
 
 ### The ACP runtime
 
 `runtime: "acp"` launches `runtime_command` inside the sandbox and speaks the
-Agent Client Protocol to it. Both are in fountain's spec from v0.21.0, which
+Agent Client Protocol to it. Both are in the spec from fountain v0.21.0, which
 made `model` optional for that runtime alone. FTN023 keeps the two together.
 FTN016 rejects a `model` on an acp agent, because the model is whatever the
 command on the other end of the protocol chooses, and rejects an agent on any
 other runtime that has no `model`, which fountain refuses at apply.
 
-`inference_credential_id` and `allowed_inference_credential_ids` name
-inference credential sets by uuid. The lexicon does not model the sets
-themselves, so these stay ids rather than typed references.
+## Retired: Teammate, Schedule and Webhook
 
-## Teammate
+Managoat removed the team, its scheduler and webhooks
+([managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)).
+The three classes are still exported so an older project builds far enough to
+be told what replaced them: declaring one fails the build with FTN025, and the
+serializer never writes it to the manifest.
 
-An Agent seated on the team, with a conversation of its own that becomes that
-seat's operational history. `agent` is a typed reference; `environment` and
-`vault` override the agent's own for this seat, and must satisfy its
-`allowed_environment_ids` and `allowed_vault_ids`. FTN021 rejects a dangling
-reference at build rather than partway through an apply.
-
-## Schedule
-
-A cron prompt sent to a Teammate. `cron` is five or six fields in UTC, and
-FTN020 rejects an expression fountain would store and then never fire. The
-`@daily`-style shorthands are refused with it: chant validates and matches one
-cron notion, the five- or six-field one, so write the fields out. `one_off:
-false` sends the prompt into the teammate's own thread, where a busy teammate
-means the run is skipped rather than queued; `one_off: true` opens a fresh
-conversation on each fire.
-
-## Webhook
-
-A URL fountain POSTs lifecycle events to. FTN022 requires https and refuses
-loopback, link-local and RFC1918 targets, which fountain refuses again at
-request time. The signing secret is returned once at create and is never
-readable afterwards, so it is not part of the declared shape.
+| Kind | Replacement |
+|---|---|
+| `Teammate` | one conversation resumed by `channel_id`, which is what a [Steward](/chant/lexicons/fountain/steward/)'s runs use; or `--on e2b` |
+| `Schedule` | a clock outside Managoat (a CI `schedule:`, a CronJob) running `chant run <op> --on fountain` |
+| `Webhook` | none upstream; read a run's outcome from `chant run` or the conversation's event stream |
 
 ## Example
 
 ```ts
-import { Environment, Agent, Teammate, Schedule, Webhook } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
 
 export const conciergeEnv = new Environment({
   name: "concierge-env",
@@ -101,22 +91,5 @@ export const researcher = new Agent({
   runtime: "claude",
   environment: conciergeEnv,
   skills: [{ source: "vercel-labs/agent-skills", ref: "main" }],
-});
-
-export const researcherSeat = new Teammate({
-  name: "researcher",
-  agent: researcher,
-});
-
-export const nightlySweep = new Schedule({
-  name: "nightly-sweep",
-  teammate: researcherSeat,
-  cron: "0 3 * * *",
-  prompt: "chant run sweep",
-});
-
-export const turnEvents = new Webhook({
-  url: "https://example.com/hooks/fountain",
-  event_types: ["conversation.turn.done", "conversation.turn.failed"],
 });
 ```

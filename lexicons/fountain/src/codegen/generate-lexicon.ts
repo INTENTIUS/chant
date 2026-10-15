@@ -17,11 +17,10 @@ export interface FountainLexiconEntry {
    * Every authored prop name, sorted.
    *
    * `propertyConstraints` is the only prop list core's `LexiconIndex` reads,
-   * and it carries a prop only when upstream constrained it — so a `Schedule`
-   * would complete `prompt` and `name` but not `cron`, and a `Webhook` not
-   * `url`. The two props most worth completing are exactly the ones the spec
-   * documents with an example rather than a pattern. This field is the full
-   * list; `src/lsp/lexicon-index.ts` merges it in.
+   * and it carries a prop only when upstream constrained it — so an `Agent`
+   * would complete `runtime` and `model` but not `system` or
+   * `allowed_vault_ids`, which the spec documents without a pattern or an
+   * enum. This field is the full list; `src/lsp/lexicon-index.ts` merges it in.
    */
   props?: string[];
   /**

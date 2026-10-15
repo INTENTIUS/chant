@@ -79,10 +79,10 @@ When you have many releasable units â€” services, tables, clusters, libraries â€
 
 ## Ops on a fountain steward
 
-The same `*.op.ts` files, hosted. A [`Steward`](/chant/lexicons/fountain/steward/) declares one environment's machine: an agent running `chant acp` on a persistent sandbox, seated on the team as a teammate, with a `Schedule` for every op that carries a cadence.
+The same `*.op.ts` files, hosted. A [`Steward`](/chant/lexicons/fountain/steward/) declares one environment's machine: an agent running `chant acp`, whose runs all go to one long-lived conversation that keeps its sandbox's disk across park and wake. An op's cadence stays on the op, for a clock outside Managoat (a CI schedule, a CronJob) to fire.
 
 ```typescript
-export const { agent, teammate, schedules } = Steward({
+export const { agent } = Steward({
   name: "prod-steward",
   environment: toolchain,
   vault: prodCreds,
@@ -94,7 +94,7 @@ export const { agent, teammate, schedules } = Steward({
 chant run prod-apply --on fountain
 ```
 
-The command line `chant run prod-apply` goes onto the steward's thread as a prompt, the CLI tails the conversation's event stream, and the run's record comes back in the shape a local run would have written. The thread is that environment's operational history: each turn is one command somebody could have typed.
+The command line `chant run prod-apply` goes into the steward's conversation as a prompt, the CLI tails its event stream, and the run's record comes back in the shape a local run would have written. The conversation is that environment's operational history: each turn is one command somebody could have typed.
 
 **Use this when:**
 - The op has to run when nobody is at a keyboard, on a cadence
@@ -121,5 +121,5 @@ the ops that need a machine.
 | I want build-once, SBOM + signing, and a verify gate before apply | Components |
 | I need parallel regional deploys with independent retry | Ops |
 | This has to run on a cadence with nobody watching | Ops on a steward |
-| I want one writer per environment, and a thread that says what it did | Ops on a steward |
+| I want one writer per environment, and a conversation that says what it did | Ops on a steward |
 | I need to query a running deploy's state | `chant run status`, or the MCP `op-status` tool |

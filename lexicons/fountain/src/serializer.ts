@@ -1,6 +1,7 @@
 import type { Serializer, Declarable } from "@intentius/chant";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { propsOf } from "./entity-props";
+import { RETIRED_KINDS } from "./retired";
 
 /**
  * Fountain serializer — emits fountain's native manifest format
@@ -18,6 +19,9 @@ import { propsOf } from "./entity-props";
  *
  * The `name` prop becomes `metadata.name` and is not repeated under `spec`,
  * matching fountain's own manifest examples.
+ *
+ * A retired kind (`Teammate`, `Schedule`, `Webhook`) is left out: Managoat
+ * answers it with 404, and FTN025 fails the build that declared it.
  */
 
 const API_VERSION = "fountain.dev/v1";
@@ -45,14 +49,13 @@ function kindOf(entityType: string): string {
 /**
  * Documents come out in dependency order, not declaration order.
  *
- * A Teammate names an Agent, a Schedule names a Teammate, and the three of
- * them can only be applied after the Environment and Vault they layer on.
- * Sorting here rather than trusting the author's export order means the
+ * An Agent names the Environment it is provisioned from, so it can only be
+ * applied after it. Sorting here rather than trusting the author's export order means the
  * manifest reads the way it applies, and `fountain apply -f` on the ejected
  * file behaves the same as `fountainApply` does. Kinds are stable-sorted, so
  * two Environments keep the order they were declared in.
  */
-const KIND_ORDER = ["Environment", "Vault", "Agent", "Teammate", "Schedule", "Webhook"];
+const KIND_ORDER = ["Environment", "Vault", "Agent"];
 
 function kindRank(entityType: string): number {
   const i = KIND_ORDER.indexOf(kindOf(entityType));
@@ -91,7 +94,9 @@ export const fountainSerializer: Serializer = {
       },
     };
 
-    const ordered = [...entities].sort((a, b) => kindRank(a[1].entityType) - kindRank(b[1].entityType));
+    const ordered = [...entities]
+      .filter(([, entity]) => !RETIRED_KINDS[entity.entityType])
+      .sort((a, b) => kindRank(a[1].entityType) - kindRank(b[1].entityType));
 
     const docs: string[] = [];
     for (const [name, entity] of ordered) {

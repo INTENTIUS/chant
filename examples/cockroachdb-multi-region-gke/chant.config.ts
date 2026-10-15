@@ -88,7 +88,7 @@ export default {
   /**
    * Where `chant run <op> --on fountain` sends a run. The token is always a
    * variable name — FTN001 refuses a literal in that position, whatever it
-   * looks like. `team` is the fallback for an op the loaded Steward does not
+   * looks like. `steward` is the fallback for an op the loaded Steward does not
    * list; ops/fountain.ts lists all four, so it is rarely the path taken.
    */
   fountain: {
@@ -96,7 +96,7 @@ export default {
       prod: {
         endpoint: "https://fountain.inevitable.fyi",
         token: { env: "FOUNTAIN_TOKEN" },
-        team: "crdb-steward",
+        steward: "crdb-steward",
       },
     },
     defaultProfile: "prod",

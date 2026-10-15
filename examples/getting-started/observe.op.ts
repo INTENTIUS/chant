@@ -5,8 +5,8 @@
 // drift. It changes nothing — this is the read-only end of the dial.
 //
 // Who honours the cron is the runtime's business: `chant operator` ticks this Op
-// on it, a CI generator renders it as a pipeline schedule, and a fountain
-// steward turns it into a Schedule on the teammate's thread. A bare
+// on it, and a CI generator renders it as a pipeline schedule, which can run
+// it on a fountain steward with `--on fountain`. A bare
 // `chant run observe` is still one observation, now.
 //
 //   chant build && chant run observe

@@ -226,8 +226,8 @@ export const REASONS = {
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
   "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",
-  // The credential fountain itself hands a persistent box (check, #2780). Also a WSP finding.
-  "box-fountain-callback-undeclared": "A box member builds a fountain Box, whose persistent sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner.",
+  // The credential fountain itself hands a box (check, #2780). Also a WSP finding.
+  "box-fountain-callback-undeclared": "A box member builds a fountain Box, whose sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner.",
   // A box's intent, the decision record its box block names (check, #2850). Each is also a WSP finding.
   "box-intent-unknown": "A box block names an intent, and no record of a declared kind named decision has that id.",
   "box-intent-unconstrained": "The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory.",

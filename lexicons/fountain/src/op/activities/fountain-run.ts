@@ -7,40 +7,22 @@
  * imperative half: resolve the agent by name, POST the conversation, and
  * poll until the turn is done.
  *
- * What "done" means depends on the agent's `sandbox_mode` (#2718). Any
- * conversation is done at `completed | failed | timed_out | terminated`,
+ * Any conversation is done at `completed | failed | timed_out | terminated`,
  * but a running server's conversation reaches none of those on its own: when
- * a turn ends, the conversation settles on `idle`. An `ephemeral`
- * conversation is done once it is `idle` and its latest turn (`GET .../turns`)
- * has ended (`completed | failed | interrupted`), and the result is that
- * turn's outcome (#3386). Before #3386 this path waited for the four statuses
- * only, so every ephemeral run waited out `timeoutMs` and was terminated. An
- * ephemeral machine is its own, so by default it is terminated once the wait
- * ends, cleanly or not (`terminate: "always"`); pass `terminate: "never"` to
- * keep the conversation up for a later turn through `fountainPrompt`
- * (#3356). A `persistent` agent's conversation
- * (`Steward`, and `Box` from #2705) shares one machine across every
- * conversation on it, and a turn ending there does not tear the sandbox
- * down: the conversation settles on `idle`, not on any of the four
- * statuses above. Waiting for one of those on a persistent agent is the
- * bug this op used to have — it waited out the whole deadline after the
- * turn had already finished, then terminated a machine that was meant to
- * persist. For `idle`, this instead reads the finished turn back
- * (`GET .../turns`) and returns its own outcome (`completed | failed |
- * interrupted` — fountain's `end_turn` block, or an error) without
- * terminating anything.
+ * a turn ends, the conversation settles on `idle`. So a conversation is also
+ * done once it is `idle` and its latest turn (`GET .../turns`) has ended
+ * (`completed | failed | interrupted`), and the result is that turn's outcome
+ * (#3386). Before #3386 this waited for the four statuses only, so every run
+ * waited out `timeoutMs` and was terminated.
  *
- * A persistent agent launched with no prompt (#2781) runs no turn: fountain
- * provisions the home (or attaches to the one that exists) and the
- * conversation stays `pending`, so it never reaches `idle`. For that launch
- * the run is done once the conversation's sandbox is `ready` or `failed` and
- * no turn is running, and the result is the sandbox's outcome: `provisioned`,
- * or `failed` with the stage that failed.
- *
- * Terminating the conversation's machine on deadline (a hung run should
- * not outlive the op that started it) still happens whenever the turn has
- * not ended — for either sandbox mode. `terminate` makes the choice
- * explicit rather than leaving it implicit in `sandbox_mode`.
+ * Every conversation gets a sandbox of its own (ADR 0073, managoat/fountain
+ * #2687), so by default the conversation is terminated once the wait ends,
+ * cleanly or not (`terminate: "always"`); pass `terminate: "never"` to keep it
+ * up for a later turn through `fountainPrompt` (#3356). Until Managoat removed
+ * persistent sandboxes, a `persistent` agent's conversation shared one machine
+ * and was left running by default (#2718, #2781). An agent row written then
+ * can still read `sandbox_mode: "persistent"`; the server runs it ephemeral
+ * like any other, and so does this op.
  *
  * Under `chant run` the executor calls this as `fountainRun(args, signal)`
  * (#2775). When the signal fires (the step's timeout, or Ctrl-C) polling
@@ -61,17 +43,10 @@ import {
  * `completed` and `timed_out` are not values fountain's `Conversation.status`
  * takes today (its enum is `pending | running | idle | failed | terminated`);
  * they are kept so a server that starts reporting them is handled without a
- * further change here. An ephemeral conversation also ends on `idle` once its
- * latest turn has ended (#3386).
+ * further change here. A conversation also ends on `idle` once its latest
+ * turn has ended (#3386).
  */
 export const TERMINAL_STATUSES = new Set(["completed", "failed", "timed_out", "terminated"]);
-
-/**
- * Conversation statuses that end a *persistent* agent's run: everything
- * {@link TERMINAL_STATUSES} does, plus `idle` — the status a persistent
- * conversation settles on once its turn ends, machine still up (#2718).
- */
-export const PERSISTENT_DONE_STATUSES = new Set([...TERMINAL_STATUSES, "idle"]);
 
 /** Turn statuses that mean the turn has ended — fountain's `end_turn` block, or an error. */
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
@@ -105,9 +80,7 @@ export interface FountainRunArgs {
   /**
    * fountain's `sandbox_api_access` (#2780): `owner`, fountain's default, gives
    * the sandbox a callback token scoped to the owner (`FOUNTAIN_TOKEN` in every
-   * exec); `none` mints none. fountain v0.21.0 accepts `none` only for a fresh
-   * ephemeral sandbox, so it is refused here for a persistent agent before any
-   * conversation starts (managoat/fountain#2497).
+   * exec); `none` mints none.
    */
   sandboxApiAccess?: "owner" | "none";
   endpoint?: string;
@@ -125,13 +98,10 @@ export interface FountainRunArgs {
   /** Poll interval. Default 5s. */
   pollMs?: number;
   /**
-   * When to terminate the conversation's machine (#2718). Default follows
-   * the agent's `sandbox_mode`: `always` for `ephemeral` (the machine is the
-   * run's own, so it goes once the turn ends or the deadline fires, #3386),
-   * `never` for `persistent` (its machine is a home meant to outlive the
-   * conversation, so a run that hits its deadline leaves it be unless this
-   * says otherwise). Pass `never` on an ephemeral run to send it a later turn
-   * with `fountainPrompt`.
+   * When to terminate the conversation's machine (#2718). Default `always`:
+   * the machine is the run's own, so it goes once the turn ends or the
+   * deadline fires (#3386). Pass `never` to send the conversation a later
+   * turn with `fountainPrompt`.
    */
   terminate?: TerminatePolicy;
   /** Injectable clock/sleep for tests. */
@@ -142,27 +112,18 @@ export interface FountainRunResult {
   conversationId: string;
   /**
    * The run's outcome. For a conversation that settled on `idle` after its
-   * turn (persistent, or ephemeral since #3386), this is the turn's own
-   * status (`completed | failed | interrupted`); otherwise it is the
-   * conversation's status when the wait ended (`terminated` on a
-   * deadline). For a persistent agent launched with no prompt (#2781), it is
-   * the sandbox's outcome: `provisioned` or `failed`.
+   * turn (#3386), this is the turn's own status (`completed | failed |
+   * interrupted`); otherwise it is the conversation's status when the wait
+   * ended (`terminated` on a deadline).
    */
   status: string;
-  /** True when the agent's `sandbox_mode` resolved to `persistent`. */
-  persistent: boolean;
   /** True when the op hit its deadline with the turn still unfinished. */
   terminatedByDeadline: boolean;
   /** The conversation's sandbox, once fountain has reported one. */
   sandboxId?: string;
   /** The sandbox's machine name (fountain's `sandbox.sprite_name`), the name to reach it by. */
   spriteName?: string;
-  /** For a no-prompt launch whose sandbox failed (#2781): the provisioning stage that failed, when fountain logged one. */
-  failedStage?: string;
 }
-
-/** Sandbox statuses that end a persistent agent's no-prompt launch (#2781). */
-const PROVISIONED_SANDBOX_STATUSES = new Set(["ready", "failed"]);
 
 interface ConversationView {
   status?: string;
@@ -174,58 +135,29 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export interface ResolvedAgent {
   id: string;
-  /** `ephemeral` or `persistent`; fountain's own default is `ephemeral`. */
-  sandboxMode: string;
 }
 
-/** Resolve an agent by name or id, along with its `sandbox_mode`. */
+/** Resolve an agent by name or id. */
 export async function resolveAgent(http: FountainHttp, agent: string): Promise<ResolvedAgent> {
   if (UUID_RE.test(agent)) {
     const { status, json } = await http("GET", `/api/agents/${agent}`);
     if (status !== 200) throw new Error(`fountainRun: agent lookup failed (${status})`);
-    const data = (json as { data?: { id?: string; sandbox_mode?: string } })?.data;
+    const data = (json as { data?: { id?: string } })?.data;
     if (!data?.id) throw new Error(`fountainRun: no agent "${agent}"`);
-    return { id: data.id, sandboxMode: data.sandbox_mode ?? "ephemeral" };
+    return { id: data.id };
   }
   const { status, json } = await http("GET", `/api/agents?search=${encodeURIComponent(agent)}`);
   if (status !== 200) throw new Error(`fountainRun: agent lookup failed (${status})`);
-  const data =
-    (json as { data?: Array<{ id: string; name: string; sandbox_mode?: string }> })?.data ?? [];
+  const data = (json as { data?: Array<{ id: string; name: string }> })?.data ?? [];
   const exact = data.find((a) => a.name === agent);
   if (!exact) throw new Error(`fountainRun: no agent named "${agent}"`);
-  return { id: exact.id, sandboxMode: exact.sandbox_mode ?? "ephemeral" };
+  return { id: exact.id };
 }
 
 /** Agent id only — the common case, and the one call sites outside this file use. */
 export async function resolveAgentId(http: FountainHttp, agent: string): Promise<string> {
   if (UUID_RE.test(agent)) return agent;
   return (await resolveAgent(http, agent)).id;
-}
-
-/**
- * The stage whose `failed` event came last in the conversation's stage log, or
- * undefined. fountain logs provisioning as stage events (`network`, `setup`,
- * `provision`, ...), each with a `state`.
- */
-async function failedStage(http: FountainHttp, conversationId: string): Promise<string | undefined> {
-  let after = 0;
-  let found: string | undefined;
-  for (let page = 0; page < 20; page++) {
-    const { status, json } = await http(
-      "GET",
-      `/api/conversations/${conversationId}/events?streams=stage&limit=1000&after=${after}`,
-    );
-    if (status !== 200) return found;
-    const body = json as {
-      data?: Array<{ stage?: string | null; state?: string | null }>;
-      meta?: { has_more?: boolean; next_cursor?: number | null };
-    };
-    for (const e of body?.data ?? []) if (e.state === "failed" && e.stage) found = e.stage;
-    const next = body?.meta?.next_cursor;
-    if (!body?.meta?.has_more || typeof next !== "number") return found;
-    after = next;
-  }
-  return found;
 }
 
 /** The latest turn's status, or undefined if it can't be read or none exists. */
@@ -261,21 +193,12 @@ export async function fountainRun(
   const timeoutMs = args.timeoutMs ?? 600_000;
   const pollMs = args.pollMs ?? 5_000;
 
-  const { id: agentId, sandboxMode } = await resolveAgent(client, args.agent);
-  const persistent = sandboxMode === "persistent";
-  if (args.sandboxApiAccess === "none" && persistent) {
-    throw new Error(
-      `fountainRun: agent "${args.agent}" is persistent, and fountain v0.21.0 accepts sandbox_api_access "none" ` +
-        `only for a fresh ephemeral sandbox, so its sandbox gets the owner-scoped callback token (managoat/fountain#2497)`,
-    );
-  }
-  const terminatePolicy: TerminatePolicy = args.terminate ?? (persistent ? "never" : "always");
-  const doneStatuses = persistent ? PERSISTENT_DONE_STATUSES : TERMINAL_STATUSES;
+  const { id: agentId } = await resolveAgent(client, args.agent);
+  const terminatePolicy: TerminatePolicy = args.terminate ?? "always";
 
   const createBody: Record<string, unknown> = { agent_id: agentId };
   // An empty prompt is no prompt, as fountain's own clients send it (#2781).
-  const promptless = args.prompt === undefined || args.prompt === "";
-  if (!promptless) createBody.prompt = args.prompt;
+  if (args.prompt !== undefined && args.prompt !== "") createBody.prompt = args.prompt;
   if (args.vaultId !== undefined) createBody.vault_id = args.vaultId;
   if (args.spriteName !== undefined) createBody.sprite_name = args.spriteName;
   if (args.sandboxApiAccess !== undefined) createBody.sandbox_api_access = args.sandboxApiAccess;
@@ -308,44 +231,19 @@ export async function fountainRun(
         const view = (res.json as { data?: ConversationView })?.data;
         see(view);
         conversationStatus = view?.status ?? conversationStatus;
-        // A persistent launch with no prompt runs no turn (#2781): it is done
-        // when the home is up (or failed to come up) and nothing is running.
-        const sandboxStatus = view?.sandbox?.status;
-        if (
-          persistent &&
-          promptless &&
-          sandboxStatus &&
-          PROVISIONED_SANDBOX_STATUSES.has(sandboxStatus) &&
-          conversationStatus !== "running"
-        ) {
-          const failed = sandboxStatus === "failed";
-          const stage = failed ? await failedStage(client, conversationId) : undefined;
-          if (terminatePolicy === "always") {
-            await client("POST", `/api/conversations/${conversationId}/terminate`);
-          }
-          return {
-            conversationId,
-            status: failed ? "failed" : "provisioned",
-            persistent,
-            terminatedByDeadline: false,
-            ...machine(),
-            ...(stage ? { failedStage: stage } : {}),
-          };
-        }
-        // `idle` reports the latest turn's outcome. A persistent conversation
-        // is done at `idle` either way; an ephemeral one only once that turn
-        // has ended (#3386), so `idle` with no ended turn keeps polling.
+        // `idle` reports the latest turn's outcome once that turn has ended
+        // (#3386), so `idle` with no ended turn keeps polling.
         let idleTurnStatus: string | undefined;
         if (conversationStatus === "idle") {
           const turnStatus = await latestTurnStatus(client, conversationId);
           if (turnStatus && TERMINAL_TURN_STATUSES.has(turnStatus)) idleTurnStatus = turnStatus;
         }
-        if (doneStatuses.has(conversationStatus) || idleTurnStatus !== undefined) {
+        if (TERMINAL_STATUSES.has(conversationStatus) || idleTurnStatus !== undefined) {
           const status = idleTurnStatus ?? conversationStatus;
           if (terminatePolicy === "always" && conversationStatus !== "terminated") {
             await client("POST", `/api/conversations/${conversationId}/terminate`);
           }
-          return { conversationId, status, persistent, terminatedByDeadline: false, ...machine() };
+          return { conversationId, status, terminatedByDeadline: false, ...machine() };
         }
       }
       await sleep(pollMs);
@@ -365,7 +263,7 @@ export async function fountainRun(
   if (terminatePolicy !== "never") {
     await client("POST", `/api/conversations/${conversationId}/terminate`);
   }
-  return { conversationId, status: "terminated", persistent, terminatedByDeadline: true, ...machine() };
+  return { conversationId, status: "terminated", terminatedByDeadline: true, ...machine() };
 }
 
 /** `sleep`, cut short by `signal`: rejects with the signal's reason as soon as it fires. */

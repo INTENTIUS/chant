@@ -66,10 +66,11 @@ read-only IAM and no chant binary.
 ## Running an Op somewhere else
 
 `chant run <op>` executes here. `chant run <op> --on fountain` hands the same
-Op to a fountain teammate instead: the command line is posted to that
-teammate's thread, the sandbox runs it, and the record comes back in the shape
-a local run would have written. That is where a cadence gets honoured, since a
-laptop is a poor place to keep a schedule.
+Op to a fountain steward instead: the command line is posted to the steward's
+one long-lived conversation, the sandbox runs it, and the record comes back in
+the shape a local run would have written. A cadence still needs a clock, since
+a laptop is a poor place to keep a schedule and Managoat has none: a CI
+schedule or a CronJob that runs the same command.
 
 Nothing about the Op changes — the same file runs either way. See
 [`fountain-steward`](../fountain-steward/) for the declaration that puts one
