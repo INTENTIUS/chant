@@ -20,8 +20,8 @@ import { fountainAuditLineage } from "./audit-lineage";
 import { applyLineage } from "@intentius/chant/audit/catalog";
 
 const FOUNTAIN_PRIMITIVES: Authority = {
-  name: "fountain: Environment, Vault, Agent, Teammate, Schedule and Webhook primitives",
-  url: "https://github.com/managoat/fountain/blob/main/docs/primitives.md",
+  name: "Managoat: Environment, Vault and Agent primitives",
+  url: "https://github.com/managoat/managoat/blob/main/docs/primitives.md",
 };
 
 const OWASP_LLM_INJECTION: Authority = {
@@ -116,31 +116,6 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "Two declarations of one kind resolve to the same fountain name",
     "fountain reconciles by name, so rename one. Otherwise the second silently overwrites the first.",
   ),
-  FTN020: rule(
-    "FTN020",
-    "merge-worthy",
-    "correctness",
-    "Schedule cron is not five- or six-field UTC cron syntax",
-    "Fix the expression. fountain stores an unparseable cron and then never fires it. " +
-      "The @daily-style shorthands are refused too (#2195): chant validates and matches one cron " +
-      "notion, the five- or six-field one, so write the fields out.",
-  ),
-  FTN021: rule(
-    "FTN021",
-    "merge-worthy",
-    "correctness",
-    "A typed reference names something the build does not declare",
-    "Declare the Agent or Teammate being referenced, or fix the name. Auditing standalone YAML, " +
-      "check the reference is not simply in another file, since the audit reads one file at a time.",
-  ),
-  FTN022: rule(
-    "FTN022",
-    "merge-worthy",
-    "security",
-    "Webhook url is http, or targets a loopback or private address",
-    "Deliver over https to a public host; a private target makes the delivery worker an SSRF probe.",
-    [OWASP_LLM_INJECTION],
-  ),
   FTN023: rule(
     "FTN023",
     "merge-worthy",
@@ -155,6 +130,14 @@ export const fountainAuditCatalog: Record<string, RuleMeta> = {
     "Environment setup_timeout_seconds is outside 1 to 900, or not a whole number",
     "Use an integer from 1 to 900, or omit the field for fountain's default of 120. Changing the value " +
       "invalidates the environment's checkpoints.",
+  ),
+  FTN025: rule(
+    "FTN025",
+    "merge-worthy",
+    "correctness",
+    "A declaration uses a kind or value Managoat removed",
+    "Replace a Teammate, Schedule or Webhook, a persistent sandbox_mode, a daytona or runner provider, or the " +
+      "opencode runtime with what the message names. Managoat answers each with 404 or 422.",
   ),
 };
 

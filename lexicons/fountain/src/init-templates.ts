@@ -11,7 +11,9 @@
  * `steward` (chant #2129) is the ops posture: a toolchain `Environment` a
  * chant checkout runs from, a `Vault` placeholder for whatever the ops need,
  * a `WatchOp` and a `ConvergeOp` on cadences, and a `Steward` binding them so
- * every run lands on one teammate's thread. It is the only template that ships
+ * every run lands on the steward's one long-lived conversation. The cadences
+ * are on the Ops; Managoat has no scheduler, so a clock outside it (a CI
+ * `schedule:`, a CronJob) runs `chant run <op> --on fountain` on them. It is the only template that ships
  * a `chant.config.ts`, because it is the only one whose commands do not work
  * without one: `chant run <op> --on fountain` needs an endpoint and a token,
  * and `fountain.profiles` is where those are declared.
@@ -75,6 +77,9 @@ const STEWARD_WATCH_OP = `// Every quarter hour: snapshot prod and diff it again
 //
 //   chant run prod-watch                 # here, on the local executor
 //   chant run prod-watch --on fountain   # on the steward, as a turn
+//
+// The cadence is for a clock outside Managoat, which has no scheduler: a CI
+// \`schedule:\` or a CronJob running the second line every quarter hour.
 
 import { WatchOp } from "@intentius/chant/op";
 
@@ -161,8 +166,9 @@ export const prodCreds = new Vault({
 });
 
 // One writer for this environment. Every run of either op lands on this
-// teammate's thread, so the thread is the environment's operational history.
-export const { agent, teammate, schedules } = Steward({
+// steward's one conversation (resumed by channel_id), so that conversation is
+// the environment's operational history.
+export const { agent, declaration } = Steward({
   name: "prod-steward",
   environment: toolchain,
   vault: prodCreds,
@@ -189,9 +195,9 @@ export default {
         endpoint: "https://fountain.inevitable.fyi",
         // Always a variable name, never a literal — FTN001 refuses the literal.
         token: { env: "FOUNTAIN_TOKEN" },
-        // The teammate \`chant run <op> --on fountain\` posts to when the op
-        // is not listed on a Steward this process loaded.
-        team: "prod-steward",
+        // The steward \`chant run <op> --on fountain\` runs on when the op is
+        // not listed on a Steward this process loaded.
+        steward: "prod-steward",
       },
     },
     defaultProfile: "prod",

@@ -16,7 +16,7 @@ The first is the outcome, and it is the op itself. The apply has to reach a decl
 
 ### The machine
 
-Something has to be running when the op runs, with a checkout and the credentials the work needs. A laptop is a fine machine for a change somebody is watching, and a bad one for anything that has to happen while nobody is. `chant run <op> --on fountain` hands the run to a [steward](/chant/lexicons/fountain/steward/), one agent on a persistent sandbox, which is a machine an environment is operated from rather than a machine somebody happens to be sitting at.
+Something has to be running when the op runs, with a checkout and the credentials the work needs. A laptop is a fine machine for a change somebody is watching, and a bad one for anything that has to happen while nobody is. `chant run <op> --on fountain` hands the run to a [steward](/chant/lexicons/fountain/steward/), one agent whose runs all go to one long-lived conversation, and that conversation's sandbox keeps its disk across park and wake. That is a machine an environment is operated from rather than a machine somebody happens to be sitting at.
 
 ### The cadence
 
@@ -30,7 +30,7 @@ export const { op: prodWatch } = WatchOp({
 });
 ```
 
-Three readers render that same field. The [github](/chant/lexicons/github/) generator turns it into a workflow `schedule:` trigger. [`chant operator`](/chant/guide/operator/) ticks it from a loop on your own machine. A fountain [`Steward`](/chant/lexicons/fountain/steward/) turns it into a `Schedule` on the teammate. The declaration does not change when you change your mind about which.
+Two readers render that same field. The [github](/chant/lexicons/github/) generator turns it into a workflow `schedule:` trigger. [`chant operator`](/chant/guide/operator/) ticks it from a loop on your own machine. Managoat has no scheduler, so an op on a fountain [`Steward`](/chant/lexicons/fountain/steward/) takes its cadence from a clock outside it, such as a CI schedule or a CronJob running `chant run <op> --on fountain`. The declaration does not change when you change your mind about which.
 
 ## The approval, and why a wait is a fact
 
@@ -62,7 +62,7 @@ A run belongs to the runtime that ran it; a fact about the world belongs to git,
 
 ## Where to start
 
-Lead with the local runtime. It needs nothing installed, it runs the whole phase grammar including gates and compensation, and it is the same executor a steward runs inside its sandbox. Move an op to `--on fountain` when it needs a machine that is not yours, a thread somebody else can read, or a cadence that fires while you are asleep. The declaration is the same either way.
+Lead with the local runtime. It needs nothing installed, it runs the whole phase grammar including gates and compensation, and it is the same executor a steward runs inside its sandbox. Move an op to `--on fountain` when it needs a machine that is not yours, a conversation somebody else can read, or a cadence that fires while you are asleep. The declaration is the same either way.
 
 ## See also
 

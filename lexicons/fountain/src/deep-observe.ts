@@ -7,7 +7,7 @@
  * the design was written for: an environment hand-edited in the fountain UI
  * from `networking_type: limited` to `unrestricted`, an `allowed_vault_ids`
  * allowlist widened, a skill repointed at an unpinned branch, a secret added to
- * a reviewed sandbox, a schedule someone paused. All of it lives one level
+ * a reviewed sandbox. All of it lives one level
  * down, in properties nobody was reading.
  *
  * ## The read is the thin path's read
@@ -33,15 +33,12 @@
  * never set it, so it is not drift and is never proposed for update), which is
  * the deliberate trade: visible and fixable beats silently dropped.
  *
- * The exceptions are the reference edges, and there is one per kind that has
- * one. chant declares an agent's environment as a typed reference
+ * The exception is the reference edge. chant declares an agent's environment as a typed reference
  * (`environment`), fountain stores the id it resolved to (`environment_id`).
  * Passing the id through would report `<undeclared> -> <uuid>` on every clean
  * read, so where source did not author the id field itself the id is resolved
  * back to the target's name and emitted under the prop an author writes — the
- * same translation `exportResources()` does for the import path. A schedule's
- * `agent_id` becomes `teammate`; a teammate's environment and vault ids become
- * `environment` and `vault`.
+ * same translation `exportResources()` does for the import path.
  *
  * An agent's two allowlists are the same edge in list form.
  * `allowed_vault_ids` and `allowed_environment_ids` are uuid columns upstream
@@ -50,15 +47,6 @@
  * declaration used for that resource before the tree is normalized (#2176).
  * ./allowlist-refs.ts holds that rule and the applier's opposite one (#2166)
  * together.
- *
- * A teammate is the one kind whose live payload is not its record. `GET
- * /api/team` renders a roster row: the agent embedded whole, the current
- * conversation, presence, unread state, the last turn, usage. Almost none of
- * that is authored, and the three fields that are — the agent, and the
- * environment and vault the team conversation was launched with — are nested
- * rather than top-level. So a teammate is projected onto its four declarable
- * props instead of passed through, and ./deep-observe-hooks.ts prunes the
- * render fields on both sides in case a future payload carries them flat.
  *
  * ## Secrets: presence, never keys, never values
  *
@@ -93,9 +81,8 @@ import {
 import {
   FountainLists,
   KIND_PATHS,
-  declaredKey,
+  effectiveName,
   nameIndex,
-  ownershipGap,
   ownershipOf,
   referencedName,
   type LiveRecord,
@@ -112,8 +99,6 @@ import {
   ENVIRONMENT_TYPE,
   VAULT_TYPE,
   AGENT_TYPE,
-  TEAMMATE_TYPE,
-  SCHEDULE_TYPE,
 } from "./deep-observe-hooks";
 
 // Re-exported so a dynamic importer of this module gets the reader and its
@@ -141,8 +126,6 @@ export interface FountainDeepObserveOptions {
 interface NameLookups {
   environment(): Promise<Map<string, string>>;
   vault(): Promise<Map<string, string>>;
-  agent(): Promise<Map<string, string>>;
-  teammate(): Promise<ReadonlyMap<string, LiveRecord>>;
   /** The fountain name a declared reference prop points at, or nothing. */
   declaredName(value: unknown): string | undefined;
 }
@@ -243,65 +226,6 @@ async function translateAllowlists(
   }
 }
 
-/**
- * The four authored props of a teammate, read off a roster row: its name, the
- * agent it is, and the environment and vault its team conversation was
- * launched with. Everything else on the row is a render (see the module doc).
- */
-async function teammateProperties(
-  record: LiveRecord,
-  declared: Record<string, unknown>,
-  names: NameLookups,
-): Promise<Record<string, unknown>> {
-  const conversation =
-    record.conversation && typeof record.conversation === "object"
-      ? (record.conversation as Record<string, unknown>)
-      : {};
-  const tree: Record<string, unknown> = {};
-  if (typeof record.name === "string") tree.name = record.name;
-
-  const agentId = typeof record.agent_id === "string" ? record.agent_id : undefined;
-  const embedded =
-    record.agent && typeof record.agent === "object"
-      ? (record.agent as Record<string, unknown>)
-      : undefined;
-  if (typeof embedded?.name === "string") tree.agent = embedded.name;
-  else if (agentId) {
-    tree.agent_id = agentId;
-    translateRef(tree, declared, "agent_id", "agent", await names.agent());
-  }
-
-  for (const [idField, prop, lookup] of [
-    ["environment_id", "environment", names.environment],
-    ["vault_id", "vault", names.vault],
-  ] as const) {
-    const id = record[idField] ?? conversation[idField];
-    if (typeof id !== "string") continue;
-    tree[idField] = id;
-    translateRef(tree, declared, idField, prop, await lookup());
-  }
-
-  return tree;
-}
-
-/**
- * A schedule's payload is its record, so it passes through — with `agent_id`
- * resolved back to the `teammate` reference chant declares it as.
- */
-async function scheduleProperties(
-  record: LiveRecord,
-  declared: Record<string, unknown>,
-  names: NameLookups,
-): Promise<Record<string, unknown>> {
-  const tree: Record<string, unknown> = { ...record };
-  if (declared.agent_id !== undefined || typeof record.agent_id !== "string") return tree;
-  const teammate = (await names.teammate()).get(record.agent_id)?.name;
-  if (typeof teammate !== "string") return tree;
-  delete tree.agent_id;
-  tree.teammate = teammate;
-  return tree;
-}
-
 async function liveProperties(
   entityType: string,
   record: LiveRecord,
@@ -309,8 +233,6 @@ async function liveProperties(
   names: NameLookups,
 ): Promise<Record<string, unknown>> {
   if (entityType === AGENT_TYPE) return agentProperties(record, declared, names);
-  if (entityType === TEAMMATE_TYPE) return teammateProperties(record, declared, names);
-  if (entityType === SCHEDULE_TYPE) return scheduleProperties(record, declared, names);
   return { ...record };
 }
 
@@ -356,8 +278,6 @@ export async function observeResourcesDeepFountain(
   const lookups: NameLookups = {
     environment: () => lists.nameById(ENVIRONMENT_TYPE),
     vault: () => lists.nameById(VAULT_TYPE),
-    agent: () => lists.nameById(AGENT_TYPE),
-    teammate: () => lists.roster(),
     declaredName: (value) => referencedName(value, index),
   };
 
@@ -371,15 +291,7 @@ export async function observeResourcesDeepFountain(
       continue;
     }
 
-    const key = declaredKey(entityType, entityName, props, index);
-    if (key === undefined) {
-      unobserved[entityName] = {
-        type: entityType,
-        reason: "read-failed",
-        detail: `"${entityName}" does not resolve to a fountain identity — a schedule needs a teammate reference, a webhook a url`,
-      };
-      continue;
-    }
+    const key = effectiveName(entityName, props);
 
     try {
       const byKey = await lists.byKey(entityType);
@@ -390,15 +302,11 @@ export async function observeResourcesDeepFountain(
       if (!record) continue;
 
       if (options.owned) {
-        const ownership = ownershipOf(entityType, record, await lists.rosterFor(entityType));
-        if (ownership !== "owned") {
+        if (ownershipOf(record) !== "owned") {
           unobserved[entityName] = {
             type: entityType,
             reason: "filtered",
-            detail:
-              ownership === "unknown"
-                ? `"${key}" exists but its ownership cannot be established — ${ownershipGap(entityType)}`
-                : `"${key}" exists but does not carry the ${OWNERSHIP_KEY}: ${OWNERSHIP_VALUE} marker`,
+            detail: `"${key}" exists but does not carry the ${OWNERSHIP_KEY}: ${OWNERSHIP_VALUE} marker`,
           };
           continue;
         }
@@ -411,10 +319,7 @@ export async function observeResourcesDeepFountain(
         if (secrets) tree.secrets = secrets;
       }
 
-      // A teammate has no id of its own — it IS an agent on the reserved team
-      // channel — so the agent's id is its physical identity, same as the thin
-      // read reports.
-      const physicalId = entityType === TEAMMATE_TYPE ? record.agent_id : record.id;
+      const physicalId = record.id;
 
       resources[entityName] = {
         type: entityType,

@@ -22,7 +22,7 @@ export interface ConciergeStackOpts {
   /** Canonical provider/model_id. */
   model: string;
   /** Agent runtime. Default "claude". */
-  runtime?: "claude" | "codex" | "gemini" | "opencode";
+  runtime?: "claude" | "codex" | "gemini";
   /** Egress allowlist. Default [] — deny all egress. */
   allowedHosts?: string[];
   /** Vaults that may attach at conversation create. Default [] — none. */

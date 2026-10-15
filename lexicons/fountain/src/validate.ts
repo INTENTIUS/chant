@@ -22,9 +22,6 @@ const REQUIRED_NAMES: string[] = [
   "Environment",
   "Vault",
   "Agent",
-  "Teammate",
-  "Schedule",
-  "Webhook",
   "Repository",
 ];
 

@@ -2,12 +2,10 @@
 
 fountain lexicon plugin for [chant](https://github.com/intentius/chant).
 
-[fountain](https://github.com/managoat/fountain) runs coding agents in
-sandboxed VMs. This lexicon declares its workload layer as typed chant
-resources: `Environment` (sandbox baseline), `Vault` (env-var overrides),
-`Agent` (a runnable agent config), `Teammate` (an agent seated on the team,
-with a thread of its own), `Schedule` (a cron prompt into that thread), and
-`Webhook` (where the estate's events leave it). Conversations are runs, not
+[Managoat](https://github.com/managoat/managoat) (formerly fountain) runs
+coding agents in sandboxed VMs. This lexicon declares its workload layer as
+typed chant resources: `Environment` (sandbox baseline), `Vault` (env-var
+overrides) and `Agent` (a runnable agent config). Conversations are runs, not
 resources — start them with the `fountainRun` op.
 
 `chant build` serializes to fountain's own manifest YAML (`fountain apply -f`
@@ -15,7 +13,7 @@ accepts it verbatim) — the same YAML `fountainApply` sends to fountain's bulk
 `POST /api/apply` endpoint in one request.
 
 ```ts
-import { Environment, Agent, Teammate, Schedule } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
 
 export const env = new Environment({
   name: "team-env",
@@ -28,24 +26,22 @@ export const helper = new Agent({
   name: "helper",
   model: "anthropic/claude-sonnet-4-6",
   runtime: "claude",
-  environment: env,                              // typed ref — dangling name = build error
-});
-
-export const helperSeat = new Teammate({ name: "helper", agent: helper });
-
-export const nightly = new Schedule({
-  name: "nightly-converge",
-  teammate: helperSeat,
-  cron: "0 3 * * *",                             // five fields, UTC (FTN020)
-  prompt: "chant run converge",
+  environment: env,                              // typed ref, serialized by name
 });
 ```
 
-Types are generated from fountain v0.21.0. That release describes
-`runtime: "acp"` and `runtime_command` on `Agent` itself, so an older instance
-rejects the pair at apply. `secrets` on `Environment` and `Vault` is the one
-field the lexicon adds to the request schemas, taken from fountain's manifest
-format.
+Types are generated from Managoat v0.29.0. `secrets` on `Environment` and
+`Vault` is the one field the lexicon adds to the request schemas, taken from
+fountain's manifest format.
+
+Managoat removed the team, its scheduler, webhooks and persistent sandboxes
+([managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)).
+`Teammate`, `Schedule` and `Webhook` are still exported so an older project
+builds far enough to be told what replaced them: declaring one, or an Agent
+with `sandbox_mode: "persistent"`, fails the build with FTN025. A `Steward`'s
+runs go to one conversation resumed by `channel_id`, and a cadence is a clock
+outside Managoat running `chant run <op> --on fountain`. The lexicon docs'
+overview has the full mapping.
 
 For agents handling anything sensitive, `ConciergeStack` bundles the
 locked-down defaults (deny-all egress, no vault overrides, ownership marker

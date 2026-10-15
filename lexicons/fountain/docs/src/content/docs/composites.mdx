@@ -1,6 +1,6 @@
 ---
 title: "Composites"
-description: "ConciergeStack, a locked-down Environment and Agent pair; Steward, an environment's one writer; and Box, a persistent machine that serves an app repo and its tools."
+description: "ConciergeStack, a locked-down Environment and Agent pair; Steward, an environment's one writer; and Box, a long-lived machine that serves an app repo and its tools."
 diataxis: reference
 ---
 
@@ -34,53 +34,50 @@ Give such a sandbox **no cloud credentials of any kind** — anything readable i
 
 ## Steward
 
-An environment's one writer: an Agent that speaks the Agent Client Protocol over `chant acp` on a persistent sandbox, bound to the team as a Teammate so it has a standing conversation, with a Schedule per scheduled op and an optional Webhook.
+An environment's one writer: an Agent that speaks the Agent Client Protocol over `chant acp`, whose every run lands on one long-lived conversation. `chant run <op> --on fountain` opens it the first time and resumes it after that by `channel_id` `chant:steward:<name>`; its sandbox keeps its disk across park and wake.
 
 ```typescript
 import { Steward } from "@intentius/chant-lexicon-fountain";
 import { watch, converge, apply } from "../ops";
 
-export const { agent, teammate, schedules, webhook } = Steward({
+export const { agent, declaration } = Steward({
   name: "prod-steward",
   environment: toolchain,   // repo, chant and kubectl in setup_script
   vault: prodCreds,         // omit under the egress broker
   ops: [watch.op, converge.op, apply.op],
-  webhook: {
-    url: "https://hooks.example.com/chant",
-    event_types: ["conversation.turn.done", "conversation.turn.failed"],
-  },
 });
 ```
 
-The teammate's thread is that environment's operational history. Each turn is one chant command line, so scrolling the thread is scrolling what was done to the environment.
+That conversation is the environment's operational history. Each turn is one chant command line, so scrolling it is scrolling what was done to the environment.
 
 | Default | Effect |
 |---|---|
-| `runtime: acp` with `runtime_command: "chant acp"` | the agent launches chant's own ACP server, so a prompt is a chant command line |
-| `sandbox_mode: persistent` | one computer per steward — the checkout and tool cache survive a turn ending |
+| `runtime: acp` with `runtime_command: "chant acp --steward <name>"` | the agent launches chant's own ACP server, so a prompt is a chant command line |
+| no `sandbox_mode` | every conversation gets a sandbox of its own; Managoat refuses `persistent` with 422 |
 | `permission_policy: { default: "auto_allow" }` | nobody is at the keyboard to answer a permission card; chant's gates are where a human belongs |
 | no `model` | an acp agent's model is whatever the command it launches decides to use |
 | no skills | a steward's competence is chant's op definitions |
 | `allowed_vault_ids` scoped to the given vault, `[]` with none | no conversation may attach a vault the steward was not given |
 | `managed-by: chant` on the Agent | owned-only reconcile, prune, and drift filtering see it |
 
-An op that carries a `schedule` (`WatchOp`, `ConvergeOp`, `ApplyOp` and `ReconcileOp` all set one from their `schedule:` field) gets a Schedule whose `cron` is the op's and whose `prompt` is `chant run <op>` — the exact line `chant acp` parses. It is `one_off: false`, so the prompt goes into the teammate's own thread and a fire while a run is in flight is dropped rather than opening a second computer beside the first. An op with no cadence gets no Schedule, but is still listed on the steward, which is how `chant run <op> --on fountain` knows the thread its run belongs on.
+Every op is listed on the steward, which is how `chant run <op> --on fountain` knows the conversation its run belongs on. An op's `schedule` stays on `declaration`: Managoat has no scheduler, so a clock outside it (a CI `schedule:`, a CronJob) runs `chant run <op> --on fountain` on that cadence.
 
-Three things are refused at construction rather than at apply:
+Refused at construction rather than at apply:
 
-- Two stewards on the same environment and vault. That is two writers on one machine, which is the exact thing a single thread exists to prevent — fountain would accept both and their turns would interleave on the same checkout.
-- An op whose `schedule.overlap` is anything but `skip`. A fountain schedule that fires while the teammate is busy is dropped with `teammate was busy`, so any other policy would be a promise the server does not keep.
-- A webhook url FTN022 would reject: plaintext http, or a loopback, link-local or RFC1918 target. Refusing here rather than at synth keeps the author from reading a lint error about a resource they never typed.
+- Two stewards on the same environment and vault. That is two writers on one environment, which is the exact thing a single conversation exists to prevent — Managoat would accept both and their turns would interleave.
+- The old `webhook` option, from an untyped caller. Managoat removed webhooks ([managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)).
 
 The composite also returns `declaration`, the steward as core reads it: its name, its Ops, and its `form`. `form` is `"fountain"` by default. A box whose preset has no Fountain in some environment names that environment, as in `form: { default: "fountain", environments: { minimal: "local" } }`, and there `chant operator --steward prod-steward --env minimal` runs the same Ops on the same crons. A form that is `local` in every environment is refused, since none of the Fountain resources would ever run; declare that steward with `declareSteward` from `@intentius/chant/op`. Export `declaration` from an `*.op.ts` file so the operator and `chant workspace status` can find it. Behind a broker, name the box capabilities the steward's Ops use in `capabilities` and leave `vault` out; the two together are refused. [The Steward](/chant/lexicons/fountain/steward/) has the whole rule.
 
-`chant build` emits all six to the manifest in dependency order: Environment, Vault, Agent, Teammate, Schedule, Webhook. `fountainApply` reconciles them. The first three go through fountain's bulk `POST /api/apply`. Before v0.21.0 it reported each resource as `created` or `updated` and nothing else, so it could not tell you an Environment was already right; v0.21.0 adds `unchanged`. The other three go through their own routes afterwards, even though v0.21.0's bulk apply accepts them too ([fountain#1636](https://github.com/managoat/fountain/issues/1636)), matched by name and by url, reading live state and comparing before they write, so a second apply of an unchanged manifest makes no Teammate, Schedule or Webhook writes.
+`chant build` emits Environment, Vault and Agent, in that order, and `fountainApply` sends them through Managoat's bulk `POST /api/apply`.
 
 ## Box
 
-A persistent machine that serves an app repo and its tools: an Environment that runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud behind it.
+A long-lived machine that serves an app repo and its tools: an Environment that runs a provisioning script as its `setup_script`, an Agent whose conversations are provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud behind it.
 
-`repo` is optional. Given, the Environment clones it in (`repositories`) before `setup_script` runs. Omitted — a blank-slate app, such as the one hud's `init` makes, has no git remote yet — the Environment declares no `repositories` at all, and `setup_script` runs against whatever working tree the sandbox already has (a self-hosted `runner`'s own).
+`repo` is optional. Given, the Environment clones it in (`repositories`) before `setup_script` runs. Omitted — a blank-slate app, such as the one hud's `init` makes, has no git remote yet — the Environment declares no `repositories` at all, and `setup_script` runs on an empty sandbox.
+
+The machine is one conversation, not the agent. Managoat gives every conversation a sandbox of its own and refuses `sandbox_mode: "persistent"`, so the Agent declares no `sandbox_mode`. A box runtime opens one conversation per box and resumes it by `channel_id`; its sandbox keeps its disk across park and wake and is destroyed only when the conversation is terminated.
 
 ```typescript
 import { readFileSync } from "node:fs";
@@ -99,23 +96,23 @@ export const { environment, agent, vault } = Box({
 
 `setupScript` is the script's text, because fountain's `setup_script` is a string it runs, not a path it reads.
 
-`model` is required. fountain v0.21.0, the pinned spec, refuses an Agent with no model for every runtime but `acp` (`model: can't be blank` at apply), and a Box's runtime is never `acp`. `Box` throws at build when it is missing, and FTN016 reports the same gap on an Agent declared any other way.
+`model` is required. Managoat refuses an Agent with no model for every runtime but `acp` (`model: can't be blank` at apply), and a Box's runtime is never `acp`. `Box` throws at build when it is missing, and FTN016 reports the same gap on an Agent declared any other way.
 
 | Declared | Name | What it carries |
 |---|---|---|
 | Environment | `<name>-env` | the app repo at `/workspace/app` (or `repo.mountPath`) when `repo` is given, else no `repositories`; the setup script, `packages`, `env_vars` and networking, passed through |
-| Agent | `<name>` | `runtime` (default `claude`), `model` (required), `sandbox_mode: persistent`, `sandbox_provider` (unset — the instance default — unless `sandboxProvider` names one), the given `permission_policy` |
+| Agent | `<name>` | `runtime` (default `claude`), `model` (required), `sandbox_provider` (unset — the instance default — unless `sandboxProvider` names one), the given `permission_policy` |
 | Vault (with `vault`) | `<name>-secrets` (or `vault.name`) | the shared secrets, written inline at apply |
 
 | Default | Effect | Loosened by |
 |---|---|---|
 | `networking_type: limited` with an empty allowlist | deny-all egress | `allowedHosts`, or `unrestrictedNetworking: true` (FTN011 warns) |
 | `allowed_vault_ids` scoped to the box's vault, `[]` with none | no conversation attaches a vault the box was not given | `allowedVaults`, a list or `"any"` |
-| `sandbox_provider` unset | the instance's configured default backend | `sandboxProvider`: `sprites`, `e2b`, `daytona` or `runner` |
+| `sandbox_provider` unset | the instance's configured default backend | `sandboxProvider`: `sprites` or `e2b` |
 | no `permission_policy` default | fountain's unset policy is `auto_allow`, so the choice is written down | `permissionPolicy` is required |
 | `managed-by: chant` on every resource | owned-only reconcile, prune, and drift filtering see them | extra `metadata` merges over it |
 
-`allowedVaults: "any"` leaves the list unset, which fountain reads as any vault the tenant owns. A runtime that makes a vault per box, as hud's box runtime does for each box's identity, needs it. A persistent sandbox is keyed on (agent, environment, vault), so a vault per box is also a machine per box.
+`allowedVaults: "any"` leaves the list unset, which fountain reads as any vault the tenant owns. A runtime that makes a vault per box, as hud's box runtime does for each box's identity, needs it.
 
 ### Credentials
 
@@ -123,7 +120,7 @@ A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/272
 
 ### The port
 
-fountain's Environment and Agent have no field for a served port at the pinned spec (v0.21.0). `port` (default 8080) is recorded as `box-port` in the metadata of the Environment and the Agent, and returned as `port`. Whatever builds the box's URL reads it from there, from the declaration or from fountain's own record of the agent, rather than assuming 8080. `BOX_PORT_METADATA_KEY` names the key.
+fountain's Environment and Agent have no field for a served port at the pinned spec (v0.29.0). `port` (default 8080) is recorded as `box-port` in the metadata of the Environment and the Agent, and returned as `port`. Whatever builds the box's URL reads it from there, from the declaration or from fountain's own record of the agent, rather than assuming 8080. `BOX_PORT_METADATA_KEY` names the key.
 
 ### Allowed vaults in the read contract
 
@@ -131,10 +128,10 @@ fountain's Environment and Agent have no field for a served port at the pinned s
 
 ### The callback token
 
-fountain v0.21.0 gives every persistent sandbox a callback token, `FOUNTAIN_TOKEN`, in the environment of each exec it makes into it, the setup script's included. The token is scoped to the owner (`sandbox_api_access: owner`). fountain's opt-out, `sandbox_api_access: none`, is refused for a persistent sandbox, and a Box is always persistent, so no Box option can turn it off ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). The Box records it instead. The Agent's metadata carries `box-sandbox-api-access: owner`, which the built manifest and `chant workspace graph --json` show. The member's box block declares `BOX_FOUNTAIN_CALLBACK_CAPABILITY`, which is `{ name: "fountain-callback", broker: "fountain", scope: ["owner"] }`. `chant workspace check` reports a box member that builds a Box and doesn't declare it (`WSP125`, `box-fountain-callback-undeclared`). A setup script that should not pass the token on can `unset FOUNTAIN_TOKEN` first, but the agent runtime still gets it.
+Managoat gives every sandbox a callback token, `FOUNTAIN_TOKEN`, in the environment of each exec it makes into it, the setup script's included. The token is scoped to the owner (`sandbox_api_access: owner`). The opt-out, `sandbox_api_access: none`, is a field of a conversation's launch, not of the Agent, and Managoat accepts it only for a fresh sandbox, never on a `channel_id` resume. A box's conversation is resumed, so no Box option can turn it off ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). The Box records it instead. The Agent's metadata carries `box-sandbox-api-access: owner`, which the built manifest and `chant workspace graph --json` show. The member's box block declares `BOX_FOUNTAIN_CALLBACK_CAPABILITY`, which is `{ name: "fountain-callback", broker: "fountain", scope: ["owner"] }`. `chant workspace check` reports a box member that builds a Box and doesn't declare it (`WSP125`, `box-fountain-callback-undeclared`). A setup script that should not pass the token on can `unset FOUNTAIN_TOKEN` first, but the agent runtime still gets it.
 
 ### Box and Steward
 
-A Steward is an environment's one writer: an `acp` agent whose every turn is a chant command line, bound to a Teammate with a standing thread and a Schedule per op. A Box is where people and their agents work on an app, with a conversational runtime, the app repo checked out, a provisioning script, and a served port. It declares no Teammate and no Schedule, and no two-writers refusal applies, because each conversation on a box is someone working on the app rather than a turn on an environment's operational history.
+A Steward is an environment's one writer: an `acp` agent whose every turn is a chant command line, on one long-lived conversation. A Box is where people and their agents work on an app, with a conversational runtime, the app repo checked out, a provisioning script, and a served port. No two-writers refusal applies, because each conversation on a box is someone working on the app rather than a turn on an environment's operational history.
 
 Nothing in a Box starts a conversation. `chant build` emits Environment, Vault and Agent, and `fountainApply` applies them through fountain's bulk `POST /api/apply`. Starting a box and reaping it stay runtime acts: a conversation launched on the agent provisions the sandbox, which clones the repo and runs the setup script.

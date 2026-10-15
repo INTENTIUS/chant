@@ -6,6 +6,11 @@
  * for conversion to chant TypeScript. Server-written read-only fields are
  * dropped so the IR is the declared shape. `logicalId` is `metadata.name`
  * (manifests) or the plan's entity name.
+ *
+ * A `Teammate`, `Schedule` or `Webhook` document, from a manifest written
+ * before Managoat removed those kinds, is skipped: there is nothing on the
+ * instance for it to declare, and generating the retired stub would only hand
+ * the importer an FTN025 error (managoat/managoat#2793).
  */
 
 import type { TemplateParser, TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
@@ -20,9 +25,6 @@ const KIND_TO_TYPE: Record<string, string> = {
   Environment: "Fountain::V1::Environment",
   Vault: "Fountain::V1::Vault",
   Agent: "Fountain::V1::Agent",
-  Teammate: "Fountain::V1::Teammate",
-  Schedule: "Fountain::V1::Schedule",
-  Webhook: "Fountain::V1::Webhook",
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {

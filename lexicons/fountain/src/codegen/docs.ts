@@ -13,7 +13,9 @@ import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/c
 
 const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-const overview = `The **fountain** lexicon declares [fountain](https://github.com/managoat/fountain)'s workload layer as typed chant resources. fountain runs coding agents in sandboxed VMs. Six kinds are declarable: \`Environment\` (sandbox baseline), \`Vault\` (env-var overrides) and \`Agent\` (a runnable agent config) are what \`fountain apply\` reconciles; \`Teammate\` (an agent seated on the team, with a thread of its own), \`Schedule\` (a cron prompt into that thread) and \`Webhook\` (where the estate's events leave it) belong to the team, schedule and webhook routes.
+const overview = `The **fountain** lexicon declares [Managoat](https://github.com/managoat/managoat)'s workload layer (formerly fountain) as typed chant resources. Managoat runs coding agents in sandboxed VMs. Three kinds are declarable, the three \`fountain apply\` reconciles: \`Environment\` (sandbox baseline), \`Vault\` (env-var overrides) and \`Agent\` (a runnable agent config). Conversations are runs, not resources: start them with the \`fountainRun\` op.
+
+\`Teammate\`, \`Schedule\` and \`Webhook\` are still exported, but Managoat removed the team, its scheduler and webhooks (managoat/managoat#2793): declaring one fails the build with FTN025, which names what replaced it. A long-lived thread is one conversation resumed by \`channel_id\` (what a \`Steward\`'s runs use), and a cadence is a clock outside Managoat running \`chant run <op> --on fountain\`. See [Coming from the team kinds](#coming-from-the-team-kinds) below.
 
 Types are generated from a pinned fountain release's OpenAPI spec, so they track the real API.
 
@@ -26,7 +28,7 @@ npm install --save-dev @intentius/chant-lexicon-fountain
 ## Quick Start
 
 \`\`\`typescript
-import { Environment, Agent, Teammate, Schedule } from "@intentius/chant-lexicon-fountain";
+import { Environment, Agent } from "@intentius/chant-lexicon-fountain";
 
 export const env = new Environment({
   name: "team-env",
@@ -39,16 +41,7 @@ export const helper = new Agent({
   name: "helper",
   model: "anthropic/claude-sonnet-4-6",
   runtime: "claude",
-  environment: env,                              // typed ref — dangling name = build error
-});
-
-export const helperSeat = new Teammate({ name: "helper", agent: helper });
-
-export const nightly = new Schedule({
-  name: "nightly-converge",
-  teammate: helperSeat,
-  cron: "0 3 * * *",                             // five fields, UTC (FTN020)
-  prompt: "chant run converge",
+  environment: env,                              // typed ref, serialized by name
 });
 \`\`\`
 
@@ -61,7 +54,21 @@ export const nightly = new Schedule({
 
 ## Endpoint and auth
 
-\`FOUNTAIN_ENDPOINT\` (defaults to the hosted instance) and \`FOUNTAIN_TOKEN\`. Mint a token via \`POST /api/auth/token\` with email and password, or from the account UI. The same code applies to a local \`mix phx.server\` fountain by pointing \`FOUNTAIN_ENDPOINT\` at it — registration and token mint work headless, so CI needs no browser.`;
+\`FOUNTAIN_ENDPOINT\` (defaults to the hosted instance) and \`FOUNTAIN_TOKEN\`. Mint a token via \`POST /api/auth/token\` with email and password, or from the account UI. The same code applies to a local \`mix phx.server\` fountain by pointing \`FOUNTAIN_ENDPOINT\` at it — registration and token mint work headless, so CI needs no browser.
+
+## Coming from the team kinds
+
+Managoat removed these between v0.21.0 and v0.29.0, the pinned spec. Each now fails the build with FTN025, and \`chant import\` skips its documents:
+
+| Was | Now |
+|---|---|
+| \`Teammate\` (an agent on the team, with a thread) | One conversation resumed by \`channel_id\`. A \`Steward\`'s runs go to \`chant:steward:<name>\`; its sandbox keeps its disk across park and wake. Or \`--on e2b\`, a sandbox of your own. |
+| \`Schedule\` (a cron prompt into that thread) | A clock outside Managoat — a CI \`schedule:\`, a CronJob — running \`chant run <op> --on fountain\`. The cadence stays on the Op. |
+| \`Webhook\` | Nothing upstream. Read a run's outcome from \`chant run\`, or the conversation's event stream. |
+| Agent \`sandbox_mode: "persistent"\` | Drop it: every conversation gets a sandbox of its own, and \`persistent\` is a 422. |
+| \`sandbox_provider\` \`daytona\` or \`runner\` | \`sprites\` or \`e2b\`, or unset for the instance default. |
+| \`runtime: "opencode"\` | \`claude\`, \`codex\`, \`gemini\` or \`acp\`. |
+| \`fountain.profiles.<name>.team\` | \`steward\`, the steward's name. |`;
 
 const outputFormat = `The fountain lexicon serializes to fountain's own manifest YAML — nothing else. \`fountainApply\` reads that same YAML, so there is no sidecar to keep in sync with it.
 
@@ -81,7 +88,7 @@ spec:
       - github.com
 \`\`\`
 
-Documents come out in dependency order — Environment, Vault, Agent, Teammate, Schedule, Webhook — whatever order the file declared them in, so the manifest reads the way it applies. Within one kind, declaration order is kept.
+Documents come out in dependency order — Environment, Vault, Agent — whatever order the file declared them in, so the manifest reads the way it applies. Within one kind, declaration order is kept.
 
 \`metadata.name\` is the resource's declared \`name\`, not the name of the variable you exported it as. fountain reconciles by that name, so renaming the variable does not orphan the resource. An entity declared without a \`name\` falls back to the export name. The name appears only in \`metadata\`; it is not repeated under \`spec\`, so the apply request carries one name per resource.
 
@@ -91,7 +98,7 @@ The output is ejectable — \`fountain apply -f\` accepts it verbatim, so adopti
 
 \`fountainApply\` parses this same YAML and sends it to fountain's bulk \`POST /api/apply\` endpoint in one request — the server reconciles by name, Environment then Vault then Agent, and resolves an agent's \`environment\` reference itself, against the manifest or the tenant's existing environments. See the Ops page for the activity's own behavior (prune, secrets, failure reporting).
 
-\`fountainApply\` sends those three kinds in the bulk call. A \`Teammate\`, \`Schedule\` or \`Webhook\` document goes through its own route afterwards, matched by name (a webhook by url). fountain v0.21.0's bulk apply accepts all six kinds (fountain#1636), and \`fountainApply\` has not moved the team-side three onto it yet.
+A \`Teammate\`, \`Schedule\` or \`Webhook\` is never written to the manifest: Managoat removed them, and FTN025 fails the build that declares one.
 
 ## Ownership
 

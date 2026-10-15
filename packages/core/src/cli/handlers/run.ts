@@ -641,9 +641,9 @@ type StewardTurnGate =
  * `chant run <op>` for an Op a declared steward lists is one of that
  * steward's turns, not a run beside it (#2750, follow-up to #2731).
  *
- * On fountain, the run belongs on the steward's thread: without `--on
+ * On fountain, the run belongs in the steward's conversation: without `--on
  * fountain` this refuses outright, naming the command that posts it there
- * instead (the fountain runtime's own turn already refuses a busy teammate,
+ * instead (the fountain runtime's own turn already refuses a busy steward,
  * unretried — see chant-fountain-ops).
  *
  * In the local form, the run takes the steward's turn lease
@@ -682,15 +682,15 @@ async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<Ste
   const form = stewardFormFor(owner, env);
 
   if (form === "fountain") {
-    // `run.on: "fountain"` asks for the steward's thread as much as the flag
+    // `run.on: "fountain"` asks for the steward's conversation as much as the flag
     // does (#2523).
     if ((await chooseOpRuntime(ctx, true))?.on === "fountain") return { ok: true };
     return {
       ok: false,
       message: `Op "${opName}" is one of steward "${owner.name}"'s Ops, which runs on fountain in environment "${env}"`,
       hint:
-        `Run \`chant run ${opName} --on fountain\` so it posts to "${owner.name}"'s thread. ` +
-        `A plain \`chant run ${opName}\` would run it outside that thread, beside the steward instead of one of its turns.`,
+        `Run \`chant run ${opName} --on fountain\` so it posts to "${owner.name}"'s conversation. ` +
+        `A plain \`chant run ${opName}\` would run it outside that conversation, beside the steward instead of one of its turns.`,
     };
   }
 

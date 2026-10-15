@@ -18,6 +18,7 @@ import type { Declarable } from "@intentius/chant";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { runtimeModelValidCheck } from "../lint/post-synth/ftn016-runtime-model-valid";
 import { acpRuntimeCommandCheck } from "../lint/post-synth/ftn023-acp-runtime-command";
+import { removedUpstreamCheck } from "../lint/post-synth/ftn025-removed-upstream";
 
 describe("ConciergeStack", () => {
   it("defaults to deny-all egress, no vaults, and the ownership marker", () => {
@@ -74,74 +75,52 @@ describe("Steward", () => {
   const toolchain = () => new Environment({ name: "toolchain" });
   const creds = () => new Vault({ name: "prod-creds" });
 
-  it("passes FTN016 and FTN023 now that acp is upstream's runtime, not chant's extension", () => {
-    const { agent, teammate } = Steward({
+  it("passes FTN016, FTN023 and FTN025 now that acp is upstream's runtime, not chant's extension", () => {
+    const { agent } = Steward({
       name: "prod-steward",
       environment: toolchain(),
       ops: [op("prod-watch", { cron: "*/10 * * * *" })],
     });
-    const entities = new Map<string, Declarable>([
-      ["agent", agent as unknown as Declarable],
-      ["teammate", teammate as unknown as Declarable],
-    ]);
+    const entities = new Map<string, Declarable>([["agent", agent as unknown as Declarable]]);
     const ctx = { outputs: new Map(), entities, buildResult: { warnings: [], errors: [] } } as unknown as PostSynthContext;
 
     expect(runtimeModelValidCheck.check(ctx)).toEqual([]);
     expect(acpRuntimeCommandCheck.check(ctx)).toEqual([]);
+    expect(removedUpstreamCheck.check(ctx)).toEqual([]);
   });
 
-  it("returns an acp agent, a teammate, a schedule per scheduled op, and the webhook", () => {
+  it("returns an ephemeral acp agent and the declaration, and nothing Managoat removed (managoat/managoat#2793)", () => {
     const environment = toolchain();
     const vault = creds();
-    const { agent, teammate, schedules, webhook } = Steward({
+    const result = Steward({
       name: "prod-steward",
       environment,
       vault,
       ops: [op("prod-watch", { cron: "*/10 * * * *" }), op("prod-apply")],
-      webhook: { url: "https://hooks.example.com/chant", event_types: ["conversation.turn.done"] },
     });
+    expect(Object.keys(result).sort()).toEqual(["agent", "declaration"]);
 
-    const a = props(agent);
+    const a = props(result.agent);
     expect(a.name).toBe("prod-steward");
     expect(a.runtime).toBe("acp");
     expect(a.runtime_command).toBe("chant acp --steward prod-steward");
-    expect(a.sandbox_mode).toBe("persistent");
+    // Every conversation gets a sandbox of its own; persistent is a 422.
+    expect(a.sandbox_mode).toBeUndefined();
     expect(a.model).toBeUndefined();
     expect(a.skills).toBeUndefined();
     expect(a.permission_policy).toEqual({ default: "auto_allow" });
     expect((a.metadata as Record<string, unknown>)["managed-by"]).toBe("chant");
     expect(a.environment).toBe(environment);
     expect(a.allowed_vault_ids).toEqual([vault]);
-
-    const t = props(teammate);
-    expect(t.name).toBe("prod-steward");
-    expect(t.agent).toBe(agent);
-    expect(t.environment).toBe(environment);
-    expect(t.vault).toBe(vault);
-
-    // One schedule — `prod-apply` carries no cadence, so it gets none.
-    expect(schedules).toHaveLength(1);
-    const s = props(schedules[0]);
-    expect(s.name).toBe("prod-steward-prod-watch");
-    expect(s.teammate).toBe(teammate);
-    expect(s.cron).toBe("*/10 * * * *");
-    expect(s.prompt).toBe("chant run prod-watch");
-    expect(s.one_off).toBe(false);
-    expect(s.enabled).toBe(true);
-
-    expect(props(webhook).url).toBe("https://hooks.example.com/chant");
-    expect(props(webhook).event_types).toEqual(["conversation.turn.done"]);
   });
 
-  it("scopes the vault allowlist to nothing when no vault is given, and omits the webhook", () => {
-    const { agent, teammate, webhook } = Steward({
+  it("scopes the vault allowlist to nothing when no vault is given", () => {
+    const { agent } = Steward({
       name: "broker-steward",
       environment: toolchain(),
       ops: [],
     });
     expect(props(agent).allowed_vault_ids).toEqual([]);
-    expect(props(teammate).vault).toBeUndefined();
-    expect(webhook).toBeUndefined();
   });
 
   it("lists every op on the steward, scheduled or not, for the runtime lookup", () => {
@@ -157,19 +136,16 @@ describe("Steward", () => {
 
   // `WatchOp`/`ConvergeOp`/`ApplyOp` return an Op *declaration*, which keeps
   // its config behind `props`. That is what an author has in hand, so reading
-  // through it is the composite's job rather than the caller's — before this,
-  // `ops: [watch.op]` type-checked nowhere and silently produced no schedules.
+  // through it is the composite's job rather than the caller's.
   it("takes the Op declarations the composites return, not just bare configs", () => {
     const { op: watch } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/10 * * * *" });
-    const { schedules } = Steward({
+    const { declaration } = Steward({
       name: "prod-steward",
       environment: toolchain(),
       ops: [watch],
     });
-    expect(schedules).toHaveLength(1);
-    expect(props(schedules[0]).name).toBe("prod-steward-prod-watch");
-    expect(props(schedules[0]).cron).toBe("*/10 * * * *");
-    expect(props(schedules[0]).prompt).toBe("chant run prod-watch");
+    // The cadence rides on the declaration, for a clock outside Managoat.
+    expect(declaration.ops.map((o) => [o.name, o.schedule?.cron])).toEqual([["prod-watch", "*/10 * * * *"]]);
     expect(stewardForOp("prod-watch")).toBe("prod-steward");
   });
 
@@ -194,40 +170,28 @@ describe("Steward", () => {
     ).not.toThrow();
   });
 
-  it("refuses an op whose schedule overlap is not skip", () => {
+  it("refuses the old webhook option by name, from an untyped caller", () => {
     expect(() =>
       Steward({
         name: "prod-steward",
         environment: toolchain(),
-        ops: [op("prod-watch", { cron: "*/10 * * * *", overlap: "buffer" })],
-      }),
-    ).toThrow(/overlap "buffer"/);
-  });
-
-  it("refuses a webhook url FTN022 would reject", () => {
-    const bad = (url: string) =>
-      Steward({ name: "prod-steward", environment: toolchain(), ops: [], webhook: { url } });
-
-    expect(() => bad("http://hooks.example.com/chant")).toThrow(/not https/);
-    expect(() => bad("https://169.254.169.254/chant")).toThrow(/private host/);
-    expect(() => bad("not a url")).toThrow(/is not a URL/);
+        ops: [],
+        webhook: { url: "https://hooks.example.com/chant" },
+      } as never),
+    ).toThrow(/webhook is gone — Managoat removed webhooks/);
   });
 
   it("serializes to the manifest in dependency order", () => {
     const environment = toolchain();
     const vault = creds();
-    const { agent, teammate, schedules, webhook } = Steward({
+    const { agent } = Steward({
       name: "prod-steward",
       environment,
       vault,
       ops: [op("prod-watch", { cron: "*/10 * * * *" })],
-      webhook: { url: "https://hooks.example.com/chant" },
     });
 
     const entities = new Map<string, Declarable>([
-      ["prodHook", webhook as unknown as Declarable],
-      ["schedule", schedules[0] as unknown as Declarable],
-      ["teammate", teammate as unknown as Declarable],
       ["agent", agent as unknown as Declarable],
       ["vault", vault as unknown as Declarable],
       ["toolchain", environment as unknown as Declarable],
@@ -235,9 +199,8 @@ describe("Steward", () => {
 
     const yaml = fountainSerializer.serialize(entities) as string;
     const kinds = [...yaml.matchAll(/^kind: (\w+)$/gm)].map((m) => m[1]);
-    expect(kinds).toEqual(["Environment", "Vault", "Agent", "Teammate", "Schedule", "Webhook"]);
-    expect(yaml).toContain("teammate: prod-steward");
-    expect(yaml).toContain("prompt: chant run prod-watch");
+    expect(kinds).toEqual(["Environment", "Vault", "Agent"]);
+    expect(yaml).not.toContain("sandbox_mode");
     // References serialize to the referenced resource's fountain name, not
     // to the chant export name the entities map is keyed on.
     expect(yaml).toContain("environment: toolchain");
@@ -268,7 +231,7 @@ describe("Steward declaration and form", () => {
   });
 
   it("names the environments where the same steward runs locally", () => {
-    const { declaration, schedules } = Steward({
+    const { declaration, agent } = Steward({
       name: "box-steward",
       environment: toolchain(),
       ops: [op("box-converge", { cron: "* * * * *" })],
@@ -279,7 +242,7 @@ describe("Steward declaration and form", () => {
     expect(stewardFormFor(declaration, "spritzer")).toBe("local");
     // The Fountain resources are declared whatever the form: which environment
     // they run in is the deploy's business, not the declaration's.
-    expect(schedules).toHaveLength(1);
+    expect(props(agent).runtime).toBe("acp");
   });
 
   it("refuses a form that is local everywhere, which needs none of the Fountain resources", () => {
@@ -327,7 +290,7 @@ describe("Box", () => {
     permissionPolicy: { default: "auto_allow" as const },
   };
 
-  it("declares a closed Environment and a persistent claude Agent, with the port in metadata", () => {
+  it("declares a closed Environment and an ephemeral claude Agent, with the port in metadata", () => {
     const { environment, agent, vault, port } = Box(base);
 
     const env = props(environment);
@@ -342,7 +305,8 @@ describe("Box", () => {
     expect(a.name).toBe("studio-box");
     expect(a.runtime).toBe("claude");
     expect(a.model).toBe("anthropic/claude-sonnet-4-5");
-    expect(a.sandbox_mode).toBe("persistent");
+    // A box is one long-lived conversation, not a persistent agent (managoat/managoat#2793).
+    expect(a.sandbox_mode).toBeUndefined();
     expect(a.environment).toBe(environment);
     expect(a.permission_policy).toEqual({ default: "auto_allow" });
     expect(a.allowed_vault_ids).toEqual([]);
@@ -424,13 +388,13 @@ describe("Box", () => {
       setupScript: "#!/bin/bash\nnpm install\n",
       model: "anthropic/claude-sonnet-4-5",
       permissionPolicy: { default: "auto_allow" as const },
-      sandboxProvider: "runner",
+      sandboxProvider: "e2b",
     });
     const env = props(environment);
     expect("repositories" in env).toBe(false);
     expect(env.setup_script).toBe("#!/bin/bash\nnpm install\n");
     const a = props(agent);
-    expect(a.sandbox_provider).toBe("runner");
+    expect(a.sandbox_provider).toBe("e2b");
     expect(port).toBe(8080);
   });
 
@@ -441,11 +405,11 @@ describe("Box", () => {
       /allowedHosts and unrestrictedNetworking/,
     );
     expect(() => Box({ ...base, setupScript: "  " })).toThrow(/setupScript is empty/);
-    // fountain v0.21.0 refuses an Agent with no model at apply (#2776); an
+    // Managoat refuses an Agent with no model at apply (#2776); an
     // untyped caller finds out at build instead.
     const { model: _model, ...noModel } = base;
     expect(() => Box(noModel as unknown as Parameters<typeof Box>[0])).toThrow(
-      /Box "studio-box": model is required — fountain v0\.21\.0 refuses an Agent with no model for the claude runtime/,
+      /Box "studio-box": model is required — Managoat refuses an Agent with no model for the claude runtime/,
     );
     expect(() => Box({ ...base, model: " " })).toThrow(/model is required/);
   });
@@ -491,13 +455,13 @@ describe("Box", () => {
     expect(diagnostics).toEqual([]);
   });
 
-  it("a no-repo, sandboxProvider: runner box builds a manifest whose every field exists in the pinned spec, clean under every post-synth check", () => {
+  it("a no-repo, sandboxProvider: e2b box builds a manifest whose every field exists in the pinned spec, clean under every post-synth check", () => {
     const { environment, agent } = Box({
       name: "blank-slate",
       setupScript: "#!/bin/bash\nnpm install\n",
       model: "anthropic/claude-sonnet-4-5",
       permissionPolicy: { default: "auto_allow" as const },
-      sandboxProvider: "runner",
+      sandboxProvider: "e2b",
     });
     const entities = new Map<string, Declarable>([
       ["boxAgent", agent as unknown as Declarable],
@@ -507,7 +471,7 @@ describe("Box", () => {
     const yaml = fountainSerializer.serialize(entities) as string;
     expect([...yaml.matchAll(/^kind: (\w+)$/gm)].map((m) => m[1])).toEqual(["Environment", "Agent"]);
     expect(yaml).not.toContain("repositories:");
-    expect(yaml).toContain("sandbox_provider: runner");
+    expect(yaml).toContain("sandbox_provider: e2b");
 
     const schemas = (spec as unknown as { components: { schemas: Record<string, { properties: Record<string, unknown> }> } })
       .components.schemas;
@@ -531,7 +495,7 @@ describe("Box", () => {
   it("shows the agent's sandbox provider and allowed vaults on the graph node (#2759)", () => {
     const { agent, environment } = Box({
       ...base,
-      sandboxProvider: "runner",
+      sandboxProvider: "e2b",
       allowedVaults: "any",
     });
     const entities = new Map<string, Declarable>([
@@ -542,7 +506,7 @@ describe("Box", () => {
 
     const ir = buildGraphIr(entities);
     const agentNode = ir.nodes.find((n) => n.id === "boxAgent")!;
-    expect(agentNode.attrs.sandbox_provider).toBe("runner");
+    expect(agentNode.attrs.sandbox_provider).toBe("e2b");
     // "any" leaves the manifest's allowed_vault_ids unset, so it's the
     // metadata marker a graph reader checks, not an absent key it has to
     // interpret.

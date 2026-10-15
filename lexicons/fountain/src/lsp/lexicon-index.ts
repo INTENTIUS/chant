@@ -13,10 +13,10 @@ interface FountainEntry extends LexiconEntry {
  *
  * Core's `LexiconIndex` reads prop names off `propertyConstraints`, which
  * carries a prop only when upstream constrained it. That is fine for a
- * CloudFormation-shaped lexicon and lossy for this one: `Schedule.cron` and
- * `Webhook.url` are documented with an example rather than a pattern, so the
- * two props most worth completing would be the two missing from completion.
- * The generator writes the full list as `props`; this merges it in.
+ * CloudFormation-shaped lexicon and lossy for this one: most of an Agent's
+ * props (`system`, `allowed_vault_ids`, `mcp_servers`) carry no constraint
+ * upstream, so they would be missing from completion. The generator writes
+ * the full list as `props`; this merges it in.
  */
 class FountainLexiconIndex extends LexiconIndex {
   constructor(private readonly data: Record<string, FountainEntry>) {

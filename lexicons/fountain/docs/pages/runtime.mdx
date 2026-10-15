@@ -4,7 +4,7 @@ description: "chant run --on fountain: profiles, the steward lookup, status, log
 diataxis: how-to
 ---
 
-`chant run <op> --on fountain` hands a run to a fountain teammate instead of executing it here. The command line goes onto the steward's thread as a prompt, the CLI tails the conversation's event stream, and the run's record comes back in the same shape a local run would have written.
+`chant run <op> --on fountain` hands a run to a Managoat steward instead of executing it here. The command line goes onto the steward's conversation as a prompt, the CLI tails the conversation's event stream, and the run's record comes back in the same shape a local run would have written.
 
 Nothing is stored on the client. `status`, `log` and `list` read fountain's turns; a gate's resolution is read from chant's own ledger.
 
@@ -23,7 +23,7 @@ export default {
       prod: {
         endpoint: "https://fountain.inevitable.fyi",
         token: { env: "FOUNTAIN_TOKEN" },
-        team: "prod-steward",
+        steward: "prod-steward",
       },
     },
     defaultProfile: "prod",
@@ -40,15 +40,18 @@ chant run prod-watch --on fountain
 chant run prod-apply --on fountain --profile staging
 ```
 
-The prompt posted is exactly `chant run <op>`, which is what makes the thread readable and what `status` matches turns on later.
+The prompt posted is exactly `chant run <op>`, which is what makes the conversation readable and what `status` matches turns on later.
 
-### Which thread it lands on
+### Which conversation it lands on
 
 Resolved in this order, first hit wins:
 
 1. A declared [`Steward`](/chant/lexicons/fountain/steward/) that lists this Op. The composite registers the mapping when the project's declarations load, so this answers whenever the run and the declaration share a process.
-2. The profile's `team`, a teammate name. The post goes to `POST /api/team/:agent_id/messages`, the single-writer path.
-3. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a fresh conversation on that agent rather than joining a thread.
+2. The profile's `steward`, a steward's name. (`team`, its old name, is still read, with a warning.)
+
+For either, the post is `POST /api/conversations` on the steward's agent with `channel_id` `chant:steward:<name>`. The first run opens that conversation; every later one resumes it, so the steward has one conversation, and one sandbox whose disk survives park and wake. This replaced the team thread, which Managoat removed ([managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793)).
+
+3. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a fresh conversation on that agent rather than resuming the steward's.
 
 With none of the four, the run refuses and names all three ways to fix it. Prefer the first: the steward is the declaration that put the Op on that machine in the first place, and it needs no second copy of the name in config.
 
@@ -61,9 +64,9 @@ chant run list --on fountain                # one row per declared Op
 chant run cancel prod-watch --on fountain --force
 ```
 
-`list` groups by steward before it reads anything, so twenty ops behind one teammate cost one round trip rather than twenty.
+`list` groups by steward before it reads anything, so twenty ops behind one steward cost one round trip rather than twenty.
 
-`cancel` without `--force` interrupts the turn and leaves the machine standing. Core's `chant run cancel` requires `--force`, which terminates the conversation and takes its sandbox with it. On a persistent steward that is the more expensive of the two: the checkout and tool cache go with it.
+`cancel` without `--force` interrupts the turn and leaves the machine standing. Core's `chant run cancel` requires `--force`, which terminates the conversation and takes its sandbox with it. On a steward that is the more expensive of the two: the checkout and tool cache go with it, and the next run opens a fresh conversation.
 
 ## Approving a gate
 
@@ -74,21 +77,21 @@ chant approve prod-apply deploy-window --approver alice
 chant run approve prod-apply deploy-window --on fountain
 ```
 
-The first records the resolution. The second posts `chant run <op>` back onto the steward's thread, carrying `--approver` and `--url` along so the thread names who resolved the gate. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger.
+The first records the resolution. The second posts `chant run <op>` back onto the steward's conversation, carrying `--approver` and `--url` along so the conversation names who resolved the gate. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger.
 
-`--durable-requests` would instead answer fountain's own pending permission card. It is refused today by name: the request-answer path it needs is [fountain#1635](https://github.com/managoat/fountain/issues/1635), which fountain v0.21.0 carries and the fountain runtime does not use yet (chant#2391). Drop the flag and use the two commands above.
+`--durable-requests` would instead answer fountain's own pending permission card. It is refused today by name: the request-answer path it needs is [fountain#1635](https://github.com/managoat/fountain/issues/1635), which Managoat carries and the fountain runtime does not use yet (chant#2391). Drop the flag and use the two commands above.
 
 ## When the steward is busy
 
-A teammate runs one turn at a time. Posting to a busy one comes back `400 conversation_busy`, and this runtime reports it with the conversation's address and does not retry:
+A conversation runs one turn at a time. A run posted while the steward's turn is in flight is refused, and this runtime reports it with the conversation's address and does not retry:
 
 ```
 fountain runtime: the steward "prod-steward" is running another op
-(https://fountain.inevitable.fyi/conversations/c_01J…). A teammate runs one
+(https://fountain.inevitable.fyi/conversations/c_01J…). A steward runs one
 turn at a time; wait for it to finish and run this again.
 ```
 
-Queueing behind it from a CLI that may be interrupted a second later would be a promise this client cannot keep. Open the conversation, see what is running, and run the command again when it settles. A `Schedule` that fires against a busy steward is dropped the same way, which is why the composite refuses any `schedule.overlap` other than `skip`.
+Queueing behind it from a CLI that may be interrupted a second later would be a promise this client cannot keep. Open the conversation, see what is running, and run the command again when it settles. A clock that fires `chant run <op> --on fountain` against a busy steward gets the same refusal, which is the `skip` overlap a steward's declaration requires.
 
 ## Patience and reconnects
 

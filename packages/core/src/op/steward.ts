@@ -5,9 +5,11 @@
  * A steward runs a fixed list of Ops, each on its own `schedule` when it has
  * one, one Op at a time. Where it runs is its form:
  *
- * - `fountain`: the fountain lexicon's `Steward` composite, an `acp` Agent on
- *   a persistent sandbox bound to a Teammate, with a Fountain `Schedule` per
- *   scheduled Op. A turn is one `chant run <op>` on the teammate's thread.
+ * - `fountain`: the fountain lexicon's `Steward` composite, an `acp` Agent
+ *   whose runs `chant run <op> --on fountain` sends to one long-lived
+ *   conversation, resumed by channel_id. A turn is one `chant run <op>` in
+ *   that conversation. Managoat has no scheduler, so a scheduled Op's cron
+ *   fires from a clock outside it (a CI schedule, a CronJob).
  * - `local`: `chant operator --steward <name>` in the box itself, for a box
  *   with no Fountain behind it (a docker compose box, a Sprites box). The same
  *   Ops on the same crons, each run under its operator lease, and the steward
@@ -129,7 +131,7 @@ export interface StewardBeside {
 }
 
 export interface StewardDeclarationConfig {
-  /** The steward's name. On Fountain, the Agent's and the Teammate's. */
+  /** The steward's name. On Fountain, the Agent's, and the key of its conversation. */
   name: string;
   /** The Ops it runs. A scheduled one runs on its cron; any other runs when asked. */
   ops: StewardOpInput[];

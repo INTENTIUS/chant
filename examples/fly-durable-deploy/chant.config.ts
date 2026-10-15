@@ -22,7 +22,7 @@ export default {
       demo: {
         endpoint: "https://fountain.inevitable.fyi",
         token: { env: "FOUNTAIN_TOKEN" },
-        team: "fly-steward",
+        steward: "fly-steward",
       },
     },
     defaultProfile: "demo",
