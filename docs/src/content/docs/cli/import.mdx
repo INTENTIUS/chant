@@ -15,9 +15,9 @@ chant import --agents [flags]
 
 ## Description
 
-`chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. This lets you adopt chant incrementally by importing your current infrastructure rather than rewriting it from scratch.
+`chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. Use it to adopt chant one template at a time.
 
-With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. This is the cloud->code direction — the way to adopt an orphaned resource back into source.
+With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. Use it to bring an orphaned resource back into source.
 
 With `--kustomize <dir>` it renders a kustomization first and imports the rendered manifests through the k8s lexicon. It runs `kustomize build <dir>`, falling back to `kubectl kustomize <dir>` when the standalone binary is absent. The flag names the lexicon, so no template detection happens. A rendering error exits nonzero with the first line of the tool's message.
 
@@ -70,7 +70,7 @@ chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1
 | `--all-projects` | `--agents` only: import every project registered in `~/.claude.json`, not just the path argument |
 
 :::caution
-Live import may emit sensitive values (keys, tokens, passwords) into generated source — unlike `chant lifecycle` observation, which only reads scrubbed metadata. The command prints a warning; review generated files before committing.
+Live import may emit sensitive values (keys, tokens, passwords) into generated source, unlike `chant lifecycle` observation, which reads only scrubbed metadata. The command prints a warning; review generated files before committing.
 
 `--agents` is the exception: it rewrites literal credentials to `${VAR}` references rather than copying them, and reports which sites it redacted. Review the output anyway.
 :::
@@ -79,9 +79,8 @@ Live import may emit sensitive values (keys, tokens, passwords) into generated s
 
 `chant import --agents` is the other half of
 [`chant audit --agents`](/chant/cli/audit/): where the audit reports on the
-agent configuration found on a machine, this re-expresses it as chant code, so a
-setup that accumulated by hand over months becomes reviewable, version
-controlled, and reproducible.
+agent configuration found on a machine, this writes it as chant code, so a
+setup built up by hand can be reviewed, committed and rebuilt on another machine.
 
 ```bash
 chant import --agents                                  # → ./infra/agents/
@@ -98,19 +97,19 @@ The default target is the [fountain](/chant/lexicons/fountain/) lexicon, whose
 | `skills/*/SKILL.md` | `Agent.skills` |
 | settings `env` | `Environment.env_vars` |
 
-Three places where it deliberately does **not** transcribe:
+Three things are changed on the way rather than transcribed:
 
-- **Secrets are not carried over.** A literal credential found in local config
-  is rewritten to a `${VAR}` reference. Generated code gets committed;
-  transcribing a live secret into it would turn a local mistake into a
-  repository one. This includes bearer tokens in MCP `headers`, not just `env`.
-- **Egress is derived, not copied.** A local agent has the machine's full
-  network access; a fountain sandbox must declare intent. The hosts the config's
-  own remote MCP servers use become the `allowed_hosts` allowlist, and
-  everything else is denied.
-- **Local skills are inlined by content.** A skill that exists only on this
-  machine has no upstream to install from, so its text is embedded — that is
-  what lets the generated code reproduce the setup somewhere else.
+- Secrets are not carried over. A literal credential found in local config,
+  in `env` or in MCP `headers` as a bearer token, is rewritten to a `${VAR}`
+  reference. Generated code gets committed, and a live secret in it would turn
+  a local mistake into a repository one.
+- Egress is derived. A local agent has the machine's full network access, and
+  a fountain sandbox must declare intent. The hosts the config's own remote MCP
+  servers use become the `allowed_hosts` allowlist, and everything else is
+  denied.
+- Local skills are inlined by content. A skill that exists only on this
+  machine has no upstream to install from, so its text is embedded, and the
+  generated code can reproduce the setup on another machine.
 
 The command reports every lossy step: a site it could not map (Cursor has no
 fountain `runtime` value), a model it had to default because the local config
@@ -119,7 +118,7 @@ pinned none, and any site where a credential was redacted.
 When the current project's `chant.config.ts` declares the target lexicon by path, it is loaded from that module. The config is read without running it, and a note is printed when its `lexicons` cannot be read that way. See [Commands that read `chant.config.ts` without running it](/chant/architecture/sandbox/#commands-that-read-chantconfigts-without-running-it).
 
 A lexicon opts into being an `--agents` target by implementing
-`agentConfigImporter()` — see
+`agentConfigImporter()`. See
 [lexicon authoring](/chant/lexicon-authoring/overview/).
 
 ## How closely an import round-trips

@@ -1,6 +1,6 @@
 ---
 title: "chant carve (emit / bridge / apply)"
-description: Incrementally carve a resource out of Terraform into native chant — emit, bridge the boundary, graduate to apply
+description: Carve resources out of Terraform into native chant one at a time
 diataxis: reference
 ---
 
@@ -15,7 +15,7 @@ chant carve status [--from <dir>] [--json]
 
 ## Description
 
-The carve commands peel a resource out of a Terraform estate into native chant source — incrementally, never the whole estate. The long tail stays in Terraform; "we can't map this" becomes "leave it where it is," not a failure. Start with [`chant carve advise`](/chant/cli/carve/) to see what is cheap to carve.
+The carve commands peel a resource out of a Terraform estate into native chant source, one resource at a time. The long tail stays in Terraform, and a resource chant cannot map is left where it is. Start with [`chant carve advise`](/chant/cli/carve/) to see what is cheap to carve.
 
 A carve never destroys or recreates. It reuses the adopt-an-orphan loop: Terraform stops managing the resource, chant adopts the still-live resource, and you sit at the observe position until you turn the dial to apply. Every step before graduation is reversible with `terraform import`.
 
@@ -23,7 +23,7 @@ The flow is three steps.
 
 ### 1. `carve emit` — adopt into chant source
 
-Adopts the selected resource into typed chant source and reports the boundary — every dependency edge the carve would cut. There are two adoption sources:
+Adopts the selected resource into typed chant source and reports the boundary: every dependency edge the carve would cut. There are two adoption sources:
 
 - **`--state <tfstate>` (recommended)** adopts offline, straight from the Terraform state file. This is the correct source for a Terraform-managed resource: it is created through the provider API, not CloudFormation, so it is not in any CFN stack, but its resolved attributes are in the state. No cloud call.
 - **`--env <env>`** adopts via the live cloud->code import path (for resources already in a CloudFormation stack). It selects by native type; if the stack has several resources of that type, narrow it with `--live-name <logical-id>`. This path is exercised end to end against a real AWS endpoint by `just carve-emit-e2e` (Floci in Docker).
@@ -32,9 +32,9 @@ Adopts the selected resource into typed chant source and reports the boundary �
 chant carve emit --from ./infra --select aws_s3_bucket.assets --state ./terraform.tfstate
 ```
 
-The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It covers 78 common AWS carve targets across S3, IAM, DynamoDB, SNS/SQS, Lambda, KMS, Secrets Manager, SSM, ECR, CloudWatch, Route 53, EFS, EC2 (instances + networking), autoscaling, ELBv2, RDS, ElastiCache, API Gateway, Step Functions, ACM, and ECS; advise and emit cover exactly the same AWS types, so there is no rank-it-but-can't-emit gap. A type outside that set is refused with the supported list, the same way on both `--state` and `--env`. Kubernetes types are ranked by advise but cannot be emitted yet. Nothing is patched or applied; the resource lands at the observe position.
+The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It covers 78 common AWS carve targets across S3, IAM, DynamoDB, SNS/SQS, Lambda, KMS, Secrets Manager, SSM, ECR, CloudWatch, Route 53, EFS, EC2 (instances + networking), autoscaling, ELBv2, RDS, ElastiCache, API Gateway, Step Functions, ACM, and ECS; advise and emit cover exactly the same AWS types. A type outside that set is refused with the supported list, the same way on both `--state` and `--env`. Kubernetes types are ranked by advise but cannot be emitted yet. Nothing is patched or applied; the resource stays at the observe position.
 
-After emit, `chant lint ./out --lexicon aws` audits the adopted resource — advisory findings you may choose to fix, and errors that block `chant build` (e.g. a bucket with no public-access block). Auditing what you inherited is part of the point.
+After emit, `chant lint ./out --lexicon aws` audits the adopted resource: advisory findings you may choose to fix, and errors that block `chant build` (e.g. a bucket with no public-access block).
 
 ### 2. `carve bridge` — patch the survivors
 
@@ -61,9 +61,9 @@ data "kubernetes_resource" "app_config" {
 }
 ```
 
-Rewrites follow the shape, so `kubernetes_manifest.app_config.object.metadata.name` becomes `data.kubernetes_resource.app_config.object.metadata.name`, and a reference through the resource-only `manifest` attribute lands on `object`. A type with a dotted identity attribute and no shape is refused, with the message naming what is missing.
+Rewrites follow the shape, so `kubernetes_manifest.app_config.object.metadata.name` becomes `data.kubernetes_resource.app_config.object.metadata.name`, and a reference through the resource-only `manifest` attribute resolves to `object`. A type with a dotted identity attribute and no shape is refused, with the message naming what is missing.
 
-Safe by default: it writes the proposed data sources, rewritten survivor files, and a runbook to an output directory for review. `--apply-rewrites` edits the survivor `.tf` in place. The rewrite is idempotent, and it excises the carved resource's own declaration (and any folded sub-resources) from the survivor source — without that, the next `terraform apply` would re-create what `terraform state rm` released.
+By default it writes the proposed data sources, rewritten survivor files, and a runbook to an output directory for review. `--apply-rewrites` edits the survivor `.tf` in place. The rewrite is idempotent, and it excises the carved resource's own declaration (and any folded sub-resources) from the survivor source. Without that, the next `terraform apply` would re-create what `terraform state rm` released.
 
 ### 3. `carve apply` — graduate
 
@@ -73,11 +73,11 @@ Resolves the ownership marker that makes the resource chant-owned and finalizes 
 chant carve apply --from ./infra --select aws_s3_bucket.assets --env prod --stack assets
 ```
 
-This is BYOL-honest: it makes no cloud call. It computes the marker and the plan; the apply itself is whatever lifecycle you brought — the native CLI, a CI pipeline, an ApplyOp — and it stamps the ownership marker the emitted source carries. `--write` saves the graduation doc. `--write-source` stamps the ownership marker into the emitted chant source as well, so the adopted declaration carries the identity `chant lifecycle` reads back.
+It makes no cloud call. It computes the marker and the plan; you run the apply with your own tooling, such as the native CLI, a CI pipeline or an ApplyOp. That apply stamps the ownership marker the emitted source carries. `--write` saves the graduation doc. `--write-source` stamps the ownership marker into the emitted chant source as well, so the adopted declaration carries the identity `chant lifecycle` reads back.
 
 ### 4. `carve status`
 
-Read-only. It walks the tree under `--from` for every `*.carve.json` manifest the three steps above write. Without `--from` it walks the current directory. Each carved address prints as one row with the step it has reached, so a renderer no longer has to discover manifests by guessing depth.
+Read-only. It walks the tree under `--from` for every `*.carve.json` manifest the three steps above write. Without `--from` it walks the current directory. Each carved address prints as one row with the step it has reached, so a renderer reads one list instead of guessing how deep the manifests sit.
 
 ```
 chant carve status --from ./infra

@@ -17,13 +17,12 @@ templates, example skeletons — from a remote or local source into your own rep
 recorded in a `vendor.json` manifest with a checksum so the provenance is
 verifiable. `chant vendor` with no subcommand runs `pull`.
 
-This is for source you **copy in and own** — reviewed in diffs, adapted freely —
-not for dependencies you import and never edit. **Lexicons stay npm
-dependencies** (the typed API surface). Vendoring exists for the things npm
-handles badly: source you want in-repo, reviewable, and adaptable.
+Use it for source you **copy in and own**, then review in diffs and adapt.
+**Lexicons stay npm dependencies** (the typed API surface), as does anything
+you import and never edit.
 
-It is not a package manager. There is no registry and no auto-update — pins
-only, bumped explicitly and reviewed. Vendored files are just source in your
+There is no registry and no auto-update. Each source is pinned, and a pin moves
+only when you bump it and review the diff. Vendored files are source in your
 repo, so `chant lint` / `chant build` cover them like anything else.
 
 ## The manifest — `vendor.json`
@@ -63,9 +62,8 @@ One entry per vendored artifact:
 | `updatePolicy` | Optional; only `"pin"` (explicit-bump) is supported. |
 
 > **v1 sources:** `local` (a path, e.g. a monorepo sibling) and `archive` (an
-> http `.tar.gz`/`.zip`, optionally scoped to a `subpath`). Both reuse chant's
-> existing fetch/extract infrastructure. Git and npm-pack sources are a
-> fast-follow.
+> http `.tar.gz`/`.zip`, optionally scoped to a `subpath`). Both use chant's
+> existing fetch/extract code. Git and npm-pack sources are planned next.
 
 ## The lineage lock
 
@@ -133,14 +131,14 @@ bump a pin, edit the scope's `source` and `ref` in the lock and run `pull`.
 ## `chant vendor check`
 
 Verify each target's working copy against its recorded checksum. **Editing
-vendored files is allowed** — `check` only tells you they diverged from the pin.
+vendored files is allowed**; `check` reports that they diverged from the pin.
 
 ```bash
 chant vendor check
 ```
 
 Drift is a **warning locally** and a **failure in CI** (when `CI` is set), so a
-pipeline catches unrecorded changes while local adaptation stays frictionless.
+pipeline catches unrecorded changes while local edits still pass.
 
 For vendor scopes in the lock, edits are expected and reported as
 `ok, N file(s) edited locally`. What fails under `CI` is an open manual step or a
@@ -151,7 +149,7 @@ missing target.
 To bump a pin, change the entry's `ref` (and `source.url` for an archive) in
 `vendor.json`, or the scope's `source` and `ref` in the lock. Then re-run
 `chant vendor pull` and review the in-repo diff. The new content and its checksum
-land together in one reviewable change — that is the whole update flow.
+arrive together in one reviewable change.
 
 ## Coming in a later release
 

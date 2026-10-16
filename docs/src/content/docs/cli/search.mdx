@@ -14,21 +14,20 @@ chant search "<query>" [--live | --at <ref>] [--env <name>] [flags]
 
 `chant search` answers a question about your estate with a **compact result**
 instead of the whole graph. Each match prints as one line — logical id, kind,
-physical id when known, and any attributes you asked for. Tens of tokens, not
-thousands.
+physical id when known, and any attributes you asked for. A result is tens of
+tokens.
 
-That compactness is the point. An agent asking "which instances sit in public
-subnets" should not ingest a multi-thousand-token IR dump and join
-instance -> subnet -> route table by hand — it should run one query and read a few
-rows. `chant search` is the query surface the
-[agent integration](/chant/guide/agent-integration/) leans on, and it is what
+An agent asking "which instances sit in public subnets" runs one query and
+reads a few rows, instead of joining instance -> subnet -> route table by hand
+across a multi-thousand-token IR dump. `chant search` is the query the
+[agent integration](/chant/guide/agent-integration/) uses, and it is what
 kept chant's token footprint the lowest of any tooling configuration on
 [aws-bench](https://github.com/aws-bench/aws-bench), an infrastructure-agent
 benchmark.
 
 By default the query runs over the **declared** graph (source only, offline).
 With `--live --env <name>` chant observes the environment, overlays live
-identity and attributes onto the declared graph, and answers from that — same
+identity and attributes onto the declared graph, and answers from that, on the same
 canvas as [`chant graph --overlay`](/chant/cli/graph/).
 
 ## Query grammar
@@ -108,8 +107,8 @@ expected answer.
 
 `--live` builds the project first (a failing build stops the search), observes
 **owned** resources in the environment, and overlays live identity onto the
-declared graph — the declared side carries the topology so `->`/`<-` resolve,
-the live side supplies physical ids and live-only attributes.
+declared graph. The declared side carries the topology so `->`/`<-` resolve,
+and the live side supplies physical ids and live-only attributes.
 
 Multi-stack projects are observed per stack, and results display the bare
 logical id without the stack qualifier.
@@ -128,8 +127,8 @@ query.
 
 ## Query-scoped drift
 
-`--check-live` and `--check-snapshot` compare the matched rows — and only the
-matched rows — against the observation the primary answer did not use. Where
+`--check-live` and `--check-snapshot` compare only the
+matched rows against the observation the primary answer did not use. Where
 `lifecycle diff --live` asks "has anything changed anywhere", this asks "is
 what I was just told still true", about the resources in front of you, in the
 same command that produced them.
@@ -148,18 +147,18 @@ The reverse framing answers live and checks the record for staleness:
 chant search "kind:EC2::Instance" --env prod --live --check-snapshot
 ```
 
-Both reuse `diffLive` — the exact function `lifecycle diff --live` calls —
-scoped to the matched entity ids, so the categories and what counts as drift
+Both reuse `diffLive` scoped to the matched entity ids. That is the function
+`lifecycle diff --live` calls, so the categories and what counts as drift
 are identical: `missing`/`orphan`/`disappeared`/`drifted` are drift,
 `newlyObserved` and runtime children are reported but are not, and
 `unobserved` (a read that could not look) stays distinct from both. A resource
-the query scoped out is a fourth thing again — never reported as missing or
+the query scoped out is a fourth case. It is never reported as missing or
 unobserved, because it was never asked about.
 
-`--check-live` requires `--at`; `--check-snapshot` requires `--live` — each
+`--check-live` requires `--at`; `--check-snapshot` requires `--live`. Each
 checks the answer against the source it did not already use. `--fail-on-drift`
 exits non-zero when the check finds drift, so it is usable as a CI gate; a
-missing snapshot for `--check-snapshot` is a note on stderr, not a failure —
+missing snapshot for `--check-snapshot` is only a note on stderr, since
 the live answer already stands. A snapshot recorded with `chant lifecycle
 snapshot <env> --deep` compares here at identity depth regardless, and the
 footer says so, rather than reporting every property the identity-depth side

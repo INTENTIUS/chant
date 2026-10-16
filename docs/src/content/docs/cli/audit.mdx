@@ -13,9 +13,9 @@ chant audit <repo-url> [flags]
 
 ## Description
 
-`chant audit` runs chant's security, correctness, and best-practice rules against an **existing** repository's config — CI/CD pipelines plus IaC and manifests (Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain) — including files chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report grouped by category, with findings worth a pull request split from lower-priority hygiene.
+`chant audit` runs chant's security, correctness, and best-practice rules against an **existing** repository's CI/CD pipelines, IaC and manifests (Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain), including files chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report grouped by category, with findings worth a pull request split from lower-priority hygiene.
 
-It is read-only and requires no chant project — it reads the repo's CI files directly and runs the same post-synth security checks the build pipeline uses (GitHub Actions `GHA*`, GitLab CI `WGL*`; Forgejo workflows are GitHub-dialect, so the GitHub tier applies to them too).
+It is read-only and runs outside a chant project. It reads the repo's CI files directly and runs the same post-synth security checks the build pipeline uses (GitHub Actions `GHA*`, GitLab CI `WGL*`; Forgejo workflows are GitHub-dialect, so the GitHub tier applies to them too).
 
 What it scans:
 
@@ -31,10 +31,10 @@ What it scans:
 - Terraform root modules, any directory with at least one `.tf` file directly inside it, for a local path. Not recursive: a nested directory with its own `.tf` files (e.g. `modules/foo`) is its own root module and its own audit unit. Install `@intentius/chant-lexicon-terraform` like any other lexicon.
 - fountain manifests — `*.{yml,yaml}` with `apiVersion: fountain.dev/v1` (`fountain apply` files, single or multi-document), for a local path — runs the `FTN*` checks (unrestricted networking, credential-shaped `env_vars`, vault shadowing, unresolvable `${VAR}` references, …). The documents are parsed back into the entity graph, so these are the same rules `chant build` runs — and a fountain document is never misread as a Kubernetes manifest.
 - Secrets & credentials (`SEC*`) — every file above, plus `.env*`, `.pem`, `.key`, `.crt`, `.cer`, `.pfx`, and `.p12` files, are scanned for likely secrets regardless of which lexicons are installed. See [Secrets & credentials detection](#secrets--credentials-detection) below.
-- Wrangler config (`WRG*`) — `wrangler.toml`, Cloudflare Workers' native deploy config. TOML is not a format any lexicon parses, so this is audit-only (#446): no lexicon package to install, no authoring surface — chant never writes Wrangler config, it only reads it for these checks. Runs regardless of which lexicons are installed, the same as `SEC*`. See [Wrangler config detection](#wrangler-config-detection) below.
-- nginx config (`NGX*`) — `nginx.conf`, and `.conf` files under nginx-ish directories (`nginx/`, `conf.d/`, `sites-available/`, `sites-enabled/`, `snippets/`) whose parsed content confirms they are nginx. Audit-only like `WRG*` (#1979): chant never writes nginx config, it only reads it for these checks. See [nginx config detection](#nginx-config-detection) below.
+- Wrangler config (`WRG*`) — `wrangler.toml`, Cloudflare Workers' native deploy config. No lexicon parses TOML, so this is audit-only (#446): there is no lexicon package to install, and chant reads Wrangler config for these checks and never writes it. Runs regardless of which lexicons are installed, the same as `SEC*`. See [Wrangler config detection](#wrangler-config-detection) below.
+- nginx config (`NGX*`) — `nginx.conf`, and `.conf` files under nginx-ish directories (`nginx/`, `conf.d/`, `sites-available/`, `sites-enabled/`, `snippets/`) whose parsed content confirms they are nginx. Like `WRG*`, this is audit-only (#1979). See [nginx config detection](#nginx-config-detection) below.
 
-A different subject entirely, behind its own flag: `--agents` audits the agent configuration installed on the machine rather than a repository — instruction files, MCP servers, skills, plugins, and tool permissions, running the `AGT*` rules. See [Auditing agent configuration](#auditing-agent-configuration---agents) below.
+`--agents` audits the agent configuration installed on the machine instead of a repository, running the `AGT*` rules. See [Auditing agent configuration](#auditing-agent-configuration---agents) below.
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
@@ -77,7 +77,7 @@ Needs a value before it can be auto-patched:
 </details>
 ````
 
-The **expanded** (HTML) report renders the same findings with badges, cards, and syntax-highlighted diffs — **[view a sample report ->](/chant/audit-sample.html)**.
+The **expanded** (HTML) report renders the same findings with badges, cards, and syntax-highlighted diffs. **[View a sample report ->](/chant/audit-sample.html)**
 
 ## Flags
 
@@ -102,9 +102,9 @@ The **expanded** (HTML) report renders the same findings with badges, cards, and
 you are on: the instruction files, MCP servers, skills, plugins, and tool
 permissions that configure your coding agents.
 
-It is worth auditing separately from CI because it is a different threat model.
-An agent config is executable surface that runs with your own credentials, on
-your own machine, usually with no review step — an MCP server entry is a command
+It is audited apart from CI because its threat model differs.
+An agent config is executable surface that runs with your own credentials on
+your own machine, usually with no review step. An MCP server entry is a command
 line that runs at session start, a skill is instructions the model will follow,
 and a permission allowlist decides what runs without anyone being asked. All of
 it is typically installed with a single command and rarely re-read afterwards.
@@ -127,20 +127,20 @@ Three scopes are scanned, in the order harnesses merge them:
 `--all-projects` reads the project list the harness already maintains in
 `~/.claude.json`, so it needs no disk crawl and no configuration. Registrations
 whose directory no longer exists are skipped. The path argument is still
-included, so a project you are sitting in but haven't opened before is not
-dropped:
+included, so a project you are in but haven't opened before is still
+scanned:
 
 ```bash
 chant audit --agents --scope project --all-projects --tier merge-worthy
 ```
 
-When a scan does *not* cover everything, the report says so — "Scanned 1 project
-root; 64 more are registered in ~/.claude.json and were not visited" — and when
+When a scan does *not* cover everything, the report says so ("Scanned 1 project
+root; 64 more are registered in ~/.claude.json and were not visited"), and when
 it does, it states the breadth instead, because "5 findings" reads very
 differently across one project than across sixty-five.
 
-Five harnesses are recognized — Claude Code, codex, Gemini, opencode, and Cursor
-— and each is normalized onto one model, so a finding reads the same regardless
+Five harnesses are recognized (Claude Code, codex, Gemini, opencode and Cursor),
+and each is normalized onto one model, so a finding reads the same regardless
 of which tool's dialect declared it.
 
 The report leads with an **inventory** (what is configured, before any judgement
@@ -180,8 +180,8 @@ Up to `v0.80.0` a truncated scan read as a whole one on stdout, and `v0.80.0` wa
 
 ## Report modes
 
-- **Minimized** — `--format markdown` (or `stylish`/`json`/`sarif`). Compact, pastes into a PR or issue; quick wins lead with ready-to-apply diffs, the rest collapses into `<details>`.
-- **Expanded** — `--format html`. A self-contained, presentable HTML document (inline CSS, opens in a browser, shareable as one file): severity badges, tier counts, styled finding cards, syntax-highlighted fix diffs, and a **provenance snapshot** (host, repo, commit SHA, files scanned, timestamp, chant version) so every finding is anchored to an exact commit.
+- Minimized: `--format markdown` (or `stylish`/`json`/`sarif`). Compact, pastes into a PR or issue; quick wins lead with ready-to-apply diffs, the rest collapses into `<details>`.
+- Expanded: `--format html`. A self-contained, presentable HTML document (inline CSS, opens in a browser, shareable as one file): severity badges, tier counts, styled finding cards, syntax-highlighted fix diffs, and a **provenance snapshot** (host, repo, commit SHA, files scanned, timestamp, chant version) so every finding is anchored to an exact commit.
 
 ### Customizing the HTML report
 
@@ -222,11 +222,11 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 - `status` is `"ok"` when at least one lexicon ran, `"no-lexicons"` when none could (see [Prerequisites](#prerequisites)). Check it before trusting an empty `findings`. An optional `unclaimed` list names files that wanted a lexicon that is not installed.
 - An optional `truncated` object (`limit`, `flag`) means the local walk stopped at its file limit, so `findings` covers only part of the tree (see [Scan limits](#scan-limits)).
 - `lineage` credits the open-source tools whose rules check the same condition, with the upstream rule id and how the two relate. It is credit, not authority, and is empty for a rule with no known counterpart. The [audit rules reference](/chant/lint-rules/audit-rules/#prior-art) lists every tool credited.
-- For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
+- For maximum stability, use `--format sarif`, an industry-standard format versioned independently of chant.
 
 ### SARIF
 
-`--format sarif` emits a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) document — the interchange format most CI platforms and code-review surfaces (GitHub code scanning, GitLab, Azure DevOps, many SAST/IDE viewers) render as inline, file-and-line annotations instead of scraped text:
+`--format sarif` emits a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) document, the interchange format most CI platforms and code-review surfaces (GitHub code scanning, GitLab, Azure DevOps, many SAST/IDE viewers) render as inline, file-and-line annotations instead of scraped text:
 
 - Each `run.tool.driver.rules[]` entry carries the finding's `helpUri` (the same authority citation as the other formats) plus a `help.text` with the catalog's remediation guidance, and a `properties.category`/`properties.dimension` pair (`security`, `correctness`, or `best-practice`) for rule-level triage. A rule with prior art also carries `properties.priorArt`, the same `lineage` entries the JSON report emits.
 - Each `run.results[]` entry carries `properties.tier` (`merge-worthy` or `report-only`) alongside the standard `ruleId`, `level`, `message`, and `locations` (file + line, when known).
@@ -247,11 +247,11 @@ Upload it to GitHub code scanning from a workflow:
 
 ## Tokens
 
-Auditing a URL calls the host's API — auditing a local path reaches nothing, and `packages/core/src/audit/fetch.ts` is the only audit module that touches the network at all ([Network Egress](/chant/reference/network-egress/)). Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):
+Auditing a URL calls the host's API. Auditing a local path reaches no network, and `packages/core/src/audit/fetch.ts` is the only audit module that touches the network at all ([Network Egress](/chant/reference/network-egress/)). Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):
 
-- `GITHUB_TOKEN` — GitHub, plus action-SHA and image-digest resolution (always queries the GitHub/registry APIs)
-- `GITLAB_TOKEN` — GitLab
-- `CODEBERG_TOKEN` — Codeberg
+- `GITHUB_TOKEN`: GitHub, plus action-SHA and image-digest resolution (always queries the GitHub/registry APIs)
+- `GITLAB_TOKEN`: GitLab
+- `CODEBERG_TOKEN`: Codeberg
 
 Without a token, unauthenticated GitHub is limited to 60 requests/hour and pin fixes fall back to "needs a value" instead of an inline diff. Tokens are never sent across hosts.
 
@@ -301,7 +301,7 @@ With `--json` the same run emits `"status": "no-lexicons"` plus `unclaimed`, `mi
 
 When some lexicons are installed and files on disk look like they belong to one that is not, the report leads with a one-line note naming the skipped files and the `npm i` to fix it, and `--json` carries them in `unclaimed`. Terraform is listed the same way, `npm i @intentius/chant-lexicon-terraform` included.
 
-If a lexicon package is present for detection but its checks fail to load, the command surfaces that as an error naming the package.
+If a lexicon package is present for detection but its checks fail to load, the command reports an error naming the package.
 
 ### Lexicons a project declares by path
 
@@ -309,25 +309,25 @@ A chant project can declare a lexicon by module path in `chant.config.ts` ([A le
 
 ## Secrets & credentials detection
 
-The `SEC*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) scan the raw text of every scanned file for likely credentials — independent of lexicon, so they run even for file types no installed lexicon claims. Two layers:
+The `SEC*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) scan the raw text of every scanned file for likely credentials. They are independent of lexicon, so they run even for file types no installed lexicon claims. Two layers:
 
-- **Pattern detectors** for well-known credential shapes: `SEC001` AWS access key ID, `SEC002` AWS secret access key, `SEC003` GitHub token, `SEC004` Slack token, `SEC005` Google API key, `SEC006` Stripe live secret key, `SEC007` PEM private key block, `SEC008` bearer/authorization token, `SEC009` credentials embedded in a connection string (`scheme://user:pass@host`).
-- **`SEC010`, a high-entropy heuristic** — a catch-all for a random-looking token (real character-class diversity, not a pure-hex run like a git SHA) that doesn't match a known shape. Its entropy threshold defaults to a conservative `4.0` bits/char and is tunable via `.chant-audit.json` (below).
+- Pattern detectors for well-known credential shapes: `SEC001` AWS access key ID, `SEC002` AWS secret access key, `SEC003` GitHub token, `SEC004` Slack token, `SEC005` Google API key, `SEC006` Stripe live secret key, `SEC007` PEM private key block, `SEC008` bearer/authorization token, `SEC009` credentials embedded in a connection string (`scheme://user:pass@host`).
+- `SEC010`, a high-entropy heuristic: a catch-all for a random-looking token (real character-class diversity, not a pure-hex run like a git SHA) that doesn't match a known shape. Its entropy threshold defaults to a conservative `4.0` bits/char and is tunable via `.chant-audit.json` (below).
 
-**Redaction is unconditional.** A secrets finding's message, JSON, SARIF, and HTML report output carry only the rule id, the kind of secret, the file/line location, and a non-reversible fingerprint of the value — never the matched value itself.
+**Redaction is unconditional.** A secrets finding's message, JSON, SARIF, and HTML report output carry only the rule id, the kind of secret, the file/line location, and a non-reversible fingerprint of the value. The matched value itself never appears.
 
 ### Suppressing a secrets finding
 
-Two ways, matching the other false-positive escape hatches in the tool:
+Two ways, the same as for other false positives:
 
-- **Inline marker** — a comment containing `chant-audit-ignore` on the flagged line (or the line immediately above it, for a PEM block whose `-----BEGIN…-----` line can't carry a trailing comment) suppresses every secrets finding on that line. Scope it to specific rules with `chant-audit-ignore: SEC001,SEC010`; bare `chant-audit-ignore` suppresses all of them.
+- Inline marker: a comment containing `chant-audit-ignore` on the flagged line (or the line immediately above it, for a PEM block whose `-----BEGIN…-----` line can't carry a trailing comment) suppresses every secrets finding on that line. Scope it to specific rules with `chant-audit-ignore: SEC001,SEC010`; bare `chant-audit-ignore` suppresses all of them.
 
   ```yaml
   # chant-audit-ignore: SEC010
   fixture_token: "not-a-real-secret-just-looks-random-9f3k2"
   ```
 
-- **Config allowlist** — a `.chant-audit.json` at the audited root:
+- Config allowlist: a `.chant-audit.json` at the audited root:
 
   ```json
   {
@@ -340,27 +340,27 @@ Two ways, matching the other false-positive escape hatches in the tool:
   }
   ```
 
-  Copy the `fingerprint` straight from the finding's message or JSON output — it's a hash of the value, so allowlisting a false positive never means writing the secret into the config. An allow entry needs `ruleId` and/or `fingerprint`; `file` alone never blanket-suppresses everything in a file.
+  Copy the `fingerprint` straight from the finding's message or JSON output. It is a hash of the value, so allowlisting a false positive never means writing the secret into the config. An allow entry needs `ruleId` and/or `fingerprint`; `file` alone never blanket-suppresses everything in a file.
 
 A Terraform finding (`TF*`) is a different mechanism: it reads `# chant-ignore`, `# chant-ignore-file`, and `# chant-ignore-block` comments straight out of the `.tf` source, so it works identically through `chant audit` and `chant build`. See the terraform lexicon's [Suppressing a finding](/chant/lexicons/terraform/lint-rules/#suppressing-a-finding) section.
 
 ## Wrangler config detection
 
-The `WRG*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read `wrangler.toml` — parsed with a small dependency-free TOML parser built for this (`packages/core/src/toml.ts`), not a full spec implementation, but enough for real deploy configs (tables, arrays of tables, dotted/nested `[env.<name>]` blocks, inline tables). Like `SEC*`, this runs independent of lexicon — it does not need any `@intentius/chant-lexicon-*` package installed, since Wrangler config is audit-only: chant has no authoring surface or serializer for it.
+The `WRG*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read `wrangler.toml` with a small dependency-free TOML parser (`packages/core/src/toml.ts`) that covers what real deploy configs use (tables, arrays of tables, dotted/nested `[env.<name>]` blocks, inline tables) short of the full spec. Like `SEC*`, it runs with no `@intentius/chant-lexicon-*` package installed. Wrangler config is audit-only, and chant has no authoring surface or serializer for it.
 
 Checks cover: a production-named environment exposed on the public `*.workers.dev` subdomain (`WRG001`), a credential-shaped key committed in `[vars]` instead of `wrangler secret` (`WRG002`), observability explicitly disabled (`WRG003`), an unscoped wildcard route matching every zone on the account (`WRG004`), a non-production environment sharing a KV/R2/D1 binding id with production (`WRG005`), and static assets served from the project root (`WRG006`).
 
-A file that fails to parse (or isn't found) contributes no findings rather than failing the audit — same tolerance as the rest of the engine.
+A file that fails to parse (or isn't found) contributes no findings rather than failing the audit, as elsewhere in the engine.
 
 ## nginx config detection
 
-The `NGX*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read nginx's native directive/block config, parsed with a small dependency-free recursive-descent parser built for this (`packages/core/src/audit/nginx.ts`) — directives, nested blocks, quoted arguments, comments, with line numbers. Like `SEC*`/`WRG*`, this runs independent of lexicon: nginx config is audit-only — chant has no authoring surface or serializer for it.
+The `NGX*` rules (see the [rules reference](/chant/lint-rules/audit-rules/)) read nginx's native directive/block config, parsed with a small dependency-free recursive-descent parser built for this (`packages/core/src/audit/nginx.ts`), which reads directives, nested blocks, quoted arguments and comments with line numbers. Like `SEC*`/`WRG*`, it runs independent of lexicon: nginx config is audit-only, and chant has no authoring surface or serializer for it.
 
 Detection is two-stage, because `.conf` names are shared with unrelated software (systemd drop-ins live in `*.d/` directories too): a path candidate (`nginx.conf` anywhere, or `.conf` under `nginx/`, `conf.d/`, `sites-available/`, `sites-enabled/`, `snippets/`) only produces findings when its parsed form also carries an nginx marker directive (`http`, `server`, `location`, `upstream`, …).
 
 Checks cover: deprecated TLS protocols in `ssl_protocols` (`NGX001`), weak cipher suites in `ssl_ciphers` (`NGX002`), directory listing via `autoindex on` (`NGX003`), the alias path-traversal shape — a `location` prefix without a trailing slash over an `alias` with one (`NGX004`), a `stub_status` endpoint with no access restriction (`NGX005`), server version disclosure — `server_tokens` never disabled (`NGX006`), and access logging disabled at http/server scope (`NGX007`).
 
-A file that fails to parse contributes no findings rather than failing the audit — same tolerance as the rest of the engine.
+An nginx file that fails to parse is skipped without failing the audit.
 
 ## Usage
 

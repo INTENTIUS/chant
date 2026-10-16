@@ -15,9 +15,9 @@ chant approve <op> <gate> [flags]
 
 ## Description
 
-`chant operator` runs scheduled ticks for every discovered [`ConvergeOp`](/chant/guide/converging-lifecycle/) locally, with no new service and no new state store. Coordination is a git-ref lease; tick state is a ledger fact on the `chant/lifecycle` orphan branch. See the [Operator guide](/chant/guide/operator/) for the full design (pipeline vs converge ops, the lease, crash recovery, gate-as-fact).
+`chant operator` runs scheduled ticks for every discovered [`ConvergeOp`](/chant/guide/converging-lifecycle/) locally, on git alone. Coordination is a git-ref lease, and tick state is a ledger fact on the `chant/lifecycle` orphan branch. See the [Operator guide](/chant/guide/operator/) for the full design (pipeline vs converge ops, the lease, crash recovery, gate-as-fact).
 
-`chant approve` is the sibling command that records a gate's out-of-band resolution — the durable counterpart to a tick's `gated` outcome.
+`chant approve` is the sibling command that records a gate's out-of-band resolution, the durable counterpart to a tick's `gated` outcome.
 
 ## Subcommands
 
@@ -48,7 +48,7 @@ operator: prod-converge@prod skipped=1(lease-held:mac.local:4821:9f2c1a3b)
 operator: nightly-converge@prod skipped=1(not-due:0 3 * * *)
 ```
 
-A `ConvergeOp` that declares its own `schedule` cron is ticked on that cron rather than on every round: the daemon still wakes on `--interval`, but an op whose cron has not fired since the operator last looked at it is skipped as `not-due`. `--interval` is the fallback for an op with no cron of its own, and the resolution at which any cron can be honoured — a round that runs every five minutes cannot see a per-minute cron.
+A `ConvergeOp` that declares its own `schedule` cron is ticked on that cron rather than on every round: the daemon still wakes on `--interval`, but an op whose cron has not fired since the operator last looked at it is skipped as `not-due`. `--interval` is the fallback for an op with no cron of its own, and the resolution at which any cron can be honoured. A round that runs every five minutes cannot see a per-minute cron.
 
 #### `operator --steward [<name>]`
 
@@ -60,7 +60,7 @@ chant operator --steward box-steward --env minimal
 chant operator --steward box-steward --once
 ```
 
-The command refuses to start when the steward's form in `--env` (default `local`) is `fountain`, since the Fountain teammate is the steward there, and when another live process holds the steward's lease, `refs/chant/lease/_stewards/<name>`. Each round renews that lease and then runs the steward's scheduled Ops, each on its own cron and under its own operator lease, as the ConvergeOp rounds above do. An Op with no schedule is left for someone to run by hand. Each run lands on the run ledger. A round that finds the steward's lease held by another process ticks nothing and prints `operator: steward <name> skipped=1(steward-lease-held:<holder>)`. `--interval`, `--lease-ttl` and `--once` work as they do without `--steward`. The steward's lease and the leases of the Ops it ticked are released on Ctrl-C or SIGTERM.
+The command refuses to start when the steward's form in `--env` (default `local`) is `fountain`, since the Fountain teammate is the steward there, and when another live process holds the steward's lease, `refs/chant/lease/_stewards/<name>`. Each round renews that lease and then runs the steward's scheduled Ops, each on its own cron and under its own operator lease, as the ConvergeOp rounds above do. An Op with no schedule is left for someone to run by hand. Each run is recorded on the run ledger. A round that finds the steward's lease held by another process ticks nothing and prints `operator: steward <name> skipped=1(steward-lease-held:<holder>)`. `--interval`, `--lease-ttl` and `--once` work as they do without `--steward`. The steward's lease and the leases of the Ops it ticked are released on Ctrl-C or SIGTERM.
 
 An Op that declares a [work lease](/chant/guide/ops/#running-under-a-work-lease) runs under it in a steward round too, claimed as `<steward>/<op>@<holder>` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). An Op that changes the checkout and declares no work lease is refused when the steward is declared, and a scheduled Op whose lease leaves the item to the run is refused the same way, since a scheduled run can't name one.
 
@@ -85,7 +85,7 @@ The `ready` step is one activity step, such as `shell("node ops/ready.mjs", { js
 
 ### `operator status`
 
-Print the last tick, outcome counts, and pending gates for every discovered `ConvergeOp`, read from the ledger alone — no daemon needs to be running.
+Print the last tick, outcome counts, and pending gates for every discovered `ConvergeOp`, read from the ledger alone, so it works with no daemon running.
 
 ```bash
 chant operator status
@@ -120,7 +120,7 @@ Each tick line carries the tick's own id in brackets, so an outcome can be trace
 
 ### `approve <op> <gate>`
 
-Record a gate's out-of-band resolution — the durable counterpart to a converge tick's `gated` outcome (see the [Operator guide's Gate-as-fact section](/chant/guide/operator/#gate-as-fact)).
+Record a gate's out-of-band resolution, the durable counterpart to a converge tick's `gated` outcome (see the [Operator guide's Gate-as-fact section](/chant/guide/operator/#gate-as-fact)).
 
 The approval copies the plan digest off the gate's standing pending fact, and the checkpoint digest too when the gate resumes (`resume: true`, [#3947](https://github.com/INTENTIUS/chant/issues/3947)). The next `chant run` then starts at the gate rather than the first phase ([Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate)). `--sign` covers the checkpoint digest as well.
 

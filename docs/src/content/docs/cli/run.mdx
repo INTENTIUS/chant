@@ -22,13 +22,13 @@ chant run --generate <provider> [--spec <file>] [--output <dir>] [--format json]
 
 ## Description
 
-`chant run` runs **Op** workflows — named, phased workflows defined in `*.op.ts` files — and, with `--components`, [component](/chant/components/orchestration/) deploy compositions.
+`chant run` runs **Op** workflows (named, phased workflows defined in `*.op.ts` files) and, with `--components`, [component](/chant/components/orchestration/) deploy compositions.
 
-`chant run <name>` runs **local by default**: the Op executes in-process, with nothing installed and nothing running. Phase sequencing, retries and activity profiles all work there. So do gates and `onFailure` compensation.
+`chant run <name>` runs **local by default**: the Op runs in the chant process. Phase sequencing, retries and activity profiles all work there. So do gates and `onFailure` compensation.
 
 ## Choosing a runtime with `--on`
 
-Every `run` subcommand addresses one **runtime**, the thing that actually hosts the run. Without a flag that is the built-in `local` runtime, which executes the Op in the chant process. `--on <lexicon>` hands the run to a configured lexicon that implements the `opRuntime` hook instead, and the subcommands follow it there: `run status`, `run log`, `run list`, `run cancel` and `run approve` all query the runtime named by the same flag.
+Every `run` subcommand addresses one **runtime**, the thing that hosts the run. Without a flag that is the built-in `local` runtime, which executes the Op in the chant process. `--on <lexicon>` hands the run to a configured lexicon that implements the `opRuntime` hook instead, and the subcommands follow it there: `run status`, `run log`, `run list`, `run cancel` and `run approve` all query the runtime named by the same flag.
 
 ```bash
 chant run alb-deploy                  # the built-in local runtime
@@ -68,7 +68,7 @@ A teammate runs one turn at a time. A prompt sent while another op is running co
 
 Tool calls on the stream become phases, so `--progress-json` and the human renderer show the run's shape as it happens. Fountain closes an idle stream connection after 60 seconds, which is not the end of a turn: the reader reconnects with `Last-Event-ID` and the server replays what arrived meanwhile. Only real silence ends the wait, after 30 minutes, and `FOUNTAIN_STREAM_IDLE_TIMEOUT` (in seconds) widens that for a run that thinks for longer.
 
-`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op> --on local` to the steward, with `--approver` and `--url` on it (quoted when the approver's name holds a space), and with the `--param`s, `--work`, `--holder` and `--env` the gated run carried. `--env` on the approve line names the environment for the re-run in place of the gated run's. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
+`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op> --on local` to the steward, with `--approver` and `--url` on it (quoted when the approver's name holds a space), and with the `--param`s, `--work`, `--holder` and `--env` the gated run carried. `--env` on the approve line names the environment for the re-run in place of the gated run's. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; until the endpoint it needs ships, the flag refuses and names the upstream issue.
 
 ### An Op a declared steward lists
 
@@ -103,13 +103,13 @@ The phase and step summary is printed when the run ends. While a step runs, the 
   ✓ shellCmd(cmd=./seed.sh)   75.2s
 ```
 
-A `gate` in the Op stops the run pending a resolution on the gate ledger. The run prints the gate's description and the `chant approve` line, and exits **3** — deliberately not 1, so a CI job can report "waiting on approval" rather than a failure. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact).
+A `gate` in the Op stops the run pending a resolution on the gate ledger. The run prints the gate's description and the `chant approve` line, and exits **3** rather than 1, so a CI job can report "waiting on approval" rather than a failure. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact).
 
 An activity that asks a [decision point](/chant/guide/decision-points/) whose question is still open, escalated to people or proposed by a model, stops the run the same way, with status `waiting` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The run prints the question's id and the `chant workspace points answer` line, records the question on its ledger record as `point`, and exits **3**, which `--gated-exit` remaps too. No later step and no `onFailure` phase runs. Once a person has answered, the next run asks the same point with the same inputs and reads the answer.
 
 A step whose command stops at a gate of its own ends the run `gated` at that gate too, when the step names the command's gated exit code in `gatedExit` ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). The run prints the `chant approve` line for the command's gate, for example `chant approve workspace-upgrade .`, and its ledger record names the gate with the op it is recorded under. See [Ops](/chant/guide/ops/#a-command-that-stops-at-its-own-gate).
 
-Recording the pending fact is two steps: an append to the local `chant/lifecycle` branch, then a push. The append always lands; that is a correct local answer on its own, and the run is right to gate on it even offline. The push can still fail (the branch moved under it since the run started, or git refused it), and when it does the run stays gated rather than failing: nothing about the local fact was wrong. What changes is the report. The run prints a warning naming the push failure and its reason, so the operator running it knows their `chant approve` from another checkout will not see anything to resolve until the fact actually reaches the remote. A checkout with no remote for `chant/lifecycle` at all, such as a laptop working against a local database, is not a failure: nobody elsewhere can approve, so the run prints one note, `recorded locally (no remote for chant/lifecycle)`, and `chant approve` ends its line the same way. `--json` carries the same information as `pushed: false` and `pushWarning` alongside the record.
+Recording the pending fact is two steps: an append to the local `chant/lifecycle` branch, then a push. The append always succeeds, and the run gates on it even offline. The push can still fail (the branch moved under it since the run started, or git refused it). The run then stays gated, since the local fact is correct, and prints a warning naming the push failure and its reason, so the operator knows a `chant approve` from another checkout finds nothing to resolve until the fact reaches the remote. A checkout with no remote for `chant/lifecycle`, such as a laptop working against a local database, is not a failure: nobody elsewhere can approve, so the run prints one note, `recorded locally (no remote for chant/lifecycle)`, and `chant approve` ends its line the same way. `--json` carries the same information as `pushed: false` and `pushWarning` alongside the record.
 
 #### Under a work item's lease: `--work`
 
@@ -133,7 +133,7 @@ chant run prod-apply --gated-exit 0    # a pending approval is not a broken buil
 
 Only the gated outcome is remapped. A run that fails still exits 1 and a run that completes still exits 0, so the flag can never hide a broken apply. The `--json` payload is untouched by it: the record still says `"status": "gated"` and still carries the gate and the exact `chant approve` line, so a job that maps the code to success can still tell the two apart and report the pending gate. The value must be a process exit status (0-255); anything else is refused before the Op runs.
 
-Whenever a run is gated, `chant run` also appends a short markdown block to the file named by `GITHUB_STEP_SUMMARY`, when that variable is set. The block names the Op and the gate, gives the exact `chant approve` command, and points at the `_gates/<op>.jsonl` ledger the pending fact was written to. GitHub Actions, Forgejo Actions and Gitea all set it, and any other CI that does gets the same block. Nothing is written when the variable is absent, and a write that fails never changes the run's outcome. When this run's own push did not reach the remote, the block says so; the step summary is the surface an operator working from a different checkout actually opens, so it is where that warning matters most.
+Whenever a run is gated, `chant run` also appends a short markdown block to the file named by `GITHUB_STEP_SUMMARY`, when that variable is set. The block names the Op and the gate, gives the exact `chant approve` command, and points at the `_gates/<op>.jsonl` ledger the pending fact was written to. GitHub Actions, Forgejo Actions and Gitea all set it, and any other CI that does gets the same block. Nothing is written when the variable is absent, and a write that fails never changes the run's outcome. When this run's own push did not reach the remote, the block says so, since the step summary is what an operator in another checkout reads.
 
 The [github Op generator](/chant/guide/ops/#scheduling-an-op) passes `--gated-exit 0` on `push`-triggered jobs and adds a follow-up job that posts the pending gate on the merged pull request, so a gated apply is a green run with a visible pending state rather than a red one.
 
@@ -192,7 +192,7 @@ A `Gate` line appears when the latest run stopped at one, naming the gate and ho
 
 ### `run approve <op> <gate>`
 
-Record a gate's resolution, then wake the runtime hosting the gated run. This is the rename of `run signal`, and a different act: a resolution is a fact on the gate ledger, not a message to a waiting workflow. The ledger write is the same one [`chant approve`](/chant/cli/operator/) performs, so a resolution recorded either way reads back identically; the runtime is told afterwards only so a parked run wakes now rather than on its next tick. A runtime that has no wake hook is not an error, since the next run reads the fact.
+Record a gate's resolution, then wake the runtime hosting the gated run. This is the rename of `run signal`, and a different act: a resolution is a fact on the gate ledger, not a message to a waiting workflow. The ledger write is the same one [`chant approve`](/chant/cli/operator/) performs, so a resolution recorded either way reads back identically; the runtime is told afterwards only so a parked run wakes now rather than on its next tick. A runtime with no wake hook is fine, since the next run reads the fact.
 
 ```bash
 chant run approve alb-deploy release-approval --approver alex
@@ -203,7 +203,7 @@ chant run approve alb-deploy release-approval --on fountain --url https://github
 
 ### `run cancel <name>`
 
-Cancel the active run on the selected runtime. Requires `--force`. The local runtime runs an Op in the foreground and so has nothing to cancel; Ctrl-C is the answer there, and the command says so.
+Cancel the active run on the selected runtime. Requires `--force`. The local runtime runs an Op in the foreground and so has nothing to cancel; use Ctrl-C there, as the command says.
 
 ```bash
 chant run cancel alb-deploy --force --on fountain
@@ -300,7 +300,7 @@ chant components promote --from staging --to prod --digest "$(cat search-service
 
 `--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged.
 
-On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact — `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. This is a post-run CLI step, never a step of the composition itself, and it never runs at all when the deploy fails. See [Auto-recorded releases](#auto-recorded-releases) below.
+On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact, `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. It is a CLI step after the run, outside the composition, and runs only when the deploy succeeds. See [Auto-recorded releases](#auto-recorded-releases) below.
 
 ### `run --generate <provider>`
 
@@ -341,7 +341,7 @@ The marker line names the command to run from the member's directory, and the me
 
 ## Auto-recorded releases
 
-Auto-recording is **on by default** — no flag needed. It writes exactly one record per component whose `deploy` composition actually published a digest-bearing artifact (via `publish-image`, `publish-artifact`, or `load-image-on-host`); a component with no publish step, or a failed deploy, writes nothing. A ledger-write failure (e.g. a concurrent push, or no git remote configured) is reported as a warning and never turns an otherwise-successful deploy into a nonzero exit.
+Auto-recording is **on by default**. It writes exactly one record per component whose `deploy` composition published a digest-bearing artifact (via `publish-image`, `publish-artifact`, or `load-image-on-host`); a component with no publish step, or a failed deploy, writes nothing. A ledger-write failure (e.g. a concurrent push, or no git remote configured) is reported as a warning and never turns an otherwise-successful deploy into a nonzero exit.
 
 Opt out per-invocation with `--no-release-record`, or project-wide via `chant.config.ts`:
 

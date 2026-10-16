@@ -12,9 +12,9 @@ chant serve lsp [path]
 
 ## Description
 
-`chant serve lsp` starts a Language Server Protocol server over stdio with Content-Length framing. This enables editor features like completions, hover documentation, diagnostics, and code actions for chant projects.
+`chant serve lsp` starts a Language Server Protocol server over stdio with Content-Length framing. Editors use it for completions, hover documentation, diagnostics, and code actions in chant projects.
 
-You typically don't invoke this directly — your editor or IDE plugin launches the server automatically.
+Your editor or IDE plugin launches the server.
 
 ## Capabilities
 
@@ -40,7 +40,7 @@ Completions include resource type names, property names, intrinsic functions, an
 
 ### Diagnostics
 
-The server runs lint rules on every document open and change, publishing diagnostics in real time. Only `.ts` files are linted — other file types return empty diagnostics.
+The server runs lint rules on every document open and change, publishing diagnostics in real time. Only `.ts` files are linted; other file types return empty diagnostics.
 
 Diagnostics use the same rule set as `chant lint`, including all configured core rules (COR, EVL) and lexicon-specific rules.
 

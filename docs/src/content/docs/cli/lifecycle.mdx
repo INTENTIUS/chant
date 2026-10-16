@@ -1,6 +1,6 @@
 ---
 title: "chant lifecycle"
-description: Capture, diff, and plan against deployed infrastructure — the observational lifecycle commands
+description: Snapshot, diff and plan against deployed infrastructure
 diataxis: reference
 ---
 
@@ -21,11 +21,11 @@ chant lifecycle log [env]
 
 ## Description
 
-`chant lifecycle` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed, and (with `--live`) against what's actually in the cloud right now.
+`chant lifecycle` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. A snapshot lets `diff` compare the current build against what was last deployed and, with `--live`, against what is in the cloud now.
 
 The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
 
-`snapshot`, `diff`, and `plan` build your declarations to compare against live state. By default they build the project root (`.`). For a mixed-layout project — chant infrastructure in `src/` alongside application code that has import side effects (starts a server, opens a connection) — set `sourceDir` in `chant.config.ts` so the lifecycle build only synthesizes the infra:
+`snapshot`, `diff`, and `plan` build your declarations to compare against live state. By default they build the project root (`.`). For a project with chant infrastructure in `src/` beside application code that has import side effects (starts a server, opens a connection), set `sourceDir` in `chant.config.ts` so the lifecycle build only synthesizes the infra:
 
 ```ts
 // chant.config.ts
@@ -34,7 +34,7 @@ export default { lexicons: ["k8s"], sourceDir: "src" };
 
 The `--src <dir>` flag overrides `sourceDir` for a single invocation. Use the same source root for `snapshot` and `diff` so their build digests stay comparable.
 
-For the conceptual model behind these commands — observational vs. authoritative state, resources vs. artifacts, when drift detection earns its keep — see [Drift Detection](/chant/concepts/drift-detection/).
+[Drift Detection](/chant/concepts/drift-detection/) explains the model behind these commands, including observational versus authoritative state and resources versus artifacts. It also says when drift detection is worth running.
 
 ## Subcommands
 
@@ -67,7 +67,7 @@ chant lifecycle show dev
 
 Two modes, depending on whether `--live` is set.
 
-**Default (digest mode).** Build the current project, fingerprint the resource declarations, and compare against the digest stored in the last snapshot. Fast, offline, and useful as a fast-feedback check inside CI — but only catches changes you've made in source. Ignores the cloud entirely.
+**Default (digest mode).** Build the current project, fingerprint the resource declarations, and compare against the digest stored in the last snapshot. Fast and offline, so it suits a CI check. It catches only changes made in source and never reads the cloud.
 
 ```bash
 chant lifecycle diff dev
@@ -75,7 +75,7 @@ chant lifecycle diff dev
 
 Reports added, removed, changed, and unchanged resources at the declaration level.
 
-**`--live` (drift mode).** Query the cloud provider API right now via each lexicon's `describeResources()` plugin method, then compare the live result against both the previous snapshot and the current build. This is the path that actually catches external mutations (someone scaled a node pool by hand, deleted a bucket, etc.).
+**`--live` (drift mode).** Query the cloud provider API right now via each lexicon's `describeResources()` plugin method, then compare the live result against both the previous snapshot and the current build. This mode catches changes made outside chant (someone scaled a node pool by hand, deleted a bucket, etc.).
 
 ```bash
 chant lifecycle diff prod --live
@@ -99,14 +99,14 @@ Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpd
 
 #### The resolved query address
 
-When the lexicon reports one, each entity also carries the **resolved address its live read was issued against** — for k8s the exact request path, with any defaulting the client applied made visible. This is what separates "confirmed not there" from "looked in the wrong place": a k8s object declared without `metadata.namespace` (a Flux-managed one, say, whose namespace is stamped at apply time) is read from the *default* namespace, and only the address shows that.
+When the lexicon reports one, each entity also carries the **resolved address its live read was issued against**. For k8s it is the exact request path, including any defaulting the client applied. The address separates "confirmed not there" from "looked in the wrong place": a k8s object declared without `metadata.namespace` (a Flux-managed one, say, whose namespace is stamped at apply time) is read from the *default* namespace, and only the address shows that.
 
 ```
 MISSING (declared, provider reports not in cloud):
   - web [queried /apis/apps/v1/namespaces/default/deployments/web]
 ```
 
-In `--json`, the addresses arrive as `resources.queried` per lexicon — a `name → address` map covering every entity a read was issued for — and each `resources.unobserved[]` row carries its own `queried` field inline:
+In `--json`, the addresses arrive as `resources.queried` per lexicon (a `name → address` map covering every entity a read was issued for), and each `resources.unobserved[]` row carries its own `queried` field inline:
 
 ```json
 {
@@ -122,7 +122,7 @@ In `--json`, the addresses arrive as `resources.queried` per lexicon — a `name
 }
 ```
 
-The field is optional and purely diagnostic: verdicts are unchanged, and a lexicon that reports no addresses simply omits it. `lifecycle plan --json` carries the same address per entry as `queried` on the change set (a `create`'s address is the one the provider confirmed absent). The k8s lexicon is the first implementer.
+The field is optional and diagnostic only: verdicts are the same with or without it, and a lexicon that reports no addresses omits it. `lifecycle plan --json` carries the same address per entry as `queried` on the change set (a `create`'s address is the one the provider confirmed absent). The k8s lexicon is the first implementer.
 
 #### The declared definition of a missing entity
 
@@ -137,14 +137,14 @@ In `--json` the fingerprints arrive as `resources.definitions`, a `name → fing
 
 #### `--namespace <ns>` — where to read scope-less entities
 
-The address above is also the fix's starting point. When an object's namespace is stamped by a controller rather than declared — a GitOps estate where one project declares the `Kustomization` with `spec.targetNamespace` and another declares the bare objects — the read falls through to `default` and reports a running estate as absent. `--namespace <ns>` replaces that fallback:
+When a controller stamps an object's namespace instead of the source declaring it (a GitOps estate where one project declares the `Kustomization` with `spec.targetNamespace` and another declares the bare objects), the read falls through to `default` and reports a running estate as absent. `--namespace <ns>` replaces that fallback:
 
 ```bash
 chant lifecycle diff prod --live --namespace app-b
 chant lifecycle plan prod --namespace app-b
 ```
 
-It is a **default, not a rewrite**: an entity that declares its own `metadata.namespace` is still read from the one it declares, and cluster-scoped kinds are unaffected. The `queried` addresses reflect whichever namespace the read actually used. Lexicons with no namespace-like scope ignore the option.
+It sets a **default**. An entity that declares its own `metadata.namespace` is still read from the one it declares, and cluster-scoped kinds are unaffected. The `queried` addresses show the namespace each read used. Lexicons with no namespace-like scope ignore the option.
 
 #### Property-level drift
 
@@ -163,11 +163,11 @@ UNCLAIMED (live values on properties chant never declared; not drift):
       Tags[#cost-center].Value: platform [not in this declaration's claimed fields]
 ```
 
-The tree is normalized before it is compared — server-populated fields dropped, tags and policy statements canonicalized, provider defaults subtracted where source is silent, secret-bearing property names masked. A resource whose properties could not be read is listed as unobserved with a reason, exactly like the thin read; it is never reported as clean.
+The tree is normalized before it is compared: server-populated fields dropped, tags and policy statements canonicalized, provider defaults subtracted where source is silent, secret-bearing property names masked. A resource whose properties could not be read is listed as unobserved with a reason, exactly like the thin read; it is never reported as clean.
 
 ##### Three ways a live value classifies
 
-A declaration's props are a claim: they are exactly the fields chant set. Flattening them gives the **claimed-field set**, in the same path grammar the diff addresses properties by (`spec.replicas`, `Tags[#env].Value`, `ingress[0].fromPort`). Every live value then falls into one of three buckets rather than two:
+A declaration's props are a claim: they are exactly the fields chant set. Flattening them gives the **claimed-field set**, in the same path grammar the diff addresses properties by (`spec.replicas`, `Tags[#env].Value`, `ingress[0].fromPort`). Every live value then falls into one of three buckets:
 
 | Classification | Where it appears | What chant does with it |
 |---|---|---|
@@ -177,7 +177,7 @@ A declaration's props are a claim: they are exactly the fields chant set. Flatte
 
 Where the substrate records who wrote a field, the unclaimed row names them instead: Kubernetes' `metadata.managedFields` gives `spec.replicas: 7 [held by hpa-controller]`, which is the difference between a controller doing its job and somebody running `kubectl edit`. Everywhere else the declaration is the only witness and the row says the path is not in this declaration's claimed fields. `--json` carries both under `unclaimed`, with `source` set to `field-manager` or `claimed-fields` so a consumer can tell which answered. It is a different array from `held`, which is the [`heldElsewhere()`](#heldelsewhere-a-field-declared-then-handed-over) set: `unclaimed` is a field source never declared, `held` is a field source declared and then handed over.
 
-This is what makes an autoscaler quiet without anything being recorded: a field chant never set stops being a finding on the first read it appears in. It also narrows what the accepted baseline is for, since `--update-baseline` now only ever records drift on a path source declares.
+This silences an autoscaler without recording anything: a field chant never set is not a finding, from the first read it appears in. It also narrows what the accepted baseline is for, since `--update-baseline` records drift only on a path source declares.
 
 A path inside a list is claimed by its exact position or key, so a lexicon that supplies an `orderKey` for a set-like list gets the sharper answer: a tag added in the console is `Tags[#other]`, unclaimed, while a positional list reports the new element by index instead.
 
@@ -206,7 +206,7 @@ HELD (declared heldElsewhere(); not drift, never proposed for update):
       spec.replicas: held by hpa — 5 (the autoscaler owns replicas after the first apply)
 ```
 
-No live value at all, not even a provider default, gets marked `[SUSPICIOUS: ...]`: the declared hand-over has no evidence it ever happened. In `--json`, the held set rides under the lexicon's `deep.held` key, the same as `drifted`/`accepted`/`unchanged`. `chant lifecycle plan` carries the same set under the change set's top-level `held` key, described [below](#lifecycle-plan-env). Held properties are never actions, so they never appear inside `entries`.
+No live value at all, not even a provider default, gets marked `[SUSPICIOUS: ...]`: the declared hand-over has no evidence it ever happened. In `--json`, the held set is under the lexicon's `deep.held` key, the same as `drifted`/`accepted`/`unchanged`. `chant lifecycle plan` carries the same set under the change set's top-level `held` key, described [below](#lifecycle-plan-env). Held properties are never actions, so they never appear inside `entries`.
 
 #### `--update-baseline` — accept a deviation
 
@@ -217,11 +217,11 @@ chant lifecycle diff prod --live                     # see what's there
 chant lifecycle diff prod --live --update-baseline   # accept it, with a commit behind it
 ```
 
-Acceptance is value-bound. The accepted value stops alerting; a later change *away* from it is drift again, reported with all three axes (declared, live, and the accepted baseline). The baseline is never authority for a deploy — deleting it costs noise suppression and nothing else.
+Acceptance is value-bound. The accepted value stops alerting; a later change *away* from it is drift again, reported with all three axes (declared, live, and the accepted baseline). The baseline is never authority for a deploy. Deleting it brings the suppressed alerts back and changes nothing else.
 
 #### `--between <refA> <refB>` — two saved snapshots
 
-Every `snapshot` is a commit on the `chant/lifecycle` orphan branch (list them with `lifecycle log`). `--between` diffs two of them against **each other** — a purely historical, read-only comparison (no build, no cloud query). It answers "what changed in the cloud between Tuesday and Thursday" independent of source.
+Every `snapshot` is a commit on the `chant/lifecycle` orphan branch (list them with `lifecycle log`). `--between` diffs two of them against **each other**. The comparison is read-only and runs no build and no cloud query. It answers "what changed in the cloud between Tuesday and Thursday" without reference to source.
 
 ```bash
 chant lifecycle log prod                      # find the two commits
@@ -233,7 +233,7 @@ Per lexicon (all declared, or the one you name), it reports a two-way delta: **a
 
 ### `lifecycle plan <env>`
 
-Promote the live diff to a typed, **read-only** change set. Where `lifecycle diff --live` reports seven observation categories, `lifecycle plan` classifies each resource into one action you can act on:
+Turn the live diff into a typed, **read-only** change set. Where `lifecycle diff --live` reports seven observation categories, `lifecycle plan` classifies each resource into one action you can act on:
 
 ```bash
 chant lifecycle plan prod
@@ -250,23 +250,23 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 | **effect** | A declared [effect receipt](https://github.com/INTENTIUS/chant/issues/1703) whose live value is absent or stale — rendered as `effect will fire: <effect>` |
 | **unobserved** | Declared, and chant could not read live state — no action is proposed, and the reason is printed |
 
-`unobserved` is not a proposal; it is the plan admitting a hole. A resource chant could not look at is never a `create` and never a `delete` — a plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it). `--report markdown` carries the same warning **in the body** instead, plus its own section — see [Reporting to a pull request](#reporting-to-a-pull-request) below.
+`unobserved` marks a hole in the plan. A resource chant could not look at is never a `create` and never a `delete`. A plan is only as complete as the read behind it, and when entities are unobserved the command says so on stderr (including under `--json` and `--report gitlab-mr`, whose shapes have no column for it). `--report markdown` carries the same warning **in the body** instead, plus its own section; see [Reporting to a pull request](#reporting-to-a-pull-request) below.
 
-`effect` is the receipt row. An effect receipt is declared, diffed, and observed like any resource, but it is **observe-only to the generic apply path**: the `effect()` step is the sole writer, on success, last. The plan resolves the receipt's expectation (references resolve against observed values at plan time) and compares it to the live value — absent or differing renders `effect will fire: <effect>`, with the reason (`receipt-absent`, `receipt-stale`, or `unresolved-input` when a reference could not resolve — the fire is proposed rather than guessed away). A matching receipt is a clean `noop`; a receipt nobody could read is `unobserved`, loudly. A receipt is never a `create`, never an `update`, and never a prune candidate: a stale receipt after a crash between the effect and its write re-proposes the fire on the next plan, which is the at-least-once guarantee the whole classification exists to preserve.
+`effect` is the receipt row. An effect receipt is declared, diffed, and observed like any resource, but it is **observe-only to the generic apply path**: the `effect()` step is the sole writer, on success, last. The plan resolves the receipt's expectation (references resolve against observed values at plan time) and compares it to the live value. An absent or differing receipt renders `effect will fire: <effect>`, with the reason (`receipt-absent`, `receipt-stale`, or `unresolved-input` when a reference could not resolve, in which case the fire is proposed rather than guessed away). A matching receipt is a clean `noop`; a receipt nobody could read is `unobserved`, loudly. A receipt is never a `create`, never an `update`, and never a prune candidate: a stale receipt after a crash between the effect and its write re-proposes the fire on the next plan, which keeps the at-least-once guarantee.
 
 `create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
 
 An `update` is bounded by the **claimed-field set**: a property the declaration never set is somebody else's field, so it is reported as [unclaimed](#three-ways-a-live-value-classifies) by `diff --live` and never becomes an `update` here. The plan proposes closing the gap on fields chant claims and nothing more, which is why an autoscaler's replica count or a controller's annotation cannot turn into a proposal to overwrite it.
 
-The classification reads ownership from the live marker, **never from the snapshot**, so the snapshot never becomes load-bearing: the delete decision is identical whether or not a snapshot exists. The moment a mutation trusted the snapshot, the snapshot would have become an authoritative state file under a different name — which chant deliberately avoids.
+The classification reads ownership from the live marker and **never from the snapshot**. The delete decision is identical whether or not a snapshot exists. A mutation that trusted the snapshot would turn it into an authoritative state file, which chant avoids.
 
-`lifecycle plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
+`lifecycle plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys, and `chant build` stays pure.
 
 For every lexicon that implements `observeResourcesDeep()`, the plan also carries a `held` array, one entry per entity with at least one property declared [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over). A held property is not an action, never appearing inside `entries` and never the reason an entity classifies as `update`. The human render prints its own HELD section, `--json` carries the array as `held` beside `entries`, and `--report markdown` folds it into the same section shown for `lifecycle diff --live`.
 
 #### Crosswalk: observation categories -> plan actions
 
-The `diff --live` categories and the `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
+The `diff --live` categories and the `plan` actions describe the same signal on different axes. Observation categories key on three sets: declared in source, observed now, and in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
 
 | Observation category (`diff --live`) | Plan action (`plan`) | Why |
 |---|---|---|
@@ -278,7 +278,7 @@ The `diff --live` categories and the `plan` actions describe the same signal on 
 | **unchanged** | **noop** *(when declared)* | Declared and live, identical |
 | **disappeared** | **create** if still declared, else **noop** | A snapshot-history signal; the plan reads live + source, not snapshot age |
 
-The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
+The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan. It is live and undeclared whatever the snapshot history says, so ownership decides between `adopt` and `delete`.
 
 #### Disruption: how much an `update` costs
 
@@ -292,9 +292,9 @@ The action says what changes. It does not say what applying it costs, and an `up
 | **destroy** | Replacement that removes the old resource **first**. There is a window with nothing in it, and whatever the old one held is gone |
 | **unknown** | Nobody could say |
 
-The verdict comes from the lexicon, never from core. Replacement semantics are spec knowledge — CloudFormation's registry schema declares `createOnlyProperties` per type, Kubernetes' SSA schema knows which field changes roll a workload — and a lexicon publishes it through `classifyDisruption`, the same way it publishes `postSynthChecks`. Core hardcoding a per-provider replacement table would be a table the tool has to keep in step with a provider it does not generate from.
+The verdict comes from the lexicon, never from core. Replacement semantics come from the spec (CloudFormation's registry schema declares `createOnlyProperties` per type, Kubernetes' SSA schema knows which field changes roll a workload), and a lexicon publishes them through `classifyDisruption`, the same way it publishes `postSynthChecks`. A replacement table in core would have to be kept in step by hand with providers chant does not generate from.
 
-`unknown` is the default and the only fallback. A lexicon that ships no classifier, a classifier that says nothing about an entry, one that throws, one that returns a level outside the vocabulary — all of them land on `unknown`. **There is no path by which a change accidentally reads as `in-place`**: that claim is only ever a lexicon's deliberate one, which is what makes it worth gating on. Read `unknown` as "nobody looked at the spec", in the same spirit as [`unobserved`](#lifecycle-plan-env) — not as "probably fine".
+`unknown` is the default and the only fallback. A lexicon that ships no classifier, a classifier that says nothing about an entry, one that throws, one that returns a level outside the vocabulary — all of them land on `unknown`. **There is no path by which a change accidentally reads as `in-place`**: that claim is only ever a lexicon's deliberate one, which is what makes it worth gating on. Read `unknown` as "nobody looked at the spec", in the same spirit as [`unobserved`](#lifecycle-plan-env), not as "probably fine".
 
 The plan says it three ways. A count on the header, the verdict and its reason on the row, and a `!` on the specific delta the verdict rests on:
 
@@ -310,9 +310,9 @@ UPDATE (disruption from the lexicon that owns the spec; unknown means nobody cou
       attributes.AllocatedStorage: 20 → 40
 ```
 
-Replacing and unclassified counts are also printed on **stderr**, so a `--json` or `--report gitlab-mr` consumer — whose shapes have no column for disruption — still hears about them. `--report markdown` bolds the verdict on every row instead, and rolls the same counts into the header — a `replace` or `destroy` reaches the reviewer without them having to read every line.
+Replacing and unclassified counts are also printed on **stderr**, so a `--json` or `--report gitlab-mr` consumer, whose shapes have no column for disruption, still sees them. `--report markdown` bolds the verdict on every row instead and puts the same counts in the header. A reviewer then sees a `replace` or `destroy` without reading every line.
 
-The AWS lexicon is the first implementer, reading the CloudFormation Registry schema the codegen already compiles into `lexicon-aws.json`: a changed `createOnlyProperties` entry is a `replace`, and `replacementStrategy: delete_then_create` makes it a `destroy`. A changed `conditionalCreateOnlyProperties` entry is `unknown` on purpose — the schema is saying "depends on the value", and reporting a maybe as `in-place` is worse than reporting nothing. AWS never returns `rolling`; nothing in the Registry schema expresses a workload roll.
+The AWS lexicon is the first implementer, reading the CloudFormation Registry schema the codegen already compiles into `lexicon-aws.json`: a changed `createOnlyProperties` entry is a `replace`, and `replacementStrategy: delete_then_create` makes it a `destroy`. A changed `conditionalCreateOnlyProperties` entry is `unknown` on purpose: the schema says "depends on the value", and reporting a maybe as `in-place` is worse than reporting nothing. AWS never returns `rolling`; nothing in the Registry schema expresses a workload roll.
 
 #### The `--json` shape
 
@@ -386,9 +386,9 @@ chant lifecycle plan prod --report gitlab-mr > tfplan.json
 # {"create":3,"update":1,"delete":0}
 ```
 
-Declare the file as `artifacts:reports:terraform` and GitLab renders "3 to add, 1 to change, 0 to delete" on the MR. The widget format is generic — any tool that emits this JSON gets it — so the plan maps onto it directly. Only the mutating actions count: `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change.
+Declare the file as `artifacts:reports:terraform` and GitLab renders "3 to add, 1 to change, 0 to delete" on the MR. Any tool that emits this JSON gets the widget, so the plan maps onto it directly. Only the mutating actions count: `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change.
 
-The widget label always reads "Terraform" — that is GitLab's fixed string, not a claim chant makes. The GitLab lexicon ships an [`MrPlanReport`](/chant/lexicons/gitlab/examples/#merge-request-plan-widget) composite that wires the job for you.
+The widget label always reads "Terraform", which is GitLab's fixed string. The GitLab lexicon ships an [`MrPlanReport`](/chant/lexicons/gitlab/examples/#merge-request-plan-widget) composite that wires the job for you.
 
 #### Reporting to a pull request
 
@@ -424,9 +424,9 @@ chant lifecycle plan prod --report markdown
 - `crd-widget` — no binding for this environment
 ````
 
-Unlike `gitlab-mr`, this is not a floor: every action carries its own section, entries are attributed to the lexicon that observed them, and both holes the other two shapes leave to stderr ride the body instead — the unobserved count gets its own banner **and** its own section, and every `update` bolds its disruption verdict rather than staying silent about a `replace` or a `destroy`. A group past 20 entries folds into a `<details>` block so a large plan doesn't bury the comment. Deterministic and pure — no ANSI, same ordering as the terminal render.
+Unlike `gitlab-mr`, this carries the whole plan: every action has its own section, entries are attributed to the lexicon that observed them, and both holes the other two shapes leave to stderr are in the body. The unobserved count gets its own banner **and** its own section, and every `update` bolds its disruption verdict. A group past 20 entries folds into a `<details>` block so a large plan doesn't bury the comment. The output is deterministic, with no ANSI and the same ordering as the terminal render.
 
-The github lexicon ships a [`PrPlanReport`](/chant/lexicons/github/composites/#prplanreport) composite that runs the plan and posts (or updates) one sticky PR comment per environment, reusing the marker-and-`gh api` mechanism `examples/github-pr-preview` proved. The forgejo lexicon gets it for free — it inherits every github composite through its dialect re-export.
+The github lexicon ships a [`PrPlanReport`](/chant/lexicons/github/composites/#prplanreport) composite that runs the plan and posts (or updates) one sticky PR comment per environment, reusing the marker-and-`gh api` mechanism `examples/github-pr-preview` proved. The forgejo lexicon has it too, since it inherits every github composite through its dialect re-export.
 
 ### Resources vs artifacts
 
@@ -445,17 +445,17 @@ For the conceptual distinction between resources and artifacts, see [Drift Detec
 
 The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) on the Lexicons overview page is the canonical per-lexicon table, with the query mechanism and ownership channel for each. It is the one place a new lexicon adds its row.
 
-Lexicons that implement neither method are warn-skipped — `--live` doesn't fail the whole command for them.
+Lexicons that implement neither method are skipped with a warning, and `--live` carries on with the rest.
 
 The fountain lexicon resolves its connection via the chant config: `lifecycle snapshot <env>` (or `--live` against `<env>`) looks up `fountain.profiles.<env>` in your `chant.config.ts` and falls back to `fountain.defaultProfile`. The same profile model is used by `chant run <op> --on fountain`. Every declared fountain resource is mapped back to its chant entity name when the declared `props.name` matches the server-side identifier.
 
 Grafana is bound the same way, through `grafana.profiles.<env>` (a URL, and a token or basic-auth pair named by environment variable), and falls back to `GRAFANA_URL` when no profile is declared. See [Drift and Live Export](/chant/lexicons/grafana/observing/).
 
-The K8s lexicon reads through a typed API client (chant #1074, [details](/chant/lexicons/k8s/api-client/)) rather than a `kubectl` subprocess. Every generated resource type is addressable — the 165 core kinds plus every bundled CRD — because the entity-type->address table comes out of the same codegen pass as the declarable classes, and is confirmed against the cluster's own API discovery before anything is read. Reads run concurrently, so a hundred declared entities are not a hundred serial round trips, and failures carry the API server's own `code` and `reason` rather than a parsed stderr line.
+The K8s lexicon reads through a typed API client (chant #1074, [details](/chant/lexicons/k8s/api-client/)) rather than a `kubectl` subprocess. Every generated resource type is addressable (the 165 core kinds plus every bundled CRD), because the entity-type->address table comes out of the same codegen pass as the declarable classes, and is confirmed against the cluster's own API discovery before anything is read. Reads run concurrently, so a hundred declared entities are not a hundred serial round trips, and failures carry the API server's own `code` and `reason` rather than a parsed stderr line.
 
-The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100) when one is declared — mirroring `fountain.profiles.<env>` — and every request is made against it explicitly. If the kubeconfig's own current-context disagrees with the bound one, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding keeps the old behavior — whatever context is ambient — but logs a visible warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
+The cluster context comes from a `k8s.profiles.<env>.context` binding in `chant.config.ts` (chant #1100, shaped like `fountain.profiles.<env>`) when one is declared, and every request is made against it explicitly. If the kubeconfig's own current-context disagrees with the bound one, `describeResources` refuses with an error naming the environment, the expected context, and the ambient one, instead of silently reading the wrong cluster. An environment with no binding uses whatever context is ambient and logs a warning that nothing is pinned. See `K8sChantConfig` in the k8s lexicon for the config shape.
 
-On EKS, AKS and GKE, kubeconfig authentication is an exec credential plugin — `aws eks get-token`, `kubelogin`, `gke-gcloud-auth-plugin` — so the client still spawns a process there, once for a token rather than once per read. Those three (plus `kubectl`) are allowed by default and anything else the kubeconfig names is refused unless listed in `k8s.execCredentialPlugins`.
+On EKS, AKS and GKE, kubeconfig authentication is an exec credential plugin (`aws eks get-token`, `kubelogin`, `gke-gcloud-auth-plugin`), so the client still spawns a process there, once for a token rather than once per read. Those three (plus `kubectl`) are allowed by default and anything else the kubeconfig names is refused unless listed in `k8s.execCredentialPlugins`.
 
 ### Concurrent snapshots
 
@@ -466,11 +466,11 @@ error: Another snapshot completed for chant/lifecycle after this run started (en
 hint:  Pull and retry: `git fetch origin chant/lifecycle:chant/lifecycle` && `chant lifecycle snapshot prod`.
 ```
 
-Pull the remote ref and re-run — the first snapshot is preserved, the second proceeds against the updated baseline.
+Pull the remote ref and re-run. The first snapshot is kept, and the second runs against the updated baseline.
 
 ### `lifecycle affected`
 
-In a multi-stack project, answer "which stacks does this change affect?" without planning everything. Read-only — it returns the set; fanning `lifecycle plan` / an `ApplyOp` over it is an [Op](/chant/guide/ops/) you compose.
+In a multi-stack project, answer "which stacks does this change affect?" without planning everything. It is read-only and returns the set; fanning `lifecycle plan` / an `ApplyOp` over it is an [Op](/chant/guide/ops/) you compose.
 
 ```bash
 chant lifecycle affected --base origin/main
@@ -479,16 +479,16 @@ chant lifecycle affected --base origin/main --include-dependents --json
 
 "Affected" is two distinct things, because chant serializes cross-stack references symbolically:
 
-- **Directly changed** — the stack's built artifact differs between base and head. Caught by **artifact diff** over deterministic builds, so a comment-only or refactor-with-no-output-change edit is correctly excluded.
-- **Operationally affected (dependents)** — a stack whose own artifact is *unchanged* but which consumes an upstream export whose value changed. Its bytes don't move, yet it may need re-apply. Caught by walking the [cross-stack graph](/chant/cli/graph/) (`chant graph --stacks`) from the directly-changed set, with `--include-dependents`.
+- Directly changed: the stack's built artifact differs between base and head. Caught by **artifact diff** over deterministic builds, so a comment-only or refactor-with-no-output-change edit is correctly excluded.
+- Operationally affected (dependents): a stack whose own artifact is *unchanged* but which consumes an upstream export whose value changed. Its bytes don't move, yet it may need re-apply. Caught by walking the [cross-stack graph](/chant/cli/graph/) (`chant graph --stacks`) from the directly-changed set, with `--include-dependents`.
 
-A stack whose inputs come from outside synthesis (deploy-time parameters) cannot be judged from a source diff — it is reported as **indeterminate** ("external-input — cannot confirm from source"), not silently included or excluded.
+A stack whose inputs come from outside synthesis (deploy-time parameters) cannot be judged from a source diff. It is reported as **indeterminate** ("external-input — cannot confirm from source") rather than silently included or excluded.
 
 Builds are obtained lazily: **head** is the in-place build of the working tree (or `--head <ref>`); **base** is built from `--base <ref>` in a single throwaway worktree (auto-removed), or skipped entirely if you supply pre-built sources via the library. Because `build` is deterministic, a cached or supplied base is as trustworthy as a rebuild.
 
 `--json` emits `{ changed, dependents, indeterminate }`. The same logic is exported as `affectedStacks()` for programmatic use.
 
-**Stack names, when the project declares its stacks.** A project that sets `stacks` in `chant.config.ts` gets each declared stack's own source built and the answer keyed by stack name. Without it, one build of the source root can only answer by lexicon partition, so an aws-only estate of fifteen stacks reports "aws changed" whichever one moved, and nothing downstream can join to that. Stack names are what a component's deploy step uses, which is what makes [`chant components fan-out`](/chant/cli/components/#components-fan-out) able to consume this output. In that mode `--include-dependents` has nothing to add and prints a note saying so: the build holds cross-lexicon edges, not edges between deployed stacks, and the relation between two deployed stacks is stated by the components' `dependsOn`, which the fan-out walks for itself. An empty `dependents` there means "not computed", never "nothing downstream".
+**Stack names, when the project declares its stacks.** A project that sets `stacks` in `chant.config.ts` gets each declared stack's own source built and the answer keyed by stack name. Without it, one build of the source root can only answer by lexicon partition, so an aws-only estate of fifteen stacks reports "aws changed" whichever one moved, and nothing downstream can join to that. Stack names are what a component's deploy step uses, so [`chant components fan-out`](/chant/cli/components/#components-fan-out) can consume this output. In that mode `--include-dependents` has nothing to add and prints a note saying so: the build holds cross-lexicon edges, not edges between deployed stacks, and the relation between two deployed stacks is stated by the components' `dependsOn`, which the fan-out walks for itself. An empty `dependents` there means "not computed", never "nothing downstream".
 
 **Composing it.** chant returns the set; you drive the fan-out. For example, plan only the affected stacks in CI:
 
@@ -498,7 +498,7 @@ chant lifecycle affected --base "$BASE_SHA" --include-dependents --json \
   | while read stack; do chant lifecycle plan "$ENV" "$stack"; done
 ```
 
-The same shape works from an Op you write — `affected` is the primitive; the fan-out (plan, gate, apply) is yours to compose. chant never blindly applies the set.
+The same shape works from an Op you write: `affected` returns the set, and you write the fan-out around it. chant never applies the set itself.
 
 | Flag | Meaning |
 |---|---|
@@ -524,11 +524,11 @@ k8s      system:serviceaccount:chant:deployer         prod-eks-a ns=chant       
 github   not reported — this lexicon does not answer for an identity
 ```
 
-A project spanning several substrates reaches each one with its own credentials, and until this command the answer arrived as a failure — an `unobserved` entry with reason `no-credentials` — or, when the binding was wrong rather than missing, as a clean read of the wrong account. Every observer already resolves an identity and a scope inside its bind and throws both away. This asks for them first.
+A project spanning several substrates reaches each one with its own credentials, and without this command the answer arrives as a failure (an `unobserved` entry with reason `no-credentials`) or, when the binding is wrong rather than missing, as a clean read of the wrong account. Every observer already resolves an identity and a scope inside its bind and throws both away. This asks for them first.
 
-Read-only and never a gate. It builds nothing, mutates nothing, and exits 0 whatever the rows say unless you pass `--strict`. Each lexicon answers with its own cheap self-query — `sts:GetCallerIdentity` for aws, `SelfSubjectReview` (the call behind `kubectl auth whoami`) for k8s — issued on the same transport, endpoint override and region resolution the live read uses, so the target reported is the target read.
+Read-only and never a gate. It builds nothing, mutates nothing, and exits 0 whatever the rows say unless you pass `--strict`. Each lexicon answers with its own cheap self-query (`sts:GetCallerIdentity` for aws, `SelfSubjectReview`, the call behind `kubectl auth whoami`, for k8s), issued on the same transport, endpoint override and region resolution the live read uses, so the target reported is the target read.
 
-**Three verdicts, and the difference between them matters.**
+**Three verdicts.**
 
 | Verdict | Meaning |
 |---|---|
@@ -538,18 +538,18 @@ Read-only and never a gate. It builds nothing, mutates nothing, and exits 0 what
 
 "No identity is configured" and "I could not find out" are different answers and stay apart in both the table and the JSON.
 
-**No credential ever reaches the output.** An identity is a principal and a scope — an account id, a region, a project, a cluster context, a service-account subject. Where a substrate's only identity signal is a secret (a kubeconfig holding a static bearer token), the report names the credential *path* — `credential token` — and stops there. Core also scrubs any value the process holds in a credential-named environment variable, plus PEM blocks, JWTs and `Bearer …` headers, from every field before it prints.
+**No credential ever reaches the output.** An identity is a principal and a scope: an account id, a region, a project, a cluster context, a service-account subject. Where a substrate's only identity signal is a secret (a kubeconfig holding a static bearer token), the report names the credential *path*, `credential token`, and stops there. Core also scrubs any value the process holds in a credential-named environment variable, plus PEM blocks, JWTs and `Bearer …` headers, from every field before it prints.
 
 **What each lexicon answers with today:**
 
-- **aws** — `sts:GetCallerIdentity`. The principal ARN, scoped to the account and the region the read transport actually resolves. That region comes from `stacks[].region` and otherwise defaults to `us-east-1`; the native transport does not consult `AWS_REGION`, and the `SOURCE` column says so when your shell sets one that is not being used. Credentials resolve the way the AWS CLI resolves them. Environment keys (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN`) come first and win over `AWS_PROFILE`, as they do in the CLI. Otherwise chant reads the `AWS_PROFILE` profile (`default` when unset) from the files `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` name, by default `~/.aws/config` and `~/.aws/credentials`. Static keys and `credential_process` sign directly. A `role_arn` is assumed with the keys of its `source_profile` or, for `credential_source = Environment`, the environment's. SSO sessions (`sso_session` or the older `sso_start_url`) go through the IAM Identity Center portal. The `SOURCE` column names what answered, for example `profile loom (sso session acme), role Deployer in 491500000000`.
+- **aws**: `sts:GetCallerIdentity`. The principal ARN, scoped to the account and the region the read transport actually resolves. That region comes from `stacks[].region` and otherwise defaults to `us-east-1`; the native transport does not consult `AWS_REGION`, and the `SOURCE` column says so when your shell sets one that is not being used. Credentials resolve the way the AWS CLI resolves them. Environment keys (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN`) come first and win over `AWS_PROFILE`, as they do in the CLI. Otherwise chant reads the `AWS_PROFILE` profile (`default` when unset) from the files `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` name, by default `~/.aws/config` and `~/.aws/credentials`. Static keys and `credential_process` sign directly. A `role_arn` is assumed with the keys of its `source_profile` or, for `credential_source = Environment`, the environment's. SSO sessions (`sso_session` or the older `sso_start_url`) go through the IAM Identity Center portal. The `SOURCE` column names what answered, for example `profile loom (sso session acme), role Deployer in 491500000000`.
 
   An SSO profile reads the token `aws sso login` cached under `~/.aws/sso/cache/`. An expired token is refreshed when the cache holds a refresh token, and the refreshed token is not written back. When no usable token is cached or the portal refuses it, the row is `no identity is configured` with `run aws sso login --profile <p>` in its detail. A profile chant cannot resolve is also `no identity is configured`, with the reason in the detail. `mfa_serial` and `web_identity_token_file` are not supported, and `credential_source` works only as `Environment`. Instance metadata and container credentials are not consulted. Against an endpoint override the profile is not read at all, since the emulator call is unsigned.
 
   The read transport behind `diff --live` still signs with environment keys only ([#3958](https://github.com/INTENTIUS/chant/issues/3958)). When only a profile is set, the whoami row is what the AWS CLI would act as. The `SOURCE` column names the profile, which shows the difference.
-- **k8s** — `SelfSubjectReview` against the bound cluster. The subject the API server authenticated, scoped to the resolved context and its default namespace, sourced from `k8s.profiles.<env>.context` or, when the environment is unbound, from the ambient current-context with the missing binding named. A cluster too old to serve the review API (pre-1.26) reports `could not determine` rather than falling back to the kubeconfig's local user alias, which is a name you chose, not the subject the cluster resolves it to.
+- **k8s**: `SelfSubjectReview` against the bound cluster. The subject the API server authenticated, scoped to the resolved context and its default namespace, sourced from `k8s.profiles.<env>.context` or, when the environment is unbound, from the ambient current-context with the missing binding named. A cluster too old to serve the review API (pre-1.26) reports `could not determine` rather than falling back to the kubeconfig's local user alias, which is a name you chose, not the subject the cluster resolves it to.
 
-Every other lexicon reports `not reported` until it implements the capability — see [Implementing Observation](/chant/lexicon-authoring/observation/#describeidentity--who-chant-would-act-as).
+Every other lexicon reports `not reported` until it implements the capability. See [Implementing Observation](/chant/lexicon-authoring/observation/#describeidentity--who-chant-would-act-as).
 
 The environment's declared `endpoint` is applied for the identity query exactly as it is for `diff --live`, so pointing an environment at a local emulator reports the emulator's identity rather than the cloud's.
 
@@ -560,7 +560,7 @@ The environment's declared `endpoint` is applied for the identity query exactly 
 
 ### `lifecycle teardown <env>`
 
-Plan — and with `--yes`, execute — the deletion of an environment's marker-scoped resources.
+Plan the deletion of an environment's marker-scoped resources, and with `--yes`, delete them.
 
 ```bash
 chant lifecycle teardown dev            # plan only: print the would-delete set
@@ -569,29 +569,29 @@ chant lifecycle teardown dev --yes      # execute the planned set
 chant lifecycle teardown prod --yes --confirm-prod
 ```
 
-Selection is marker-scoped by construction: a resource is in the plan only when its own [ownership marker](/chant/configuration/config-file/#ownership) carries this project's `ownership.stack` **and** the requested environment. Unmarked resources, another stack's resources, and another environment's resources are never candidates. The read is stateless — live markers only, no build, no snapshot.
+Selection is marker-scoped by construction: a resource is in the plan only when its own [ownership marker](/chant/configuration/config-file/#ownership) carries this project's `ownership.stack` **and** the requested environment. Unmarked resources, another stack's resources, and another environment's resources are never candidates. The read uses live markers only, with no build and no snapshot.
 
 The environment must be declared in `chant.config.ts` under `environments`; an unknown name exits nonzero. A project with no `ownership.stack` is refused: teardown has nothing to select on.
 
-Per lexicon, the plan comes from the `teardownOwned` capability where a lexicon implements one, falling back to `describeResources` plus the per-resource marker identity otherwise. Kinds a lexicon stamps but cannot read back are reported as **holes** — a plan with holes is incomplete, not clean, and says so. An empty would-delete set is also reported loudly rather than exiting silently.
+Per lexicon, the plan comes from the `teardownOwned` capability where a lexicon implements one, falling back to `describeResources` plus the per-resource marker identity otherwise. Kinds a lexicon stamps but cannot read back are reported as **holes**, and a plan with holes says it is incomplete. An empty would-delete set is also reported loudly rather than exiting silently.
 
 #### Execution (`--yes`)
 
-`--yes` deletes the planned set through each lexicon's `executeTeardown` capability and prints one outcome per candidate: `deleted` (already-gone counts — teardown is idempotent), `failed` (the delete errored), `not-prunable` (deliberately refused, with the reason — for example the live object's marker changed since planning), `retained` (owned and no longer declared, but deliberately kept — a k8s `generated-once` secret is never swept, because the stored bytes are the only copy of material chant never held; delete it explicitly if you mean to), or `skipped` (the lexicon enumerates but does not implement execution yet). Nothing is ever silent: every planned entry gets a row, the summary line counts `retained` separately with a warning that the environment is not clean while retained resources exist, and the command exits nonzero when any candidate is still `failed` after the retry pass.
+`--yes` deletes the planned set through each lexicon's `executeTeardown` capability and prints one outcome per candidate: `deleted` (already gone counts, since teardown is idempotent), `failed` (the delete errored), `not-prunable` (refused, with the reason, for example the live object's marker changed since planning), `retained` (owned and no longer declared, but kept on purpose: a k8s `generated-once` secret is never swept, because the stored bytes are the only copy of material chant never held; delete it explicitly if you mean to), or `skipped` (the lexicon enumerates but does not implement execution yet). Every planned entry gets a row, the summary line counts `retained` separately with a warning that the environment is not clean while retained resources exist, and the command exits nonzero when any candidate is still `failed` after the retry pass.
 
-Ordering is per lexicon, and each lexicon deletes in the order its target requires — there is no global reverse-dependency ordering. After the first pass, core runs **one bounded retry pass** over that lexicon's failures, which covers most ordering hiccups (a dependent that had not finished deleting yet). Failures that survive the retry are reported as failures.
+Ordering is per lexicon, and each lexicon deletes in the order its target requires; there is no global reverse-dependency ordering. After the first pass, core runs **one bounded retry pass** over that lexicon's failures, which covers most ordering hiccups (a dependent that had not finished deleting yet). Failures that survive the retry are reported as failures.
 
 Implemented today:
 
-- **k8s** — deletes by the marker label selector through the typed API client (the same delete the ownership-scoped prune uses), re-reading and re-verifying each object's marker immediately before deleting. Namespaces are deleted last, so their members get individual outcomes before the namespace cascade.
-- **fly** — destroys marker-carrying machines (lease -> destroy -> wait) first, then deletes whole apps last. An app is deleted whole only when every live machine in it carries the requested identity — the app-boundary rule from the fly ownership convention; volumes, IPs, and certificates go with their app. An app also hosting a foreign or other-env machine is never deleted whole.
-- **aws** — STACK granularity: CloudFormation's thin read returns no tags, so per-resource selection is impossible, and the stack is the deploy boundary anyway. The plan resolves the environment's stacks (the project's `stacks[]`, else the stack named after the environment), reads each stack's **own** tags via `DescribeStacks`, and admits only stacks whose tags carry the requested marker identity — one candidate of type `AWS::CloudFormation::Stack` per verified stack. Execution re-verifies the tags, then `DeleteStack` polled to `DELETE_COMPLETE`. The apply paths stamp the marker as stack tags on create/update (from the template's `Metadata["chant:ownership"]` block the build writes), so every stack deployed from a marked build is teardown-eligible; a stack deployed before stack tagging carries no tags to verify and is reported as a hole (`unverified-ownership`) — re-deploy it once to stamp it. It is never deleted.
+- **k8s**: deletes by the marker label selector through the typed API client (the same delete the ownership-scoped prune uses), re-reading and re-verifying each object's marker immediately before deleting. Namespaces are deleted last, so their members get individual outcomes before the namespace cascade.
+- **fly**: destroys marker-carrying machines (lease -> destroy -> wait) first, then deletes whole apps last. An app is deleted whole only when every live machine in it carries the requested identity, the app-boundary rule from the fly ownership convention; volumes, IPs, and certificates go with their app. An app also hosting a foreign or other-env machine is never deleted whole.
+- **aws**: STACK granularity: CloudFormation's thin read returns no tags, so per-resource selection is impossible, and the stack is the deploy boundary anyway. The plan resolves the environment's stacks (the project's `stacks[]`, else the stack named after the environment) and reads each stack's **own** tags via `DescribeStacks`. It admits only stacks whose tags carry the requested marker identity. There is one candidate of type `AWS::CloudFormation::Stack` per verified stack. Execution re-verifies the tags, then `DeleteStack` polled to `DELETE_COMPLETE`. The apply paths stamp the marker as stack tags on create/update (from the template's `Metadata["chant:ownership"]` block the build writes), so every stack deployed from a marked build is teardown-eligible; a stack deployed before stack tagging carries no tags to verify and is reported as a hole (`unverified-ownership`). Re-deploy it once to stamp it. It is never deleted.
 
-gcp and azure enumerate (via the fallback read) but do not execute yet — their candidates are reported as `skipped`.
+gcp and azure enumerate (via the fallback read) but do not execute yet; their candidates are reported as `skipped`.
 
 #### The prod guard
 
-An environment whose name looks production-like (`prod`, `production`, `prod-eu`, `us-prod`, ...) is never torn down on `--yes` alone. Interactively, chant asks you to re-type the environment name; non-interactively (CI, scripts), pass `--yes --confirm-prod` explicitly. Planning a production environment needs no confirmation — only deletion does.
+An environment whose name looks production-like (`prod`, `production`, `prod-eu`, `us-prod`, ...) is never torn down on `--yes` alone. Interactively, chant asks you to re-type the environment name; non-interactively (CI, scripts), pass `--yes --confirm-prod` explicitly. Planning a production environment needs no confirmation; only deletion does.
 
 Both halves are exported from `@intentius/chant` for programmatic use (a test-environment harness tearing down in `afterAll`, for example): `planTeardown()` enumerates, `executeTeardown()` deletes and returns the same per-candidate report the CLI prints.
 
@@ -614,11 +614,11 @@ export default Op({
 });
 ```
 
-Steps run in authored order, so a `gate(...)` placed before `envTeardown` stops the run until someone records the resolution with `chant approve retire-staging approve-teardown`, and the next run walks through and deletes. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })` — the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
+Steps run in authored order, so a `gate(...)` placed before `envTeardown` stops the run until someone records the resolution with `chant approve retire-staging approve-teardown`, and the next run walks through and deletes. The guards are the CLI's guards: an undeclared environment and a missing `ownership.stack` fail the step before any live read, and a production-like name needs `envTeardown("prod", { confirmProd: true })`, the authored counterpart of `--confirm-prod`, since an Op never prompts. The step fails when any candidate is still `failed` after the retry pass, naming the survivors; a fully clean run returns the same per-candidate report the CLI prints. See the [Ops reference](/chant/guide/ops-reference/#step-builders) for the builder row.
 
 ### `lifecycle rollback [env] --to <ref>`
 
-Open a pull request that restores the project's `sourceDir` to a prior git revision. The rollback happens in source, where it can be reviewed. No cloud is touched by this command. Once a human merges the PR, the project's own gated apply rolls the environment back from the restored source. The optional `env` positional only names the environment in the PR title.
+Open a pull request that restores the project's `sourceDir` to a prior git revision. The rollback happens in source, where it can be reviewed. This command touches no cloud. Once a human merges the PR, the project's own gated apply rolls the environment back from the restored source. The optional `env` positional only names the environment in the PR title.
 
 ```bash
 chant lifecycle rollback prod --to v1.4.2
