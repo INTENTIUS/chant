@@ -7,15 +7,15 @@ diataxis: explanation
 import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
-chant covers the synthesis step — TypeScript in, validated artifacts out — and the lifecycle layers built on top of it: Ops, the lifecycle dial, and the component release model. Knowing which layer fits your situation avoids unnecessary setup.
+chant builds TypeScript into validated artifacts, and three layers on top of the compiler can deploy them. Pick the smallest one that fits.
 
-Use none of the lifecycle layers and chant is a deterministic compiler you hand off from, with no runtime, no state file and nothing to run. The orchestration layer starts the same way: `chant run <op>` executes an Op in this process, gates and compensation included. What moves an op off your machine is needing a machine of its own, a record somebody else can read, or a cadence that fires while nobody is watching.
+Use none of the lifecycle layers and chant is a compiler whose output you deploy yourself, with no runtime or state file. Ops also start local. `chant run <op>` executes an Op in this process, gates and compensation included. Move an op to a steward when it needs a machine of its own, a record somebody else can read, or a schedule that fires while nobody is watching.
 
 <Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline goes to hand-off; needing observability, gates or rollback goes to Ops; needing a machine of its own goes to Ops on a steward" caption="Choosing your deployment model" />
 
 ## Hand Off to an Existing Pipeline
 
-`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and hands them off. Deployment happens however it always has: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. Nothing else to install — the lifecycle layers below simply go unused.
+`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and hands them off. You deploy them as you do today: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. You install only chant, and the lifecycle layers below go unused.
 
 **Use this when:**
 - You already have a deployment pipeline you trust

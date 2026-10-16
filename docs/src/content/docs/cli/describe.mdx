@@ -12,15 +12,15 @@ chant describe <component> [path] [flags]
 
 ## Description
 
-`chant describe` projects the **effective, fully-resolved** configuration for a
-single named component — its resolved property bag and the resources it produces
-— **offline** (source only, no live calls).
+`chant describe` prints the **effective, fully-resolved** configuration for a
+single named component (its resolved property bag and the resources it
+produces), **offline** from source with no live calls.
 
 Where `chant list` shows inventory and `chant graph` shows edges, `describe`
 shows the resolved detail for one thing. It is most useful with
-[layered configuration](/chant/guide/layered-configuration/): rather than reading
-and merging every layer by hand, ask "what is the effective config for this
-component, after every spread and override?"
+[layered configuration](/chant/guide/layered-configuration/), where it gives the
+effective config for a component after every spread and override, so you don't
+merge the layers by hand.
 
 `<component>` is a named export:
 
@@ -50,7 +50,7 @@ chant describe search-service src --components --format json
 
 ## `--components`
 
-`chant describe <name> --components` looks up one discovered [`Component`](/chant/components/component-contract/) by its `name` field (not its export name) and prints its full JSON contract projection — the same document `chant build` would hand to the interpret driver, and that validates against `component.schema.json`.
+`chant describe <name> --components` looks up one discovered [`Component`](/chant/components/component-contract/) by its `name` field (not its export name) and prints its full JSON contract projection. It is the same document `chant build` would hand to the interpret driver, and it validates against `component.schema.json`.
 
 ```json
 {

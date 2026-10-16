@@ -67,8 +67,8 @@ This distinction once cost the repo three of its four emulators. azure and gcp
 both built the exact spec above in `src/op/activities/` and used it from their
 Ops without setting `plugin.emulator`, so `chant emulator up --all` booted Floci
 and nothing else while the local-testing docs presented all three clouds as
-equal local targets (chant #1345). All of them are declared now. The
-lesson holds anyway. The wrapper is not the declaration.
+equal local targets (chant #1345). All of them are declared now. Set
+`plugin.emulator` even when your Ops already use the wrapper.
 
 ## More than one
 

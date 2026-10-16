@@ -27,7 +27,7 @@ chant init lexicon <name> [path] [flags]
 
 ## Description
 
-`chant init lexicon` creates a complete lexicon plugin project with stubs for every required lifecycle method. The generated code compiles out of the box, imports from `@intentius/chant`, and mirrors the structure of the AWS lexicon.
+`chant init lexicon` creates a lexicon plugin project with a stub for every required lifecycle method. The generated code compiles as written, imports from `@intentius/chant`, and mirrors the structure of the AWS lexicon.
 
 ### Name derivations
 
@@ -93,8 +93,8 @@ After scaffolding:
 
 1. `cd lexicons/<name>`
 2. `npm install`
-3. Edit `src/spec/fetch.ts` — point at your upstream schema source
-4. Edit `src/spec/parse.ts` — parse your schema format
+3. Edit `src/spec/fetch.ts` to point at your upstream schema source
+4. Edit `src/spec/parse.ts` to parse your schema format
 5. `chant dev generate` to generate types
 6. `chant dev publish` to package for distribution
 7. `chant dev onboard <name>` to wire into CI, Docker, and npm publish

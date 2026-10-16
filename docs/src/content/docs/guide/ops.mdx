@@ -15,15 +15,15 @@ import Diagram from '../../../components/Diagram.astro';
 
 Deciding whether Ops is the right deployment model for your project? See [Choosing Your Deployment Model](/chant/concepts/deployment-paths/).
 
-**Ops** (chant's named-workflow abstraction, not "operations" in general) are named, phased workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into declared, observable ones: progress renders as the run goes, gate steps stop for a human approval that lives on the gate ledger, and `onFailure` phases handle compensation automatically.
+**Ops** are named, phased workflows defined in `*.op.ts` files (the chant feature, not "operations" in general). An Op replaces an ad-hoc deployment script: progress prints as the run goes, gate steps stop for a human approval recorded on the gate ledger, and `onFailure` phases run compensation when a step fails.
 
 ### When to reach for an Op
 
-- **Long-running deploys** — see current phase without grepping logs.
-- **Gates** — stop for human approval or an external-system event (DNS delegation, change windows).
-- **Automatic rollback** — `onFailure` phases compensate on failure instead of hand-rolled scripts.
+- A long-running deploy, where you want to see the current phase without grepping logs.
+- A stop for human approval or an external event (DNS delegation, change windows).
+- Rollback on failure, with `onFailure` phases in place of hand-rolled scripts.
 
-`chant run <name>` executes an Op **in this process**, with nothing installed and nothing running. `--on <lexicon>` hands the same Op to a runtime that hosts it instead, and `chant run <op> --on fountain` is the one chant ships: a [steward](/chant/lexicons/fountain/steward/) runs it on a machine of its own and keeps the record on a thread. See [Ops as teammates](/chant/concepts/durable-workflows/) for what each half is for.
+`chant run <name>` executes an Op **in this process**. `--on <lexicon>` hands the same Op to a runtime that hosts it instead, and `chant run <op> --on fountain` is the one chant ships: a [steward](/chant/lexicons/fountain/steward/) runs it on a machine of its own and keeps the record on a thread. See [Ops as teammates](/chant/concepts/durable-workflows/) for what each half is for.
 
 <Aside type="note" title="Prerequisites">
 `Op`, `phase` and the base step builders come from `@intentius/chant/op`, which
@@ -34,7 +34,7 @@ Running on a steward additionally needs `@intentius/chant-lexicon-fountain` and 
 [profile](/chant/lexicons/fountain/profiles/).
 </Aside>
 
-<Diagram name="ops-execution-model" alt="Op execution model: sequential phases, parallel phases, gate steps, and onFailure compensation" caption="Op execution model — phases, gates, and compensation" />
+<Diagram name="ops-execution-model" alt="Op execution model: sequential phases, parallel phases, gate steps, and onFailure compensation" caption="Op execution model: phases, gates, and compensation" />
 
 ## Defining an Op
 
@@ -61,7 +61,7 @@ export default Op({
 
 ## Try it locally
 
-Before reaching for real infrastructure, verify your toolchain with a shell-only Op. Save as `hello.op.ts` anywhere in your project:
+Check your toolchain first with a shell-only Op. Save as `hello.op.ts` anywhere in your project:
 
 ```typescript
 import { Op, phase, shell } from "@intentius/chant/op";
@@ -81,17 +81,17 @@ Then run it.
 chant run hello
 ```
 
-There is no server to start and no worker to build. Once this works end-to-end, swap `shell()` for `kubectlApply()`, `helmInstall()`, or any other step builder to start deploying real resources.
+The Op ran in this process. Once it works, swap `shell()` for `kubectlApply()`, `helmInstall()`, or any other step builder to start deploying real resources.
 
 ## Phases and steps
 
 Each `phase()` has a name and an ordered list of steps. All steps in a phase run sequentially by default. Set `parallel: true` to run them concurrently via `Promise.all`.
 
-A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `comment`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud -> code).
+A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `comment`, `report`). It never commits to the main branch. The reconcile workflow (cloud -> code) is built on it.
 
 `comment` mode is the one that constrains its trigger. The body lands as a single comment on the pull request that triggered the run. Every re-run edits that same comment instead of adding another; the activity finds it again by a hidden marker written as the comment's first line. A branch pushed to five times then carries one current body instead of five stale ones. GitHub and Forgejo read the pull request out of the run's own event payload (`GITHUB_EVENT_PATH`, with `GITHUB_REF` as the fallback). GitLab gets the body as a note on the merge request named by `CI_MERGE_REQUEST_IID`. So the mode requires a pull request or merge request trigger and fails by name on a run without one. The generated GitHub workflow gets exactly `contents: read` and `pull-requests: write`.
 
-`issue` mode needs no trigger at all; a cron Op with a nightly finding is the case it exists for. It is sticky the same way `comment` mode is: a hidden marker on the first line of the issue body finds the one this Op already owns, and a re-run edits it in place instead of opening another. This holds on GitHub, GitHub Enterprise Server, and Forgejo alike, each read off `GITHUB_REPOSITORY` since a GitHub Actions and a Forgejo Actions job set it the same way, and on GitLab CI, read off `CI_PROJECT_ID`, as its own project issue. It never closes the issue itself, on either forge (a tool posting through [`trackIssue`](#posting-from-your-own-tool) can opt in to that). The search only looks at OPEN issues, which makes that a concrete decision rather than an implicit one. Closing the issue by hand, once whatever it named is actually fixed, is how an operator tells the next run to open a fresh issue for a fresh finding, rather than have the bot silently rewrite a closed issue nobody is watching. Reopening a closed issue on the next finding was considered and rejected: this activity has no reliable signal for "the last finding got fixed" as opposed to "this run happened not to check."
+`issue` mode needs no trigger, so a cron Op with a nightly finding can use it. It is sticky the same way `comment` mode is: a hidden marker on the first line of the issue body finds the one this Op already owns, and a re-run edits it in place instead of opening another. This holds on GitHub, GitHub Enterprise Server, and Forgejo alike, each read off `GITHUB_REPOSITORY` since a GitHub Actions and a Forgejo Actions job set it the same way, and on GitLab CI, read off `CI_PROJECT_ID`, as its own project issue. It never closes the issue itself, on either forge (a tool posting through [`trackIssue`](#posting-from-your-own-tool) can opt in to that). The search reads only OPEN issues. Closing the issue by hand once its finding is fixed tells the next run to open a fresh issue for a fresh finding, so the bot never rewrites a closed issue nobody is watching. Reopening a closed issue on the next finding was considered and rejected: this activity has no reliable signal for "the last finding got fixed" as opposed to "this run happened not to check."
 
 That marker decides which issue a run edits, so it has to name the Op. `issue` mode fails by name on a step that gives it nothing to name one with. Pass `op` with the enclosing Op's own name; `TerraformWatchOp` and `ReconcileOp` both do that for you. An `env` on its own is not enough. Two watch Ops over one terraform root share an `env`. So do a terraform root and a chant environment that happen to be spelled the same. Whichever of the pair ran second used to rewrite the other's issue title and body on every run. The other way is to supply `marker` yourself, and then keeping it unique is your job. A blank or whitespace-only `marker` counts as no marker and is refused, because an empty one matches every issue in the repository rather than none. So does one containing a double quote or a backslash, which the search filter cannot carry. An issue opened before this rule existed carries the older env-only marker that no Op matches now. It stays open and untouched until you read it and close it yourself.
 
@@ -632,13 +632,13 @@ A compensation step can read what a main-phase step returned, such as the revisi
 
 ## Continuous observation
 
-The `WatchOp` composite puts a cron on the Op itself, so `chant lifecycle snapshot` and `chant lifecycle diff --live` run on a recurring cadence — periodic drift detection between change windows, not just at the next deploy.
+The `WatchOp` composite puts a cron on the Op itself, so `chant lifecycle snapshot` and `chant lifecycle diff --live` run on a schedule, catching drift between change windows as well as at the next deploy.
 
-See **[Watching Lifecycle](/chant/guide/watching-lifecycle/)** for the full walk-through: composite shape, the cadence, filtering by `labels` (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
+See **[Watching Lifecycle](/chant/guide/watching-lifecycle/)** for the full walk-through: composite shape, the cadence, filtering by `labels` (`Watch = "true"` / `Drift = "true"`), smoke-testing drift, and how to triage each diff category. For what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
 
 ## Reconcile (cloud -> code)
 
-The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot -> plan -> regenerate -> open PR** — the plan is `chant lifecycle plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
+The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot -> plan -> regenerate -> open PR**. The plan is `chant lifecycle plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
 
 ```typescript
 import { ReconcileOp } from "@intentius/chant/op";
@@ -656,15 +656,15 @@ const { op } = ReconcileOp({
 export default op;        // discovered by `chant run prod-reconcile`
 ```
 
-Run `chant run prod-reconcile` for a one-shot reconcile here; give it a `schedule` and hand it to a reader that fires it — the github generator, `chant operator`, or a fountain `Steward` — for the continuous form.
+Run `chant run prod-reconcile` for a one-shot reconcile here. For the continuous form, give it a `schedule` and hand it to a reader that fires it: the github generator, `chant operator`, or a fountain `Steward`.
 
 ## Apply (code -> cloud)
 
-The `ApplyOp` composite is the other direction: compute the plan, then apply it. Authority stays with the platform; chant hosts no state file.
+The `ApplyOp` composite is the other direction: compute the plan, then apply it. The platform holds the state; chant keeps no state file.
 
-`target` picks the mechanism, and every one of them is native — no cloud CLI in the path: `kubectl` and `kustomize` are a server-side apply through the k8s lexicon's typed client, `arm` is the azure lexicon's per-resource `azApply`, `cloudformation` is the aws lexicon's `awsApply`, which speaks the CloudFormation API directly, `gcp` is the gcp lexicon's per-resource `gcpApply`, which maps each CNRM kind to its GCP REST API, `fly` is the fly lexicon's `flyApply`, which speaks the Fly Machines API (flaps) directly, `grafana` is the grafana lexicon's `grafanaApply`, which writes folders, library panels and dashboards over Grafana's HTTP API, `clickhouse` is the sql lexicon's `clickhouseApply`, which sends a ClickHouse server the `CREATE` and `ALTER` statements a build's classified changes need and refuses a rebuild as not attempted, `postgres` is the sql lexicon's `postgresApply`, which sends a Postgres server the statements a build's classified changes need, in transactions with a lock timeout, and refuses an expand-and-contract change as not attempted, and `ruler` is the prometheus lexicon's `rulerApply`, which posts changed rule groups to a Mimir, Cortex or Loki ruler under the tenant `prometheus.profiles.<env>` names, uploads a Mimir or Cortex Alertmanager config, and under `delete: "owned-only"` removes only the groups the project no longer declares inside the ruler namespaces it declares (a namespace it does not declare is never read or touched, unlike `mimirtool rules sync`); a rollback re-applies the previous group set. Each is loaded from its lexicon at apply time, so a project using a target lists that lexicon in `chant.config.ts`.
+`target` picks the mechanism, and each one calls the provider directly, with no cloud CLI in the path: `kubectl` and `kustomize` are a server-side apply through the k8s lexicon's typed client, `arm` is the azure lexicon's per-resource `azApply`, `cloudformation` is the aws lexicon's `awsApply`, which speaks the CloudFormation API directly, `gcp` is the gcp lexicon's per-resource `gcpApply`, which maps each CNRM kind to its GCP REST API, `fly` is the fly lexicon's `flyApply`, which speaks the Fly Machines API (flaps) directly, `grafana` is the grafana lexicon's `grafanaApply`, which writes folders, library panels and dashboards over Grafana's HTTP API, `clickhouse` is the sql lexicon's `clickhouseApply`, which sends a ClickHouse server the `CREATE` and `ALTER` statements a build's classified changes need and refuses a rebuild as not attempted, `postgres` is the sql lexicon's `postgresApply`, which sends a Postgres server the statements a build's classified changes need, in transactions with a lock timeout, and refuses an expand-and-contract change as not attempted, and `ruler` is the prometheus lexicon's `rulerApply`, which posts changed rule groups to a Mimir, Cortex or Loki ruler under the tenant `prometheus.profiles.<env>` names, uploads a Mimir or Cortex Alertmanager config, and under `delete: "owned-only"` removes only the groups the project no longer declares inside the ruler namespaces it declares (a namespace it does not declare is never read or touched, unlike `mimirtool rules sync`); a rollback re-applies the previous group set. Each is loaded from its lexicon at apply time, so a project using a target lists that lexicon in `chant.config.ts`.
 
-Whatever the target, the apply reports one result shape: the count projection of core's apply contract ([#1446](https://github.com/INTENTIUS/chant/issues/1446)) — `applied`, `pruned`, and `notAttempted` (declared resources no provider call was made for, including kinds an owned-only prune could not consider). An Op gates on those counts regardless of target; the target-specific detail — the field manager on `kubectl`, the stack status on `cloudformation` — stays on the step record.
+Whatever the target, the apply reports one result shape: the count projection of core's apply contract ([#1446](https://github.com/INTENTIUS/chant/issues/1446)): `applied`, `pruned`, and `notAttempted` (declared resources no provider call was made for, including kinds an owned-only prune could not consider). An Op gates on those counts regardless of target; the target-specific detail, such as the field manager on `kubectl` or the stack status on `cloudformation`, stays on the step record.
 
 chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). Each of the four is exactly what `ApplyOp` runs for the `cloudformation`, `arm`, `gcp` and `fly` targets ([#1449](https://github.com/INTENTIUS/chant/issues/1449)), and the grafana lexicon's [`grafanaApply`](/chant/lexicons/grafana/applying/) is what it runs for `grafana` ([#3011](https://github.com/INTENTIUS/chant/issues/3011)), and the sql lexicon's [`clickhouseApply`](/chant/lexicons/sql/applying/) for `clickhouse` ([#3208](https://github.com/INTENTIUS/chant/issues/3208)) and its [`postgresApply`](/chant/lexicons/sql/postgres-applying/) for `postgres` ([#3280](https://github.com/INTENTIUS/chant/issues/3280)); the step forms remain for hand-written Ops that need per-step control.
 
@@ -695,17 +695,17 @@ owned by another field manager.
 …
 ```
 
-chant never resolves that for you. Set `forceConflicts: true` on the `ApplyOp` to take ownership deliberately — adopting objects a previous `kubectl apply` created is the usual reason. See [the k8s lexicon's API client page](/chant/lexicons/k8s/api-client/) for the full surface.
+chant never resolves that for you. Set `forceConflicts: true` on the `ApplyOp` to take ownership deliberately, usually to adopt objects a previous `kubectl apply` created. See [the k8s lexicon's API client page](/chant/lexicons/k8s/api-client/) for the full surface.
 
 ### Gates and compensation on a destructive apply
 
-A destructive apply is where the two safety features earn their place:
+A destructive apply gets these:
 
-- **Approval gate** — `delete: "gated"` (or an explicit `gate`) inserts an Approve phase before the apply. The run stops there and exits 3 until `chant approve prod-apply approve-apply` records the resolution. Nothing is held open in between, so a decision that takes three days costs nothing while it is being made.
-- **Compensation** — a destructive apply defaults to an `onFailure` Rollback phase (a `compensateApply` activity), so a partial failure unwinds instead of leaving the cloud half-applied. Compensation is total or refused ([#1449](https://github.com/INTENTIUS/chant/issues/1449)): it needs a rollback to run, which is either the target's mapped native one (`cloudformation` rolls back through the aws lexicon's `rollbackStack` — the only mapped rollback today) or an explicit `compensate: { command }` (e.g. `kubectl rollout undo …`). Asking for `compensate: true` on a target with neither fails when the Op is built, not with a warning when the rollback is already needed, and the default only wires the phase where a rollback path exists. Set `compensate: false` to opt out.
-- **Audit** — every run appends one record to the run ledger on the `chant/lifecycle` branch, carrying the run id, the status, the Op's `labels`, and each phase's per-step status. The gate's resolution lands beside it on the same branch.
+- `delete: "gated"` (or an explicit `gate`) inserts an Approve phase before the apply. The run stops there and exits 3 until `chant approve prod-apply approve-apply` records the resolution. Nothing is held open in between, so a decision that takes three days costs nothing while it is being made.
+- A destructive apply defaults to an `onFailure` Rollback phase (a `compensateApply` activity), so a partial failure unwinds instead of leaving the cloud half-applied. Compensation is total or refused ([#1449](https://github.com/INTENTIUS/chant/issues/1449)): it needs a rollback to run, which is either the target's mapped native one (`cloudformation` rolls back through the aws lexicon's `rollbackStack`, the only mapped rollback today) or an explicit `compensate: { command }` (e.g. `kubectl rollout undo …`). Asking for `compensate: true` on a target with neither fails when the Op is built, not with a warning when the rollback is already needed, and the default only wires the phase where a rollback path exists. Set `compensate: false` to opt out.
+- Every run appends one record to the run ledger on the `chant/lifecycle` branch. The record carries the run id and status, the Op's `labels`, and each phase's per-step status. The gate's resolution lands beside it on the same branch.
 
-An ungated, additive apply needs none of this. See [Ops as teammates](/chant/concepts/durable-workflows/) for where each kind of durability an apply needs actually lives.
+An ungated, additive apply needs none of this. See [Ops as teammates](/chant/concepts/durable-workflows/) for where each kind of durability an apply needs lives.
 
 ## Behaviour (a pull request's predicted delta)
 
@@ -731,7 +731,7 @@ Two activities sit under the composite, both with contracts OPS012 validates: `p
 
 ## Audit (supply-chain drift)
 
-Some CI/CD security checks can only be answered against a moving external truth: whether a pinned action SHA still corresponds to a real upstream tag, whether a referenced commit still exists, whether a new advisory now covers a dependency already in use, whether an upstream was archived since you pinned it. The reference was correct when authored, and the external world moved. That is drift, not a synthesis error, so it cannot live in the pure `chant build`; it belongs in the operational layer, exactly like lifecycle observation. On the dial it sits at **observe**, with a finding-mode as the **reconcile** step.
+Some CI/CD security checks can only be answered against a moving external truth: whether a pinned action SHA still corresponds to a real upstream tag, whether a referenced commit still exists, whether a new advisory now covers a dependency already in use, whether an upstream was archived since you pinned it. The reference was correct when written, and upstream has changed since. That is drift, so an Op checks it at run time, like lifecycle observation, instead of `chant build`. On the dial it sits at **observe**, with a finding-mode as the **reconcile** step.
 
 The github and gitlab lexicons each ship an audit Op for this. The deterministic post-synth checks ([GitHub GHA029–058](/chant/lexicons/github/lint-rules/), [GitLab WGL029–048](/chant/lexicons/gitlab/lint-rules/)) own everything answerable from the build; the audit Op owns *only* what needs live resolution.
 
@@ -749,13 +749,13 @@ export const { op: scheduledOp } = WorkflowAuditOp({
 });
 ```
 
-`PipelineAuditOp` is the GitLab counterpart — it audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot with `chant run <name>`; `report` mode needs no external services at all. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
+`PipelineAuditOp` is the GitLab counterpart. It audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot with `chant run <name>`; `report` mode needs no external services. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
 
 ### Scheduling an Op
 
 `schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Three readers render it.
 
-`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one CI file per Op (on gitlab, one document holding a job apiece, since a trigger there is job-scoped) — `chant run <name>` in the job, with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`comment`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
+`generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one CI file per Op (on gitlab, one document holding a job apiece, since a trigger there is job-scoped). Each job runs `chant run <name>` with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`comment`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
 
 Finding-modes, where each lands, and the scopes it costs on GitHub:
 
@@ -780,7 +780,7 @@ Three per-Op options sit beside the finding mode, two of them widening what the 
 
 Those two land differently per provider. GitHub emits both. Forgejo emits the steps, since its runner runs `uses:` steps, and drops `permissions:` along with the mode's own scopes, because the Forgejo runner ignores the section and issues no OIDC token off a workflow permission. GitLab takes the `{ run }` steps and one permission. A `{ run }` entry is emitted as a `script:` line ahead of the `beforeScript` lines. A `uses:` step is refused by name at build time, since GitLab jobs run `script` lines and there is no marketplace action to translate it into. In `permissions`, `id-token: write` becomes an `id_tokens:` declaration on the job, `CHANT_ID_TOKEN` with `aud: $CI_SERVER_URL`, which is GitLab's OIDC surface; the job's own setup line reads the JWT from that variable, and a project whose identity provider was registered with another audience edits the declaration. `id-token: read` is refused, because GitLab either mints the token into the job or does not. Every other scope is refused by name as well: GitLab has no per-job token-scope mapping, and a scope dropped without a word would emit a job that reads as granted and runs with nothing.
 
-The third option points the other way. `environment`, a `{ name, url? }`, emits `environment:` on that Op's job, which is how a GitHub environment's protection rules (required reviewers, a wait timer, a branch restriction) come to hold a generated apply. It costs no token scope, since environment protection is repository configuration rather than something `GITHUB_TOKEN` carries. Nothing about the environment itself is validated, because GitHub creates an unprotected one on first use rather than failing, so whether reviewers exist cannot be answered from workflow content. What the generator refuses is only the shape that could never bind, meaning a blank name or a `url` that is neither absolute nor an expression the run resolves. GitLab has the same key with the same two fields and a protected environment's approval rule behind it, so it maps across, and the generated header names the environment to protect since the rule is a project setting this file cannot declare. Forgejo Actions has no environments at all, so the key is dropped **and** the generated file gains a header comment naming the environment that was asked for and stating that nothing on the forge enforces it. That is the one option where a silent drop would be worst, because the whole point of it is a human holding an apply.
+The third option points the other way. `environment`, a `{ name, url? }`, emits `environment:` on that Op's job, which is how a GitHub environment's protection rules (required reviewers, a wait timer, a branch restriction) come to hold a generated apply. It costs no token scope, since environment protection is repository configuration rather than something `GITHUB_TOKEN` carries. Nothing about the environment itself is validated, because GitHub creates an unprotected one on first use rather than failing, so whether reviewers exist cannot be answered from workflow content. What the generator refuses is only the shape that could never bind, meaning a blank name or a `url` that is neither absolute nor an expression the run resolves. GitLab has the same key with the same two fields and a protected environment's approval rule behind it, so it maps across, and the generated header names the environment to protect since the rule is a project setting this file cannot declare. Forgejo Actions has no environments at all, so the key is dropped **and** the generated file gains a header comment naming the environment that was asked for and stating that nothing on the forge enforces it. A silent drop would be worst for this option, because its purpose is a human holding an apply.
 
 A `ScheduledOpSpec` isn't limited to cron. Its `trigger` also takes `{ kind: "pull_request", branches? }` and `{ kind: "push", branches? }`, for an Op whose CI trigger is a PR or a push rather than a clock (a Terraform `plan` on `pull_request`, posted as a PR comment, paired with `apply` on `push` to the default branch, is the motivating case). All three generators support all three trigger kinds ([#2256](https://github.com/INTENTIUS/chant/issues/2256) for GitLab). On GitLab each kind becomes a `rules:` entry on the Op's job:
 
@@ -869,7 +869,7 @@ The **environment reviewer** stops the job before it starts. Nothing is checked 
 
 **chant's own gate** ([#2119](https://github.com/INTENTIUS/chant/issues/2119)) stops the apply inside a run that already started. The Op plans and reaches its Gate phase. Finding no resolution on the gate ledger, it records a pending fact on the `chant/lifecycle` branch and ends there. Nothing is held open in between. `chant approve <op> <gate> --approver you` records the answer as another fact on that branch, and the next run reads it and applies. Because it is a fact rather than a held connection, the decision survives the run that asked for it, and the approver is reading a plan that already exists rather than a promise of one.
 
-That difference is the reason to want both. The environment reviewer answers whether this job may run at all, cheaply and before any cost is incurred. chant's gate answers whether this exact plan should be applied, which nothing can answer before the job has run far enough to produce the plan. Either alone is coherent. The reviewer alone is the forge-native shape a team already knows, with `gate: "never"` on the root; chant's gate alone needs no forge features and works identically on Forgejo, where there are none. Neither, for a root whose merges should apply unattended, is also a choice. The choice is per environment, so a `staging` environment with no protection and `gate: "never"` sits happily beside a `production` environment with two reviewers and a gated apply.
+That difference is the reason to want both. The environment reviewer answers whether this job may run at all, cheaply and before any cost is incurred. chant's gate answers whether this exact plan should be applied, which nothing can answer before the job has run far enough to produce the plan. Either alone is coherent. The reviewer alone is the forge-native shape a team already knows, with `gate: "never"` on the root; chant's gate alone needs no forge features and works identically on Forgejo, where there are none. Neither, for a root whose merges should apply unattended, is also a choice. The choice is per environment, so a `staging` environment with no protection and `gate: "never"` sits beside a `production` environment with two reviewers and a gated apply.
 
 The follow-up job that reports a pending chant gate stays outside the environment. It exists to say an approval is waiting, and behind the same reviewer it would only become readable after somebody had already acted.
 
@@ -880,13 +880,13 @@ The gate's pending fact is a commit on `chant/lifecycle`, so a CI job that reach
 - **No committer identity.** GitLab CI, GitHub Actions and Forgejo Actions all clone without `user.email` or `user.name`, and `git commit-tree` refuses rather than inventing one. chant supplies its own (`chant <chant@localhost>`) for that commit alone, applied per-invocation and field by field: only the half the checkout cannot supply is filled in, so a configured `user.name` or `user.email` still authors these commits, and nothing is written into the repository's config. Set `CHANT_LIFECYCLE_COMMITTER_NAME` and `CHANT_LIFECYCLE_COMMITTER_EMAIL` to attribute them to a bot account you control instead.
 - **No ledger branch.** A CI checkout fetches the pipeline's own ref and nothing else, so `chant/lifecycle` is absent, and an absent branch reads exactly like an empty ledger: like nothing having been approved. A retried job would then record a *second* pending fact for a gate somebody had already answered. Every read of the ledger, and every write that would otherwise *create* the branch, fetches it first. `GIT_DEPTH: 0` does not substitute for this on GitLab: it fetches refspecs, not all branches.
 
-Two states are refused rather than guessed at. A checkout whose `chant/lifecycle` has **diverged** from the remote's is never read, because a fork is not the ledger and appending to either side drops the other's facts. A ledger that is simply **unreachable**, with no local copy to fall back on, is refused too, since that is the state an empty ledger is indistinguishable from. Everything else proceeds, including a local branch that is merely ahead of the remote, which is the ordinary state right after an append whose push has not landed yet.
+chant refuses two states instead of guessing. A checkout whose `chant/lifecycle` has **diverged** from the remote's is never read, because a fork is not the ledger and appending to either side drops the other's facts. A ledger that is **unreachable**, with no local copy to fall back on, is refused too, since that is the state an empty ledger is indistinguishable from. Everything else proceeds, including a local branch that is merely ahead of the remote, which is the ordinary state right after an append whose push has not landed yet.
 
 A job that cannot reach the remote at all still gates correctly the first time. What it will not do is treat an unreadable ledger as an empty one, or write a fresh ledger branch over one it never looked at.
 
 ## Replay (policy drift)
 
-`PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries time-window clauses — `formerly within 1h …` — so what a policy decides depends on a history the build cannot see. Replaying the declared set against a recorded event trace is how that gets checked, and the answer moves as the history does.
+`PolicyReplayOp` is the same shape applied to authorization policy. A [dogwood](/chant/lexicons/cedar/) `.dw` policy set carries time-window clauses (`formerly within 1h …`), so what a policy decides depends on a history the build cannot see. The Op checks it by replaying the declared set against a recorded event trace, and the answer changes as the history does.
 
 ```typescript
 import { PolicyReplayOp } from "@intentius/chant-lexicon-cedar";

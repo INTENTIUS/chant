@@ -14,7 +14,7 @@ Lint rules analyze your TypeScript source code before build.
 
 **Severity:** warning | **Category:** style
 
-Flags usage of `only:` and `except:` keywords, which are deprecated in favor of `rules:`. The `rules:` syntax is more flexible and is the recommended approach.
+Flags usage of `only:` and `except:` keywords, which are deprecated in favor of `rules:`. Use `rules:` instead.
 
 {{file:docs-snippets/src/lint-wgl001.ts}}
 
@@ -56,7 +56,7 @@ Flags jobs that reference a stage not present in the collected stages list. This
 
 **Severity:** warning
 
-Flags jobs where all `rules:` entries have `when: "never"`, making the job unreachable. This usually indicates a configuration error.
+Flags jobs where all `rules:` entries have `when: "never"`, making the job unreachable. This is usually a configuration error.
 
 {{file:docs-snippets/src/lint-wgl011.ts}}
 
@@ -112,13 +112,13 @@ Deploy-stage jobs benefit from a `retry:` strategy to ride out transient infrast
 
 **Severity:** error
 
-Detects multiple jobs that resolve to the same kebab-case key in the serialized YAML. GitLab silently merges duplicate keys, so one job's config quietly overwrites the other.
+Detects multiple jobs that resolve to the same kebab-case key in the serialized YAML. GitLab silently merges duplicate keys, so one job's config overwrites the other.
 
 ### WGL021 — Unused variables
 
 **Severity:** warning
 
-Flags global `variables:` not referenced by any job script — usually stale configuration adding noise.
+Flags global `variables:` not referenced by any job script, usually stale configuration.
 
 ### WGL022 — Missing artifacts expiry
 
@@ -160,19 +160,19 @@ Detects jobs with `script: []` or only empty strings. GitLab rejects empty scrip
 
 **Severity:** info
 
-Detects `needs:` entries already implied by stage ordering. Not incorrect, but redundant needs add noise and make the pipeline harder to maintain.
+Detects `needs:` entries already implied by stage ordering. They are valid but redundant.
 
 ## Supply-chain security pass (WGL029–048)
 
 WGL029 onward are a CI/CD supply-chain security pass, the GitLab counterpart to the github lexicon's GHA029–058: pin & vet includes/components/images, scope `CI_JOB_TOKEN` and OIDC, guard trust boundaries against untrusted CI input, mask/protect/scope secrets, reject unsound `rules:` expressions, and keep artifacts/caches honest. They run statically on the emitted `.gitlab-ci.yml`.
 
-The checks that need a *moving external truth* — whether a pinned component/include ref still resolves, whether an upstream was archived or moved, whether a new advisory covers a component in use — live in the operational layer instead. Schedule the [`PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift), which ships from core's `@intentius/chant/op`, for that live half; it reads the emitted `include:` / `component:` / `image:` references and reports drift via `report | issue | merge-request`.
+Checks that depend on upstream state (whether a pinned component/include ref still resolves, whether an upstream was archived or moved, whether a new advisory covers a component in use) run as an Op. Schedule the [`PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift), which ships from core's `@intentius/chant/op`, for those; it reads the emitted `include:` / `component:` / `image:` references and reports drift via `report | issue | merge-request`.
 
 ### WGL029 — Unpinned include:project / component
 
 **Severity:** warning
 
-Flags an `include:project` or CI/CD `component:` resolved by a moving ref — a branch, a missing `ref:` (defaults to the default branch), or a floating component version — instead of a pinned tag or commit SHA.
+Flags an `include:project` or CI/CD `component:` resolved by a moving ref (a branch, a missing `ref:` that defaults to the default branch, or a floating component version) instead of a pinned tag or commit SHA.
 
 ### WGL030 — Mutable or insecure include:remote
 
@@ -190,7 +190,7 @@ Flags `image:` and `services:` references not pinned to an immutable `@sha256:` 
 
 **Severity:** warning
 
-Flags an `include:project` / `component:` source that is a near-miss (edit distance 1–2) of a well-known GitLab CI source but not an exact match — a likely typo or impersonation. Backed by a vendored reference list.
+Flags an `include:project` / `component:` source that is a near-miss (edit distance 1–2) of a well-known GitLab CI source but not an exact match, a likely typo or impersonation. Backed by a vendored reference list.
 
 ### WGL033 — OIDC id_token without a scoped audience
 
@@ -222,7 +222,7 @@ Flags a Docker-in-Docker (privileged) job reachable from merge-request pipelines
 
 **Severity:** warning
 
-Flags a `rules:if` that gates on a regex match (`=~`) over an attacker-controllable ref variable — a crafted branch/tag name can satisfy the pattern. Match the full ref with `==` or gate on a protected condition.
+Flags a `rules:if` that gates on a regex match (`=~`) over an attacker-controllable ref variable; a crafted branch/tag name can satisfy the pattern. Match the full ref with `==` or gate on a protected condition.
 
 ### WGL038 — Secret reachable from a merge-request pipeline
 
@@ -242,7 +242,7 @@ Flags a `script:` command that prints a secret-like variable (`echo`/`printf`/`c
 
 Flags a `docker login` (or compatible) passing a literal password via `-p`/`--password` instead of a variable or `--password-stdin`. Extends WGL016 to scripts.
 
-> Variable *masking* and *protected* status are GitLab project/CI-settings, not emitted YAML — WGL016 already nudges toward masked variables; this group covers the exposure paths visible in the pipeline.
+> Variable *masking* and *protected* status are GitLab project/CI-settings, not emitted YAML. WGL016 already nudges toward masked variables; this group covers the exposure paths visible in the pipeline.
 
 ### WGL041 — Unsound rules:if condition
 
@@ -260,7 +260,7 @@ Flags rules listed after an unconditional rule (no `if:`, not `when: never`). Gi
 
 **Severity:** warning
 
-Flags a `rules:if` whose `=~` regex matches every value (empty, dot-star, anchored dot-star) — a filter that admits everything. Tighten the pattern or remove the gate.
+Flags a `rules:if` whose `=~` regex matches every value (empty, dot-star, anchored dot-star), so the filter admits everything. Tighten the pattern or remove the gate.
 
 > The auto-fix acceptance item is N/A at the post-synth layer (PostSynthDiagnostic has no fix channel); it belongs to the declarative source-lint rules.
 
@@ -274,7 +274,7 @@ Flags `artifacts:public: true`, which makes build output downloadable by anyone.
 
 **Severity:** error
 
-Flags an `artifacts:paths:` entry that looks like a credential or sensitive file (`.env`, `*.pem`, `id_rsa`, `*.key`, `.npmrc`, `.netrc`, `credentials`). Artifacts flow downstream and are downloadable — exclude the file.
+Flags an `artifacts:paths:` entry that looks like a credential or sensitive file (`.env`, `*.pem`, `id_rsa`, `*.key`, `.npmrc`, `.netrc`, `credentials`). Artifacts flow downstream and are downloadable. Exclude the file.
 
 ### WGL046 — Cache poisoning from a merge-request pipeline
 
@@ -282,19 +282,19 @@ Flags an `artifacts:paths:` entry that looks like a credential or sensitive file
 
 Flags a job that writes a cache (push policy) and is reachable from merge-request pipelines. An MR can poison the cache for a later protected run that restores the same key. Restrict cache writes to protected refs or scope the key.
 
-> Artifact / `dependencies:` flow across a *protected* boundary depends on a ref's protected status, a project setting not present in emitted YAML — out of scope here.
+> Artifact / `dependencies:` flow across a *protected* boundary depends on a ref's protected status, a project setting not present in emitted YAML, so it is out of scope here.
 
 ### WGL047 — Software fetched and piped to a shell
 
 **Severity:** warning
 
-Flags a `script:` command that pipes a network download straight into a shell (`curl ... | bash`). The fetched code is unpinned and unverified — download to a file, verify a checksum/signature, then run it.
+Flags a `script:` command that pipes a network download straight into a shell (`curl ... | bash`). The fetched code is unpinned and unverified. Download to a file, verify a checksum/signature, then run it.
 
 ### WGL048 — Pipeline without a name
 
 **Severity:** info
 
-Flags a pipeline that defines a `workflow:` block but no `workflow:name`. A pipeline name aids identification in the GitLab UI and audit output.
+Flags a pipeline that defines a `workflow:` block but no `workflow:name`. A name identifies the pipeline in the GitLab UI and audit output.
 
 > Two #304 items stay out of scope: a broad privileged-service / DinD check (already covered by WGL026 for DinD-TLS and WGL036 for MR-reachable DinD; a runner's privileged isolation is not in emitted YAML) and an optional include/component allowlist policy (configuration, overlapping WGL032's vendored source list).
 

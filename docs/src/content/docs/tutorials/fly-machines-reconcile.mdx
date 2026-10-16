@@ -13,9 +13,9 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 The [`fly-reconcile`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-reconcile)
-example shows chant's differentiator on Fly: a **stateless reconcile**. Fly's
+example shows a **stateless reconcile** on Fly. Fly's
 Machines API has no server-side declarative apply and chant keeps **no state
-file**, so `flyApply` does the reconcile itself — it diffs your typed resources
+file**, so `flyApply` does the reconcile itself. It diffs your typed resources
 against what the platform reports, and prunes only the machines it owns.
 
 Where [`local-fly`](/chant/tutorials/local-fly/) boots and tears down the
@@ -24,7 +24,7 @@ the op repeatedly and watch the reconcile converge.
 
 ## The infra
 
-`src/infra.ts` is one app, a persistent volume, and two machines — `web` (which
+`src/infra.ts` is one app, a persistent volume, and two machines, `web` (which
 mounts the volume) and `worker`:
 
 ```ts
@@ -49,15 +49,15 @@ export { app, data, web, worker };
 ```
 
 The serializer stamps `managed-by: chant` into each machine's `config.metadata`
-on its own — the ownership marker the owned-only prune reads back. `flyApply`
-creates the volume before the machine that mounts it (the dependency is on the
-wire — the volume is POSTed first), and FLY011 checks at build time that the
+on its own, as the ownership marker the owned-only prune reads back. `flyApply`
+creates the volume before the machine that mounts it (the volume is POSTed
+first), and FLY011 checks at build time that the
 mount names a declared volume.
 
 ## The op
 
-`ops/fly.op.ts` is `Build → Apply` only — no emulator lifecycle, so state
-persists between runs:
+`ops/fly.op.ts` is `Build → Apply` only. It leaves the emulator running, so
+state persists between runs:
 
 ```ts
 import { Op, phase, build } from "@intentius/chant/op";
@@ -97,9 +97,9 @@ created: machine/fly-reconcile-demo/worker
 ```
 
 <Aside type="note">
-In a dev checkout, run through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run fly-reconcile` — rather than a globally
-linked `chant`, which double-loads modules here.
+In a dev checkout, run through the workspace CLI with
+`npx tsx ../../packages/core/src/cli/main.ts run fly-reconcile`. A globally linked
+`chant` double-loads modules here.
 </Aside>
 
 ## Watch it reconcile
@@ -107,7 +107,7 @@ linked `chant`, which double-loads modules here.
 The point is what re-running does. State lives on the platform, not in a file, so
 `flyApply` reads it back each time.
 
-**Re-apply is a no-op.** Run it again with no source change — nothing is touched:
+**Re-apply is a no-op.** Run it again with no source change, and nothing is touched:
 
 ```
 unchanged: app/fly-reconcile-demo
@@ -117,7 +117,7 @@ noop: machine/fly-reconcile-demo/worker
 ```
 
 **A config change updates in place.** Edit `web`'s `config.image` in
-`src/infra.ts` and re-run — `flyApply` leases the machine, updates it, and waits
+`src/infra.ts` and re-run. `flyApply` leases the machine, updates it, and waits
 the new instance to `started`. `worker`, unchanged, still no-ops:
 
 ```
@@ -126,8 +126,8 @@ noop: machine/fly-reconcile-demo/worker
 ```
 
 **Removing a machine prunes it.** Delete the `worker` machine from `src/infra.ts`
-and re-run. Prune is on, so the machine chant no longer declares is destroyed —
-it carries the `managed-by: chant` marker:
+and re-run. Prune is on, so the machine chant no longer declares is destroyed,
+since it carries the `managed-by: chant` marker:
 
 ```
 noop: machine/fly-reconcile-demo/web
@@ -143,9 +143,8 @@ curl -X POST http://localhost:4280/v1/apps/fly-reconcile-demo/machines \
   -d '{"name":"legacy","region":"iad","config":{"image":"flyio/hellofly:latest"}}'
 ```
 
-The owned-only prune leaves `legacy` alone — chant deletes only what it owns, so
-a resource created outside chant is never touched. Authority stays with the
-platform; chant reconciles its own slice of it.
+The owned-only prune leaves `legacy` alone. chant deletes only what it owns, so
+it never touches a resource created outside chant.
 
 Stop the emulator when done:
 
@@ -155,7 +154,7 @@ docker rm -f mudflaps
 
 ## Run it against real Fly
 
-Drop the endpoint override and give it a token — the same op, no code change:
+Drop the endpoint override and give it a token. The op and the code stay the same:
 
 ```ts
 phase("Apply", [flyApplyStep("dist/fly.json", { prune: true })]),   // no endpoint
@@ -168,4 +167,4 @@ chant run fly-reconcile
 
 With no `endpoint`, `flyApply` falls through to `FLY_FLAPS_BASE_URL` (or Fly's
 `https://api.machines.dev`) and authenticates with the token. The reconcile is
-the same against real Fly — the emulator is just an endpoint swap.
+the same against real Fly; only the endpoint changes.

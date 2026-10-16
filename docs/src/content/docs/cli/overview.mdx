@@ -4,7 +4,7 @@ description: Complete command-line interface reference for chant
 diataxis: reference
 ---
 
-chant provides a CLI for building, linting, and managing infrastructure definitions.
+The `chant` CLI builds and lints infrastructure definitions, runs Ops, and records deployed state.
 
 ## Installation
 
@@ -44,7 +44,7 @@ chant <command> [options] [path]
 
 ## Lexicon Development Commands
 
-These commands are for **lexicon authors** — project users don't typically need them.
+These commands are for **lexicon authors**.
 
 | Command | Description |
 |---------|-------------|
@@ -56,7 +56,7 @@ These commands are for **lexicon authors** — project users don't typically nee
 
 ## Op Commands
 
-Run named, phased workflows defined in `*.op.ts` files. The local runtime is built in and needs nothing installed; `--on <lexicon>` hands the run to a configured lexicon that hosts one instead.
+Run named, phased workflows defined in `*.op.ts` files. The local runtime runs in the chant process; `--on <lexicon>` hands the run to a configured lexicon that hosts one instead.
 
 | Command | Description |
 |---------|-------------|
@@ -70,7 +70,7 @@ Run named, phased workflows defined in `*.op.ts` files. The local runtime is bui
 
 ## Workspace Commands
 
-A `chant.workspace.json` makes a repository a workspace of members ([Workspace Declaration](/chant/reference/workspace-declaration/)). The records and lineage commands don't need one.
+A `chant.workspace.json` makes a repository a workspace of members ([Workspace Declaration](/chant/reference/workspace-declaration/)). The records and lineage commands also work without one.
 
 | Command | Description |
 |---------|-------------|
@@ -135,7 +135,7 @@ chant doctor
 
 ## File Discovery
 
-The CLI automatically discovers infrastructure files based on these rules:
+The CLI finds infrastructure files by these rules:
 
 **Included:**
 - All `.ts` files in the specified directory and subdirectories
@@ -176,7 +176,7 @@ export default {
 
 ## Error Handling
 
-The CLI provides structured error output for different types of errors:
+The CLI reports errors in two groups:
 
 ### Discovery Errors
 
@@ -194,7 +194,7 @@ Show stack traces on errors. For `chant build`, also list every resolved build p
 
 ### `--help, -h`
 
-Display help information for the CLI.
+Print help for the CLI.
 
 ```bash
 chant --help

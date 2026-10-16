@@ -1,6 +1,6 @@
 ---
 title: Fly Deploy with Checkpoint Rollback
-description: Wrap a transactional rollback boundary around a Fly App + Machine deploy, using a Sprite checkpoint as the commit point — when a risky post-deploy step fails, the sandbox rewinds to its known-good checkpoint. Runs offline against emulators, or against real Fly + real Sprites by changing two environment variables.
+description: Wrap a transactional rollback boundary around a Fly App + Machine deploy, using a Sprite checkpoint as the commit point. When a risky post-deploy step fails, the sandbox rewinds to its known-good checkpoint. Runs offline against emulators, or against real Fly + real Sprites by changing two environment variables.
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/fly-deploy-rollback/.
@@ -16,11 +16,11 @@ The [`fly-deploy-rollback`](https://github.com/INTENTIUS/chant/tree/main/example
 example is for teams already on Fly Machines. It wraps a **transactional rollback
 boundary** around a Fly deploy, using a Sprite checkpoint as the commit point:
 
-- **declarative infra-as-code** for your Machines — a Fly `App` and a `Machine`
+- declarative infra-as-code for your Machines: a Fly `App` and a `Machine`
   you author in TypeScript, applied straight to the Machines API;
-- a **Sprite sandbox** (Fly's stateful, checkpointable VM) whose checkpoint is a
+- a Sprite sandbox (Fly's stateful, checkpointable VM) whose checkpoint is a
   clean rewind point;
-- **checkpoint-as-compensation** — when a risky post-deploy step fails, restoring
+- checkpoint-as-compensation: when a risky post-deploy step fails, restoring
   the checkpoint rewinds the whole sandbox to its known-good state in roughly the
   time a VM restore takes, instead of a hand-written undo.
 
@@ -33,8 +33,7 @@ points at real Fly + real Sprites by changing two environment variables.
 | `fly-deploy-guarded` | the rollback climax — a risky follow-up step fails and the Sprite rewinds |
 
 <Aside type="note">
-The deploy itself — `build:fly` then `flyApply` — is orchestrated by the Op, not
-run from inside the Sprite. The Sprite is a stateful sandbox that holds workspace
+The Op runs the deploy itself (`build:fly`, then `flyApply`) outside the Sprite. The Sprite is a stateful sandbox that holds workspace
 state and whose checkpoint is the rollback boundary. The point is the boundary:
 checkpoint = commit, restore = rollback.
 </Aside>
@@ -47,8 +46,8 @@ It composes two smaller examples:
 
 ## The infra to deploy
 
-`src/infra.ts` is one Fly `App` and one `Machine` — the smallest complete
-deploy, authored declaratively:
+`src/infra.ts` is one Fly `App` and one `Machine`, the smallest complete
+deploy:
 
 ```ts
 import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
@@ -77,8 +76,8 @@ owned-only prune reads back.
 ## Prerequisites
 
 - Node.js and `npm`.
-- Docker (for the offline run — it boots the `spritzer` and `mudflaps` emulators
-  in containers). Real mode needs no Docker.
+- Docker for the offline run, which boots the `spritzer` and `mudflaps` emulators
+  in containers. Real mode needs no Docker.
 
 ## Run it offline
 
@@ -101,9 +100,9 @@ plan, `flyApply` the App + Machine (waiting each machine to `started`), verify,
 then tear down.
 
 <Aside type="note">
-In a dev checkout, run the Op through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run deploy` — rather than a globally
-linked `chant`, which double-loads modules here and can produce an empty plan. A
+In a dev checkout, run the Op through the workspace CLI with
+`npx tsx ../../packages/core/src/cli/main.ts run deploy`. A globally linked
+`chant` double-loads modules here and can produce an empty plan. A
 normal install of `chant` does not have this quirk.
 </Aside>
 
@@ -111,8 +110,8 @@ normal install of `chant` does not have this quirk.
 
 `fly-deploy-guarded` is the same setup, then a risky follow-up step (`./risky.sh`, run
 in the Sprite) corrupts the sandbox's state and exits non-zero. The failing
-`RiskyChange` phase triggers the Op-level `onFailure` `Rollback`, which restores
-the `known-good` checkpoint — rewinding the whole sandbox — then proves the rewind
+`RiskyChange` phase triggers the Op-level `onFailure` `Rollback`. It restores
+the `known-good` checkpoint to rewind the whole sandbox, then proves the rewind
 and cleans up. It exits non-zero on purpose:
 
 ```

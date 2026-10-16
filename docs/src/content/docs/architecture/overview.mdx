@@ -1,16 +1,16 @@
 ---
 title: Architecture Overview
-description: Understanding chant's architecture and the build/lint pipeline
+description: chant's packages and the build/lint pipeline
 diataxis: explanation
 ---
 
-chant is a type system for operations. You declare intent in TypeScript, the system validates it with semantic rules, and synthesizes artifacts for your target platform.
+chant validates TypeScript declarations with semantic lint rules and compiles them into artifacts such as CloudFormation templates and Kubernetes manifests.
 
 ## Concepts
 
 ### Lexicons
 
-A lexicon is a collection of types and semantic lint rules for an operational area. Each lexicon brings its own vocabulary (types) and grammar (semantic rules). The system is extensible — implement the `Serializer` interface to create a lexicon for any operational area.
+A lexicon is a collection of types and semantic lint rules for an operational area. Each lexicon brings its own types and semantic rules. To add a lexicon for any operational area, implement the `Serializer` interface.
 
 ### The Pipeline
 
@@ -24,7 +24,7 @@ build  →  lint
 
 ### @intentius/chant
 
-The foundation — lexicon-agnostic type system, pipeline, and codegen infrastructure:
+The lexicon-agnostic type system, pipeline, and codegen infrastructure:
 
 - **Type system** — `Declarable`, `Intrinsic`, `Value<T>`, `AttrRef`
 - **Discovery** — file scanning, module imports, entity collection, dependency graph
@@ -35,7 +35,7 @@ The foundation — lexicon-agnostic type system, pipeline, and codegen infrastru
 - **LSP providers** — generic lexicon-based completion and hover
 - **Runtime factories** — `createResource`/`createProperty` for Declarable-marked constructors
 
-The core has no lexicon-specific knowledge. It provides the machinery that lexicons plug into. The codegen layer provides parameterized pipelines — lexicons supply callbacks and data tables, core handles orchestration.
+The core has no lexicon-specific knowledge; lexicons plug into it. The codegen layer provides parameterized pipelines — lexicons supply callbacks and data tables, core handles orchestration.
 
 The CLI is included in this package:
 

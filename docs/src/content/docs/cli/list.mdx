@@ -32,7 +32,7 @@ chant list --components --format json
 
 ## `--components`
 
-`chant list --components` scans for `*.component.ts` files and lists every exported [`Component`](/chant/components/component-contract/), one row per component (name, [archetype](/chant/components/component-contract/#archetypes), `dependsOn`, whether it has a `build`, and its phase names). Archetype is shown even when a component's declaration omits it explicitly — inferred the same way `chant describe --components`'s JSON projection fills it in.
+`chant list --components` scans for `*.component.ts` files and lists every exported [`Component`](/chant/components/component-contract/), one row per component (name, [archetype](/chant/components/component-contract/#archetypes), `dependsOn`, whether it has a `build`, and its phase names). Archetype is shown even when a component's declaration omits it, inferred the same way `chant describe --components`'s JSON projection fills it in.
 
 ```
 NAME             ARCHETYPE          DEPENDS ON    PHASES

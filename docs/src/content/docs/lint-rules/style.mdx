@@ -4,7 +4,7 @@ description: Structural and naming convention rules
 diataxis: reference
 ---
 
-Core style rules enforce structural and naming conventions in chant projects. These rules apply to all projects regardless of lexicon.
+Core style rules check structure and naming in every chant project, whatever the lexicon.
 
 ---
 
@@ -61,7 +61,7 @@ export const overview = new Dashboard({
 A lexicon that does not implement `propertyClassNames()` gets the rule on every constructor, as before.
 
 :::note
-This rule is automatically skipped inside `Composite()` factory callbacks, where inline construction is expected. See [Composite Rules](/chant/lint-rules/composite/).
+This rule skips `Composite()` factory callbacks, where inline construction is expected. See [Composite Rules](/chant/lint-rules/composite/).
 :::
 
 ---
@@ -96,7 +96,7 @@ Only applies to exported variables initialized with `new` expressions.
 
 ## COR009: File Declarable Limit
 
-Files should not contain too many resource declarations. The default limit is 8.
+A file may hold up to 8 resource declarations by default.
 
 Only resources count. The classes a lexicon lists in its plugin's `propertyClassNames()` are property-kind and are left out. A Grafana dashboard file with twenty panels inside one dashboard counts as one declarable. A lexicon that does not implement `propertyClassNames()` has every declarable counted, as before.
 
@@ -108,7 +108,7 @@ Only resources count. The classes a lexicon lists in its plugin's `propertyClass
 
 **Fix:** Split the file by concern. For example, separate networking resources from compute resources.
 
-The limit can be configured:
+Configure the limit:
 
 ```typescript
 // chant.config.ts
@@ -142,13 +142,13 @@ import { isDeclarable, type Declarable } from "@intentius/chant";
 const d: Declarable = /* ... */;
 ```
 
-This rule is auto-fixable — `chant lint --fix` removes the redundant `import type` line.
+`chant lint --fix` removes the redundant `import type` line.
 
 ---
 
 ## COR013: Single-Concern File
 
-Files should not mix resource declarations with configuration/property declarations. Resources (e.g., `Bucket`, `Function`, `Role`) and properties (e.g., `BucketEncryption`, `VersioningConfiguration`, `PublicAccessBlockConfiguration`) belong in separate files.
+Keep resources (e.g., `Bucket`, `Function`, `Role`) and properties (e.g., `BucketEncryption`, `VersioningConfiguration`, `PublicAccessBlockConfiguration`) in separate files.
 
 **Severity:** info
 

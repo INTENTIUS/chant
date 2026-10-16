@@ -4,15 +4,15 @@ description: A declared, checkable claim about what a change should DO — not j
 diataxis: explanation
 ---
 
-Everything chant validates before this feature is about shape. Lint rules, post-synth checks, EVL — all of it answers "is this declaration well-formed." None of it answers "what will this change do." A composite refactor that was supposed to be plan-neutral can quietly propose replacing a database, and nothing catches it until someone runs `chant lifecycle plan` and reads the output — or worse, until `chant lifecycle apply` runs it.
+Lint rules, post-synth checks and EVL answer "is this declaration well-formed." None of them answers "what will this change do." A composite refactor that was supposed to be plan-neutral can propose replacing a database, and nothing catches it until someone runs `chant lifecycle plan` and reads the output — or worse, until `chant lifecycle apply` runs it.
 
-A **plan scenario** closes that gap: a declared expectation about the resulting change set, checkable without a cluster, without credentials, in CI, on every PR.
+A **plan scenario** is a declared expectation about the resulting change set. CI checks it on every PR, with no cluster and no credentials.
 
 ## The three inputs, and which one moves
 
 A plan is a function of three inputs: declared source, the prior snapshot, and a live observation. Two of the three are already inert, versioned data chant controls — declared source is deterministic by construction (EVL), and snapshots are already stored as data on the `chant/lifecycle` orphan branch. The third — live observation — is the only impure one, and it arrives through one substitutable interface: `describeResources()`. Feed that interface a fixture instead of a cluster, and the whole plan becomes a pure function of data.
 
-That's the property that makes this possible: not a new capability bolted onto chant's plan engine, but the existing one run against recorded data instead of a live read.
+Plan scenarios run chant's existing plan engine against recorded data instead of a live read.
 
 ## Declaring a scenario
 

@@ -16,7 +16,7 @@ import dataBucketSrc from '../../../../../lexicons/aws/examples/lambda-api/src/d
 import mainSrc from '../../../../../lexicons/aws/examples/lambda-function/src/main.ts?raw';
 
 <Aside type="tip" title="Prefer a runnable example?">
-The [getting-started example](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started) teaches chant in levels — clone it, run `npm run build` / `npm run lint` / `npm run list`, and read up from pure synthesis. This page is the from-scratch walkthrough.
+The [getting-started example](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started) teaches chant in levels. Clone it, run `npm run build` / `npm run lint` / `npm run list`, and work up from the build. This page starts from an empty directory.
 </Aside>
 
 ## Step 1: Install chant
@@ -54,11 +54,11 @@ Resource files import types from the lexicon and reference sibling exports throu
 
 <Code code={dataBucketSrc} lang="typescript" title="src/data-bucket.ts" />
 
-Every property is typed — your editor autocompletes `bucketName`, `bucketEncryption`, `sseAlgorithm`, and catches typos immediately. Cross-file references like `bucketEncryption` are resolved through standard imports at build time.
+Every property is typed, so your editor autocompletes `bucketName`, `bucketEncryption` and `sseAlgorithm`, and flags typos as you type. Cross-file references like `bucketEncryption` are resolved through standard imports at build time.
 
 ### Composites
 
-Built-in composites bundle common resource patterns into reusable factories:
+Built-in composites are functions that create a common group of resources:
 
 <Code code={mainSrc} lang="typescript" title="src/main.ts" />
 
@@ -71,7 +71,7 @@ For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cro
 :::
 
 :::caution[Property constraints]
-Resource properties must be statically evaluable — literals, constants, and cross-resource references only. `chant build` reduces supported files to data with no execution at all; a file outside that subset falls back to being imported and run, which the evaluability rules keep safe. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for supported patterns.
+Resource properties must be statically evaluable: literals, constants and cross-resource references only. `chant build` reduces supported files to data with no execution at all; a file outside that subset falls back to being imported and run, which the evaluability rules keep safe. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for supported patterns.
 :::
 
 ## Step 4: Build
@@ -84,7 +84,7 @@ The build command discovers all `.ts` files, collects exported declarables, reso
 
 ## Step 5: Run an Op
 
-Resources synthesize to artifacts. **Ops** *execute* — phased, with retries and rollback. Write a minimal one:
+Resources build to files. An **Op** runs phases, with retries and rollback. Write a minimal one:
 
 ```typescript
 // hello.op.ts
@@ -112,11 +112,11 @@ chant run hello
 Op "hello" completed in 0.1s
 ```
 
-Nothing had to be installed and nothing had to be running: `Op`, `phase` and `shell` come from `@intentius/chant/op`, and `chant run` executes the phases in this process. A gate in the Op works here too — the run reads the gate ledger and either walks through or records that it is waiting. When an Op needs a machine of its own, a standing record, or a cadence nobody triggers, `chant run <op> --on fountain` hands the same declaration to a steward. See [Ops as teammates](/chant/concepts/durable-workflows/).
+`Op`, `phase` and `shell` come from `@intentius/chant/op`, and `chant run` executes the phases in this process. A gate works here too: the run reads the gate ledger and either walks through or records that it is waiting. When an Op needs a machine of its own, a standing record, or a cadence nobody triggers, `chant run <op> --on fountain` hands the same declaration to a steward. See [Ops as teammates](/chant/concepts/durable-workflows/).
 
 ## Step 6: See drift, decide what to do
 
-Once resources are deployed, chant tells you when the cloud and your source disagree — without hosting a state file:
+Once resources are deployed, chant reports where the cloud and your source differ, with no hosted state file:
 
 ```bash
 chant lifecycle diff prod --live

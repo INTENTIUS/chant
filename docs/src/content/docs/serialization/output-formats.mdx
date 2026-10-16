@@ -4,20 +4,20 @@ description: How lexicons serialize evaluated resources into output formats
 diataxis: reference
 ---
 
-Each lexicon defines its own output format for serialized resources. The core evaluation pipeline produces a provider-agnostic resource graph; the lexicon's serializer converts this into the target platform's native format.
+Each lexicon has its own output format, such as a CloudFormation template or Kubernetes YAML. The core evaluation pipeline produces a provider-agnostic resource graph, and the lexicon's serializer converts it to that format.
 
 ## How Serialization Works
 
-1. **Evaluation** — chant resolves all TypeScript expressions, imports, and references into concrete values
-2. **Property mapping** — Property names are converted from TypeScript conventions to the target format's conventions
-3. **Output generation** — The lexicon serializer emits the final output
+1. chant resolves all TypeScript expressions, imports and references into concrete values.
+2. Property names are converted from TypeScript conventions to the target format's.
+3. The lexicon serializer writes the output.
 
 ## Common Behaviors
 
-All lexicon serializers share these behaviors:
+Every lexicon serializer:
 
-- **Deterministic output** — Resources are serialized in a stable order, making output safe for version control and diff-based review
-- **Null handling** — Properties set to `null` are omitted from output objects; `null` values inside arrays are preserved
-- **Reference resolution** — Cross-resource references are converted to the target format's reference mechanism
+- writes resources in a stable order, so the output is safe for version control and diff review
+- omits properties set to `null` from output objects, and keeps `null` values inside arrays
+- converts cross-resource references to the target format's reference syntax
 
 See your lexicon's documentation for the specific output format.

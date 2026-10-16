@@ -1,6 +1,6 @@
 ---
 title: Post-Synth Check Guide
-description: Writing comprehensive post-synth checks for your lexicon
+description: Write post-synth checks for your lexicon
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicon-authoring/post-synth-checks/.
@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Post-synth checks validate the serialized output after the build pipeline completes. They catch issues in the generated templates that pre-synth rules (which operate on TypeScript AST) cannot detect.
+Post-synth checks validate the serialized output after the build. They catch problems in the emitted templates that pre-synth rules, which read the TypeScript AST, cannot see.
 
 ## Anatomy of a PostSynthCheck
 
@@ -54,12 +54,12 @@ The definitions are in `packages/core/src/lint/post-synth.ts`.
 
 ### `ctx.docs` — the parsed-output view (chant #975)
 
-`ctx.outputs` is raw serialized text. Reasoning about *structure* — "does this
+`ctx.outputs` is raw serialized text. Reasoning about *structure* ("does this
 manifest set `hostNetwork: true`", "does this CFN resource have an
-`Encrypted` property" — means parsing it first, and every check that reaches
-for `ctx.outputs` directly reinvents that parse. `ctx.docs` is the shared,
-parse-once alternative: `ctx.outputs` run through `parseOutputDocs` once per
-build and cached, so every check reads the same array instead of re-parsing.
+`Encrypted` property") means parsing it first, and every check that reads
+`ctx.outputs` directly repeats that parse. `ctx.docs` is `ctx.outputs` run
+through `parseOutputDocs` once per build and cached, so every check reads the
+same array.
 
 ```typescript
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
@@ -105,15 +105,14 @@ per document. `SerializerResult.files` entries (a nested CloudFormation
 stack template, a sidecar manifest) are parsed the same way and tagged with
 `file`.
 
-**Malformed documents are never thrown** — a document `parseOutputDocs`
+**Malformed documents are never thrown.** A document `parseOutputDocs`
 cannot make sense of (invalid syntax, or content that parses to a bare
-scalar rather than an object/array) is still returned, with `error` set and
-`value: undefined`, rather than crashing the whole build or silently
-vanishing. Filter with `.filter((d) => !d.error)` to work with only the
+scalar rather than an object/array) is returned with `error` set and
+`value: undefined`, so it neither crashes the build nor vanishes. Filter with `.filter((d) => !d.error)` to work with only the
 usable documents, the way the example above does.
 
-Two small helpers round out the `,remain`-style ergonomic — decode the
-fields you care about, leave the rest untouched and unvalidated:
+Two small helpers decode the fields you care about and leave the rest
+untouched and unvalidated (the `,remain` style):
 
 ```typescript
 import { pick, get } from "@intentius/chant/lint/post-synth";
@@ -125,17 +124,16 @@ const podSpec = get(doc.value, "spec.template.spec");
 const { kind, metadata } = pick<K8sManifest>(doc.value, ["kind", "metadata"]);
 ```
 
-`pick`/`get` are deliberately not a query DSL or JSONPath engine — no
-wildcards, no predicates. Selector languages over the *source* AST belong in
-`declarative.ts`; this is output-side, and stays small.
+`pick`/`get` take a plain path, with no wildcards or predicates. Selector
+languages over the *source* AST belong in `declarative.ts`; this is
+output-side and stays small.
 
 `ctx.docs` is `undefined`-typed only for lexicon test files that build a
-`PostSynthContext` object literal by hand and predate this field — every
+`PostSynthContext` object literal by hand and predate this field. Every
 context chant itself constructs (`chant build`, `chant lint`, `policyGate`,
 the sandboxed policy runner, and `@intentius/chant-test-utils`'s
 `createPostSynthContext`/`makePostSynthCtx`/`makePostSynthCtxFromFiles`)
-populates it, so `ctx.docs ?? []` is a defensive habit, not something you
-should expect to hit in a normal build.
+populates it, so `ctx.docs ?? []` only guards those old hand-built literals.
 
 ## PostSynthDiagnostic
 
@@ -155,16 +153,14 @@ Each diagnostic requires:
 ### `missing`, the finding is an absence, not a defect (chant #2113)
 
 Most checks flag something present and wrong, misconfigured or invalid. Some
-checks flag the opposite. Nothing is there at all. The terraform lexicon's
-TF001 is the example. A root module with no `backend`/`cloud` block has
-nothing to set `entity` to, because the thing that's wrong is that a block
-*doesn't* exist.
+checks flag something missing. The terraform lexicon's TF001 is the example.
+A root module with no `backend`/`cloud` block has nothing to set `entity` to,
+because what's wrong is a block that *doesn't* exist.
 Snyk's policy-engine spec names this the **missing-resource archetype**, a
 policy whose `info` carries a `resource_type` instead of a `resource`,
 "since we don't have one." It's the only tool in a 2026 survey of Terraform
 lint/scan tools with a first-class shape for it. trivy's own inline-ignore
-comments admit they cannot suppress an absence finding, for exactly this
-reason.
+comments admit they cannot suppress an absence finding, for this reason.
 
 ```typescript
 {
@@ -188,7 +184,7 @@ finding on.
 
 ## Category Taxonomy
 
-Organize checks into categories for clarity:
+Put each check in one of four categories:
 
 ### Security
 Encryption, TLS, HTTPS, access control, identity configuration.
@@ -283,7 +279,7 @@ the same package. It takes an entity map as its third argument. Building the
 
 ## Cross-resource (bundle-join) checks
 
-The examples above judge one resource in isolation. The higher-value checks judge a resource **against the rest of the bundle** — a reference that must resolve, an owner that must exist, a name that must be unique across the output. The shape is always the same: collect every manifest of one kind, then validate each manifest of another kind against that set.
+The examples above judge one resource in isolation. The higher-value checks judge a resource **against the rest of the bundle**: a reference that must resolve, an owner that must exist, a name that must be unique across the output. The shape is always the same: collect every manifest of one kind, then validate each manifest of another kind against that set.
 
 `ARGO003` in the k8s lexicon (`lint/post-synth/argo003.ts`) is the reference. It gathers the registered cluster Secrets, then checks that every Argo `Application` targets one of them:
 
@@ -318,7 +314,7 @@ check(ctx: PostSynthContext): PostSynthDiagnostic[] {
 }
 ```
 
-The helpers do the parsing so the check stays about the rule, not YAML wrangling:
+The helpers do the parsing, so the check holds only the rule:
 
 | Helper | Returns |
 |---|---|
@@ -326,9 +322,9 @@ The helpers do the parsing so the check stays about the rule, not YAML wrangling
 | `manifestsOfKind(manifests, kind)` | the manifests of one kind |
 | `docsToManifests(ctx)` | the `ctx.docs` → `K8sManifest[]` bridge, from `k8s-helpers.ts` |
 
-Keep helpers in a `*-helpers.ts` file — the barrel generator skips them (they export no check), so a shared-utility module never registers as a rule.
+Keep helpers in a `*-helpers.ts` file. The barrel generator skips files that export no check, so a shared-utility module never registers as a rule.
 
-This join is the pattern behind conformance checks generally — a custom resource against the schema that defines it, a composition against the kinds it references. Any check that needs to know about *other* resources in the output is a post-synth check, and this is its shape.
+The same join underlies conformance checks in general: a custom resource against the schema that defines it, a composition against the kinds it references. Any check that needs to know about *other* resources in the output is a post-synth check, and this is its shape.
 
 ### One build root at a time (chant #1939)
 
@@ -336,7 +332,7 @@ A bundle-join check only sees the build root of the *current* `chant build` invo
 
 The k8s lexicon's `WK8505` (`lint/post-synth/wk8505.ts`) shows why this matters. It warns when a committed-encrypted secret has no Flux `Kustomization` setting `spec.decryption`, and that join needs the secret and the Kustomization declared in the same build root. A project that splits workload and Flux wiring into separate roots, a common shape as a project grows, gets no warning even when the decryption wiring is genuinely missing.
 
-Chant #1939 tracks whether checks like this should get an opt-in project-level mode that runs across every build root. Until that lands, a check that joins across resources stays single-build-root-scoped by construction, and an author has two options today: keep the resources a check joins across in the same build root, or accept that the check will not fire once those resources live apart.
+Chant #1939 tracks whether checks like this should get an opt-in project-level mode that runs across every build root. Until that ships, a check that joins across resources sees one build root, and an author has two options: keep the resources a check joins across in the same build root, or accept that the check will not fire once those resources live apart.
 
 ## Universal Check Patterns
 
@@ -362,11 +358,11 @@ that isn't known statically? Re-deriving that by hand in every check is how
 you end up with a dozen slightly different regexes for "is this a reference."
 
 tflint's OPA ruleset hands a policy `{value, unknown, sensitive, ephemeral,
-range}` per attribute for exactly this reason. One accessor, read uniformly,
+range}` per attribute for this reason. One accessor, read uniformly,
 instead of every rule re-deriving it. The terraform lexicon's `attr()`
 (`src/hcl/value.ts`) is chant's version of the same idea, scoped to what a
 static JSON-round-tripped parse (no live evaluation, no position data) can
-actually answer:
+answer:
 
 ```typescript
 import { attr } from "./hcl/value";
@@ -386,14 +382,12 @@ value (a nested block hcl2json encodes the same way counts too),
 untouched source value. A check that needs something this envelope doesn't
 model can still reach for it directly.
 
-The lesson generalizes past HCL. Any lexicon parsing a format where "is this
-attribute a literal or does it point somewhere else" comes up more than once
-across its checks is a candidate for the same small accessor, instead of
-each check answering that question its own way.
+The same holds past HCL. A lexicon whose checks keep asking whether an
+attribute is a literal or a reference should get the same small accessor.
 
 ## Wiring Checks into Plugin
 
-Checks are **discovered by directory**, not registered by hand. Any file in `lint/post-synth/` that exports a `PostSynthCheck` is picked up automatically — the generator scans the directory and emits a committed barrel (`lint/post-synth/index.ts`, marked `DO NOT EDIT`) with explicit static imports, and the plugin's `postSynthChecks()` returns that barrel:
+Checks are **discovered by directory**. Any file in `lint/post-synth/` that exports a `PostSynthCheck` is picked up. The generator scans the directory and emits a committed barrel (`lint/post-synth/index.ts`, marked `DO NOT EDIT`) with explicit static imports, and the plugin's `postSynthChecks()` returns that barrel:
 
 ```typescript
 // plugin.ts
@@ -404,7 +398,7 @@ postSynthChecks() {
 }
 ```
 
-So adding a check is two steps: drop the file, then regenerate the barrel.
+To add a check, drop in the file and regenerate the barrel.
 
 ```bash
 npm run generate:barrels          # scripts/generate-post-synth-barrels.ts, all lexicons
@@ -416,14 +410,14 @@ skipped, so name shared utilities `*-helpers.ts` and keep them beside the checks
 Detection reuses the same `isPostSynthCheck` predicate the runtime uses, so the
 barrel contains exactly what discovery would.
 
-> Pre-synth rules (imperative and declarative) are the exception — they are **not** auto-discovered. Import them into the `lintRules()` array in your `plugin.ts`. See [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
+> Pre-synth rules (imperative and declarative) are the exception and are **not** auto-discovered. Import them into the `lintRules()` array in your `plugin.ts`. See [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
 
 ## Audit metadata — `auditCatalog()`
 
 A check's own definition says what it looks for. It does not say how severe a
 finding is, whether a fix is mechanical, what authority backs the rule, or what
 to title it in a report. `chant audit` needs all four, and gets them from the
-lexicon's `auditCatalog()` — a map from check id to `RuleMeta`, merged over
+lexicon's `auditCatalog()`, a map from check id to `RuleMeta`, merged over
 core's small static catalog by `resolveAuditCatalog`:
 
 ```typescript
@@ -459,10 +453,10 @@ auditCatalog() {
 constants (`K8S_PSS`, `SCORECARD_PINNED`, `GH_SECRETS`, and others) from the same
 module; reach for one before writing your own.
 
-Contributing nothing is not neutral. `resolveAuditCatalog` skips a lexicon that
-omits the method **silently**, so every one of its findings reaches the report
-with no title, tier, fix kind, or category — which is how fly's and render's
-six checks surfaced before chant #1346. `chant dev check-lexicon` warns at tier
+Omitting the method costs you. `resolveAuditCatalog` skips such a lexicon
+**silently**, so every one of its findings reaches the report with no title,
+tier, fix kind, or category. fly's and render's six checks surfaced that way
+before chant #1346. `chant dev check-lexicon` warns at tier
 2 when a shipped check has no entry, and a repo-level test enumerates every
 lexicon and fails on a gap in either direction.
 
@@ -476,7 +470,7 @@ Two details worth knowing:
   exception: a lexicon that
   ships `auditEntities` (parse-to-graph) has its classified files parsed back
   into the entity graph during an audit, so its entity-reading checks do fire
-  and stay `yamlBased: true` — fountain does this; only its source-level lint
+  and stay `yamlBased: true`. fountain does this; only its source-level lint
   rule (FTN001) is `yamlBased: false`.
 - **Cross-cutting core ids** (`COR*`, `EXT*`) belong to core's static catalog,
   not to any lexicon, and are excluded from both the check and the test.
@@ -485,9 +479,9 @@ Two details worth knowing:
 
 A rule id is public API the day it ships. A project's `lint.rules`, a
 suppression comment, someone's dashboard, all name it. trivy's checks carry
-`id`, `long_id`, `aliases` and a `deprecated: true` field for exactly this
-reason. A rule can be renamed, or retired, without every existing reference
-to its old id going dark. `RuleMeta` carries the same two fields:
+`id`, `long_id`, `aliases` and a `deprecated: true` field for this reason. A
+rule can be renamed or retired while existing references to its old id keep
+working. `RuleMeta` carries the same two fields:
 
 ```typescript
 export const myAuditCatalog: Record<string, RuleMeta> = {
@@ -519,7 +513,7 @@ silently matching nothing.
 
 A family of more than a handful of rules eventually needs a "the good ones"
 subset distinct from "every rule we ship." tflint-ruleset-terraform ships
-`recommended` (13 of its 20) and `all` for exactly this. A lexicon opts in by
+`recommended` (13 of its 20) and `all` for this. A lexicon opts in by
 adding `lintPresets()` to its plugin, returning a preset name mapped to the
 check ids that preset enables:
 
@@ -539,9 +533,8 @@ already lives. A project picks a preset through the `presets` field under
 `lint` in its config, keyed by lexicon name. The [Rule
 Configuration](/chant/lint-rules/configuration/#selecting-a-lexicon-preset-chant-2113) page
 covers the project-facing side, including the default and the precedence
-against `lint.rules`. A lexicon that omits `lintPresets()` is unaffected.
-Every one of its findings is reported regardless of `lint.presets`, same as
-before this existed.
+against `lint.rules`. For a lexicon that omits `lintPresets()`, every finding
+is reported whatever `lint.presets` says.
 
 ### Prior art in `audit-lineage.ts`
 

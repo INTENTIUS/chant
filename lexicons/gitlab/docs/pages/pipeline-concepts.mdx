@@ -11,9 +11,9 @@ Every exported `Job` declaration becomes a job entry in the generated `.gitlab-c
 <Diagram name="pipeline-hierarchy" alt="GitLab Pipeline with stages (build, test, deploy) each containing jobs, with stage dependencies flowing left to right" caption="GitLab CI pipeline hierarchy" />
 
 - Property names use spec-native snake_case (`expire_in`, `allow_failure`)
-- Converts export names to kebab-case job keys (`buildApp` → `build-app`)
+- Converts export names to kebab-case job keys (`buildApp` becomes `build-app`)
 - Collects stages from all jobs into a `stages:` list
-- Collapses single-property objects (`new Image({ name: "node:20" })` → `image: node:20`)
+- Collapses single-property objects (`new Image({ name: "node:20" })` becomes `image: node:20`)
 
 {{file:docs-snippets/src/job-basic.ts}}
 
@@ -84,7 +84,7 @@ Key properties:
 
 ## Stages
 
-Stages define the execution order of a pipeline. The serializer automatically collects unique stage values from all jobs:
+Stages define the execution order of a pipeline. The serializer collects unique stage values from all jobs:
 
 {{file:docs-snippets/src/stages.ts}}
 
@@ -133,7 +133,7 @@ The `if` property maps directly to `if:` in the YAML. Use the `CI` pseudo-parame
 
 {{file:docs-snippets/src/environment.ts}}
 
-GitLab tracks deployments to environments and provides rollback capabilities in the UI.
+GitLab tracks deployments to each environment and can roll them back from the UI.
 
 ## Images and services
 
@@ -143,7 +143,7 @@ GitLab tracks deployments to environments and provides rollback capabilities in 
 
 ## Workflow
 
-`Workflow` controls pipeline-level settings — when pipelines run, auto-cancellation, and global includes:
+`Workflow` controls pipeline-level settings: when pipelines run, auto-cancellation, and global includes:
 
 {{file:docs-snippets/src/workflow.ts}}
 

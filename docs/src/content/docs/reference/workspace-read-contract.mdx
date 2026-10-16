@@ -4,7 +4,7 @@ description: The versioned contract that behold, hud and agents use to read a wo
 diataxis: reference
 ---
 
-Tools that show a workspace read it through one contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536), D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). behold, hud and agents all read the same JSON documents from the same commands, and an MCP tool wraps those documents rather than defining its own. The contract is made of the [declaration format](/chant/reference/workspace-declaration/) and a JSON Schema for each command's output. One closed list of reason codes and a chant floor for each contract version complete it.
+Tools that show a workspace read it through one contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536), D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). behold, hud and agents all read the same JSON documents from the same commands, and an MCP tool wraps those documents rather than defining its own. The contract is the [declaration format](/chant/reference/workspace-declaration/) and a JSON Schema for each command's output, with one closed list of reason codes and a chant floor for each contract version.
 
 ## Versions
 
@@ -697,7 +697,7 @@ A box block may declare a `factory` and a `listing` ([#3146](https://github.com/
 
 The box's `ship` ([ws-100](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-100-a-box-declares-how-it-ships.md)) says how it ships its staged work to its own site, or is `null`. A surface offers Ship when it is set and shows `pending.files` as the count of changes waiting to ship. To ship, it runs `chant run <ship.op>` in the member's directory with the person's principal in `CHANT_SHIP_BY`, and passes `ship.gate` the way it passes any Op's gate. `serving.commit` is the commit the box's site serves: the latest release in `ship.env`'s ledger under the member.
 
-Both documents carry a top-level `plantable`: `{ plantable, box, reason }`. A workspace is plantable when exactly one member's box block declares `services`, and `box` names that member. Otherwise `box` is `null` and `reason` is `box-none` or `box-several`. Plantability is never a check finding, since a records-only or infra workspace is valid and simply isn't plantable. A host such as a studio's planter reads this field rather than reimplementing the rule.
+Both documents carry a top-level `plantable`: `{ plantable, box, reason }`. A workspace is plantable when exactly one member's box block declares `services`, and `box` names that member. Otherwise `box` is `null` and `reason` is `box-none` or `box-several`. Plantability is never a check finding, since a records-only or infra workspace is valid and isn't plantable. A host such as a studio's planter reads this field rather than reimplementing the rule.
 
 A box block may also declare `replicate`, where the box's work in progress is pushed ([#3172](https://github.com/INTENTIUS/chant/issues/3172)). `status --json` prints it under the member's `box` and reports where each ref stands in the top-level `replication`, as [Work in progress that survives the box](#work-in-progress-that-survives-the-box) describes.
 

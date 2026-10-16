@@ -12,13 +12,12 @@ prompt: |
 ---
 
 `dogwood replay` evaluates a policy set against a recorded event trace and
-returns a verdict per decision point. It is how a temporal policy gets tested
-at all.
+returns a verdict per decision point. It is how you test a temporal policy.
 
 A plain Cedar policy is decidable from its source: given the schema, a build
 can say whether it parses, whether it type-checks, and what it applies to. The
 DWDC and CEDC checks already do that. A temporal policy is not decidable that
-way — whether `formerly within 1h Login::response{ … }` fires depends on a
+way: whether `formerly within 1h Login::response{ … }` fires depends on a
 history nobody has replayed. So the check is a replay against recorded decision
 history, and the answer moves as the history does. That puts it on the observe
 end of the lifecycle dial, beside `WorkflowAuditOp`, with a finding mode as the
@@ -68,8 +67,8 @@ so a phase boundary needs an artifact to be a real boundary.
 The Replay step carries `outcomeAttribute: { name: "Divergences", from: "findings" }`,
 so "show me the replays that found something" is one filter rather than a log
 read. `onFinding` takes `report | issue | pull-request`; `report` prints the
-markdown, and the other two hand back a title and body for whatever opens them
-— the cedar lexicon has no forge client and does not grow one, the same
+markdown, and the other two hand back a title and body for whatever opens them.
+The cedar lexicon has no forge client and does not grow one, the same
 division `workflowSupplyChainAudit` draws. `failOnDivergence` defaults to
 false: an observe-dial Op reports, and a red run is the caller's decision.
 
@@ -164,15 +163,15 @@ Cedar request.
 
 ## The action-naming trap
 
-Action names must be fully qualified — `Drupe::Action::"Read"`, never `Read`. A
+Action names must be fully qualified (`Drupe::Action::"Read"`, never `Read`). A
 short name leaves every temporal predicate unmatched while Cedar still
 authorizes. `traceEvent()` rejects one at construction, as do `entityRef()` and
 `traceEntity()`.
 
 ## Auditing a trace chant did not build
 
-A trace fetched from somewhere else — an AgentCore session history, a `.log`
-recorded by hand — normalizes into the same `TraceEvent` list and takes the
+A trace fetched from somewhere else (an AgentCore session history, a `.log`
+recorded by hand) normalizes into the same `TraceEvent` list and takes the
 same audit:
 
 ```typescript
@@ -187,9 +186,9 @@ const issues = dogwood.auditTrace(events);
 | `out-of-order` | A timestamp goes backwards; history accumulates in file order, so a window sees something different |
 
 Every one of those makes a replay *weaker* rather than making it fail, which is
-the class a green run hides. `decisionKinds` defaults to `["request"]` — a
+the class a green run hides. `decisionKinds` defaults to `["request"]`: a
 history-only event never becomes a Cedar request, so a missing envelope on one
-is not a weakening and is not reported. The truth is whichever kinds the
+is not a weakening and is not reported. The kinds that decide are the ones the
 project's `.dwschema` marks `decision`, and that file is not visible from the
 audit.
 
@@ -215,21 +214,21 @@ verdict. `index` is the position in the *decision* stream, not the trace line
 number, and it shifts whenever a trace gains a history-only event.
 
 `determiningRules` is the second half of the assertion. A decision that comes
-out right for the wrong reason — the correct verdict carried by a different
-rule — is drift the verdict alone cannot show.
+out right for the wrong reason (the correct verdict carried by a different
+rule) is drift the verdict alone cannot show.
 
 What `compareVerdicts` reports: a verdict that differs from the expectation; a
 verdict that matches but was determined by different rules; a decision point an
 expectation named that never occurred; a decision point that occurred and
 nothing expected. Per-evaluation errors are reported even when the expectation
-matched, and — when no expectations were written at all — an errored evaluation
+matched, and when no expectations were written at all an errored evaluation
 is still a finding, because a provider with no inlined Rhai script would
 otherwise replay "clean".
 
 ## The trace format
 
 One event per line. Blank lines are skipped, a leading BOM is stripped, and
-there is **no comment syntax** — a `//` is an ordinary part of a value, so URLs
+there is **no comment syntax**: a `//` is an ordinary part of a value, so URLs
 survive and an attribution header would be parsed as an event and rejected with
 "timepoint must start with `@`".
 
@@ -263,13 +262,13 @@ dropped, because dropping an entry would shift every later index.
 ## It needs the binary, and does not pretend otherwise
 
 The Replay phase shells to upstream's CLI. There is no npm package and no wasm
-build — see [Validation](../dogwood-validation/) for how chant finds a binary
+build; see [Validation](../dogwood-validation/) for how chant finds a binary
 and how to build one.
 
 Without one the step **fails** and says where chant looked. It does not degrade
 to a pass, and an unusable invocation or a fatal (a malformed trace line, an
 unparseable policy set) throws rather than reporting zero divergences. A replay
-that did not happen is not a replay that found nothing — which is also why
+that did not happen is not a replay that found nothing, which is also why
 nothing in gating CI executes the binary.
 
 ## Next

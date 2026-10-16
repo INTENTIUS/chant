@@ -1,6 +1,6 @@
 ---
 title: Network Egress
-description: Every module in chant that can reach the network, which command reaches it, and why — with the offline phases guaranteed by a guard test rather than by assertion.
+description: Every module in chant that can reach the network, which command reaches it and why, and the guard test that keeps the offline phases offline.
 diataxis: reference
 ---
 
@@ -8,22 +8,22 @@ import { Aside } from '@astrojs/starlight/components';
 
 chant sends no telemetry. Nothing in core or in any lexicon reports usage, versions, errors or identities anywhere, and there is no endpoint to opt out of.
 
-What remains is the network chant needs to do its job, and this page is the whole of it: every module that calls a network primitive, which command reaches it, and where it dials. The tables below are generated from `test/egress-catalogue.ts`, which the same test that guards the offline phases checks against the tree on every run. A module that starts calling `fetch` and is not in the catalogue fails CI.
+This page lists all the network chant uses: every module that calls a network primitive, which command reaches it, and where it dials. The tables below are generated from `test/egress-catalogue.ts`, which the same test that guards the offline phases checks against the tree on every run. A module that starts calling `fetch` and is not in the catalogue fails CI.
 
 ## The decision
 
-A first-class air-gapped mode does not belong in core.
+An air-gapped mode does not belong in core.
 
-The network chant needs at apply time is the substrate itself — the AWS, Azure, GCP, Kubernetes or Fly endpoint the project describes. A mode that severed it would sever the product. Every *other* piece an adopter needs to cut already has a per-surface answer: committed spec snapshots for codegen, the forgejo lexicon's mirror base for `uses:` resolution, the build archive's `load-image-on-host` backend for registry-free delivery, and the emulators for a whole substrate.
+At apply time chant must reach the AWS, Azure, GCP, Kubernetes or Fly endpoint the project describes, so a mode that cut that off would leave chant nothing to deploy to. Every *other* connection an adopter needs to cut already has its own fix: committed spec snapshots for codegen, the forgejo lexicon's mirror base for `uses:` resolution, the build archive's `load-image-on-host` backend for registry-free delivery, and the emulators for a whole substrate.
 
-So the story stays an integration pattern, documented here, with the offline half guaranteed by test rather than by claim.
+So offline use is a pattern documented on this page, and a test guarantees the offline phases.
 
 <Aside type="note" title="What is guaranteed and what is enumerated">
-The offline phases are guaranteed: `test/no-egress.e2e.test.ts` runs them over every project in the example corpus with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs, and fails on any call. That one socket patch covers the whole in-process TCP surface — `fetch`, `http`, `https`, `net`, `tls` — regardless of how a module imported it.
+The offline phases are guaranteed: `test/no-egress.e2e.test.ts` runs them over every project in the example corpus with `net.Socket.prototype.connect` and `globalThis.fetch` replaced by throwing stubs, and fails on any call. That one socket patch covers every in-process TCP call (`fetch`, `http`, `https`, `net`, `tls`), however a module imported it.
 
-A child process is not in that process. Rather than imply coverage it does not have, the guard records every spawn and fails on a binary that is not enumerated in the second table below. What a child does of its own — what `git fetch` talks to, what a container runtime pulls — is outside the guard and stated as such.
+The patch does not reach a child process. The second table below lists every binary the offline phases spawn, and the guard fails on any other. It does not see what a child does itself, such as what `git fetch` talks to or what a container runtime pulls. The table marks each of those.
 
-That enumeration is not decoration. Its first finding was a `helm template` on the **build** path: a `HelmRender` declaration resolves at synthesis time and fetches its chart, so "`chant build` reaches no network" is true of the process and not of the machine. The table below says so, and the claim is qualified rather than quietly wrong.
+The spawn list's first finding was a `helm template` on the **build** path: a `HelmRender` declaration resolves at synthesis time and fetches its chart, so "`chant build` reaches no network" is true of the process and not of the machine. The table below says so.
 </Aside>
 
 {/* GENERATED:egress-catalogue:start */}
@@ -213,9 +213,9 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 
 ## Supply chain
 
-None of the above covers how chant and its outputs arrive on a machine, which is a separate question with separate answers.
+The tables above leave out how chant and its outputs arrive on a machine.
 
-`npm install` reaches a registry, like any Node project. A private mirror or an offline cache serves chant the same way it serves anything else — there is no chant-specific endpoint in the install path.
+`npm install` reaches a registry, like any Node project. A private mirror or an offline cache serves chant the same way it serves anything else. The install path has no chant-specific endpoint.
 
 An emitted pipeline references container images and, on GitHub and Forgejo, `uses:` action refs. Those are fetched by the CI runner, not by chant, at a time chant is not running. The forgejo lexicon resolves `uses:` against a configurable mirror base for exactly this reason, so a self-hosted Forgejo with a local action mirror emits refs that resolve inside the perimeter.
 
@@ -227,7 +227,7 @@ Container images that chant itself produces travel in the [build archive](/chant
 |---|---|
 | Codegen | Do not run `chant dev generate`. The generated types and the committed spec snapshot in each lexicon are what a build reads; a lexicon is fully usable on a machine that never fetches a spec. |
 | Kubernetes CRDs | CRD YAML is baked in at generation time, so `chant build` on a project using third-party CRDs stays offline. See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/). |
-| Helm chart renders | Warm the render cache on a networked machine before going offline — `chant build` once, and `~/.chant/helm-renders/` carries every later build. A `HelmRender` pointed at a local chart path instead of a `repo` needs no fetch at all. |
+| Helm chart renders | Warm the render cache on a networked machine before going offline: run `chant build` once, and `~/.chant/helm-renders/` carries every later build. A `HelmRender` pointed at a local chart path instead of a `repo` needs no fetch at all. |
 | Action references | Point the forgejo lexicon at a mirror base, and `uses:` refs resolve against it instead of a public forge. |
 | Image delivery | Use the build archive's `load-image-on-host` publish backend instead of a registry. |
 | A whole substrate | Run against an [emulator](/chant/local-testing/overview/). `chant emulator up` needs the image once; everything after it is loopback. |
@@ -237,16 +237,16 @@ Container images that chant itself produces travel in the [build archive](/chant
 
 `test/egress-catalogue.ts` holds the catalogue as data. `test/no-egress.e2e.test.ts` checks it from three sides on every run:
 
-- **Closure.** A scan of `packages/`, `lexicons/`, `scripts/` and `ops/` finds every module naming a network primitive. It must equal the catalogue exactly — so an added `fetch` fails, and so does a stale row for a call that no longer exists.
-- **Accuracy.** Each row declares which primitives it reaches for, and the scan must agree.
-- **Publication.** The generated block above must match what the catalogue renders, byte for byte. Refresh it with `npm run generate:egress-catalogue`.
+- A scan of `packages/`, `lexicons/`, `scripts/` and `ops/` finds every module naming a network primitive, and it must equal the catalogue exactly. An added `fetch` fails, and so does a stale row for a call that no longer exists.
+- Each row declares which primitives it reaches for, and the scan must agree.
+- The generated block above must match what the catalogue renders, byte for byte. Refresh it with `npm run generate:egress-catalogue`.
 
-A prose audit answers the question once and is wrong after the next merge. This one is answered by the test suite.
+A prose audit is wrong after the next merge. The test suite checks this page on every run.
 
 ## What this is not
 
 It is not a security boundary against project code you do not trust.
 
-The guard is a regression gate over chant's own source, run by chant's own CI, and every mechanism in it is defeatable by code that wants to defeat it — a module can import its own copy of `node:http`, or shell out. That is the same argument [Sandboxed Execution](/chant/architecture/sandbox/#what-is-explicitly-not-isolated-network-egress) makes for why `--sandbox` does not ship a bootstrap-time `fetch` patch and does not claim to block egress: against a hostile file, a userland patch is theatre.
+The guard is a regression gate over chant's own source, run by chant's own CI, and every mechanism in it is defeatable by code that wants to defeat it. A module can import its own copy of `node:http`, or shell out. That is the same argument [Sandboxed Execution](/chant/architecture/sandbox/#what-is-explicitly-not-isolated-network-egress) makes for why `--sandbox` does not ship a bootstrap-time `fetch` patch and does not claim to block egress: against a hostile file, a userland patch stops nothing.
 
-The two are answering different questions. The sandbox asks whether a repository chant does not own can reach out from inside a build; the answer is yes, and the deployment guidance there — a container with no route out, a network namespace, a `seatbelt` profile — is what closes it. This page asks whether chant itself reaches out on the paths you run every day; the answer is no, and a test fails the day that stops being true.
+The two are answering different questions. The sandbox asks whether a repository chant does not own can reach out from inside a build; the answer is yes, and the deployment guidance there (a container with no route out, a network namespace, a `seatbelt` profile) closes it. This page asks whether chant itself reaches out on the paths you run every day; the answer is no, and a test fails the day that stops being true.

@@ -37,7 +37,7 @@ export const myBucket = new _.Resource({
 
 ## Suppression Reasons
 
-Add a reason after `--` to document why a rule is suppressed. The reason is optional and purely informational — it appears in SARIF output for audit trails.
+Add a reason after `--` to document why a rule is suppressed. The reason is optional, changes no behaviour, and appears in SARIF output for audit trails.
 
 ```typescript
 // chant-disable COR001 -- intentional for backwards compat
@@ -46,9 +46,9 @@ Add a reason after `--` to document why a rule is suppressed. The reason is opti
 // chant-disable -- entire file suppressed for migration
 ```
 
-The `--` separator follows the convention used by ESLint, clippy, and shellcheck. Everything after the first ` -- ` is the reason text. The reason is always optional — existing disable comments without `--` continue to work unchanged.
+The `--` separator follows the convention used by ESLint, clippy, and shellcheck. Everything after the first ` -- ` is the reason text. Disable comments without `--` work as before.
 
-When using `--format sarif`, suppressed diagnostics appear in the SARIF output with a `suppressions` array containing the justification text, enabling compliance workflows and audit reporting.
+When using `--format sarif`, suppressed diagnostics appear in the SARIF output with a `suppressions` array that holds the reason text, for compliance and audit reports.
 
 ## Block Comment Syntax
 
@@ -72,7 +72,7 @@ export const helper = { key: "value" };
 file-level only, COMP* composition checks (see
 [Composition Rules](/chant/lint-rules/composition/)). Post-synth checks and
 organizational policies (a lexicon's `WAW019`, a project's `ORG-COST-CENTER`)
-are diagnostics over the *synthesized output*, not source lines — a
-`chant-disable` comment has nothing to anchor to. Suppress those with
+report on the *synthesized output*, which has no source line for a
+`chant-disable` comment to sit on. Suppress those with
 `lint.rules` instead; see [Post-Synth Checks and
 Policies](/chant/lint-rules/configuration/#post-synth-checks-and-policies).

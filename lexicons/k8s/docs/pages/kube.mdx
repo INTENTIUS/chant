@@ -1,6 +1,6 @@
 ---
 title: chant kube
-description: A terminal surface over the typed API client — kubectl-shaped reads with chant's own verdicts, and writes that go through the same machinery as deploys
+description: kubectl-style reads over the typed API client with chant's verdict column, and writes through the same code as deploys
 diataxis: how-to
 group: "Live Cluster"
 prompt: |
@@ -13,9 +13,9 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-`chant kube` is the operator's view of the same live-cluster data that `lifecycle diff --live` and behold consume. Every verb goes through the [typed API client](/chant/lexicons/k8s/api-client/) — same cluster binding, same credentials, same honest error reporting — so what you see in the terminal is what chant's other surfaces see, never a second opinion.
+`chant kube` is the operator's view of the same live-cluster data that `lifecycle diff --live` and behold consume. Every verb goes through the [typed API client](/chant/lexicons/k8s/api-client/), with the same cluster binding, credentials and error reporting, so the terminal shows what `lifecycle diff --live` and behold see.
 
-It mounts through the lexicon command seam, so it exists only in projects whose config loads the `k8s` lexicon.
+The k8s lexicon registers it, so it exists only in projects whose config loads the `k8s` lexicon.
 
 ## The verbs
 
@@ -38,7 +38,7 @@ It mounts through the lexicon command seam, so it exists only in projects whose 
 
 **Absence and unreadability are different answers.** A kind the cluster can't serve, an RBAC denial, or a connection failure renders as *not observed* with its reason — never as `No resources found.`
 
-**Writes share the deploy path.** `apply` and `delete` call the exact functions the Op activities call — same field manager identity (`chant:<stack>`), same conflict surface, same ownership checks. There is no parallel implementation to drift.
+**Writes share the deploy path.** `apply` and `delete` call the functions the Op activities call, with the same field manager identity (`chant:<stack>`), conflict errors and ownership checks. There is no parallel implementation to drift.
 
 <Aside type="note">
 Outside a chant project, the read verbs still work (the verdict column reports `unavailable`); the binding refusal only applies where an environment declares one.
@@ -46,8 +46,8 @@ Outside a chant project, the read verbs still work (the verdict column reports `
 
 ## Try the whole surface live
 
-[behold](https://github.com/INTENTIUS/behold)'s `npm run demo:k8s` is a one-command tour of everything on this page against a real (local) cluster: it brings up a single-node [k3d](https://k3d.io) cluster, deploys a chant-declared app via server-side apply, and walks declared → managed → runtime children → an induced out-of-band change surfacing as field-level drift — including the conflict refusal that names the intruding field manager. Docker is the only prerequisite; the cluster tears itself down on exit.
+[behold](https://github.com/INTENTIUS/behold)'s `npm run demo:k8s` is a one-command tour of everything on this page against a real (local) cluster: it brings up a single-node [k3d](https://k3d.io) cluster, deploys a chant-declared app via server-side apply, and shows the declared objects, their managed fields and runtime children, then an out-of-band change reported as field-level drift, including the conflict refusal that names the other field manager. Docker is the only prerequisite; the cluster tears itself down on exit.
 
 ## Deliberate gaps
 
-`logs --follow` (needs a streaming seam the client doesn't have yet), `-o go-template`, kubectl's per-kind `describe` templates, and `top`'s quantity summation. Each fails loudly rather than approximating.
+`logs --follow` (needs a streaming seam the client doesn't have yet), `-o go-template`, kubectl's per-kind `describe` templates, and `top`'s quantity summation. Each fails with an error instead of approximating.

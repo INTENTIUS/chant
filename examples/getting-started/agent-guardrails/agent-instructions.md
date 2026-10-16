@@ -1,6 +1,6 @@
 # Agent instructions
 
-This is a chant repo. You author typed TypeScript and verify it. You do not
+This is a chant repo. You author TypeScript and verify it. You do not
 deploy. These rules constrain an agent working in this directory; a human reader
 following the tutorial still runs the deploy steps themselves.
 

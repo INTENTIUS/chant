@@ -68,7 +68,7 @@ spec-native casing and are passed through unchanged; the values are what need
 converting.
 
 Use `walkValue` and `SerializerVisitor` from `@intentius/chant/serializer-walker`
-to handle all of them generically. The walker owns the dispatch chain (null,
+to handle all three. The walker owns the dispatch chain (null,
 `AttrRef`, `Intrinsic`, `Declarable`, array, object) and calls your visitor for
 the three cases that are format-specific:
 
@@ -218,7 +218,7 @@ Two core types support child projects:
 
 ### 1. Create your lexicon's factory function
 
-Your lexicon provides a function that creates a `ChildProjectInstance`. This is the user-facing API for referencing child projects:
+Users reference a child project through a function your lexicon exports, which creates a `ChildProjectInstance`:
 
 ```typescript
 import { CHILD_PROJECT_MARKER, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -261,7 +261,7 @@ export function nestedModule(
 }
 ```
 
-The `outputs` Proxy creates output ref objects on demand — `network.outputs.vpcId` returns a `ModuleOutputRef("network", "vpcId")` that serializes via `toJSON()`.
+The `outputs` Proxy creates output ref objects on demand: `network.outputs.vpcId` returns a `ModuleOutputRef("network", "vpcId")` that serializes via `toJSON()`.
 
 ### 2. Handle `ChildProjectInstance` in your serializer
 
@@ -302,7 +302,7 @@ for (const [name, entity] of entities) {
 1. **Discovery** stops at child project boundaries. `findInfraFiles()` treats a nested directory carrying its own `chant.config.ts` as a separate scope and does not descend into it (`packages/core/src/discovery/files.ts`)
 2. **Build** detects `ChildProjectInstance` entities and recursively builds each child project
 3. **Cycle detection** tracks the build stack and errors on circular references
-4. **Serialization** receives entities with populated `buildResult` — the serializer extracts child templates and emits parent references
+4. **Serialization** receives entities with populated `buildResult`, and the serializer extracts child templates and emits parent references
 
 > See `lexicons/aws/src/nested-stack.ts` and `lexicons/aws/src/serializer.ts` for a complete working example.
 
@@ -330,8 +330,7 @@ whatever is peculiar to your format:
 `lexicons/cedar/src/serializer.test.ts` is sectioned by these numbers and is the
 clearest one to copy.
 
-Two cases the list above does not number, both of which shipped serializers
-test:
+Shipped serializers also test two cases the list leaves out:
 
 - Ownership stamping, when the build carries a marker, plus the case where an
   author's own key with the same name wins. See
@@ -346,4 +345,4 @@ create test entities without constructing real resource classes. See
 
 ## Next Steps
 
-With serialization in place, the next step is to [write lint rules](/chant/lexicon-authoring/lint-rules/) for your provider.
+Next, [write lint rules](/chant/lexicon-authoring/lint-rules/) for your provider.

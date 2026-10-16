@@ -1,22 +1,22 @@
 ---
 title: What chant is
-description: chant is typed infrastructure, end to end — a deterministic synthesis core and the lifecycle you choose on top of it. This page is the canonical picture; the rest of the concepts go deep on each part.
+description: The compiler at chant's core and the deploy steps built on it, in one picture. The other concept pages cover each part in depth.
 diataxis: explanation
 ---
 
-chant is typed infrastructure, end to end. A deterministic core you can trust, and the lifecycle you choose on top of it.
+chant compiles TypeScript into native formats such as CloudFormation and Kubernetes YAML. Per environment, it can also deploy what it built or compare it with what is running.
 
-The core is a **compiler**: typed TypeScript in, spec-native artifacts out, validated by semantic lint rules. On top of that core you pick a lifecycle — observe drift, reconcile `cloud → code`, or apply `code → cloud`, per environment, hosted when you need it. The compiler is what makes the whole thing auditable and safe. It is the foundation, not the ceiling.
+The core is a **compiler**: TypeScript in, spec-native artifacts out, validated by semantic lint rules. Per environment you then pick what happens after the build: observe drift, reconcile `cloud → code`, or apply `code → cloud`, locally or on a fountain steward. The compiler is what makes the rest auditable and safe.
 
 ## The core is a compiler
 
 `chant build` reads the resource objects your TypeScript exports and emits the target format. The default path does not import your file at all: the source is reduced to values without executing it, which the specification calls folding. A file that does more than declare values is imported and run instead, and both paths produce the same output. No cloud API is called, no state is read or written, nothing is deployed.
 
-That determinism is the point. Every value in the output traces to a line of source; the build makes no network calls and holds no credentials; synthesis is fast and IDE-native. It is a small, side-effect-free thing to audit — and everything above it inherits that trust. See [Philosophy](/chant/concepts/philosophy/) and [TypeScript as Data](/chant/concepts/typescript-as-data/) for why the core is built this way.
+Every value in the output traces to a line of source. The build makes no network calls and holds no credentials, and synthesis is fast enough to run in the IDE. That makes it small and side-effect-free to audit, and every later stage starts from output you can trust. See [Philosophy](/chant/concepts/philosophy/) and [TypeScript as Data](/chant/concepts/typescript-as-data/) for why the core is built this way.
 
 ## The lifecycle is yours
 
-Most tools weld a lifecycle to the compiler — state, apply, drift, retire, owned end to end — so you cannot take the compiler without the lifecycle chosen for you. chant separates them:
+Most infrastructure tools ship the compiler and the deployment lifecycle as one product, so you take both or neither. chant separates them:
 
 > Pluggable lexicons in, pluggable lifecycles out, deterministic synthesis in the middle.
 
@@ -26,30 +26,30 @@ You pick a position per environment on one dial:
 - **reconcile** — `ReconcileOp`: open `cloud → code` PRs that pull live reality back into source.
 - **apply** — `ApplyOp`: push `code → cloud` behind a gate, with owned-only deletes.
 
-A dev environment might only observe; production might apply behind an approval gate. Same project, different dial positions. Truth lives in the live system, not a hosted state file — ownership is answered by a marker on the resource itself. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full model.
+A dev environment might only observe while production applies behind an approval gate, in the same project. The live system is the source of truth, and a marker on each resource records who owns it. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full model.
 
 ## Durable when you need it
 
-The lifecycle is orchestration, and you declare it as [Ops](/chant/guide/ops/) — named, phased workflows in `*.op.ts` files. An Op runs **locally by default**, in-process, with nothing else installed. When it needs a machine of its own, a standing record, or a cadence nobody has to trigger, the same Op runs on a [fountain steward](/chant/concepts/durable-workflows/) with `chant run <op> --on fountain`. Decoupled first, hosted when you ask.
+The lifecycle is orchestration, and you declare it as [Ops](/chant/guide/ops/) — named, phased workflows in `*.op.ts` files. An Op runs **locally by default**, in the chant process. When it needs a machine of its own, a standing record, or a schedule, the same Op runs on a [fountain steward](/chant/concepts/durable-workflows/) with `chant run <op> --on fountain`.
 
-On top of Ops sits the [component release model](/chant/concepts/components/): declare a releasable unit in `*.component.ts`, and one generated orchestrator builds, publishes, signs, applies, verifies, and rolls it back — no pipeline per unit.
+The [component release model](/chant/concepts/components/) is built from Ops: declare a releasable unit in `*.component.ts`, and one generated orchestrator builds, publishes, signs, applies, verifies, and rolls it back. You write no pipeline per unit.
 
 ## The whole arc
 
 | Stage | What runs | Where it's covered |
 |---|---|---|
-| Author | typed TypeScript resources, composites, presets | [Writing Resources](/chant/guide/writing-resources/) |
+| Author | TypeScript resources, composites, presets | [Writing Resources](/chant/guide/writing-resources/) |
 | Validate | semantic lint + type-check, one local pass | [Linting](/chant/guide/linting/) |
 | Emit | `chant build` → spec-native artifacts | [Building](/chant/guide/building/) |
 | Deploy | Ops (local or on a steward), or hand off to your pipeline | [Ops](/chant/guide/ops/) · [Deployment Model](/chant/concepts/deployment-paths/) |
 | Observe | live drift against the deployed system | [Drift Detection](/chant/concepts/drift-detection/) |
 | Reconcile / apply | `cloud → code` PRs, or gated `code → cloud` | [Lifecycle Models](/chant/concepts/lifecycle-models/) |
 
-The whole arc is available. None of it is forced: hand a chant-built artifact to any deployment mechanism and the lifecycle stages simply go unused. Because the output is native spec, walking away costs nothing.
+Every stage after Emit is optional. Hand a chant-built artifact to any deployment tool and the later stages go unused. The output is the native format, so you can stop using chant and keep it.
 
 ## Where chant draws the line
 
-chant hosts no authoritative state file, and the build path itself never touches your cloud. The apply mechanism — `kubectl`, CloudFormation, an ARM deployment, a CI pipeline, an agent — is one you bring or one chant drives for you through an Op. That boundary is a design choice that keeps the core small and the output portable, not a gap in what chant can do. [How chant compares](/chant/concepts/comparison/) works through the trade-offs against Terraform, CDK, and Pulumi.
+chant hosts no authoritative state file, and the build path itself never touches your cloud. You bring the apply step, such as `kubectl` or a CI pipeline, or chant runs it for you through an Op. Keeping it out of the build keeps the core small and the output portable. [How chant compares](/chant/concepts/comparison/) works through the trade-offs against Terraform, CDK, and Pulumi.
 
 ## The subset has a specification
 

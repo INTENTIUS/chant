@@ -6,17 +6,17 @@ diataxis: reference
 
 import { Aside } from '@astrojs/starlight/components';
 
-Composition rules check the [`Component`](/chant/components/component-contract/) graph — the long-term entropy guards described in [Orchestration](/chant/components/orchestration/#what-chant-adds-over-hand-driving-it): "publishes-but-never-applies, an `imageRef` to a phase that does not exist, a mutating capability with no rollback and no opt-out, a gate in a local-executor component, a capability named after a component."
+Composition rules check the [`Component`](/chant/components/component-contract/) graph. They are the long-term entropy guards described in [Orchestration](/chant/components/orchestration/#what-chant-adds-over-hand-driving-it): "publishes-but-never-applies, an `imageRef` to a phase that does not exist, a mutating capability with no rollback and no opt-out, a gate in a local-executor component, a capability named after a component."
 
-Unlike COR/EVL rules (single-file AST checks), COMP* rules see the **whole discovered component graph** — every `*.component.ts` file under the project, cross-referenced. They still run as part of `chant lint` and gate the build at `error` severity, the same as a COR* error.
+COR/EVL rules check one file's AST. COMP* rules see the **whole discovered component graph**: every `*.component.ts` file under the project, cross-referenced. They run in `chant lint` and block the build at `error` severity, like a COR* error.
 
 ---
 
 ## How discovery works for these rules
 
-COMP* rules run against real, imported `Component` values (see [Component Discovery](/chant/components/component-contract/)) — a `*.component.ts` file is imported, not just parsed, so a rule can answer questions no single-file AST check can: "does any component consume this one's published artifact?", "does this wiring reference point at a phase that actually exists?", "do two components compose an identical shape?"
+COMP* rules run against real, imported `Component` values (see [Component Discovery](/chant/components/component-contract/)). chant imports each `*.component.ts` file as well as parsing it, so a rule can answer questions a single-file AST check cannot: "does any component consume this one's published artifact?", "does this wiring reference point at a phase that actually exists?", "do two components compose an identical shape?"
 
-Because these checks report per-component rather than per-exact-line, a diagnostic is reported at the top of the file the component was declared in (`1:1`), the same convention [COR009](/chant/lint-rules/style/) uses for its own whole-file diagnostic. Only the **file-level** disable directive form is honored for COMP* rules:
+These checks report per component, so a diagnostic sits at the top of the file the component was declared in (`1:1`), the same convention [COR009](/chant/lint-rules/style/) uses for its own whole-file diagnostic. Only the **file-level** disable directive form is honored for COMP* rules:
 
 ```typescript
 // chant-disable COMP004 -- the release manager approves this rollout
@@ -28,7 +28,7 @@ Because these checks report per-component rather than per-exact-line, a diagnost
 
 ## COMP001: Publishes But Never Applies
 
-Flags a component that publishes an image or artifact (`publish-image`, `publish-artifact`, `load-image-on-host`) that nothing ever consumes — neither a later step in the same component (`@Publish.digest`) nor any other component (`@<name>.publish.uri|digest|key`).
+Flags a component that publishes an image or artifact (`publish-image`, `publish-artifact`, `load-image-on-host`) that nothing consumes. A consumer is a later step in the same component (`@Publish.digest`) or another one (`@<name>.publish.uri|digest|key`).
 
 | | |
 |---|---|
@@ -67,7 +67,7 @@ export const emrJob: Component = {
 
 ## COMP002: Dangling Wiring Reference
 
-Flags an `@Phase.field` or `@<component>.publish.*` reference that points at a phase or component that does not exist — `@Phase.field` naming a phase absent from the component's own `deploy`, or `@<component>.publish.*` naming an undiscovered component, or one missing from `dependsOn`.
+Flags an `@Phase.field` or `@<component>.publish.*` reference that points at a phase or component that does not exist: `@Phase.field` naming a phase absent from the component's own `deploy`, or `@<component>.publish.*` naming an undiscovered component, or one missing from `dependsOn`.
 
 | | |
 |---|---|
@@ -103,7 +103,7 @@ deploy: [
 
 ## COMP003: Mutating Capability With No Rollback
 
-Flags a mutating capability step (`s3-sync`, `cdn-invalidate`, `run-migration`, `emr-start-job-run`, `emr-submit-step`, `copy-to-host`, `remote-exec`, or any non-starter `kind`) with no known native rollback and no explicit opt-out. `cfn-deploy`/`ecs-update-service`/`lambda-deploy`/`code-deploy` (native rollback) and the whole publish/build family (no-rollback-by-design — an already-built/published artifact is immutable and content-addressed, nothing to compensate) are never flagged.
+Flags a mutating capability step (`s3-sync`, `cdn-invalidate`, `run-migration`, `emr-start-job-run`, `emr-submit-step`, `copy-to-host`, `remote-exec`, or any non-starter `kind`) with no known native rollback and no explicit opt-out. `cfn-deploy`/`ecs-update-service`/`lambda-deploy`/`code-deploy` (native rollback) and the whole publish/build family (an already-built or published artifact is immutable and content-addressed, so there is nothing to roll back) are never flagged.
 
 | | |
 |---|---|
@@ -140,9 +140,9 @@ The capability interface and `component.schema.json` are out of scope for this r
 ## COMP004: Gate Ends The Run Pending Approval
 
 The rule id stays `COMP004`, and so does its file name
-(`comp004-gate-needs-durable-runtime.ts`). Renaming either would churn every
-`chant-disable` comment and every import for no gain, so the heading above is
-the rule's own description and the file name underneath it is historical.
+(`comp004-gate-needs-durable-runtime.ts`). Renaming either would touch every
+`chant-disable` comment and every import, so the heading above is the rule's
+current description and the file name is historical.
 
 Flags a `gate` step anywhere in a component's composition. A gate ends the run pending `chant approve <component> <gate>`: the driver decides it against the gate ledger, and one nobody has approved stops the run there, with no later phase running. Which runtime hosts the run is chosen per run via `chant run --on <lexicon>`, never declared in the component itself.
 
@@ -172,13 +172,13 @@ deploy: [
 ],
 ```
 
-**Fix:** if the component is meant to stop for a person, suppress with `// chant-disable COMP004 -- <reason>` to document who approves it and why. There is no per-component runtime field — the same declaration runs wherever it is invoked, so this rule always flags a `gate` unless acknowledged.
+**Fix:** if the component is meant to stop for a person, suppress with `// chant-disable COMP004 -- <reason>` to document who approves it and why. The declaration names no runtime and runs wherever it is invoked, so this rule flags every `gate` that has no suppression comment.
 
 ---
 
 ## COMP005: Capability Kind Is A Noun
 
-Flags a step `kind` named after a component rather than an operation — the "capability-per-component" failure mode ([epic #551](https://github.com/INTENTIUS/chant/issues/551), "renamed sprawl"). A capability kind must be a verb (`cfn-deploy`, `publish-image`, `wait-steady-state`); a `kind` equal to or built from a discovered component's own name is exactly the sprawl the capability model exists to remove.
+Flags a step `kind` named after a component rather than an operation, the "capability-per-component" failure mode ([epic #551](https://github.com/INTENTIUS/chant/issues/551), "renamed sprawl"). A capability kind must be a verb (`cfn-deploy`, `publish-image`, `wait-steady-state`); a `kind` equal to or built from a discovered component's own name is the sprawl the capability model is meant to remove.
 
 | | |
 |---|---|
@@ -208,17 +208,17 @@ export const searchService: Component = {
 };
 ```
 
-**Fix:** rename the capability to describe the operation it performs, not the component that happens to use it — see [Capabilities](/chant/components/capabilities/#the-discipline).
+**Fix:** name the capability after the operation it performs. See [Capabilities](/chant/components/capabilities/#the-discipline).
 
 <Aside type="note" title="Every starter-set verb is exempt, unconditionally">
-A `kind` already in the bounded starter verb set (`cfn-deploy`, `wait-for-stack`, `emr-start-job-run`, ...) is never flagged, even if a component happens to be named "stack" or "job" and its kebab-case segments overlap. A registered capability's verb-ness is an established fact of the registry, not something to re-adjudicate per project.
+A `kind` already in the bounded starter verb set (`cfn-deploy`, `wait-for-stack`, `emr-start-job-run`, ...) is never flagged, even if a component happens to be named "stack" or "job" and its kebab-case segments overlap. The registry already settles that a registered capability is a verb.
 </Aside>
 
 ---
 
 ## COMP006: Shell Needs A Reason
 
-Flags a raw `shell` step (the deliberate [escape hatch](/chant/components/capabilities/#the-families)) with no, or an empty/blank, `reason`.
+Flags a raw `shell` step (the deliberate [escape hatch](/chant/components/capabilities/#the-families)) with a missing, empty or blank `reason`.
 
 | | |
 |---|---|
@@ -239,13 +239,13 @@ deploy: [
 ],
 ```
 
-**Fix:** add a non-empty `reason` explaining why no capability covers this case. `ShellInput.reason` is already required on the typed `createShellCapability` input; this rule enforces the same discipline for a hand-authored or JSON-only component too.
+**Fix:** add a non-empty `reason` explaining why no capability covers this case. `ShellInput.reason` is already required on the typed `createShellCapability` input; this rule applies the same requirement to hand-authored and JSON-only components.
 
 ---
 
 ## COMP007: Composition Sprawl (hint)
 
-Flags two or more components whose `deploy` composition is structurally identical — same phases, same `parallel`/nesting shape, same step kinds in the same order (ignoring `name`, `dependsOn`, and literal wiring values/params). This is a **hint**, not a hard error — a declaration-sprawl signal to extract a [preset](/chant/components/capabilities/#presets--reuse-without-a-closed-set).
+Flags two or more components whose `deploy` composition is structurally identical — same phases, same `parallel`/nesting shape, same step kinds in the same order (ignoring `name`, `dependsOn`, and literal wiring values/params). This is a **hint**, reported as a warning, to extract a [preset](/chant/components/capabilities/#presets--reuse-without-a-closed-set).
 
 | | |
 |---|---|
@@ -273,13 +273,13 @@ export const inventoryTable: Component = {
 };
 ```
 
-**Fix:** extract a named preset (e.g. `DynamoTableComponent({ name, template })`) that both components call, the same way [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) composites the common shape today. Structurally distinct components — a different archetype, a different apply family, fan-out vs. no fan-out — are never flagged; the four real pilots ([ALB/ECS](/chant/components/composition-and-wiring/), DynamoDB, Neo4j fan-out, image-processor Lambda) were deliberately chosen to be structurally distinct and lint clean under this rule.
+**Fix:** extract a named preset (e.g. `DynamoTableComponent({ name, template })`) that both components call, the same way [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) composites the common shape today. Structurally distinct components (a different archetype, a different apply family, fan-out vs. no fan-out) are never flagged. The four pilots were chosen to be structurally distinct and pass this rule: [ALB/ECS](/chant/components/composition-and-wiring/), DynamoDB, Neo4j fan-out and an image-processor Lambda.
 
 ---
 
 ## Auto-fix
 
-None of the COMP* rules provide an automatic fix yet (out of scope for this issue — see [#562](https://github.com/INTENTIUS/chant/issues/562)). COMP007 in particular is the clearest future auto-fix candidate: a fix could scaffold the shared preset call, but choosing the preset's name and parameter shape is a judgment call left to the author for now.
+No COMP* rule has an automatic fix yet (see [#562](https://github.com/INTENTIUS/chant/issues/562)). COMP007 is the likeliest first one. A fix could scaffold the shared preset call, but the author still picks the preset's name and parameter shape.
 
 ## See Also
 

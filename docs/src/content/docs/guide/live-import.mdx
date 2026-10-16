@@ -1,6 +1,6 @@
 ---
 title: Live Import
-description: Generate chant TypeScript from a running cloud or cluster with chant import --from — the cloud->code direction, and the way to adopt an orphaned resource back into source.
+description: Generate chant TypeScript from a running cloud or cluster with chant import --from, to adopt infrastructure you didn't write or pull an orphaned resource back into source.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/live-import/.
@@ -10,7 +10,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-`chant import <template-file>` reads a template from disk. `chant import --from <env>` reads the **live** cloud or cluster instead, regenerating chant TypeScript from what is actually running. This is the `cloud → code` direction — the way to adopt infrastructure you didn't author, or pull an orphan back into source.
+`chant import <template-file>` reads a template from disk. `chant import --from <env>` reads the **live** cloud or cluster instead, regenerating chant TypeScript from what is actually running. This is the `cloud → code` direction. Use it to adopt infrastructure you didn't author or to pull an orphan back into source.
 
 ## How it works
 
@@ -22,7 +22,7 @@ chant import --from prod --output src/
 2. Call each project lexicon's `exportResources()` capability for full-fidelity config.
 3. Generate TypeScript with the same by-category organization as file import.
 
-Unlike `chant lifecycle` observation, which only ever reads scrubbed metadata, live import emits the resource's **full input config** — so it may surface secrets. The command prints a warning; review generated files before committing.
+Unlike `chant lifecycle` observation, which only ever reads scrubbed metadata, live import emits the resource's **full input config**, so it may include secrets. The command prints a warning; review generated files before committing.
 
 ## Selectors
 

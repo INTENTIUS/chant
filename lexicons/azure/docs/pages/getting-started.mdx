@@ -11,7 +11,7 @@ prompt: |
 
 ## What is chant?
 
-Chant is a TypeScript-to-JSON compiler for Azure ARM templates. You write typed TypeScript declarations, and chant outputs deployment-ready ARM templates.
+chant compiles TypeScript declarations into ARM template JSON.
 
 ## Install
 
@@ -21,7 +21,7 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-azure
 
 ## Your first ARM template
 
-The fastest path is the **StorageAccountSecure** composite — one function call that produces a fully configured storage account:
+The fastest path is the **StorageAccountSecure** composite, one call that returns a configured storage account:
 
 ```typescript
 // src/main.ts
@@ -55,7 +55,7 @@ az deployment group create \
 
 ## Using resource constructors
 
-Composites are convenient, but you can also use the lower-level resource constructors directly:
+You can also call the resource constructors directly:
 
 ```typescript
 import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";

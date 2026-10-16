@@ -14,7 +14,7 @@ Lint rules analyze your TypeScript source code before build.
 
 **Severity:** warning | **Category:** style
 
-Flags raw `uses:` strings when a typed composite wrapper is available (e.g. `actions/checkout@v7` → `Checkout({})`). Typed composites provide better IDE support and catch configuration errors at compile time.
+Flags raw `uses:` strings when a typed composite wrapper is available (e.g. `Checkout({})` for `actions/checkout@v7`). A typed composite gets IDE completion and catches configuration errors at compile time.
 
 ### GHA002 — Use Expression helpers
 
@@ -46,7 +46,7 @@ Flags deeply nested inline objects and suggests extracting them to named constan
 
 **Severity:** warning | **Category:** style
 
-Flags files with more than 10 job exports. Split large workflows into separate files for maintainability.
+Flags files with more than 10 job exports. Split large workflows into separate files.
 
 ### GHA008 — Avoid raw expression strings
 
@@ -76,7 +76,7 @@ Flags jobs without `timeoutMinutes`. Jobs without a timeout default to 360 minut
 
 **Severity:** warning | **Category:** performance
 
-Flags setup action composites (SetupNode, SetupGo, SetupPython) without a paired `CacheAction` or built-in `cache` option. Caching dependencies significantly speeds up builds.
+Flags setup action composites (SetupNode, SetupGo, SetupPython) without a paired `CacheAction` or built-in `cache` option. Caching dependencies speeds up builds.
 
 ### GHA016 — Concurrency missing group
 
@@ -98,7 +98,7 @@ Post-synth checks run against the serialized YAML after build. They catch issues
 
 **Severity:** error
 
-Flags multiple workflows that share the same `name:` value. Duplicate names cause confusion in the GitHub Actions UI.
+Flags multiple workflows that share the same `name:` value. Duplicate names are indistinguishable in the GitHub Actions UI.
 
 ### GHA009 — Empty matrix dimension
 
@@ -122,13 +122,13 @@ Flags jobs without an explicit `permissions:` block when the workflow uses a sen
 
 **Severity:** info
 
-Flags workflows without an explicit `permissions:` block. Omitting permissions uses the repository default (often overly broad). Following least-privilege by declaring explicit permissions is a security best practice.
+Flags workflows without an explicit `permissions:` block. Omitting permissions uses the repository default (often overly broad). Declare explicit permissions to keep the token least-privilege.
 
 ### GHA018 — pull_request_target with checkout
 
 **Severity:** warning
 
-Flags workflows triggered by `pull_request_target` that include `actions/checkout`. This combination can be a security risk because the workflow runs with write permissions in the context of the base branch while checking out potentially untrusted PR code.
+Flags workflows triggered by `pull_request_target` that include `actions/checkout`. The workflow then runs with write permissions in the base branch's context while checking out PR code that may be untrusted.
 
 ### GHA019 — Circular needs chain
 
@@ -146,19 +146,19 @@ Flags `actions/checkout` referenced by a tag (e.g. `@v4`) instead of a pinned co
 
 **Severity:** info
 
-Flags jobs that omit `timeout-minutes`. A hung step otherwise runs to the runner's default cap, burning minutes — set an explicit ceiling.
+Flags jobs that omit `timeout-minutes`. A hung step otherwise runs to the runner's default cap, burning minutes. Set an explicit ceiling.
 
 ### GHA023 — Deprecated set-output command
 
 **Severity:** warning
 
-Flags `::set-output` in `run:` steps. The workflow command is deprecated and disabled on current runners — write to `$GITHUB_OUTPUT` instead.
+Flags `::set-output` in `run:` steps. The workflow command is deprecated and disabled on current runners. Write to `$GITHUB_OUTPUT` instead.
 
 ### GHA024 — Missing concurrency for deploy workflows
 
 **Severity:** info
 
-Flags deploy workflows without a `concurrency:` block. Without one, two pushes can deploy concurrently and race — add a concurrency group to serialize them.
+Flags deploy workflows without a `concurrency:` block. Without one, two pushes can deploy concurrently and race. Add a concurrency group to serialize them.
 
 ### GHA025 — pull_request_target without restrictions
 
@@ -176,7 +176,7 @@ Flags workflows that reference `secrets.` in steps but declare no `environment:`
 
 **Severity:** info
 
-Flags steps named "cleanup" / "teardown" / "clean up" that lack an `if:` condition. Cleanup should run even when a prior step fails — add `if: always()`.
+Flags steps named "cleanup" / "teardown" / "clean up" that lack an `if:` condition. Cleanup should run even when a prior step fails, so add `if: always()`.
 
 ### GHA028 — Workflow with no on: triggers
 
@@ -186,15 +186,15 @@ Flags a workflow file with no top-level `on:` key. Without a trigger the workflo
 
 ## Supply-chain security pass (GHA029–058)
 
-GHA029 onward are a CI/CD supply-chain security pass: pin & vet external references, enforce least-privilege token scopes, guard trust boundaries against untrusted input, contain secrets, reject unsound expressions, and keep artifacts/caches honest. They run statically on the emitted YAML — everything answerable without leaving the build.
+GHA029 onward are a CI/CD supply-chain security pass: pin & vet external references, enforce least-privilege token scopes, guard trust boundaries against untrusted input, contain secrets, reject unsound expressions, and keep artifacts/caches honest. They run on the emitted YAML and cover everything the build can decide offline.
 
-The checks that need a *moving external truth* — whether a pinned SHA still maps to a real upstream tag, whether a ref still exists, whether a new advisory now covers an action in use — can't be deterministic, so they live in the operational layer instead. Schedule the [`WorkflowAuditOp`](/chant/guide/ops/#audit-supply-chain-drift), which ships from core's `@intentius/chant/op`, for that live, always-fresh half; it reads the same emitted workflow references and reports drift via `report | issue | pull-request`.
+Checks that depend on upstream state (whether a pinned SHA still maps to a real upstream tag, whether a ref still exists, whether a new advisory now covers an action in use) can't be deterministic, so they run as an Op. Schedule the [`WorkflowAuditOp`](/chant/guide/ops/#audit-supply-chain-drift), which ships from core's `@intentius/chant/op`, for those; it reads the same emitted workflow references and reports drift via `report | issue | pull-request`.
 
 ### GHA029 — Action or reusable workflow not pinned to a commit SHA
 
 **Severity:** warning
 
-Flags any `uses:` — step action or job-level reusable workflow — pinned to a mutable tag or branch instead of a full commit SHA. Tags can be repointed to malicious code after review, so every external reference should be pinned. `actions/checkout` is covered by the more specific GHA021; local (`./`) and `docker://` references are out of scope. Owners in the vendored trusted allowlist are exempt.
+Flags any `uses:` (step action or job-level reusable workflow) pinned to a mutable tag or branch instead of a full commit SHA. Tags can be repointed to malicious code after review, so every external reference should be pinned. `actions/checkout` is covered by the more specific GHA021; local (`./`) and `docker://` references are out of scope. Owners in the vendored trusted allowlist are exempt.
 
 ### GHA030 — Container image not pinned to a digest
 
@@ -206,7 +206,7 @@ Flags job `container:` images, `services:` images, and `docker://` step referenc
 
 **Severity:** warning
 
-Flags a `uses:` slug that is a near-miss (edit distance 1–2) of a popular action but not an exact match — a likely typo or impersonation under different ownership. Advisory; backed by a vendored reference list.
+Flags a `uses:` slug that is a near-miss (edit distance 1–2) of a popular action but not an exact match, a likely typo or impersonation under different ownership. Advisory; backed by a vendored reference list.
 
 ### GHA032 — Archived or compromised action
 
@@ -218,7 +218,7 @@ Flags a `uses:` slug that a vendored snapshot marks as archived/abandoned or car
 
 **Severity:** warning
 
-Flags `permissions: write-all` at the workflow or job level. It grants the `GITHUB_TOKEN` every write scope regardless of need — replace it with the specific scopes the job uses.
+Flags `permissions: write-all` at the workflow or job level. It grants the `GITHUB_TOKEN` every write scope regardless of need. Replace it with the specific scopes the job uses.
 
 ### GHA034 — Write permissions granted workflow-wide
 
@@ -230,13 +230,13 @@ Flags individual write scopes declared at the workflow level, which apply to eve
 
 **Severity:** error
 
-Flags a workflow that grants the token write access while using a trigger that can run untrusted code (`pull_request_target`, `workflow_run`). An injected step would run with standing write credentials — drop the write scope or isolate the privileged work in a separate trusted workflow.
+Flags a workflow that grants the token write access while using a trigger that can run untrusted code (`pull_request_target`, `workflow_run`). An injected step would run with standing write credentials. Drop the write scope or isolate the privileged work in a separate trusted workflow.
 
 ### GHA036 — Untrusted input in a run: command
 
 **Severity:** error
 
-Flags an attacker-controllable expression context (PR title, branch name, issue/comment body, commit message) interpolated directly into a `run:` script — a script-injection sink. Pass the value through an `env:` variable and reference it quoted instead.
+Flags an attacker-controllable expression context (PR title, branch name, issue/comment body, commit message) interpolated directly into a `run:` script, where it can inject commands. Pass the value through an `env:` variable and reference it quoted instead.
 
 ### GHA037 — Untrusted input written to GITHUB_ENV / GITHUB_PATH
 
@@ -254,7 +254,7 @@ Generalizes GHA018 to the `workflow_run` trigger, which runs with repo write sco
 
 **Severity:** warning
 
-Flags an `if:` condition that gates on a commit-author identity field (`author.name` / `author.email`). Those come from git metadata the committer sets freely and can be spoofed — gate on a verified signal (environment protection, CODEOWNERS, verified actor).
+Flags an `if:` condition that gates on a commit-author identity field (`author.name` / `author.email`). Those come from git metadata the committer sets freely and can be spoofed. Gate on a verified signal (environment protection, CODEOWNERS, verified actor).
 
 ### GHA040 — Self-hosted runner on an untrusted-code trigger
 
@@ -278,7 +278,7 @@ Flags `toJSON(secrets)` passed into a step or reusable workflow, serializing eve
 
 **Severity:** warning
 
-Extends GHA026: when a workflow gates some jobs with an `environment:`, flags the specific secret-using jobs that have none — the inconsistent-gating case where a job skips the approval/scoping applied elsewhere.
+Extends GHA026: when a workflow gates some jobs with an `environment:`, flags the specific secret-using jobs that have none. Such a job skips the approval/scoping applied elsewhere.
 
 ### GHA044 — Hardcoded registry/container credential
 
@@ -296,31 +296,31 @@ Flags `${{ secrets.* }}` expanded directly into a `run:` script, where a transfo
 
 **Severity:** warning
 
-Flags an `if:` condition that reads like a gate but evaluates to a constant — `true`/`false` literals, an `X == X` tautology, or a collapse via `|| true` / `&& false`. A gate that constrains nothing is misleading.
+Flags an `if:` condition that reads like a gate but evaluates to a constant: `true`/`false` literals, an `X == X` tautology, or a collapse via `|| true` / `&& false`. A gate that constrains nothing is misleading.
 
 ### GHA047 — Ineffective contains() guard
 
 **Severity:** warning
 
-Flags `contains('literal', <dynamic>)` — a constant haystack with a dynamic needle. `contains(search, item)` tests whether `item` is in `search`, so reversed arguments make the result depend on a fixed string. Swap them.
+Flags `contains('literal', <dynamic>)`, a constant haystack with a dynamic needle. `contains(search, item)` tests whether `item` is in `search`, so reversed arguments make the result depend on a fixed string. Swap them.
 
 ### GHA048 — Obfuscated guard condition
 
 **Severity:** warning
 
-Flags an `if:` gate whose compared operand is built through `format()` / `join()` / `fromJSON()` indirection. Constructing the operand at evaluation time hides what the gate checks — compare against the value directly.
+Flags an `if:` gate whose compared operand is built through `format()` / `join()` / `fromJSON()` indirection. Constructing the operand at evaluation time hides what the gate checks. Compare against the value directly.
 
 ### GHA049 — Persisted checkout credentials reachable by an artifact
 
 **Severity:** warning
 
-Flags a job that checks out with persisted credentials (the default) and uploads an artifact — the token in `.git/config` can be swept into the artifact. Set `persist-credentials: false` on the checkout.
+Flags a job that checks out with persisted credentials (the default) and uploads an artifact; the token in `.git/config` can be swept into the artifact. Set `persist-credentials: false` on the checkout.
 
 ### GHA050 — Cache populated in a privileged context
 
 **Severity:** warning
 
-Flags `actions/cache` under a privileged trigger (`pull_request_target`, `workflow_run`). A cache entry influenced by a fork can be restored and executed by a later trusted run (cache poisoning) — restrict caching to trusted triggers.
+Flags `actions/cache` under a privileged trigger (`pull_request_target`, `workflow_run`). A cache entry influenced by a fork can be restored and executed by a later trusted run (cache poisoning). Restrict caching to trusted triggers.
 
 ### GHA051 — Publish step using a long-lived token instead of OIDC
 
@@ -332,7 +332,7 @@ Flags a publish/release job that uses a long-lived token secret while requesting
 
 **Severity:** warning
 
-Flags a `run:` step that pipes a network download straight into a shell (`curl ... | bash`). The fetched code is unpinned and unverified — download to a file, verify a checksum/signature, then run it.
+Flags a `run:` step that pipes a network download straight into a shell (`curl ... | bash`). The fetched code is unpinned and unverified. Download to a file, verify a checksum/signature, then run it.
 
 ### GHA053 — Unsafe set-env / add-path opt-in
 
@@ -364,13 +364,13 @@ Flags a workflow with no top-level `name:`. Without one, GitHub falls back to th
 
 **Severity:** error
 
-Flags a Dependabot `updates:` entry with `insecure-external-code-execution: allow`, which runs a freshly-pulled dependency's lifecycle scripts during the update itself — a compromised release executes before any review. Set it to `deny`. Requires the `Dependabot` resource so the config is emitted (`.github/dependabot.yml`).
+Flags a Dependabot `updates:` entry with `insecure-external-code-execution: allow`, which runs a freshly-pulled dependency's lifecycle scripts during the update itself; a compromised release executes before any review. Set it to `deny`. Requires the `Dependabot` resource so the config is emitted (`.github/dependabot.yml`).
 
 ### GHA058 — Dependency update without a cooldown
 
 **Severity:** warning
 
-Flags a Dependabot `updates:` entry with no cooldown — a version published moments ago (including a compromised one) is adopted immediately. Configure a `cooldown:` window. The `Dependabot` composite ships a 7-day default.
+Flags a Dependabot `updates:` entry with no cooldown: a version published moments ago (including a compromised one) is adopted immediately. Configure a `cooldown:` window. The `Dependabot` composite ships a 7-day default.
 
 ### GHA069 — Job permissions block drops the workflow's id-token: write
 

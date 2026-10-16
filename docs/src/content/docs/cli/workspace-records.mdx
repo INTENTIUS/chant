@@ -527,7 +527,7 @@ A kind may opt a field in to hold a new record's proposer, apart from the decide
 proposedBy: { field: "proposed_by" },
 ```
 
-`records new --by <name>` names `<name>` as who proposed the record. Since a new decision starts `proposed`, that name lands in `proposed_by`, not `decided_by`. `--by` fills `reviews.decider` instead, `decided_by` for a decision, only when the fields given with `--from` set the record past that starting state; a harvested record can't do this, since #2708 requires it to start there too. Either way, `--by` conflicting with a value the fields already set on its target field is refused with `write-input-invalid`. A kind without `proposedBy` keeps `--by` writing `reviews.decider` for every new record, as it always has. `--by` on a kind with neither field declared is `write-usage-invalid`.
+`records new --by <name>` names `<name>` as who proposed the record. Since a new decision starts `proposed`, that name goes in `proposed_by`, not `decided_by`. `--by` fills `reviews.decider` instead, `decided_by` for a decision, only when the fields given with `--from` set the record past that starting state; a harvested record can't do this, since #2708 requires it to start there too. Either way, `--by` conflicting with a value the fields already set on its target field is refused with `write-input-invalid`. A kind without `proposedBy` keeps `--by` writing `reviews.decider` for every new record, as it always has. `--by` on a kind with neither field declared is `write-usage-invalid`.
 
 `records amend` and the MCP `records-amend` tool take no `by`: a person or a harness names a decider by setting the kind's decider field, such as `decided_by`, in the fields given to `--set`. `--by` given to `records amend` is refused rather than dropped.
 
@@ -926,7 +926,7 @@ Several principals write one working tree at once, so every write holds the work
 }
 ```
 
-Read the record again, show the person what changed, and write again with `--expect` set to `conflict.digest`. Of several writes from one digest exactly one is written. A verdict doesn't move the digest, so a review that lands between a read and an amendment is kept and is no conflict. A write without `--expect` still waits its turn and applies its fields to the record as it is then. Two amendments of different fields both land, and the later of two amendments of one field wins. `records --json` prints each record's `lastWrite` in a working tree, so a UI can say who changed a record before anyone writes.
+Read the record again, show the person what changed, and write again with `--expect` set to `conflict.digest`. Of several writes from one digest exactly one is written. A verdict doesn't move the digest, so a review written between a read and an amendment is kept and is no conflict. A write without `--expect` still waits its turn and applies its fields to the record as it is then. Two amendments of different fields both land, and the later of two amendments of one field wins. `records --json` prints each record's `lastWrite` in a working tree, so a UI can say who changed a record before anyone writes.
 
 For several writes that nobody else interleaves with, take the lock for the batch with [`chant workspace lock acquire`](/chant/reference/workspace-read-contract/#concurrent-writers). Each write of the batch then runs with `CHANT_WRITE_LOCK=<token>`, and `lock release` ends it.
 

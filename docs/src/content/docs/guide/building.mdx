@@ -1,6 +1,6 @@
 ---
 title: Building
-description: Synthesizing TypeScript resource definitions into deployment-ready output
+description: Turning TypeScript resource definitions into the files you deploy
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/building/.
@@ -12,7 +12,7 @@ prompt: |
 
 import Diagram from '../../../components/Diagram.astro';
 
-Use `chant build` to synthesize your TypeScript resource definitions into deployment-ready output.
+Use `chant build` to turn your TypeScript resource definitions into the files you deploy, such as a CloudFormation template or Kubernetes YAML.
 
 ```bash
 chant build                # Build from current directory
@@ -33,7 +33,7 @@ The build command:
 2. Imports modules and collects declarable entities
 3. Resolves attribute references and dependencies
 4. Builds dependency graph and performs topological sort
-5. Serializes to the lexicon-specific format
+5. Serializes to the lexicon's format, such as CloudFormation JSON or Kubernetes YAML
 6. Outputs result to stdout or file
 
 `--watch` mode maintains this module graph and re-evaluates only the affected files when a source file changes.

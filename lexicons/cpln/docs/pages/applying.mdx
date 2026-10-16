@@ -43,8 +43,9 @@ cpln apply --file dist/cpln.yaml --ready
 
 ## Notes on the output
 
-**Only authoring surface is emitted.** Control Plane's guidance is to export with `-o yaml-slim` rather than `-o yaml` before re-applying, because the server-side fields (`status`, `id`, `created`, `lastModified`, `links`) break `cpln apply`. Those are attributes in this lexicon rather than properties, so they never reach a document — the shape you can declare is already the slim shape.
+**Only authoring surface is emitted.** Control Plane's guidance is to export with `-o yaml-slim` rather than `-o yaml` before re-applying, because the server-side fields (`status`, `id`, `created`, `lastModified`, `links`) break `cpln apply`. This lexicon models them as attributes, not properties, so they never reach a document. What you declare is already the slim shape.
 
-**Ordering is resolved by `cpln apply`** for a multi-document file, so a single apply call is preferred over several sequential ones. Documents are still emitted GVC-first and sorted within a kind, so the file diffs cleanly between builds.
+**Ordering is resolved by `cpln apply`** for a multi-document file, so apply the whole file in one call. Documents are still emitted GVC-first and sorted within a kind, so the file diffs cleanly between builds.
 
-**`--ready` does not fail fast** on terminal container errors — a non-zero exit, an image pull failure, a crashloop. On a misconfigured first deploy it sits through its full timeout while the container is dead. For first deploys and workload type migrations, Control Plane documents a patience-windowed pattern instead.
+**`--ready` does not fail fast** on terminal container errors: a non-zero exit
+===, an image pull failure, a crashloop. On a misconfigured first deploy it sits through its full timeout while the container is dead. For first deploys and workload type migrations, Control Plane documents a patience-windowed pattern instead.

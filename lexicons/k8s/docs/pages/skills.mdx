@@ -8,7 +8,7 @@ The Kubernetes lexicon ships an AI skill called **chant-k8s** that teaches AI co
 
 ## What are skills?
 
-Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+A skill is a markdown file shipped with a lexicon. An AI agent working in a chant project finds and loads the relevant skills itself, so it knows the build, lint and apply steps without being told.
 
 ## Installation
 
@@ -16,7 +16,7 @@ When you scaffold a new project with `chant init --lexicon k8s`, the skill is in
 
 ## Skill: chant-k8s
 
-The `chant-k8s` skill covers the full deployment lifecycle:
+The `chant-k8s` skill covers:
 
 - **Build** — `chant build src/ --output manifests.yaml`
 - **Lint** — `chant lint src/` + post-synth checks (20 rules)

@@ -14,27 +14,27 @@ import { Code } from '@astrojs/starlight/components';
 import policySrc from '../../../../../lexicons/k8s/examples/org-policy/policies/org.ts?raw';
 import configSrc from '../../../../../lexicons/k8s/examples/org-policy/chant.config.ts?raw';
 
-Lexicon lint answers "is this a coherent resource for its domain." It does not
-express **organizational policy** — "no public load balancers in prod," "every
-workload carries a cost-center tag," "instance types from this allowlist." Those
-are cross-cutting, org-specific, and often need to branch on environment.
+Lexicon lint checks that a resource is valid for its domain. **Organizational
+policy** is your org's own rules: "no public load balancers in prod," "every
+workload carries a cost-center tag," "instance types from this allowlist." Such
+rules span lexicons, belong to one org, and often branch on environment.
 
-chant does not add a separate policy language for this. Organizational policy is
+In chant, organizational policy is
 **project-authored [post-synth checks](/chant/lexicon-authoring/post-synth-checks/),
-run by the existing engine, with the current environment in context** — the same
-`PostSynthCheck` shape lexicons ship as domain rules, authored by your org.
+run by the existing engine, with the current environment in context**. They use the
+`PostSynthCheck` shape lexicons ship as domain rules, with no separate policy language.
 
 ## Writing a policy
 
 A policy reads the resolved resources and returns diagnostics. A diagnostic with
-`severity: "error"` fails `chant build` — that is the gate. The check receives
+`severity: "error"` fails `chant build`, and that is the gate. The check receives
 `ctx.env`, so a rule can branch on the environment.
 
-Both checks below read `ctx.docs` — the parsed-output view (chant #975,
-[Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/#ctxdocs--the-parsed-output-view-chant-975)) —
-rather than hand-splitting `ctx.outputs` YAML. It is exactly what a lexicon's
-own post-synth checks use, with no lexicon-internal import required: an org
-policy gets the same shared, parse-once manifest list.
+Both checks below read `ctx.docs`, the parsed-output view (chant #975,
+[Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/#ctxdocs--the-parsed-output-view-chant-975)),
+instead of splitting `ctx.outputs` YAML by hand. A lexicon's own post-synth
+checks read the same view, so an org policy gets the same parse-once manifest
+list without a lexicon-internal import.
 
 <Code code={policySrc} lang="typescript" title="policies/org.ts" />
 
@@ -43,9 +43,9 @@ build is for `prod`.
 
 ## Registering it
 
-Add the policy file(s) to `lint.policies` in `chant.config.ts`. This is distinct
-from `lint.plugins` (declarative lint rules) by authorship and phase — policies
-reason about the **resolved** resources during build — but it is the same engine.
+Add the policy file(s) to `lint.policies` in `chant.config.ts`. Policies differ
+from `lint.plugins` (declarative lint rules) in who writes them and when they
+run: they read the **resolved** resources during build. The engine is the same.
 
 <Code code={configSrc} lang="typescript" title="chant.config.ts" />
 
@@ -70,13 +70,13 @@ error: [policy:ORG-PROD-TLS] [storefront] Ingress "storefront" must terminate TL
 each lexicon's own post-synth checks, and reports a finding under the policy's
 id (`ORG-PROD-TLS`) at the file that declared the entity it names.
 
-Policy evaluates the **synthesized artifact**, offline — it never touches the
-cloud. Live checks are [`chant lifecycle`](/chant/cli/lifecycle/), not this.
+Policy evaluates the **synthesized artifact** offline and never touches the
+cloud. For live checks, use [`chant lifecycle`](/chant/cli/lifecycle/).
 
 ## Suppressing a check
 
 Turn a check off (or down to `warning`) with `lint.rules`, keyed by the
-check's own `id` — same mechanism as any lexicon lint rule:
+check's own `id`, the same mechanism as any lexicon lint rule:
 
 ```typescript
 export default {
@@ -88,7 +88,7 @@ export default {
 } satisfies ChantConfig;
 ```
 
-`chant-disable` source comments do not apply to a policy finding — see [Post-
+`chant-disable` source comments do not apply to a policy finding; see [Post-
 Synth Checks and Policies](/chant/lint-rules/configuration/#post-synth-checks-and-policies)
 for why. A suppressed finding is counted, not dropped: `chant build` and
 `policyGate` both print how many `lint.rules` suppressed.
@@ -96,11 +96,11 @@ for why. A suppressed finding is counted, not dropped: `chant build` and
 ### Under `--sandbox`
 
 A policy is your code, and `chant build --sandbox` runs it in an isolated child
-process rather than in the CLI's own — after the build is merged and
+process rather than in the CLI's own, after the build is merged and
 serialized, over the same resources, with the same `env`, producing the same
-diagnostics. Nothing about how you write one changes.
+diagnostics. You write it the same way.
 
-What does change is what it may do while running: it may read the project
+What changes is what it may do while running: it may read the project
 directory and nothing else, it may not write files or spawn processes, and it
 sees only `PATH` and `CHANT_ENV` in its environment. A policy that writes a
 report or shells out to a scanner fails under `--sandbox`, naming the file and
@@ -110,14 +110,14 @@ full contract, including the handful of ways the resource view is narrower.
 
 ## Cookbook: the same shape against CloudFormation
 
-Nothing above is k8s-specific — a policy reads `ctx.docs`, whatever lexicon
-produced it. Two more examples, in the style CDK's `cdk-nag` /
+Everything above works for any lexicon: a policy reads `ctx.docs`, whatever
+lexicon produced it. Two more examples, in the style CDK's `cdk-nag` /
 `CfnGuardValidator` compliance packs cover for CloudFormation: a bucket must
 not allow public access in prod, and every bucket must declare encryption.
 (For reusing an *existing* CloudFormation Guard/OPA ruleset instead of writing
 one of these by hand, see the aws lexicon's [Policy
-Validation](/chant/lexicons/aws/policy-validation/) guide — the two compose,
-they don't compete.)
+Validation](/chant/lexicons/aws/policy-validation/) guide; the two work
+together.)
 
 ```typescript
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
@@ -186,10 +186,10 @@ export const bucketEncryptionRequired: PostSynthCheck = {
 };
 ```
 
-Register both the same way — add the file to `lint.policies` in
+Register both the same way: add the file to `lint.policies` in
 `chant.config.ts` (`lexicons: ["aws"]` instead of `["k8s"]`). `ORG-BUCKET-
 ENCRYPTION` runs in every environment; `ORG-NO-PUBLIC-BUCKETS-PROD` only fires
-in `prod` — the same environment-aware branch `ORG-PROD-TLS` uses above.
+in `prod`, the same environment-aware branch `ORG-PROD-TLS` uses above.
 
 ## Cookbook: column rules over a SQL schema
 
@@ -207,7 +207,7 @@ chant already has the machinery: a [post-synth phase](/chant/lexicon-authoring/p
 that reasons about resolved resources, project-authored rule loading, and the
 [Op gate model](/chant/guide/ops/) for the apply side. A separate policy language
 (Rego/OPA-style) would duplicate the lint engine and break "TypeScript is the one
-language." Org policy is post-synth checks the org authors — nothing more.
+language." Org policy is post-synth checks the org writes.
 
 ## Gating an apply
 
@@ -232,8 +232,8 @@ export default Op({
 ```
 
 `policyGate` builds the project, runs `lint.policies` with the given `env` (or
-`ownership.env`), and **blocks** on any violation — non-retryable and
-single-attempt (a deterministic violation is not worth retrying). It is a plain
+`ownership.env`), and **blocks** on any violation. It runs once, with no retry
+(a deterministic violation is not worth retrying). It is a plain
 activity, so it gates the same wherever the run is hosted. A clean evaluation
 passes through to the apply.
 
@@ -242,7 +242,7 @@ uses, so it is the same project: folded by default, with the project's config
 reaching the serializers and its `buildRoots` contributing their entities. A gate
 that passes is a gate over a build `chant build` would also accept.
 
-One combination is refused rather than half-honoured. `chant run <op> --sandbox`
+chant refuses one combination outright. `chant run <op> --sandbox`
 on an Op containing a `policyGate` step exits before any phase runs: the gate
 builds the project and imports its `lint.policies` modules in the chant process,
 which is what `--sandbox` promises does not happen. Run the Op without
@@ -263,4 +263,4 @@ bound to the plan digest and the rules that denied it, and it counts once.
 
 The full example is
 [`lexicons/k8s/examples/org-policy`](https://github.com/INTENTIUS/chant/tree/main/lexicons/k8s/examples/org-policy)
-— it is exercised in CI (clean in dev, blocked in prod).
+and CI runs it (clean in dev, blocked in prod).

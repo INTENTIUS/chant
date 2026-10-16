@@ -13,7 +13,7 @@ function serviceFromType(resourceType: string): string {
   return parts.length >= 2 ? parts[1] : "Helm";
 }
 
-const overview = `The **Helm** lexicon generates production-quality, parameterized Helm charts from typed TypeScript.
+const overview = `The **Helm** lexicon generates production-quality, parameterized Helm charts from TypeScript.
 
 Unlike static manifest generators, the Helm lexicon produces real \`{{ .Values.x }}\` directives, \`values.yaml\`, \`values.schema.json\`, conditional resources, Helm hooks, and standard \`_helpers.tpl\`.
 

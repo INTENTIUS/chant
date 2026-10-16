@@ -1,15 +1,15 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, the Grafana Operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs (Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, the Grafana Operator, KubeRay, Argo CD, and Flux), plus how the CRD source list works and how to add your own."
 diataxis: reference
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-The k8s lexicon generates typed classes from the core Kubernetes OpenAPI spec **plus a curated list of third-party CRDs**. Each CRD in the list becomes a first-class `K8s::*` resource — with the serializer, LSP hover, and MCP — the same as a built-in `Deployment`. No hand-written YAML, no `as any`. The constructor's `spec` is an open record; its fields are checked against the CRD schema at lint time (see [Spec validation](#spec-validation)).
+The k8s lexicon generates typed classes from the core Kubernetes OpenAPI spec **plus a curated list of third-party CRDs**. Each CRD in the list becomes a typed `K8s::*` resource with the serializer, LSP hover and MCP, like a built-in `Deployment`. The constructor's `spec` is an open record; its fields are checked against the CRD schema at lint time (see [Spec validation](#spec-validation)).
 
 <Aside type="note">
-The lexicon stays **runtime-agnostic** — it only emits manifests. Generated CRD classes describe the custom resource; you still install the upstream **controller/operator** (and its CRDs) in the cluster. Each section below includes the install command.
+The lexicon only writes manifests. You still install each upstream **controller or operator**, and its CRDs, in the cluster. Each section below includes the install command.
 </Aside>
 
 ## How it works
@@ -47,7 +47,7 @@ Objects the CRD marks `x-kubernetes-preserve-unknown-fields` or `additionalPrope
 
 ## Gateway API
 
-`gateway.networking.k8s.io`, pinned to **v1.2.1** (standard channel). The modern, portable replacement for `Ingress` — `GRPCRoute` in particular is the native way to express a gRPC route, instead of ingress-controller annotations.
+`gateway.networking.k8s.io`, pinned to **v1.2.1** (standard channel). The successor to `Ingress`. `GRPCRoute` declares a gRPC route without ingress-controller annotations.
 
 | Type | apiVersion / kind |
 |---|---|
@@ -125,7 +125,7 @@ export const cert = new Certificate({
 
 ### SecureIngress emits a real Certificate
 
-When you set `clusterIssuer` on the [`SecureIngress`](/chant/lexicons/k8s/composite-examples/) composite, it now emits a genuine `K8s::CertManager::Certificate` (wired to the named issuer) alongside the ingress-shim annotation — no placeholder.
+When you set `clusterIssuer` on the [`SecureIngress`](/chant/lexicons/k8s/composite-examples/) composite, it emits a `K8s::CertManager::Certificate` for the named issuer beside the ingress-shim annotation.
 
 ```typescript
 import { SecureIngress } from "@intentius/chant-lexicon-k8s";

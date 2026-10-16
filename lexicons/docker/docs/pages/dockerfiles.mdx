@@ -244,7 +244,8 @@ The build stops with an error that names the Dockerfile, the stage and the step 
 
 ## Sharing stages and steps between Dockerfiles
 
-A Dockerfile has no `INCLUDE`. In chant, stages and step lists are TypeScript values, so you share them the way you share any other value: export them from a module and import them where they are needed. Import a stage and list it in `stages`, or import a step list and spread it into `steps` before or after your own steps.
+A Dockerfile has no `INCLUDE`. In chant, stages and step lists are TypeScript values: export them from a module and import them where they are needed.
+=== Import a stage and list it in `stages`, or import a step list and spread it into `steps` before or after your own steps.
 
 The shared module holds plain data. The `DockerfileStage` and `DockerfileStep` types check the shape:
 

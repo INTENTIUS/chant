@@ -6,17 +6,17 @@ diataxis: explanation
 
 import { Aside } from '@astrojs/starlight/components';
 
-A **component** is a releasable unit declared as data. It says what it builds, what it produces, and how it deploys. One generic orchestrator runs it, so adding a component adds a declaration, not a pipeline. This page places the release model against the rest of chant and clears up two names that collide.
+A **component** is a releasable unit declared as data. It says what it builds, what it produces, and how it deploys. One generic orchestrator runs it, so adding a component adds a declaration, not a pipeline. This page shows where components fit in chant and how they differ from composites.
 
-For the model's own internals — the contract, the capability registry, wiring, and the orchestrator — start at [Components Overview](/chant/components/overview/). This page is the conceptual placement.
+For the model's own internals — the contract, the capability registry, wiring, and the orchestrator — start at [Components Overview](/chant/components/overview/). This page explains where components fit.
 
 ## Where it sits
 
-chant is a deterministic synthesis core with the lifecycle built on top in layers. Components are the outermost.
+chant's layers build on synthesis, and components are the outermost.
 
 | Ring | Layer | What it does |
 |---|---|---|
-| 0 | Synthesis (`chant build`) | typed TypeScript in, spec-native artifacts out |
+| 0 | Synthesis (`chant build`) | TypeScript in, spec-native artifacts out |
 | 1 | [Ops](/chant/guide/ops/) | named, phased workflows over those artifacts |
 | 2 | [Lifecycle dial](/chant/concepts/lifecycle-models/) | observe, reconcile, or apply — per environment |
 | 3 | Components | a release composed from a bounded capability set |

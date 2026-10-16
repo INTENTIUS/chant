@@ -662,7 +662,7 @@ A host that plants a repo as a box, such as a studio's planter, needs exactly on
 
 ### Isolation
 
-Several boxes on one machine collide unless something keeps them apart. When two boxes keep hud's identity in one file, they share one owner ([arugula-salad/studio#39](https://github.com/arugula-salad/studio/issues/39)). A browser scopes a cookie to a host and not to a port. So when two boxes set one cookie name on one hostname, signing into one signs you out of the other. The box block states the box's isolation, and chant derives the values from the box's identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). A runtime that plants or starts boxes reads them from [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) instead of choosing its own.
+Several boxes on one machine can collide on ports, state paths and cookies. When two boxes keep hud's identity in one file, they share one owner ([arugula-salad/studio#39](https://github.com/arugula-salad/studio/issues/39)). A browser scopes a cookie to a host and not to a port. So when two boxes set one cookie name on one hostname, signing into one signs you out of the other. The box block states the box's isolation, and chant derives the values from the box's identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). A runtime that plants or starts boxes reads them from [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) instead of choosing its own.
 
 ```json
 {

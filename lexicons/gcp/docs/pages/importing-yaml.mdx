@@ -1,15 +1,15 @@
 ---
 title: "Importing Existing YAML"
-description: "Convert existing Config Connector YAML into typed TypeScript"
+description: "Convert existing Config Connector YAML into TypeScript"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/gcp/importing-yaml/.
-  Import the Config Connector YAML files I name into typed TypeScript under src/ with `npx chant import`, and check that `npx chant build src/ --output manifests.yaml` writes the same resources.
+  Import the Config Connector YAML files I name into TypeScript under src/ with `npx chant import`, and check that `npx chant build src/ --output manifests.yaml` writes the same resources.
   Run `npx chant lint src/`, and open a pull request with src/ and a list of anything the import left out or changed. Keep the original YAML.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Chant can parse existing Config Connector YAML manifests and generate typed TypeScript source files.
+`chant import` reads Config Connector YAML and writes TypeScript.
 
 ## How it works
 
@@ -17,7 +17,7 @@ Chant can parse existing Config Connector YAML manifests and generate typed Type
 Input YAML → parse → generate TypeScript → export typed resources
 ```
 
-The importer reads multi-document YAML, identifies Config Connector resources by their `cnrm.cloud.google.com` apiVersion, and generates corresponding typed constructor calls.
+The importer reads multi-document YAML, identifies Config Connector resources by their `cnrm.cloud.google.com` apiVersion, and writes a typed constructor call for each.
 
 ## Example
 

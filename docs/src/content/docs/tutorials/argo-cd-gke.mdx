@@ -25,7 +25,7 @@ GKE cluster (Autopilot)
               └── reconciles ──▶  Deployment + Service  (namespace demo)
 ```
 
-The key idea: **the k8s lexicon stays runtime-agnostic.** The workload (`src/app`) is plain Chant k8s — it knows nothing about Argo. Argo is **opt-in**, added by one `ArgoAppFor` call in `src/bootstrap`.
+The k8s lexicon stays runtime-agnostic. The workload (`src/app`) is plain Chant k8s with no reference to Argo, and one `ArgoAppFor` call in `src/bootstrap` adds Argo.
 
 ## Layout
 
@@ -43,7 +43,7 @@ Two build outputs:
 
 ## 1. Declare the workload
 
-`src/app/web.ts` is ordinary Chant — a `WebApp` composite. No Argo anywhere:
+`src/app/web.ts` is ordinary Chant, a `WebApp` composite with no Argo in it:
 
 ```typescript
 import { WebApp } from "@intentius/chant-lexicon-k8s";
@@ -134,11 +134,11 @@ NAME   SYNC STATUS   HEALTH STATUS
 web    Synced        Healthy
 ```
 
-The `web` Deployment and Service exist in the `demo` namespace — created by Argo, not by `kubectl apply` of the workload. Change `src/app`, rebuild, push to git, and Argo reconciles the diff on its own.
+The `web` Deployment and Service exist in the `demo` namespace, created by Argo rather than by `kubectl apply` of the workload. Change `src/app`, rebuild, push to git, and Argo reconciles the diff on its own.
 
 ## Next steps
 
 - Scope the Application to a real `AppProject` for RBAC ([ARGO002](/chant/lexicons/k8s/lint-rules/)).
 - Fan out across regional clusters with [`ArgoAppSetForRegions`](/chant/lexicons/k8s/argo-composites/).
-- Gate procedural steps on Argo finishing with the k8s lexicon's `waitForArgoSync` activity — see the [CockroachDB multi-region tutorial](/chant/tutorials/cockroachdb-multi-region/), which uses Argo for the apply layer and a steward for the procedural one.
-- Running Flux instead of Argo? The same split, on a self-hosted estate: [Flux CD Self-Hosted](/chant/tutorials/flux-apps/).
+- Gate procedural steps on Argo finishing with the k8s lexicon's `waitForArgoSync` activity. The [CockroachDB multi-region tutorial](/chant/tutorials/cockroachdb-multi-region/) does this, with Argo for the apply layer and a steward for the procedural one.
+- For Flux instead of Argo, [Flux CD Self-Hosted](/chant/tutorials/flux-apps/) has the same split on a self-hosted estate.

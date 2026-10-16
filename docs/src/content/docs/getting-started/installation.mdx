@@ -7,11 +7,11 @@ prompt: setup
 
 ## Requirements
 
-- **Node.js 24+** — Install from [nodejs.org](https://nodejs.org). The repo `.nvmrc` pins Node 24, which is what CI tests against.
+- Node.js 24 or later, from [nodejs.org](https://nodejs.org). The repo `.nvmrc` pins Node 24, which is what CI tests against.
 
 ## Install
 
-A **lexicon** is a platform-specific plugin that teaches chant how to generate infrastructure for a target (AWS, Azure, K8s, etc.). Install a lexicon for your target platform (this also installs the chant CLI):
+A **lexicon** is the plugin that generates output for one platform, such as AWS or Kubernetes. Install the lexicon for your platform, which also installs the chant CLI:
 
 ```bash
 npm install --save-dev @intentius/chant-lexicon-aws
@@ -21,10 +21,10 @@ See the [AWS lexicon reference](/chant/lexicons/aws/) for intrinsic functions, c
 
 ## Verify the Installation
 
-After installing, confirm chant is available:
+Check the install:
 
 ```bash
 chant --version
 ```
 
-You're ready to proceed to the [Quick Start](/chant/getting-started/quick-start/).
+Next, follow the [Quick Start](/chant/getting-started/quick-start/).

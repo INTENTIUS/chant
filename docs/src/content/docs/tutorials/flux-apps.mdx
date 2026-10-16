@@ -1,6 +1,6 @@
 ---
 title: "Flux CD Self-Hosted"
-description: "A GitOps on-ramp for the self-hosted estate — a platform layer and two Chant-authored workloads reconciled by Flux CD, declared in TypeScript with FluxGitSource and FluxAppFor."
+description: "A GitOps on-ramp for a self-hosted estate: a platform layer and two Chant-authored workloads reconciled by Flux CD, declared in TypeScript with FluxGitSource and FluxAppFor."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/flux-apps/.
@@ -12,13 +12,13 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-The Flux counterpart of [Argo CD on GKE](/chant/tutorials/argo-cd-gke/), aimed at where Flux users actually are: a self-hosted cluster — k3s on hardware you own — with Traefik and cert-manager beside it. Chant authors typed manifests, Flux reconciles them from git in dependency order, and chant reads convergence back. One `GitRepository` and three `Kustomization`s, declared in TypeScript with [`FluxGitSource` and `FluxAppFor`](/chant/lexicons/k8s/flux-composites/).
+The Flux counterpart of [Argo CD on GKE](/chant/tutorials/argo-cd-gke/), for the setup most Flux users run: k3s on hardware you own, with Traefik and cert-manager beside it. Chant authors typed manifests, Flux reconciles them from git in dependency order, and chant reads convergence back. One `GitRepository` and three `Kustomization`s, declared in TypeScript with [`FluxGitSource` and `FluxAppFor`](/chant/lexicons/k8s/flux-composites/).
 
-This mirrors the [`flux-apps` example](https://github.com/INTENTIUS/chant/tree/main/examples/flux-apps), and the estate shape comes from a real one: [jhgaylor/home-cloud](https://github.com/jhgaylor/home-cloud) runs k3s across several Mac minis with Flux reconciling thirty-one hand-written `GitRepository` + `Kustomization` call sites, Traefik `IngressRoute`s, cert-manager, CNPG, and Infisical — with chant-built manifests already onboarded as one of the sources.
+This mirrors the [`flux-apps` example](https://github.com/INTENTIUS/chant/tree/main/examples/flux-apps), and the estate shape comes from a real one: [jhgaylor/home-cloud](https://github.com/jhgaylor/home-cloud) runs k3s across several Mac minis with Flux reconciling thirty-one hand-written `GitRepository` + `Kustomization` call sites, Traefik `IngressRoute`s, cert-manager, CNPG, and Infisical, and already pulls chant-built manifests as one of its sources.
 
 ## Cost
 
-None. Everything runs on a cluster you already have (k3s, k3d, kind, anything with Traefik). The controller installs take a few minutes; there is no cloud account anywhere in the loop.
+None. Everything runs on a cluster you already have (k3s, k3d, kind, anything with Traefik). The controller installs take a few minutes, and the loop needs no cloud account.
 
 ## What you'll build
 
@@ -32,7 +32,7 @@ self-hosted cluster (k3s)
                                                  + IngressRoute + Certificate  (dependsOn: platform, api)
 ```
 
-The key idea carries over from the Argo tutorial unchanged: **the k8s lexicon stays runtime-agnostic.** The workloads (`src/platform`, `src/apps`) are plain Chant k8s — they know nothing about Flux. Flux is **opt-in**, added by four calls in `src/flux`.
+As in the Argo tutorial, the k8s lexicon stays runtime-agnostic. The workloads (`src/platform`, `src/apps`) are plain Chant k8s with no reference to Flux, and four calls in `src/flux` add Flux.
 
 ## Layout
 
@@ -46,11 +46,11 @@ src/
   deploy/flux.component.ts # flux-reconcile deploy leaf
 ```
 
-Four build outputs: three workload manifests you **commit to the repo Flux watches**, and `dist/flux.yaml` — the Flux CRs you **apply once** to bootstrap the loop.
+Four build outputs: three workload manifests you **commit to the repo Flux watches**, and `dist/flux.yaml`, the Flux CRs you **apply once** to bootstrap the loop.
 
 ## 1. Declare the workloads
 
-`src/apps/web/web.ts` is ordinary Chant — a `WebApp` composite plus the two CRs the self-hosted stack fronts it with. No Flux anywhere:
+`src/apps/web/web.ts` is ordinary Chant: a `WebApp` composite plus the two CRs the self-hosted stack fronts it with, and no Flux:
 
 ```typescript
 import { WebApp, IngressRoute, Certificate } from "@intentius/chant-lexicon-k8s";
@@ -74,11 +74,11 @@ export const route = new IngressRoute({
 });
 ```
 
-`IngressRoute` and `Certificate` are the typed `K8s::Traefik::*` and `K8s::CertManager::*` CRD classes — no escape hatch, no synthetic entity types.
+`IngressRoute` and `Certificate` are the typed `K8s::Traefik::*` and `K8s::CertManager::*` CRD classes.
 
 ## 2. Declare the GitOps loop
 
-`src/flux/apps.ts` adds Flux in four calls — **one source, many apps**:
+`src/flux/apps.ts` adds Flux in four calls, with one source for many apps:
 
 ```typescript
 import { FluxGitSource, FluxAppFor } from "@intentius/chant-lexicon-k8s";
@@ -107,7 +107,7 @@ export const web = FluxAppFor("web", {
 });
 ```
 
-The repo is declared once; every `FluxAppFor` reconciles a path out of it. A `GitRepository` per app is the mistake this split makes hard. Each call renders to a `Kustomization` with estate defaults — 10m interval, `prune: true`, `wait: true`:
+The repo is declared once; every `FluxAppFor` reconciles a path out of it. A `GitRepository` per app is the mistake this split makes hard. Each call renders to a `Kustomization` with estate defaults: 10m interval, `prune: true`, `wait: true`:
 
 ```yaml
 apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -129,11 +129,11 @@ spec:
     - name: api
 ```
 
-Three lint rules keep the loop honest before anything reaches a cluster:
+Three lint rules check the loop before anything reaches a cluster:
 
-- **FLUX001** — a `GitRepository` with no `spec.ref` falls back to the `master` branch, which on most repos no longer exists; the source stalls and everything downstream stalls with it. `FluxGitSource` always pins a branch or tag.
-- **FLUX002** — every `Kustomization.spec.sourceRef` must name a source the build declares (the bootstrap-created `flux-system` repo is exempt). An undeclared source means the kustomize-controller waits forever on an artifact that never arrives.
-- **FLUX003** — every `dependsOn` entry is joined against the Kustomizations the build declares. In raw YAML those names have no referential integrity — a typo stalls the app silently; here it's a build-time diagnostic. Cross-repo edges are warnings, not errors, because estates legitimately split infra and apps across repos.
+- FLUX001 catches a `GitRepository` with no `spec.ref`. It falls back to the `master` branch, which on most repos no longer exists. The source stalls and everything downstream stalls with it. `FluxGitSource` always pins a branch or tag.
+- FLUX002 checks that every `Kustomization.spec.sourceRef` names a source the build declares (the bootstrap-created `flux-system` repo is exempt). With an undeclared source, the kustomize-controller waits forever on an artifact that never arrives.
+- FLUX003 joins every `dependsOn` entry against the Kustomizations the build declares. In raw YAML a typo in those names stalls the app silently; here it is a build-time diagnostic. Cross-repo edges are warnings because estates legitimately split infra and apps across repos.
 
 <Aside type="tip">
 `dependsOn` is the piece worth converting for. home-cloud's `clusters/home/infra/` carries a 22-node dependency graph in hand-written YAML strings that are correct until they aren't.
@@ -165,7 +165,7 @@ npm run wait        # block until kustomization/web is Ready
 npm run status
 ```
 
-Or as a component deploy with the convergence wait built in — `src/deploy/flux.component.ts` uses the k8s lexicon's `flux-reconcile` capability:
+Or deploy it as a component with the convergence wait built in. `src/deploy/flux.component.ts` uses the k8s lexicon's `flux-reconcile` capability:
 
 ```typescript
 import { phase, type Component } from "@intentius/chant/components/component";
@@ -187,7 +187,7 @@ export const fluxBootstrap: Component = {
 npm run deploy      # chant run --components flux-bootstrap --env home
 ```
 
-`flux-reconcile` applies the CRs through the same server-side apply `kubectl-apply` uses, then waits for every applied Flux CR to report Ready — **sources first**, because a Kustomization cannot become Ready before its `GitRepository` has an artifact, so a wedged clone surfaces as the source's error rather than a reconciler timeout downstream of it. Wedge reasons like `BuildFailed` fail fast instead of polling out the timeout.
+`flux-reconcile` applies the CRs through the same server-side apply `kubectl-apply` uses, then waits for every applied Flux CR to report Ready, **sources first**. A Kustomization cannot become Ready before its `GitRepository` has an artifact, so a wedged clone surfaces as the source's error rather than a reconciler timeout downstream of it. Wedge reasons like `BuildFailed` fail fast instead of polling out the timeout.
 
 ## What success looks like
 
@@ -206,18 +206,18 @@ The workloads exist in the `demo` namespace, created by Flux in dependency order
 
 ## Reading convergence back
 
-Flux applied the manifests — but attribution doesn't depend on who applied them. The example's `chant.config.ts` sets `ownership: { stack: "flux-apps" }`, so the build stamps `chant.intentius.io/stack: flux-apps` (alongside `app.kubernetes.io/managed-by: chant`) on every resource, and the labels travel with the manifests through git and through Flux:
+Attribution does not depend on who applied the manifests. The example's `chant.config.ts` sets `ownership: { stack: "flux-apps" }`, so the build stamps `chant.intentius.io/stack: flux-apps` (alongside `app.kubernetes.io/managed-by: chant`) on every resource, and the labels travel with the manifests through git and through Flux:
 
 ```bash
 npm run status:components   # chant components status home --live
 ```
 
-The k8s lexicon's live read selects on exactly those labels and rolls readiness up from the matching workloads' controllers — the labels channel. Flux prunes by its own labels, chant observes by its own; neither needs the other's. The same channel is what lets `chant kube` separate chant's resources from the operator-generated ones beside them in a cluster where Flux and several operators all create Deployments.
+The k8s lexicon's live read selects on exactly those labels and rolls readiness up from the matching workloads' controllers. This is the labels channel. Flux prunes by its own labels, chant observes by its own; neither needs the other's. The same channel is what lets `chant kube` separate chant's resources from the operator-generated ones beside them in a cluster where Flux and several operators all create Deployments.
 
 ## Next steps
 
 - Point `FLUX_REPO` at a private repo and pass `secretRef` to `FluxGitSource`.
 - Swap the self-signed `ClusterIssuer` for an ACME issuer once the cluster has a real domain.
 - Split infra and apps across repos the way home-cloud does; FLUX003 tolerates cross-repo `dependsOn` edges by design.
-- Converting an existing Flux estate? `chant import --kustomize` brings a manifest you already have into typed source — hand-rewriting is how a conversion stalls at app four.
-- The full composite reference lives at [Flux Composites](/chant/lexicons/k8s/flux-composites/); the Argo counterpart at [Argo CD Composites](/chant/lexicons/k8s/argo-composites/).
+- To convert an existing Flux estate, `chant import --kustomize` brings a manifest you already have into typed source. Rewriting by hand is how a conversion stalls at app four.
+- The full composite reference is at [Flux Composites](/chant/lexicons/k8s/flux-composites/); the Argo counterpart at [Argo CD Composites](/chant/lexicons/k8s/argo-composites/).

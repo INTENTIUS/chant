@@ -13,14 +13,14 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 The [`github-pr-preview`](https://github.com/INTENTIUS/chant/tree/main/examples/github-pr-preview)
-example closes the loop on short-lived environments: **PR opened** -> an
+example runs the whole life of a short-lived environment: **PR opened** -> an
 isolated copy of the stack deploys and a sticky comment on the PR says where
 it is; **PR updated** -> the same copy converges and the same comment updates
 in place; **PR closed** -> the copy is swept away by its ownership marker.
 
 Nothing in the loop is a marketplace action or a shell script grown in the
-workflow file. The workload is chant, the CI workflow is chant output, the
-deploy is an Op, and the teardown is `chant lifecycle teardown` — the
+workflow file. The workload is chant and the CI workflow is chant output. The
+deploy is an Op, and the teardown is `chant lifecycle teardown`, the
 stateless, marker-scoped sweep from [Reconciling
 Lifecycle](/chant/guide/reconciling-lifecycle/).
 
@@ -61,14 +61,14 @@ PR.
 **`buildParams.env` with the `CHANT_ENV` fallback.** The env name enters the
 build as a [build-time parameter](/chant/concepts/build-time-parameters/). The
 workflow exports `CHANT_ENV=pr-<n>` once at workflow level; every chant
-invocation in both jobs — the Op's inner `npm run build`, the teardown —
-resolves the same validated value. No flag threading.
+invocation in both jobs (the Op's inner `npm run build`, the teardown)
+resolves the same validated value, with no flag passed along.
 
 **`ownership.env: { param: "env" }`.** The ownership marker follows the
 parameter (chant #1396). A build with `env=pr-42` stamps every resource
 `chant.intentius.io/stack: pr-preview` + `chant.intentius.io/env: pr-42`.
-That marker is the entire teardown contract — no state file, no snapshot, the
-cluster's own labels are the record.
+That marker is the entire teardown contract: the cluster's own labels are the
+record, with no state file or snapshot.
 
 The workload interpolates the same parameter into every physical name
 (`preview-pr-42`, `web-pr-42`), which is what lets two open PRs coexist —
@@ -93,7 +93,7 @@ export const config = {
 ## The workflow is chant output
 
 `src/ci/` declares the workflow with the github lexicon's typed entities, and
-`npm run build:ci` emits `.github/workflows/preview.yml` — the workflow that
+`npm run build:ci` emits `.github/workflows/preview.yml`, so the workflow that
 builds the project is itself built from the project. One workflow, two jobs,
 gated on the PR action:
 
@@ -125,9 +125,9 @@ environment](https://docs.github.com/en/actions/deployment/targeting-different-e
   run: npx chant run preview-apply
 ```
 
-`preview-apply` is an `ApplyOp` on the [local runtime](/chant/concepts/durable-workflows/)
-— build, live-diff plan, then a Kubernetes server-side apply as field manager
-`chant:pr-preview`, deletes scoped to owned resources only. The op reads the
+`preview-apply` is an `ApplyOp` on the [local runtime](/chant/concepts/durable-workflows/):
+build, live-diff plan, then a Kubernetes server-side apply as field manager
+`chant:pr-preview`, with deletes scoped to owned resources only. The op reads the
 same `params.env`, so nothing about it is PR-specific:
 
 ```typescript
@@ -151,7 +151,7 @@ close, merged or abandoned:
 
 Teardown enumerates live resources carrying stack `pr-preview` + env `pr-<n>`
 and deletes exactly those, reporting every outcome (deleted / failed /
-not-prunable / skipped — never silence). It works even when the PR rewrote
+not-prunable / skipped). It works even when the PR rewrote
 the workflow or the workload sources, because it never consults the build:
 the marker lives on the resources. The prod guard does not fire for `pr-*`
 names, so `--yes` is enough to run non-interactively; a name like `prod`
@@ -159,9 +159,9 @@ would additionally demand `--confirm-prod`.
 
 ## The sticky comment
 
-A preview no one can find may as well not exist. The deploy job ends by
-posting the environment's coordinates to the PR — one comment, updated in
-place across pushes, keyed on a hidden HTML marker in the body:
+The deploy job ends by posting the environment's address to the PR: one
+comment, updated in place across pushes, keyed on a hidden HTML marker in the
+body:
 
 ```yaml
 - name: Sticky PR comment
@@ -188,9 +188,9 @@ place across pushes, keyed on a hidden HTML marker in the body:
 The marker is invisible in rendered Markdown but survives in the raw body, so
 the find-and-update is stable across any number of pushes. This is a scripted
 `gh api` step on purpose: `gh` ships on GitHub's hosted runners, so there is
-no marketplace action to vet, pin to a SHA, and re-audit on every bump — the
-github lexicon's own pinned-action lints (GHA019 and friends) stay quiet
-because there is nothing unpinned to flag.
+no marketplace action to vet, pin to a SHA, and re-audit on every bump. The
+github lexicon's own pinned-action lints (GHA019 and friends) have nothing
+unpinned to flag.
 
 Every `gh api` call targets `$api_base`, resolved from `$GITHUB_API_URL`
 rather than a bare relative path: `gh` resolves a bare path against
@@ -208,7 +208,7 @@ workflow-wide. Note the fork boundary: on `pull_request` from a fork, GitHub
 hands the job a read-only token and no secrets, so the comment step (and the
 deploy itself, which needs the kubeconfig secret) runs only for same-repo
 PRs. Previews for forked PRs mean `pull_request_target` and a very different
-threat model — do not go there casually.
+threat model. Do not go there casually.
 
 ## Run the loop by hand
 
@@ -232,10 +232,10 @@ npx chant lifecycle teardown pr-42 --yes
 kubectl get ns preview-pr-42 preview-pr-43
 ```
 
-The same two invocations are proven end to end — deploy on a PR-opened
-event, sweep on a PR-closed event, against a real runner and a live emulator
-— by the Forgejo runtime E2E (`just forgejo-preview-e2e`), which drives the
-chant-emitted workflow through `act` with stubbed PR events.
+The Forgejo runtime E2E (`just forgejo-preview-e2e`) tests the same two
+invocations against a real runner and a live emulator: deploy on a PR-opened
+event, sweep on a PR-closed event. It drives the chant-emitted workflow
+through `act` with stubbed PR events.
 
 ## What a preview costs, and what not to clone
 
@@ -249,8 +249,8 @@ per push.
 Costs that scale with open PRs, not with merges:
 
 - **Compute and storage per copy.** Every open PR holds its copy alive.
-  Long-lived PRs are the expensive ones — the teardown fires on close, not on
-  staleness. If your team parks PRs for weeks, add a scheduled workflow that
+  Long-lived PRs are the expensive ones, because the teardown fires on close,
+  not on staleness. If your team parks PRs for weeks, add a scheduled workflow that
   tears down environments whose PR has gone quiet.
 - **CI minutes per push.** Deploy runs on every synchronize. The concurrency
   group keeps it to one run at a time per PR, but a busy PR still redeploys
@@ -270,24 +270,24 @@ Some resource kinds do not belong in a per-PR copy at all:
   to provision (managed clusters, cloud databases, VPCs) or draws from a hard
   account quota (elastic IPs, load balancers, certificates) makes open ×
   provision-time your PR feedback loop. Keep those in a long-lived
-  environment and clone only the app layer — namespaces, workloads, config.
+  environment and clone only the app layer: namespaces, workloads, config.
 - **Globally named resources.** Anything whose name is a global singleton
   (DNS records at a fixed hostname, storage buckets in a global namespace)
   needs the env interpolated into the name or it cannot be cloned; that is
   what COR021 enforces for the kinds chant builds.
-- **Third-party side effects.** Webhooks, external DNS, paid SaaS
-  integrations — a preview that registers itself with external systems needs
-  a teardown story for each of them. The marker-scoped sweep covers what
+- **Third-party side effects.** A preview that registers itself with
+  webhooks, external DNS or paid SaaS integrations needs a teardown story for
+  each of them. The marker-scoped sweep covers what
   chant deployed, nothing else.
 
 The k8s target keeps the marginal cost of this example near zero. The same
-loop works with `target: "cloudformation"` or any other `ApplyOp` target —
-reread this section first, because the marginal cost of a stack of cloud
+loop works with `target: "cloudformation"` or any other `ApplyOp` target.
+Reread this section first, because the marginal cost of a stack of cloud
 resources is not near zero.
 
 <Aside type="note">
 `chant lifecycle teardown` executes its sweep through each lexicon's teardown
-capability — implemented today for the k8s and fly lexicons. For other
+capability, which the k8s and fly lexicons implement today. For other
 lexicons the command still plans (and reports what it would need), but
 candidates are reported as skipped, not deleted.
 </Aside>

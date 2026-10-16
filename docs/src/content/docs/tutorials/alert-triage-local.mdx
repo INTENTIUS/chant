@@ -1,6 +1,6 @@
 ---
 title: Alert Triage (local)
-description: Run the alert-triage capstone locally — an incident-triage app whose remediation waits on a person, on nothing but Node and npm.
+description: Run the alert-triage capstone with only Node and npm, an incident-triage app whose remediation waits for a person.
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/alert-triage-local/.
@@ -20,8 +20,7 @@ for a person before applying it (a clearly-stubbed step). chant synthesizes the
 Kubernetes manifests the app runs on, and the triage itself is an ordinary
 `*.op.ts` whose steps shell out to this project's own code.
 
-This tutorial runs the whole thing locally with no cloud, no cluster, and no
-runtime beyond the one built into chant.
+This tutorial runs it all on your machine, with the runtime built into chant.
 
 ## Prerequisites
 
@@ -70,8 +69,8 @@ week's approval cannot clear this morning's proposal.
 Every remediation passes the gate, which is a change from the workflow this
 example replaces. That one paid for its gate with a twelve-hour open wait, so it
 spent that only on remediations the classifier called risky and let the routine
-ones through unattended. Nothing is held open now, and the second run is just
-another run, so there is no cost left to route everything through the gate.
+ones through unattended. Now nothing is held open and the second run is an
+ordinary run, so routing everything through the gate costs nothing.
 `risky` still does work: it is what the proposal and the notify line say about
 the change somebody is being asked to clear.
 
@@ -91,7 +90,7 @@ sample drift so you can see the pipeline without making a real change.
 
 ## The agent (optional)
 
-`proposeRemediation` is a deterministic stub by default — no key, runs offline.
+`proposeRemediation` is a deterministic stub by default, which runs offline with no key.
 Set `ANTHROPIC_API_KEY` (and `npm i @anthropic-ai/sdk`) to have it call Claude;
 override the model with `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`). The first
 run shows chant, not an LLM. The agent may only escalate risk, never de-escalate:

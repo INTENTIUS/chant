@@ -13,20 +13,20 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 The [`sprites-build-sandbox`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-build-sandbox)
-example is a disposable build box on a [Sprite](https://sprites.dev) — Fly.io's
+example is a disposable build box on a [Sprite](https://sprites.dev), Fly.io's
 stateful, checkpointable sandbox. It warms a toolchain once, **checkpoints** it,
-then builds from staged source and reads the artifact out — resetting to the warm
-checkpoint so the next build starts fast.
+then builds from staged source and reads the artifact out. It then resets to the
+warm checkpoint so the next build starts fast.
 
 Two ideas do the work:
 
-- the **Sprite** is the disposable box — create it, use it, throw it away;
-- the **checkpoint** is the prepared pool — a warm toolchain you restore per
+- the **Sprite** is the disposable box: create it, use it, throw it away;
+- the **checkpoint** is the prepared pool: a warm toolchain you restore per
   build instead of re-installing.
 
 The filesystem activities stage the source in and read the artifact out without
 shelling I/O through `spriteExec`. Sprites are imperative and ephemeral, so this
-lives in chant's Op/activity layer — no `build` phase, no serialized plan.
+lives in chant's Op/activity layer without a `build` phase or serialized plan.
 
 | Phase | Activity | Point |
 |-------|----------|-------|
@@ -90,26 +90,25 @@ chant emulator down   # stop both containers when done
 ```
 
 <Aside type="note">
-In a dev checkout, run through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run build-sandbox` — rather than a
-globally linked `chant`, which double-loads modules here.
+In a dev checkout, run through the workspace CLI with
+`npx tsx ../../packages/core/src/cli/main.ts run build-sandbox`. A
+globally linked `chant` double-loads modules here.
 </Aside>
 
 ## The prepared pool
 
-Warming a toolchain — installing compilers, priming caches — is the slow part of
+Warming a toolchain (installing compilers, priming caches) is the slow part of
 a build. `spriteCheckpoint` snapshots it once; `spriteRestore` rewinds to it in
 seconds. In a real pool you keep the Sprite alive and restore the warm checkpoint
 per build, so each build starts from the toolchain, not a cold install. This
-example checkpoints, builds, then resets to the checkpoint to show the cycle —
-the same checkpoint-as-a-fast-reset that
-[`fly-deploy-rollback`](/chant/tutorials/fly-deploy-rollback/) uses for
-rollback, pointed at reuse instead.
+example checkpoints, builds, then resets to the checkpoint to show the cycle.
+[`fly-deploy-rollback`](/chant/tutorials/fly-deploy-rollback/) uses the same
+fast reset for rollback.
 
 ## Real Sprites
 
-Drop the `SPRITES_BASE_URL` override and set a token — the same Op, no code
-change:
+Drop the `SPRITES_BASE_URL` override and set a token. The Op and the code stay
+the same:
 
 ```bash
 unset SPRITES_BASE_URL

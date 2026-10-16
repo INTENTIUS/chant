@@ -10,7 +10,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-This guide is for a monorepo of Terraform, OpenTofu or Terragrunt units that share modules. A change under `modules/` gives the CI no way to tell which units need applying. The answer here has two halves, and they work together:
+This guide is for a monorepo of Terraform, OpenTofu or Terragrunt units that share modules. A change under `modules/` gives the CI no way to tell which units need applying. This guide's answer has two halves:
 
 - Each unit pins an exact version of each module it calls. A change to a module then moves no unit. The units to apply are the ones whose pin moved, which a plain path diff answers.
 - Taking a new module version is a series of pin bumps, one pull request per wave. Each PR moves the pin for a subset of units, so a cautious rollout is a choice of which units move first.

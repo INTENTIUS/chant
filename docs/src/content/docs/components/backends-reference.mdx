@@ -12,8 +12,8 @@ The backend interface behind [Orchestration](/chant/components/orchestration/)'s
 
 The orchestrator is a **backend interface**, not one engine. Two axes swap independently and a component definition does not change across them: the **trigger/scheduler host** (when and what to invoke) and the **execution engine** (how a run executes).
 
-- **General-consumption default.** Plain CI (generated) for the trigger and runner, the local executor for one-shot deploys, native scheduling. Zero exotic dependencies — this is what keeps the model broadly adoptable rather than "requires our stack."
-- **Cloud/k8s-native.** Lean on what the platform already reconciles and schedules — CronJob/Jobs/Argo on k8s, native schedulers and CloudFormation `deploy` on AWS.
+- **General-consumption default.** Plain CI (generated) for the trigger and runner, the local executor for one-shot deploys, native scheduling. It needs nothing beyond plain CI and chant, so any team can adopt it.
+- **Cloud/k8s-native.** Use what the platform already reconciles and schedules — CronJob/Jobs/Argo on k8s, native schedulers and CloudFormation `deploy` on AWS.
 - **Opt-in advanced backends.** A [fountain steward](/chant/concepts/durable-workflows/) as the hosted runtime for components that need a machine of their own; Dagster or Airflow as a team-owned trigger host that invokes `chant run`. Chosen when a team needs or owns them, never baseline.
 
 <Aside type="tip" title="Keep logic out of the trigger">

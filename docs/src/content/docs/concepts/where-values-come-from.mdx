@@ -6,9 +6,9 @@ diataxis: explanation
 
 import { Aside } from '@astrojs/starlight/components';
 
-Every value in a chant resource comes from one of four places. Two are allowed. One is refused, by construction. The fourth never enters chant at all — it lives in the estate, and chant declares where it came from without ever reading it. This page draws those boundaries and names which is which, so the rest of the docs can point here instead of re-deriving it.
+Every value in a chant resource comes from one of four places. Two are allowed. One is refused, by construction. The fourth never enters chant at all — it lives in the estate, and chant declares where it came from without ever reading it. This page defines the four, and other pages link here.
 
-The boundary exists because synthesis is pure. `chant build` imports your files, reads the resource objects they export, and emits output. It never calls an API, reads a secret, or touches mutable state. That is what makes the output deterministic and auditable — every value traces to a line in the source. The boundary is the price of that property, and it is worth paying.
+The boundary exists because synthesis is pure. `chant build` imports your files, reads the resource objects they export, and emits output. It never calls an API, reads a secret, or touches mutable state. That is what makes the output deterministic and auditable — every value traces to a line in the source.
 
 ## The four origins
 

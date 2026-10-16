@@ -6,7 +6,7 @@ diataxis: explanation
 
 `chant build --fold` folds a subset of source files with zero module execution ([TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run)). Everything outside that subset — most source files today — falls back to importing and running the file for real. Run in-process, that execution has the same filesystem, network, environment, and process-spawn access as the `chant` CLI itself.
 
-`chant build --sandbox` (chant #1045 Phase 2) moves that execution off the CLI's own process: every run-fallback file for a build runs together, as one bundled module graph, inside one child process with Node's Permission Model locked down. This is the isolation the fold epic (#1019) was building toward — coverage of the fold *subset* stops being the security-relevant number, because the remainder no longer runs unrestricted.
+`chant build --sandbox` (chant #1045 Phase 2) moves that execution off the CLI's own process: every run-fallback file for a build runs together, as one bundled module graph, inside one child process with Node's Permission Model locked down. This completes the isolation the fold epic (#1019) aimed for. Coverage of the fold *subset* no longer matters for security, because the remainder no longer runs unrestricted.
 
 ## Why this is independent of fold coverage
 

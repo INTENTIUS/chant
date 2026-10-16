@@ -11,7 +11,7 @@ prompt: |
 
 ## What is the Helm lexicon?
 
-The Helm lexicon extends chant to produce **real, parameterized Helm charts** from typed TypeScript. Unlike static manifest generators (like cdk8s's Helm output), the Helm lexicon generates:
+The Helm lexicon builds **parameterized Helm charts** from TypeScript. Where static manifest generators (like cdk8s's Helm output) emit fixed YAML, it generates:
 
 - `{{ .Values.x }}` template directives
 - `values.yaml` with typed defaults

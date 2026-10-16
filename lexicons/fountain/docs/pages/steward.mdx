@@ -4,9 +4,9 @@ description: "One writer per environment: what a steward is, which chant need ea
 diataxis: explanation
 ---
 
-A steward is the machine an environment is operated from, declared. It is one `Agent` running `chant acp` on a persistent sandbox, seated on the team as a `Teammate` so it has a standing conversation, with a `Schedule` for every op that carries a cadence and an optional `Webhook` for whoever has to hear about a turn.
+A steward is the declared machine an environment is operated from. It is one `Agent` running `chant acp` on a persistent sandbox, seated on the team as a `Teammate` so it has a standing conversation, with a `Schedule` for every op that carries a cadence and an optional `Webhook` for whoever has to hear about a turn.
 
-The teammate's thread is that environment's operational history. Each turn is one chant command line, so scrolling the thread is scrolling what was done to the environment, redacted and searchable, without anyone having kept a separate log.
+The teammate's thread is that environment's operational history. Each turn is one chant command line, so scrolling the thread is scrolling what was done to the environment, redacted and searchable, with no separate log to keep.
 
 ## The mesh
 
@@ -22,7 +22,8 @@ chant needs seven things from a place to run ops. fountain already has a noun fo
 | telling someone | a `Webhook`, or a message to a human teammate |
 | one writer per environment | the thread |
 
-Nothing in that table is new machinery. The steward composite is the declaration that wires the existing nouns together in one place, so an author writes the environment once instead of six resources that have to agree with each other.
+The steward composite wires those nouns together in one declaration, so an author writes
+=== the environment once instead of six resources that have to agree with each other.
 
 ## Declaring one
 
@@ -86,11 +87,11 @@ Two stores, each authoritative for one kind of thing, and nothing stored twice.
 | A gate's resolution, and anything that has to survive across runs | chant's ledger branch in git | `chant approve`, `chant run approve <op> <gate>` |
 | The declared shape of the estate | the repo | `chant build`, `chant lifecycle diff --live` |
 
-A gate is a fact, not a wait. A run that reaches an unapproved gate ends its turn saying so; the resolution is recorded on chant's ledger by a person or a merged PR, and the next run re-evaluates it. Nothing sits blocked inside a sandbox holding a machine open, which is what lets the steward be one computer rather than one per pending decision.
+A gate is a fact on the ledger. A run that reaches an unapproved gate ends its turn saying so; the resolution is recorded on chant's ledger by a person or a merged PR, and the next run re-evaluates it. No sandbox stays open waiting on a decision, so the steward is one computer rather than one per pending decision.
 
 ## Why one writer
 
-A teammate runs one turn at a time. That is fountain's rule, not chant's, and the steward is built to sit exactly on top of it: a schedule that fires while a turn is in flight is dropped with `teammate was busy` rather than queued, and a `chant run --on fountain` against a busy steward is refused with the conversation's address rather than retried.
+A teammate runs one turn at a time. That is fountain's rule, and the steward is built around it: a schedule that fires while a turn is in flight is dropped with `teammate was busy` rather than queued, and a `chant run --on fountain` against a busy steward is refused with the conversation's address rather than retried.
 
 The composite refuses these at construction, so the failure arrives while the author is looking at the declaration:
 
@@ -121,7 +122,7 @@ Core reads the steward from the `*.op.ts` files it already reads Ops from, so ex
 export { declaration as steward } from "../src/steward";
 ```
 
-A box that never runs on Fountain doesn't need this lexicon for its steward. `declareSteward` from `@intentius/chant/op` takes the same `name`, `ops` and `form`, with `local` as the default form.
+A box that never runs on Fountain declares its steward without this lexicon, with `declareSteward` from `@intentius/chant/op`. It takes the same `name`, `ops` and `form`, with `local` as the default form.
 
 `chant operator --steward box-steward --env minimal` then:
 

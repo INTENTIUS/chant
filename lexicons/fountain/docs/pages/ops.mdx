@@ -12,11 +12,12 @@ The native applier: compiles the serializer's manifest YAML into fountain's bulk
 
 | Behavior | Detail |
 |---|---|
-| Create / update | By name, reconciled server-side. An agent's `environment` reference resolves by name — against the manifest or the tenant's existing environments — without a client-side id lookup. |
+| Create / update | By name, reconciled server-side. An agent's `environment` reference resolves by name, against the manifest or the tenant's existing environments, with no client-side id lookup. |
 | Order | Environment → Vault → Agent, fixed server-side regardless of manifest order. |
-| Prune | Off by default. With `prune: true`, chant-owned resources absent from the manifest are deleted, in reverse order — the one thing bulk apply doesn't cover, so this still lists live state per kind. |
-| Secrets | `spec.secrets` converts from chant's authored `{key, value}[]` to the wire's `{KEY: value}` map; the server upserts them through the encrypted envelope path in the same request. Upsert-always — values are write-only upstream. |
-| Failure | Best-effort per resource. Every result is collected before this throws, so one bad resource doesn't hide failures elsewhere in the manifest. |
+| Prune | Off by default. With `prune: true`, chant-owned resources absent from the manifest are deleted, in reverse order. Bulk apply does not prune, so this step still lists live state per kind. |
+| Secrets | `spec.secrets` converts from chant's authored `{key, value}[]` to the wire's `{KEY: value}` map; the server upserts them through the encrypted envelope path in the same request. Always upserted, since values are write-only upstream. |
+| Failure | Best-effort per resource. Every result is collected before this throws, so the error covers every failed resource in the manifest.
+=== |
 
 ```typescript
 await fountainApply({ manifestPath: "build/fountain.yaml", prune: true });

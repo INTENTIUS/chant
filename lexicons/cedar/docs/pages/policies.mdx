@@ -54,7 +54,7 @@ TypeScript is [import and reconcile](../importing/)'s problem, not codegen's.
 
 ## Policy ids
 
-The id comes from the export's logical name, kebab-cased — `allowAdminRead`
+The id comes from the export's logical name, kebab-cased: `allowAdminRead`
 becomes `@id("allow-admin-read")`. Set `annotations.id` to pin one:
 
 ```typescript
@@ -70,11 +70,11 @@ declaration order.
 ## permit and forbid
 
 Cedar is default-deny, so a `permit` is what grants anything at all. A
-`forbid` is not the absence of a grant — it beats every `permit` in the set
+`forbid` beats every `permit` in the set
 unconditionally, which makes it the only construct that survives a wider grant
 somebody adds next quarter.
 
-Two consequences worth internalizing:
+Two consequences:
 
 - **A forbid with no guard denies everything**, and no permit can lift it. The
   `DenyByDefaultSet` [composite](../composites/) throws rather than emit one.
@@ -84,7 +84,7 @@ Two consequences worth internalizing:
 
 ## The JSON companion
 
-Every build writes `policies.cedar.json` beside the `.cedar` text — the same
+Every build writes `policies.cedar.json` beside the `.cedar` text: the same
 policy set in Cedar's JSON policy format, produced from the same structured
 model rather than by re-parsing the text.
 

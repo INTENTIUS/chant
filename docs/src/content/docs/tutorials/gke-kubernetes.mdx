@@ -1,6 +1,6 @@
 ---
 title: "GCP GKE + Kubernetes"
-description: "Deploy a production-grade GKE microservice with GCP Config Connector for infrastructure and the K8s lexicon for workloads — all in TypeScript."
+description: "Deploy a production-grade GKE microservice in TypeScript, with GCP Config Connector for infrastructure and the K8s lexicon for workloads."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/gke-kubernetes/.
@@ -12,7 +12,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-Two chant lexicons, one `src/` directory: the GCP lexicon produces Config Connector YAML that creates real GCP resources; the K8s lexicon produces kubectl-ready YAML for workloads. A single `.env` file bridges the two — Config Connector outputs (SA emails) flow in, K8s composites consume them.
+Two chant lexicons, one `src/` directory: the GCP lexicon produces Config Connector YAML that creates real GCP resources; the K8s lexicon produces kubectl-ready YAML for workloads. A single `.env` file connects the two: Config Connector outputs (SA emails) go in, and K8s composites read them.
 
 ## What you'll build
 
@@ -40,14 +40,14 @@ Two chant lexicons, one `src/` directory: the GCP lexicon produces Config Connec
 
 ## What you'll learn
 
-- How Config Connector turns GCP resources into K8s CRDs — and why that means one `kubectl apply` creates real GCP infrastructure
+- How Config Connector turns GCP resources into K8s CRDs, and why that means one `kubectl apply` creates real GCP infrastructure
 - The cross-lexicon value flow: CC outputs -> `.env` -> `config.ts` -> K8s composite props
 - How `WorkloadIdentityServiceAccount` wires a K8s SA to a GCP SA (annotation + IAM binding)
-- The deploy order that matters: CC resources first, K8s workloads second — and why teardown reverses it
+- The deploy order that matters: CC resources first, K8s workloads second, and why teardown reverses it
 
 ## Cost
 
-GKE control plane free (one zonal cluster), Cloud NAT ~$32/mo, 3× e2-medium nodes ~$75/mo. **Total ~$107/mo** (us-central1 list price, checked 2026-08 against chant 0.46.0; GCP list prices change and vary by region — re-price before relying on this number). Teardown after testing.
+GKE control plane free (one zonal cluster), Cloud NAT ~$32/mo, 3× e2-medium nodes ~$75/mo. **Total ~$107/mo** (us-central1 list price, checked 2026-08 against chant 0.46.0; GCP list prices change and vary by region, so re-price before relying on this number). Tear down after testing.
 
 ## Get started
 
@@ -79,7 +79,7 @@ The management cluster runs Config Connector and manages all GCP infra this way.
 
 ### Cross-lexicon wiring via `.env`
 
-After `npm run deploy-infra`, Config Connector has created the GCP service accounts. Their email addresses are in the CC resource status — `npm run load-outputs` extracts them and writes them to `.env`:
+After `npm run deploy-infra`, Config Connector has created the GCP service accounts. Their email addresses are in the CC resource status, and `npm run load-outputs` extracts them and writes them to `.env`:
 
 ```
 APP_GSA_EMAIL=app-sa@my-project.iam.gserviceaccount.com
@@ -96,7 +96,7 @@ export const appSa = WorkloadIdentityServiceAccount({
 });
 ```
 
-`WorkloadIdentityServiceAccount` sets the `iam.gke.io/gcp-service-account` annotation on the K8s ServiceAccount. GKE's Workload Identity mutating webhook injects the credential into pods that use this SA — no JSON key files, no secrets.
+`WorkloadIdentityServiceAccount` sets the `iam.gke.io/gcp-service-account` annotation on the K8s ServiceAccount. GKE's Workload Identity mutating webhook injects the credential into pods that use this SA, with no JSON key files or secrets.
 
 ### Deploy and teardown order
 

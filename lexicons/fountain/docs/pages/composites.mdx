@@ -20,13 +20,13 @@ export const { environment, agent } = ConciergeStack({
 
 | Default | Effect |
 |---|---|
-| `networking_type: limited` with an empty allowlist | deny-all egress — fountain's isolation mode |
+| `networking_type: limited` with an empty allowlist | deny-all egress, fountain's isolation mode |
 | `allowed_vault_ids: []` | no conversation may override the reviewed environment at spawn |
 | `managed-by: chant` on both | owned-only reconcile, prune, and drift filtering see them |
 
-Every default is the closed one, so loosening any of it is a visible, reviewable act: pass an allowlist, pass vault ids, or drop to the raw classes.
+Every default is the closed one, so loosening one shows in review: pass an allowlist, pass vault ids, or drop to the raw classes.
 
-Give such a sandbox **no cloud credentials of any kind** — anything readable inside it is exfiltratable by prompt injection. Services the agent needs live outside the sandbox behind their own auth; the sandbox gets at most a conversation-scoped token.
+Give such a sandbox **no cloud credentials of any kind**: prompt injection can exfiltrate anything readable inside it. Services the agent needs live outside the sandbox behind their own auth; the sandbox gets at most a conversation-scoped token.
 
 ## Steward
 
@@ -53,18 +53,18 @@ The teammate's thread is that environment's operational history. Each turn is on
 | Default | Effect |
 |---|---|
 | `runtime: acp` with `runtime_command: "chant acp"` | the agent launches chant's own ACP server, so a prompt is a chant command line |
-| `sandbox_mode: persistent` | one computer per steward — the checkout and tool cache survive a turn ending |
+| `sandbox_mode: persistent` | one computer per steward: the checkout and tool cache survive a turn ending |
 | `permission_policy: { default: "auto_allow" }` | nobody is at the keyboard to answer a permission card; chant's gates are where a human belongs |
 | no `model` | an acp agent's model is whatever the command it launches decides to use |
 | no skills | a steward's competence is chant's op definitions |
 | `allowed_vault_ids` scoped to the given vault, `[]` with none | no conversation may attach a vault the steward was not given |
 | `managed-by: chant` on the Agent | owned-only reconcile, prune, and drift filtering see it |
 
-An op that carries a `schedule` (`WatchOp`, `ConvergeOp`, `ApplyOp` and `ReconcileOp` all set one from their `schedule:` field) gets a Schedule whose `cron` is the op's and whose `prompt` is `chant run <op>` — the exact line `chant acp` parses. It is `one_off: false`, so the prompt goes into the teammate's own thread and a fire while a run is in flight is dropped rather than opening a second computer beside the first. An op with no cadence gets no Schedule, but is still listed on the steward, which is how `chant run <op> --on fountain` knows the thread its run belongs on.
+An op that carries a `schedule` (`WatchOp`, `ConvergeOp`, `ApplyOp` and `ReconcileOp` all set one from their `schedule:` field) gets a Schedule whose `cron` is the op's and whose `prompt` is `chant run <op>`, the line `chant acp` parses. It is `one_off: false`, so the prompt goes into the teammate's own thread and a fire while a run is in flight is dropped rather than opening a second computer beside the first. An op with no cadence gets no Schedule, but is still listed on the steward, which is how `chant run <op> --on fountain` knows the thread its run belongs on.
 
 Three things are refused at construction rather than at apply:
 
-- Two stewards on the same environment and vault. That is two writers on one machine, which is the exact thing a single thread exists to prevent — fountain would accept both and their turns would interleave on the same checkout.
+- Two stewards on the same environment and vault. That is two writers on one machine: fountain would accept both, and their turns would interleave on the same checkout.
 - An op whose `schedule.overlap` is anything but `skip`. A fountain schedule that fires while the teammate is busy is dropped with `teammate was busy`, so any other policy would be a promise the server does not keep.
 - A webhook url FTN022 would reject: plaintext http, or a loopback, link-local or RFC1918 target. Refusing here rather than at synth keeps the author from reading a lint error about a resource they never typed.
 
@@ -76,7 +76,7 @@ The composite also returns `declaration`, the steward as core reads it: its name
 
 A persistent machine that serves an app repo and its tools: an Environment that runs a provisioning script as its `setup_script`, an Agent on a persistent sandbox provisioned from it, and optionally a Vault for the secrets every box of this kind shares. An arugula studio box is the case it was written for: `box/provision-template.sh` is the setup, and the door serves on :8080 with hud behind it.
 
-`repo` is optional. Given, the Environment clones it in (`repositories`) before `setup_script` runs. Omitted — a blank-slate app, such as the one hud's `init` makes, has no git remote yet — the Environment declares no `repositories` at all, and `setup_script` runs against whatever working tree the sandbox already has (a self-hosted `runner`'s own).
+`repo` is optional. When given, the Environment clones it in (`repositories`) before `setup_script` runs. When omitted (a blank-slate app, such as the one hud's `init` makes, has no git remote yet), the Environment declares no `repositories`, and `setup_script` runs against whatever working tree the sandbox already has (a self-hosted `runner`'s own).
 
 ```typescript
 import { readFileSync } from "node:fs";
@@ -100,7 +100,7 @@ export const { environment, agent, vault } = Box({
 | Declared | Name | What it carries |
 |---|---|---|
 | Environment | `<name>-env` | the app repo at `/workspace/app` (or `repo.mountPath`) when `repo` is given, else no `repositories`; the setup script, `packages`, `env_vars` and networking, passed through |
-| Agent | `<name>` | `runtime` (default `claude`), `model` (required), `sandbox_mode: persistent`, `sandbox_provider` (unset — the instance default — unless `sandboxProvider` names one), the given `permission_policy` |
+| Agent | `<name>` | `runtime` (default `claude`), `model` (required), `sandbox_mode: persistent`, `sandbox_provider` (unset, so the instance default, unless `sandboxProvider` names one), the given `permission_policy` |
 | Vault (with `vault`) | `<name>-secrets` (or `vault.name`) | the shared secrets, written inline at apply |
 
 | Default | Effect | Loosened by |
@@ -123,7 +123,8 @@ fountain's Environment and Agent have no field for a served port at the pinned s
 
 ### Allowed vaults in the read contract
 
-`sandbox_provider` is a plain Agent field, so `chant workspace graph --json` already carries it on the agent's node like any other declared attribute. `allowed_vault_ids` is not as plain to read: fountain's own convention, and this composite's, is that an *unset* list means "any vault the tenant owns", so a graph reader can't tell "no vaults declared" from "any vault" from the key's absence alone ([#2759](https://github.com/INTENTIUS/chant/issues/2759)) — which a runtime that creates a vault per box, such as hud's, needs to check before it acts. The resolved list, or the literal string `"any"`, is also recorded in the agent's metadata under `box-allowed-vault-ids` (`BOX_ALLOWED_VAULTS_METADATA_KEY`), so it shows up on the agent's node without a reader having to know that convention. It is read-only bookkeeping alongside `box-port`: the manifest's real `allowed_vault_ids` field is what fountain applies.
+`sandbox_provider` is a plain Agent field, so `chant workspace graph --json` already carries it on the agent's node like any other declared attribute. `allowed_vault_ids` is not as plain to read: fountain's own convention, and this composite's, is that an *unset* list means "any vault the tenant owns", so a graph reader can't tell "no vaults declared" from "any vault" from the key's absence alone ([#2759](https://github.com/INTENTIUS/chant/issues/2759)). A runtime that creates a vault per box, such as hud's, needs to know which before it acts. The resolved list, or the literal string `"any"`, is also recorded in the agent's metadata under `box-allowed-vault-ids` (`BOX_ALLOWED_VAULTS_METADATA_KEY`), so a reader sees it on the agent's node without knowing that convention.
+=== It is read-only bookkeeping alongside `box-port`: the manifest's real `allowed_vault_ids` field is what fountain applies.
 
 ### The callback token
 

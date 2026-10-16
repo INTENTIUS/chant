@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-k8s
 
-Kubernetes lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as typed TypeScript that serializes to Kubernetes YAML manifests.
+Kubernetes lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as TypeScript that serializes to Kubernetes YAML manifests.
 
 This package provides typed constructors for all core Kubernetes resource types (Deployments, Services, ConfigMaps, Secrets, StatefulSets, and more), property types (Containers, Volumes, Probes, etc.), composites for common patterns, and K8s-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
 

@@ -10,14 +10,13 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-The `package` lifecycle method bundles your lexicon's generated artifacts into a distributable format. Core provides `packagePipeline` to assemble the bundle and `writeBundleSpec` to put it on disk.
+The `package` lifecycle method bundles your lexicon's generated artifacts for publishing. Core's `packagePipeline` assembles the bundle and `writeBundleSpec` writes it to disk.
 
 ## Packaging Pipeline
 
 `packagePipeline` returns a `PackageResult` in memory. It writes nothing.
-`writeBundleSpec(spec, distDir)` is the step that creates `dist/`, and forgetting
-it is why `chant dev check-lexicon` reports `dist/manifest.json exists` as
-failing.
+`writeBundleSpec(spec, distDir)` creates `dist/`. Without it,
+`chant dev check-lexicon` reports `dist/manifest.json exists` as failing.
 
 ```typescript
 // src/codegen/package.ts
@@ -111,7 +110,7 @@ for presence and shape only, never for compatibility with the running core.
 
 ## Documentation Pipeline
 
-Core provides `docsPipeline` and `writeDocsSite` for generating a standalone Starlight docs site from your lexicon's `dist/` artifacts:
+Core's `docsPipeline` and `writeDocsSite` generate a standalone Starlight docs site from your lexicon's `dist/` artifacts:
 
 ```typescript
 import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";

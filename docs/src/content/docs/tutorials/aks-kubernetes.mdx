@@ -14,7 +14,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Two chant lexicons, one `src/` directory: the Azure lexicon produces an ARM template for the AKS cluster and managed identities; the K8s lexicon produces kubectl-ready YAML for workloads. Managed identity client IDs flow between them via `.env` -> `config.ts`.
 
-Unlike GKE (which requires a bootstrap management cluster) and EKS (which requires NS delegation for ACM), AKS deploys in a single pass — the ARM template creates the cluster directly, no separate bootstrap step needed.
+GKE needs a bootstrap management cluster and EKS needs NS delegation for ACM. AKS deploys in a single pass: the ARM template creates the cluster directly.
 
 ## What you'll build
 
@@ -44,7 +44,7 @@ Unlike GKE (which requires a bootstrap management cluster) and EKS (which requir
 
 ## Cost
 
-AKS control plane free (free tier), Application Gateway ~$20/mo, 3× Standard_B2s nodes ~$75/mo. **Total ~$95/mo** (eastus list price, checked 2026-08 against chant 0.46.0; Azure list prices change and vary by region — re-price before relying on this number). Teardown after testing.
+AKS control plane free (free tier), Application Gateway ~$20/mo, 3× Standard_B2s nodes ~$75/mo. **Total ~$95/mo** (eastus list price, checked 2026-08 against chant 0.46.0; Azure list prices change and vary by region, so re-price before relying on this number). Tear down after testing.
 
 ## Get started
 
@@ -60,9 +60,9 @@ See [`examples/k8s-aks-microservice/`](https://github.com/intentius/chant/tree/m
 
 GKE Workload Identity needs only a K8s SA annotation pointing to a GCP SA. AKS Workload Identity needs three things:
 
-1. **Managed identity** in Azure (created in ARM template)
-2. **Federated credential** on that identity — binds it to the AKS OIDC issuer + K8s SA
-3. **K8s SA annotation** — `azure.workload.identity/client-id: <clientId>`
+1. A managed identity in Azure (created in the ARM template)
+2. A federated credential on that identity, which binds it to the AKS OIDC issuer and the K8s SA
+3. The K8s SA annotation `azure.workload.identity/client-id: <clientId>`
 
 The `AksWorkloadIdentityServiceAccount` composite handles step 3. Steps 1 and 2 are in `src/infra/cluster.ts`. If a pod can't authenticate, the most common cause is a missing or misconfigured federated credential.
 
@@ -78,7 +78,7 @@ export const appSa = AksWorkloadIdentityServiceAccount({
 
 ### No bootstrap step needed
 
-GKE requires bootstrapping a management cluster to run Config Connector. EKS creates the cluster directly via CloudFormation but needs a two-phase deploy for ACM. AKS is simpler: the ARM template creates the AKS cluster in one deployment, no additional cluster or setup step.
+GKE requires bootstrapping a management cluster to run Config Connector. EKS creates the cluster directly via CloudFormation but needs a two-phase deploy for ACM. AKS needs neither.
 
 ```bash
 az group create --name $AZURE_RESOURCE_GROUP --location eastus

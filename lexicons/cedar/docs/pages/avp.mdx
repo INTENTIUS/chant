@@ -4,13 +4,13 @@ description: "The AVP statement seam, and the other Cedar evaluators."
 diataxis: explanation
 ---
 
-Amazon Verified Permissions is one deployment vehicle for Cedar. It is not the only one, and the lexicon does not privilege it.
+Amazon Verified Permissions is one place to deploy Cedar policies, and the lexicon treats it like any other.
 
 ## The seam
 
 chant already ships the deployment half. `AWS::VerifiedPermissions::Policy` in
 the [aws lexicon](/chant/lexicons/aws/) carries its policy text in
-`definition.static.statement`, typed `CedarPolicy` — which is to say,
+`definition.static.statement`, typed `CedarPolicy`, which is a
 `string`. That string is the seam.
 
 ```
@@ -18,14 +18,14 @@ cedar lexicon                        aws lexicon
 schema -> Policy -> .cedar text  ->  VerifiedPermissionsPolicy.definition.static.statement
 ```
 
-Everything upstream of the string — the schema, entity types, actions, scope
-constraints — belongs to this lexicon. Everything downstream — the policy
-store, the CloudFormation `ApplyOp`, the IAM around it — belongs to the aws
+Everything upstream of the string (the schema, entity types, actions, scope
+constraints) belongs to this lexicon. Everything downstream (the policy
+store, the CloudFormation `ApplyOp`, the IAM around it) belongs to the aws
 lexicon and already works.
 
 ## What ships today
 
-A policy's statement text is what the serializer emits for that one entity —
+A policy's statement text is what the serializer emits for that one entity,
 the same bytes as the `.cedar` file, so the deployed policy and the reviewed
 file cannot disagree.
 
@@ -46,8 +46,8 @@ a three-policy set shaped for one.
 
 ## What is deferred
 
-A typed handoff — a `VerifiedPermissionsPolicy` whose `statement` accepts a
-`Policy` value directly rather than a string a caller assembled — is landing
+A `VerifiedPermissionsPolicy` whose `statement` accepts a
+`Policy` value directly, rather than a string a caller assembled, is coming
 with [INTENTIUS/chant#1652](https://github.com/INTENTIUS/chant/issues/1652),
 along with `describeResources()`/`observeAmbient()` against a live policy
 store and the ownership-channel design.
@@ -65,8 +65,8 @@ Until it does:
 
 ## The other evaluators
 
-If the target is not AVP there is no embedding step at all — emit the files and
-ship them.
+For any target other than AVP, emit the files and ship them. There is no
+embedding step.
 
 | Target | How |
 |---|---|
@@ -77,7 +77,7 @@ ship them.
 ## Cedar for Kubernetes
 
 The CNCF push includes Cedar as a Kubernetes authorizer with policies as CRDs.
-Those kinds belong to the [k8s lexicon](/chant/lexicons/k8s/)'s CRD sources —
+Those kinds belong to the [k8s lexicon](/chant/lexicons/k8s/)'s CRD sources,
 the same rule that kept `helm.cattle.io` out of k3s. What this lexicon does
 there is lint the policy text embedded in those kinds, the pattern the ARGO
 rules already use.

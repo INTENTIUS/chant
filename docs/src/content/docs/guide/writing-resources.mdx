@@ -14,7 +14,7 @@ import { Code } from '@astrojs/starlight/components';
 import resourceBasicSrc from '../../../../../lexicons/aws/examples/core-concepts/src/resource-basic.ts?raw';
 import resourceTagsSrc from '../../../../../lexicons/aws/examples/core-concepts/src/resource-tags.ts?raw';
 
-Resources are the building blocks of a chant project. Each resource maps to a single infrastructure component defined by the lexicon you're using.
+A resource is one infrastructure component, such as an S3 bucket or a Kubernetes Deployment, with its type from your lexicon.
 
 ## Defining a Resource
 
@@ -28,13 +28,13 @@ Every resource definition follows this pattern:
 2. **Instantiate** with `new ResourceType({...})` using the constructor provided by your lexicon
 3. **Export** the result as a `const`
 
-The export is required — chant discovers resources by scanning exports across your `src/` directory.
+The export is required: chant discovers resources by scanning exports across your `src/` directory.
 
 See your lexicon's documentation for available resource types and concrete examples.
 
 ## Property Rules
 
-chant reads TypeScript as data. By default, `chant build` skips execution entirely for files that stay inside the supported subset, reducing them straight from the AST (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)). A file outside that subset is imported and run instead, and the evaluability rules (below) are what keep that run side-effect-free, so it behaves like reading static data. Either way, resource properties must be **statically evaluable** — the build must be able to resolve every value without depending on anything outside the source.
+chant reads TypeScript as data. By default, `chant build` skips execution entirely for files that stay inside the supported subset, reducing them straight from the AST (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)). A file outside that subset is imported and run instead, and the evaluability rules (below) keep that run free of side effects, so it behaves like reading static data. Either way, resource properties must be **statically evaluable**: the build resolves every value from the source alone.
 
 **Allowed expressions:**
 
@@ -68,7 +68,7 @@ Use `const` variables to share values across properties or files:
 
 ## Multiple Resources per File
 
-A file can export more than one resource. There is no hard rule on one resource per file, but keeping related resources together and unrelated ones apart makes projects easier to navigate.
+A file can export more than one resource. Group related resources in one file and keep unrelated ones apart, so the project is easy to navigate.
 
 ## Next Steps
 

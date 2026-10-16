@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-azure
 
-Azure Resource Manager (ARM) lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as typed TypeScript that serializes to ARM template JSON.
+Azure Resource Manager (ARM) lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as TypeScript that serializes to ARM template JSON.
 
 This package provides generated constructors for Azure resource types, type-safe ARM template functions (`ResourceId`, `Reference`, `Concat`, etc.), pseudo-parameters (`Azure.ResourceGroupName`, `Azure.SubscriptionId`, etc.), composites for grouping related resources, and Azure-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
 

@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-render
 
-The Render lexicon for [chant](https://intentius.io/chant/). Declare Render web services, static sites, private services, background workers, cron jobs, Postgres and Key Value datastores, env groups, projects, environments, disks, custom domains, registry credentials, and webhooks as typed TypeScript and apply them straight to the Render Public API.
+The Render lexicon for [chant](https://intentius.io/chant/). Declare Render web services, static sites, private services, background workers, cron jobs, Postgres and Key Value datastores, env groups, projects, environments, disks, custom domains, registry credentials, and webhooks as TypeScript and apply them straight to the Render Public API.
 
 ```bash
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-render
@@ -8,7 +8,7 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-render
 
 ## What it does
 
-chant is a type system for operations: you describe infrastructure as typed TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers [Render](https://render.com).
+chant is a type system for operations: you describe infrastructure as TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers [Render](https://render.com).
 
 The resource types are generated from Render's own [Public API OpenAPI spec](https://api-docs.render.com/v1.0/openapi/render-public-api-1.json), so they track the real API and give you full editor autocomplete — every `plan`, `region`, and `runtime` is a string-literal union, and `serviceDetails` is typed per service type. A build step lints them, and `renderApply` reconciles them against a workspace over `https://api.render.com/v1` directly.
 

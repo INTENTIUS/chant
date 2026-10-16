@@ -1,6 +1,6 @@
 ---
 title: "Examples: Composites"
-description: "Composite examples — WebApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent"
+description: "Composite examples: WebApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/k8s/composite-examples/.
@@ -12,7 +12,7 @@ prompt: |
 
 import Diagram from '../../components/Diagram.astro';
 
-Composites are higher-level constructs that produce multiple coordinated K8s resources from a single function call.
+A composite is one function call that returns several Kubernetes resources wired together.
 
 <Diagram name="composite-expansion" alt="Single CockroachDbCluster composite declaration expanding into Namespace, StatefulSet, Service, ServiceAccount, NetworkPolicy, PodDisruptionBudget, and ConfigMap resources serialized to one YAML file" caption="Composite expansion: one declaration → many resources" />
 
@@ -93,7 +93,7 @@ const { deployment, serviceAccount, role, roleBinding, configMap, hpa } = Worker
 });
 ```
 
-Pass `rbacRules: []` to opt out of RBAC resource creation entirely.
+Pass `rbacRules: []` to create no RBAC resources.
 
 ## NamespaceEnv
 
@@ -179,7 +179,7 @@ Not yet documented on this page or its vendor-specific neighbors (chant #1723's 
 
 ## Deploying composites
 
-Composites produce plain prop objects. To deploy them, write each resource to a `.k8s.ts` file then use the standard chant build → kubectl apply workflow.
+Composites return plain prop objects. To deploy them, write each resource to a `.k8s.ts` file, then run `chant build` and `kubectl apply`.
 
 ### Step 1 — Write a chant source file
 
@@ -273,4 +273,4 @@ just k3d-validate-composites --keep-cluster
 just k3d-validate-composites --reuse-cluster --verbose
 ```
 
-The `/chant-k8s` AI skill covers the full lifecycle — scaffold, build, lint, apply, rollback, and troubleshooting.
+The `/chant-k8s` AI skill covers scaffold, build, lint, apply, rollback and troubleshooting.

@@ -1,6 +1,6 @@
 ---
 title: Managed Agents Worker on Sprites
-description: Run a Claude Managed Agents session inside a per-session Sprite — an egress allowlist, a keep-alive hold, the runner env-contract staged as a file, and the runner as a supervised service, torn down on exit. Runs offline against the emulator, or against real Sprites + real Managed Agents by changing two environment variables.
+description: Run a Claude Managed Agents session inside a per-session Sprite with an egress allowlist, a keep-alive hold, the runner env-contract staged as a file, and the runner as a supervised service, torn down on exit. Runs offline against the emulator, or against real Sprites + real Managed Agents by changing two environment variables.
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/sprites-managed-agent-worker/.
@@ -14,26 +14,26 @@ import { Aside } from '@astrojs/starlight/components';
 
 The [`sprites-managed-agent-worker`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-managed-agent-worker)
 example runs a [Claude Managed Agents](https://docs.sprites.dev/integrations/claude-managed-agents/)
-session inside a per-session [Sprite](https://sprites.dev) — Fly.io's stateful,
+session inside a per-session [Sprite](https://sprites.dev), Fly.io's stateful,
 checkpointable sandbox.
 
 Anthropic runs the agent loop and the model and queues work items. A **worker**
 on your infrastructure claims each item and spawns a Sprite that executes the
 tools, so the agent's filesystem and network egress never leave your account.
-The org API key stays with the worker — only a scoped environment key reaches
+The org API key stays with the worker, and only a scoped environment key reaches
 the Sprite.
 
 This tutorial is the **per-session unit** the worker runs once per claimed work
 item. One Op composes every Sprite runtime primitive in turn:
 
-- **Secure** — an egress allowlist so the sandbox reaches only Anthropic and the
+- Secure: an egress allowlist so the sandbox reaches only Anthropic and the
   package registries (`spriteApplyNetworkPolicy`);
-- **Hold** — a keep-alive task so the Sprite will not pause mid-session
+- Hold: a keep-alive task so the Sprite will not pause mid-session
   (`spriteTaskCreate`, released on exit);
-- **Stage** — the runner env-contract written to a file, never process args
+- Stage: the runner env-contract written to a file, never process args
   (`spriteWriteFile`);
-- **Runner** — Anthropic's runner as a supervised service (`spriteApplyServices`);
-- **Run**, then **Release** and **Destroy** — the session works, then tears down.
+- Runner: Anthropic's runner as a supervised service (`spriteApplyServices`);
+- Run, then Release and Destroy: the session works, then tears down.
 
 The whole flow runs offline against the emulator (no Anthropic key, no Fly
 account), and points at real Sprites + real Managed Agents by changing two
@@ -56,15 +56,15 @@ leaves a paused-but-billed sandbox behind.
 Where the agent **lives** and where it **executes** are separate decisions. The
 Sprite is where a session's tools execute; the worker that claims work and spawns
 Sprites lives on your infrastructure. This example is the per-session unit, so
-the Anthropic work-queue side is faked — the session id is a static string, as if
+the Anthropic work-queue side is faked: the session id is a static string, as if
 a single work item had been claimed. A production worker replaces that with a
 poll or webhook against `client.beta.environments.work`.
 </Aside>
 
 ## The session
 
-`ops/managed-agent-session.op.ts` is a pure activity sequence — no `build` phase,
-no serialized plan. The Secure phase locks egress before anything runs:
+`ops/managed-agent-session.op.ts` is a pure activity sequence, with no `build` phase
+or serialized plan. The Secure phase locks egress before anything runs:
 
 ```ts
 phase("Secure", [
@@ -79,8 +79,8 @@ phase("Secure", [
 ]),
 ```
 
-The Stage phase writes the runner's environment to a file — never process args,
-so the scoped key never shows up in a process listing — and the Runner phase
+The Stage phase writes the runner's environment to a file instead of process
+args, so the scoped key never shows up in a process listing. The Runner phase
 starts Anthropic's runner as a service that sources it:
 
 ```ts
@@ -108,8 +108,8 @@ session takes a single 5-minute hold and releases it at the end.
 ## Prerequisites
 
 - Node.js and `npm`.
-- Docker (for the offline run — `chant emulator up` boots the emulator in a
-  container). Real mode needs no Docker.
+- Docker, for the offline run, where `chant emulator up` boots the emulator in a
+  container. Real mode needs no Docker.
 
 ## Run it offline
 
@@ -136,7 +136,7 @@ chant run managed-agent-session
 chant emulator down   # stop both containers when done
 ```
 
-The phases run end to end against the emulator with no key: create the sandbox,
+The phases run against the emulator with no key: create the sandbox,
 apply the egress policy, take the keep-alive hold, stage the env-contract file,
 start the runner service, run the session, then release and destroy.
 
@@ -157,8 +157,8 @@ stays with the worker. See the
 for the worker loop and the Managed Agents setup.
 
 <Aside type="tip">
-For the filesystem activities on their own — staging an input file and reading a
-result back without shelling I/O through `spriteExec` — see the smaller
+For the filesystem activities on their own (staging an input file and reading a
+result back without shelling I/O through `spriteExec`), see the smaller
 [`sprites-agent-task`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-agent-task)
 example (`chant run agent-task`), which stages and collects with `spriteWriteFile`
 / `spriteReadFile`.

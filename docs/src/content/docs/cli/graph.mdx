@@ -27,7 +27,7 @@ chant graph [path] [--env <name>] [--param name=value] [--params-file <path>] [-
 - **`--components`** — the [component](/chant/components/component-contract/) dependency graph, from each discovered component's `dependsOn`.
 - **`--format ir|mermaid|dot|layout`** — the **infrastructure graph** chant resolves during synthesis, emitted for diagrams. This is the graph of your declared resources and the references between them.
 
-The infra-graph formats are a pure function of lint-clean source — every node traces to a source file, every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
+The infra-graph formats are computed from lint-clean source alone. Every node traces to a source file, and every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
 
 Declared Ops are part of the infra graph. `*.op.ts` files are collected the way `chant graph` (the Op view) and `chant run` find them, from the git root, so an op kept outside `sourceDir` (`ops/`, or the project root beside `sourceDir: "src"`) still appears as a `Chant::Op` node. Its `attrs` carry the full `OpConfig` (`phases`, `steps`, `gates`, `depends`) at `--detail 3`; lower tiers keep only the scalar fields.
 
@@ -41,9 +41,9 @@ chant graph --format ir --live --env prod    # the provisioned resources as IR
 
 Edges are **reconstructed** from the live references: observed resources point at each other by physical id (a subnet's `VpcId`, an ALB listener's `TargetGroupArn`), and each lexicon ships a reference catalog that turns those into graph edges (peer references) and containment (subnet ∈ VPC). A reference whose target isn't in the observed set is reported as dangling, never a wrong edge.
 
-Scope today is **managed-only** — resources carrying chant's ownership marker; it isn't a full-account scan. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source).
+`--live` reads only **managed** resources, the ones carrying chant's ownership marker, and does not scan the full account. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source).
 
-Edge reconstruction is only as rich as the observed node attributes. AWS's plain `describe-stack-resources` metadata is too thin, so the AWS lexicon enriches from the deployed CloudFormation template (its `{Ref}`/`{Fn::GetAtt}` references, resolved to node ids) before reconstruction — so a managed AWS stack produces its topology. A lexicon without that enrichment yields nodes with fewer edges.
+Edge reconstruction is only as rich as the observed node attributes. AWS's plain `describe-stack-resources` metadata is too thin, so the AWS lexicon enriches from the deployed CloudFormation template (its `{Ref}`/`{Fn::GetAtt}` references, resolved to node ids) before reconstruction, so a managed AWS stack produces its topology. A lexicon without that enrichment yields nodes with fewer edges.
 
 ### `--at <ref>`, a recorded snapshot
 
@@ -81,7 +81,7 @@ chant graph --format ir --live --env prod --overlay --overlay-anchor live  # pro
 
 `--traffic "<level>"` asks the project's predicting lexicon what the estate does at that traffic level, and carries the answer on the IR. Each entity's block rides on `attrs._behaviour`. The graph-level half rides on `meta._behaviour`: which engine answered, at what version and level, with the estate totals.
 
-It works on either graph, and the two answer different questions. With `--live` the prediction is about the account as it stands, drift included. Without it, the prediction is about the declared source, which is the file rather than anything deployed, so no environment is named. Showing the pair as a delta is the point:
+It works on either graph, and the two answer different questions. With `--live` the prediction is about the account as it stands, drift included. Without it, the prediction is about the declared source, which is the file rather than anything deployed, so no environment is named. Run both to see the delta:
 
 ```bash
 chant graph --format ir --traffic "100 rps, p50"                                  # the file
@@ -114,7 +114,7 @@ A live read resolves each entity's address from its own declaration. For a Kuber
 chant graph --format ir --live --env prod --overlay --namespace app-b
 ```
 
-An entity that declares its own namespace keeps it — the option fills holes, it does not redirect reads. Lexicons with no namespace-like scope ignore it.
+An entity that declares its own namespace keeps it; the option only fills holes. Lexicons with no namespace-like scope ignore it.
 
 ## Infra graph: `--format`
 
@@ -156,7 +156,7 @@ A lens keeps the members it keeps.
 
 ### Edges from a lexicon that parses foreign source
 
-Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. An edge is an edge whichever way it was found, and a consumer does not have to know.
+Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. A consumer sees the same edge whichever way it was found.
 
 ### CI edges
 
@@ -187,7 +187,7 @@ A lexicon reports these through the plugin's `graphEdges(entities)` hook; see th
 
 ### `--format layout`: size-aware positions
 
-The layout step exists for **custom painters** (the [pinhole](https://github.com/INTENTIUS/pinhole) diagrammer is one): chant computes positions, the painter draws. By default it uses **dagre** — a pure-JS engine, so `--format layout` needs **no native dependency**.
+The layout step exists for **custom painters** (the [pinhole](https://github.com/INTENTIUS/pinhole) diagrammer is one): chant computes positions and the painter draws. By default it uses **dagre**, a pure-JS engine, so `--format layout` needs **no native dependency**.
 
 A painter draws its nodes (cards, icons and labels) at a real size. It can pass those footprints in and get spacing that fits them, so no two nodes overlap.
 
@@ -199,11 +199,11 @@ echo "$SIZES" | chant graph ./infra --format layout --node-sizes -
 
 Without `--node-sizes`, nodes fall back to a default box (the layout still works, but a painter with larger nodes may need to space them itself).
 
-To use Graphviz for layout instead of dagre (e.g. to match `dot`'s routing), pass `--layout-engine graphviz` — this is the only path that needs `dot` (`brew install graphviz`), and it honours lexicon clusters.
+To use Graphviz for layout instead of dagre (e.g. to match `dot`'s routing), pass `--layout-engine graphviz`. Only this path needs `dot` (`brew install graphviz`), and it honours lexicon clusters.
 
 ## Detail tiers: `--detail 0..3`
 
-The detail dial controls how much of the graph each format shows. It is a transform over the same IR, so it works with every `--format`. It moves two things at once: the graph's shape (what collapses) and each node's attribute payload, which grows monotonically — a node's attrs at one level are always a subset of its attrs at the next.
+The detail dial controls how much of the graph each format shows. It is a transform over the same IR, so it works with every `--format`. It moves two things at once: the graph's shape (what collapses) and each node's attribute payload, which only grows. A node's attrs at one level are always a subset of its attrs at the next.
 
 | Level | Name | Shows |
 |-------|------|-------|
@@ -218,7 +218,7 @@ chant graph ./infra --format mermaid --detail 1   # composites as single nodes
 chant graph ./infra --format ir --detail 3        # every resource + attribute-level edges
 ```
 
-A handful of composites at `--detail 2` expands to every resource they declare — you describe a few, the graph shows the whole set. Turn the dial down to `0`/`1` for an overview.
+A handful of composites at `--detail 2` expands to every resource they declare. Turn the dial down to `0`/`1` for an overview.
 
 ## Lenses: `--lens <kind>:<target>`
 
@@ -240,18 +240,18 @@ chant graph ./infra --format mermaid --lens lexicon:gcp
 chant graph ./infra --format mermaid --lens blast:vpc --down   # everything that depends on the VPC
 ```
 
-A lens drops edges that would dangle and rebuilds group metadata, so the result is always a self-consistent graph. An unknown or no-match target exits non-zero with a clear message.
+A lens drops edges that would dangle and rebuilds group metadata, so the result is always a self-consistent graph. An unknown or no-match target exits non-zero with a message.
 
 ## `--stacks` — cross-stack apply order
 
-`chant graph --stacks [path]` renders the **cross-stack apply-ordering graph** instead. chant resolves cross-lexicon references during build and already knows the order — a stack that *exports* a value must apply before the stack that *imports* it. `--stacks` surfaces that as tool-agnostic data for your orchestrator. chant **exposes** the order; it does not drive the apply.
+`chant graph --stacks [path]` renders the **cross-stack apply-ordering graph** instead. chant resolves cross-lexicon references during build, so it knows the order. A stack that *exports* a value must apply before the stack that *imports* it. `--stacks` prints that order as data for your orchestrator. chant **exposes** the order and leaves the apply to you.
 
 ```bash
 chant graph --stacks ./infra
 chant graph --stacks ./infra --json
 ```
 
-The output is the stacks, their dependency edges (consumer -> producer), a topological apply **order**, and **waves** — levels whose stacks have no inter-dependency and may apply concurrently. `--json` emits the full graph (`nodes`, `edges`, `order`, `waves`, `cycles`). A dependency cycle is reported and exits non-zero.
+The output is the stacks, their dependency edges (consumer -> producer), a topological apply **order**, and **waves** (levels whose stacks have no inter-dependency and may apply concurrently). `--json` emits the full graph (`nodes`, `edges`, `order`, `waves`, `cycles`). A dependency cycle is reported and exits non-zero.
 
 ```
 Apply order (waves apply top-to-bottom; a wave's stacks are parallel-safe):
@@ -264,7 +264,7 @@ Dependencies (consumer → producer):
 
 ## `--components` — component dependency order
 
-`chant graph --components [path]` renders the **component dependency graph**: every `*.component.ts` declaration under `path`, ordered by `dependsOn`. Unlike `--stacks` (which infers edges from cross-lexicon attribute references), a component's dependency is always an explicit name in its own `dependsOn` list, so no reference inference is needed — the same `dependsOn` the [interpret driver](/chant/components/orchestration/) uses to order a real run.
+`chant graph --components [path]` renders the **component dependency graph**: every `*.component.ts` declaration under `path`, ordered by `dependsOn`. Unlike `--stacks` (which infers edges from cross-lexicon attribute references), a component's dependency is always an explicit name in its own `dependsOn` list, so nothing is inferred. It is the same `dependsOn` the [interpret driver](/chant/components/orchestration/) uses to order a real run.
 
 ```bash
 chant graph --components ./infra
@@ -284,13 +284,13 @@ Dependencies (consumer → producer):
 
 ### `--projection <lexicon>` — the CI/pipeline projection (#989)
 
-`chant graph --components --format ir --projection gitlab|github|forgejo` adds the **CI/pipeline projection** alongside the component-graph IR: the same stages/jobs/`needs` a CI-provider lexicon's `generateComponentPipeline` synthesizes for [`chant build --components --generate <lexicon>`](/chant/cli/build/) (waves become stages, components become jobs, `dependsOn` becomes `needs:`) — reused wholesale, never re-derived, and exposed as first-class IR nodes/edges rather than something a consumer parses back out of generated CI YAML.
+`chant graph --components --format ir --projection gitlab|github|forgejo` adds the **CI/pipeline projection** alongside the component-graph IR: the same stages/jobs/`needs` a CI-provider lexicon's `generateComponentPipeline` synthesizes for [`chant build --components --generate <lexicon>`](/chant/cli/build/) (waves become stages, components become jobs, `dependsOn` becomes `needs:`). The projection reuses that output as is and exposes it as IR nodes and edges, so a consumer does not parse it back out of generated CI YAML.
 
 ```bash
 chant graph --components --format ir --projection gitlab
 ```
 
-The projection lands in `ir.pipeline`, alongside the component graph's own `nodes`/`edges`/`groups.byWave`:
+The projection is in `ir.pipeline`, alongside the component graph's own `nodes`/`edges`/`groups.byWave`:
 
 ```json
 {
@@ -311,7 +311,7 @@ The projection lands in `ir.pipeline`, alongside the component graph's own `node
 }
 ```
 
-`pipeline.nodes`/`pipeline.edges` are a distinct id space from the component graph's own `nodes`/`edges` (a CI-provider's job name isn't always identical to the component name), so a consumer renders them as two related graphs sharing one `component` join key rather than merging them into one. `--projection` only applies to `--format ir` — `mermaid`/`dot`/`layout` don't read `pipeline` yet, and `chant graph --components` without `--format` never builds an IR at all, so either combination is rejected with a clear error.
+`pipeline.nodes`/`pipeline.edges` are a distinct id space from the component graph's own `nodes`/`edges` (a CI-provider's job name isn't always identical to the component name), so a consumer renders them as two related graphs sharing one `component` join key rather than merging them into one. `--projection` applies only to `--format ir`. `mermaid`/`dot`/`layout` don't read `pipeline` yet, and `chant graph --components` without `--format` never builds an IR at all, so either combination is rejected with an error.
 
 Any lexicon whose plugin implements `generateComponentPipeline` works, not just gitlab/github/forgejo; an unsupported name fails with the same descriptive error `chant build --components --generate` gives.
 
@@ -336,7 +336,7 @@ chant graph            # Ops in the current directory
 chant graph ./infra    # Ops in a specific directory
 ```
 
-Each dependency prints as one edge per line, `<dependency> → <dependent>` — the left Op must complete before the right Op can run. If no Ops declare dependencies the output is `No Op dependencies`; if no `*.op.ts` files are found, `No Ops found`.
+Each dependency prints as one edge per line, `<dependency> → <dependent>`. The left Op must complete before the right Op can run. If no Ops declare dependencies the output is `No Op dependencies`; if no `*.op.ts` files are found, `No Ops found`.
 
 ## Exit Codes
 

@@ -1,6 +1,6 @@
 ---
 title: "chant components"
-description: Record immutable deploy events, reconcile the release ledger against live truth, and export the build archive to a portable directory — the build & deploy observability commands
+description: Record immutable deploy events, reconcile the release ledger against live truth, and export the build archive to a portable directory
 diataxis: reference
 ---
 
@@ -39,11 +39,11 @@ chant components redeploy <env> --component <name> [--digest <sha256:...>]
 
 ## Description
 
-`chant components` holds the release ledger, status surface, and build-archive export for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl` — one immutable JSON line per recorded deploy.
+`chant components` holds the release ledger, status surface, and build-archive export for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl`, with one immutable JSON line per recorded deploy.
 
 `components fan-out` is the odd one out on this page. It runs rather than records, taking a change signal and applying the components downstream of it in a derived order. It sits here because it is the component subsystem's own dispatch path, next to the ledger those deploys write to.
 
-`components release` below is the standalone, explicit way to append a record. [`chant run --components`](/chant/cli/run/#auto-recorded-releases) auto-emits one on every successful deploy, so most projects never need to call `components release` directly — it remains useful for CI compositions and Verify phases outside `chant run`'s own execution.
+`components release` below is the standalone, explicit way to append a record. [`chant run --components`](/chant/cli/run/#auto-recorded-releases) auto-emits one on every successful deploy, so most projects never call `components release` directly. Use it for CI compositions and Verify phases outside `chant run`'s own execution.
 
 ## Subcommands
 
@@ -69,7 +69,7 @@ chant components release prod \
 | `--actor <name>` | Who/what triggered the deploy. Defaults to `$GITHUB_ACTOR`, `$GITLAB_USER_LOGIN`, or `$USER` — but must resolve to something; an unattributed record fails rather than falls back to a placeholder. |
 | `--json` | Print the recorded record as JSON instead of a human summary. |
 
-The timestamp is always a real `new Date()` taken by the CLI at record time — never threaded in from elsewhere, and never re-derived later. A record is never edited or replaced: recording again appends a new line.
+The timestamp is always a real `new Date()` taken by the CLI at record time, never threaded in from elsewhere or re-derived later. A record is never edited or replaced: recording again appends a new line.
 
 Pushes to the remote afterward using the same `--force-with-lease` protocol snapshots use; a concurrent write from another operator is rejected with a recovery hint rather than silently overwritten.
 
@@ -85,7 +85,7 @@ chant components status prod --compare-to staging    # cross-env digest comparis
 chant components status                              # every environment with release records
 ```
 
-Without `--live`, every recorded component reports `unknown` reconciliation — the ledger alone can't confirm live state. With `--live`, `chant components status` reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already computes (`buildChangeSet`) to produce one of:
+Without `--live`, every recorded component reports `unknown` reconciliation, since the ledger alone can't confirm live state. With `--live`, `chant components status` reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already computes (`buildChangeSet`) to produce one of:
 
 | Reconciliation | Meaning |
 |---|---|
@@ -126,7 +126,7 @@ chant components status prod --compare-to staging --json
 
 ### `components export <env>`
 
-Materialize a persisted [build archive](/chant/components/build-archive/) manifest to a portable, downloadable directory: every `image`/`template`/`asset`/`sbom` entry copied byte-for-byte from where the build that produced it left it on disk (its archive-relative `path`, resolved against the current working directory) into `-o <dir>`, plus a self-describing `manifest.json` alongside them. No re-synthesis — it never regenerates content, only copies what a prior `chant build`/`run --components` already produced, so the export is byte-identical to what was built (promote-by-digest holds).
+Materialize a persisted [build archive](/chant/components/build-archive/) manifest to a portable, downloadable directory: every `image`/`template`/`asset`/`sbom` entry copied byte-for-byte from where the build that produced it left it on disk (its archive-relative `path`, resolved against the current working directory) into `-o <dir>`, with a self-describing `manifest.json` beside them. It copies what a prior `chant build`/`run --components` produced and regenerates nothing, so the export is byte-identical to what was built (promote-by-digest holds).
 
 ```bash
 chant components export prod --component search-service -o ./dist/search-service
@@ -136,7 +136,7 @@ chant components export --digest sha256:9fae3d7c... -o ./dist/search-service --j
 Manifest resolution:
 
 - `--digest <manifestDigest>` reads the manifest directly, independent of any environment or release record.
-- Without `--digest`, resolves "the manifest behind this component's most recent successful run" in `<env>`: the latest release record's own `manifestDigest` when one was recorded, else a reverse lookup by its promoted artifact digest — the same join `chant components status` performs.
+- Without `--digest`, resolves "the manifest behind this component's most recent successful run" in `<env>`: the latest release record's own `manifestDigest` when one was recorded, else a reverse lookup by its promoted artifact digest, the same join `chant components status` performs.
 
 | Flag | Meaning |
 |---|---|
@@ -145,7 +145,7 @@ Manifest resolution:
 | `-o, --output <dir>` | Required. Directory the archive is materialized into. |
 | `--json` | Emit a structured per-entry summary instead of a human-readable list. |
 
-A source file missing on disk (the build ran somewhere else, or its output was since cleaned) is reported per entry, and the command exits non-zero — an incomplete export is never mistaken for a complete one. Run it from the same checkout the build that produced the manifest ran in.
+A source file missing on disk (the build ran somewhere else, or its output was since cleaned) is reported per entry, and the command exits non-zero, so an incomplete export is never mistaken for a complete one. Run it from the same checkout the build that produced the manifest ran in.
 
 ```json
 {
@@ -172,11 +172,11 @@ chant components fan-out --base origin/main --env prod --gate release --resume .
 
 #### Where the change signal comes from
 
-Exactly one of `--base` and `--from-affected` is required. Both at once is refused, and so is neither, because defaulting one way or the other would let a stale file quietly beat a fresh diff, or a fresh diff quietly beat a file somebody meant to use.
+Exactly one of `--base` and `--from-affected` is required. Both at once is refused, and so is neither, because defaulting one way or the other would let a stale file silently beat a fresh diff, or a fresh diff silently beat a file somebody meant to use.
 
-`--base <ref>` derives the signal in place, running the same artifact diff [`chant lifecycle affected`](/chant/cli/lifecycle/) runs. That is the one-command shape for a developer working in a checkout. `--from-affected <file>` reads the JSON that `chant lifecycle affected --base <ref> --json` already wrote, which is what a CI job wants when an earlier step ran the diff and there is no reason to build twice. Reading a file builds nothing, so a project whose lexicon plugins are not installed is not turned away for a step this form never runs.
+`--base <ref>` derives the signal in place, running the same artifact diff [`chant lifecycle affected`](/chant/cli/lifecycle/) runs. That is the one-command shape for a developer working in a checkout. `--from-affected <file>` reads the JSON that `chant lifecycle affected --base <ref> --json` already wrote, which is what a CI job wants when an earlier step ran the diff and there is no reason to build twice. Reading a file builds nothing, so this form works in a project whose lexicon plugins are not installed.
 
-Either way the signal names stacks. A component claims a stack through its own deploy steps, so the join to components needs no fan-out config restating a relationship the composition already makes. A changed stack that no component deploys is reported as a warning naming that stack, because a hole in the fan-out's coverage is worth saying out loud rather than dropping.
+Either way the signal names stacks. A component claims a stack through its own deploy steps, so the join to components needs no fan-out config restating a relationship the composition already makes. A changed stack that no component deploys is reported as a warning naming that stack, because it is a hole in the fan-out's coverage.
 
 `--include-dependents` is handed to the diff and folded into the changed set before the join.
 
@@ -204,7 +204,7 @@ Each line answers a question an operator would otherwise have to ask.
 
 - The waves are the derived order shown as a graph. A flat list could not show that the order came out of each component's `dependsOn` rather than out of somebody's hand.
 - Every component that is not running is named with its reason, one of `unaffected`, `indeterminate`, `already-applied` or `blocked`. A `blocked` row also names the failure it was reached from, as `blocked by "cluster-a"`. Absent from a list and deliberately held back would read identically without this.
-- `indeterminate` has a count on the first line, and components a source diff could not judge that the walk never reached get a line of their own (`a source diff cannot judge these, and the walk did not reach them: ...`). It is the third outcome, and a two-state render would quietly fold it into one of the other two.
+- `indeterminate` has a count on the first line, and components a source diff could not judge that the walk never reached get a line of their own (`a source diff cannot judge these, and the walk did not reach them: ...`). It is the third outcome, and a two-state render would silently fold it into one of the other two.
 - `seeded from an earlier run` lists dependencies of selected components that are not themselves running. Their outputs are taken on trust from a run that happened earlier and somewhere else, which is the price of running a subset instead of the whole graph.
 - `plan:` carries the digest verbatim and unabbreviated (shortened above to fit this page). It is the exact string `chant approve --plan` takes, so truncating it for width would make the line useless for the one job it has.
 - `approve:` appears only when `--gate <name>` was given, and is the whole command to run.
@@ -226,7 +226,7 @@ The digest identifies the derivation. It covers the ordered selection and the wa
 
 #### One gate per wave
 
-With `--wave-gate <name>`, each wave gets a gate of its own instead of one gate over the set. For wave `n` it is `<name>-wave-<n>` under the op `fan-out`, bound to that wave's set digest. Use it when a change is too large or too risky to approve in one read. A module bump across many [Terraform roots](/chant/lexicons/terraform/ops/#roots-as-components-in-gated-waves) is the usual case. A canary goes first, and the rest wait until it lands.
+With `--wave-gate <name>`, each wave gets a gate of its own instead of one gate over the set. For wave `n` it is `<name>-wave-<n>` under the op `fan-out`, bound to that wave's set digest. Use it when a change is too large or too risky to approve in one read. A module bump across many [Terraform roots](/chant/lexicons/terraform/ops/#roots-as-components-in-gated-waves) is the usual case. A canary goes first, and the rest wait until it applies.
 
 ```bash
 chant components fan-out --base origin/main --env prod --wave-gate release --canary app-dev --resume .chant/fan-out.json
@@ -249,11 +249,11 @@ Wave numbers come from the derivation, so on a resumed attempt wave 3 is still w
 
 `--wave <n>` runs wave `n` and no other, which is the shape for CI with one job per wave. It refuses while an earlier wave has work left, and a wave past the last one the change has exits 0. `chant build --components --generate gitlab|github|forgejo --wave-gate <name>` writes that pipeline. Job `wave-k` runs `--wave k` and needs `wave-(k-1)`. It hands the `--resume` record on as an artifact, even when it stops at a gate. Approve, then re-run the job that stopped. The pipeline measures the change from `HEAD~1`. Pass `--base <ref>` to the build command to measure it from somewhere else; every job must use the same ref, so it is a fixed one.
 
-`--gate` and `--wave-gate` are refused together. Use `--gate` when one person reads the whole change once, the fan-out is small, and its components do not read each other's fresh outputs at plan time. Use `--wave-gate` when the change should land in stages, when a later root's plan depends on what an earlier one writes, or when the set is too large to review as one.
+`--gate` and `--wave-gate` are refused together. Use `--gate` when one person reads the whole change once, the fan-out is small, and its components do not read each other's fresh outputs at plan time. Use `--wave-gate` when the change should apply in stages, when a later root's plan depends on what an earlier one writes, or when the set is too large to review as one.
 
 #### Failure semantics
 
-A failed component stops its own subtree and nothing else. Components beneath it record as `blocked` naming the failure rather than as `failed`, because nothing about them failed, and that distinction is what makes the next attempt readable. Branches sharing no edge with the failure run to completion.
+A failed component stops its own subtree and nothing else. Components beneath it record as `blocked` naming the failure rather than as `failed`, because they did not fail, which keeps the next attempt readable. Branches sharing no edge with the failure run to completion.
 
 ```
 applied: app-three, cluster-b, net
@@ -273,9 +273,9 @@ Each completed component's outputs are saved alongside its name. A component sti
 
 Repeating the identical command finishes the work. The record narrows the plan before the gate is decided, and the digest is carried rather than recomputed, so an approval already given still stands. The re-run prints what it is skipping as `already-applied` and dispatches only the rest.
 
-Only the earlier attempt's completions are carried forward. Its failures are recorded in the file for whoever has to read it, but feeding them back as progress would block their subtrees again on the very run that exists to retry them.
+Only the earlier attempt's completions are carried forward. Its failures are recorded in the file for whoever has to read it, but feeding them back as progress would block their subtrees again on the run meant to retry them.
 
-`--dry-run` reads the record too, so a plan-only invocation alongside `--resume` shows what is actually left and prints the digest the earlier approval was given for.
+`--dry-run` reads the record too, so a plan-only invocation alongside `--resume` shows what is left and prints the digest the earlier approval was given for.
 
 A record whose digest does not match the fan-out derived now is refused with a warning, and its progress is not applied. The derivation changed, which makes this a different change, and carrying `cluster-a already applied` into it would be a claim about work nobody did.
 

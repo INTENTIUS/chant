@@ -86,9 +86,9 @@ npm update @intentius/chant-lexicon-<name>
 
 Each lexicon is versioned independently of core and of other lexicons. A spec upgrade PR for `k8s` bumps only `@intentius/chant-lexicon-k8s`; merging it triggers publish-on-merge for that package alone.
 
-All lexicons declare `@intentius/chant` as a peer dependency with a `^` range pinned to the minimum compatible core version (e.g. `"^0.13.1"`). A lexicon minor or major bump does not require a core release, and a core minor release does not force lexicon versions to move.
+All lexicons declare `@intentius/chant` as a peer dependency with a `^` range pinned to the minimum compatible core version (e.g. `"^0.13.1"`). A lexicon can ship a minor or major version without a core release, and a core minor release leaves lexicon versions where they are.
 
-When installing a lexicon, npm resolves the peer against whichever core version is already in the tree — as long as it satisfies the `^` lower bound.
+When installing a lexicon, npm resolves the peer against whichever core version is already in the tree, as long as it satisfies the `^` lower bound.
 
 ## How Lexicons Work
 

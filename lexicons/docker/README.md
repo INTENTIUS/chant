@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-docker
 
-Docker lexicon for [chant](https://intentius.io/chant/) — declare Docker Compose services and Dockerfile build instructions as typed TypeScript that serializes to `docker-compose.yml` and `Dockerfile.*` files.
+Docker lexicon for [chant](https://intentius.io/chant/) — declare Docker Compose services and Dockerfile build instructions as TypeScript that serializes to `docker-compose.yml` and `Dockerfile.*` files.
 
 Provides typed constructors for Service, Volume, Network, Config, Secret, and multi-stage Dockerfile resources, plus variable interpolation, default labels, Docker-specific lint rules, LSP completions, and MCP server support.
 

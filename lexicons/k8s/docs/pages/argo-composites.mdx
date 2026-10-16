@@ -1,20 +1,20 @@
 ---
 title: "Argo CD Composites"
-description: "Argo CD support in the k8s lexicon — the argoproj.io CRDs, ArgoAppFor / ArgoAppSetForRegions composites, cluster registration, the ARGO00x rules, and how a deploy splits between Argo, an Op and CI."
+description: "Argo CD support in the k8s lexicon: the argoproj.io CRDs, ArgoAppFor / ArgoAppSetForRegions composites, cluster registration, the ARGO00x rules, and how a deploy splits between Argo, an Op and CI."
 diataxis: reference
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Argo CD's `Application`, `ApplicationSet`, and `AppProject` are Kubernetes CRDs (`argoproj.io`). The k8s lexicon registers them via codegen — the same precedent as KubeRay — so you get typed `K8s::Argo::*` resources, the serializer, LSP, hover, and MCP for free. The value-add ships as composites, lint rules, and a skill.
+Argo CD's `Application`, `ApplicationSet`, and `AppProject` are Kubernetes CRDs (`argoproj.io`). The k8s lexicon generates them as it does KubeRay, so you get typed `K8s::Argo::*` resources with the serializer, LSP hover and MCP. The lexicon adds composites, lint rules and a skill for Argo.
 
 <Aside type="note">
-The k8s lexicon stays **runtime-agnostic** — it only emits manifests. Argo is **opt-in** via the composites below; nothing here is implied unless you reach for it.
+The k8s lexicon only writes manifests. Argo comes in only when you use the composites below.
 </Aside>
 
 ## The three-layer model: Argo, an Op and CI
 
-Chant authors typed infra into manifests. From there, who applies them?
+chant writes the manifests. Three layers can apply them:
 
 | Layer | Owns | Reach for it when |
 |---|---|---|
@@ -53,7 +53,7 @@ export const api = ArgoAppFor("api", {
 });
 ```
 
-One call replaces ~30 lines of hand-written `Application` YAML. Defaults are production-friendly:
+One call replaces about 30 lines of hand-written `Application` YAML. Defaults:
 
 - **destination** — the in-cluster target (`https://kubernetes.default.svc`, namespace = target name) when omitted.
 - **project** — `default`. Pass `project` to scope to a declared `AppProject`.

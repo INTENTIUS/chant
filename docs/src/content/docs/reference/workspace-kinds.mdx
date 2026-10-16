@@ -26,7 +26,7 @@ The probe of `other` only checks that the directory exists, and it never claims 
 
 ## Kinds from a package
 
-A package supplies kinds by exporting a JSON file at its `./workspace-kinds` subpath. This follows the slim `./detect` entry every lexicon exports ([#426](https://github.com/INTENTIUS/chant/issues/426)), with one difference. The target is a data file, not a module.
+A package supplies kinds by exporting a JSON file at its `./workspace-kinds` subpath. This follows the slim `./detect` entry every lexicon exports ([#426](https://github.com/INTENTIUS/chant/issues/426)), except that the target is a data file, not a module.
 
 ```json
 {

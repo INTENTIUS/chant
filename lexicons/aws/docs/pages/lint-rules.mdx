@@ -6,9 +6,9 @@ diataxis: reference
 
 The AWS lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized CloudFormation output after `chant build`.
 
-This page explains the most commonly hit rules in depth. For the complete list —
-every rule the lexicon registers, generated from the registration itself so it
-cannot fall behind — see [All Rules](../rules/). The security-hardening rules
+This page explains the most commonly hit rules in depth. For the complete list, see
+[All Rules](../rules/), generated from the rule registrations so it stays
+current. The security-hardening rules
 (WAW032 onward) also carry remediation guidance and upstream references in the
 [audit rules reference](/chant/lint-rules/audit-rules/).
 
@@ -84,13 +84,13 @@ Flags Lambda functions using deprecated or approaching-end-of-life runtimes (e.g
 
 **Severity:** error | **Category:** correctness
 
-Flags child projects (nested stacks) that have no `stackOutput()` exports. Without outputs, the parent stack can't reference any values from the child — either add `stackOutput()` declarations or remove the `nestedStack()` reference.
+Flags child projects (nested stacks) that have no `stackOutput()` exports. Without outputs, the parent stack can't reference any values from the child. Either add `stackOutput()` declarations or remove the `nestedStack()` reference.
 
 ### WAW014 — Unreferenced Stack Outputs
 
 **Severity:** warning | **Category:** style
 
-Flags `nestedStack()` references whose outputs are never used from the parent. If no cross-stack references exist, the child project could just be built and deployed independently.
+Flags `nestedStack()` references whose outputs are never used from the parent. If no cross-stack references exist, the child project can be built and deployed on its own.
 
 ### WAW015 — Circular Project References
 
@@ -147,10 +147,10 @@ Flags resources that are likely missing a required explicit `DependsOn` based on
 
 - **ECS Service + Listener**: An ECS Service with `LoadBalancers` should depend on the ALB Listener so the target group is fully configured before the service starts registering tasks.
 - **EC2 Route + VPCGatewayAttachment**: A Route using a `GatewayId` should depend on the VPCGatewayAttachment so the gateway is attached to the VPC before the route is created.
-- **API Gateway Deployment + Method**: A Deployment only references `RestApiId` — it needs an explicit `DependsOn` on its Methods or CloudFormation may create the deployment before any methods exist.
-- **API Gateway V2 Deployment + Route**: Same as above for HTTP APIs — a V2 Deployment needs `DependsOn` on its Routes.
-- **DynamoDB Table + ScalableTarget**: A ScalableTarget with `ServiceNamespace: "dynamodb"` references the table by string `ResourceId`, not `Ref` — it needs `DependsOn` so the table exists before scaling is registered.
-- **ECS Service + ScalableTarget**: A ScalableTarget with `ServiceNamespace: "ecs"` references the service by string — it needs `DependsOn` so the ECS Service exists first.
+- **API Gateway Deployment + Method**: A Deployment only references `RestApiId`, so it needs an explicit `DependsOn` on its Methods or CloudFormation may create the deployment before any methods exist.
+- **API Gateway V2 Deployment + Route**: Same as above for HTTP APIs: a V2 Deployment needs `DependsOn` on its Routes.
+- **DynamoDB Table + ScalableTarget**: A ScalableTarget with `ServiceNamespace: "dynamodb"` references the table by string `ResourceId`, not `Ref`, so it needs `DependsOn` so the table exists before scaling is registered.
+- **ECS Service + ScalableTarget**: A ScalableTarget with `ServiceNamespace: "ecs"` references the service by string, so it needs `DependsOn` so the ECS Service exists first.
 
 ```
 WAW030: ECS Service "MyService" has LoadBalancers but no DependsOn on a Listener

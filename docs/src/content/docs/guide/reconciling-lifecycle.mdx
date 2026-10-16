@@ -1,6 +1,6 @@
 ---
 title: Reconciling Lifecycle
-description: The two reconciliation directions as Op composites — ReconcileOp (cloud->code) and ApplyOp (code->cloud) — the commands and flags for each.
+description: Commands and flags for ReconcileOp (cloud->code) and ApplyOp (code->cloud).
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/reconciling-lifecycle/.
@@ -10,7 +10,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Drift detection tells you the cloud and your source disagree. Reconciliation closes the gap. There are two directions, and chant exposes each as an Op composite. Which one you reach for — and whether you reach for either — is the [dial](/chant/concepts/lifecycle-models/#the-dial), chosen per environment.
+Drift detection tells you the cloud and your source disagree. Reconciliation closes the gap. There are two directions, and chant exposes each as an Op composite. Which one you use, if either, is the [dial](/chant/concepts/lifecycle-models/#the-dial), set per environment.
 
 ```
 observe  →  reconcile  →  authoritative
@@ -20,7 +20,7 @@ observe  →  reconcile  →  authoritative
 
 ## Reconcile — `cloud → code`
 
-When the live system is ahead of source — someone created or changed a resource by hand — pull reality *back into source* so declarations track it. [`ReconcileOp`](/chant/guide/ops/#reconcile-cloud--code) does this by opening a PR:
+When someone has created or changed a resource by hand, pull the live state *back into source*. [`ReconcileOp`](/chant/guide/ops/#reconcile-cloud--code) does this by opening a PR:
 
 ```typescript
 import { ReconcileOp } from "@intentius/chant/op";
@@ -40,11 +40,11 @@ Phases: **Snapshot -> Plan -> Reconcile**, where the Reconcile phase's `reconcil
 
 `onDrift: "comment"` is the mode for a reconcile that runs on a pull request rather than on a cron: the body lands as one comment on the pull request that triggered the run, re-edited in place on each push, and the generated workflow costs `contents: read` plus `pull-requests: write` and nothing else. It needs that trigger, so the github Op generator refuses it by name on a cron or push trigger, and gitlab and forgejo refuse it outright.
 
-Reconcile never mutates the cloud. It only changes source — the safest reconciliation direction, and a good first step past pure observation.
+Reconcile never mutates the cloud; it changes only source. That makes it the safer direction and a good first step past observation.
 
 ## Apply — `code → cloud`
 
-When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system — a Kubernetes server-side apply, a CloudFormation `deploy`, an ARM deployment, or a Grafana API apply, selected by `target`:
+When the cloud should match source, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes source to the live system (a Kubernetes server-side apply, a CloudFormation `deploy`, an ARM deployment, or a Grafana API apply, selected by `target`):
 
 ```typescript
 import { ApplyOp } from "@intentius/chant/op";
@@ -60,7 +60,7 @@ const { op } = ApplyOp({
 export default op;
 ```
 
-Authority stays with the platform — chant hosts no state file. Deletes ride the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops-reference/#delete-paths) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation on a destructive apply](/chant/guide/ops/#gates-and-compensation-on-a-destructive-apply) for what each buys.
+The platform holds the state; chant keeps no state file. Deletes use the target's own delete path and are owned-only on every target: marker-scoped on `kubectl`, tag-scoped on `arm`, and bounded by the stack on `cloudformation`. See [`delete` and what bounds it](/chant/guide/ops-reference/#delete-paths) for the mechanism in each case. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation on a destructive apply](/chant/guide/ops/#gates-and-compensation-on-a-destructive-apply) for what each buys.
 
 ## See also
 

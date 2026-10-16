@@ -9,13 +9,13 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Lexicons can provide editor integration through LSP (Language Server Protocol) and MCP (Model Context Protocol) contributions.
+A lexicon can add editor completions and hover through LSP (Language Server Protocol), and agent tools through MCP (Model Context Protocol).
 
 ## LSP Providers
 
-Core provides `LexiconIndex`, `lexiconCompletions` and `lexiconHover` in
-`packages/core/src/lsp/lexicon-providers.ts`. They are generic implementations
-that work with any lexicon's registry data:
+Core's `LexiconIndex`, `lexiconCompletions` and `lexiconHover`, in
+`packages/core/src/lsp/lexicon-providers.ts`, work with any lexicon's registry
+data:
 
 ```typescript
 import { LexiconIndex, lexiconCompletions, lexiconHover } from "@intentius/chant/lsp/lexicon-providers";
@@ -72,7 +72,7 @@ hoverProvider(ctx) {
 
 ## MCP Contributions
 
-Lexicons can contribute MCP tools and resources for AI agent integration:
+A lexicon can contribute MCP tools and resources for AI agents:
 
 ### Tools
 
@@ -149,7 +149,7 @@ helpers write their own prefix without doubling it. What does not normalize is a
 URI naming a *different* lexicon: `chant://other/x` contributed by `aws`
 registers as the unusable `chant://aws/chant://other/x`. `chant dev
 check-lexicon` fails any contribution whose registered name is not a single
-well-formed identifier, which is exactly that case.
+well-formed identifier, which catches that case.
 
 ### Conventional names
 

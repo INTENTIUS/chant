@@ -1,6 +1,6 @@
 ---
 title: Type Errors
-description: Understanding and fixing TypeScript type errors in chant
+description: Fixing TypeScript type errors in chant
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/troubleshooting/type-errors/.
@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-chant uses the TypeScript type checker, so type errors are identical to what your IDE shows.
+chant uses the TypeScript type checker, so it reports the same type errors your IDE shows.
 
 ## Common Type Errors
 
@@ -39,7 +39,7 @@ Check the property name casing. Lexicon types use the casing defined by the prov
 
 ## Debugging Type Errors
 
-Your editor provides the same diagnostics with hover information. To inspect lexicon type definitions:
+Your editor shows the same diagnostics on hover. To inspect lexicon type definitions:
 
 1. Hover over a resource class and use "Go to Definition"
 2. Review the property types and required fields

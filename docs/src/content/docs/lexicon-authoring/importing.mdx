@@ -12,7 +12,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Six optional plugin members cover import and its neighbours; a lexicon with no import story implements none of them.
+The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Six optional plugin members cover import and its neighbours; a lexicon without import implements none of them.
 
 | Member | Returns | Drives |
 |---|---|---|
@@ -57,7 +57,7 @@ interface ResourceIR {
 
 Three rules follow from that shape:
 
-- Capture all properties. `properties` is a lossless intermediate, so every property from the source file should appear there for the generator to emit. Dropping properties silently causes roundtrip failures and user surprise.
+- Capture all properties. `properties` is a lossless intermediate, so every property from the source file should appear there for the generator to emit. A silently dropped property breaks the roundtrip.
 - Name what you cannot carry. A section you read and deliberately drop goes in `warnings`, which `chant import` prints (`parseAndWrite` pushes `ir.warnings` straight into the result). Silence is the failure mode #2069 closed.
 - `logicalId` becomes an export name. Core lowercases its first character when it writes the barrel re-exports, so emit a valid JavaScript identifier.
 
@@ -117,7 +117,7 @@ k8s is the only host so far (`lexicons/k8s/src/import/embedded.ts`). otel, prome
 | `src/import/generator.ts` | IR into TypeScript source |
 | `src/import/roundtrip.test.ts` | End-to-end fixture tests |
 
-Two shapes are in use. github and gitlab implement `TemplateParser` / `TypeScriptGenerator` directly, so `plugin.ts` just returns `new GitHubActionsParser()`. docker keeps a lexicon-local `DockerIR` (`{ kind, name, props }`) that suits its multi-section source, and bridges it in `src/import/adapter.ts` with a `DockerTemplateParser` / `DockerTemplateGenerator` pair that maps `DockerIR` onto `ResourceIR` and back. Pick the second only when your source format genuinely does not fit `ResourceIR`; the examples below are docker's, so they show the local shape.
+Two shapes are in use. github and gitlab implement `TemplateParser` / `TypeScriptGenerator` directly, so `plugin.ts` just returns `new GitHubActionsParser()`. docker keeps a lexicon-local `DockerIR` (`{ kind, name, props }`) that suits its multi-section source, and bridges it in `src/import/adapter.ts` with a `DockerTemplateParser` / `DockerTemplateGenerator` pair that maps `DockerIR` onto `ResourceIR` and back. Pick the second only when your source format does not fit `ResourceIR`; the examples below are docker's, so they show the local shape.
 
 ## parser.ts
 
@@ -166,7 +166,7 @@ export class DockerParser {
 
 ### Use an allowlist for props
 
-Don't pass the raw object through as `props`. Define an allowlist of known property names and extract only those:
+Define an allowlist of known property names and copy only those into `props`:
 
 ```typescript
 const SERVICE_PROPS = [
@@ -372,7 +372,7 @@ test("simple.yaml → Service + Volume constructors", () => {
 
 ## `chant migrate` — another provider's format
 
-`migrationSource(from)` is a separate hook for translating one lexicon's format into another, driven by `chant migrate <file> --from <lexicon> --to <lexicon>`. Core orchestrates I/O and exit codes; the target lexicon owns the translation.
+`migrationSource(from)` is a separate hook for translating one lexicon's format into another, driven by `chant migrate <file> --from <lexicon> --to <lexicon>`. Core handles I/O and exit codes; the target lexicon owns the translation.
 
 ```typescript
 interface MigrationSource {
@@ -381,7 +381,7 @@ interface MigrationSource {
 }
 ```
 
-Implement it on the **target** lexicon, returning `undefined` for a `from` you do not handle. `lexicons/gitlab/src/plugin.ts` implements `migrationSource("github")` and `lexicons/forgejo/src/plugin.ts` does the same; both keep the transform behind a dynamic import so the migrate code stays out of the import graph until a translation actually runs.
+Implement it on the **target** lexicon, returning `undefined` for a `from` you do not handle. `lexicons/gitlab/src/plugin.ts` implements `migrationSource("github")` and `lexicons/forgejo/src/plugin.ts` does the same; both keep the transform behind a dynamic import so the migrate code stays out of the import graph until a translation runs.
 
 The CLI defaults `--from` to `github` and `--to` to `gitlab`. Its flags:
 

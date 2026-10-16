@@ -1,6 +1,6 @@
 ---
 title: "chant carve advise"
-description: Read-only peelability advisor for Terraform estates and CDK cloud assemblies — rank what is cheap to carve into native chant
+description: Rank what in a Terraform estate or CDK cloud assembly is cheap to carve into native chant
 diataxis: reference
 ---
 
@@ -14,11 +14,11 @@ chant carve advise --from <terraform-dir | cdk.out> [flags]
 
 `chant carve advise` points at foreign infrastructure and ranks each piece by **peelability**: how cleanly it could be carved into native chant source. Clean leaves score high, load-bearing or unmappable pieces score low.
 
-Two sources are read. A **Terraform estate** is parsed from `.tf` (and optionally `.tfstate`), and each resource and module is ranked. A **CDK cloud assembly** (`cdk.out`) is read from its synthesized JSON, and each *construct* is ranked. Which one is in `--from` is decided by looking at the directory, not by a second flag.
+Two sources are read. A **Terraform estate** is parsed from `.tf` (and optionally `.tfstate`), and each resource and module is ranked. A **CDK cloud assembly** (`cdk.out`) is read from its synthesized JSON, and each *construct* is ranked. chant tells which one `--from` names by looking at the directory.
 
-It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases have shipped as [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only; this command is the analysis slice that is useful on its own. Advise also ranks more than emit can adopt — it bands the google provider types, the typed kubernetes provider resources and every CDK construct, which emit refuses, and it bands `kubernetes_manifest`, which emit adopts from state and bridge reads back through `data "kubernetes_resource"`.
+It is read-only either way. It parses, scores, and prints. It emits no chant source, patches nothing, and touches no live resource. The emit, boundary-bridging, and apply phases are [`chant carve emit|bridge|apply`](/chant/cli/carve-out/) and read Terraform only. Advise also ranks types emit refuses (the google provider types, the typed kubernetes provider resources and every CDK construct). It bands `kubernetes_manifest` too, which emit adopts from state and bridge reads back through `data "kubernetes_resource"`.
 
-Use it to decide where an incremental move is worth starting. The point is not to carve everything. Small, cleanly-mappable pieces move; the gnarly long tail stays where it is. Once carving has begun, [`chant carve status`](/chant/cli/carve-out/#4-carve-status) reports where each carved address stands.
+Use it to decide where an incremental move is worth starting. Small, cleanly mapped pieces move, and the long tail stays where it is. Once carving has begun, [`chant carve status`](/chant/cli/carve-out/#4-carve-status) reports where each carved address stands.
 
 ## Flags
 
@@ -37,7 +37,7 @@ Terraform only. The advisor parses HCL with [`@cdktn/hcl2json`](https://www.npmj
 npm install -D @cdktn/hcl2json
 ```
 
-A CDK cloud assembly needs nothing installed. The assembly is already JSON, and its templates are already in `AWS::*` type space — the same space the tier map keys on.
+A CDK cloud assembly needs nothing installed. The assembly is already JSON, and its templates are already in `AWS::*` type space, the space the tier map keys on.
 
 ## Scoring model
 
@@ -54,11 +54,11 @@ score = 100
 clamp 0..100              # no known native mapping → 0
 ```
 
-**Inbound** edges are the expensive ones: each resource that still depends on a carved piece needs its Terraform rewritten to a `data` source. **Outbound** edges are cheaper — a value the carved piece reads from a survivor becomes a deploy-time input, deferred until you actually apply.
+**Inbound** edges are the expensive ones: each resource that still depends on a carved piece needs its Terraform rewritten to a `data` source. **Outbound** edges are cheaper. A value the carved piece reads from a survivor becomes a deploy-time input, deferred until you apply.
 
 An `output` block that reads the carved resource counts too. It is an inbound dependency with the same urgency (the surviving plan errors on the dangling reference), but bridging it rewrites a single expression in a block that manages nothing, so it is weighted like an outbound edge rather than a data-source patch.
 
-A reference that reaches the carved resource through a `locals` block or a `data` source counts as a full inbound edge. Neither block is carvable, so the edge is recorded against the surviving resource that reads the local or the data source, and `carve bridge` lands the rewrite in the referrer's own body. Chained locals resolve through to whatever resource the chain ultimately names.
+A reference that reaches the carved resource through a `locals` block or a `data` source counts as a full inbound edge. Neither block is carvable, so the edge is recorded against the surviving resource that reads the local or the data source, and `carve bridge` lands the rewrite in the referrer's own body. Chained locals resolve to the resource at the end of the chain.
 
 | Score | Band | Meaning |
 |-------|------|---------|
@@ -72,11 +72,11 @@ Terraform sub-resources that inline into a parent (for example `aws_s3_bucket_ve
 
 Point `--from` at a `cdk.out` directory and the same model ranks constructs. Three files carry everything the advisor reads: `manifest.json` (which artifacts are stacks), `tree.json` (the construct tree), and the `*.template.json` files themselves. Nothing reads your CDK source, so a Python or Java app is ranked through the same code path as a TypeScript one.
 
-**Constructs rank, not CloudFormation resources.** An L2 construct emits several resources — a `Function` emits a role, a policy and the function — and they carve together or not at all. Every resource names its emitting construct in `Metadata["aws:cdk:path"]`, and `tree.json` says which ancestor of that path is a construct someone actually wrote, so resources fold up to the shallowest L2 or L3 ancestor. That construct ranks once, and the `members` field names the resources folded into it. This is the CDK analogue of Terraform sub-resources folding into their parent.
+**Constructs rank, not CloudFormation resources.** An L2 construct emits several resources (a `Function` emits a role, a policy and the function), and they carve together or not at all. Every resource names its emitting construct in `Metadata["aws:cdk:path"]`, and `tree.json` says which ancestor of that path is a construct someone wrote. Resources fold up to the shallowest L2 or L3 ancestor. That construct ranks once, and the `members` field names the resources folded into it. This is the CDK analogue of Terraform sub-resources folding into their parent.
 
-**An L3 subtree ranks as one Composite candidate.** A pattern construct, or a grouping construct you wrote yourself, is a chant Composite in waiting. It is reported with `kind: "module"` — the same tier-2 treatment a Terraform module gets — instead of having its leaves scored separately.
+**An L3 subtree ranks as one Composite candidate.** A pattern construct, or a grouping construct you wrote yourself, is a chant Composite in waiting. It is reported with `kind: "module"`, the same tier-2 treatment a Terraform module gets — instead of having its leaves scored separately.
 
-**Edges are exact, including across stacks.** `Ref`, `Fn::GetAtt` and `Fn::Sub` are intra-stack. `Fn::ImportValue` is resolved through the exporting stack's `Outputs` back to the construct that produces the value, so a cross-stack dependency is a real edge between two constructs and shows up from both ends: inbound on the exporter, outbound on the importer, both tagged `crossStack: true`. `DependsOn` counts too. A stack `Output` that reads a construct is the CloudFormation twin of a Terraform `output` block, and is weighted the same way — except when its export is imported somewhere, in which case the direct cross-stack edge stands for that dependency rather than charging it twice.
+**Edges are exact, including across stacks.** `Ref`, `Fn::GetAtt` and `Fn::Sub` are intra-stack. `Fn::ImportValue` is resolved through the exporting stack's `Outputs` back to the construct that produces the value, so a cross-stack dependency is a real edge between two constructs and shows up from both ends: inbound on the exporter, outbound on the importer, both tagged `crossStack: true`. `DependsOn` counts too. A stack `Output` that reads a construct is the CloudFormation twin of a Terraform `output` block, and is weighted the same way, except when its export is imported somewhere: then the direct cross-stack edge stands for that dependency rather than charging it twice.
 
 Three signals are CDK's own, layered on the shared score:
 
@@ -88,7 +88,7 @@ Three signals are CDK's own, layered on the shared score:
 
 Synthesis scaffolding never appears: the `CDKMetadata` resource, the bootstrap version parameter and asset parameters describe the synthesis rather than the infrastructure.
 
-`--state` is refused against an assembly rather than ignored — it is a Terraform option, and a synthesized template already carries its own instance counts. So are `carve emit`, `carve bridge` and `carve apply`: bridging a CDK carve means rewriting the surviving app's source, which does not generalize across jsii languages.
+`--state` is refused against an assembly rather than ignored: it is a Terraform option, and a synthesized template already carries its own instance counts. So are `carve emit`, `carve bridge` and `carve apply`: bridging a CDK carve means rewriting the surviving app's source, which does not generalize across jsii languages.
 
 ```
 $ chant carve advise --from ./cdk.out
@@ -153,7 +153,7 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 
 ## The JSON report
 
-`--json` prints the report to stdout; `--report <path>` writes the same bytes to a file. Other tools read it — [behold](https://github.com/INTENTIUS/behold) renders it as a graph — so it is a contract, and it says which version of that contract it is:
+`--json` prints the report to stdout; `--report <path>` writes the same bytes to a file. Other tools read it ([behold](https://github.com/INTENTIUS/behold) renders it as a graph), so it is a contract, and it says which version of that contract it is:
 
 ```json
 {
@@ -202,12 +202,12 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 
 `breakdown.inbound` and `breakdown.outbound` are the counts the score was computed from. `boundary` is the same information as **edges**: every dependency link carving that resource would cut, named at both ends.
 
-- `survivor` is the address that stays in Terraform, `carved` the address that leaves. `attrs` are the producer-side attributes referenced (`id`, `arn`); `via` is the referring block's own attribute the reference sits in (`vpc_id`) — the name a deferred input's build parameter takes on emit.
+- `survivor` is the address that stays in Terraform, `carved` the address that leaves. `attrs` are the producer-side attributes referenced (`id`, `arn`); `via` is the referring block's own attribute the reference sits in (`vpc_id`), the name a deferred input's build parameter takes on emit.
 - An `inbound` edge is bridged by a `data` source and is `required: "immediately"`: the surviving plan breaks without it. An `outbound` edge becomes a `deferred-input`, `required: "at-apply"`.
 - An inbound edge whose `survivor` is an `output.<name>` pseudo-address comes from an `output` block. It carries `bridge: "tf-output-rewrite"` and `via: ["value"]`, and `carve bridge` repoints the output at the same data source. It is counted in `breakdown.outputs`, not `breakdown.inbound`, so `boundary.inbound.length` equals `breakdown.inbound + breakdown.outputs`.
-- Every cut appears **twice** across the report — once as an `inbound` edge on the depended-on resource, once as an `outbound` edge on the resource that depends on it. Each list answers "what would carving *this* resource cut", so a reader collecting edges across resources should key them in dependency direction to fold the two views into one.
+- Every cut appears **twice** across the report: once as an `inbound` edge on the depended-on resource, once as an `outbound` edge on the resource that depends on it. Each list answers "what would carving *this* resource cut", so a reader collecting edges across resources should key them in dependency direction to fold the two views into one.
 - The lists are the carve *set's* boundary, so a folded sub-resource is never an endpoint: it carves with its parent, and edges internal to the set are not boundary work.
-- `boundary` present with two empty lists means no boundary work. `boundary` absent means the report was produced by a chant that predates the field — "none" and "not reported" are different claims.
+- `boundary` present with two empty lists means no boundary work. `boundary` absent means the report was produced by a chant that predates the field. "None" and "not reported" are different claims.
 
 ### What a CDK report adds
 
@@ -215,11 +215,11 @@ The shape is the same. `source` says `"cdk"`, and:
 
 - `address` is a **construct path** (`AppStack/Handler`) rather than a Terraform address. It is still an opaque string identifier, but it does not split on `.` into a type the way a Terraform address does.
 - `kind` is still `"resource"` or `"module"`. An L3 construct subtree is a `module`, which is what that value already means: a candidate for one chant Composite rather than several resources.
-- `mapsTo` is the CloudFormation type — the identity map, which is the point. A synthesized template is already in the type space chant's AWS lexicon constructors take.
+- `mapsTo` is the CloudFormation type, unchanged. A synthesized template is already in the type space chant's AWS lexicon constructors take.
 - `members` names the CloudFormation resources folded into the construct (`id`, `type`, `stack`, `path`). Absent on the Terraform path, where a fold is expressed by the child's absence from the ranking instead.
 - `notes` carries what the arithmetic cannot say: why a construct was disqualified, that it is asset-backed, that it is an L3 Composite candidate.
 - `bridge` takes two more values: `cdk-import` where Terraform says `tf-data-source` (the surviving app reimports what was carved), and `cfn-output-rewrite` where it says `tf-output-rewrite`. A boundary edge whose two ends are in different templates also carries `crossStack: true`.
-- `diagnostics` is a top-level list of anything about the read the scores alone do not say — a missing `tree.json`, an assembly synthesized from unresolved context lookups.
+- `diagnostics` is a top-level list of anything about the read the scores alone do not say, such as a missing `tree.json`, an assembly synthesized from unresolved context lookups.
 - Band names do not change. A construct in the lowest band is still `"leave in Terraform"` in the JSON, because the band is part of this contract and readers key on it; only the heading a person reads says "LEAVE IN CDK".
 
 ### Version policy
@@ -234,7 +234,7 @@ The CDK source stays inside that promise and does not bump the version. Every fi
 
 ## Coverage
 
-The tier map is a curated seed covering the common tier-1 leaves people carve first. A type it does not know scores 0 (leave where it is), which is the safe default: the advisor never claims something is carvable when it cannot map it. Both sources read the same table — the Terraform advisor keys it by Terraform type, the CDK advisor by the CloudFormation type the same entry names — so adding a type lights it up for both at once.
+The tier map is a curated seed covering the common tier-1 leaves people carve first. A type it does not know scores 0 (leave where it is), which is the safe default: the advisor never claims something is carvable when it cannot map it. Both sources read the same table (the Terraform advisor keys it by Terraform type, the CDK advisor by the CloudFormation type the same entry names), so adding a type enables it for both.
 
 Three Terraform providers contribute entries: `aws_*` maps to CloudFormation types, `google_*` to Config Connector types, and `kubernetes_*` to manifests. A fourth is a file under `packages/core/src/terraform/providers/` and a line in that directory's index.
 
