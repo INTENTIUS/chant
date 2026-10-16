@@ -54,4 +54,4 @@ If the overlay keeps growing, the fallback is generating from Grafana's CUE dire
 
 ## Why not the SDK package
 
-The SDK's TypeScript builders are method chains (`new PanelBuilder().title(…).withTarget(…)`), and chant declarations are static `new X({ … })` data that the build evaluates and lint reads. The SDK's generated interfaces don't work as plain props either: each query type declares a method, enums are runtime TypeScript `enum`s, and option types mark every field required. The package is also versioned `0.0.x`, with a prerelease line per Grafana minor. Pinning its schema output keeps the fidelity without the dependency.
+The SDK's TypeScript builders are method chains (`new PanelBuilder().title(…).withTarget(…)`), and chant declarations are static `new X({ … })` data that the build evaluates and lint reads. The SDK's generated interfaces don't work as plain props either: each query type declares a method, enums are runtime TypeScript `enum`s, and option types mark every field required. The package is also versioned `0.0.x`, with a prerelease line per Grafana minor. Vendoring its JSON Schemas gives the same types without depending on the package.

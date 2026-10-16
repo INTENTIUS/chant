@@ -1,10 +1,10 @@
 ---
 title: "Kubernetes Concepts"
-description: "How Kubernetes resources map to chant constructs — apiVersion, kind, metadata, spec"
+description: "How Kubernetes resources map to chant constructs: apiVersion, kind, metadata, spec"
 diataxis: explanation
 ---
 
-Every exported resource declaration becomes a Kubernetes manifest document in the generated YAML. The serializer handles the translation automatically:
+Every exported resource declaration becomes a Kubernetes manifest document in the generated YAML. The serializer:
 
 - Resolves the correct `apiVersion` and `kind` from the resource type
 - Converts the export name to a kebab-case `metadata.name`

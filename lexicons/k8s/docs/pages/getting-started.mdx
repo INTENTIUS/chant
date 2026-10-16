@@ -11,7 +11,7 @@ prompt: |
 
 ## What is chant?
 
-Chant is a TypeScript-to-YAML compiler for Kubernetes. You write TypeScript declarations, and chant outputs kubectl-ready manifests.
+You write TypeScript, and chant builds it into Kubernetes YAML for `kubectl apply`.
 
 ## Install
 
@@ -21,7 +21,7 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-k8s
 
 ## Your first deployment
 
-The fastest path is the **WebApp** composite — one function call that produces a Deployment, Service, and optional Ingress:
+Start with the **WebApp** composite, one function call that returns a Deployment, a Service and an optional Ingress:
 
 ```typescript
 // src/infra.k8s.ts
@@ -52,7 +52,7 @@ kubectl apply -f dist/manifests.yaml
 
 ## Using resource constructors
 
-Composites are convenient, but you can also use the lower-level resource constructors directly:
+You can also call the resource constructors directly:
 
 ```typescript
 // src/infra.k8s.ts

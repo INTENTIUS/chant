@@ -1,13 +1,13 @@
 ---
 title: "GKE Composites"
-description: "Vendor-specific composites for Google GKE — Workload Identity, GCE Ingress, Gateway API, PD/Filestore storage, Cloud Logging, Cloud Trace, and Config Connector."
+description: "Composites for Google GKE: Workload Identity, GCE Ingress, Gateway API, PD/Filestore storage, Cloud Logging, Cloud Trace, and Config Connector."
 diataxis: reference
 group: "Vendor Composites"
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-These composites produce K8s YAML with GKE-specific annotations and configurations. They complement the [generic composites](../composite-examples/) by adding GCP service integrations.
+These composites write Kubernetes YAML with the annotations and settings GKE reads, for Workload Identity, GCE Ingress, Gateway API, Persistent Disk and Filestore, Cloud DNS, Cloud Logging, Cloud Trace and Config Connector. Use them beside the [generic composites](../composite-examples/).
 
 ## WorkloadIdentityServiceAccount
 
@@ -56,7 +56,7 @@ const { ingress } = GceIngress({
 - `managedCertificate` attaches a GKE-managed SSL certificate via `networking.gke.io/managed-certificates`
 - Auto-generates FrontendConfig for SSL redirect when `managedCertificate` is set (override with `sslRedirect: false`)
 - `frontendConfig` for explicit FrontendConfig reference
-- Pairs naturally with Config Connector static IP resources
+- Works with Config Connector static IP resources
 
 ## GkeGateway
 
@@ -85,11 +85,11 @@ Gateway class options:
 - `gke-l7-rilb` — Regional internal
 
 <Aside type="tip" title="GCE Ingress vs Gateway API">
-**GceIngress** uses the traditional Ingress API with GCE-specific annotations. It's simpler, matches the EKS/AKS ingress pattern, and pairs naturally with Config Connector static IPs and managed certificates.
+**GceIngress** uses the traditional Ingress API with GCE-specific annotations. It is simpler, matches the EKS and AKS ingress composites, and works with Config Connector static IPs and managed certificates.
 
 **GkeGateway** uses the newer Gateway API with richer routing capabilities (header matching, traffic splitting, URL rewrites). It's Google's recommended path for new projects.
 
-Choose GceIngress for consistency with existing EKS/AKS patterns. Choose GkeGateway for advanced routing or greenfield GKE projects.
+Use GceIngress to match EKS and AKS projects. Use GkeGateway for header matching, traffic splitting or URL rewrites, or for a new GKE project.
 </Aside>
 
 ## GcePdStorageClass
@@ -298,15 +298,15 @@ stack's own `ClusterSecretStore` is similarly fixed-named
 | Security | No long-lived credentials, auto-rotated | Static key, must rotate manually |
 | When to use | Always (recommended) | Legacy workloads, non-GKE clusters |
 
-Workload Identity is the recommended approach for all GKE workloads. Key-based auth requires no K8s-side composite — create a Secret from the JSON key and mount it.
+Use Workload Identity for GKE workloads. For key-based auth, create a Secret from the JSON key and mount it; no composite is involved.
 
 <Aside type="note">
-GKE ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+GKE ships its own metrics-server, so HPA works without the `MetricsServer` composite.
 </Aside>
 
 ## Config Connector considerations
 
-Config Connector (CC) runs as a GKE add-on and manages GCP resources declaratively via K8s CRDs:
+Config Connector (CC) runs as a GKE add-on and manages GCP resources through Kubernetes CRDs:
 - **Bootstrap cluster required** — CC needs an existing GKE cluster to run in; use `npm run bootstrap` to create one
 - **CC service account** — a GCP SA with editor/IAM roles, bound to the CC controller pod via Workload Identity
 - **Reconciliation** — CC continuously reconciles; deleting a CC resource deletes the underlying GCP resource

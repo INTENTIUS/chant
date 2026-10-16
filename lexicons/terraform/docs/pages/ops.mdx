@@ -14,7 +14,7 @@ Nine activities ship with the lexicon, resolvable by name via `loadActivities(["
 
 ## The activities
 
-Every call resolves the named root out of `terraform.roots` (walking up from `cwd` to the nearest `chant.config.*`, the same way `chant build` does), sets `TF_IN_AUTOMATION=1`, and passes `-input=false` everywhere the CLI accepts it — a missing variable fails the step instead of blocking on a prompt nobody answers.
+Every call resolves the named root out of `terraform.roots` (walking up from `cwd` to the nearest `chant.config.*`, the same way `chant build` does), sets `TF_IN_AUTOMATION=1`, and passes `-input=false` everywhere the CLI accepts it, so a missing variable fails the step instead of blocking on a prompt nobody answers.
 
 | Activity | Runs | Notes |
 |---|---|---|
@@ -25,7 +25,7 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 
 ## The builders
 
-`terraformInit`, `terraformPlan`, `terraformApply`, `terraformShow` also exist as typed step-builder wrappers (`import { terraformPlan } from "@intentius/chant-lexicon-terraform"`), the fully-typed twins of the activities above: `opts` *is* the activity's own args interface, minus the positional `root`, so a field rename there is a compile error at the call site rather than a silent drop. `root` is positional because naming the root is the one thing a terraform step cannot be authored without.
+`terraformInit`, `terraformPlan`, `terraformApply`, `terraformShow` also exist as typed step-builder wrappers (`import { terraformPlan } from "@intentius/chant-lexicon-terraform"`), the fully-typed twins of the activities above: `opts` *is* the activity's own args interface, minus the positional `root`, so a field rename there is a compile error at the call site rather than a silent drop. `root` is positional because every terraform step needs one.
 
 ```typescript
 import { terraformInit, terraformPlan, terraformApply, phase } from "@intentius/chant-lexicon-terraform";
@@ -33,7 +33,7 @@ import { terraformInit, terraformPlan, terraformApply, phase } from "@intentius/
 const plan = terraformPlan("app", { id: "plan" }); // an id is what makes `.out` legal
 ```
 
-Give a Plan step an `id` when a later step applies its plan: `plan.out.planFile` builds a reference to that step's own saved output, instead of a literal path a rename could silently orphan. That reference is exactly what TF101 enforces — see [Lint Rules](../lint-rules/).
+Give a Plan step an `id` when a later step applies its plan: `plan.out.planFile` builds a reference to that step's own saved output, instead of a literal path a rename could silently orphan. TF101 requires that reference; see [Lint Rules](../lint-rules/).
 
 Default profiles: `terraformInit`/`terraformPlan`/`terraformApply` run on `longInfra` (they call providers or download them); `terraformShow` runs on `fastIdempotent` (it reads an artifact and calls no provider).
 
@@ -103,11 +103,11 @@ export const { op } = TerraformApplyOp({
 
 ### The gate
 
-`gate: "never"` drops the Gate phase, so `chant run` walks straight from Plan to Apply. Every other mode emits a Gate phase that re-renders the saved plan with a `terraformShow` step first (over the plan file, so it calls no provider) and reports its `destroys` count as a `Destroys` search attribute. A gate is a fact on the gate ledger: a run that reaches one nobody has approved records that it is waiting, ends with status `gated` and exits 3, `chant approve <op> <gate>` writes the resolution, and the next run reads it and walks through. `"on-destroy"` and `"always"` emitting the identical shape is deliberate: `GateStep` carries a signal name, a timeout and a description, nothing conditional, so `"on-destroy"` cannot itself decide at build time whether a given run's plan destroys anything. The workable answer is to always emit the gate and tell the approver what is at stake instead of trying to skip it.
+`gate: "never"` drops the Gate phase, so `chant run` walks straight from Plan to Apply. Every other mode emits a Gate phase that re-renders the saved plan with a `terraformShow` step first (over the plan file, so it calls no provider) and reports its `destroys` count as a `Destroys` search attribute. A gate is a fact on the gate ledger: a run that reaches one nobody has approved records that it is waiting, ends with status `gated` and exits 3, `chant approve <op> <gate>` writes the resolution, and the next run reads it and walks through. `"on-destroy"` and `"always"` emitting the identical shape is deliberate: `GateStep` carries a signal name, a timeout and a description, nothing conditional, so `"on-destroy"` cannot itself decide at build time whether a given run's plan destroys anything. So both modes always emit the gate, and the approver sees the `Destroys` count.
 
 ### Compensation
 
-Terraform has no automatic rollback — undoing a partial apply means planning and applying the inverse, a decision about the estate rather than something chant can synthesize. So `compensate: true` with no `command` throws at build time, naming the Op, rather than surfacing as a runtime failure once an apply has already half-run:
+Terraform has no automatic rollback. Undoing a partial apply means planning and applying the inverse, a decision about the estate rather than something chant can synthesize. So `compensate: true` with no `command` throws at build time, naming the Op, rather than surfacing as a runtime failure once an apply has already half-run:
 
 ```typescript
 export const { op } = TerraformApplyOp({
@@ -175,7 +175,7 @@ The `approvalArtifact` seam #2106 left named and unused on the apply args is gon
 
 TF101 (plan-before-apply) fires on a live root's `terraformApply` call again, and reads no project config at all. The pairing matters more here than on a stock root, not less: the apply compares its fresh plan against the file it was handed, so a plan file spelled out as a literal path is an approval for a run nobody can trace back to a plan step.
 
-**Delete modes.** chant's `delete: "never" | "owned-only" | "gated"` (`terraform.roots.<name>.delete`) maps onto choudoufu's `policy` block: `"owned-only"` is choudoufu's own default verb for the `undeclared_tagged` quadrant (an orphaned marked resource) and needs nothing; `"gated"` needs nothing beyond the approval gate above; `"never"` requires the root's `policy` block to set `undeclared_tagged` to `"keep"`, `"untag"` or `"report"` — TF026 enforces that at build time, naming the setting to add. Separately, and regardless of `delete`, `TerraformApplyOp` refuses outright to build against a root whose `policy` sets `undeclared_untagged = "delete"` (account-scoped reconciliation, which needs a `scope` block): chant never proposes deleting a resource it does not own, and neither does an Op it generates.
+**Delete modes.** chant's `delete: "never" | "owned-only" | "gated"` (`terraform.roots.<name>.delete`) maps onto choudoufu's `policy` block: `"owned-only"` is choudoufu's own default verb for the `undeclared_tagged` quadrant (an orphaned marked resource) and needs nothing; `"gated"` needs nothing beyond the approval gate above; `"never"` requires the root's `policy` block to set `undeclared_tagged` to `"keep"`, `"untag"` or `"report"`, and TF026 enforces that at build time, naming the setting to add. Separately, and regardless of `delete`, `TerraformApplyOp` refuses outright to build against a root whose `policy` sets `undeclared_untagged = "delete"` (account-scoped reconciliation, which needs a `scope` block): chant never proposes deleting a resource it does not own, and neither does an Op it generates.
 
 ## TerraformWatchOp
 
@@ -334,7 +334,7 @@ The environment costs no permission. Protection rules live on the environment ob
 
 ## Reconcile: adoption, not regeneration
 
-Cloud-to-code is the position on the lifecycle dial chant [#2089](https://github.com/INTENTIUS/chant/issues/2089) left open for this lexicon, because stock Terraform has no typed path from a live resource back to HCL. On choudoufu the question is different rather than harder. Ownership is two tags, `live-plan` already names every live resource that exactly matches a declared block and carries no marker, and it prints the two values that would claim it. So reconcile here is "claim what the configuration already describes", which is a tag write.
+Cloud-to-code is the position on the lifecycle dial chant [#2089](https://github.com/INTENTIUS/chant/issues/2089) left open for this lexicon, because stock Terraform has no typed path from a live resource back to HCL. On choudoufu, ownership is two tags, `live-plan` already names every live resource that exactly matches a declared block and carries no marker, and it prints the two values that would claim it. So reconcile here is "claim what the configuration already describes", which is a tag write.
 
 `TerraformAdoptOp` is that, in five phases:
 
