@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Generate SVGs from .dot source files for all docs sites.
-# Output goes to public/diagrams/ inside each docs directory (gitignored).
+# Output goes to docs/public/ (gitignored): diagrams/ for the core docs,
+# lexicons/<name>/diagrams/ for each lexicon's.
 set -euo pipefail
 
 build_diagrams() {
@@ -32,9 +33,12 @@ echo "Building diagrams..."
 # Main docs
 build_diagrams docs/diagrams docs/public/diagrams
 
-# Each lexicon that has a diagrams/ directory
+# Each lexicon that has a diagrams/ directory. Its pages are a section of the
+# main site (chant #3993), so its SVGs go to the main site's public/ under the
+# lexicon's path, the URL they had when each lexicon was a site of its own.
 for lexicon_docs in lexicons/*/docs; do
-  build_diagrams "$lexicon_docs/diagrams" "$lexicon_docs/public/diagrams"
+  lex="$(basename "$(dirname "$lexicon_docs")")"
+  build_diagrams "$lexicon_docs/diagrams" "docs/public/lexicons/$lex/diagrams"
 done
 
 echo "Done."

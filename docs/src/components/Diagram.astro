@@ -1,5 +1,5 @@
 ---
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 
 interface Props {
   name: string;
@@ -8,12 +8,32 @@ interface Props {
 }
 const { name, alt, caption } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const src = `${base}/diagrams/${name}.svg`;
-const darkSrc = `${base}/diagrams/${name}-dark.svg`;
+// A lexicon page (src/content/docs/lexicons/<name>/...) shows its lexicon's
+// diagrams, which scripts/build-diagrams.sh builds from
+// lexicons/<name>/docs/diagrams/ into public/lexicons/<name>/diagrams/, so
+// they keep the URL they had on the lexicon's own site (chant #3993).
+// starlight-llms-txt renders page bodies outside a Starlight route, where
+// reading `starlightRoute` throws; there the diagram is found by its file.
+let entryId: string | undefined;
+try {
+  entryId = Astro.locals.starlightRoute?.entry.id;
+} catch {
+  entryId = undefined;
+}
+const isSection = (lex: string) => existsSync(`src/content/docs/lexicons/${lex}`) && statSync(`src/content/docs/lexicons/${lex}`).isDirectory();
+const fromRoute = entryId?.match(/^lexicons\/([^/]+)/)?.[1];
+const fromFile = () =>
+  existsSync(`public/diagrams/${name}.svg`) || !existsSync('public/lexicons')
+    ? undefined
+    : readdirSync('public/lexicons').find((lex) => existsSync(`public/lexicons/${lex}/diagrams/${name}.svg`));
+const lexicon = entryId === undefined ? fromFile() : fromRoute && isSection(fromRoute) ? fromRoute : undefined;
+const dir = lexicon ? `lexicons/${lexicon}/diagrams` : 'diagrams';
+const src = `${base}/${dir}/${name}.svg`;
+const darkSrc = `${base}/${dir}/${name}-dark.svg`;
 // Diagrams repainted through pinhole are baked per theme (pinhole bakes one theme
 // per SVG). When a `<name>-dark.svg` exists we render both and swap on the site
 // theme; single-file diagrams (graphviz, transparent) show in both.
-const hasDark = existsSync(`public/diagrams/${name}-dark.svg`);
+const hasDark = existsSync(`public/${dir}/${name}-dark.svg`);
 ---
 <figure class="diagram not-content" style="overflow-x:auto;margin:1.5rem 0;">
   {hasDark ? (

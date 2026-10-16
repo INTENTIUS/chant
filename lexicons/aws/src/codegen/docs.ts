@@ -4,7 +4,8 @@
  * Calls the core docsPipeline with AWS-specific config:
  * service grouping, resource type URLs, and overview content.
  *
- * Produces a standalone Starlight docs site at lexicons/aws/docs/.
+ * writeDocsSite puts the pages in the main docs site under
+ * docs/src/content/docs/lexicons/aws/ (chant #3993).
  */
 
 import { dirname, join } from "path";
@@ -80,7 +81,7 @@ The output is compatible with:
 - Any tool that accepts CloudFormation JSON templates`;
 
 /**
- * Generate AWS lexicon documentation as a standalone Starlight site.
+ * Generate the AWS lexicon's documentation pages.
  */
 export async function generateDocs(options?: { verbose?: boolean }): Promise<void> {
   const log = options?.verbose
@@ -123,7 +124,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
   log("Generating AWS documentation...");
   const result = docsPipeline(config);
 
-  log(`Writing standalone docs site to ${outDir}`);
+  log(`Writing docs pages for ${outDir}`);
   writeDocsSite(config, result);
 
   console.error(

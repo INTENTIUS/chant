@@ -2,7 +2,8 @@ import { describe, test, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 
-const docsDir = join(import.meta.dirname, "..", "..", "docs", "src", "content", "docs");
+// The pages scripts/build-docs.sh generates into the main docs site (chant #3993).
+const docsDir = join(import.meta.dirname, "..", "..", "..", "..", "docs", "src", "content", "docs", "lexicons", "aws");
 const docsSource = join(import.meta.dirname, "docs.ts");
 const pagesDir = join(import.meta.dirname, "..", "..", "docs", "pages");
 

@@ -4,11 +4,12 @@ import { join } from "node:path";
 
 const ROOT = join(import.meta.dirname, "..");
 const LEXICONS = join(ROOT, "lexicons");
+const SCRIPT = readFileSync(join(ROOT, "scripts", "build-docs.sh"), "utf-8");
 
-/** Every lexicon that ships a docs site — the set the unified site must contain. */
+/** Every lexicon with docs: the ones whose section the site must contain. */
 function lexiconsWithDocs(): string[] {
   return readdirSync(LEXICONS, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(join(LEXICONS, d.name, "docs", "astro.config.mjs")))
+    .filter((d) => d.isDirectory() && existsSync(join(LEXICONS, d.name, "src", "codegen", "docs-cli.ts")))
     .map((d) => d.name)
     .sort();
 }
@@ -22,23 +23,19 @@ function lexiconsWithDocs(): string[] {
  * until a tutorial tried.
  *
  * The script derives its list from the filesystem now, so absence is not
- * possible — these assert the two things that still can go wrong: a docs site
- * that cannot be placed in the unified tree because it declares no base, and a
- * regression to the hardcoded shape.
+ * possible — these assert the things that still can go wrong.
  */
-describe("unified docs cover every lexicon that has a docs site (#1720)", () => {
-  test("build-docs.sh derives which lexicons it builds from the filesystem", () => {
-    const script = readFileSync(join(ROOT, "scripts", "build-docs.sh"), "utf-8");
-
-    // Membership comes from the glob. `ORDER` in that script is a sequencing
-    // hint — forgejo and gitlab import github's generated surface at prepack
-    // time — and a lexicon absent from it is appended, not skipped.
-    expect(script).toMatch(/lexicons_with_docs\(\)/);
-    expect(script).toMatch(/for d in lexicons\/\*\//);
+describe("unified docs cover every lexicon that has docs (#1720)", () => {
+  test("build-docs.sh derives which lexicons it generates from the filesystem", () => {
+    // Membership comes from the glob. AFTER is a sequencing hint (forgejo's
+    // bundle imports github's generated surface) and a lexicon absent from it
+    // gets a job of its own, not skipped.
+    expect(SCRIPT).toMatch(/lexicons_with_docs\(\)/);
+    expect(SCRIPT).toMatch(/for d in lexicons\/\*\//);
 
     // A hardcoded `cd lexicons/<name>` is how the old shape looked. One is a
     // regression; the loop uses a variable.
-    const hardcoded = [...script.matchAll(/^\s*cd lexicons\/([a-z0-9]+)\s*$/gm)].map((m) => m[1]);
+    const hardcoded = [...SCRIPT.matchAll(/^\s*cd lexicons\/([a-z0-9]+)\s*$/gm)].map((m) => m[1]);
     expect(
       hardcoded,
       `build-docs.sh hardcodes these lexicons again — a new lexicon's docs would be ` +
@@ -46,36 +43,37 @@ describe("unified docs cover every lexicon that has a docs site (#1720)", () => 
     ).toEqual([]);
   });
 
-  test("the ordering hint names only lexicons that exist", () => {
-    const script = readFileSync(join(ROOT, "scripts", "build-docs.sh"), "utf-8");
-    const order = (script.match(/^ORDER="([^"]*)"/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
-    expect(order.length).toBeGreaterThan(0);
+  test("the ordering hint names only lexicons that exist, and runs forgejo after github", () => {
+    const after = (SCRIPT.match(/^AFTER="([^"]*)"/m)?.[1] ?? "").split(/\s+/).filter(Boolean);
     const have = new Set(lexiconsWithDocs());
-    const stale = order.filter((lex) => !have.has(lex));
-    expect(
-      stale,
-      `ORDER names lexicons that no longer have a docs site: ${stale.join(", ")}`,
-    ).toEqual([]);
+    const stale = after.flatMap((pair) => pair.split(":")).filter((lex) => !have.has(lex));
+    expect(stale, `AFTER names lexicons that have no docs: ${stale.join(", ")}`).toEqual([]);
 
-    // forgejo's prepack imports lexicons/github/src/generated, so github has to
-    // be generated first — the alphabetical order this replaced put forgejo
-    // first and died with ERR_MODULE_NOT_FOUND. gitlab imports github too but
-    // has always been built before it without complaint, so that edge is not
-    // asserted: only the one CI actually proved.
-    expect(order.indexOf("github")).toBeLessThan(order.indexOf("forgejo"));
+    // forgejo's bundle imports lexicons/github/src/generated; run alone on a
+    // clean tree it dies with ERR_MODULE_NOT_FOUND (chant #3993 measured it).
+    expect(after).toContain("forgejo:github");
+  });
+});
+
+/**
+ * chant #3993 — every lexicon's docs are a section of the main Starlight site,
+ * built by one `astro build` of docs/. The 21 per-lexicon Astro apps are gone.
+ */
+describe("one docs site (#3993)", () => {
+  test("no lexicon ships a docs app of its own", () => {
+    const apps = readdirSync(LEXICONS).filter((lex) =>
+      ["astro.config.mjs", "package.json", "package-lock.json", "src"].some((f) => existsSync(join(LEXICONS, lex, "docs", f))),
+    );
+    expect(apps, `these lexicons still carry a docs app under docs/: ${apps.join(", ")}`).toEqual([]);
   });
 
-  test("every lexicon docs site declares the base its published path needs", () => {
-    const missing: string[] = [];
-    for (const lex of lexiconsWithDocs()) {
-      const config = readFileSync(join(LEXICONS, lex, "docs", "astro.config.mjs"), "utf-8");
-      if (!config.includes(`base: '/chant/lexicons/${lex}/'`)) missing.push(lex);
-    }
-    expect(
-      missing,
-      `these docs sites do not set base: '/chant/lexicons/<name>/', so every asset and ` +
-        `internal link resolves to the wrong path once copied into the unified site:\n  ` +
-        missing.join("\n  "),
-    ).toEqual([]);
+  test("build-docs.sh runs one Astro build, of docs/", () => {
+    expect([...SCRIPT.matchAll(/npm run --prefix docs build/g)]).toHaveLength(1);
+    expect(SCRIPT).not.toMatch(/cd docs && npm/);
+  });
+
+  test("lexicons generate their pages in-site, from generate and bundle only", () => {
+    expect(SCRIPT).toMatch(/CHANT_DOCS_MODE=in-site npx tsx src\/codegen\/docs-cli\.ts/);
+    expect(SCRIPT).not.toMatch(/npm run prepack/);
   });
 });

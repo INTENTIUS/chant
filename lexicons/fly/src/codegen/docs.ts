@@ -2,8 +2,8 @@
  * fly (Machines API / "flaps") documentation generator.
  *
  * Calls the core docsPipeline with fly-specific config: service grouping and
- * overview content. Produces a standalone Starlight docs site at
- * lexicons/fly/docs/, like the aws and gcp lexicons.
+ * overview content. writeDocsSite puts the pages in the main docs site under
+ * docs/src/content/docs/lexicons/fly/ (chant #3993).
  */
 
 import { dirname, join } from "path";

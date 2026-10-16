@@ -1,5 +1,5 @@
 // A room link's href (see rooms.mjs) as a site address: a slug or a
-// lexicon site path gets the base and a trailing slash, an https:// address
+// lexicon section path gets the base and a trailing slash, an https:// address
 // stays as it is.
 export function siteHref(base, h) {
 	if (/^https:\/\//.test(h)) return h;

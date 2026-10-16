@@ -4,7 +4,8 @@
  * Calls the core docsPipeline with Azure-specific config:
  * service grouping, resource type URLs, and overview content.
  *
- * Produces a standalone Starlight docs site at lexicons/azure/docs/.
+ * writeDocsSite puts the pages in the main docs site under
+ * docs/src/content/docs/lexicons/azure/ (chant #3993).
  */
 
 import { dirname, join } from "path";

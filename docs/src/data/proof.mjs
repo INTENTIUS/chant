@@ -30,6 +30,3 @@ export function roomExamples(room) {
 		return { path, href: `${repoTree}/${path}` };
 	});
 }
-
-/** Whether lexicons/<name>/docs exists, so a link to /chant/lexicons/<name>/ has a site behind it. */
-export const hasLexiconSite = (name) => existsSync(join(root, 'lexicons', name, 'docs', 'astro.config.mjs'));

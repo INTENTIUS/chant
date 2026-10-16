@@ -10,17 +10,15 @@ generate:
 validate:
     npx tsx src/validate-cli.ts
 
-# Generate docs site, install deps, and start dev server
+# Generate this lexicon's docs into the main site (docs/src/content/docs/lexicons/), then start its dev server
 docs:
-    DOCS_BASE_PATH=/ npx tsx src/codegen/docs-cli.ts
-    npm install --prefix docs
-    npm run --prefix docs dev --port 4322
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix ../../docs
+    npm run --prefix ../../docs dev
 
-# Build docs site for production
+# Build the whole docs site, every lexicon's section included
 docs-build:
-    DOCS_BASE_PATH=/ npx tsx src/codegen/docs-cli.ts
-    npm install --prefix docs
-    npm run --prefix docs build
+    cd ../.. && bash scripts/build-docs.sh
 
 # Run CloudFormation samples roundtrip import test
 import-samples *args:

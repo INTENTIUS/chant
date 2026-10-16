@@ -3,6 +3,14 @@ dist/
 
 # generated diagram SVGs (built from docs/diagrams/*.dot via scripts/build-diagrams.sh)
 public/diagrams/
+# and each lexicon's, from lexicons/<name>/docs/diagrams/ (chant #3993)
+public/lexicons/
+
+# Every lexicon's docs section: pages and _sidebar.json, written by the
+# lexicon's docs pipeline (writeDocsSite, in-site mode) from
+# lexicons/<name>/docs/pages/ and its packaged dist/. The authored sources
+# stay beside the lexicon. lexicons/overview.mdx is a core page and tracked.
+src/content/docs/lexicons/*/
 
 # generated API docs (starlight-typedoc)
 src/content/docs/api/

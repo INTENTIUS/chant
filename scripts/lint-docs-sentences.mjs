@@ -48,10 +48,20 @@ const ALWAYS_GATED_RULES = new Set(["reframe"]);
 const verbose = process.argv.includes("--verbose");
 const updateBaseline = process.argv.includes("--update-baseline");
 
+/**
+ * Each lexicon's section, docs/src/content/docs/lexicons/<name>/, is build
+ * output: scripts/build-docs.sh generates it from lexicons/<name>/docs/pages/
+ * (chant #3993). It is left out, so the result does not depend on whether a
+ * build ran first and the baseline never grows to make room for it.
+ * lexicons/overview.mdx is a core page and stays in.
+ */
+const LEXICON_SECTIONS = join(DOCS_ROOT, "lexicons");
+
 function docFiles(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
+    if (statSync(p).isDirectory() && dir === LEXICON_SECTIONS) continue;
     if (statSync(p).isDirectory()) out.push(...docFiles(p));
     else if (/\.(md|mdx)$/.test(entry)) out.push(p);
   }
