@@ -1,0 +1,25 @@
+---
+// The header's right side: a Docs link first, so the docs are one click from
+// the home page (whose splash layout has no sidebar), then Starlight's own
+// social icons.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+import { docsHref } from '../site';
+---
+<a class="ch-docs" href={docsHref}>Docs</a>
+<Default />
+
+<style>
+	.ch-docs {
+		margin-right: 0.5rem;
+		padding: 0.3rem 0.8rem;
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		border: 1px solid var(--ch-rule);
+		border-radius: 999px;
+	}
+	.ch-docs:hover {
+		border-color: var(--ch-gold);
+	}
+</style>

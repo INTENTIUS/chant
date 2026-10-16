@@ -155,7 +155,7 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/cli/lifecycle.mdx": {
-  "formatting/em-dash-density": 93,
+  "formatting/em-dash-density": 92,
   "claude/colon-reveal": 8,
   "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 2,
@@ -771,11 +771,8 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/index.mdx": {
-  "formatting/em-dash-density": 10,
-  "claude/colon-reveal": 7,
-  "repetition/near-duplicate": 1,
-  "dead-metaphor/rare-lemma": 1,
-  "tricolon/comma-series": 3,
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/lexicon-authoring/applying-conformance.mdx": {

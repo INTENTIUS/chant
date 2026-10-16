@@ -1,0 +1,367 @@
+/*
+ * chant's look, shared in shape with terragucci and SQL Yodeler: cool ink and
+ * slate neutrals, one violet accent, a gold hairline for fine details and a
+ * vermillion warn. Geist for reading and headings, Geist Mono for anything a
+ * terminal would print, and Geist in tracked capitals for the wordmark.
+ *
+ * The pixel face (scripts/brand/logo.py) is the logo: beside the title, in
+ * the footer, on cards and as top-level bullets. The sound waves
+ * (scripts/brand/mark.py) are the small mark: over each section heading,
+ * before each top-level sidebar entry, on nested bullets and in the picked
+ * tile's corner. Both are drawn with mask-image over a colour token, so one
+ * SVG serves both themes: the logo in the text colour, the mark in gold.
+ *
+ * Violet and vermillion stay apart under protanopia, deuteranopia and
+ * tritanopia, and every status also carries a text label. Body text and
+ * links clear WCAG AA on every panel colour in both themes.
+ *
+ * Starlight's dark theme lives on :root and its light theme on
+ * :root[data-theme='light'], so both palettes are set here as tokens. Dark is
+ * the default (components/ThemeProvider.astro).
+ */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+:root {
+	--ch-display: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--ch-logo: url('/chant/brand/logo.svg');
+	--ch-mark: url('/chant/brand/mark.svg');
+
+	/* dark: ink and slate, violet accent */
+	--sl-color-white: #f4f5f8;
+	--sl-color-gray-1: #e2e4ea;
+	--sl-color-gray-2: #c3c7d1;
+	--sl-color-gray-3: #9aa0ae;
+	--sl-color-gray-4: #5f6574;
+	--sl-color-gray-5: #2a2e38;
+	--sl-color-gray-6: #171a21;
+	--sl-color-black: #0c0e12;
+	--sl-color-accent-low: #241d45;
+	--sl-color-accent: #a78bfa;
+	--sl-color-accent-high: #d4c6fd;
+
+	--ch-ink: var(--sl-color-white); /* the logo */
+	--ch-accent: #a78bfa;            /* links, the one highlight */
+	--ch-warn: #f2894a;              /* caution, danger, refused */
+	--ch-gold: #c9a96e;              /* fine details only: hairlines, the mark, the picked tile */
+	--ch-panel: #12141a;
+	--ch-rule: #262a33;
+}
+
+:root[data-theme='light'] {
+	--sl-color-white: #0d0f14;
+	--sl-color-gray-1: #232733;
+	--sl-color-gray-2: #3a3f4c;
+	--sl-color-gray-3: #5e6472;
+	--sl-color-gray-4: #9ba1ae;
+	--sl-color-gray-5: #d7dae1;
+	--sl-color-gray-6: #eff1f4;
+	--sl-color-gray-7: #f7f8fa;
+	--sl-color-black: #ffffff;
+	--sl-color-accent-low: #ede7fe;
+	--sl-color-accent: #6d28d9;
+	--sl-color-accent-high: #5b21b6;
+
+	--ch-accent: #6d28d9;
+	--ch-warn: #b94700;
+	--ch-gold: #9a7b3f;
+	--ch-panel: #fafbfc;
+	--ch-rule: #e3e6eb;
+}
+
+/* The two marks as reusable masks. Set width and height where they are used. */
+.ch-logo,
+.ch-mark {
+	display: inline-block;
+	flex: none;
+	vertical-align: middle;
+	-webkit-mask: var(--ch-logo) center / contain no-repeat;
+	mask: var(--ch-logo) center / contain no-repeat;
+	background-color: var(--ch-ink);
+}
+.ch-logo {
+	width: 40px;
+	height: 23px;
+}
+.ch-mark {
+	width: 15px;
+	height: 15px;
+	-webkit-mask-image: var(--ch-mark);
+	mask-image: var(--ch-mark);
+	background-color: var(--ch-gold);
+}
+
+/* Headings: Geist, semibold, tracked in a little. */
+.sl-markdown-content :is(h1, h2, h3),
+h1#_top {
+	font-family: var(--ch-display);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+h1#_top {
+	font-size: clamp(1.75rem, 3.5vw, 2.25rem);
+}
+
+/* Site title as a wordmark, the logo beside it (SiteTitle.astro). */
+.site-title {
+	font-family: var(--ch-display);
+	font-weight: 600;
+	font-size: 1.1rem;
+	letter-spacing: -0.02em;
+	color: var(--sl-color-white);
+}
+
+/* Reading text: a size down from Starlight's, quieter, more air between blocks. */
+.sl-markdown-content {
+	font-size: 0.9375rem;
+	line-height: 1.7;
+	color: var(--sl-color-gray-2);
+}
+.sl-markdown-content :is(strong, b):not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+	font-weight: 600;
+}
+.sl-markdown-content :is(h2, h3, h4):not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+}
+.sl-markdown-content h2:not(.not-content, .not-content *) {
+	font-size: 1.3rem;
+	margin-top: 2.75rem;
+}
+/* The mark over each section heading. */
+.sl-markdown-content h2:not(.not-content, .not-content *)::before {
+	content: '';
+	display: block;
+	width: 15px;
+	height: 15px;
+	margin-bottom: 0.8rem;
+	background-color: var(--ch-gold);
+	-webkit-mask: var(--ch-mark) center / contain no-repeat;
+	mask: var(--ch-mark) center / contain no-repeat;
+}
+.sl-markdown-content h3:not(.not-content, .not-content *) {
+	font-size: 1.05rem;
+	margin-top: 2rem;
+}
+
+/* Links: the accent, a fine underline that turns gold on hover. */
+.sl-markdown-content a:not(.not-content, .not-content *, :is(h1, h2, h3, h4) a) {
+	color: var(--ch-accent);
+	text-decoration-line: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+	text-decoration-color: color-mix(in srgb, var(--ch-accent) 35%, transparent);
+}
+.sl-markdown-content a:not(.not-content, .not-content *):hover {
+	text-decoration-color: var(--ch-gold);
+}
+
+/* Bullets are the logo, and a nested list's bullets are the mark. Ordered lists keep their numbers. */
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li {
+	position: relative;
+	padding-left: 1.85rem;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 7px;
+	width: 20px;
+	height: 11.5px;
+	background-color: var(--ch-ink);
+	-webkit-mask: var(--ch-logo) center / contain no-repeat;
+	mask: var(--ch-logo) center / contain no-repeat;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li {
+	position: relative;
+	padding-left: 1.4rem;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.4em;
+	width: 15px;
+	height: 15px;
+	background-color: var(--ch-gold);
+	-webkit-mask: var(--ch-mark) center / contain no-repeat;
+	mask: var(--ch-mark) center / contain no-repeat;
+}
+
+/* Tables: smaller type, a tracked caps header over a gold hairline, hairline rows. */
+.sl-markdown-content table:not(.not-content, .not-content *) {
+	border-collapse: collapse;
+	font-size: 0.85rem;
+	line-height: 1.55;
+}
+.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
+	border: none;
+	border-bottom: 1px solid var(--ch-rule);
+	padding: 0.6rem 0.9rem 0.6rem 0;
+	vertical-align: top;
+}
+.sl-markdown-content th:not(.not-content, .not-content *) {
+	font-size: 0.68rem;
+	font-weight: 600;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	text-align: left;
+	color: var(--sl-color-gray-3);
+	background: none;
+	border-bottom: 1px solid var(--ch-gold);
+}
+.sl-markdown-content td:first-child:not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+}
+.sl-markdown-content tbody tr:hover td:not(.not-content, .not-content *) {
+	background: color-mix(in srgb, var(--ch-gold) 5%, transparent);
+}
+
+/* Inline code: a quiet chip. */
+.sl-markdown-content :not(pre):not(.not-content, .not-content *) > code {
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-gray-1);
+	border: 1px solid var(--ch-rule);
+	border-radius: 0.3rem;
+	padding: 0.05em 0.35em;
+}
+
+/* Components carry their own type; long identifiers wrap rather than widen the page. */
+.not-content code {
+	overflow-wrap: anywhere;
+}
+
+/* Code shows exactly what was typed: no ligatures turning -> into arrows. */
+code, pre, kbd, samp {
+	font-variant-ligatures: none;
+	font-feature-settings: 'calt' 0, 'liga' 0;
+}
+
+/* The current page in the sidebar: a quiet tint, not a solid block. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-white);
+	font-weight: 600;
+}
+.sidebar-content a {
+	font-size: var(--sl-text-sm);
+}
+.sidebar-content .sl-badge {
+	font-family: var(--sl-font);
+	font-size: 0.68rem;
+	font-weight: 500;
+	color: var(--sl-color-gray-3);
+	background: none;
+	border: 1px solid var(--ch-rule);
+	border-radius: 999px;
+	padding: 0 0.4rem;
+}
+
+/* Each top-level sidebar group's label, and each top-level link, starts with the mark. */
+.sidebar-content .top-level > li > a {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	font-size: var(--sl-text-base);
+	font-weight: 600;
+	color: var(--sl-color-white);
+}
+.sidebar-content .top-level > li > a::before,
+.sidebar-content .top-level > li > details > summary .group-label::before {
+	content: '';
+	flex: none;
+	width: 15px;
+	height: 15px;
+	background-color: var(--ch-gold);
+	-webkit-mask: var(--ch-mark) center / contain no-repeat;
+	mask: var(--ch-mark) center / contain no-repeat;
+}
+.sidebar-content .top-level > li > details > summary .group-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.55rem;
+}
+.sidebar-content .top-level > li > details > summary .group-label .large {
+	color: var(--sl-color-white);
+}
+
+/* A nested group's label reads as a quiet heading, a step under the top level. */
+.sidebar-content details details > summary .group-label .large {
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
+	color: var(--sl-color-gray-1);
+}
+
+/* Callouts: a neutral panel with a coloured edge, from the same two signals. */
+.starlight-aside {
+	background: var(--sl-color-gray-6);
+	border-inline-start-color: var(--ch-accent);
+	color: var(--sl-color-gray-1);
+}
+.starlight-aside .starlight-aside__title {
+	color: var(--sl-color-white);
+}
+.starlight-aside .starlight-aside__icon {
+	color: var(--ch-accent);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+	border-inline-start-color: var(--ch-warn);
+}
+.starlight-aside--caution .starlight-aside__icon,
+.starlight-aside--danger .starlight-aside__icon {
+	color: var(--ch-warn);
+}
+.starlight-aside a {
+	color: var(--sl-color-accent-high);
+}
+
+/* Synced tabs: the picked tab underlined in gold. */
+starlight-tabs [role='tab'][aria-selected='true'] {
+	border-color: var(--ch-gold);
+	color: var(--sl-color-white);
+}
+
+/* The agent-prompt card (packages/core AgentPrompt.astro) in chant's accent
+   instead of its built-in blue. Repeated classes outrank its scoped rules. */
+html .chant-prompt.chant-prompt.chant-prompt {
+	--chant-prompt-blue: var(--ch-accent);
+	border-color: var(--ch-rule);
+	border-left-color: var(--ch-gold);
+	background: var(--ch-panel);
+}
+
+/* The home page carries its own heading in the landing block, so Starlight's
+   title panel is hidden there. */
+:root:has(.ch-landing) main > .content-panel:first-child:has(h1#_top) {
+	display: none;
+}
+
+/* Splash sections: more air between them. */
+:root:not([data-has-sidebar]) .sl-markdown-content h2 {
+	margin-top: 4rem;
+	border: none;
+}
+
+/* On a phone a wide table scrolls in its box, so its columns keep readable widths. */
+@media (max-width: 40rem) {
+	.sl-markdown-content table:not(.not-content, .not-content *) {
+		display: block;
+		overflow-x: auto;
+		font-size: 0.8rem;
+	}
+	.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
+		min-width: 7.5rem;
+	}
+}

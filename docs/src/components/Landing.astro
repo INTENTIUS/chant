@@ -1,0 +1,172 @@
+---
+// The home page's parts. `part="top"` (the default) is the pixel face, which
+// opens the docs, the wordmark, the mark between two gold hairlines, the
+// tagline and one plain sentence; then the platform picker (Picker.astro) and
+// the eight highlights, each one link. The other parts go under the section
+// headings in index.mdx: the lexicon link table, the lifecycle row and the
+// read-next table. One import keeps index.mdx's prose free of import lines.
+import { readdirSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import Lifecycle from './Lifecycle.astro';
+import LinkRows from './LinkRows.astro';
+import Picker from './Picker.astro';
+import { base, docsHref } from '../site';
+
+interface Props {
+	part?: 'top' | 'lexicons' | 'lifecycle' | 'next';
+}
+const { part = 'top' } = Astro.props;
+
+// How many lexicons ship, read from lexicons/ in the repository (see data/proof.mjs).
+const lexiconsDir = resolve(process.cwd(), '..', 'lexicons');
+const lexiconCount = readdirSync(lexiconsDir).filter((n) => statSync(join(lexiconsDir, n)).isDirectory()).length;
+
+const pillars = [
+	{ title: 'Plain TypeScript, no DSL and no YAML', href: '/concepts/typescript-as-data/' },
+	{ title: 'Lint rules that check meaning', href: '/guide/linting/' },
+	{ title: "Output in each platform's own format", href: '/serialization/output-formats/' },
+	{ title: `${lexiconCount} lexicons, and a contract for your own`, href: '/lexicons/overview/' },
+	{ title: 'Observe, reconcile or apply, per environment', href: '/concepts/lifecycle-models/' },
+	{ title: 'Ops with gates and rollback', href: '/guide/ops/' },
+	{ title: 'Component releases, signed and verified', href: '/components/overview/' },
+	{ title: 'Local emulators, no cloud account', href: '/local-testing/overview/' },
+];
+---
+{part === 'lexicons' && <LinkRows set="lexicons" />}
+{part === 'lifecycle' && <Lifecycle />}
+{part === 'next' && <LinkRows set="next" />}
+{part === 'top' && (
+	<>
+		<section class="ch-landing not-content">
+			<a class="hero-link" href={docsHref} aria-label="The docs"><span class="ch-logo hero-logo" aria-hidden="true"></span></a>
+			<h1 class="wordmark">CHANT</h1>
+			<span class="rule" aria-hidden="true"><span class="ch-mark"></span></span>
+			<p class="claim">Typed infrastructure, end to end</p>
+			<p class="lede">chant builds typed TypeScript into each platform's own format, checks it with semantic lint rules, and runs the lifecycle you choose on top.</p>
+		</section>
+		<Picker />
+		<ul class="ch-pillars not-content">
+			{pillars.map((p) => (
+				<li>
+					<a href={`${base}${p.href}`}>
+						<span class="ch-logo" aria-hidden="true"></span>
+						<span>{p.title}</span>
+					</a>
+				</li>
+			))}
+		</ul>
+	</>
+)}
+
+<style>
+	.ch-landing {
+		display: grid;
+		justify-items: center;
+		gap: 0.9rem;
+		padding-block: clamp(1.5rem, 4vw, 2.5rem) 1.25rem;
+		text-align: center;
+	}
+	.hero-link {
+		line-height: 0;
+		transition: transform 0.2s;
+	}
+	.hero-link:hover {
+		transform: translateY(-2px);
+	}
+	/* Three screen pixels per art pixel, so every square stays sharp. */
+	.hero-logo {
+		width: 120px;
+		height: 69px;
+	}
+	.wordmark {
+		margin: 0.4rem 0 0;
+		font-family: var(--ch-display);
+		font-weight: 500;
+		font-size: clamp(1.4rem, 3.8vw, 1.8rem);
+		letter-spacing: 0.4em;
+		line-height: 1;
+		color: var(--sl-color-white);
+		/* Optical centre: the tracking adds space after the last letter. */
+		padding-left: 0.4em;
+	}
+	/* The mark between two gold hairlines, under the wordmark. */
+	.rule {
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+	}
+	.rule::before,
+	.rule::after {
+		content: '';
+		width: 2.6rem;
+		height: 1px;
+		background: var(--ch-gold);
+	}
+	.claim {
+		margin: 0;
+		font-family: var(--ch-display);
+		font-size: 0.78rem;
+		line-height: 1.3;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	@media (max-width: 30rem) {
+		.claim {
+			letter-spacing: 0.14em;
+		}
+	}
+	.lede {
+		margin: 0.4rem 0 0;
+		max-width: 40rem;
+		font-size: var(--sl-text-lg);
+		line-height: 1.5;
+		color: var(--sl-color-gray-1);
+		text-wrap: pretty;
+	}
+	.ch-pillars {
+		list-style: none;
+		max-width: 64rem;
+		margin: 0 auto;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.75rem;
+	}
+	.ch-pillars li {
+		margin: 0;
+		min-width: 0;
+	}
+	.ch-pillars a {
+		display: grid;
+		gap: 0.75rem;
+		justify-items: start;
+		height: 100%;
+		padding: 1.1rem 1.15rem;
+		font-family: var(--ch-display);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		line-height: 1.3;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		border: 1px solid var(--ch-rule);
+		border-top: 1px solid var(--ch-gold);
+		border-radius: 0.5rem;
+		background: var(--ch-panel);
+		transition: border-color 0.15s;
+	}
+	.ch-pillars a:hover,
+	.ch-pillars a:focus-visible {
+		border-color: var(--ch-gold);
+	}
+	@media (max-width: 50rem) {
+		.ch-pillars {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 0.5rem;
+		}
+		.ch-pillars a {
+			padding: 0.85rem;
+			font-size: var(--sl-text-xs);
+		}
+	}
+</style>

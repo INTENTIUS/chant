@@ -1,0 +1,404 @@
+---
+// The home page's first choice: the target platform as tiles, the forge as a
+// switch, and the roles as a line of links. Two cards then say what works for
+// that pick (the platform's list, the forge's lines, and how many example
+// projects its lexicons ship) and the first step (the command, and the page
+// to follow). Every list comes from data/rooms.mjs, the room pages' source,
+// and every count from data/proof.mjs, which reads the repository.
+//
+// The first pick (AWS, GitHub) is rendered here, so the cards read the same
+// without script. Each tile is a link to its room: with script, a click on a
+// tile that is not picked picks it instead, and a click on the picked one
+// opens the room. The script keeps the pick in localStorage and writes
+// Starlight's synced-tab key for the forge, so the rooms' forge tabs open on
+// the same choice.
+import { FORGES, ROLES, TILES, room } from '../data/rooms.mjs';
+import { lexiconExamples } from '../data/proof.mjs';
+import { codeHtml, siteHref } from '../data/href.mjs';
+import { base } from '../site';
+
+const tiles = TILES.map((t) => {
+	const r = room(t.room);
+	const ex = lexiconExamples(t.lexicons).filter((l) => l.count > 0);
+	const total = ex.reduce((n, l) => n + l.count, 0);
+	const where = ex.map((l) => `lexicons/${l.lexicon}/examples`);
+	return {
+		id: t.id,
+		label: t.label,
+		blurb: t.blurb,
+		room: `${base}/for/${t.room}/`,
+		title: r.title,
+		works: r.works,
+		differs: r.differs,
+		note: r.first.note ?? '',
+		command: Object.fromEntries(FORGES.map((f) => [f.id, r.first.command.any ?? r.first.command[f.id]])),
+		first: { label: r.first.link.label, href: siteHref(base, r.first.link.href) },
+		proof: `In the repo: ${total} example ${total === 1 ? 'project' : 'projects'} under ${where.length > 2 ? `${where.slice(0, -1).join(', ')} and ${where.at(-1)}` : where.join(' and ')}.`,
+	};
+});
+const forges = FORGES.map((f) => ({ id: f.id, label: f.label, differs: f.differs }));
+const data = { tiles, forges };
+const [tile] = tiles;
+const [forge] = forges;
+const forgeLines = (t: (typeof tiles)[number], f: (typeof forges)[number]) => [...f.differs, ...((t.differs as Record<string, string[]>)[f.id] ?? [])].map((l) => `${f.label}: ${l}`);
+---
+<section class="ch-picker not-content" aria-label="Where to start">
+	<div class="switches">
+		<div class="switch">
+			<span id="ch-pick-forge">Forge</span>
+			<div class="seg" role="group" aria-labelledby="ch-pick-forge">
+				{forges.map((f, i) => <button type="button" data-pick="forge" value={f.id} aria-pressed={String(i === 0)}>{f.label}</button>)}
+			</div>
+		</div>
+	</div>
+	<nav class="tiles" aria-label="Target platforms">
+		{tiles.map((t, i) => (
+			<a class="tile" href={t.room} data-tile={t.id} aria-current={i === 0 ? 'true' : undefined}>
+				<span class="ch-logo" aria-hidden="true"></span>
+				<b>{t.label}</b>
+				<small>{t.blurb}</small>
+			</a>
+		))}
+	</nav>
+	<nav class="roles" aria-label="By role">
+		<span>Or start from your role:</span>
+		{ROLES.map((r) => <a class="role" href={`${base}/for/${r.room}/`}><span class="ch-logo" aria-hidden="true"></span>{r.label}</a>)}
+	</nav>
+	<div class="cards" aria-live="polite">
+		<div class="card">
+			<p class="h">Works</p>
+			<ul class="logo-list" data-works>
+				{[...tile.works, ...forgeLines(tile, forge)].map((w) => <li set:html={codeHtml(w)} />)}
+			</ul>
+			<p class="proof"><span data-proof>{tile.proof}</span> <a data-proof-link href={`${tile.room}#proof`}>The proof</a></p>
+		</div>
+		<div class="card">
+			<p class="h">First step</p>
+			<p class="note" data-note hidden={!tile.note} set:html={codeHtml(tile.note)} />
+			<pre><code data-command>{tile.command[forge.id]}</code></pre>
+			<a class="go" data-first href={tile.first.href}>{tile.first.label}</a>
+			<p class="more">More in <a data-room href={tile.room}>{tile.title}</a>: what differs on each forge, the proof, and what to read next.</p>
+		</div>
+	</div>
+	<script type="application/json" data-picker-data set:html={JSON.stringify(data).replace(/</g, '\\u003c')} />
+</section>
+
+<script is:inline>
+	(() => {
+		// `code` spans as <code>, the rest escaped: the same as data/href.mjs codeHtml().
+		const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const code = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>');
+		const key = 'ch-picker';
+		const synced = 'starlight-synced-tabs__forge';
+		for (const section of document.querySelectorAll('.ch-picker')) {
+			const data = JSON.parse(section.querySelector('[data-picker-data]').textContent);
+			const pick = { tile: data.tiles[0].id, forge: data.forges[0].id };
+			try {
+				const saved = JSON.parse(localStorage.getItem(key) || '{}');
+				// Without a pick of its own, take the forge tab a room last synced.
+				const tab = data.forges.find((f) => f.label === localStorage.getItem(synced))?.id;
+				pick.forge = saved.forge || tab || pick.forge;
+				if (saved.tile) pick.tile = saved.tile;
+			} catch {}
+			const $ = (sel) => section.querySelector(sel);
+			const show = () => {
+				const tile = data.tiles.find((t) => t.id === pick.tile) || data.tiles[0];
+				const forge = data.forges.find((f) => f.id === pick.forge) || data.forges[0];
+				for (const b of section.querySelectorAll('button[data-pick]')) b.setAttribute('aria-pressed', String(pick[b.dataset.pick] === b.value));
+				for (const t of section.querySelectorAll('[data-tile]')) {
+					if (t.dataset.tile === tile.id) t.setAttribute('aria-current', 'true');
+					else t.removeAttribute('aria-current');
+				}
+				const lines = [...forge.differs, ...(tile.differs[forge.id] || [])].map((l) => `${forge.label}: ${l}`);
+				$('[data-works]').innerHTML = [...tile.works, ...lines].map((w) => `<li>${code(w)}</li>`).join('');
+				$('[data-proof]').textContent = tile.proof;
+				$('[data-proof-link]').href = `${tile.room}#proof`;
+				$('[data-note]').innerHTML = code(tile.note);
+				$('[data-note]').hidden = !tile.note;
+				$('[data-command]').textContent = tile.command[forge.id];
+				$('[data-first]').href = tile.first.href;
+				$('[data-first]').textContent = tile.first.label;
+				$('[data-room]').href = tile.room;
+				$('[data-room]').textContent = tile.title;
+				try {
+					localStorage.setItem(key, JSON.stringify(pick));
+					localStorage.setItem(synced, forge.label);
+				} catch {}
+			};
+			section.addEventListener('click', (e) => {
+				const b = e.target.closest('button[data-pick]');
+				if (b) {
+					pick[b.dataset.pick] = b.value;
+					show();
+					return;
+				}
+				const t = e.target.closest('[data-tile]');
+				if (!t || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+				// The picked tile opens its room; another one is picked first.
+				if (t.dataset.tile === pick.tile) return;
+				e.preventDefault();
+				pick.tile = t.dataset.tile;
+				show();
+			});
+			show();
+		}
+	})();
+</script>
+
+<style>
+	.ch-picker {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 1.1rem;
+		max-width: 64rem;
+		margin: 0.5rem auto 2.5rem;
+		font-size: var(--sl-text-sm);
+		overflow-wrap: anywhere;
+	}
+	.switches {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem 1.25rem;
+		align-items: center;
+		justify-content: center;
+	}
+	.switch {
+		display: flex;
+		gap: 0.6rem;
+		align-items: center;
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.seg {
+		display: inline-flex;
+		flex-wrap: wrap;
+		padding: 3px;
+		border: 1px solid var(--ch-rule);
+		border-radius: 0.55rem;
+		background: var(--ch-panel);
+		font-size: var(--sl-text-sm);
+		letter-spacing: normal;
+		text-transform: none;
+	}
+	.seg button {
+		padding: 0.35rem 0.8rem;
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-gray-3);
+		background: none;
+		border: 0;
+		border-radius: 0.4rem;
+		cursor: pointer;
+	}
+	.seg button:hover {
+		color: var(--sl-color-white);
+	}
+	.seg button[aria-pressed='true'] {
+		color: var(--sl-color-black);
+		background: var(--sl-color-white);
+	}
+	.tiles {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 0.5rem;
+	}
+	.tile {
+		--ch-ink: var(--sl-color-gray-4);
+		position: relative;
+		display: grid;
+		gap: 0.45rem;
+		align-content: start;
+		padding: 0.85rem 0.9rem;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		background: var(--ch-panel);
+		border: 1px solid var(--ch-rule);
+		border-top: 2px solid var(--ch-rule);
+		border-radius: 0.6rem;
+		transition: border-color 0.15s;
+	}
+	.tile b {
+		line-height: 1.3;
+	}
+	.tile small {
+		font-size: var(--sl-text-xs);
+		line-height: 1.35;
+		color: var(--sl-color-gray-3);
+	}
+	.tile:hover {
+		--ch-ink: var(--sl-color-gray-2);
+		border-color: var(--ch-gold);
+	}
+	/* The picked tile: a gold edge, the logo in full ink, and the mark in its corner. */
+	.tile[aria-current='true'] {
+		--ch-ink: var(--sl-color-white);
+		border-color: var(--ch-rule);
+		border-top-color: var(--ch-gold);
+		box-shadow: inset 0 0 0 1px var(--ch-gold);
+	}
+	.tile[aria-current='true']::after {
+		content: '';
+		position: absolute;
+		top: 0.6rem;
+		right: 0.6rem;
+		width: 15px;
+		height: 15px;
+		background-color: var(--ch-gold);
+		-webkit-mask: var(--ch-mark) center / contain no-repeat;
+		mask: var(--ch-mark) center / contain no-repeat;
+	}
+	.roles {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.roles > span {
+		margin-right: 0.25rem;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	.role {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.35rem 0.8rem 0.35rem 0.55rem;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		background: var(--ch-panel);
+		border: 1px solid var(--ch-rule);
+		border-radius: 0.5rem;
+	}
+	.role .ch-logo {
+		width: 20px;
+		height: 11.5px;
+	}
+	.role:hover,
+	.role:focus-visible {
+		border-color: var(--ch-gold);
+	}
+	.cards {
+		display: grid;
+		grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+		gap: 0.75rem;
+	}
+	.card {
+		display: grid;
+		align-content: start;
+		gap: 0.7rem;
+		padding: 1rem 1.15rem;
+		background: var(--ch-panel);
+		border: 1px solid var(--ch-rule);
+		border-top: 1px solid var(--ch-gold);
+		border-radius: 0.6rem;
+		color: var(--sl-color-gray-2);
+		line-height: 1.55;
+	}
+	.card p {
+		margin: 0;
+	}
+	.h {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.logo-list {
+		display: grid;
+		gap: 0.45rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.logo-list :global(li) {
+		position: relative;
+		margin: 0;
+		padding-left: 1.85rem;
+		color: var(--sl-color-white);
+	}
+	.logo-list :global(li)::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 6px;
+		width: 20px;
+		height: 11.5px;
+		background-color: var(--ch-ink);
+		-webkit-mask: var(--ch-logo) center / contain no-repeat;
+		mask: var(--ch-logo) center / contain no-repeat;
+	}
+	.card :global(code) {
+		font-size: 0.85em;
+		padding: 0.05em 0.3em;
+		border: 1px solid var(--ch-rule);
+		border-radius: 0.3rem;
+		background: var(--sl-color-gray-6);
+	}
+	.card pre {
+		margin: 0;
+		padding: 0.65rem 0.8rem;
+		overflow-x: auto;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		white-space: pre-wrap;
+		color: var(--sl-color-gray-1);
+		border: 1px solid var(--ch-rule);
+		border-radius: 0.45rem;
+		background: var(--sl-color-black);
+	}
+	.card pre code {
+		border: 0;
+		padding: 0;
+		background: none;
+	}
+	.proof {
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--ch-rule);
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	.proof a,
+	.more a {
+		color: var(--ch-accent);
+	}
+	.go {
+		justify-self: start;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.55rem 1rem;
+		font-weight: 600;
+		color: var(--sl-color-black);
+		text-decoration: none;
+		background: var(--ch-accent);
+		border-radius: 0.5rem;
+	}
+	.go::after {
+		content: '\2192';
+	}
+	.go:hover {
+		filter: brightness(1.1);
+	}
+	.more {
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	@media (max-width: 56rem) {
+		.tiles {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+		.cards {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+	@media (max-width: 36rem) {
+		.tiles {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+</style>

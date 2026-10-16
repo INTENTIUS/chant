@@ -1,0 +1,79 @@
+---
+// The commands a chant project runs, in the order a change meets them: a
+// dot, the command in mono, when it runs in tracked caps, and one line.
+import { base } from '../site';
+
+const steps = [
+	{ name: 'chant build', when: 'every change', what: 'Typed TypeScript in, spec-native output out, with no state file.', href: '/cli/build/' },
+	{ name: 'chant lint', when: 'every pull request', what: "Semantic rules and your organization's policy over the built output.", href: '/cli/lint/' },
+	{ name: 'chant run', when: 'when you deploy', what: "An Op's phases in-process, with gates and rollback, or on a fountain steward.", href: '/cli/run/' },
+	{ name: 'chant lifecycle diff --live', when: 'when you ask', what: 'Out-of-band drift between the source and the live system.', href: '/cli/lifecycle/' },
+	{ name: 'WatchOp', when: 'on a schedule', what: 'The same snapshot and live diff, run on a cadence.', href: '/guide/watching-lifecycle/' },
+];
+---
+<ol class="ch-lifecycle not-content">
+	{steps.map((s) => (
+		<li>
+			<a class="name" href={`${base}${s.href}`}><code>{s.name}</code></a>
+			<span class="when">{s.when}</span>
+			<p>{s.what}</p>
+		</li>
+	))}
+</ol>
+
+<style>
+	.ch-lifecycle {
+		list-style: none;
+		margin: 2rem 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
+		border-top: 1px solid var(--ch-rule);
+	}
+	.ch-lifecycle li {
+		position: relative;
+		padding: 1.25rem 1.25rem 1.25rem 0;
+		margin: 0;
+		display: grid;
+		gap: 0.35rem;
+		align-content: start;
+		border-bottom: 1px solid var(--ch-rule);
+		min-width: 0;
+	}
+	.ch-lifecycle li::before {
+		content: '';
+		position: absolute;
+		top: -4px;
+		left: 0;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--ch-accent);
+	}
+	.name {
+		text-decoration: none;
+	}
+	.name code {
+		font-family: var(--sl-font-mono);
+		font-size: 0.95rem;
+		color: var(--sl-color-white);
+		background: none;
+		border: 0;
+		padding: 0;
+	}
+	.name:hover code {
+		color: var(--ch-accent);
+	}
+	.when {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--ch-accent);
+	}
+	p {
+		margin: 0;
+		color: var(--sl-color-gray-2);
+		font-size: 0.9rem;
+	}
+</style>
