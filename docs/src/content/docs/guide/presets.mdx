@@ -14,7 +14,7 @@ import { Code } from '@astrojs/starlight/components';
 import presetDefaultsSrc from '../../../../../lexicons/aws/examples/core-concepts/src/preset-defaults.ts?raw';
 import presetUsageSrc from '../../../../../lexicons/aws/examples/core-concepts/src/preset-usage.ts?raw';
 
-Presets are shared default values that you reference from resource definitions. They reduce repetition when multiple resources of the same type share common configuration.
+Presets are shared default values that resource definitions reference. Use one when several resources of the same type share settings.
 
 ## Defining a Preset
 
@@ -33,7 +33,7 @@ Properties listed after the preset reference override the preset values.
 ## Rules
 
 - The spread source must be a `const` binding, declared in the file or imported from another module. Spreading from `let`, `var`, or function calls triggers lint rule EVL004.
-- Preset objects are plain data — they are not resource instances.
+- Preset objects are plain data, not resource instances.
 - Properties in the spread are merged shallowly. Nested objects are replaced entirely, not deep-merged.
 
 See your lexicon's documentation for working preset examples with concrete resource types.

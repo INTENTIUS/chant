@@ -1,6 +1,6 @@
 ---
 title: Converging Lifecycle
-description: ConvergeOp — the executable runbook. Observe, classify against a typed rule table, dispatch within a per-tick budget, record.
+description: Each ConvergeOp tick observes and matches a typed rule table, then dispatches within a per-tick budget and records the result.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/converging-lifecycle/.
@@ -10,9 +10,9 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-[Watching](/chant/guide/watching-lifecycle/) tells you an environment drifted. [Reconciling](/chant/guide/reconciling-lifecycle/) closes one gap, once, on request. `ConvergeOp` is the loop between those two: a scheduled tick that observes, decides what (if anything) to do about what it saw, and does it — on a schedule, within a bounded budget, every action traced back to a written rule.
+[Watching](/chant/guide/watching-lifecycle/) tells you an environment drifted. [Reconciling](/chant/guide/reconciling-lifecycle/) closes one gap, once, on request. `ConvergeOp` runs on a schedule between those two: each tick observes, matches what it saw against written rules, and runs what they say, up to a per-tick budget.
 
-There is no new goal language and no planner. The declaration is already the goal; the [status join](/chant/guide/reconciling-lifecycle/) already says how reality differs from it. `ConvergeOp` adds exactly one thing: a typed table connecting a symptom to a verb.
+The declaration is the goal, and the [status join](/chant/guide/reconciling-lifecycle/) says how the live state differs from it. `ConvergeOp` adds one thing, with no goal language or planner: a typed table from a symptom to a verb.
 
 ## Defining a converge loop
 
@@ -45,16 +45,16 @@ export const { op } = ConvergeOp({
 export default op;        // discovered by `chant run staging-converge`
 ```
 
-Every rule is a `when(predicate, action, { id, why })`: a typed comparison over a `ConvergeSymptom` (never an arbitrary function — see [Rules are data](#rules-are-data-not-closures) below), an action (`run(opName)` to dispatch a declared Op, or `report(reason)` to log-and-ledger only), and a mandatory `why`. A rule with no `why` fails `chant build`.
+Every rule is a `when(predicate, action, { id, why })`: a typed comparison over a `ConvergeSymptom` (never an arbitrary function; see [Rules are data](#rules-are-data-not-closures) below), an action (`run(opName)` to dispatch a declared Op, or `report(reason)` to log-and-ledger only), and a mandatory `why`. A rule with no `why` fails `chant build`.
 
 ## What one tick does
 
 Phases: **Observe -> Converge**.
 
-1. **Observe** — `lifecycleSnapshot` + `lifecycleDiff --live`, the same pair [`WatchOp`](/chant/guide/ops/) runs, recording a `Drift` outcome on the tick's run record.
-2. **Converge** — one `convergeTick` activity: derive the typed symptom (the status join + change-set counts + unobserved reasons), evaluate every rule against it, dispatch matched `run()` rules up to `budget` via the existing local runner (`chant run <op>`), and append one record to the converge ledger.
+1. **Observe**: `lifecycleSnapshot` + `lifecycleDiff --live`, the same pair [`WatchOp`](/chant/guide/ops/) runs, recording a `Drift` outcome on the tick's run record.
+2. **Converge**: one `convergeTick` activity: derive the typed symptom (the status join + change-set counts + unobserved reasons), evaluate every rule against it, dispatch matched `run()` rules up to `budget` via the existing local runner (`chant run <op>`), and append one record to the converge ledger.
 
-`chant run staging-converge` runs a single tick here, which is also the test story. `schedule` is the cadence on the Op, and the thing that fires it is your choice: `chant operator` ticks every discovered `ConvergeOp` from a loop on git alone (see the [operator guide](/chant/guide/operator/)), a generated CI workflow ticks it from a cron job, and a fountain [`Steward`](/chant/lexicons/fountain/steward/) ticks it in its own thread.
+`chant run staging-converge` runs a single tick here, which is also how you test it. `schedule` is the cadence on the Op, and the thing that fires it is your choice: `chant operator` ticks every discovered `ConvergeOp` from a loop on git alone (see the [operator guide](/chant/guide/operator/)), a generated CI workflow ticks it from a cron job, and a fountain [`Steward`](/chant/lexicons/fountain/steward/) ticks it in its own thread.
 
 ## Converging resources no lexicon observes
 
@@ -130,7 +130,7 @@ The rules read a `ResourceSymptom` (`env`, `resource`, `status`, `detail`) and a
 
 ## The dial × verb class matrix
 
-`ConvergeOp` adds no authority an environment didn't already grant. Every Op a rule's `run()` dispatches is classified read-only / mutating / destructive from its own composition (its steps, its `deleteMode`, whether it carries a gate) — never self-reported. Issue #1484's own Autonomy table is the target:
+`ConvergeOp` adds no authority an environment didn't already grant. Every Op a rule's `run()` dispatches is classified read-only / mutating / destructive from its own composition (its steps, its `deleteMode`, whether it carries a gate), never self-reported. Issue #1484's own Autonomy table is the target:
 
 | verb class  | `observe`   | `reconcile`     | `apply`               |
 |-------------|-------------|------------------|------------------------|
@@ -138,7 +138,7 @@ The rules read a `ResourceSymptom` (`env`, `resource`, `status`, `detail`) and a
 | mutating    | report only | open PR          | run, gated per op       |
 | destructive | refused     | refused          | always gated            |
 
-**v1 implements a conservative subset of this**, not the whole thing:
+**v1 implements a conservative subset of this**:
 
 | verb class  | `observe`   | `reconcile`                    | `apply`                          |
 |-------------|-------------|----------------------------------|-------------------------------------|
@@ -146,20 +146,20 @@ The rules read a `ResourceSymptom` (`env`, `resource`, `status`, `detail`) and a
 | mutating    | report only | **refused at build (not yet implemented)** | run                       |
 | destructive | refused     | refused                          | **refused at build, v1**            |
 
-- `reconcile` × mutating is "open PR" in the issue's table. Building that channel — reusing `ReconcileOp`'s `onDrift: "pull-request" | "issue" | "comment" | "report"` — is out of v1 scope (epic #1487's onDrift-channel open question). Until it exists, a rule that would dispatch a mutating op under `reconcile` is **refused at build** (`OPS014`), not silently escalated to run directly the way `apply` would. `convergeTick` re-checks the same thing at dispatch time, as a runtime backstop for a rule table that reached the tick without going through that build.
-- `apply` × destructive is "always gated" in the issue's table, but v1 **refuses it outright, gate or not**, at build (`OPS014`). A converge tick runs unattended, on a schedule, with no one watching it fire. A destructive dispatch needs a human's approval *before* it is attempted, not a gate the tick consults only after it has already committed to running the op, and `run()` has no way to ask first; the rule is refused rather than shipped as an approval that arrives too late to matter.
-- `apply` × **mutating** + gated *is* reachable — `OPS014` only refuses destructive-with-a-gate, not mutating-with-a-gate. A tick that dispatches such a rule sees the dispatched op stop at its gate and exit 3. That is gate-as-fact, not a dispatch failure: the tick records `action: "gated"` and moves on, rather than reporting an error. See the [operator guide](/chant/guide/operator/)'s "Gate-as-fact" section for the resolution path (`chant approve`, or a merged PR) and what the next tick does with it.
+- `reconcile` × mutating is "open PR" in the issue's table. Building that channel, reusing `ReconcileOp`'s `onDrift: "pull-request" | "issue" | "comment" | "report"`, is out of v1 scope (epic #1487's onDrift-channel open question). Until it exists, a rule that would dispatch a mutating op under `reconcile` is **refused at build** (`OPS014`), not silently escalated to run directly the way `apply` would. `convergeTick` re-checks the same thing at dispatch time, as a runtime backstop for a rule table that reached the tick without going through that build.
+- `apply` × destructive is "always gated" in the issue's table, but v1 **refuses it outright, gate or not**, at build (`OPS014`). A converge tick runs unattended, on a schedule, with no one watching it fire. A destructive dispatch needs a human's approval *before* the tick commits to running the op, and `run()` has no way to ask first, so the rule is refused.
+- `apply` × **mutating** + gated *is* reachable, because `OPS014` refuses only destructive-with-a-gate. A tick that dispatches such a rule sees the dispatched op stop at its gate and exit 3. The tick treats that as gate-as-fact: it records `action: "gated"` and moves on without reporting an error. See the [operator guide](/chant/guide/operator/)'s "Gate-as-fact" section for the resolution path (`chant approve`, or a merged PR) and what the next tick does with it.
 
-`dial` defaults to `"observe"` — not autonomous by default. A `ConvergeOp` with no `dial` set is a report generator.
+`dial` defaults to `"observe"`, so a `ConvergeOp` with no `dial` set only reports.
 
 ## Build-time refusals
 
-`chant build` refuses a rule table that isn't honest about what it will do, via `OPS014` ([rules reference](/chant/lint-rules/correctness/)):
+`chant build` refuses a rule table with any of these, via `OPS014` ([rules reference](/chant/lint-rules/correctness/)):
 
 - a rule with no (or a blank) `why`,
-- a predicate outside the evaluable subset — `eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`truthy`/`falsy`/`allOf`/`anyOf` over a field `ConvergeSymptom` actually produces (`ResourceSymptom` for a ConvergeOp with `observe`); nothing else,
+- a predicate outside the evaluable subset, which is `eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`truthy`/`falsy`/`allOf`/`anyOf` over a field `ConvergeSymptom` actually produces (`ResourceSymptom` for a ConvergeOp with `observe`); nothing else,
 - `run()` naming an Op that doesn't exist,
-- a mutating dispatch under any dial other than `apply` (see the matrix above — `reconcile`'s "open PR" isn't implemented in v1),
+- a mutating dispatch under any dial other than `apply` (see the matrix above; `reconcile`'s "open PR" isn't implemented in v1),
 - a destructive dispatch under any dial, unconditionally (an unattended tick can't ask for approval first; see above),
 - a rule whose predicate reads `adoptCount` while dispatching a mutating op (adopt safety, below).
 
@@ -167,16 +167,16 @@ Duplicate rule ids, an empty rule table, and a negative/non-integer `budget` are
 
 ## Honesty requirements
 
-- **`unknown` never remediates.** Whatever a rule's own predicate says, a tick whose symptom is `status: "unknown"` forces every matched `run()` action to report instead — enforced in `convergeTick` itself, not only trusted to rule authors.
-- **Adopt safety is enforced, not just documented.** There is no dispatch verb that claims an unowned resource, and `OPS014` refuses a rule that both reads `adoptCount` and dispatches a mutating op — precisely: a rule predicated on `adoptCount` may only `report()`, or dispatch a *read-only* op. Separately, `buildChangeSet` never classifies an unowned/undeclared resource as a `delete`/`update` proposal in the first place, so nothing in the ordinary apply path can mutate an adopt candidate either.
+- **`unknown` never remediates.** Whatever a rule's own predicate says, a tick whose symptom is `status: "unknown"` forces every matched `run()` action to report instead. `convergeTick` enforces this itself instead of trusting rule authors.
+- **Adopt safety is enforced in code.** There is no dispatch verb that claims an unowned resource, and `OPS014` refuses a rule that both reads `adoptCount` and dispatches a mutating op. Precisely, a rule predicated on `adoptCount` may only `report()`, or dispatch a *read-only* op. Separately, `buildChangeSet` never classifies an unowned/undeclared resource as a `delete`/`update` proposal in the first place, so nothing in the ordinary apply path can mutate an adopt candidate either.
 - **The worst tick is bounded.** `budget` caps `run()` dispatches per tick; anything matched beyond it is recorded `skipped-budget`, not queued.
-- **A prior tick is never queued.** The Op's `schedule` carries `overlap: "skip"`: if a tick is still running when the next fire time arrives, the new one is dropped, not buffered — the issue's "skip-and-report ... never queue". There is no per-tick ledger record for the skipped fire itself (nothing ran, so nothing observed, classified, or dispatched). `chant operator` reports it as `skipped=1(lease-held:<holder>)` for that round; a steward reports it on the thread as `teammate was busy`.
-- **Flap damping is mandatory.** A rule that fires `flapThreshold` (default 3) consecutive ticks without its symptom clearing escalates to `skipped-flap` and stops dispatching — the counter lives on the converge ledger, not process memory, so it survives the process that was ticking.
+- **A prior tick is never queued.** The Op's `schedule` carries `overlap: "skip"`: if a tick is still running when the next fire time arrives, the new one is dropped, not buffered (the issue's "skip-and-report ... never queue"). There is no per-tick ledger record for the skipped fire itself (nothing ran, so nothing observed, classified, or dispatched). `chant operator` reports it as `skipped=1(lease-held:<holder>)` for that round; a steward reports it on the thread as `teammate was busy`.
+- **Flap damping is mandatory.** A rule that fires `flapThreshold` (default 3) consecutive ticks without its symptom clearing escalates to `skipped-flap` and stops dispatching. The counter lives on the converge ledger, not in process memory, so it survives the process that was ticking.
 - **Every action traces to a rule, in source.** One log line and one ledger record per tick (`<env>/converge.jsonl` on the `chant/lifecycle` branch); `git blame` on the rule table answers "why did it do that."
 
 ## Rules are data, not closures
 
-A rule's `when` looks like a predicate but is JSON — `eq("status", "drifted")`, not `s => s.status === "drifted"`. A rule table has to survive `chant build` into `op.json` and be read back by something that never imported this project, and an arbitrary closure cannot make that crossing. "A rule outside the evaluable subset" is one of the refusals above precisely because there's a bounded subset to be outside of. `isWellFormedPredicate` is the runtime backstop OPS014 re-checks a rule table against, in case one was assembled by hand instead of through `when()`.
+A rule's `when` looks like a predicate but is JSON: `eq("status", "drifted")`, not `s => s.status === "drifted"`. A rule table has to survive `chant build` into `op.json` and be read back by something that never imported this project, and a closure cannot survive that trip. That is why a rule outside the evaluable subset is refused. `isWellFormedPredicate` is the runtime backstop OPS014 re-checks a rule table against, in case one was assembled by hand instead of through `when()`.
 
 ## See also
 

@@ -14,7 +14,7 @@ import { Code } from '@astrojs/starlight/components';
 import compositeDefSrc from '../../../../../lexicons/aws/examples/core-concepts/src/composite-definition.ts?raw';
 import compositeUsageSrc from '../../../../../lexicons/aws/examples/core-concepts/src/composite-usage.ts?raw';
 
-A composite groups related resources into a single reusable unit. Instead of defining multiple related resources separately every time, you define them once as a composite and instantiate it with props.
+A composite groups related resources into one reusable unit. Define them once, then instantiate the composite with props wherever you need them.
 
 ## Defining a Composite
 
@@ -30,11 +30,11 @@ Instantiate a composite by calling it with props:
 
 <Code code={compositeUsageSrc} lang="typescript" title="src/composite-usage.ts" />
 
-This produces all underlying resources with names derived from the props. The composite instance exposes its members directly, so `api.role` and `api.func` are accessible for cross-references.
+This produces all underlying resources with names derived from the props. The composite instance exposes its members directly, so other resources can reference `api.role` and `api.func`.
 
 ## Referencing Members
 
-Within the factory, you can reference other members directly since they're just variables in the same scope (as seen in the definition above — `role: role.arn`).
+Within the factory, you can reference other members directly since they are variables in the same scope (`role: role.arn` in the definition above).
 
 Outside the composite, access members via the instance:
 
@@ -49,17 +49,17 @@ export const monitor = new _.Alarm({
 
 Composites are useful when:
 
-- **Multiple resources always appear together** — a function always needs a role and log destination
-- **You want consistent naming** — derive all resource names from a single `name` prop
-- **Cross-resource wiring is complex** — encapsulate the references inside the composite
+- Several resources always appear together, such as a function that needs a role and a log destination
+- Every resource name should derive from one `name` prop
+- The references between resources are complex enough to hide inside the composite
 
 For sharing default *property values* across resources of the same type, see [Presets](/chant/guide/presets/) instead.
 
-Some lexicons also support **child projects** — subdirectories that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
+Some lexicons also support **child projects**: subdirectories that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
 
 ## What a Composite Records About Its Fields
 
-A composite is the one thing chant emits that is not one to one with its source. Two typed arguments become five resources, so a drift report comparing live properties against declared ones sees flat resources and no longer sees the factory that produced them.
+A composite is the one thing chant emits where one source call becomes several resources. Two typed arguments become five resources, so a drift report comparing live properties against declared ones sees flat resources and no longer sees the factory that produced them.
 
 The build records the missing half. For every property an expansion emits, `chant build` stores where the value came from, beside the build output and never inside it, so the record cannot reach the document an applier writes. There are four answers:
 
@@ -68,7 +68,7 @@ The build records the missing half. For every property an expansion emits, `chan
 - a field the author declared directly, outside any expansion
 - unknown, when the build expanded a call without interpreting its factory
 
-`chant lifecycle diff` reads the record on the return leg. A drifted field that traces to a parameter is reported as a one line change to that parameter, naming the file, the call and the parameter path, leaving the source structure intact. A drifted field the factory fixes is refused by name instead. Closing it would mean flattening the abstraction away, and the two honest options are to parameterize the field or to stop using the abstraction at that call site. Both are choices for a person to make.
+`chant lifecycle diff` reads the record on the return leg. A drifted field that traces to a parameter is reported as a one line change to that parameter, naming the file, the call and the parameter path, leaving the source structure intact. A drifted field the factory fixes is refused by name instead. Closing it would flatten the composite, so the two options are to parameterize the field or to stop using the composite at that call site. Both are choices for a person to make.
 
 ### Hardcoding a Field Gives Up Its Provenance
 
@@ -84,7 +84,7 @@ export const WebService = Composite<WebServiceProps>((props) => {
 }, "WebService");
 ```
 
-That is a fair trade for a value that genuinely should not vary per caller, such as an API version or a label chant itself owns. It is a poor one for a value an operator might need to change under pressure, because the only ways to move it are to edit the factory for every caller or to abandon it for one of them. Prefer a parameter with a default when a caller might ever need the field to differ.
+That is a fair trade for a value that should not vary per caller, such as an API version or a label chant itself owns. It is a poor one for a value an operator might need to change under pressure, because the only ways to move it are to edit the factory for every caller or to abandon it for one of them. Prefer a parameter with a default when a caller might ever need the field to differ.
 
 Two other shapes lose provenance the same way. A field wired to a sibling member inside the factory reads as fixed. `role: role.arn` is the usual case, and no argument at the call site moves it, so proposing a parameter change would be wrong.
 
@@ -96,11 +96,11 @@ A factory can build a member with a registered tagged template instead of `new T
 
 ## Kubernetes Composites
 
-The Kubernetes lexicon ships 27 production-ready composites across four categories. Here's a quick overview:
+The Kubernetes lexicon ships 27 production-ready composites across four categories.
 
 ### Generic Composites
 
-Platform-agnostic patterns that work on any conformant cluster:
+These work on any conformant cluster:
 
 | Composite | What it creates |
 |-----------|----------------|
@@ -126,7 +126,7 @@ Each cloud provider has composites that integrate Kubernetes with its native ser
 
 ### Example: AutoscaledService
 
-`AutoscaledService` is the most common composite — a production HTTP service with horizontal autoscaling, disruption budgets, and health probes:
+`AutoscaledService` is the most common composite. It is a production HTTP service with horizontal autoscaling, disruption budgets, and health probes:
 
 ```typescript
 import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
@@ -150,7 +150,7 @@ const { deployment, service, hpa, pdb } = AutoscaledService({
 });
 ```
 
-All four members (`deployment`, `service`, `hpa`, `pdb`) are available for cross-references just like any other resource.
+All four members (`deployment`, `service`, `hpa`, `pdb`) can be referenced like any other resource.
 
 ### Composite Reference Pages
 

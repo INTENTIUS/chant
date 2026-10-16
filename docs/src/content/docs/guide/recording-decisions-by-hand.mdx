@@ -30,7 +30,7 @@ ships a harness-neutral way to do it by hand, in two files that
   the same ask written as one prompt, for a harness with no skill mechanism.
   Paste it into the chat.
 
-Both describe the same loop. This page walks it once, end to end.
+Both describe the same loop. This page walks through it once.
 
 ## List what was actually decided
 
@@ -108,7 +108,7 @@ transcript read after the fact), `harness` (`"claude-code"`, `"codex"`,
 `"gemini-cli"`, `"opencode"`, `"fountain"`, `"hud"`, or another id), `model`,
 `session`, `turns` and a `transcript` pinned by a path or URI and the SHA-256
 of its bytes, never its content. Every one of these is optional, and none of
-them changes a record's standing; it's data about the proposal, not trust.
+them changes a record's standing; they describe the proposal and grant no trust.
 `chant workspace records` warns `source-transcript-drift` when a pinned
 transcript is reachable and its bytes no longer match.
 
@@ -123,8 +123,8 @@ isn't.
 
 ## Reviewing what gets proposed
 
-This loop only proposes. Moving a record to `decided` is a separate act, by
-a person, with `chant workspace records amend`:
+This loop only proposes. A person moves a record to `decided` as a separate
+step, with `chant workspace records amend`:
 
 ```bash
 chant workspace records amend ref-003 --kind decisions/decision.kind.mjs --set - <<'JSON'

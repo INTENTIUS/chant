@@ -13,7 +13,7 @@ import { Code } from '@astrojs/starlight/components';
 import storageSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-storage.ts?raw';
 import policySrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-policy.ts?raw';
 
-Resources often depend on each other — a policy needs a storage resource's ARN, a function needs a table's name. chant uses standard TypeScript imports for cross-file references.
+Resources often depend on each other. A policy needs a storage resource's ARN; a function needs a table's name. chant uses standard TypeScript imports for cross-file references.
 
 ## Direct Imports
 
@@ -29,7 +29,7 @@ Import a resource from another file and access its attributes:
 
 Cross-file references are resolved at build time, not at runtime. This means:
 
-- References are resolved statically — the evaluator follows imports to build the resource graph
+- The evaluator follows imports to build the resource graph
 - References to nonexistent resources produce a build error
 - Circular dependencies between resources are detected and reported
 

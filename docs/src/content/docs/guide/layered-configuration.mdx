@@ -1,6 +1,6 @@
 ---
 title: Layered Configuration
-description: One composite, many environments — per-environment config with plain object spread.
+description: Per-environment config for one composite, with plain object spread.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/layered-configuration/.
@@ -14,12 +14,11 @@ import { Code } from '@astrojs/starlight/components';
 import configSrc from '../../../../../lexicons/k8s/examples/layered-config/src/config.ts?raw';
 import webSrc from '../../../../../lexicons/k8s/examples/layered-config/src/web.ts?raw';
 
-A common need: **one composite, deployed across several environments, with
-per-environment differences.** [Presets](/chant/guide/presets/) cover the
-single-level case — shared defaults spread into resources. Layered configuration
-is the multi-level generalization: a base config overridden per environment,
-including deep-merged nested objects — using nothing but plain TypeScript object
-spread. No `deepMerge` helper, no per-environment files, no codegen.
+To deploy **one composite to several environments, with per-environment
+differences**, layer its config. [Presets](/chant/guide/presets/) cover one
+level of shared defaults spread into resources. Layered configuration is a base
+config that each environment overrides, nested objects included. It is plain
+TypeScript object spread in one file, with no merge helper or codegen.
 
 ## The pattern
 
@@ -28,14 +27,14 @@ differs; everything else inherits.
 
 <Code code={configSrc} lang="typescript" title="src/config.ts" />
 
-Then instantiate the **same** composite once per environment. Each call is the
-blessed composite factory call with a static (const) prop bag — the layering
-already happened in `config.ts`:
+Then instantiate the **same** composite once per environment. Each call passes a
+static (const) prop bag to the composite factory; the layering already happened
+in `config.ts`:
 
 <Code code={webSrc} lang="typescript" title="src/web.ts" />
 
 All three build into one manifest. Per-environment names (`web-dev` /
-`web-staging` / `web-prod`) keep their resources distinct and collision-free.
+`web-staging` / `web-prod`) keep their resources from colliding.
 
 ## Why it resolves at synthesis
 
@@ -53,7 +52,7 @@ qualifies, at any depth:
 
 So the shallow level is `...base` and each nested object you want to merge gets
 its own `...base.<key>`. A nested object you *don't* spread is replaced
-wholesale — the same rule presets follow — which is often what you want
+wholesale, the same rule presets follow. That is often what you want
 (`securityContext` in the example is set once on the base and inherited
 unchanged).
 
@@ -66,17 +65,16 @@ supplies its own (`web-dev`, `web-staging`, `web-prod`). Thread an `env` or
 
 ## When you outgrow it
 
-This pattern stays in plain TypeScript on purpose — it is deterministic and
-auditable, and every environment is an explicit, readable object. If you later
-need to know the *effective* config for one environment without merging the
-layers in your head, that is what
-[`chant describe`](/chant/cli/describe/) projects.
+This pattern stays in plain TypeScript on purpose: every environment is an
+explicit object you can read and audit, and the build is deterministic. To see
+the *effective* config for one environment, run
+[`chant describe`](/chant/cli/describe/).
 
 ## Try it
 
 The full example is
 [`lexicons/k8s/examples/layered-config`](https://github.com/INTENTIUS/chant/tree/main/lexicons/k8s/examples/layered-config)
-— it builds in CI.
+and CI builds it.
 
 ```bash
 cd lexicons/k8s/examples/layered-config
