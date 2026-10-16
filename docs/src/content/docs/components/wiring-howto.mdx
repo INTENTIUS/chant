@@ -2,6 +2,11 @@
 title: Wiring Components
 description: How to wire one component's data into another — cross-stack outputs and cross-component artifact references — and the commands that resolve them.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/components/wiring-howto/.
+  Wire the components I name: replace any `describe-stacks | jq` glue in their pipelines with the producer's outputs spread into the consumer's step, or an `@<component>.publish.uri` reference, and add `dependsOn`.
+  Run `npx chant graph --stacks` and show me the order it prints, then run `npx chant build` and `npx chant lint`, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

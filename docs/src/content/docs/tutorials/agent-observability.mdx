@@ -2,6 +2,12 @@
 title: "Agent Observability on k3d"
 description: "Observability for an agent declared across five lexicons in one chant project and run on a local k3d cluster."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/agent-observability/.
+  In `examples/agent-observability`, run `npm run build` and `npm run lint` and fix any finding the lint reports.
+  Then run the steps under "Run it" on a local k3d cluster only: build the image, create the cluster from `dist/k3d.yaml`, import the image and `kubectl apply -f dist/k8s.yaml`.
+  Show me the output and which alerts fire in Alertmanager after a few minutes. Delete the k3d cluster when I say so.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

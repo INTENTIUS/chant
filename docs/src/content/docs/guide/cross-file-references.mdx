@@ -2,6 +2,11 @@
 title: Cross-File References
 description: How to reference resources defined in other files
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/cross-file-references/.
+  Find properties in this project that hard-code another resource's name, ARN or ID as a string, and replace each with an import of that resource and its attribute.
+  Run `npx chant build` and `npx chant lint` until both pass, fix any circular import they report, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code } from '@astrojs/starlight/components';

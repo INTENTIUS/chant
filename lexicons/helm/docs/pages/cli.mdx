@@ -2,6 +2,12 @@
 title: "chant helm"
 description: "The pinned-render command surface — classify a chart's pinnability, localize unstable output lines to their inputs, list recorded renders"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/helm/cli/.
+  Run `npx chant helm classify <chart-dir>`, with `--values <file>` for each values file I name, and `npx chant helm localize <chart-dir>`, and tell me the verdict and each pin that would close an unstable line.
+  Run `npx chant helm renders` and report any render it marks UNSTABLE.
+  Read only: change no file, and do not run `chant helm diff --live` against a shared environment.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant helm` is the terminal surface over the pinned-renders machinery. It mounts through the lexicon command seam, so it exists only in projects whose config loads the `helm` lexicon.

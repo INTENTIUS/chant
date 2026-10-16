@@ -2,6 +2,11 @@
 title: "Getting Started"
 description: "Install chant and deploy your first ARM template in 5 minutes"
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/lexicons/azure/getting-started/.
+  In a new directory, install `@intentius/chant` and `@intentius/chant-lexicon-azure`, write the `StorageAccountSecure` example from the page in src/main.ts, and run `npx chant build --output dist/template.json` and `npx chant lint src`.
+  Show me the output and the generated template. Print the `az deployment group validate` and `az deployment group create` commands for me to run; do not run them.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## What is chant?

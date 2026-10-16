@@ -2,6 +2,11 @@
 title: "Getting Started"
 description: "Create your first typed Helm chart in 5 minutes"
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/lexicons/helm/getting-started/.
+  In a new directory, install the helm and k8s lexicons, run `npx chant init --lexicon helm`, and run `npx chant build`.
+  Run `helm lint` and `helm template` on the chart it wrote, and show me the output and the chart's files.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## What is the Helm lexicon?

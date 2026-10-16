@@ -2,6 +2,12 @@
 title: Lexicon Onboarding Skill
 description: A single self-contained checklist for an AI agent adding a lexicon to the chant monorepo, from scaffold through first npm publish
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/onboarding-skill/.
+  Follow the page's steps 1 to 5 for the lexicon I name in the chant repository: scaffold it, close every tier-1 failure of `chant dev check-lexicon lexicons/<name>`, add an example, run `dev onboard`, then `npx vitest run lexicons/<name>`, `npm run prepack -w @intentius/chant-lexicon-<name>` and `just check`.
+  Open a pull request, and say in its description that steps 6 and 7 of the page are left for me.
+  Do not publish to npm or run `just release`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';

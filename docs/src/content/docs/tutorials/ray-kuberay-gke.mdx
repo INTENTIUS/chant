@@ -2,6 +2,12 @@
 title: "Ray + KubeRay on GKE"
 description: "A persistent Ray cluster on GKE backed by Filestore shared storage and GCS spillover, deployed via Config Connector and KubeRay."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/ray-kuberay-gke/.
+  In `examples/ray-kuberay-gke`, run `npm install` from the repository root. Then run the local k3d smoke test the README describes, with k3d and kubectl only.
+  Show me the output, including the result of the test job.
+  Do not run `just bootstrap`, `npm run build:gcp` with `kubectl apply`, or any other step against GCP, and do not push an image.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

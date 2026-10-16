@@ -3,6 +3,11 @@ title: "Typed Columns"
 description: "Give a table, view or dictionary its qualified name as a type argument and run chant sql types, so tsc checks column references, foreign keys and sort keys, and RowOf gives application code its row types"
 diataxis: how-to
 order: 3
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/typed-columns/.
+  Give each table, view and dictionary I name its qualified name as a type argument, run `npx chant sql types`, and fix every column reference `tsc` then rejects.
+  Add `npx chant sql types --check` to the CI job that builds this project, run `npx chant build` and `npx chant lint`, and open a pull request with the declarations and `sql-types.d.ts`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `tsc` sees a tagged template's text as a plain string, so on its own it cannot tell that `${orders.columns.emial}` names no column. `chant sql types` closes the gap: it builds the project and writes the columns of every table, view and dictionary the build declares as TypeScript declarations. A tag that names its object as a type argument then returns typed columns.

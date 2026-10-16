@@ -2,6 +2,11 @@
 title: Parameters & Outputs
 description: Declare CloudFormation parameters and stack outputs in chant
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/getting-started/parameters-and-outputs/.
+  Add the CloudFormation parameters and stack outputs I describe to this project: an exported `Parameter` for each input, `Ref` or an import where a resource uses it, and `output()` for each value to expose.
+  Run `npx chant build -o template.json` and show me the template's `Parameters` and `Outputs` sections, then run `npx chant lint` and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code } from '@astrojs/starlight/components';

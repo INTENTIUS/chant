@@ -5,6 +5,12 @@ description: "chant import --from <env> writes a Postgres server's schema as dec
 diataxis: how-to
 group: "Postgres"
 order: 12
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/postgres-importing/.
+  Bind the environment I name in `chant.config.ts` with `sql.profiles.<env>`, credentials named by environment variable only, and the schemas I list.
+  Run `npx chant import --from <env> --output src/` with the read-only credentials I give you, then `npx chant build` and `npx chant lint`, and list what the import left out: objects chant cannot declare and tables another tool keeps.
+  Open a pull request with the config and the imported `schema.ts`. Write no password into any file.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant import --from <env>` reads the schema of the Postgres server an environment is bound to and writes it as declarations: one `schema.ts` holding a `schema`, `table`, `index`, `view`, `sequence`, `type`, `domain` or `extension` for each object, in dependency order.

@@ -3,17 +3,21 @@
 // opens the docs, the wordmark, the mark between two gold hairlines, the
 // tagline and one plain sentence; then the platform picker (Picker.astro) and
 // the eight highlights, each one link. The other parts go under the section
-// headings in index.mdx: the lexicon link table, the lifecycle row and the
-// read-next table. One import keeps index.mdx's prose free of import lines.
+// headings in index.mdx: the lexicon link table, the lifecycle row, the
+// read-next table and, last on the page, the setup prompt to hand a coding
+// agent (`part="agent"`), from prompts.mjs, which README.md and the agents
+// page carry too. One import keeps index.mdx's prose free of import lines.
 import { readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import Lifecycle from './Lifecycle.astro';
 import LinkRows from './LinkRows.astro';
 import Picker from './Picker.astro';
+import AgentPrompt from '../../../packages/core/src/codegen/docs-site/AgentPrompt.astro';
+import { setupPrompt } from '../prompts.mjs';
 import { base, docsHref } from '../site';
 
 interface Props {
-	part?: 'top' | 'lexicons' | 'lifecycle' | 'next';
+	part?: 'top' | 'lexicons' | 'lifecycle' | 'next' | 'agent';
 }
 const { part = 'top' } = Astro.props;
 
@@ -35,6 +39,11 @@ const pillars = [
 {part === 'lexicons' && <LinkRows set="lexicons" />}
 {part === 'lifecycle' && <Lifecycle />}
 {part === 'next' && <LinkRows set="next" />}
+{part === 'agent' && (
+	<AgentPrompt text={setupPrompt} label="Hand the setup to your coding agent" note="Or set up by hand: install a lexicon and run chant init, as Quick Start shows.">
+		<span slot="icon" class="ch-logo ch-prompt-logo" aria-hidden="true"></span>
+	</AgentPrompt>
+)}
 {part === 'top' && (
 	<>
 		<section class="ch-landing not-content">

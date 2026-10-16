@@ -2,6 +2,11 @@
 title: Development Setup
 description: Setting up a development environment for chant
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/contributing/development/.
+  Set up the chant repository on this machine: run `npm install` and `just regen`, then `just check` and `npx tsx scripts/typecheck.ts`.
+  Show me the output of each, and the first failure if one fails. Change no file.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## Prerequisites

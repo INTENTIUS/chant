@@ -2,6 +2,12 @@
 title: Implementing Live Export
 description: How to implement exportResources() and the ownership marker so your lexicon participates in chant import --from and ownership-gated reconciliation.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/live-export/.
+  Implement `exportResources()` and the ownership marker read for the lexicon I name: the I/O in one file, the pure mapping onto `TemplateIR` through its import parser in another, wired from `src/plugin.ts` behind a dynamic import.
+  Test the mapping against recorded fixtures and the read against a local emulator or a faked transport, run `npx vitest run lexicons/<name>` and `chant dev check-lexicon lexicons/<name>`, and open a pull request.
+  Do not run `chant import --from` against a real account or a shared environment.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

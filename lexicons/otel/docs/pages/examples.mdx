@@ -3,6 +3,11 @@ title: "Examples"
 description: "The otel lexicon's example projects"
 diataxis: how-to
 order: 8
+prompt: |
+  Read https://intentius.io/chant/lexicons/otel/examples/.
+  Pick the example the page lists that fits the collector I describe, and write that collector in this project's src/ the same way.
+  Run `npx chant build src --lexicon otel -o collector.yaml` and `npx chant lint src` until both are clean, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Each example lives under `lexicons/otel/examples/` and builds with `chant build src --lexicon otel`. The lexicon's tests build every one, lint it with no warnings, and check the emitted config with `validateCollectorConfig`.

@@ -2,6 +2,12 @@
 title: Multi-Stack Projects
 description: Splitting an estate across several stacks
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/multi-stack/.
+  Split or join this project's stacks as the page shows: publish each shared value with `output()` in the producing project and declare a matching parameter in the consuming one, with the same name.
+  Build each stack with its own `npx chant build <dir> -o <out>`, run `npx chant lint`, and open a pull request.
+  List the values each stack needs at deploy time in the pull request description.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code } from '@astrojs/starlight/components';

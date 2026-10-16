@@ -2,6 +2,11 @@
 title: LSP & MCP Providers
 description: Editor completions, hover info, and AI tool support for your lexicon
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/lsp-mcp/.
+  Add the LSP completion and hover providers and the MCP tools and resources I describe to the lexicon I name, with tool and resource names in the lexicon's namespace as the page shows.
+  Write `completions.test.ts` and `hover.test.ts` and tests for each tool, run `npx vitest run lexicons/<name>` and `chant dev check-lexicon lexicons/<name>`, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Lexicons can provide editor integration through LSP (Language Server Protocol) and MCP (Model Context Protocol) contributions.

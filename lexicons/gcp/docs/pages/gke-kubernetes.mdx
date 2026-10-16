@@ -2,6 +2,12 @@
 title: "Deploying to GKE"
 description: "How GCP Config Connector infrastructure connects to Kubernetes workloads on GKE via chant's cross-lexicon build."
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/gcp/gke-kubernetes/.
+  Set up the cross-lexicon project the page describes: the gcp lexicon for the Config Connector resources, the k8s lexicon for the workloads, with the service account emails flowing through `.env` into `config.ts`.
+  Run `npm run build` and `npx chant lint src`, and open a pull request with the source and the built manifests.
+  List the deploy steps (`npm run bootstrap`, `npm run deploy-infra`, `npm run load-outputs`, `npm run apply`) for me to run in order, and do not run them or kubectl against any cluster yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

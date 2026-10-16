@@ -2,6 +2,11 @@
 title: Scaffold a Lexicon
 description: Use chant init lexicon to generate a new lexicon project
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/scaffold/.
+  In the chant repository, run `npx tsx packages/core/src/cli/main.ts init lexicon <name>` for the lexicon I name and then `npm install`. Run `chant dev check-lexicon lexicons/<name>`.
+  Show me the two tier-1 checks a fresh scaffold fails and what the page says closes each, and open a pull request with the scaffold.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The fastest way to start a new lexicon is with `chant init lexicon`:

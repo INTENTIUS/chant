@@ -2,6 +2,12 @@
 title: "Run ops on a fountain steward"
 description: "Declare one writer for an environment and run chant ops on its thread, with gates that stay on the chant ledger branch."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/fountain-steward/.
+  In a new directory, run `npx chant init --lexicon fountain --template steward` and `npm install`, then `npx chant build src --lexicon fountain -o dist/fountain.yaml` and `npx chant lint src`.
+  Show me the six documents the build wrote and the lint result, and stop there.
+  Do not run `steward-apply`, post anything with `--on fountain`, or create a fountain token.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

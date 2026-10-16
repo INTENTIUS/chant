@@ -2,6 +2,11 @@
 title: "Examples"
 description: "Walkthrough of Helm examples — basic composites, production patterns, and infrastructure charts"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/helm/examples/.
+  Pick the example the page lists that fits the chart I describe, and write the chart in this project's src/ the same way.
+  Run `npx chant build` and `npx chant lint` until both are clean, run `helm template` and `helm lint` on the built chart in dist/, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 Runnable examples live in the lexicon's `examples/` directory. Clone the repo and try them:
 

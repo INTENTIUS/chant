@@ -1,7 +1,13 @@
 ---
 title: Disposable Build Sandbox on Sprites
-description: Warm a toolchain once, checkpoint it, then build from staged source and read the artifact out — resetting to the warm checkpoint so the next build starts fast. Runs offline against the spritzer emulator, or real Sprites by dropping one override.
+description: Warm a toolchain once and checkpoint it, so each build starts from the warm checkpoint and reads its artifact out. It runs offline against the spritzer emulator, or against real Sprites once one override is dropped.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/sprites-build-sandbox/.
+  In `examples/sprites-build-sandbox`, run `npm install` and `npx chant emulator up`, export `SPRITES_BASE_URL=http://localhost:4290`, and run `npx chant run build-sandbox --no-record`.
+  Show me the output and the artifact the build read out, then run `npx chant emulator down`.
+  Set no Sprites token.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

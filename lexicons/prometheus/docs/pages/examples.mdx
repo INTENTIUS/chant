@@ -3,6 +3,12 @@ title: "Examples"
 description: "The prometheus lexicon's example projects"
 diataxis: how-to
 order: 8
+prompt: |
+  Read https://intentius.io/chant/lexicons/prometheus/examples/.
+  Pick the example the page lists that fits what I describe, and write the rules, routing or SLO in this project's src/ the same way.
+  Run `npx chant build src --lexicon prometheus -o dist/rules.yml` and `npx chant lint src` until both are clean, then `promtool check rules dist/rules.yml` and `amtool check-config dist/alertmanager.yml` when the tools are installed.
+  Open a pull request with the result.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Each example lives under `lexicons/prometheus/examples/`. The lexicon's tests build every one, lint it with no warnings, and run the lexicon's checks over the output with nothing to report; with `promtool` and `amtool` installed they run those too.

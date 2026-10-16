@@ -3,6 +3,12 @@ title: chant kube
 description: A terminal surface over the typed API client — kubectl-shaped reads with chant's own verdicts, and writes that go through the same machinery as deploys
 diataxis: how-to
 group: "Live Cluster"
+prompt: |
+  Read https://intentius.io/chant/lexicons/k8s/kube/.
+  In this chant project, use `npx chant kube get`, `describe`, `events`, `logs` and `source` to answer the question I ask about the environment I name, passing `--env <env>`.
+  Report what you find with the verdict chant gives each object.
+  Read only: never pass `--yes` to `chant kube apply` or `chant kube delete`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

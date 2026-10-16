@@ -3,6 +3,13 @@ title: "Alerting"
 description: "Declare Grafana-managed alert rules, contact points, notification policies and mute timings, and provision them from files"
 diataxis: how-to
 order: 5
+prompt: |
+  Read https://intentius.io/chant/lexicons/grafana/alerting/.
+  Declare the alert rules, contact points and notification policy I describe with `AlertRuleGroup`, `AlertRule`, `ContactPoint` and `NotificationPolicy`, in this chant project's src/.
+  Write every secret setting as `$__env{NAME}`, and list the variables I must set in the pull request description.
+  Run `npx chant build src --lexicon grafana -o dist/grafana/index.json` and `npx chant lint src` until both are clean, and open a pull request with src/.
+  Do not provision the file into a running Grafana other than a local container.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Grafana-managed alerting is declared with the same build as dashboards and datasources, and written to one provisioning file, `provisioning/alerting/chant.yaml`, in the format Grafana's file provisioner reads (the same at 12.4 and 13.x). Mount `provisioning/` at `/etc/grafana/provisioning` as for datasources; see [Provisioning](../provisioning/).

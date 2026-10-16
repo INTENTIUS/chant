@@ -2,6 +2,12 @@
 title: "Importing"
 description: "The JSON policy format round trip, reconcile, and ownership."
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/cedar/importing/.
+  Convert the existing Cedar policy set I name to the JSON policy format with `cedar-wasm` (`policySetTextToParts`, `policyToJson`) and write the matching typed policies in src/ against the project schema.
+  Run `npx chant cedar generate`, `npx chant build` and `npx chant lint src`, compare the emitted `.cedar` text with the original, and open a pull request with each difference listed.
+  Report any permit found in a policy store that no source declares as a finding for me; do not remove or change it in the store.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Bringing an existing Cedar policy set into typed source, and pulling console edits back.

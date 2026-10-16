@@ -2,6 +2,12 @@
 title: "Argo CD on GKE"
 description: "A minimal Argo CD on-ramp — one Chant-authored workload reconciled by Argo CD on a single GKE cluster, declared in TypeScript with ArgoAppFor."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/argo-cd-gke/.
+  Using `examples/argo-cd-gke` as the model, declare the workload with `WebApp` in `src/app` and its Argo CD `Application` with `ArgoAppFor` in `src/bootstrap`.
+  Run `npm run build` and `npx chant lint` until both pass and ARGO001 is clean, and open a pull request with the sources and `dist/app/`.
+  List in its description the commands a person runs next (`npm run cluster`, `npm run install-argocd`, `npm run bootstrap`); do not run them.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

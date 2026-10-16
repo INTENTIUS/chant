@@ -2,6 +2,12 @@
 title: Common Errors
 description: Solutions for frequently encountered chant errors
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/troubleshooting/common-errors/.
+  Run `npx chant lint` and `npx chant build` in this project, and match each error to its section on the page.
+  Fix each one as the page says, run both again until they pass, and open a pull request.
+  Add a `chant-disable-next-line` comment only with a reason I give you.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## EVL001: Expression Not Statically Evaluable

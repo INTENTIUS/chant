@@ -2,6 +2,12 @@
 title: Writing Resources
 description: How to define infrastructure resources in chant
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/writing-resources/.
+  Write the resources I describe as exported `const` declarations with the lexicon's typed constructors, in files under `src/`.
+  Keep every property statically evaluable. Use literals and `const` references, spreads from a `const`, or attributes of imported resources.
+  Run `npx chant build` and `npx chant lint` until both pass, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code } from '@astrojs/starlight/components';

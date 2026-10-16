@@ -3,6 +3,12 @@ title: "On Kubernetes"
 description: "Render the same RuleGroups into a PrometheusRule, through MonitoredService, or into ConfigMaps for a plain Prometheus and Alertmanager"
 diataxis: how-to
 order: 6
+prompt: |
+  Read https://intentius.io/chant/lexicons/prometheus/kubernetes/.
+  Render this project's `RuleGroup`s into the destination I name: a `PrometheusRule`, a `MonitoredService`, or ConfigMaps for a plain Prometheus and Alertmanager.
+  Run `npx chant build src --lexicon k8s -o dist/k8s.yaml`, `npx chant build src --lexicon prometheus -o dist/rules.yml` and `npx chant lint src` until all are clean, then `kubectl apply -f dist/k8s.yaml --dry-run=client`.
+  Open a pull request with src/.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A `RuleGroup` renders the same way into every destination, so the rules are declared once however Prometheus loads them.

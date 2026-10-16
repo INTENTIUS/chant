@@ -2,6 +2,11 @@
 title: "Importing"
 description: "Convert existing docker-compose.yml files and Dockerfiles to chant TypeScript"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/docker/importing/.
+  Import each Compose file and Dockerfile I name with `npx chant import --lexicon docker docker-compose.yml -o src/compose/` and `npx chant import --lexicon docker Dockerfile -o src/<name>/`, then rename each Dockerfile export after its image and point the Compose service at it by reference.
+  Run `npx chant lint src` and `npx chant build src --lexicon docker -o build/docker-compose.yml`, diff the output and the `Dockerfile.*` files beside it against the originals, and open a pull request with each difference listed.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The Docker lexicon can parse existing `docker-compose.yml` files and `Dockerfile`s and generate typed TypeScript equivalents.

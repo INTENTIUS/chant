@@ -1,55 +1,49 @@
 ---
 title: Agents Start Here
-description: A copy-paste prompt that gets an agent from zero to a working chant build
+description: The setup prompt for a coding agent, and the steps it follows to a working chant build
 diataxis: how-to
+prompt: setup
 ---
 
-Paste this into your agent. It installs chant, scaffolds a project, and points the
-agent at the skills and MCP tools that carry the rest of the work — see
-[Agent Integration](/chant/guide/agent-integration/) for what those surfaces do
-once installed.
+Paste the prompt above into your coding agent in the repository you want to set up. It sends the agent to this page, and the agent follows the steps below. It stops at a pull request, which a person reviews and merges. People also deploy to real accounts, approve gates and override policy denials. [Agent Integration](/chant/guide/agent-integration/) covers the skills, MCP tools and Ops the project carries once it is set up.
 
-````text
-You're setting up chant (https://intentius.io/chant), a TypeScript-first
-infrastructure tool: typed resources in, spec-native output out, validated by
-semantic lint rules.
+The same prompt is on the [home page](/chant/) and in the repository's README. Every tutorial and how-to page on this site carries a prompt of its own for its task, with the same last line.
 
-1. Pick the lexicon (platform plugin) for this project's target — aws, azure,
-   gcp, k8s, helm, docker, github, gitlab, forgejo, fly, terraform, or
-   fountain — then install it (this also installs the chant CLI):
+## The steps
 
-     npm install --save-dev @intentius/chant-lexicon-<name>
+chant (https://intentius.io/chant) is a TypeScript-first infrastructure tool. Typed resources go in, each platform's own format comes out, and semantic lint rules check it.
 
-2. Scaffold the project (use `.` if this repo is already the project root):
+1. Pick the lexicon (platform plugin) for this project's target, such as `aws`, `k8s` or `github`; [Lexicons](/chant/lexicons/overview/) lists them all. Install it, which also installs the chant CLI:
 
-     npx chant init . --lexicon <name>
+   ```sh
+   npm install --save-dev @intentius/chant-lexicon-<name>
+   ```
 
-   This writes `chant.config.ts`, starter resources, a `skills/` directory,
-   and a project `.mcp.json` registering the chant MCP server. Pass
-   `--skip-mcp` to scaffold without the `.mcp.json`, or `--skip-install` to
-   skip the dependency install prompt.
+2. Scaffold the project. Use `.` when this repository is already the project root:
 
-3. Read every `skills/*/SKILL.md` chant init just wrote before authoring
-   anything. They're the operational playbook for this platform: which
-   composites exist, what to validate, how to deploy. Don't guess at the
-   platform's shape — the skill already has it.
+   ```sh
+   npx chant init . --lexicon <name>
+   ```
 
-4. Author resources as typed, exported TypeScript objects (no YAML, no
-   string templates). Cross-file references are plain `import`/`export`.
+   This writes `chant.config.ts` and starter resources. It also writes a `skills/` directory and a project `.mcp.json` that registers the chant MCP server. Pass `--skip-mcp` to scaffold without the `.mcp.json`, or `--skip-install` to skip the dependency install prompt.
+
+3. Read every `skills/*/SKILL.md` that `chant init` wrote before you author anything. They are the playbook for this platform: which composites exist, what to validate and how to deploy. Take the platform's shape from the skill instead of guessing it.
+
+4. Author resources as exported TypeScript objects built with the lexicon's typed constructors. Use no YAML and no string templates. References across files are plain `import` and `export`.
 
 5. Validate before you call it done:
 
-     npx chant build   # synthesizes spec-native output; fails on type errors
-     npx chant lint     # semantic rules — fails on real misconfigurations, not style
+   ```sh
+   npx chant build   # synthesizes each platform's output; fails on type errors
+   npx chant lint    # semantic rules; fails on real misconfigurations
+   ```
 
-6. Query the estate instead of reading a synthesized dump — one compact,
-   edge-aware line per match:
+6. Query the estate with one compact line per match instead of reading a synthesized dump:
 
-     npx chant search "kind:<Type> attr:<name>=<value>"
+   ```sh
+   npx chant search "kind:<Type> attr:<name>=<value>"
+   ```
 
-If an MCP server is configured, prefer its `build`, `lint`, and `search`
-tools over shelling out — same operations, no terminal round-trip.
-````
+   When an MCP server is configured, use its `build`, `lint` and `search` tools in place of the shell. They run the same operations.
 
-Once this runs clean, the [Agent Integration](/chant/guide/agent-integration/)
-guide covers skills, MCP tools, and Ops in depth for everything past scaffolding.
+7. Open a pull request with the project. Stop there.

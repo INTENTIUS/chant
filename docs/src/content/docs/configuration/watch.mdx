@@ -2,6 +2,11 @@
 title: Watch Mode
 description: Automatic rebuilds and re-linting on file changes
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/configuration/watch/.
+  Start `npx chant build --watch` or `npx chant lint --watch` in this project while you edit the files I name, and fix each error it reports as you go.
+  Stop the watch when both are clean, and open a pull request with the changes.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 chant includes a watch mode that monitors your source files and automatically re-runs on changes. Available on both `build` and `lint` commands.

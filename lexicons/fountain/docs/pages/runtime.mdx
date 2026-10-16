@@ -2,6 +2,12 @@
 title: "Running an Op on fountain"
 description: "chant run --on fountain: profiles, the steward lookup, status, log, list, cancel, approve, and what to do when the steward is busy."
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/fountain/runtime/.
+  Add a fountain profile to `chant.config.ts` as the page shows, with the endpoint and team I name and the token read from an environment variable, never the token itself.
+  Run `npx chant run list --on fountain` and `npx chant run status <op> --on fountain` for the Ops I name, and show me the output; they only read.
+  Open a pull request with the config. Print the `chant run <op> --on fountain` command for me to run; do not start or cancel a run yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant run <op> --on fountain` hands a run to a fountain teammate instead of executing it here. The command line goes onto the steward's thread as a prompt, the CLI tails the conversation's event stream, and the run's record comes back in the same shape a local run would have written.

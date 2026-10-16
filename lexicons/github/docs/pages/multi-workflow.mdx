@@ -2,6 +2,11 @@
 title: "Multiple Workflows"
 description: "Define multiple GitHub Actions workflow files from a single Chant source directory using Workflow.jobs"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/github/multi-workflow/.
+  Move the jobs of the workflows I name into one chant source with `Workflow.jobs`, so each workflow writes its own file under `.github/workflows/`.
+  Run `npx chant build src --lexicon github -o .github/workflows/pipeline.yml` and `npx chant lint src`, diff the generated files against the old ones, and open a pull request with each difference listed.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A single Chant source directory can produce multiple `.github/workflows/*.yml` files. Export multiple `Workflow` entities and scope jobs to each one using `Workflow.jobs`.

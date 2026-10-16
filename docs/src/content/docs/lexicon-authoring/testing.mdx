@@ -2,6 +2,11 @@
 title: Testing Your Lexicon
 description: What each test file should cover and patterns for writing effective lexicon tests
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/testing/.
+  Bring the tests of the lexicon I name up to this page: `plugin.test.ts`, `serializer.test.ts`, the examples test, and the LSP, import, coverage and post-synth tests for the members it implements, using `@intentius/chant-test-utils`.
+  Run `npx vitest run lexicons/<name>` and `chant dev check-lexicon lexicons/<name>`, report what each tier says, and open a pull request with the tests.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This guide documents what each test file in a lexicon should cover, with patterns and checklists. Follow these to ensure consistent test quality across lexicons.

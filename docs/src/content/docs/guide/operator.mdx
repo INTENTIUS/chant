@@ -2,6 +2,12 @@
 title: Operator
 description: "chant operator: native durable ticks for ConvergeOp — a timer, a git-ref lease, and the local executor in a loop"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/operator/.
+  Read the ConvergeOps in this project. Then run `npx chant operator status` and `npx chant operator log --limit 50`, which only read the ledger, and show me the output.
+  Tell me the last tick and outcome of each Op, and each pending gate with the `chant approve` command a person would run for it.
+  Do not start `chant operator`, even with `--once`. A tick dispatches Ops and writes to the ledger.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

@@ -3,6 +3,12 @@ title: "Other Panel and Datasource Plugins"
 description: "Add a panel plugin or a datasource's query class that chant doesn't ship, with definePanel and defineQuery"
 diataxis: how-to
 order: 5
+prompt: |
+  Read https://intentius.io/chant/lexicons/grafana/custom-plugins/.
+  Declare the panel plugin or datasource query class I name with `definePanel` or `defineQuery`, typed from the plugin's own options, in this chant project's src/.
+  Use it in a dashboard, run `npx chant build src --lexicon grafana -o dist/grafana/index.json` and `npx chant lint src` until both are clean, and open a pull request.
+  In its description, say that GRAF107 does not check the new definition's options.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The built-in panels and query classes are defined through `definePanel` and `defineQuery`. A plugin chant doesn't ship uses the same two functions and gets the same layout, serialization and checks.

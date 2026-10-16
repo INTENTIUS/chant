@@ -2,6 +2,11 @@
 title: Write Lint Rules
 description: Imperative rules, declarative rules, and post-synth checks for your lexicon
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/lint-rules/.
+  Write the lint rules I describe for the lexicon I name, each id starting with the serializer's `rulePrefix`: pre-synth rules returned from `lintRules()`, and post-synth checks in `src/lint/post-synth/` picked up by `npm run generate:barrels`.
+  Give each rule a positive and a negative test, with `makePostSynthCtx` for post-synth checks. Run `npx vitest run lexicons/<name>` and `chant dev check-lexicon lexicons/<name>`, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Lexicons can contribute three kinds of validation: **imperative rules** (TypeScript compiler API), **declarative rules** (pattern matching DSL), and **post-synth checks** (validate serialized output).

@@ -5,6 +5,11 @@ diataxis: how-to
 order: 1
 label: "Declaring Tables and Views"
 group: "ClickHouse"
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/clickhouse-ddl/.
+  Declare the ClickHouse databases, tables, views, materialized views, dictionaries or functions I describe as tagged templates from `@intentius/chant-lexicon-sql/clickhouse`, with every column reference written as `${table.columns.name}`.
+  Run `npx chant build src --lexicon sql -o dist/schema.json` and `npx chant lint src` until both are clean, and open a pull request with the declarations.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A ClickHouse object is declared as its own DDL, inside a `database`, `table`, `view`, `dictionary` or `func` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:

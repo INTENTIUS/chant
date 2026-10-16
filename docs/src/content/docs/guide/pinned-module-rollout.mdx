@@ -2,6 +2,12 @@
 title: Pinned Module Rollout
 description: Roll a module version out across Terraform and Terragrunt roots as one pin-bump pull request per wave
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/pinned-module-rollout/.
+  Pin each call of the module I name to an OCI tag or digest, as the page shows, and run `npx chant terraform pin-rollout --module <source> --from <old> --to <new>` with the canaries I name, without `--pull-request`.
+  Show me the waves it prints, and open one pull request with the pinned calls.
+  Do not run it with `--pull-request` and do not merge any wave's pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This guide is for a monorepo of Terraform, OpenTofu or Terragrunt units that share modules. A change under `modules/` gives the CI no way to tell which units need applying. The answer here has two halves, and they work together:

@@ -3,6 +3,12 @@ title: "Plain .sql Files"
 description: "Keep schema in .sql files of CREATE statements beside the tagged templates; the build reads them into the same declarations, for Postgres and ClickHouse"
 diataxis: how-to
 order: 2
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/sql-files/.
+  Move the `.sql` files of CREATE statements I name into the source directory, so the build reads them beside the tagged templates, and take out any statement that is not schema.
+  Run `npx chant build src --lexicon sql -o dist/schema.json` and `npx chant lint src`, fix every error the build names by file and line, and report each warning about a clause chant does not read.
+  Open a pull request with the files.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A project can keep its schema, or part of it, in plain `.sql` files of `CREATE` statements. `chant build` reads every `.sql` file in the source directory and turns each object into the declaration `chant import` would write for it, so a file and the tagged templates can sit side by side and reference each other.

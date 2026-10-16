@@ -2,6 +2,11 @@
 title: "Matrix Strategies"
 description: "Matrix builds, dynamic matrices, fail-fast, max-parallel, and include/exclude patterns"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/github/matrix/.
+  Add the matrix strategy I describe to the job I name, with typed matrix expressions, `fail-fast` and `max-parallel` set as the page shows, and `include` or `exclude` where needed.
+  Run `npx chant build src --lexicon github -o .github/workflows/ci.yml` and `npx chant lint src` until the matrix lint rules are clean, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Matrix strategies let you run a job across multiple configurations in parallel. Define a `strategy.matrix` on a job to generate one run per combination of values.

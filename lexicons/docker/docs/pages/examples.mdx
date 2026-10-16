@@ -2,6 +2,11 @@
 title: "Examples"
 description: "Common Docker Compose and Dockerfile patterns"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/docker/examples/.
+  Write the Compose services and Dockerfiles I describe in src/, starting from the closest example on the page, with each Dockerfile as an ordered `steps` list.
+  Run `npx chant build src --lexicon docker -o docker-compose.yml`, `npx chant lint src` and `docker compose config --quiet` until all pass, and open a pull request. Do not push an image.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## Web app with database

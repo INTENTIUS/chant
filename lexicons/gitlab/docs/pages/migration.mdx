@@ -2,6 +2,12 @@
 title: "Migration"
 description: "Translate GitHub Actions workflows into GitLab CI/CD pipelines with chant migrate"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/gitlab/migration/.
+  Run `npx chant migrate <workflow> --output .gitlab-ci.yml --validate --report migration.sarif` for each GitHub Actions workflow I name, or `--emit ts` when I want chant source to keep.
+  List every NeedsReview item (MIG-...) and security finding it reports, with the change each needs, then run `npx chant lint src` on any emitted source.
+  Open a pull request with the output and that list. Keep the GitHub workflows, and do not set GitLab project settings or schedules yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant migrate` translates `.github/workflows/*.yml` into `.gitlab-ci.yml` or chant TypeScript source. It's the typed-compiler counterpart to the upstream `gitlab-org/ci-cd/github-actions-to-gitlab-ci` Agent Skill — same translation rules, but deterministic, testable, and re-runnable.

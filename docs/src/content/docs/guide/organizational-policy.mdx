@@ -2,6 +2,12 @@
 title: Organizational Policy
 description: Enforce org-specific rules ("no public buckets in prod", "every workload has a cost-center tag") as project-authored, environment-aware checks.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/organizational-policy/.
+  Write the policy I describe as a post-synth check in `policies/`, register it under `lint.policies` in `chant.config.ts`, and add a `policyGate()` step before the apply phase of any Op that deploys.
+  Run `npx chant build src --env <env>` for each environment I name and `npx chant lint`, and show me what each policy reports.
+  Open a pull request with the policy and the config. Do not suppress a finding to make a build pass.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code } from '@astrojs/starlight/components';

@@ -2,6 +2,12 @@
 title: Implementing Observation
 description: How to implement describeResources() and listArtifacts() so your lexicon participates in chant lifecycle diff --live
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/observation/.
+  Implement observation for the lexicon I name: `describeResources()` for resources chant applies, or `listArtifacts()` for things it finds, from the observer harness, returning the `ObservationResult` envelope with every entity it could not read in `unobserved`.
+  Inject the transport as the page shows, and assert on `normalizeObservation(result)` in its tests. Run `npx vitest run lexicons/<name>` and `chant dev check-lexicon lexicons/<name>`, and open a pull request.
+  Do not run `chant lifecycle diff --live` or `chant lifecycle snapshot` against a real account or a shared environment.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant lifecycle snapshot <env>` and `chant lifecycle diff <env> --live` query each lexicon for its view of the deployed world. Two opt-in plugin methods feed that pipeline:

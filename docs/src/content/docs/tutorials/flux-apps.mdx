@@ -2,6 +2,12 @@
 title: "Flux CD Self-Hosted"
 description: "A GitOps on-ramp for the self-hosted estate — a platform layer and two Chant-authored workloads reconciled by Flux CD, declared in TypeScript with FluxGitSource and FluxAppFor."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/flux-apps/.
+  Using `examples/flux-apps` as the model, declare the workloads in `src/platform` and `src/apps` and the loop with one `FluxGitSource` and a `FluxAppFor` per app.
+  Run `npm run build` and `npx chant lint` until both pass with FLUX001, FLUX002 and FLUX003 clean, and open a pull request with the sources and `dist/`.
+  To try the loop, use a local k3d cluster only: run `npm run install-flux`, `npm run install-cert-manager` and `npm run bootstrap` there, and show me `npm run status`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

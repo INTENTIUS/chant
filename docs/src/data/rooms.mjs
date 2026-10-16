@@ -19,6 +19,19 @@
 
 /** @typedef {{ label: string, href: string }} Link */
 
+import { neverLine, pageUrl } from '../prompts.mjs';
+
+/**
+ * A room's prompt for its First step: it names the room's page and ends with
+ * the never-line (scripts/lint-prompts.mjs checks both). `first.prompt` is
+ * this, or `'setup'` for the setup prompt in prompts.mjs.
+ */
+const roomPrompt = (id, ...lines) => [`Read ${pageUrl(`for/${id}`)}.`, ...lines, neverLine].join('\n');
+
+/** The setup steps for one lexicon, as a room prompt asks for them. */
+const setUp = (lexicon) =>
+	`Install it with \`npm install --save-dev @intentius/chant-lexicon-${lexicon}\`, run \`npx chant init . --lexicon ${lexicon}\`, and read every \`skills/*/SKILL.md\` it writes before you author anything.`;
+
 const install = (lexicon, dir = 'my-infra') =>
 	`npm install --save-dev @intentius/chant-lexicon-${lexicon}\nnpx chant init ${dir} --lexicon ${lexicon}`;
 
@@ -70,7 +83,8 @@ export const FORGES = [
 /**
  * The rooms, one per tile and role. `differs` adds lines to a forge's own (by
  * its id). `first.command` is `any` for every forge or one per forge id, in a
- * `sh` block; `first.note` comes before it.
+ * `sh` block; `first.note` comes before it. `first.prompt` is the step handed
+ * to a coding agent: `'setup'` for the setup prompt, or a room prompt.
  */
 export const ROOMS = [
 	{
@@ -85,7 +99,16 @@ export const ROOMS = [
 		differs: {
 			gitlab: ['The GitLab CI + AWS ALB tutorial deploys a multi-service Fargate application from GitLab CI.'],
 		},
-		first: { command: { any: install('aws') }, link: { label: 'Quick Start', href: 'getting-started/quick-start' } },
+		first: {
+			command: { any: install('aws') },
+			link: { label: 'Quick Start', href: 'getting-started/quick-start' },
+			prompt: roomPrompt(
+				'aws',
+				'Set up chant with the aws lexicon in this repository.',
+				setUp('aws'),
+				'Run `npx chant build` and `npx chant lint` until both pass, and open a pull request with the result. Deploy only to Floci, the local AWS emulator, and only when I ask.',
+			),
+		},
 		examples: ['examples/local-cloud-trio', 'examples/k8s-eks-microservice', 'examples/gitlab-aws-alb-infra'],
 		tasks: [
 			{ label: 'Quick Start', href: 'getting-started/quick-start' },
@@ -114,7 +137,16 @@ export const ROOMS = [
 			'Drift reported against the composite argument and source line that set the field, with a k3d demo you can run',
 		],
 		differs: {},
-		first: { command: { any: install('k8s') }, link: { label: 'Drift Back to Source', href: 'guide/drift-to-source' } },
+		first: {
+			command: { any: install('k8s') },
+			link: { label: 'Drift Back to Source', href: 'guide/drift-to-source' },
+			prompt: roomPrompt(
+				'kubernetes',
+				'Set up chant with the k8s lexicon in this repository, and the helm lexicon as well if it holds Helm charts.',
+				setUp('k8s'),
+				'Run `npx chant build` and `npx chant lint` until both pass, and open a pull request with the result. Apply manifests only to a local k3d cluster, and only when I ask.',
+			),
+		},
 		examples: ['examples/getting-started', 'examples/k8s-drift-to-source', 'examples/argo-cd-gke', 'examples/flux-apps'],
 		tasks: [
 			{ label: 'Drift Back to Source', href: 'guide/drift-to-source' },
@@ -146,6 +178,12 @@ export const ROOMS = [
 			note: 'For Azure, use `azure` in place of `gcp`.',
 			command: { any: install('gcp') },
 			link: { label: 'Local Testing', href: 'local-testing/overview' },
+			prompt: roomPrompt(
+				'gcp-azure',
+				'Set up chant in this repository with the gcp lexicon, or the azure lexicon when the repository targets Azure; use `azure` in place of `gcp` below.',
+				setUp('gcp'),
+				'Run `npx chant build` and `npx chant lint` until both pass, and open a pull request with the result. Deploy only to the local emulator (floci-gcp or floci-az), and only when I ask.',
+			),
 		},
 		examples: ['examples/local-cloud-trio', 'examples/k8s-gke-microservice', 'examples/k8s-aks-microservice', 'examples/cockroachdb-multi-region-gke'],
 		tasks: [
@@ -179,6 +217,13 @@ export const ROOMS = [
 		first: {
 			command: { github: install('github', 'my-pipelines'), gitlab: install('gitlab', 'my-pipelines'), forgejo: install('forgejo', 'my-pipelines') },
 			link: { label: 'Generated CI for Pull Requests', href: 'guide/pull-request-ci' },
+			prompt: roomPrompt(
+				'ci',
+				"Set up chant for this repository's pipelines with the lexicon of its forge: github, gitlab or forgejo. Use that name in place of `github` below.",
+				setUp('github'),
+				'Run `npx chant audit .` over the pipelines the repository has now, and list its findings in the pull request description.',
+				'Run `npx chant build` and `npx chant lint` until both pass, and open a pull request with the result.',
+			),
 		},
 		examples: ['examples/github-pr-preview', 'examples/gitlab-aws-alb-services'],
 		tasks: [
@@ -207,7 +252,16 @@ export const ROOMS = [
 			'Docker Compose services and multi-stage Dockerfiles from typed TypeScript',
 		],
 		differs: {},
-		first: { command: { any: install('fly', 'my-app') }, link: { label: 'Deploy Fly Machines Offline', href: 'tutorials/local-fly' } },
+		first: {
+			command: { any: install('fly', 'my-app') },
+			link: { label: 'Deploy Fly Machines Offline', href: 'tutorials/local-fly' },
+			prompt: roomPrompt(
+				'fly',
+				'Set up chant with the fly lexicon in this repository.',
+				setUp('fly'),
+				'Run `npx chant build` and `npx chant lint` until both pass, and open a pull request with the result. Deploy only to the mudflaps emulator, and only when I ask.',
+			),
+		},
 		examples: ['examples/local-fly', 'examples/fly-reconcile', 'examples/fly-deploy-rollback', 'examples/sprites-build-sandbox'],
 		tasks: [
 			{ label: 'Deploy Fly Machines Offline', href: 'tutorials/local-fly' },
@@ -238,6 +292,7 @@ export const ROOMS = [
 			note: 'Or paste the prompt from Agents Start Here and let the agent pick the lexicon.',
 			command: { any: install('aws', '.') },
 			link: { label: 'Agents Start Here', href: 'agents' },
+			prompt: 'setup',
 		},
 		examples: ['examples/getting-started', 'examples/alert-triage'],
 		tasks: [{ label: 'Agents Start Here', href: 'agents' }],
@@ -265,6 +320,12 @@ export const ROOMS = [
 			note: 'Policy runs during `chant build`; pass the environment with `--env`.',
 			command: { any: 'npx chant build src --env prod' },
 			link: { label: 'Organizational Policy', href: 'guide/organizational-policy' },
+			prompt: roomPrompt(
+				'platform',
+				`Following ${pageUrl('guide/organizational-policy')}, write the policy checks I describe as project code in this chant project.`,
+				'Run `npx chant build src --env <env>` for each environment I name, and show me what each check reports.',
+				'Open a pull request with the checks.',
+			),
 		},
 		examples: ['examples/fan-out-estate', 'examples/components-aws-e2e'],
 		tasks: [
@@ -295,7 +356,15 @@ export const ROOMS = [
 			'Lint rules that check meaning, such as whether a resource is encrypted, across lexicons',
 		],
 		differs: {},
-		first: { command: { any: 'npx @intentius/chant audit .' }, link: { label: 'chant audit', href: 'cli/audit' } },
+		first: {
+			command: { any: 'npx @intentius/chant audit .' },
+			link: { label: 'chant audit', href: 'cli/audit' },
+			prompt: roomPrompt(
+				'security',
+				'Run `npx @intentius/chant audit . --tier merge-worthy` in this repository, and report each finding with its file, its rule and the fix it suggests.',
+				'Read only: change no file and open no pull request.',
+			),
+		},
 		examples: ['examples/supply-chain'],
 		tasks: [
 			{ label: 'Linting & Type-Checking', href: 'guide/linting' },
@@ -325,6 +394,11 @@ export const ROOMS = [
 		first: {
 			command: { any: 'git clone https://github.com/INTENTIUS/chant\ncd chant/examples/getting-started\nnpm install\nnpm run build' },
 			link: { label: 'Quick Start', href: 'getting-started/quick-start' },
+			prompt: roomPrompt(
+				'evaluate',
+				'In a new directory, clone https://github.com/INTENTIUS/chant, and in `examples/getting-started` run `npm install` and `npm run build`.',
+				'Show me the output, and tell me what the example built and where it wrote it. Change nothing outside the new directory.',
+			),
 		},
 		examples: ['examples/getting-started', 'examples/local-cloud-trio', 'examples/local-op-quickstart'],
 		tasks: [
@@ -369,5 +443,6 @@ export function checkRooms() {
 		}
 		const cmd = r.first.command;
 		if (!cmd.any && !FORGES.every((f) => cmd[f.id])) throw new Error(`docs/src/data/rooms.mjs: room ${r.id} needs first.command.any or one per forge`);
+		if (typeof r.first.prompt !== 'string' || !r.first.prompt.trim()) throw new Error(`docs/src/data/rooms.mjs: room ${r.id} needs first.prompt: 'setup', or a prompt that names the room's page`);
 	}
 }

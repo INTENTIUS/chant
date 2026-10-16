@@ -2,6 +2,12 @@
 title: "Security"
 description: "Security best practices and checks for Helm charts"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/helm/security/.
+  Run `npx chant lint` on this project's Helm chart and fix every WHM401 to WHM407 finding as the page shows: pinned image tags, security contexts, resource requests, and `HelmExternalSecret` in place of inline Secret data.
+  Run `npx chant build` and `helm template` on the result, and open a pull request.
+  Do not write a secret's value into any file or the pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## Secret management

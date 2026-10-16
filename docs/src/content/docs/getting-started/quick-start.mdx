@@ -2,6 +2,12 @@
 title: Quick Start
 description: Get a chant project running in under five minutes
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/getting-started/quick-start/.
+  Follow the page in a new directory: install the aws lexicon, run `npx chant init my-infra --lexicon aws`, and add the resources and the `LambdaNode` composite it shows.
+  Run `npx chant build` and `npx chant lint`, then write the `hello.op.ts` Op and run it with `npx chant run hello --no-record`.
+  Show me the build output and the run output, and stop there. Skip the drift step, since it reads a deployed environment.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code, Aside } from '@astrojs/starlight/components';

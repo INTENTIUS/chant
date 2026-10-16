@@ -2,6 +2,11 @@
 title: Local Testing — GCP (floci-gcp)
 description: Deploy chant's Config Connector output to floci-gcp with gcpApply, which drives each resource as a native REST call — no cluster, no deployment service.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/local-testing/gcp/.
+  In `examples/local-cloud-trio`, run `npm install` and then `npx chant run gcp --no-record`. The run boots floci-gcp and applies the manifest with `gcpApply`. It checks the bucket and then removes the container, and it needs Docker.
+  Keep the `endpoint` override on the local floci-gcp port, and show me what the run prints.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

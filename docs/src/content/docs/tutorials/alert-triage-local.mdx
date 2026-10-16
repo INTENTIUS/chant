@@ -2,6 +2,12 @@
 title: Alert Triage (local)
 description: Run the alert-triage capstone locally — an incident-triage app whose remediation waits on a person, on nothing but Node and npm.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/alert-triage-local/.
+  In `examples/alert-triage`, run `npm install`, then `CHANT_NO_RECORD=1 npm run dev` so the triage run records nothing on the ledger.
+  When the run stops at the `approve-remediation` gate, show me the output and the approve command it printed. Show me `.chant/triage/current.json` too, and stop there.
+  Run `npm run build`, `npm run lint` and `npm test` and show me the results as well.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

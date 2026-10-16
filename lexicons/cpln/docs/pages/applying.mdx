@@ -3,6 +3,11 @@ title: "Applying"
 description: "What the serializer emits and how to apply it."
 diataxis: how-to
 order: 2
+prompt: |
+  Read https://intentius.io/chant/lexicons/cpln/applying/.
+  Run `npx chant build` and `npx chant lint src` until both pass, and check that `dist/cpln.yaml` holds only authoring fields, GVCs first.
+  Open a pull request with the source and the built file, and print the `cpln apply --file dist/cpln.yaml --ready` command for me to run; do not run `cpln apply` yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant build` emits one multi-document YAML file for `cpln apply`.

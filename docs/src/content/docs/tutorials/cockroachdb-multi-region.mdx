@@ -2,6 +2,12 @@
 title: "CockroachDB Multi-Region on GKE"
 description: "One CockroachDB cluster across three GCP regions — nine nodes, three composites, five Ops — with a local k3d smoke test that needs no cloud account."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/cockroachdb-multi-region/.
+  In `examples/cockroachdb-multi-region-gke`, run `npm install` and the local smoke test with `CHANT_NO_RECORD=1 npm run smoke`, which runs on one k3d cluster with no cloud account.
+  Show me the output, including the three regions SQL reports and the `REGIONAL BY ROW` write.
+  Do not run `npm run bootstrap`, `npm run deploy` or any `chant run crdb-*` Op against GCP.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
