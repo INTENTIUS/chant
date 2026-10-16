@@ -14,7 +14,7 @@ Instantiate and export:
 
 During build, composites expand to flat CloudFormation resources: `healthApiRole`, `healthApiFunc`, `healthApiPermission`.
 
-A top-level composite call assigned directly to an export — like `healthApi` above — is one of the patterns [folding](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). Defining a composite (the `Composite(...)` call inside `lambda-api.ts` itself) doesn't fold — its factory callback is a function, which is outside the fold subset — and neither does a composite call embedded as a nested value inside another resource's own properties; only a composite call that is itself a file's top-level export (or destructured/re-exported from one) is eligible.
+A top-level composite call assigned directly to an export (like `healthApi` above) is one of the patterns [folding](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). Defining a composite (the `Composite(...)` call inside `lambda-api.ts` itself) doesn't fold, because its factory callback is a function, outside the fold subset. Neither does a composite call embedded as a nested value inside another resource's own properties. Only a composite call that is itself a file's top-level export (or destructured/re-exported from one) is eligible.
 
 ## Built-in composites
 
@@ -67,7 +67,7 @@ Available constants:
 | `LogsActions` | `Write`, `Full` |
 | `ECSActions` | `RunTask`, `Service`, `Full` |
 
-Broad groups like `ReadWrite` are always supersets of their narrow counterparts (`ReadOnly` + `WriteOnly`). All values are `as const` arrays for full type safety.
+Broad groups like `ReadWrite` are always supersets of their narrow counterparts (`ReadOnly` + `WriteOnly`). All values are `as const` arrays.
 
 ## `withDefaults` — composite presets
 
@@ -75,11 +75,11 @@ Wrap a composite with pre-applied defaults. Defaulted props become optional:
 
 {{file:docs-snippets/src/with-defaults.ts}}
 
-`withDefaults` preserves the original composite's identity — same `_id` and `compositeName`, no new registry entry.
+`withDefaults` keeps the original composite's identity: same `_id` and `compositeName`, no new registry entry.
 
 ### Computed defaults
 
-`withDefaults` also accepts a function that receives the caller's props and returns defaults. This enables conditional logic without generating extra resources:
+`withDefaults` also accepts a function that receives the caller's props and returns defaults. Use it for conditional defaults that add no resources:
 
 {{file:docs-snippets/src/computed-defaults.ts}}
 
@@ -99,7 +99,7 @@ Merge semantics:
 ## Nested stacks
 
 :::caution
-Nested stacks add deployment complexity and are not recommended for most projects. Prefer flat composites instead.
+Nested stacks add deployment complexity. Most projects should use flat composites.
 :::
 
 When you need to split resources into a separate CloudFormation template, the lexicon supports nested stacks via `nestedStack()`. See the [Nested Stacks](../nested-stacks/) page for details.

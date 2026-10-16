@@ -1,6 +1,6 @@
 ---
 title: "chant helm"
-description: "The pinned-render command surface — classify a chart's pinnability, localize unstable output lines to their inputs, list recorded renders"
+description: "Pinned-render commands: classify a chart's pinnability, localize unstable output lines to their inputs, list recorded renders"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/helm/cli/.
@@ -10,7 +10,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-`chant helm` is the terminal surface over the pinned-renders machinery. It mounts through the lexicon command seam, so it exists only in projects whose config loads the `helm` lexicon.
+`chant helm` holds the pinned-render commands. It is a lexicon command, so it exists only in projects whose config loads the `helm` lexicon.
 
 Every verb accepts `--json` for the full report as machine-readable output.
 
@@ -32,7 +32,7 @@ chant helm classify ./charts/my-app --values prod-values.yaml
 chant helm classify ./charts/my-app --json | jq .verdict
 ```
 
-The verdict is a property of the `(chart, values)` pair, not the chart alone. A control-flow `lookup` the supplied values gate off is a recorded hazard, not a refusal — flipping that value re-classifies the pair, and `classify` with the flipped values file shows exactly that.
+The verdict is a property of the `(chart, values)` pair, not the chart alone. A control-flow `lookup` the supplied values gate off is recorded as a hazard and not refused; flipping that value re-classifies the pair, and `classify` with the flipped values file shows exactly that.
 
 ## Find what makes a render unstable
 
@@ -58,7 +58,7 @@ chant helm renders
 chant helm renders --json
 ```
 
-Runs discovery over the project source (the same import pass `chant build` starts with), so every `HelmRender` executes and records itself, then prints the table. The digests are the identities from the render pipeline — `inputDigest` joins renders and deploys of the same inputs, `contentDigest` names the exact bytes.
+Runs discovery over the project source (the same import pass `chant build` starts with), so every `HelmRender` executes and records itself, then prints the table. The digests are the identities from the render pipeline: `inputDigest` joins renders and deploys of the same inputs, `contentDigest` names the exact bytes.
 
 ## Diff two renders, offline
 
@@ -67,7 +67,7 @@ chant helm diff sha256:1a2b… sha256:9f0e…
 chant helm diff sha256:1a2b… sha256:9f0e… --json
 ```
 
-Resolves both content digests from the render store and pairs documents by identity (kind, namespace, name) — a document present on both sides with the same per-document digest is unchanged and never re-parsed; one whose digest differs is parsed on both sides and diffed field by field. Prints `ADDED`/`REMOVED`/`CHANGED` lines, a block of field changes under each changed document, and a count of unindexed documents on either side (never silently dropped). No cluster, no credentials — every byte compared comes from the archive.
+Resolves both content digests from the render store and pairs documents by identity (kind, namespace, name). A document present on both sides with the same per-document digest is unchanged and never re-parsed; one whose digest differs is parsed on both sides and diffed field by field. Prints `ADDED`/`REMOVED`/`CHANGED` lines, a block of field changes under each changed document, and a count of unindexed documents on either side (never silently dropped). Every byte compared comes from the archive, so it needs no cluster or credentials.
 
 ## Check a pinned render against the live cluster
 
@@ -75,6 +75,6 @@ Resolves both content digests from the render store and pairs documents by ident
 chant helm diff sha256:6f2c… prod --live
 ```
 
-Reads the render's document index — kind, namespace, name for everything it rendered, hook resources included, since `helm template` renders them as ordinary documents — and reads the live property tree for each one, by identity, through the same k8s-typed reader `describeResources`/`observeResourcesDeep` use. Reports property-level drift per document. A digest the store has never seen (an unpinned render — those are never persisted, see `renders` above) is refused with that reason, never silently reported clean.
+Reads the render's document index (kind, namespace, name for everything it rendered, hook resources included, since `helm template` renders them as ordinary documents) and reads the live property tree for each one, by identity, through the same k8s-typed reader `describeResources`/`observeResourcesDeep` use. Reports property-level drift per document. A digest the store has never seen (an unpinned render; those are never persisted, see `renders` above) is refused with that reason, never silently reported clean.
 
 Both `diff` modes dispatch off the same verb: two positional digests with no `--live` run the offline render-to-render comparison above; a digest plus an environment with `--live` runs the live comparison.

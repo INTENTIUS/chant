@@ -10,7 +10,7 @@ diataxis: explanation
     (parameters, outputs, conditions, mappings, tagging). Tagged explanation
     for its majority; not split in this PR. */}
 
-Every exported resource declaration becomes a logical resource in a CloudFormation template. The serializer handles the translation automatically:
+Every exported resource declaration becomes a logical resource in a CloudFormation template. The serializer:
 
 - Wraps output in `AWSTemplateFormatVersion: "2010-09-09"`
 - Converts camelCase property names to PascalCase (CloudFormation convention)
@@ -36,7 +36,7 @@ CloudFormation resource types like `AWS::S3::Bucket` are mapped to short TypeScr
 
 Common resources get fixed short names for stability. When two services define the same resource name (e.g. both ECS and AppRunner have `Service`), the less common one gets a service prefix.
 
-**Discovering available resources:** Your editor's autocomplete is the best tool — every resource is a named export from the lexicon. You can also run `chant list` to see all resource types, or browse the generated TypeScript types.
+**Discovering available resources:** Use your editor's autocomplete; every resource is a named export from the lexicon. You can also run `chant list` to see all resource types, or browse the generated TypeScript types.
 
 ## Allowed values in generated types
 
@@ -47,7 +47,7 @@ new LogGroup({ RetentionInDays: 45 });
 // Type '45' is not assignable to type '1 | 1096 | 120 | 14 | 150 | 180 | 1827 | ... | 90'
 ```
 
-The value of that is the error text. It lists the whole valid set, so the compiler answers the question instead of sending you to the console.
+The compiler error then lists every valid value.
 
 The Registry schema is silent on many properties that people write constantly, and it is inconsistent about which: `AWS::SageMaker::NotebookInstance.InstanceType` carried a union while `AWS::EC2::Instance.InstanceType` was a bare `string`. Two sources close that gap at generation time, both of them applied before anything is parsed, and neither of them reachable from `chant build`:
 
@@ -79,7 +79,7 @@ Chant projects use standard TypeScript imports. Lexicon types come from the lexi
 
 {{file:lambda-api/src/health-api.ts}}
 
-When you reference a resource or attribute from another file (e.g. `dataBucket.Arn`), the serializer resolves it to `Fn::GetAtt` or `Ref` as appropriate. This is how cross-file references work — standard imports, no indirection.
+When you reference a resource or attribute from another file (e.g. `dataBucket.Arn`), the serializer resolves it to `Fn::GetAtt` or `Ref` as appropriate.
 
 ## Parameters
 
@@ -172,19 +172,19 @@ The lexicon provides 9 intrinsic functions (`Sub`, `Ref`, `GetAtt`, `If`, `Join`
 
 ## Dependencies
 
-CloudFormation automatically creates dependencies between resources when you use `Ref` or `Fn::GetAtt`. Chant leverages this — when you reference `$.myBucket.arn`, the serializer emits `Fn::GetAtt` and CloudFormation infers the dependency.
+CloudFormation automatically creates dependencies between resources when you use `Ref` or `Fn::GetAtt`. When you reference `$.myBucket.arn`, the serializer emits `Fn::GetAtt` and CloudFormation infers the dependency.
 
 For cases where you need an explicit dependency without a property reference, pass `DependsOn` as a resource-level attribute (second constructor argument):
 
 {{file:docs-snippets/src/depends-on.ts}}
 
-`DependsOn` values can be string logical names or references to other resource objects — Declarable references are resolved to their logical names automatically at build time.
+`DependsOn` values can be string logical names or references to other resource objects; Declarable references are resolved to their logical names automatically at build time.
 
-The `WAW010` post-synth check warns if a `DependsOn` target is already referenced via `Ref` or `Fn::GetAtt` in properties — in that case the explicit dependency is redundant.
+The `WAW010` post-synth check warns if a `DependsOn` target is already referenced via `Ref` or `Fn::GetAtt` in properties, where the explicit dependency is redundant.
 
 ## Resource attributes
 
-Every resource constructor accepts an optional second argument for CloudFormation resource-level attributes. These control lifecycle behavior, conditional creation, and metadata — they are distinct from resource *properties* (the first argument).
+Every resource constructor accepts an optional second argument for CloudFormation resource-level attributes. These control lifecycle behavior, conditional creation and metadata, and are separate from resource *properties* (the first argument).
 
 {{file:docs-snippets/src/resource-attributes.ts}}
 
@@ -202,7 +202,7 @@ All attributes are optional. When omitted, CloudFormation uses its defaults (e.g
 
 ## Policy documents
 
-IAM policy documents appear on many AWS resources — `Role.assumeRolePolicyDocument`, `ManagedPolicy.policyDocument`, `BucketPolicy.policyDocument`, and others. These properties are typed as `PolicyDocument`, giving you autocomplete for the IAM JSON Policy Language.
+IAM policy documents appear on many AWS resources: `Role.assumeRolePolicyDocument`, `ManagedPolicy.policyDocument`, `BucketPolicy.policyDocument`, and others. These properties are typed as `PolicyDocument`, giving you autocomplete for the IAM JSON Policy Language.
 
 The `PolicyDocument` interface and its supporting types:
 
@@ -212,7 +212,7 @@ The `PolicyDocument` interface and its supporting types:
 | `IamPolicyStatement` | `Effect` (`"Allow"` \| `"Deny"`), `Action?`, `Resource?`, `Principal?`, `Condition?`, and their `Not` variants |
 | `IamPolicyPrincipal` | `"*"` or `{ AWS?, Service?, Federated? }` |
 
-Policy documents use **PascalCase keys** (`Effect`, `Action`, `Resource`) because they follow the IAM JSON Policy Language spec — CloudFormation passes them through to IAM as-is, unlike resource properties which are automatically converted from camelCase.
+Policy documents use **PascalCase keys** (`Effect`, `Action`, `Resource`) because they follow the IAM JSON Policy Language spec. CloudFormation passes them through to IAM as-is, unlike resource properties which are automatically converted from camelCase.
 
 The recommended pattern is to extract policies into your `defaults.ts` and import them directly:
 
@@ -226,7 +226,7 @@ For scoped resource ARNs, use `Sub` in the policy constant:
 
 {{file:docs-snippets/src/policy-scoped.ts}}
 
-The `IamPolicyPrincipal` type supports all principal forms — wildcard (`"*"`), AWS accounts, services, and federated providers:
+The `IamPolicyPrincipal` type supports all principal forms: wildcard (`"*"`), AWS accounts, services, and federated providers:
 
 ```typescript
 // Wildcard principal
@@ -248,11 +248,11 @@ Declare a condition with the `Condition` declarable and the condition intrinsics
 
 {{file:docs-snippets/src/conditions.ts}}
 
-`If`, the resource-level `Condition` attribute, a `stackOutput`'s `condition` option, and `And`/`Or`/`Not` operands all accept either the `Condition` declarable or a condition name string. A template that references a condition it never declares fails the build (WAW069) — CloudFormation would reject it at deploy time. `chant import` regenerates `Conditions` sections from existing templates. Prefer plain TypeScript logic for decisions that can be made at build time; conditions are for decisions the deployment makes from parameter values.
+`If`, the resource-level `Condition` attribute, a `stackOutput`'s `condition` option, and `And`/`Or`/`Not` operands all accept either the `Condition` declarable or a condition name string. A template that references a condition it never declares fails the build (WAW069), since CloudFormation would reject it at deploy time. `chant import` regenerates `Conditions` sections from existing templates. Prefer plain TypeScript logic for decisions that can be made at build time; conditions are for decisions the deployment makes from parameter values.
 
 ## Mappings
 
-CloudFormation Mappings are a static lookup mechanism. In chant, use TypeScript objects instead — they're evaluated at build time and produce the same result:
+For a static lookup, use a TypeScript object instead of a CloudFormation Mapping. It is evaluated at build time and gives the same result:
 
 {{file:docs-snippets/src/mappings.ts}}
 
@@ -275,17 +275,17 @@ export const mappedServer = new Instance({
 ## Nested stacks
 
 :::caution
-Nested stacks add deployment complexity and are not recommended for most projects. Prefer [flat composites](../composites/) instead.
+Nested stacks add deployment complexity. Most projects should use [flat composites](../composites/).
 :::
 
 CloudFormation nested stacks (`AWS::CloudFormation::Stack`) split resources into child templates. The lexicon supports them via `nestedStack()` for cases where you exceed the 500-resource limit or need to package reusable infrastructure as a black box. See the [Nested Stacks](../nested-stacks/) page for details.
 
 ## Tagging
 
-Use `defaultTags()` to declare project-wide tags. The serializer automatically injects them into every taggable resource at synthesis time:
+Use `defaultTags()` to declare project-wide tags. The serializer adds them to every taggable resource at build time:
 
 {{file:docs-snippets/src/tagging.ts}}
 
-No other changes needed — all taggable resources in the project get these tags automatically. Resources with explicit `Tags` keep them (explicit key wins over default). Non-taggable resources like `AWS::Lambda::Permission` are never tagged.
+Resources with explicit `Tags` keep them (explicit key wins over default). Non-taggable resources like `AWS::Lambda::Permission` are never tagged.
 
 Tag values support strings, `Parameter` references, and intrinsic functions (`Sub`, `Ref`, etc.).

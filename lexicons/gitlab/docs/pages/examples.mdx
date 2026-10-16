@@ -1,6 +1,6 @@
 ---
 title: "Examples"
-description: "Walkthrough of GitLab CI/CD examples — pipelines, composites, and cross-lexicon patterns"
+description: "GitLab CI/CD example projects: pipelines, composites and cross-lexicon patterns"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/gitlab/examples/.
@@ -21,7 +21,7 @@ npx vitest run    # run the tests
 
 ## Getting Started
 
-`examples/getting-started/` — a 2-stage Node.js pipeline with build and test jobs.
+`examples/getting-started/`: a 2-stage Node.js pipeline with build and test jobs.
 
 ```
 src/
@@ -31,7 +31,7 @@ src/
 
 ### Shared configuration
 
-`config.ts` extracts reusable objects — image and cache — so jobs stay concise:
+`config.ts` holds the shared image and cache, so jobs stay short:
 
 {{file:getting-started/src/config.ts}}
 
@@ -91,7 +91,7 @@ test:
 
 ## Docker Build
 
-`examples/docker-build/` — builds and pushes a Docker image using the `DockerBuild` composite.
+`examples/docker-build/`: builds and pushes a Docker image using the `DockerBuild` composite.
 
 {{file:docker-build/src/pipeline.ts}}
 
@@ -99,25 +99,25 @@ The `DockerBuild` composite expands to a job with Docker-in-Docker service, regi
 
 ## Node Pipeline
 
-`examples/node-pipeline/` — a full Node.js CI pipeline using the `NodePipeline` composite.
+`examples/node-pipeline/`: a full Node.js CI pipeline using the `NodePipeline` composite.
 
 {{file:node-pipeline/src/pipeline.ts}}
 
 ## Python Pipeline
 
-`examples/python-pipeline/` — a Python CI pipeline using the `PythonPipeline` composite.
+`examples/python-pipeline/`: a Python CI pipeline using the `PythonPipeline` composite.
 
 {{file:python-pipeline/src/pipeline.ts}}
 
 ## Review App
 
-`examples/review-app/` — deploys a review environment per merge request using the `ReviewApp` composite.
+`examples/review-app/`: deploys a review environment per merge request using the `ReviewApp` composite.
 
 {{file:review-app/src/pipeline.ts}}
 
 ## Merge-request plan widget
 
-The `MrPlanReport` composite turns `chant lifecycle plan` into the GitLab merge-request plan widget — the "N to add, M to change, K to delete" summary GitLab renders from an `artifacts:reports:terraform` artifact:
+The `MrPlanReport` composite turns `chant lifecycle plan` into the GitLab merge-request plan widget: the "N to add, M to change, K to delete" summary GitLab renders from an `artifacts:reports:terraform` artifact:
 
 ```typescript
 import { MrPlanReport } from "@intentius/chant-lexicon-gitlab";
@@ -131,16 +131,16 @@ export const plan = MrPlanReport({
 
 The job runs `chant lifecycle plan prod --report gitlab-mr`, writes the count JSON to `tfplan.json`, and declares it as `artifacts:reports:terraform`. On the merge request, GitLab shows the plan summary inline.
 
-Caveats worth knowing:
+Caveats:
 
-- The widget label always reads **"Terraform"** — that is GitLab's fixed string for this report type, not a claim chant makes.
-- It is **counts only** (create/update/delete). `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change. There is no per-resource breakdown — run `chant lifecycle plan` in the job log for that.
+- The widget label always reads **"Terraform"**; that is GitLab's fixed string for this report type, not a claim chant makes.
+- It is **counts only** (create/update/delete). `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change. There is no per-resource breakdown; run `chant lifecycle plan` in the job log for that.
 - It is a **GitLab-only** surface. The same plan JSON is portable, but the widget is GitLab's.
-- The plan reads the live system, so the job needs cloud credentials — wire them via `before` or CI variables.
+- The plan reads the live system, so the job needs cloud credentials; wire them via `before` or CI variables.
 
 ## AWS ALB Deployment
 
-A cross-lexicon example showing how to deploy AWS CloudFormation stacks from GitLab CI. Two pipelines mirror the separate-project AWS ALB pattern: one for the shared infrastructure, one for the two Fargate services on it.
+This cross-lexicon example deploys AWS CloudFormation stacks from GitLab CI. Two pipelines mirror the separate-project AWS ALB pattern: one for the shared infrastructure, one for the two Fargate services on it.
 
 ### Infra pipeline
 

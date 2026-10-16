@@ -4,9 +4,9 @@ description: "The .cedarschema this lexicon's codegen reads, and how it is resol
 diataxis: reference
 ---
 
-Unlike every other lexicon, cedar's interesting spec is not one global upstream. It is **your** schema.
+Unlike every other lexicon, cedar generates from **your** schema rather than one global upstream spec.
 
-The pinned upstream here is the Cedar *grammar* — `@cedar-policy/cedar-wasm`,
+The pinned upstream here is the Cedar *grammar*, `@cedar-policy/cedar-wasm`,
 whose language version is asserted before anything is emitted. The schema is
 the input.
 
@@ -16,9 +16,9 @@ the input.
 2. `schema.cedarschema` in the project root
 3. the schema bundled with the lexicon
 
-Step 3 exists so `generate()` has something to read in a fresh clone — a
+Step 3 exists so `generate()` has something to read in a fresh clone; a
 generate step that only works after the user does something is a generate step
-nothing gates. It is a real application-authorization model, not a stub.
+nothing gates. It is a complete application-authorization model.
 
 **Turn it off once you have your own:**
 
@@ -41,7 +41,7 @@ export default {
 ```
 
 Without `requireProjectSchema`, a typo in the path is the difference between
-"your entity types" and "the bundled default" — and the build succeeds either
+"your entity types" and "the bundled default", and the build succeeds either
 way.
 
 ## Where the output goes
@@ -106,7 +106,7 @@ namespace App {
 }
 ```
 
-Common types (`type Level = Long`) are resolved away by the codegen — real
+Common types (`type Level = Long`) are resolved away by the codegen. Real
 schemas use them, so the resolver collapses them rather than pretending they
 are absent.
 

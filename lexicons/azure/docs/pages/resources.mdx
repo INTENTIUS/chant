@@ -96,7 +96,7 @@ export const storage = new StorageAccount({
 
 ## apiVersion
 
-Every ARM resource requires an `apiVersion` — the serializer injects the latest stable version automatically. You typically never set this manually.
+Every ARM resource requires an `apiVersion`. The serializer fills in the latest stable version, so you rarely set it.
 
 The post-synth checks AZR011 and AZR012 validate:
 - **AZR011**: apiVersion exists and follows YYYY-MM-DD format

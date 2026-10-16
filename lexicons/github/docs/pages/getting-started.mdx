@@ -68,7 +68,7 @@ jobs:
 chant lint src/
 ```
 
-Lint checks for common issues — missing timeouts, hardcoded secrets, raw expression strings, and more. See the [Lint Rules](/chant/lexicons/github/lint-rules/) page for the full list.
+Lint reports missing timeouts, hardcoded secrets, raw expression strings and more. See the [Lint Rules](/chant/lexicons/github/lint-rules/) page for the full list.
 
 ## 5. Deploy
 
@@ -80,7 +80,7 @@ git commit -m "Add CI workflow"
 git push
 ```
 
-GitHub automatically picks up any `.github/workflows/*.yml` files and runs them on the configured triggers.
+GitHub runs every `.github/workflows/*.yml` file on its configured triggers.
 
 ## Next steps
 

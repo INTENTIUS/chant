@@ -1,10 +1,10 @@
 ---
 title: "Composites"
-description: "OwnerCanManage and DenyByDefaultSet — the shapes Cedar has nowhere to put."
+description: "OwnerCanManage and DenyByDefaultSet, factories for policy shapes Cedar can't reuse."
 diataxis: reference
 ---
 
-Cedar has no functions, no modules, and no loops, so every repeated policy shape is copy-paste in `.cedar` text. A TypeScript factory is the only place the abstraction can live.
+Cedar has no functions, modules or loops, so a repeated policy shape is copy-paste in `.cedar` text. A TypeScript factory writes it once.
 
 These follow chant's general
 [composite resources](/chant/guide/composite-resources/) pattern: a function
@@ -16,7 +16,7 @@ import { OwnerCanManage, DenyByDefaultSet } from "@intentius/chant-lexicon-cedar
 
 ## OwnerCanManage
 
-"The owner of a thing may act on it" — the most-repeated shape in any policy
+"The owner of a thing may act on it" is the most-repeated shape in any policy
 set, and where the two classic mistakes get made: the `when` guard names an
 attribute the schema spells differently, or the grant is written wide and the
 scoping clause is forgotten.
@@ -62,7 +62,7 @@ omitting the field rather than arriving by accident.
 
 A guarded `forbid` and the permits it governs, returned from one call. The
 pattern teams write by hand is a forbid at the top of a file and a pile of
-permits under it with nothing tying the two together — delete the forbid and
+permits under it with nothing tying the two together. Delete the forbid and
 the permits keep working, wider than anyone intended.
 
 ```typescript
@@ -87,7 +87,7 @@ export const documentOwnerGrant = guarded.members[0];
 | `all` | `[floor, ...members]` |
 
 `when` is required. An unguarded forbid overrides every permit in the set, so
-the result would authorize nothing — the composite throws rather than emit it.
+the result would authorize nothing, so the composite throws rather than emit it.
 
 ## Where composites go in a build
 
@@ -98,6 +98,6 @@ from a discovered file is all that is needed:
 export const [floor, grant] = DenyByDefaultSet({ /* … */ }).all;
 ```
 
-The floor is emitted first. Cedar's evaluation is order-independent — a forbid
-wins wherever it sits — but a file that reads floor-first matches how the set
+The floor is emitted first. Cedar's evaluation is order-independent (a forbid
+wins wherever it sits), but a file that reads floor-first matches how the set
 is reasoned about.

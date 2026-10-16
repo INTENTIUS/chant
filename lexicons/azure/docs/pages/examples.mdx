@@ -1,6 +1,6 @@
 ---
 title: "Examples"
-description: "Walkthrough of each example project"
+description: "The Azure lexicon's example projects"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/azure/examples/.
@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-The Azure lexicon ships with several example projects demonstrating common patterns.
+The Azure lexicon ships these example projects.
 
 ## basic-storage
 
@@ -119,7 +119,7 @@ export const { virtualMachine, nic, nsg: vmNsg } = VmLinux({
 
 ## multi-resource
 
-A multi-tier application with storage and web app, demonstrating cross-resource references via intrinsics.
+A multi-tier application with storage and a web app, wired together with intrinsics.
 
 ```typescript
 import {

@@ -12,7 +12,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-Chant supports cross-lexicon projects where Azure infrastructure and Kubernetes workloads live in the same `src/` directory. The Azure lexicon produces an ARM template; the K8s lexicon produces kubectl-ready YAML.
+Azure infrastructure and Kubernetes workloads can live in the same `src/` directory. The Azure lexicon produces an ARM template; the K8s lexicon produces kubectl-ready YAML.
 
 ## Architecture
 
@@ -50,7 +50,7 @@ ARM template outputs map to K8s composite props via `.env`:
 | `AZURE_TENANT_ID` | `tenantId` props on multiple composites |
 | `AKS_CLUSTER_NAME` | `clusterName` props |
 
-Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+Values pass from `.env` to `config.ts` to the K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
 
 ## K8s composites used
 
@@ -78,7 +78,7 @@ npm run apply          # kubectl apply
 ```
 
 <Aside type="note">
-AKS ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+AKS ships its own metrics-server. HPA uses it directly, so skip the MetricsServer composite.
 </Aside>
 
 ## Further reading
