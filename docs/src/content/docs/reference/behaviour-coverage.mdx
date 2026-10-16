@@ -4,11 +4,11 @@ description: Which entities a behaviour engine prices, which are declared unmapp
 diataxis: reference
 ---
 
-A prediction from `chant graph --traffic` reaches an engine with every entity the project declares, and not every entity has a rate. This page is the whole of what the lexicons say about their own entities, generated from the rows each contributes through its plugin's `behaviourKinds` field. A table transcribed by hand stops being true the first time a row changes, so `test/behaviour-coverage.test.ts` fails when this page and the rows disagree.
+A prediction from `chant graph --traffic` reaches an engine with every entity the project declares, and not every entity has a rate. This page lists every row the lexicons contribute through their plugins' `behaviourKinds` field, and is generated from those rows. A table transcribed by hand stops being true the first time a row changes, so `test/behaviour-coverage.test.ts` fails when this page and the rows disagree.
 
 ## Three verdicts, not two
 
-An entity resolves to exactly one verdict, and the second and third are different answers rather than one answer written twice.
+An entity resolves to exactly one verdict, and the second and third are different answers.
 
 | Verdict | What it means | Where the entity lands |
 |---|---|---|
