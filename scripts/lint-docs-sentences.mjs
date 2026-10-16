@@ -96,11 +96,16 @@ function promptProse(text) {
   const kept = lines.map((line) => {
     if (PROMPT_BLOCK.test(line)) {
       inPrompt = true;
-      return blank(line);
+      return "";
     }
     if (inPrompt && (line === "" || /^\s/.test(line))) return line.includes(neverLine) || READ_PAGE.test(line) ? blank(line) : line;
     inPrompt = false;
-    return blank(line);
+    // A description is reader-facing prose: keep its value, blank only the key.
+    const desc = /^(description:\s*)(.*)$/.exec(line);
+    if (desc) return blank(desc[1]) + desc[2];
+    // Emptied, not blanked to spaces, so the description and the prompt stay
+    // separate paragraphs; line numbers are unchanged.
+    return "";
   });
   return kept.join("\n") + text.slice(m[0].length);
 }
