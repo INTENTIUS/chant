@@ -47,7 +47,8 @@ Two SLOs over OpenTelemetry span metrics: a 28-day one written as good over tota
 
 ## k3d-stack
 
-Prometheus and Alertmanager as plain k8s workloads, each reading its config from a ConfigMap filled by `ruleFileYaml` and `alertmanagerYaml`. An always-firing `Watchdog` alert proves the path end to end; see [Checking with promtool and amtool](../upstream-tools/#on-a-cluster) for the e2e run.
+Prometheus and Alertmanager as plain k8s workloads, each reading its config from a ConfigMap filled by `ruleFileYaml` and `alertmanagerYaml`. An always-firing `Watchdog` alert checks the path from Prometheus through Alertmanager;
+=== see [Checking with promtool and amtool](../upstream-tools/#on-a-cluster) for the e2e run.
 
 ```ts title="src/workloads.ts"
 {{file:k3d-stack/src/workloads.ts}}

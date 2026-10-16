@@ -6,8 +6,8 @@ diataxis: reference
 
 Rules run in two phases:
 
-- **Pre-synth** (`chant lint`) — static analysis on TypeScript source
-- **Post-synth** (`chant build`) — checks on the generated `docker-compose.yml` / `Dockerfile.*`
+- Pre-synth, in `chant lint`: static analysis of the TypeScript source
+- Post-synth, in `chant build`: checks on the generated `docker-compose.yml` / `Dockerfile.*`
 
 ## Pre-synth rules
 
@@ -87,7 +87,7 @@ export const svc = new Service({ ports: ["22:22"] });  // ✗
 ### DKRD010 — apt-get without --no-install-recommends
 **Severity:** warning | **Applies to:** Dockerfiles
 
-`apt-get install` without `--no-install-recommends` installs unnecessary packages and bloats image size.
+`apt-get install` without `--no-install-recommends` installs packages the image does not need and makes it larger.
 
 ```dockerfile
 # ✗
@@ -100,7 +100,8 @@ RUN apt-get install -y --no-install-recommends curl
 ### DKRD011 — Prefer COPY over ADD
 **Severity:** info | **Applies to:** Dockerfiles
 
-`ADD` has implicit behaviours (URL fetching, tar extraction). Use `COPY` for plain file copies; use `ADD` only when its extra features are intentionally needed.
+`ADD` has implicit behaviours (URL fetching, tar extraction). Use `COPY` for plain file copies, and `ADD` only to fetch a URL or extract a tar.
+===
 
 ### DKRD012 — Container runs as root
 **Severity:** warning | **Applies to:** Dockerfiles

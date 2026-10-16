@@ -13,7 +13,8 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-`postgresApply` makes the Postgres server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "postgres"`, and an Op step of its own for a hand-written Op. It sends the statements for every change [the classifier](../postgres-change-classifier/) does not put in the expand-and-contract class, and nothing for the objects that have one.
+`postgresApply` makes the Postgres server an environment is bound to hold what a `chant build` declares. `ApplyOp` runs it for `target: "postgres"`, and a hand-written Op can call it as a step.
+=== It sends the statements for every change [the classifier](../postgres-change-classifier/) does not put in the expand-and-contract class, and nothing for the objects that have one.
 
 ## Apply with ApplyOp
 

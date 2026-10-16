@@ -12,7 +12,8 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Some changes ClickHouse cannot make to the table it has. The sorting key is the on-disk order and, in a `ReplacingMergeTree`, the dedup identity, so changing it means writing every row again into a new table. [The classifier](../change-classifier/) puts these in the rebuild class, and both `chant sql plan` and the [applier](../applying/) refuse them in place. `ClickHouseRebuildOp` is what runs them.
+Some changes ClickHouse cannot make to the table it has. The sorting key is the on-disk order and, in a `ReplacingMergeTree`, the dedup identity, so changing it means writing every row again into a new table. [The classifier](../change-classifier/) puts these in the rebuild class, and both `chant sql plan` and the [applier](../applying/) refuse them in place. `ClickHouseRebuildOp` runs them.
+===
 
 ## Start from the plan
 

@@ -7,7 +7,8 @@ label: "Where the Types Come From"
 group: "ClickHouse"
 ---
 
-ClickHouse publishes no schema for its DDL. What it does publish, inside every server, is a set of `system.*` tables describing what that server accepts. The ClickHouse dialect's types are generated from those tables at one pinned server release, so a type here is a name the pinned server knows, not one a document claims it should.
+ClickHouse publishes no schema for its DDL. What it does publish, inside every server, is a set of `system.*` tables describing what that server accepts. The ClickHouse dialect's types are generated from those tables at one pinned server release, so every type here is a name the pinned server knows.
+===
 
 ## What is read
 

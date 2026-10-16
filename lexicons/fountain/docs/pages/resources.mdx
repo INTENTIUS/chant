@@ -16,7 +16,7 @@ A reusable sandbox baseline: packages, repos, setup script, env vars,
 encrypted secrets, and the networking policy. `networking_type` is
 `"unrestricted" | "limited"`; under `limited`, egress is restricted to
 `networking_config.allowed_hosts`, and with no hosts (or an empty list) the
-sandbox denies all egress — a deny-all, not an allow-all. FTN010 requires the
+sandbox denies all egress. FTN010 requires the
 networking intent to be explicit.
 
 `setup_timeout_seconds` bounds how long the setup script may run, from 1 to 900
@@ -32,7 +32,7 @@ write a reference that resolves at build, never a literal (FTN001).
 ## Vault
 
 A bag of env-var overrides selected at conversation create. Vault values
-win on key collision with the environment — which is why agents can carry
+win on key collision with the environment, which is why agents can carry
 a vault allowlist upstream (fountain#136). `allowed_vault_ids` on an Agent is
 three-state: `null` allows any tenant vault, `[]` forbids all, a list is an
 allowlist.
@@ -41,8 +41,9 @@ allowlist.
 
 A named, re-runnable agent configuration: model, runtime, skills (inline
 SKILL.md or GitHub-sourced with a `ref` pin), MCP servers, and an optional
-`environment` reference — typed, so a dangling reference is a build error,
-not a 422 at apply time. `sandbox_mode` picks between a sandbox per
+`environment` reference, typed, so a dangling reference is a build error
+instead of a 422 at apply time.
+=== `sandbox_mode` picks between a sandbox per
 conversation and one persistent computer per agent identity.
 
 ### The ACP runtime

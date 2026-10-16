@@ -6,7 +6,7 @@ diataxis: reference
 
 `chant acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) over stdio. An editor or a fountain sandbox spawns the process, sends JSON-RPC 2.0 on stdin, and gets `session/update` notifications back.
 
-It is fountain-agnostic by construction. Nothing in it imports a fountain type, a fountain route, or a fountain URL; it ships in this lexicon because a fountain `Agent` with `runtime: "acp"` and `runtime_command: "chant acp"` is its first host, and any ACP client drives it unchanged.
+It imports no fountain type, route or URL. It ships in this lexicon because a fountain `Agent` with `runtime: "acp"` and `runtime_command: "chant acp"` is its first host, and any ACP client drives it unchanged.
 
 ```bash
 chant acp                 # the bare form a client spawns
@@ -25,11 +25,11 @@ chant lifecycle diff --live
 chant build
 ```
 
-That is the whole convention, and it is what makes a steward's thread readable: each turn is a command someone could have typed, so scrolling the thread is scrolling the environment's shell history.
+Each turn is a command someone could have typed, so a steward's thread reads as the environment's shell history.
 
-It is a command *line*, not a shell line. The text is split with quote awareness and nothing else. No `$VAR`, no `&&`, no pipes, no globbing, no redirection. The verb is then resolved against chant's own command registry, so the set of things this accepts is exactly the set `chant --help` prints, and a prompt that does not parse to a chant verb is refused before anything runs. `rm -rf /` never reaches a shell, because there is no shell.
+No shell parses it: the text is split with quote awareness and nothing else. No `$VAR`, no `&&`, no pipes, no globbing, no redirection. The verb is then resolved against chant's own command registry, so the set of things this accepts is exactly the set `chant --help` prints, and a prompt that does not parse to a chant verb is refused before anything runs. `rm -rf /` never reaches a shell, because there is no shell.
 
-Nothing here shells out at all: a parsed command is dispatched in this process, against the checkout the session's `cwd` points at.
+A parsed command runs in this process, against the checkout the session's `cwd` points at.
 
 ## What a client sees
 
@@ -38,9 +38,9 @@ Nothing here shells out at all: a parsed command is dispatched in this process, 
 | `chant run <op>` | one `tool_call` per declared step, `pending`, emitted before the run starts, then a `tool_call_update` as each step settles. Stdout and stderr stream as `agent_message_chunk`s, and the run's ledger record is the final chunk. |
 | any other verb | runs with `--json`; output streams as `agent_message_chunk`s the same way. |
 
-An Op's declaration is the plan, so the whole plan arrives up front and fills in. A client renders the shape of the run immediately instead of watching calls appear one at a time with no idea how many are coming. Tool calls carry `kind: "execute"`, the title `<phase> / <fn>`, and the step's args as `rawInput`.
+An Op's declaration is the plan, so the whole plan arrives up front and fills in, and a client can draw every step before the first one runs. Tool calls carry `kind: "execute"`, the title `<phase> / <fn>`, and the step's args as `rawInput`.
 
-A record that matches no declared step, which is what an `onFailure` phase produces, opens its own tool call and closes it in the same breath. Failure phases are not part of the plan because they only run when the plan fails.
+A record that matches no declared step, which is what an `onFailure` phase produces, opens its own tool call and closes it at once. Failure phases are not part of the plan because they only run when the plan fails.
 
 ## Protocol surface
 
@@ -64,7 +64,7 @@ By default a run that reaches an unapproved gate ends its turn. The reply carrie
 chant approve prod-apply deploy-window --approver <you>
 ```
 
-The gate is a fact on chant's ledger, not a wait held open inside the sandbox. Nothing blocks, no machine is pinned by a decision nobody has made yet, and the next run re-evaluates the fact.
+The gate is a fact on chant's ledger. The turn ends and frees the sandbox, and the next run re-evaluates the fact.
 
 ### `--durable-requests`
 
@@ -80,4 +80,5 @@ The `runtime: "acp"` and `runtime_command` pair the steward sets is in fountain'
 
 ## Redaction
 
-The server does not redact. A step's output reaches the thread verbatim and fountain redacts secrets on the way in. chant never reads or prints the environment it was spawned with, so nothing is added to what the command itself chose to say.
+The server does not redact. A step's output reaches the thread verbatim and fountain redacts secrets on the way in. chant never reads or prints the environment it was spawned with, so the thread holds only what the command printed.
+===

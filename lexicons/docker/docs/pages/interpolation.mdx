@@ -4,7 +4,7 @@ description: "env() for Docker Compose variable substitution"
 diataxis: reference
 ---
 
-Use `env()` to emit Docker Compose variable interpolation syntax. Values are substituted at runtime by `docker compose` from the environment or a `.env` file.
+`env()` writes a Compose variable reference. `docker compose` fills it in at runtime from the environment or a `.env` file.
 
 ## Syntax
 
@@ -61,4 +61,5 @@ DATABASE_URL=postgresql://localhost:5432/myapp
 LOG_LEVEL=debug
 ```
 
-`docker compose` automatically loads `.env`. Do not commit secrets to `.env` — use `.env.example` for documentation.
+`docker compose` automatically loads `.env`. Do not commit secrets to `.env`; list the variables in a committed `.env.example`.
+===

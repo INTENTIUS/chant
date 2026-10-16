@@ -1,11 +1,11 @@
 ---
 title: "Workload Types"
-description: "Serverless, standard, stateful and cron — and the constraints each carries."
+description: "Serverless, standard, stateful and cron, and the constraints of each."
 diataxis: reference
 order: 2
 ---
 
-Workload `type` is **immutable** — changing it means delete and recreate — and almost every other workload constraint follows from it.
+Workload `type` is **immutable** (changing it means delete and recreate), and almost every other workload constraint follows from it.
 
 | | Serverless | Standard | Stateful | Cron |
 |---|:---:|:---:|:---:|:---:|
@@ -21,11 +21,12 @@ Defaults are `cpu: 50m`, `memory: 128Mi`. CPU ≥ 25m, memory ≥ 32Mi, and **`m
 
 ## Capacity AI
 
-On by default for serverless, standard and cron. Mutually exclusive with CPU-utilization autoscaling, multi-metric autoscaling, and GPUs — all three for the same reason: they need a stable resource baseline that Capacity AI is actively moving. These conflicts are usually reached by *adding* CPU scaling or a GPU to a workload that never opted in, which is why [CPL027](/chant/lexicons/cpln/rules/) says which of the two it is.
+On by default for serverless, standard and cron. Mutually exclusive with CPU-utilization autoscaling, multi-metric autoscaling, and GPUs, because all three need a stable resource baseline and Capacity AI keeps moving it. These conflicts are usually reached by *adding* CPU scaling or a GPU to a workload that never opted in, which is why [CPL027](/chant/lexicons/cpln/rules/) says which of the two it is.
 
 ## Scale to zero
 
-`minScale: 0` is accepted on any type and only takes effect for serverless under `rps`/`concurrency`, or standard/stateful under KEDA (which must be enabled on the GVC first). Everywhere else the workload holds at one replica and the saving never arrives, with nothing reported.
+`minScale: 0` is accepted on any type and only takes effect for serverless under `rps`/`concurrency`, or standard/stateful under KEDA (which must be enabled on the GVC first). Everywhere else the workload stays at one replica and nothing reports it.
+===
 
 ## Storage
 
