@@ -3,6 +3,7 @@
 import { FORGES, TILES } from './rooms.mjs';
 import { lexiconExamples, roomExamples } from './proof.mjs';
 import { siteHref } from './href.mjs';
+import { promptText } from '../prompts.mjs';
 
 export function roomMarkdown(r, site) {
 	const link = (l) => `[${l.label}](${siteHref(site, l.href)})`;
@@ -14,7 +15,7 @@ export function roomMarkdown(r, site) {
 	if (r.first.note) out.push(r.first.note, '');
 	if (r.first.command.any) out.push('```sh', r.first.command.any, '```', '');
 	else for (const f of FORGES) out.push(`${f.label}:`, '', '```sh', r.first.command[f.id], '```', '');
-	out.push(`Next: ${link(r.first.link)}.`, '', '## Proof', '');
+	out.push(`Next: ${link(r.first.link)}.`, '', 'Or hand this step to your coding agent:', '', '```text', promptText(r.first.prompt), '```', '', '## Proof', '');
 	for (const e of roomExamples(r)) out.push(`- [${e.path}](${e.href})`);
 	const tile = TILES.find((t) => t.room === r.id);
 	for (const l of tile ? lexiconExamples(tile.lexicons) : []) if (l.count) out.push(`- ${l.count} examples in [lexicons/${l.lexicon}/examples](${l.href})`);

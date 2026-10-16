@@ -1,8 +1,10 @@
 ---
 // Starlight's page title, then the tools for an agent reading the page: a
 // "Copy page as Markdown" button, a pointer to llms.txt, and, when the page
-// has a `prompt:`, the agent-prompt card. AgentPrompt.astro lives in chant
-// core so lexicon docs sites render the same card.
+// has a `prompt:`, the agent-prompt card with the logo beside its label.
+// AgentPrompt.astro lives in chant core so a lexicon's standalone docs site
+// renders the same card; chant.css gives it this site's look. The content
+// schema has already turned `prompt: setup` into the setup prompt.
 import Default from '@astrojs/starlight/components/PageTitle.astro';
 import AgentPrompt from '../../../packages/core/src/codegen/docs-site/AgentPrompt.astro';
 import { pageMarkdown } from '../page-markdown';
@@ -25,7 +27,7 @@ const markdown = pageMarkdown({
 		<span>lists every page for an agent</span>
 	</div>
 )}
-<AgentPrompt />
+{real && <AgentPrompt><span slot="icon" class="ch-logo ch-prompt-logo" aria-hidden="true"></span></AgentPrompt>}
 
 <script>
 	for (const button of document.querySelectorAll<HTMLButtonElement>('.ch-page-copy')) {

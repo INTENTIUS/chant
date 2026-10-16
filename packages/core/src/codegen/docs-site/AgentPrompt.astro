@@ -6,14 +6,26 @@
 // render it from their PageTitle override; lexicon sites get a copy of this
 // file from writeDocsSite (docs.ts). The content schema refuses a prompt with
 // no "Never" line. No Starlight import here, so the file works from any site.
+// `text`, `label` and `note` replace the page's prompt and the caption (the
+// main site's home page passes the setup prompt); an `icon` slot goes before
+// the label (the main site passes its logo).
 interface Props {
 	text?: string;
+	label?: string;
+	note?: string;
 }
+const {
+	label = 'Optional: hand this page to your coding agent',
+	note = 'The steps work by hand too.',
+} = Astro.props;
 const prompt = (Astro.props.text ?? Astro.locals.starlightRoute?.entry.data.prompt)?.trim();
 ---
 {prompt && (
 	<figure class="chant-prompt not-content" id="agent-prompt">
-		<figcaption>Optional: hand this page to your coding agent</figcaption>
+		<figcaption>
+			<span class="label"><slot name="icon" />{label}</span>
+			{note && <span class="note">{note}</span>}
+		</figcaption>
 		<details>
 			<summary>
 				<pre class="peek" aria-hidden="true">{prompt}</pre>
@@ -69,10 +81,23 @@ const prompt = (Astro.props.text ?? Astro.locals.starlightRoute?.entry.data.prom
 		--chant-prompt-blue: #60a5fa;
 	}
 	figcaption {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 0.75rem;
 		padding: 0.7rem 1rem 0.4rem;
+	}
+	.label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
 		font-size: 0.85rem;
 		font-weight: 600;
 		color: var(--sl-color-white);
+	}
+	.note {
+		font-size: 0.75rem;
+		color: var(--sl-color-gray-3);
 	}
 	summary {
 		display: block;

@@ -333,13 +333,31 @@ starlight-tabs [role='tab'][aria-selected='true'] {
 	color: var(--sl-color-white);
 }
 
-/* The agent-prompt card (packages/core AgentPrompt.astro) in chant's accent
-   instead of its built-in blue. Repeated classes outrank its scoped rules. */
+/* The agent-prompt card (packages/core AgentPrompt.astro), laid out as
+   terragucci's: the small logo beside the label, a gold edge, the accent Copy
+   prompt button. Repeated classes outrank the card's scoped rules. */
 html .chant-prompt.chant-prompt.chant-prompt {
 	--chant-prompt-blue: var(--ch-accent);
 	border-color: var(--ch-rule);
 	border-left-color: var(--ch-gold);
+	border-radius: 0.6rem;
 	background: var(--ch-panel);
+}
+html .chant-prompt.chant-prompt .copy.copy {
+	color: var(--sl-color-black);
+}
+html .chant-prompt.chant-prompt .link.link {
+	border-color: var(--ch-rule);
+}
+html .chant-prompt.chant-prompt .link.link:hover {
+	border-color: var(--ch-gold);
+}
+.ch-prompt-logo.ch-prompt-logo {
+	width: 26px;
+	height: 15px;
+}
+:root[data-theme='light'] .chant-prompt.chant-prompt .copy.copy {
+	color: #fff;
 }
 
 /* The home page carries its own heading in the landing block, so Starlight's

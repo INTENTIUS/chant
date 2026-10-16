@@ -1,6 +1,7 @@
 ---
 // One room of the site, from data/rooms.mjs: the lede, then three cards
-// (what works, what differs on each forge, the first step), the proof (the
+// (what works, what differs on each forge, the first step with its agent
+// prompt), the proof (the
 // example projects in the repository, counted from the filesystem) and the
 // pages to read next as tasks, background and reference. pages/for/[id].astro
 // renders it, with roomMarkdown() as the page's Markdown for "Copy page as
@@ -9,6 +10,8 @@ import { Code, TabItem, Tabs } from '@astrojs/starlight/components';
 import { FORGES, TILES, room } from '../data/rooms.mjs';
 import { lexiconExamples, roomExamples } from '../data/proof.mjs';
 import { codeHtml, siteHref } from '../data/href.mjs';
+import { promptText } from '../prompts.mjs';
+import AgentPrompt from '../../../packages/core/src/codegen/docs-site/AgentPrompt.astro';
 import { base } from '../site';
 
 interface Props {
@@ -21,7 +24,7 @@ const href = (h: string) => siteHref(base, h);
 const differs = r.differs as Record<string, string[]>;
 const forgeLines = FORGES.map((f) => ({ label: f.label, lines: [...f.differs, ...(differs[f.id] ?? [])] }));
 
-const first = r.first as { note?: string; command: Record<string, string>; link: Link };
+const first = r.first as { note?: string; command: Record<string, string>; link: Link; prompt: string };
 const cmd = first.command;
 const single = cmd.any;
 
@@ -67,6 +70,9 @@ const read = [
 				</Tabs>
 			)}
 			<p><a class="go" href={href(first.link.href)}>{first.link.label}</a></p>
+			<AgentPrompt text={promptText(first.prompt)} label="Or hand this step to your coding agent" note="It stops at a pull request or a report.">
+				<span slot="icon" class="ch-logo ch-prompt-logo" aria-hidden="true"></span>
+			</AgentPrompt>
 		</section>
 	</div>
 	<section>
