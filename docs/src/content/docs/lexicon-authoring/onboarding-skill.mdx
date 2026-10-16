@@ -29,7 +29,8 @@ way. If you do nothing else on this page, do step 6.
 
 ## What you are building
 
-A lexicon is a plugin that teaches chant about one operational area. It lives
+A lexicon is a plugin that adds one platform to chant, such as CloudFormation
+or Kubernetes. It lives
 in `lexicons/<name>/`, is published as `@intentius/chant-lexicon-<name>`, and
 is versioned in lockstep with core.
 
@@ -215,7 +216,7 @@ npm's OIDC helper is written never to throw. When the token exchange fails it
 logs at verbose level and returns undefined, so `npm publish` falls through to
 ordinary auth and reports a bare `ENEEDAUTH`. That one error covers both "no
 record at all" and "a record that does not match this workflow", and it reads
-exactly like having no credentials.
+like having no credentials.
 
 `scripts/publish-packages.sh` replays the exchange and prints the registry's
 own status and message, so read that line instead of inferring. A successful

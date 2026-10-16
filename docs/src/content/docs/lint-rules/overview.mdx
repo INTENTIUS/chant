@@ -4,7 +4,7 @@ description: Complete reference for chant semantic lint rules
 diataxis: reference
 ---
 
-chant includes a semantic lint system that validates the meaning of your declarations, not just their structure. Core rules (COR, EVL) apply to all projects. Each lexicon brings its own lexicon-specific rules.
+chant's lint rules check what your declarations mean as well as how they are structured. Core rules (COR, EVL) apply to all projects. Each lexicon brings its own lexicon-specific rules.
 
 ## Rule Categories
 
@@ -21,9 +21,9 @@ chant includes a semantic lint system that validates the meaning of your declara
 
 ## Severity Levels
 
-- **error** — blocks the build. Must be fixed.
-- **warning** — does not block the build. Should be addressed.
-- **info** — informational. Highlights potential improvements.
+- `error` blocks the build until you fix it.
+- `warning` is reported and the build continues.
+- `info` points out a possible improvement.
 
 Severity can be overridden per-rule in your configuration. See [Rule Configuration](/chant/lint-rules/configuration/).
 
@@ -39,7 +39,7 @@ chant lint --fix             # Auto-fix fixable issues
 
 ## Configuration
 
-Rules are configured via `chant.config.ts` in your project root. When no config file is found, the **strict** preset is used by default.
+Configure rules in `chant.config.ts` in your project root. Without a config file, chant uses the **strict** preset.
 
 ### Built-in Presets
 

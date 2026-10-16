@@ -24,7 +24,7 @@ No shipped lexicon populates the five optional fields; `name`, `description` and
 
 ## Op-Aware Skills
 
-If your lexicon contributes **Op step builders** — functions users import into `*.op.ts` files — add a dedicated section to your skill content that shows how to use them. Agents authoring Op files will find these instructions alongside your resource authoring patterns.
+If your lexicon contributes **Op step builders** (functions users import into `*.op.ts` files), add a dedicated section to your skill content that shows how to use them. Agents authoring Op files will find these instructions alongside your resource authoring patterns.
 
 ```markdown
 ## Using [My Lexicon] resources in Ops
@@ -48,9 +48,9 @@ The MCP server exposes `op-run`, `op-status`, and `op-signal` so you can start
 and monitor this Op programmatically.
 ```
 
-The fountain lexicon's `chant-fountain-ops.md` is the reference example — it teaches agents how to declare a steward, run an op on it, and resolve a gate with `chant approve`.
+The fountain lexicon's `chant-fountain-ops.md` is the reference example. It teaches agents how to declare a steward, run an op on it, and resolve a gate with `chant approve`.
 
-Not all lexicons need Op-aware skills. Synthesis-only lexicons (those that don't export step builders) don't need this section.
+Only lexicons that export step builders need this section.
 
 ## The 3-Skill Pattern
 
@@ -208,4 +208,4 @@ Every lexicon ships skills except k3d, which ships none
 
 ## Next Steps
 
-With skills defined, the final step is to [package and publish](/chant/lexicon-authoring/package/) your lexicon.
+With skills defined, [package and publish](/chant/lexicon-authoring/package/) your lexicon.

@@ -48,7 +48,7 @@ Presets are resolved recursively. Local rules override inherited ones.
 
 ## Selecting a lexicon preset (chant #2113)
 
-This is a different, narrower thing from `extends` above. Core's `extends`
+This is narrower than `extends` above. Core's `extends`
 bundles (`strict`, `relaxed`) set AST rule severities. `lint.presets` is a
 **lexicon's own** bundle of which of *its* post-synth check ids get reported
 at all, the way tflint-ruleset-terraform ships `recommended` (13 of its 20
@@ -68,13 +68,11 @@ export default {
 
 The key is the lexicon's name (`plugin.name`, e.g. `"terraform"`, not a
 serializer name), and the value is a preset name that lexicon's
-`lintPresets()` defines. Naming a preset the lexicon doesn't define, or
-omitting the entry
-for a lexicon that ships presets at all, falls back to `"recommended"`, the
-safe default, matching tflint's own precedent of shipping a curated subset
-rather than everything.
+`lintPresets()` defines. An unknown preset name, or no entry for a lexicon
+that ships presets, falls back to `"recommended"`, a curated subset, as
+tflint does.
 
-A rule the active preset excludes is not the same as `rules: { ID: "off" }`.
+A rule the active preset excludes differs from `rules: { ID: "off" }`.
 It never runs the severity-override pass in the first place, so it is
 counted separately. `chant build` reports "N post-synth finding(s) not
 reported: excluded by the active lint.presets preset," distinct from the
@@ -94,9 +92,8 @@ export default {
 } satisfies ChantConfig;
 ```
 
-A lexicon that ships no `lintPresets()` at all is unaffected by
-`lint.presets`. Every one of its findings reports regardless, exactly as
-before this existed.
+For a lexicon with no `lintPresets()`, `lint.presets` does nothing and every
+finding reports.
 
 ## File-Specific Overrides
 
@@ -129,9 +126,8 @@ rules: {
 ## Post-Synth Checks and Policies
 
 `rules` applies to a post-synth check id (a lexicon's `WAW019`, `WK8005`, ...)
-and a project policy's own id (`ORG-COST-CENTER`) exactly the same way it
-applies to `COR004` or `EVL001` above — same key, same severities, `"off"`
-suppresses it entirely:
+and a project policy's own id (`ORG-COST-CENTER`) the same way it applies to
+`COR004` or `EVL001` above, and `"off"` suppresses it:
 
 ```typescript
 export default {
@@ -142,27 +138,25 @@ export default {
 } satisfies ChantConfig;
 ```
 
-This is the whole surface for suppressing a post-synth or policy finding.
+`rules` is the only way to suppress a post-synth or policy finding.
 Two things that work for `COR`/`EVL`/`COMP` rules do **not** apply here:
 
-- **File-specific `overrides`** — a post-synth check runs over the whole
-  synthesized output, not one file, so there is no file path to match a glob
-  against.
-- **`chant-disable` source comments** — a post-synth diagnostic's only
-  locator (`entity`) names a resource in the *synthesized output* (a
-  CloudFormation logical id, a Kubernetes `metadata.name`), not a source file
-  or line, and several checks never set it at all. There is no reliable
-  anchor to put a directive at, so a project-wide `rules: { ID: "off" }` is
-  the only suppression path.
+- File-specific `overrides`. A post-synth check runs over the whole
+  synthesized output, so there is no file path to match a glob against.
+- `chant-disable` source comments. A post-synth diagnostic's only locator
+  (`entity`) names a resource in the *synthesized output* (a CloudFormation
+  logical id, a Kubernetes `metadata.name`), and several checks never set it
+  at all. With no source file or line to put a directive at, a project-wide
+  `rules: { ID: "off" }` is the only suppression path.
 
-A suppressed post-synth/policy finding is not silently dropped: `chant build`
-prints a count (`N post-synth finding(s) suppressed via lint.rules`) so the
-suppression stays visible.
+`chant build` prints a count of suppressed post-synth and policy findings
+(`N post-synth finding(s) suppressed via lint.rules`) so the suppression
+stays visible.
 
 ## The chant audit failure-severity floor (chant #2113)
 
 `rules`/severity above decides what a *rule* reports by default. `--fail-on`
-on `chant audit` is a separate lever. It decides what makes the exit code
+on `chant audit` is separate. It decides what makes the exit code
 non-zero, the job tflint's `--minimum-failure-severity` does. It takes one
 of four values.
 
@@ -174,13 +168,11 @@ of four values.
 | `error` | any error-severity finding exists |
 
 `error` is the floor a rule can ship under before it is trusted to fail a
-pipeline. Land it at `severity: "warning"` (or configure it to `"warning"`
-via `rules` above), run `--fail-on error` in CI, and the new rule is visible
-in every report without breaking a single build. Nobody's pipeline is
-pinned to a `--fail-on` value the new rule would trip. Promote it to
-`"error"` later, in the rule's own default or via `rules: { ID: "error" }`,
-once you're confident. The exact same `--fail-on error` pipeline then starts
-enforcing it, with no separate opt-in step.
+pipeline. Ship it at `severity: "warning"` (or configure it to `"warning"`
+via `rules` above), run `--fail-on error` in CI, and the new rule shows in
+every report while builds keep passing. Promote it to `"error"` later, in
+the rule's own default or via `rules: { ID: "error" }`. The same
+`--fail-on error` pipeline then enforces it.
 
 ```bash
 chant audit . --fail-on error

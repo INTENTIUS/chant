@@ -75,7 +75,7 @@ Property-kind declarables are the classes a lexicon lists in its plugin's `prope
 
 ## COR008: Export Required
 
-All declarable instances must be exported so chant can discover them during synthesis. Non-exported resources are invisible to the build pipeline.
+Export every declarable instance so chant can find it during synthesis. The build sees only exported resources.
 
 **Severity:** error
 
@@ -98,7 +98,7 @@ export const bucket = new _.Bucket({
 
 ## COR021: Literal Name in a Multi-Environment Project
 
-When a project declares two or more `environments` and binds its ownership marker to a build parameter (`ownership.env: { param: "env" }`), it is built once per environment — and a name-bearing property holding a bare string literal produces the same physical name in every build. The collision is silent until apply time, when the second environment's deploy walks over the first's resources. Interpolate the env parameter into the name instead; the template folds to a per-environment literal because [build-time parameters](/chant/concepts/build-time-parameters/) resolve before any file is imported.
+When a project declares two or more `environments` and binds its ownership marker to a build parameter (`ownership.env: { param: "env" }`), it is built once per environment. A name-bearing property holding a bare string literal then produces the same physical name in every build. Nothing reports the collision until apply time, when the second environment's deploy overwrites the first's resources. Interpolate the env parameter into the name instead; the template folds to a per-environment literal because [build-time parameters](/chant/concepts/build-time-parameters/) resolve before any file is imported.
 
 **Severity:** warning
 
@@ -119,13 +119,13 @@ export const uploads = new _.Bucket({
 });
 ```
 
-The rule stays silent when `ownership.env` is a literal or absent — a project not doing per-environment builds from one source tree names its instances another way (the [layered configuration](/chant/guide/layered-configuration/) all-in-one pattern hand-names each instance), and warning there would be noise. See [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence) for both patterns.
+The rule stays silent when `ownership.env` is a literal or absent. Such a project names its instances another way (the [layered configuration](/chant/guide/layered-configuration/) all-in-one pattern hand-names each instance). See [Resource Naming](/chant/guide/resource-naming/#multi-environment-coexistence) for both patterns.
 
 ---
 
 ## COR022: Effect Receipt Is a Leaf
 
-Nothing may reference an effect receipt's attributes. A receipt is the declared witness that an out-of-band effect ran — the `effect()` step is its sole writer, on success, last. A resource that derives a property from a receipt couples itself to a value only the effect controls, and the receipt's late write (or its absence after a crash) ripples into resources that were supposed to be independent of whether the effect has fired. Const indirection fires too: an alias of a receipt is still the receipt.
+Nothing may reference an effect receipt's attributes. A receipt is the declared witness that an out-of-band effect ran. The `effect()` step is its only writer, and writes it last, on success. A resource that derives a property from a receipt couples itself to a value only the effect controls, and the receipt's late write (or its absence after a crash) ripples into resources that were supposed to be independent of whether the effect has fired. Const indirection fires too: an alias of a receipt is still the receipt.
 
 **Severity:** error
 
@@ -145,7 +145,7 @@ export const app = new _.Service({
 });
 ```
 
-Passing the receipt value itself around (registering it, handing it to a materialization row) is fine — the leaf constraint is about attributes.
+Passing the receipt value itself around (registering it, handing it to a materialization row) is fine. The leaf rule covers attributes only.
 
 ---
 
@@ -179,7 +179,7 @@ MigratedReceipt:
 
 ## COR024: Receipt Inputs Reference Secrets by Pointer
 
-A receipt's `inputs` feed its expectation hash — whatever lands there is canonicalized, digested, and compared against a stored value for the rest of the receipt's life. chant's constitutional line on secrets is that no code path may hold, log, hash, or compare a secret value, so a receipt input reading a Secret-kind entity's material (`.data`, `.value`, `.stringData`, ...) is refused. Reference the secret by name+version pointer instead: a rotation is then an explicit version bump that re-proposes the effect, and the hash only ever sees the pointer. Const indirection fires — extracting the material into a variable first does not change what the input reads.
+A receipt's `inputs` feed its expectation hash. Whatever goes there is canonicalized, digested, and compared against a stored value for the rest of the receipt's life. chant's constitutional line on secrets is that no code path may hold, log, hash, or compare a secret value, so a receipt input reading a Secret-kind entity's material (`.data`, `.value`, `.stringData`, ...) is refused. Reference the secret by name+version pointer instead: a rotation is then an explicit version bump that re-proposes the effect, and the hash only ever sees the pointer. Const indirection fires too, so moving the material into a variable first still counts.
 
 **Severity:** error
 
@@ -207,7 +207,7 @@ export const seeded = EffectReceipt("seeded", {
 
 ## COR025: Stringified Reference in Serialized Output
 
-A serialized output (a CloudFormation template, a Kubernetes manifest, ...) containing the literal substring `[object Object]` is always an authoring error: a reference got coerced to a string — typically by a template literal or string concatenation over an object like an `AttrRef` — instead of resolved to its actual value. No lexicon's serializer emits this on purpose, and no provider's schema ever expects it, so this check is cheap, universal across lexicons, and free of meaningful false positives.
+A serialized output (a CloudFormation template, a Kubernetes manifest, ...) containing the literal substring `[object Object]` is always an authoring error. A reference was coerced to a string, typically by a template literal or string concatenation over an object like an `AttrRef`, instead of resolved to its value. No serializer emits it on purpose and no provider schema expects it, so the check is cheap and has no meaningful false positives in any lexicon.
 
 This is a post-synth check run by `chant build` over the whole build result's emitted text, scanning every lexicon's primary output plus any nested files (e.g. nested stack templates). It flags each distinct offending line once, quoting it in the diagnostic so the emitting declaration is easy to spot.
 
@@ -236,9 +236,9 @@ export const policy = new BucketPolicy({
 
 ## COR026: Stale Knowledge Binding
 
-A knowledge concept's `binds` frontmatter key (an OKF v0.2 bundle read from the project's `knowledge/` directory, or wherever `knowledge.dir` points) must name a discovered entity's logical name. A name that resolves to nothing is a stale binding — the entity was renamed or removed, or the concept was authored against a name that never existed.
+A knowledge concept's `binds` frontmatter key (an OKF v0.2 bundle read from the project's `knowledge/` directory, or wherever `knowledge.dir` points) must name a discovered entity's logical name. A name that resolves to nothing is a stale binding. The entity was renamed or removed, or the concept named something that never existed.
 
-This is a post-synth check run by `chant build` over the whole build result, alongside COR023/COR024. Per the OKF binding design (#1059), the spec permits broken links, so a stale binding warns rather than fails the build — knowledge is deliberately softer than the typed graph it describes. A concept with no `binds` at all is orphaned knowledge, not an omission, and never triggers this check; a project with no knowledge bundle triggers nothing either.
+This is a post-synth check run by `chant build` over the whole build result, alongside COR023/COR024. Per the OKF binding design (#1059), the spec permits broken links, so a stale binding is a warning. A concept with no `binds` never triggers this check, and neither does a project with no knowledge bundle.
 
 **Severity:** warning
 
@@ -268,9 +268,9 @@ binds: jobQueue
 
 ## OPS012: Activity Step Args Don't Match the Activity's Contract
 
-An activity step's `args` and `outcomeAttribute.from` must match the activity's registered `ActivityContract`: its name and arg schema, plus its return schema when one is declared. A step whose `fn` has no registered contract is skipped, not flagged, since contract coverage is opt-in per activity.
+An activity step's `args` and `outcomeAttribute.from` must match the activity's registered `ActivityContract`: its name and arg schema, plus its return schema when one is declared. The check skips a step whose `fn` has no registered contract, since contracts are opt-in per activity.
 
-This runs over every declared Op regardless of which lexicons are configured; an Op is recognized by its entity type, not by which lexicon declared it. An untyped `args: Record<string, unknown>` otherwise lets four failure classes through, and this check catches all of them:
+This runs over every declared Op, whatever lexicons are configured, since an Op is recognized by its entity type. It catches four failures an untyped `args: Record<string, unknown>` would let through:
 
 - an unrecognized profile
 - an args key the schema doesn't recognize
@@ -291,9 +291,9 @@ activity("lifecycleDiff", { env: "prod" });
 
 ## OPS013: Dangling Step-Output Reference
 
-A step-output reference (`stepOutput()` / `step.out.field`) must name a top-level activity step of the main `phases` that precedes it. An `onFailure` step may name any main-phase step, and one nested inside an `effect` may name a step that runs before the effect. Nothing may name a step nested inside an effect, or a step in `onFailure` ([#3948](https://github.com/INTENTIUS/chant/issues/3948)). The named step also needs a registered contract with a `returns` schema the referenced path resolves against. This check additionally compares the producer's declared return type at that path against the consumer's declared arg type at the same position, and flags a mismatch such as a boolean-returning path feeding a string-typed arg.
+A step-output reference (`stepOutput()` / `step.out.field`) must name a top-level activity step of the main `phases` that precedes it. An `onFailure` step may name any main-phase step, and one nested inside an `effect` may name a step that runs before the effect. Nothing may name a step nested inside an effect, or a step in `onFailure` ([#3948](https://github.com/INTENTIUS/chant/issues/3948)). The named step also needs a registered contract with a `returns` schema the referenced path resolves against. It also compares the producer's declared return type at that path against the consumer's declared arg type at the same position, and flags a mismatch such as a boolean-returning path feeding a string-typed arg.
 
-This is what lets a lexicon's serializer compile every reference it finds unconditionally: `chant build` blocks output while an error-severity finding stands, so a workflow referencing an unresolved step never reaches disk. The purely structural half of this check (an unknown step id, or a reference into a later phase) fires with no activity contracts registered at all, so it still catches a dangling reference on a project with no lexicons configured.
+This is what lets a lexicon's serializer compile every reference it finds unconditionally: `chant build` blocks output while an error-severity finding stands, so a workflow referencing an unresolved step never reaches disk. The structural half of this check (an unknown step id, or a reference into a later phase) needs no activity contracts, so it catches a dangling reference even on a project with no lexicons configured.
 
 **Severity:** error
 
@@ -310,7 +310,7 @@ activity("httpCheck", { url, contains: diff.out.output });
 
 ## OPS014: ConvergeOp Rule Table Refusal
 
-`chant build` refuses a `ConvergeOp` rule table that isn't honest about what it will do. Each of these fails the build:
+`chant build` fails on a `ConvergeOp` rule table with any of these:
 
 - a rule with no (or blank) `why`
 - a predicate outside the evaluable subset (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`truthy`/`falsy`/`allOf`/`anyOf` over a known symptom field, nothing else)
@@ -319,7 +319,7 @@ activity("httpCheck", { url, contains: diff.out.output });
 - a `run()` dispatching a `destructive` Op under any dial, unconditionally
 - a rule whose predicate reads `adoptCount` while dispatching a `mutating` Op (an unowned resource is reported, never auto-claimed)
 
-The destructive refusal holds no matter whether the target carries a gate. A converge tick runs unattended on a schedule, with no one watching it fire. A destructive dispatch needs a human's approval before it is attempted, not a gate the tick consults only after already committing to run the op, and `run()` has no way to ask first. See the [Converging Lifecycle](/chant/guide/converging-lifecycle/) guide's "Build-time refusals" section for the full dial × verb-class matrix.
+The destructive refusal holds even when the target carries a gate. A converge tick runs unattended on a schedule. A destructive dispatch needs a human's approval before it starts, a gate is consulted only after the tick has committed to run the op, and `run()` cannot ask first. See the [Converging Lifecycle](/chant/guide/converging-lifecycle/) guide's "Build-time refusals" section for the full dial × verb-class matrix.
 
 **Severity:** error
 
@@ -369,7 +369,7 @@ gate("ship", { approval: { policy: gatePolicy("ship", shipPolicies), mode: "enfo
 
 ## OPS016: Gate That Can't Resume
 
-`chant build` refuses a gate with `resume: true` ([#3947](https://github.com/INTENTIUS/chant/issues/3947)) that a run could not resume at, since the run would otherwise start at the first phase again without a word. [Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate) in the guide explains how a run resumes. OPS016 reports each gate that breaks one of these rules:
+`chant build` refuses a gate with `resume: true` ([#3947](https://github.com/INTENTIUS/chant/issues/3947)) that a run could not resume at, since the run would otherwise restart at the first phase without saying so. [Resuming at the approved gate](/chant/guide/ops/#resuming-at-the-approved-gate) in the guide explains how a run resumes. OPS016 reports each gate that breaks one of these rules:
 
 - the gate is in an `onFailure` phase or inside an effect
 - the gate asks a decision point

@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-This guide documents what each test file in a lexicon should cover, with patterns and checklists. Follow these to ensure consistent test quality across lexicons.
+This page lists what each test file in a lexicon should cover, with patterns and checklists.
 
 Two test files are required by name. `chant dev check-lexicon` fails tier 1
 without `src/plugin.test.ts` and `src/serializer.test.ts`.

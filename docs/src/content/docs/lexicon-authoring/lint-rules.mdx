@@ -87,7 +87,7 @@ substitutes `{node}` with the node's text.
 
 ## Post-synth Checks
 
-Post-synth checks validate the serialized output after the build pipeline completes:
+Post-synth checks validate the serialized output after the build:
 
 ```typescript
 import type { PostSynthCheck, PostSynthDiagnostic } from "@intentius/chant";
@@ -144,10 +144,10 @@ rather than by a letter: k3s uses `K3S001` for its source-level rule and
 `K3S101`-`K3S107` for its post-synth checks, gcp uses `WGC001`-`WGC003` then
 `WGC1xx` through `WGC5xx`, and github runs a flat `GHA001`-`GHA069`.
 
-A category letter after the prefix is a local convention in two lexicons, not a
-rule the tooling enforces. cedar splits `CEDC` (correctness), `CEDE`
-(evaluability) and `CEDS` (style); docker splits `DKRD` and `DKRS`. Copy it only
-if you want it; nothing checks for it, and fourteen lexicons do without.
+Two lexicons put a category letter after the prefix, a local convention the
+tooling ignores. cedar splits `CEDC` (correctness), `CEDE`
+(evaluability) and `CEDS` (style); docker splits `DKRD` and `DKRS`. It is
+optional, and fourteen lexicons do without it.
 
 ## Testing
 
@@ -207,4 +207,4 @@ See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full testi
 
 ## Next Steps
 
-With rules in place, add [LSP & MCP providers](/chant/lexicon-authoring/lsp-mcp/) for editor integration.
+Next, add [LSP & MCP providers](/chant/lexicon-authoring/lsp-mcp/) for editor integration.

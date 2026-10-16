@@ -1,6 +1,6 @@
 ---
 title: Completeness Checklist
-description: What makes a production-quality lexicon — tier 1/2/3 checks
+description: The tier 1, 2 and 3 checks a production-quality lexicon passes
 diataxis: reference
 ---
 
@@ -14,7 +14,7 @@ Pass `--format json` for machine-readable output.
 
 ## Tier 1 — Required
 
-These must all pass for the command to exit 0. Run for real via `just check-lexicons` and gated in CI (chant #1067) — see [`chant dev check-lexicon`](/chant/cli/check-lexicon/) for the exceptions currently tracked, not silently skipped.
+These must all pass for the command to exit 0. `just check-lexicons` runs them and CI gates on the result (chant #1067). See [`chant dev check-lexicon`](/chant/cli/check-lexicon/) for the tracked exceptions.
 
 | Check | What it verifies |
 |---|---|
@@ -45,11 +45,11 @@ These must all pass for the command to exit 0. Run for real via `just check-lexi
 
 ### `chantVersion`
 
-`chantVersion` on the manifest is checked for presence and shape only — it is **not** validated for compatibility against the core version actually running. That would need a live check at plugin-load time (a different tool, e.g. `loadPlugin`/`loadPlugins`), and is a deliberate non-goal of chant #1067.
+`chantVersion` on the manifest is checked for presence and shape only. It is **not** validated for compatibility with the running core version. That would need a live check at plugin-load time (a different tool, e.g. `loadPlugin`/`loadPlugins`), and is a deliberate non-goal of chant #1067.
 
 ## Tier 2 — Recommended
 
-Warnings — these make the lexicon useful in practice.
+Warnings. These make the lexicon useful in practice.
 
 | Check | What it verifies |
 |---|---|
@@ -73,7 +73,7 @@ Warnings — these make the lexicon useful in practice.
 
 ## Tier 3 — Thoroughness
 
-Informational — tracks depth of testing and feature coverage.
+Informational. These track depth of testing and feature coverage.
 
 | Check | What it verifies |
 |---|---|
@@ -90,9 +90,9 @@ Informational — tracks depth of testing and feature coverage.
 ## What the tool does not check
 
 The three tables above are the whole of `chant dev check-lexicon`, and a test
-asserts that — a row here with no matching check, or a check with no row, fails
-the build (chant #1343). Several things worth doing are consequently absent from
-them, and were previously listed as though they were verified:
+asserts that: a row with no matching check, or a check with no row, fails the
+build (chant #1343). These useful steps are therefore absent from the tables,
+though earlier versions listed them as verified:
 
 | Not checked | Where it lives instead |
 |---|---|
@@ -103,12 +103,12 @@ them, and were previously listed as though they were verified:
 A capability counts as present when the plugin **exposes** it, not when a file
 with the right name exists (chant #1342). The checks above load the lexicon and
 ask it. That is what caught helm shipping `src/lsp/completions.ts` and
-`src/lsp/hover.ts` — with tests — while registering neither provider, so its
+`src/lsp/hover.ts` (with tests) while registering neither provider, so its
 LSP support was unreachable in an editor for as long as it has existed.
 
 ## Recommended Post-Synth Check Categories
 
-When designing post-synth checks, aim for coverage across these categories:
+Cover these categories with post-synth checks:
 
 | Category | Examples |
 |----------|---------|

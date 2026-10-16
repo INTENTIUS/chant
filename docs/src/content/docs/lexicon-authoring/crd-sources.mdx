@@ -1,6 +1,6 @@
 ---
 title: Add a Third-Party CRD
-description: Extend the Kubernetes lexicon with an operator's CRDs — typed resources plus rules — without building a new lexicon.
+description: Extend the Kubernetes lexicon with an operator's CRDs, as typed resources plus rules, without building a new lexicon.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicon-authoring/crd-sources/.
@@ -10,12 +10,12 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. You do not write a new lexicon for KubeRay, Argo CD, cert-manager, or Crossplane — you add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.
+Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. For KubeRay, Argo CD, cert-manager or Crossplane, add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.
 
-Every third-party API in the k8s lexicon arrived this way, from KubeRay and Argo CD to the ACK controllers. Read `CRD_SOURCES` for what is there today. This page documents how to add to it.
+Every third-party API in the k8s lexicon arrived this way, from KubeRay and Argo CD to the ACK controllers. Read `CRD_SOURCES` for what is there today. This page shows how to add to it.
 
 :::note[New lexicon vs. third-party CRD]
-Build a [new lexicon](/chant/lexicon-authoring/overview/) when the target is a non-Kubernetes spec (a cloud API, a CI format). Add a CRD here when the target already speaks Kubernetes — anything installed as a CRD belongs in the k8s lexicon, not a lexicon of its own.
+Build a [new lexicon](/chant/lexicon-authoring/overview/) when the target is a non-Kubernetes spec (a cloud API, a CI format). Add a CRD here when the target already speaks Kubernetes. Anything installed as a CRD belongs in the k8s lexicon.
 :::
 
 ## The CRD source list
@@ -46,7 +46,7 @@ A `CRDSource` is one of four shapes:
 | `{ type: "file", path }` | a local path | a CRD vendored into the repo |
 | `{ type: "cluster", context?, namespace? }` | a kubectl context | read CRDs already installed in a cluster |
 
-Every shape also takes an optional `kinds` allowlist, which keeps a multi-document bundle down to the kinds you actually want.
+Every shape also takes an optional `kinds` allowlist, which keeps a multi-document bundle down to the kinds you want.
 
 Pin the operator version in a `const` next to the entry (see the `KUBERAY_VERSION` and `ARGOCD_VERSION` constants at the top of `crd-sources.ts`) so an upgrade is a one-line change and the source URL always resolves to a known revision.
 
@@ -66,11 +66,11 @@ Operators built with the Java and Go operator SDKs generate their CRDs at build 
 }
 ```
 
-`version` is required, because an unpinned chart makes generated output depend on the day it was generated. `chartSubdir` overrides `crds` for charts that keep them somewhere else. The `kinds` allowlist works exactly as it does for a multi-doc URL bundle.
+`version` is required, because an unpinned chart makes generated output depend on the day it was generated. `chartSubdir` overrides `crds` for charts that keep them somewhere else. The `kinds` allowlist works as it does for a multi-doc URL bundle.
 
 An `oci://` chart is pulled over the registry's HTTP API with an anonymous token and unpacked in process, so generation does not need `helm` on PATH and produces the same surface on a fresh CI runner as on a workstation. `digest` pins the chart's content layer (the `sha256:` the registry manifest lists for the `application/vnd.cncf.helm.chart.content.v1.tar+gzip` layer); with it, a re-pushed tag fails generation instead of changing the output. A classic `https://` chart repository still needs the `helm` binary. Prefer `url` when the operator publishes its CRDs, since it is one fewer network shape.
 
-> The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic — see [Network Egress](/chant/reference/network-egress/) for the guard that keeps that true.
+> The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic. See [Network Egress](/chant/reference/network-egress/) for the guard that keeps that true.
 
 ## Generate
 
@@ -97,7 +97,7 @@ Each CRD kind becomes a resource type `K8s::<Namespace>::<Kind>`. The namespace 
 | `postgresql.cnpg.io` | `Cnpg` (override) | `K8s::Cnpg::Cluster` |
 | `barmancloud.cnpg.io` | `Cnpg` (override) | `K8s::Cnpg::ObjectStore` |
 
-An override earns its place for one of two reasons. Either the first segment reads badly on its own — `secrets.infisical.com` would give `K8s::Secrets::InfisicalSecret`, which looks like a core Secret when `K8s::Core::Secret` is right there — or several groups belong together. The last two rows are the second case: a CNPG `Cluster` names a barman-cloud `ObjectStore` in its `plugins[]` block, so splitting them into `Postgresql` and `Barmancloud` would scatter two kinds that are only ever used as a pair. Flux does the same with six groups.
+An override earns its place for one of two reasons. Either the first segment reads badly on its own (`secrets.infisical.com` would give `K8s::Secrets::InfisicalSecret`, which looks like a core Secret next to `K8s::Core::Secret`), or several groups belong together. The last two rows are the second case: a CNPG `Cluster` names a barman-cloud `ObjectStore` in its `plugins[]` block, so splitting them into `Postgresql` and `Barmancloud` would scatter two kinds that are only ever used as a pair. Flux does the same with six groups.
 
 :::note
 The mapping lives in `namespaceSegmentForGroup` and `GROUP_NAMESPACE_OVERRIDES` in `lexicons/k8s/src/group-namespace.ts`, not in `crd/parser.ts`. Add an override there if a group's first segment collides or reads poorly.
@@ -114,22 +114,22 @@ grep -R "RayCluster" lexicons/k8s/src/generated/index.d.ts   # the type exists
 npm run build -w @intentius/chant-lexicon-k8s                # the lexicon compiles
 ```
 
-Then import it in a scratch file and check that editor completion resolves the `spec` — that is the fastest confirmation the schema round-tripped.
+Then import it in a scratch file and check that editor completion resolves the `spec`. That is the fastest confirmation the schema round-tripped.
 
 ## Scale — do not fetch a whole provider
 
-A CRD source is one CRD document. Some operators ship hundreds — a full Crossplane `provider-aws` is on the order of a thousand kinds. Generating all of them at once produces an enormous types file and slow type-checking (the same failure mode the Azure codegen hit). Add the specific kinds a project uses, or scope by resource group. Never point a source at an operator's entire CRD bundle without a reason.
+A CRD source is one CRD document. Some operators ship hundreds; a full Crossplane `provider-aws` is on the order of a thousand kinds. Generating all of them at once produces an enormous types file and slow type-checking (the same failure mode the Azure codegen hit). Add the specific kinds a project uses, or scope by resource group. Never point a source at an operator's entire CRD bundle without a reason.
 
 ## Add rules for the new kinds
 
-Types give you structural validation for free — a misspelled field or a wrong type will not compile. Everything semantic is a rule you author against the kind by name. The kind being CRD-derived changes nothing; rules target it exactly as they target a built-in resource.
+Types give you structural validation: a misspelled field or a wrong type will not compile. Everything semantic is a rule you author against the kind by name. Rules target a CRD-derived kind exactly as they target a built-in resource.
 
 Argo CD is the worked precedent. It arrives through `CRD_SOURCES` and carries a full rule set:
 
-- **Pre-synth** (source AST) — [`ARGO001`](/chant/lexicon-authoring/lint-rules/) in `lint/rules/argo-automated-prune.ts` flags a production `Application` that enables `syncPolicy.automated.prune`. Wire a pre-synth rule by importing it into the `lintRules()` array in `lexicons/k8s/src/plugin.ts`.
-- **Post-synth** (emitted manifests) — `ARGO003` in `lint/post-synth/argo003.ts` checks each `Application.spec.destination` against the cluster Secrets in the same output. Drop a post-synth check file in `lint/post-synth/` and it is discovered automatically; no manual registration.
+- Pre-synth (source AST): [`ARGO001`](/chant/lexicon-authoring/lint-rules/) in `lint/rules/argo-automated-prune.ts` flags a production `Application` that enables `syncPolicy.automated.prune`. Wire a pre-synth rule by importing it into the `lintRules()` array in `lexicons/k8s/src/plugin.ts`.
+- Post-synth (emitted manifests): `ARGO003` in `lint/post-synth/argo003.ts` checks each `Application.spec.destination` against the cluster Secrets in the same output. Drop a post-synth check file in `lint/post-synth/` and it is discovered automatically.
 
-The post-synth cross-resource pattern — collect every manifest of kind A, validate each kind B against them — is the one worth studying, because XR-against-XRD conformance and Composition-references-a-real-kind checks are the same shape. See [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#cross-resource-bundle-join-checks) for that pattern in full.
+The post-synth cross-resource pattern (collect every manifest of kind A, validate each kind B against them) is the one to study, because XR-against-XRD conformance and Composition-references-a-real-kind checks are the same shape. See [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#cross-resource-bundle-join-checks) for that pattern in full.
 
 ## Next steps
 
