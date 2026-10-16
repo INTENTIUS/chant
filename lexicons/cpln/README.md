@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-cpln
 
-[Control Plane](https://controlplane.com) (cpln) lexicon for [chant](https://github.com/intentius/chant) — GVCs, workloads, identities and secrets as typed TypeScript.
+[Control Plane](https://controlplane.com) (cpln) lexicon for [chant](https://github.com/intentius/chant) — GVCs, workloads, identities and secrets as TypeScript.
 
 Types are generated from Control Plane's served OpenAPI document, so they track the real API.
 

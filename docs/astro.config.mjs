@@ -27,7 +27,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'chant',
-			description: 'Typed infrastructure, end to end. chant builds typed TypeScript into each platform\'s own format, checks it with semantic lint rules, and runs the lifecycle you choose on top.',
+			description: 'Infrastructure in TypeScript, out as CloudFormation, Kubernetes YAML, GitHub Actions and more.',
 			// The pixel face and the sound waves (scripts/brand/), Geist, and the
 			// palette as tokens for both themes.
 			customCss: ['./src/styles/chant.css'],

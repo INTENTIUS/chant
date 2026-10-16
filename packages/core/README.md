@@ -4,7 +4,7 @@ Core package for [chant](https://intentius.io/chant/) — a type system for oper
 
 This package provides the lexicon-agnostic foundation that all chant lexicons build on. It includes the type system (Declarables, Intrinsics, Parameters, Outputs), the discovery and build pipeline, the semantic lint engine, the CLI, template import, and reusable codegen infrastructure for lexicon authors (runtime factories, naming strategies, generation and packaging pipelines, LSP providers).
 
-Install it alongside a lexicon to start declaring infrastructure as typed TypeScript.
+Install it alongside a lexicon to start declaring infrastructure as TypeScript.
 
 ```bash
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-aws

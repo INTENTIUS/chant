@@ -1,6 +1,6 @@
 # render getting-started
 
-A Postgres database and a web service wired to it, declared as typed TypeScript and applied straight to a Render workspace over the Public API.
+A Postgres database and a web service wired to it, declared as TypeScript and applied straight to a Render workspace over the Public API.
 
 ```bash
 export RENDER_API_KEY=rnd_…       # Account Settings → API Keys

@@ -50,7 +50,7 @@
   "peerDependencies": {
     "@intentius/chant": "^0.124.27"
   },
-  "description": "Render (render.com) lexicon for chant — services, datastores, env groups, projects as typed TypeScript, applied straight to the Render API",
+  "description": "Render (render.com) lexicon for chant — services, datastores, env groups, projects as TypeScript, applied straight to the Render API",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

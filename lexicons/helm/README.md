@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-helm
 
-Helm lexicon for [chant](https://intentius.io/chant/) — declare Helm charts, releases, and values as typed TypeScript.
+Helm lexicon for [chant](https://intentius.io/chant/) — declare Helm charts, releases, and values as TypeScript.
 
 This package provides generated constructors for Helm resource types, composites for grouping related resources, and Helm-specific lint rules. It builds on the Kubernetes lexicon for base resource types. It also includes LSP and MCP server support for editor completions and hover.
 

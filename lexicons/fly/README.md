@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-fly
 
-The Fly.io lexicon for [chant](https://intentius.io/chant/). Declare Fly apps, machines, volumes, IPs, certificates, and secrets as typed TypeScript and apply them straight to the Fly Machines API.
+The Fly.io lexicon for [chant](https://intentius.io/chant/). Declare Fly apps, machines, volumes, IPs, certificates, and secrets as TypeScript and apply them straight to the Fly Machines API.
 
 ```bash
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-fly
@@ -44,7 +44,7 @@ Each process runs in its own process group. `close()` stops them (SIGTERM, then 
 
 ## What it does
 
-chant is a type system for operations: you describe infrastructure as typed TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers Fly.
+chant is a type system for operations: you describe infrastructure as TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers Fly.
 
 The resource types (`App`, `Machine`, `Volume`, `IPAddress`, `Certificate`, `Secret`) are generated from Fly's own Machines API OpenAPI spec, so they track the real API and give you full editor autocomplete. A build step lints them, and `flyApply` reconciles them against a Fly org over the Machines API (flaps) directly.
 

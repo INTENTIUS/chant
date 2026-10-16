@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-aws
 
-AWS CloudFormation lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as typed TypeScript that serializes to CloudFormation JSON templates.
+AWS CloudFormation lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as TypeScript that serializes to CloudFormation JSON templates.
 
 This package provides generated constructors for all CloudFormation resource and property types, type-safe intrinsic functions (`Sub`, `Ref`, `Join`, etc.), pseudo-parameters (`AWS.Region`, `AWS.AccountId`, etc.), composites for grouping related resources, and AWS-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
 

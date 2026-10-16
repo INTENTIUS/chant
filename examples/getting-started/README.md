@@ -23,7 +23,7 @@ Start here if you are new to chant. Stop at whatever level answers your question
 
 ## L1 — what is here
 
-A web Deployment and its Service, declared as typed TypeScript.
+A web Deployment and its Service, declared as TypeScript.
 
 | File | Teaches |
 |---|---|

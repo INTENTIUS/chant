@@ -20,7 +20,7 @@ Synthesis is pure and local. There is no authoritative state file — chant comp
 
 ## What It Looks Like
 
-Declare infrastructure as typed TypeScript — see the [Quick Start](https://intentius.io/chant/getting-started/quick-start/) for a walkthrough.
+Declare infrastructure as TypeScript — see the [Quick Start](https://intentius.io/chant/getting-started/quick-start/) for a walkthrough.
 
 ## Audit any repo's CI/CD
 

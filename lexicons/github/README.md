@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-github
 
-GitHub Actions lexicon for [chant](https://intentius.io/chant/) — declare workflow definitions as typed TypeScript that serializes to `.github/workflows/*.yml`.
+GitHub Actions lexicon for [chant](https://intentius.io/chant/) — declare workflow definitions as TypeScript that serializes to `.github/workflows/*.yml`.
 
 ```bash
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-github

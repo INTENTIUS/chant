@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-gcp
 
-GCP Deployment Manager lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as typed TypeScript that serializes to Deployment Manager YAML templates.
+GCP Deployment Manager lexicon for [chant](https://intentius.io/chant/) — declare infrastructure as TypeScript that serializes to Deployment Manager YAML templates.
 
 This package provides generated constructors for GCP resource types, type-safe template properties, pseudo-parameters, composites for grouping related resources, and GCP-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
 

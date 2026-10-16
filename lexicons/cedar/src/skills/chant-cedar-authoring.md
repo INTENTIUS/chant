@@ -12,7 +12,7 @@ Cedar is an authorization policy language. Its toolchain validates and evaluates
 policies; it does not help you write them. There are no functions, no modules,
 no loops, and templates carry exactly two slots (`?principal`, `?resource`), so
 teams managing large policy sets generate `.cedar` text with string templating.
-This lexicon replaces that with typed TypeScript.
+This lexicon replaces that with TypeScript.
 
 Two artifacts come out of every build:
 

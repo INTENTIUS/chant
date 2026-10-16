@@ -130,9 +130,9 @@ export const ROOMS = [
 	{
 		id: 'kubernetes',
 		title: 'chant on Kubernetes',
-		lede: 'For a team that ships to Kubernetes: manifests and Helm charts from typed TypeScript, GitOps through Argo CD or Flux, and a local k3d cluster to try it on.',
+		lede: 'For a team that ships to Kubernetes: manifests and Helm charts from TypeScript, GitOps through Argo CD or Flux, and a local k3d cluster to try it on.',
 		works: [
-			'Kubernetes manifests and Helm charts from typed TypeScript, in the formats kubectl and helm read',
+			'Kubernetes manifests and Helm charts from TypeScript, in the formats kubectl and helm read',
 			'GitOps on-ramps for Argo CD (`ArgoAppFor`) and Flux CD (`FluxGitSource`, `FluxAppFor`)',
 			'Drift reported against the composite argument and source line that set the field, with a k3d demo you can run',
 		],
@@ -167,9 +167,9 @@ export const ROOMS = [
 	{
 		id: 'gcp-azure',
 		title: 'chant on GCP and Azure',
-		lede: 'For a team on Google Cloud or Azure: Config Connector resources and ARM templates from typed TypeScript, with a local emulator for each cloud.',
+		lede: 'For a team on Google Cloud or Azure: Config Connector resources and ARM templates from TypeScript, with a local emulator for each cloud.',
 		works: [
-			'GCP Config Connector resources and Azure ARM templates from typed TypeScript',
+			'GCP Config Connector resources and Azure ARM templates from TypeScript',
 			'Local deploys to floci-gcp through `gcpApply` and to floci-az through `azApply`, with no account',
 			'GKE and AKS clusters with their workloads from the Kubernetes lexicon, in one project',
 		],
@@ -206,9 +206,9 @@ export const ROOMS = [
 	{
 		id: 'ci',
 		title: 'chant for CI pipelines',
-		lede: 'For a team that owns its pipelines: workflows for GitHub Actions, GitLab CI and Forgejo Actions from typed TypeScript, a generated pull-request pipeline, and an audit of the pipelines you already have.',
+		lede: 'For a team that owns its pipelines: workflows for GitHub Actions, GitLab CI and Forgejo Actions from TypeScript, a generated pull-request pipeline, and an audit of the pipelines you already have.',
 		works: [
-			'Workflows for GitHub Actions, GitLab CI and Forgejo Actions from typed TypeScript',
+			'Workflows for GitHub Actions, GitLab CI and Forgejo Actions from TypeScript',
 			'A generated pull-request pipeline that plans what a change reaches, posts the plan, and on merge applies only the plan a reviewer approved',
 			"`chant audit` reads a repository's existing pipelines and reports security findings, with a diff for each mechanical fix",
 			'`chant migrate` translates a GitHub Actions workflow into GitLab CI',
@@ -249,7 +249,7 @@ export const ROOMS = [
 			'Fly Apps and Machines applied straight to the Machines API by `flyApply`, with no flyctl and no state file',
 			'The whole deploy offline against the mudflaps emulator first, then against real Fly by dropping one override',
 			'Sprites as disposable build sandboxes and agent workers, rewound to a checkpoint when a step fails',
-			'Docker Compose services and multi-stage Dockerfiles from typed TypeScript',
+			'Docker Compose services and multi-stage Dockerfiles from TypeScript',
 		],
 		differs: {},
 		first: {
