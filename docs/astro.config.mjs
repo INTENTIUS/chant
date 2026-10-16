@@ -48,6 +48,14 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/intentius/chant' }],
 			head: [
 				{ tag: 'link', attrs: { rel: 'icon', href: '/chant/favicon-48.png', sizes: '48x48', type: 'image/png' } },
+				// The card a shared link shows (LinkedIn, Slack, X). It has to be an
+				// absolute URL to a PNG or JPEG; LinkedIn ignores SVG. Drawn by
+				// scripts/brand/logo.py --og.
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://intentius.io/chant/brand/og.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'The chant logo, a pixel face with sound waves, over the word CHANT' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://intentius.io/chant/brand/og.png' } },
 				// PostHog's loader snippet, with one change: its `n<o.length` reads
 				// `o.length>n`. lychee's HTML tokenizer took `<o.length...` for a tag
 				// and stopped reading the page there, so the link check saw three
