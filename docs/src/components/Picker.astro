@@ -125,11 +125,21 @@ const forgeLines = (t: (typeof tiles)[number], f: (typeof forges)[number]) => [.
 					localStorage.setItem(synced, forge.label);
 				} catch {}
 			};
+			// The cards sit below the fold, so a pick that changed them would look
+			// like it did nothing. Bring them into view, scrolling no further than
+			// it takes to show them.
+			const reveal = () => {
+				const cards = $('.cards');
+				if (cards.getBoundingClientRect().bottom <= window.innerHeight) return;
+				const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+				cards.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
+			};
 			section.addEventListener('click', (e) => {
 				const b = e.target.closest('button[data-pick]');
 				if (b) {
 					pick[b.dataset.pick] = b.value;
 					show();
+					reveal();
 					return;
 				}
 				const t = e.target.closest('[data-tile]');
@@ -139,6 +149,7 @@ const forgeLines = (t: (typeof tiles)[number], f: (typeof forges)[number]) => [.
 				e.preventDefault();
 				pick.tile = t.dataset.tile;
 				show();
+				reveal();
 			});
 			show();
 		}
