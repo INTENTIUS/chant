@@ -14,11 +14,11 @@ import { Aside } from '@astrojs/starlight/components';
 
 `WatchOp` turns `chant lifecycle snapshot` and `chant lifecycle diff --live` into an Op with a cadence on it. The result is a drift signal that fires between change windows rather than only at the next deploy.
 
-This page is the tutorial home for that pattern. For the underlying CLI commands, see [`chant lifecycle`](/chant/cli/lifecycle/); for the Op execution model, see [Ops](/chant/guide/ops/).
+This page covers that pattern. For the underlying CLI commands, see [`chant lifecycle`](/chant/cli/lifecycle/); for the Op execution model, see [Ops](/chant/guide/ops/).
 
 ## Three layers, one composite
 
-Drift detection in chant is built from three pieces that compose:
+Drift detection in chant has three pieces:
 
 | Layer | Command | What it does |
 |---|---|---|
@@ -26,11 +26,11 @@ Drift detection in chant is built from three pieces that compose:
 | **Live diff** | `chant lifecycle diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into seven categories (missing / orphan / disappeared / newly observed / drifted / unchanged / unobserved) |
 | **Watching** | `WatchOp({ env, schedule })` | Run the two commands above on a cron, and record drift as an outcome on each run |
 
-Snapshots without diffs are forensic record. Diffs without scheduling are ad-hoc. The composite is what makes drift a continuous signal rather than a manual chore.
+A snapshot alone is a record for later forensics, and a diff alone runs only when someone runs it. The composite runs both on a schedule.
 
 ## Declaring a WatchOp
 
-Save anywhere in your project as a `*.op.ts` file. The composite returns `{ op }`, and the cadence rides on the Op itself:
+Save anywhere in your project as a `*.op.ts` file. The composite returns `{ op }`, and the cadence is set on the Op itself:
 
 ```typescript
 // prod-watch.op.ts
@@ -59,8 +59,8 @@ Three readers turn the cadence into something that fires on its own. The [github
 
 The two phases run in order on each tick:
 
-1. **`Snapshot`** — calls the `lifecycleSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
-2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`. A diff that exits non-zero, a build error among them, fails the step: it returns no result and no plan digest, so an `ApplyOp` gate never sees a digest of an error.
+1. **`Snapshot`**: calls the `lifecycleSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (`--force-with-lease` protects concurrent runs; see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
+2. **`Diff`**: calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured onto the run record via `outcomeAttribute: { name: "Drift", from: "drifted" }`. A diff that exits non-zero, a build error among them, fails the step: it returns no result and no plan digest, so an `ApplyOp` gate never sees a digest of an error.
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
@@ -77,9 +77,9 @@ const { op } = WatchOp({
 });
 ```
 
-`failOn` rides on the Op's declaration, so a pipeline rendered by any of the CI generators picks it up with no change to the `chant run prod-watch` line they write. `chant run prod-watch --fail-on-drift` asks for the same exit code on one invocation of a watch that does not declare it. Either way the run records the same thing on the ledger; only the process exit status changes. A failed run still exits 1 and a gated one 3.
+`failOn` is part of the Op's declaration, so a pipeline rendered by any of the CI generators picks it up with no change to the `chant run prod-watch` line they write. `chant run prod-watch --fail-on-drift` asks for the same exit code on one invocation of a watch that does not declare it. Either way the run records the same thing on the ledger; only the process exit status changes. A failed run still exits 1 and a gated one 3.
 
-`receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, recorded as a `StaleReceipts` outcome — it never runs an effect and never writes a receipt.
+`receipts: [myReceipt, ...]` (typed `EffectReceipt` references) adds a read-only `Receipts` phase that reads each effect receipt through the receipt store and reports absent or differing receipts as findings, recorded as a `StaleReceipts` outcome. It never runs an effect or writes a receipt.
 
 ## Reading the ticks back
 
@@ -89,7 +89,7 @@ const { op } = WatchOp({
 labels: { OpName: "prod-watch", Watch: "true", Env: "prod" }
 ```
 
-Those labels ride onto every run record the Op writes, and the `Drift` outcome lands beside them once the Diff phase settles. The record goes to `prod/runs__prod-watch.jsonl` on the `chant/lifecycle` branch, because `Env` is `prod`.
+Those labels go onto every run record the Op writes, and the `Drift` outcome lands beside them once the Diff phase settles. The record goes to `prod/runs__prod-watch.jsonl` on the `chant/lifecycle` branch, because `Env` is `prod`.
 
 ```bash
 chant run log prod-watch                  # every run, newest first
@@ -97,11 +97,11 @@ chant run status prod-watch               # the latest one
 chant operator log --env prod             # every tick in the environment, one timeline
 ```
 
-Nothing has to be running to read any of that: the ledger is a branch in your own repo. When the op is hosted, its turn is also a message on the steward's thread, so the same tick is legible in fountain's UI as one command somebody could have typed. See [The Steward](/chant/lexicons/fountain/steward/) for which store owns what.
+Nothing has to be running to read any of that: the ledger is a branch in your own repo. When the op is hosted, its turn is also a message on the steward's thread, so fountain's UI shows the same tick as one command somebody could have typed. See [The Steward](/chant/lexicons/fountain/steward/) for which store owns what.
 
 ## Smoke-testing the drift signal
 
-To prove the pipeline end-to-end, introduce a real out-of-band mutation and watch it surface.
+To test the whole pipeline, change something outside chant and watch the diff report it.
 
 The simplest path is the Helm lexicon's `listArtifacts()`, which lists Helm releases visible to your current kubeconfig context. Install something chant doesn't know about:
 
@@ -127,7 +127,7 @@ The next tick should show `Drift = "false"` again.
 
 ## How drift becomes an outcome
 
-`outcomeAttribute` is a generic Op feature, not a `WatchOp`-specific one — see [Outcome attributes](/chant/guide/ops-reference/#outcome-attributes) for the full contract. The composite wires it like this:
+`outcomeAttribute` works on any Op; see [Outcome attributes](/chant/guide/ops-reference/#outcome-attributes) for the full contract. The composite wires it like this:
 
 ```typescript
 phase("Diff", [
@@ -142,7 +142,7 @@ phase("Diff", [
 
 The run reads `drifted` off the activity's return value and folds it into the record's `outcomes` as `Drift`, so `chant run prod-watch --json` prints it and every later reader of the ledger sees the same field.
 
-`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
+`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could capture the raw output instead (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
 
 ## Choosing a schedule
 
@@ -150,7 +150,7 @@ Cron expressions follow standard 5-field syntax. A few starting points:
 
 | Cadence | Cron | When to use |
 |---|---|---|
-| Every 15 min | `*/15 * * * *` | Fast feedback on prod, low API load — the default we recommend |
+| Every 15 min | `*/15 * * * *` | Fast feedback on prod, low API load. The default we recommend |
 | Hourly | `0 * * * *` | Lower-traffic envs, expensive `describeResources()` |
 | Nightly | `0 3 * * *` | Compliance-style audit, no expectation of human follow-up between ticks |
 
@@ -158,22 +158,22 @@ Bias toward less frequent. Each tick re-queries every covered lexicon's API; rat
 
 ## Profile selection
 
-`lifecycleSnapshot` and `lifecycleDiff` are activities — they pick up the same retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
+`lifecycleSnapshot` and `lifecycleDiff` are activities, so they pick up the same retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
 
-If your snapshot regularly takes longer than five minutes (large multi-region estates, slow `kubectl` against many resources), declare the activity with `profile: "longInfra"` directly instead of using the composite — `WatchOp` is a thin wrapper, you can always emit the equivalent `Op({ phases: [...] })` by hand.
+If your snapshot regularly takes longer than five minutes (large multi-region estates, slow `kubectl` against many resources), declare the activity with `profile: "longInfra"` directly instead of using the composite. `WatchOp` is a thin wrapper, and you can write the equivalent `Op({ phases: [...] })` by hand.
 
 ## What to do when drift fires
 
-The signal tells you *something* changed. The output tells you *what*. The next move depends on which category fired:
+The output says what changed. The next step depends on the category:
 
-- **`MISSING`** — declared in source, gone from the cloud. Usually a deletion or stack-rollback. Re-apply your stack or update source if the deletion was intentional.
-- **`ORPHAN`** — present in the cloud, not in source. Either a teammate created it manually (move it into source) or it's untracked tooling output (use `chant import` to bring it in, or scope it out of the env).
-- **`DRIFTED`** — observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape). A property-level drift that fires every tick because something else legitimately operates that field, an autoscaler on `replicas`, say, or a controller stamping an annotation on every sync, is worth declaring [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over) rather than re-triaging on every run. It stops appearing as drift, and shows up in the plan's HELD section with who holds it and why.
+- **`MISSING`**: declared in source, gone from the cloud. Usually a deletion or stack-rollback. Re-apply your stack or update source if the deletion was intentional.
+- **`ORPHAN`**: present in the cloud, not in source. Either a teammate created it manually (move it into source) or it's untracked tooling output (use `chant import` to bring it in, or scope it out of the env).
+- **`DRIFTED`**: observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape). A property-level drift that fires every tick because something else manages that field, an autoscaler on `replicas`, say, or a controller stamping an annotation on every sync, is worth declaring [`heldElsewhere()`](/chant/concepts/drift-detection/#heldelsewhere-a-field-declared-once-then-handed-over) rather than re-triaging on every run. It stops appearing as drift, and shows up in the plan's HELD section with who holds it and why.
 - **`PROPERTY DRIFT`**: the deep read found a declared resource whose live properties differ from its declaration. Each property is listed with its declared and live values. A sql table whose TTL was changed by hand shows here ([Watching a Server for Drift](/chant/lexicons/sql/drift-watch/)). Below it, `PENDING` lists the changes an apply would make that no one resource's properties show, such as the revoke of a privilege granted by hand on Postgres ([Access](/chant/lexicons/sql/postgres-access/)) or ClickHouse ([Access Control](/chant/lexicons/sql/clickhouse-access/)).
-- **`DISAPPEARED`** / **`NEWLY OBSERVED`** — historical context across snapshots. Useful for incident timelines, less actionable per-tick.
-- **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`** — context-keyed (Helm releases, Docker containers). Same triage as the resource categories.
+- **`DISAPPEARED`** / **`NEWLY OBSERVED`**: historical context across snapshots. Useful for incident timelines, less actionable per-tick.
+- **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`**: context-keyed (Helm releases, Docker containers). Same triage as the resource categories.
 
-Drift remediation is intentionally not a chant primitive — what to *do* about a drifted security group is a domain decision that doesn't generalize. The `WatchOp` pattern stops at "tell me when it happened."
+chant leaves remediation to you on purpose: what to *do* about a drifted security group is a domain decision. `WatchOp` stops at telling you when it happened.
 
 ## See also
 

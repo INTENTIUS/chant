@@ -10,7 +10,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-chant includes a built-in linter that validates your resource files. Run it with:
+chant has a built-in linter for your resource files. Run it with:
 
 ```bash
 chant lint
@@ -27,10 +27,10 @@ src/api.ts:12:1 error [EVL002] resource declaration must not be inside an if sta
 
 Lint runs two layers in one pass:
 
-1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/chant/lint-rules/evaluability/).
-2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/chant/lint-rules/correctness/).
+1. **Evaluability rules (EVL)** check that every resource property can be evaluated statically. See [Evaluability Rules](/chant/lint-rules/evaluability/).
+2. **Correctness & style rules (COR)** check structure: missing exports, circular dependencies, naming conventions. See [Correctness Rules](/chant/lint-rules/correctness/).
 
-Additionally, `chant build` runs **post-synth checks** against the serialized output (YAML, JSON, etc.). These lexicon-specific rules catch issues that only manifest in the generated output — for example, security misconfigurations, missing health probes, or invalid container commands. See your lexicon's lint rules documentation for the full list.
+Additionally, `chant build` runs **post-synth checks** against the serialized output (YAML, JSON, etc.). These lexicon-specific rules catch problems visible only in the generated output. Examples are security misconfigurations, missing health probes, and invalid container commands. See your lexicon's lint rules documentation for the full list.
 
 ## Output Formats
 

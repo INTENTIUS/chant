@@ -1,6 +1,6 @@
 ---
 title: Operator
-description: "chant operator: native durable ticks for ConvergeOp — a timer, a git-ref lease, and the local executor in a loop"
+description: "chant operator runs ConvergeOp ticks with a timer, a git-ref lease, and the local executor in a loop"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/operator/.
@@ -12,31 +12,30 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-[`ConvergeOp`](/chant/guide/converging-lifecycle/) needs a controller, not a workflow engine: a converge tick re-observes and re-derives everything every time, so durability, crash recovery, and a normal tick are the same act. `chant operator` runs those ticks — scheduled, durable, gated — using only primitives chant already owns: git as memory, `chant lifecycle plan --live` as the clock, and `git update-ref` as the lock. No new service, no new state store.
+A [`ConvergeOp`](/chant/guide/converging-lifecycle/) tick re-observes and re-derives everything every time, so a crash recovery and a normal tick are the same act and a controller loop is enough. `chant operator` runs those ticks on a schedule, with gates. Git is its memory, `chant lifecycle plan --live` is the clock, and `git update-ref` is the lock. It needs no extra service or state store.
 
 ## Pipeline ops vs converge ops
 
-Two kinds of Op need two different runtimes, and the difference is what durability is *for*:
+The two kinds of Op need different runtimes because durability means something different for each:
 
 | | Pipeline Op | `ConvergeOp` |
 |---|---|---|
-| Shape | A fixed sequence of steps, run start to finish | A loop that observes, classifies, and dispatches — fresh, every tick |
-| What a crash loses | Whatever the run had not finished when it died | Nothing — the next tick re-observes and re-derives everything |
+| Shape | A fixed sequence of steps, run start to finish | A loop that observes, classifies, and dispatches from scratch every tick |
+| What a crash loses | Whatever the run had not finished when it died | Nothing; the next tick re-observes and re-derives everything |
 | What "durable" means | Run it again, on a machine that is still there | Re-tick: run the whole loop again, cheap because ticks are idempotent |
 | Waiting (a schedule, a gate) | A fact the run records and exits on | A symptom the next tick reads fresh, or a fact the tick records and moves past |
 | Runtime | `chant run <op>`, here or `--on` a steward | `chant operator`, or the same steward |
 
-Both are convergent verbs; what differs is who decides when they run. A pipeline Op runs because somebody or something asked for it, so what it needs from a runtime is a machine that is still standing when the ask arrives. A `ConvergeOp` runs because the world might have moved, so what it needs is a cadence and a lease. It is level-triggered in the Kubernetes-controller sense, comparing the live level of the world against the declared level, recomputed from scratch every time. Re-running one beats resuming one, which is why nothing here resumes anything.
+Both are convergent verbs; what differs is who decides when they run. A pipeline Op runs because somebody or something asked for it, so what it needs from a runtime is a machine that is still standing when the ask arrives. A `ConvergeOp` runs because the world might have moved, so what it needs is a cadence and a lease. It is level-triggered in the Kubernetes-controller sense, comparing the live level of the world against the declared level, recomputed from scratch every time. Re-running one beats resuming one, so nothing here resumes a run.
 
 `chant operator` is the smallest thing that supplies the cadence and the lease: your own machine, or a CronJob, ticking on git alone. A [fountain steward](/chant/lexicons/fountain/steward/) is the same cadence hosted, with the environment's thread as the record. See [Ops as teammates](/chant/concepts/durable-workflows/) for how the pieces divide up.
 
 <Aside type="tip" title="When a step genuinely cannot be re-run">
 Compensation and mid-sequence resumption are workarounds for non-idempotent
-steps. The apply contract's whole point (tri-state envelope, owned-only prune,
-re-apply converges) is that chant verbs should already be convergent, so a step
-that cannot be re-run safely is usually a step in the wrong place — a pipeline
-Op somebody invokes deliberately, rather than a converge rule's `run()` target
-that a tick may fire at any time.
+steps. The apply contract (tri-state envelope, owned-only prune, re-apply converges)
+exists so that chant verbs are already convergent, so a step that cannot be
+re-run safely usually belongs in a pipeline Op somebody invokes deliberately,
+rather than as a converge rule's `run()` target that a tick may fire at any time.
 </Aside>
 
 ## Running it
@@ -52,22 +51,22 @@ chant approve fountain-apply rollout-gate   # resolve a gate a tick recorded
 
 `chant operator` is a deliberately small daemon: a timer, a lease, and the existing local executor (`runOpLocally`, the same path `chant run <name>` takes) in a loop. Every round:
 
-1. **Discover** every `ConvergeOp` in the project (any Op whose `labels.Converge === "true"` — what `ConvergeOp(...)` always sets), optionally filtered to `--env`.
-2. **Acquire or renew the lease** for each one (see below). Lose it — skip and report (`skipped=1(lease-held:<holder>)`), never queue.
-3. **Tick** the ones this process's lease covers, through the same local executor `chant run <name>` uses — so a tick this daemon runs and a tick you run by hand are identical, byte for byte.
+1. **Discover** every `ConvergeOp` in the project (any Op whose `labels.Converge === "true"`, which `ConvergeOp(...)` always sets), optionally filtered to `--env`.
+2. **Acquire or renew the lease** for each one (see below). If another process holds it, skip and report (`skipped=1(lease-held:<holder>)`); never queue.
+3. **Tick** the ones this process's lease covers, through the same local executor `chant run <name>` uses, so a tick this daemon runs and a tick you run by hand are identical, byte for byte.
 4. **Sleep** `--interval` (default 60s) and repeat, until Ctrl-C.
 
-The daemon is a convenience, never a requirement. If it dies, nothing breaks and nothing is lost — the environment simply stops converging until *anything* ticks it again: this process restarted, cron, a systemd timer, a Kubernetes CronJob, or a bare `chant run <name>`. They're all safe invokers of the same tick, because ticks are idempotent and lease-fenced.
+The daemon is optional. If it dies, nothing breaks and nothing is lost; the environment stops converging until something ticks it again: this process restarted, cron, a systemd timer, a Kubernetes CronJob, or a bare `chant run <name>`. Any of them can safely run the same tick, because ticks are idempotent and lease-fenced.
 
 ## The lease: single-writer coordination over a git ref
 
-Single-writer per environment is a lease, and `git update-ref` already supports compare-and-swap: pass the ref's last-observed value as its old value, and the write only lands if nothing moved it in between. `chant operator` uses exactly that — no lock file, no new mechanism:
+Single-writer per environment is a lease, and `git update-ref` already supports compare-and-swap: pass the ref's last-observed value as its old value, and the write only lands if nothing moved it in between. `chant operator` uses exactly that and nothing else:
 
-- Each `ConvergeOp` gets a dedicated ref, `refs/chant/lease/<op-name>`, separate from the `chant/lifecycle` ledger branch's own history. In a workspace member the ref is `refs/chant/lease/_members/<member>/<op-name>` (see [Ledgers](/chant/reference/workspace-declaration/#ledgers)). The ref's value **is** the lease record — a bare git blob (holder, a fencing token, `acquiredAt`, `expiresAt`), no tree, no commit.
-- **Acquire**: read the ref's current value; if it's absent, expired, or already held by this same process, write a new value with `update-ref <ref> <new> <old>`. A concurrent acquirer loses the CAS outright — `git update-ref`'s own lockfile-then-rename is already an atomic local mutex, so no `flock` is needed on top of it.
-- **Renew**: the same acquire call, called every round for an op this process still holds — same fencing token, pushed-out expiry.
-- **Fencing token**: a fresh token is minted only when the lease actually changes hands (first acquire, or a re-acquire after the previous holder's lease expired). A tick checks, right before trusting its own work, that its token is still the live one — a lease stolen mid-tick (the process stalled past its TTL) is detected, not silently trusted.
-- **Cross-machine**: the ref is pushed/fetched through the project's configured remote, the same way the `chant/lifecycle` branch itself is. **A project with no remote is single-machine by construction** — the local CAS above is then the *entire* coordination story. If two operators on two different machines share no remote, nothing arbitrates between them; don't run more than one in that setup.
+- Each `ConvergeOp` gets a dedicated ref, `refs/chant/lease/<op-name>`, separate from the `chant/lifecycle` ledger branch's own history. In a workspace member the ref is `refs/chant/lease/_members/<member>/<op-name>` (see [Ledgers](/chant/reference/workspace-declaration/#ledgers)). The ref's value **is** the lease record: a bare git blob (holder, a fencing token, `acquiredAt`, `expiresAt`). It has no tree and no commit.
+- **Acquire**: read the ref's current value; if it's absent, expired, or already held by this same process, write a new value with `update-ref <ref> <new> <old>`. A concurrent acquirer loses the CAS outright. `git update-ref`'s own lockfile-then-rename is already an atomic local mutex, so no `flock` is needed on top of it.
+- **Renew**: the same acquire call, made every round for an op this process still holds. It keeps the fencing token and pushes out the expiry.
+- **Fencing token**: a fresh token is minted only when the lease actually changes hands (first acquire, or a re-acquire after the previous holder's lease expired). A tick checks, right before trusting its own work, that its token is still the live one, so it detects a lease stolen mid-tick (the process stalled past its TTL).
+- **Cross-machine**: the ref is pushed/fetched through the project's configured remote, the same way the `chant/lifecycle` branch itself is. **A project with no remote is single-machine by construction** — the local CAS above is then the only coordination. If two operators on two different machines share no remote, nothing arbitrates between them; don't run more than one in that setup.
 
 ```bash
 chant operator --lease-ttl 5m        # default; long enough for a normal tick, short enough to recover promptly
@@ -77,15 +76,15 @@ chant operator --lease-ttl 5m        # default; long enough for a normal tick, s
 
 An operator that is stopped cleanly (Ctrl-C or SIGTERM) releases the Op leases it holds, so a restart ticks on its first round instead of printing `skipped=1(lease-held:<old holder>)` until they expire ([#2879](https://github.com/INTENTIUS/chant/issues/2879)). A killed one cannot, and that is the case the TTL covers.
 
-There is no special crash-recovery code path — restarting is ticking. A killed operator simply stops renewing its lease; the lease expires on its own TTL; the next round (this process restarted, a different machine's operator, or a bare `chant run <name>` from cron) re-acquires and re-ticks. A converge tick re-derives everything from live observation every time (`ConvergeOp`'s own design), so re-ticking after a crash and ticking on a normal schedule are the same act, not two different code paths to test and trust separately.
+Restarting is ticking; there is no separate crash-recovery code path. A killed operator stops renewing its lease; the lease expires on its own TTL; the next round (this process restarted, a different machine's operator, or a bare `chant run <name>` from cron) re-acquires and re-ticks. A converge tick re-derives everything from live observation every time (`ConvergeOp`'s own design), so re-ticking after a crash and ticking on a normal schedule run the same code.
 
-All operator state — ticks, gates, leases — lives on git. `rm -rf` of any local scratch directory changes nothing: the tick history is on the `chant/lifecycle` orphan branch, and the lease is a ref, both re-fetchable from the remote.
+All operator state (ticks, gates, leases) lives on git. `rm -rf` of any local scratch directory changes nothing: the tick history is on the `chant/lifecycle` orphan branch, and the lease is a ref, both re-fetchable from the remote.
 
-**One crash needs a human, not just a TTL.** If the killed process was interrupted mid-write — between `git update-ref` creating its lock file and renaming it into place — that lock file can be left behind, and it blocks every future write to that op's lease ref until it's removed; TTL expiry alone doesn't help, since the ref update itself can't land while the lock file sits there. `chant operator` never mistakes this for ordinary lease contention (a live holder elsewhere): a round reports it per-op as its own outcome — `error=1(lease acquire failed — ...)`, naming the `.lock` path and the fix — logs it, and moves on to every other discovered op rather than aborting the whole round. Once the file is removed (`rm <path>.lock`), the next round acquires normally.
+**One crash needs a human.** If the killed process was interrupted mid-write (between `git update-ref` creating its lock file and renaming it into place), that lock file can be left behind, and it blocks every future write to that op's lease ref until it's removed; TTL expiry alone doesn't help, since the ref update itself can't land while the lock file sits there. `chant operator` never mistakes this for ordinary lease contention (a live holder elsewhere): a round reports it per-op as its own outcome (`error=1(lease acquire failed — ...)`, naming the `.lock` path and the fix), logs it, and moves on to every other discovered op rather than aborting the whole round. Once the file is removed (`rm <path>.lock`), the next round acquires normally.
 
 ## Gate-as-fact
 
-A gate is a **fact**, not a wait. Nothing is suspended and nothing is holding a machine open for a decision: reaching a gate, a run reads the gate ledger, and either walks through on a resolution someone has already written or records that it is waiting and stops.
+A gate is a **fact** on the ledger. Nothing is suspended or holding a machine open for a decision: reaching a gate, a run reads the gate ledger, and either walks through on a resolution someone has already written or records that it is waiting and stops.
 
 Run a gated Op directly and you see both halves:
 
@@ -104,7 +103,7 @@ Op "prod-apply" is gated on "rollout-gate" after 2.1s
   expires : 2026-09-07T12:00:00.000Z
 ```
 
-The run exits **3** — not 1. A gate is a decision nobody has made yet, not a broken Op, and a CI job that reads 3 can report "waiting on approval" instead of paging whoever is on call. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. The pending fact lands on `_gates/<op>.jsonl` beside the resolutions, with the gate's `timeout` as its expiry (48h by default). Running again before it expires re-reads the same fact rather than writing another one, so an operator ticking every minute against an unapproved gate does not grow the ledger by a line a minute.
+The run exits **3**, not 1. A gate is a decision nobody has made yet, so a CI job that reads 3 can report "waiting on approval" instead of paging whoever is on call. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. The pending fact lands on `_gates/<op>.jsonl` beside the resolutions, with the gate's `timeout` as its expiry (48h by default). Running again before it expires re-reads the same fact rather than writing another one, so an operator ticking every minute against an unapproved gate does not grow the ledger by a line a minute.
 
 A converge tick reports the same event in its own vocabulary. Its `run()` dispatch of a gated Op sees exit 3 and records one `ConvergeRuleOutcome` with `action: "gated"` and the gate's name, on the same ledger record every other tick outcome lands on (`<env>/converge.jsonl`):
 
@@ -112,7 +111,7 @@ A converge tick reports the same event in its own vocabulary. Its `run()` dispat
 converge(staging): drifted=1 remediated=0 reported=0 skipped-budget=0 skipped-flap=0 gated=1 unobserved=0 adopted=0
 ```
 
-The tick ends there for that rule; it does not block, retry, or queue. The next tick re-observes independently and may fire the same rule again — visible in `chant operator status`'s pending-gates list either way.
+The tick ends there for that rule; it does not block, retry, or queue. The next tick re-observes independently and may fire the same rule again. Either way it shows in `chant operator status`'s pending-gates list.
 
 The pending fact carries an address when the run has one. A run inside the PR (or MR) job that carries the change knows where approval happens, so it records that link, and `chant operator status` prints it under the pending gate:
 
@@ -123,7 +122,7 @@ The pending fact carries an address when the run has one. A run inside the PR (o
       approve at: https://github.com/org/repo/pull/123
 ```
 
-A run with no PR behind it records no `url` at all — the field is absent, never a synthesized link. A gate an ordinary `chant run <op>` stopped at appears under a `pending gates (no converge tick)` heading, since no rule dispatched it.
+A run with no PR behind it records no `url`; the field is absent, never a synthesized link. A gate an ordinary `chant run <op>` stopped at appears under a `pending gates (no converge tick)` heading, since no rule dispatched it.
 
 Resolution is out-of-band, the same two paths [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) already uses for a human gate:
 
@@ -131,7 +130,7 @@ Resolution is out-of-band, the same two paths [Reconciling Lifecycle](/chant/gui
 chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"
 ```
 
-writes the counterpart fact — a `GateResolutionRecord` at `_gates/<op>.jsonl` — or a merged PR resolves it just as validly. `--url` is the typed link, so a reader gets "resolved by this PR" without sniffing free text; omit it inside a PR/MR CI job and that job's own PR is used. `--note` stays for prose.
+writes the counterpart fact, a `GateResolutionRecord` at `_gates/<op>.jsonl`; a merged PR resolves it just as well. `--url` is the typed link, so a reader gets "resolved by this PR" without sniffing free text; omit it inside a PR/MR CI job and that job's own PR is used. `--note` stays for prose.
 
 Then run the Op again. It reads the resolution, walks through the gate carrying the approver onto the step record, and finishes:
 
@@ -142,7 +141,7 @@ Then run the Op again. It reads the resolution, walks through the gate carrying 
 Op "prod-apply" completed in 43.4s
 ```
 
-Ordering is what makes this safe. A resolution counts only if it is newer than the gate's newest pending fact, so approving in advance does not clear a gate recorded since, and last month's approval does not answer the fact this morning's run wrote. To take back a gate nobody intends to finish, `chant approve <op> <gate> --expire` clears the standing pending fact without approving anything — the next run decides the gate from scratch.
+Ordering is what makes this safe. A resolution counts only if it is newer than the gate's newest pending fact, so approving in advance does not clear a gate recorded since, and last month's approval does not answer the fact this morning's run wrote. To take back a gate nobody intends to finish, `chant approve <op> <gate> --expire` clears the standing pending fact without approving anything, and the next run decides the gate from scratch.
 
 `chant run --components <name>` behaves identically. A `gate` in a component's composition stops that component pending `chant approve <component> <gate>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval.
 
@@ -183,7 +182,7 @@ An approval a run carried from a gate's alias ([#3949](https://github.com/INTENT
 
 ## `chant operator status`
 
-Everything below is read from the `chant/lifecycle` orphan branch alone — no daemon needs to be running, and nothing here queries a live cluster:
+Everything below is read from the `chant/lifecycle` orphan branch alone, so no daemon needs to be running and nothing queries a live cluster:
 
 ```bash
 chant operator status
@@ -199,11 +198,11 @@ staging-converge (staging)
     - fountain-apply gate "rollout-gate" (rule drift-apply) — resolve: chant approve fountain-apply rollout-gate
 ```
 
-A gate stops appearing as pending the moment `chant approve` (or a resolution recorded from elsewhere) is dated after the tick that recorded it — `chant operator status` re-checks the gate ledger on every read, so a stale/superseded approval (dated before the gated tick) doesn't count.
+A gate stops appearing as pending the moment `chant approve` (or a resolution recorded from elsewhere) is dated after the tick that recorded it. `chant operator status` re-checks the gate ledger on every read, so a stale/superseded approval (dated before the gated tick) doesn't count.
 
 ## `chant operator log`
 
-`status` answers "where is this environment right now" and shows exactly one tick. `log` is the history behind it — every tick record for the discovered ConvergeOps and every gate resolution against them, merged into one timestamp-ordered timeline, oldest first, read from the same orphan branch:
+`status` answers "where is this environment right now" and shows exactly one tick. `log` is the history behind it: every tick record for the discovered ConvergeOps and every gate resolution against them, merged into one timestamp-ordered timeline, oldest first, read from the same orphan branch:
 
 ```bash
 chant operator log
@@ -220,29 +219,29 @@ chant operator log --since 2026-08-25T00:00:00Z --limit 50 --json
 
 The bracketed value is the tick's own id, so an outcome can be traced back to the tick that produced it. `--limit` keeps the newest n entries and still prints them oldest-first; `--since` takes an ISO-8601 instant and is inclusive.
 
-`--json` emits `{entries, malformed}` — one document, on stdout, diagnostics on stderr, the same discipline `operator status --json` follows. `malformed` carries the per-ledger count of lines that could not be parsed, so a consumer can say "3 lines of this ledger were unreadable" rather than silently rendering a shorter timeline. Without `--json` the same count is a warning on stderr.
+`--json` emits `{entries, malformed}` as one document on stdout, with diagnostics on stderr, the same discipline `operator status --json` follows. `malformed` carries the per-ledger count of lines that could not be parsed, so a consumer can say "3 lines of this ledger were unreadable" rather than silently rendering a shorter timeline. Without `--json` the same count is a warning on stderr.
 
-This exists so a reader never has to reach past the CLI. `git show chant/lifecycle:<env>/converge.jsonl` works, and pins whoever does it to the orphan branch's name, the `<env>/converge.jsonl` and `_gates/<op>.jsonl` path conventions, and the record's on-disk encoding — none of which are promised contracts.
+This exists so a reader never has to reach past the CLI. `git show chant/lifecycle:<env>/converge.jsonl` works, and pins whoever does it to the orphan branch's name, the `<env>/converge.jsonl` and `_gates/<op>.jsonl` path conventions, and the record's on-disk encoding. None of those are promised contracts.
 
 ## Change signals: a second wake source, never a second source of truth
 
 The loop above is time-triggered, so detection latency is bounded by `--interval`. A lexicon can shorten that by telling the operator when something moved, through the optional `subscribeChanges` seam on its plugin ([#1981](https://github.com/INTENTIUS/chant/issues/1981)). Today one lexicon implements it: [k8s](/chant/lexicons/k8s/), over the Kubernetes Watch API.
 
-Three rules keep it honest.
+Three rules govern it.
 
 **The signal is a trigger, and never a fact.** `onChange()` takes no arguments. There is no channel through which a watch event could reach a change set, a snapshot row or a diff line, because there is nowhere to put one. The round a signal wakes is the round the timer would have run: it re-observes and re-derives everything from the ordinary read path. Waking early changes *when* a tick runs, and nothing about what it concludes. A test in `packages/core/src/op/operator.test.ts` runs the same round on a timer and on a fabricated signal and asserts the two verdicts are identical.
 
 **A dropped subscription degrades to the timer and says so.** A watch that dies is reported as one line, and so is one that never opened. The loop keeps ticking on `--interval` either way, and the next round re-subscribes. Losing the stream slows detection back down. It never stops the loop, and it never reads as a clean estate.
 
-**The timer stays.** A signal shortens the sleep, it does not replace it, so a substrate that silently stops sending still converges on `--interval`.
+**The timer stays.** A signal shortens the sleep and never replaces it, so a substrate that silently stops sending still converges on `--interval`.
 
-Signals are coalesced behind a floor of **5 seconds** (`DEFAULT_SIGNAL_FLOOR_MS`). A rollout or a controller resync produces hundreds of truthful "something moved" events in a second, and a tick per event would turn a convergence loop into a load generator pointed at the cluster it is watching. So a pending signal wakes the sleep no earlier than 5 seconds after the *last round started*: a storm inside one window costs exactly one early round, and a substrate that never stops sending settles into ticking on the floor rather than on the interval. Measured from the round rather than from the last signal on purpose, which makes it a rate limit instead of a debounce: a debounce starves, and the busier the cluster the later the tick would land.
+Signals are coalesced behind a floor of **5 seconds** (`DEFAULT_SIGNAL_FLOOR_MS`). A rollout or a controller resync produces hundreds of truthful "something moved" events in a second, and a tick per event would turn a convergence loop into a load generator pointed at the cluster it is watching. So a pending signal wakes the sleep no earlier than 5 seconds after the *last round started*: a storm inside one window costs exactly one early round, and a substrate that never stops sending settles into ticking on the floor rather than on the interval. The floor is measured from the round, not from the last signal, so it is a rate limit. A debounce would delay the tick longer the busier the cluster gets.
 
 Subscriptions need an environment, since they resolve the same binding a live read does, so `chant operator --env <env>` is what turns them on. Every subscription is closed and its abort signal fired when the operator stops.
 
 ### Which substrates have a change stream worth using
 
-The question is not whether a substrate can notify. It is whether its notification primitive is complete and trustworthy enough to *shorten* a scheduled watch without anything being deployed into the estate being observed. One family passes.
+A substrate qualifies when its notification primitive is complete and trustworthy enough to *shorten* a scheduled watch with nothing deployed into the observed estate. One family qualifies.
 
 | Lexicon | Native primitive | Usable as a signal | Cost |
 |---|---|---|---|
@@ -257,11 +256,11 @@ The question is not whether a substrate can notify. It is whether its notificati
 | fly | The Machines API exposes no change stream | No | |
 | cedar, fountain, render, cpln | No change feed on the surfaces chant reads | No | |
 
-Every cloud substrate fails on the same point. Subscribing means writing infrastructure into the account being observed, which inverts the property that makes a watch safe to point at production. So their absence from the table's second column is a position, not a gap waiting to be filled: on aws, gcp and azure the operator's timer is the detection mechanism, and `--interval` is the latency.
+Every cloud substrate fails on the same point. Subscribing means writing infrastructure into the account being observed, which breaks the property that makes a watch safe to point at production. Leaving them out is deliberate: on aws, gcp and azure the operator's timer is the detection mechanism, and `--interval` is the latency.
 
 ## Local-only durability
 
-`chant operator`'s daemon lives entirely on your machine and your project's git remote — there is no server component and no new database. Hosting the same cadence on a machine that is not yours is what a [fountain steward](/chant/lexicons/fountain/steward/) is for, and OperatorStack (the in-cluster estate runtime, tracked separately) is deliberately out of scope here. If your project has no configured remote, say so loudly to yourself: the lease and the ledger are then local-only, and a second machine running `chant operator` against the "same" environment has no way to see the first one's lease at all.
+`chant operator`'s daemon lives entirely on your machine and your project's git remote, with no server or database. Hosting the same cadence on a machine that is not yours is what a [fountain steward](/chant/lexicons/fountain/steward/) is for, and OperatorStack (the in-cluster estate runtime, tracked separately) is deliberately out of scope here. If your project has no configured remote, the lease and the ledger are local-only, and a second machine running `chant operator` against the "same" environment has no way to see the first one's lease at all.
 
 ## See also
 

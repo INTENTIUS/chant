@@ -14,11 +14,11 @@ import { Code } from '@astrojs/starlight/components';
 import sharedConfigSrc from '../../../../../lexicons/aws/examples/core-concepts/src/naming-shared-config.ts?raw';
 import sequentialSrc from '../../../../../lexicons/aws/examples/core-concepts/src/naming-sequential.ts?raw';
 
-chant discovers resources by scanning **exports** from your `src/` files. The export name becomes the logical resource name — it's what you see in lint output, build logs, and cross-file imports. Choosing clear, consistent names makes your project easier to navigate and maintain.
+chant discovers resources by scanning **exports** from your `src/` files. The export name becomes the logical resource name that lint output, build logs and cross-file imports show.
 
 ## Export naming
 
-Exports must use **camelCase** — the lint rule **COR005** enforces this automatically.
+Exports must use **camelCase**; lint rule **COR005** enforces it.
 
 ```typescript
 // ✅ correct
@@ -55,7 +55,7 @@ Because the config object is `as const`, chant's evaluator can resolve every val
 
 ## Multiple similar resources
 
-TypeScript's native constructs replace the need for framework-level `count` or `for_each`. Use `Array.map` to create a set of resources, then destructure the result into named exports:
+Plain TypeScript replaces `count` and `for_each`. Use `Array.map` to create a set of resources, then destructure the result into named exports:
 
 <Code code={sequentialSrc} lang="typescript" title="src/naming-sequential.ts" />
 
@@ -89,7 +89,7 @@ export const uploadBucket = new Bucket({
 });
 ```
 
-`params.env` resolves before any file is imported, so the template literal folds to a plain string — `billing-staging-uploads` — with no new machinery. Build once per environment:
+`params.env` resolves before any file is imported, so the template literal folds to a plain string such as `billing-staging-uploads`. Build once per environment:
 
 ```bash
 chant build --param env=staging
@@ -100,7 +100,7 @@ The two builds yield disjoint physical names *and* disjoint ownership markers (`
 
 ### All environments in one build
 
-The alternative keeps every environment in a single build and hand-threads the name per instance — instantiate the same composite once per environment, each call passing its own `name` (`web-dev`, `web-staging`, `web-prod`). This is the [layered configuration](/chant/guide/layered-configuration/) pattern: a base config, per-environment overrides via object spread, one manifest containing all instances.
+The alternative keeps every environment in one build: instantiate the same composite once per environment, each call passing its own `name` (`web-dev`, `web-staging`, `web-prod`). This is the [layered configuration](/chant/guide/layered-configuration/) pattern: a base config, per-environment overrides via object spread, one manifest containing all instances.
 
 Choose per-env builds when environments deploy independently (separate accounts, separate pipelines, short-lived copies); choose the all-in-one shape when one apply should converge every environment at once.
 
@@ -120,7 +120,7 @@ Now `chant build --env staging` and `chant build --param env=staging` bind the s
 
 ## File organization
 
-Group related resources in the same file and keep unrelated ones separate. The lint rule **COR009** warns when a single file exports eight or more resources — a signal that it may be doing too much.
+Group related resources in the same file and keep unrelated ones separate. The lint rule **COR009** warns when a single file exports eight or more resources, a sign the file may be doing too much.
 
 A typical layout:
 
