@@ -74,9 +74,14 @@ const pillars = [
 		transform: translateY(-2px);
 	}
 	/* Three screen pixels per art pixel, so every square stays sharp. */
+	/* Optical centre: the face, not the whole image, sits over the wordmark. The
+	   face spans art columns 1 to 24 of the 40-wide viewBox, so its middle is 6
+	   art pixels (18px) left of the image's, and the sound waves hang to the right. */
 	.hero-logo {
 		width: 120px;
 		height: 69px;
+		position: relative;
+		left: 18px;
 	}
 	.wordmark {
 		margin: 0.4rem 0 0;
@@ -86,8 +91,6 @@ const pillars = [
 		letter-spacing: 0.4em;
 		line-height: 1;
 		color: var(--sl-color-white);
-		/* Optical centre: the tracking adds space after the last letter. */
-		padding-left: 0.4em;
 	}
 	/* The mark between two gold hairlines, under the wordmark. */
 	.rule {
