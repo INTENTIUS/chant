@@ -2,6 +2,12 @@
 title: Per-PR Preview Environments
 description: Open a PR, get an isolated live copy of the stack. Push, the copy updates and one sticky comment tells you where it is. Close the PR, a marker-scoped teardown removes it. The workflow itself is declared in chant and emitted by chant build.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/github-pr-preview/.
+  In `examples/github-pr-preview`, run `npm install` and `npm run build:ci`, and show me the generated `.github/workflows/preview.yml`.
+  On a local k3d cluster only (`k3d cluster create preview`), run `CHANT_ENV=pr-42 npx chant run preview-apply --no-record` and `CHANT_ENV=pr-43 npx chant run preview-apply --no-record`, then `npx chant lifecycle teardown pr-42 --yes`.
+  Show me `kubectl get ns preview-pr-42 preview-pr-43` after each step. Do not create the `PREVIEW_KUBECONFIG` secret.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

@@ -3,6 +3,12 @@ title: "Watching a Server for Drift"
 description: "A WatchOp with a schedule reads a ClickHouse or Postgres server as a read-only user and reports owned objects changed or dropped out of band; generateOpsPipeline renders it for GitHub, GitLab and Forgejo"
 diataxis: how-to
 order: 3
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/drift-watch/.
+  Add a `WatchOp` as `ops/schema-watch.op.ts` for the environment I name, with the schedule I give, and bind that environment's profile to a read-only user named by environment variables.
+  Render it to CI with `generateOpsPipeline` for this repository's forge, passing only the reader's credentials as secret references.
+  Try the watch once against the local server with `npx chant run schema-watch --no-record --env dev`, show me the output, and open a pull request with the Op, the config and the pipeline. List the secrets I must add; do not create them.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A `WatchOp` over a `sql` environment runs `chant lifecycle diff <env> --live` on a schedule and records the run's `Drift` outcome. It works the same way for ClickHouse and Postgres. The example the lexicon ships, `examples/drift-watch`, is a ClickHouse project with one.

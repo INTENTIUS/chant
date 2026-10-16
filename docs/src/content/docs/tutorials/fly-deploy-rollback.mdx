@@ -2,6 +2,12 @@
 title: Fly Deploy with Checkpoint Rollback
 description: Wrap a transactional rollback boundary around a Fly App + Machine deploy, using a Sprite checkpoint as the commit point — when a risky post-deploy step fails, the sandbox rewinds to its known-good checkpoint. Runs offline against emulators, or against real Fly + real Sprites by changing two environment variables.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/fly-deploy-rollback/.
+  In `examples/fly-deploy-rollback`, run `npm install`. Export `FLY_FLAPS_BASE_URL=http://localhost:4280` and `SPRITES_BASE_URL=http://localhost:4290`, and run `npx chant run fly-deploy --no-record` against the emulators.
+  Then run `npx chant run fly-deploy-guarded --no-record`, and show me the output of both runs, with the rollback to the checkpoint in the second.
+  Keep both emulator overrides set and set no Fly or Sprites token.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

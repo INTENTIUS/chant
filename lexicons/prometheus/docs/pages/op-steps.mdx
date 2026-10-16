@@ -3,6 +3,12 @@ title: "Op Steps"
 description: "promtool, amtool, Alertmanager silences, loaded-rule observation and the rule audit as chant Op steps"
 diataxis: how-to
 order: 7
+prompt: |
+  Read https://intentius.io/chant/lexicons/prometheus/op-steps/.
+  Write the `rule-checks` Op the page gives, with `promtoolCheckRules`, `promtoolTestRules`, `amtoolCheckConfig` and `amtoolRoutesTest` over the built files, in ops/.
+  Run `npx chant build src --lexicon prometheus -o dist/rules.yml`, then `npx chant run rule-checks --no-record`, and show me the output.
+  Open a pull request with ops/. Do not create silences in a shared Alertmanager.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The lexicon ships Op steps for what happens around a rule file once it is built: checking it with the upstream tools, silencing alerts during a change, watching that Prometheus loaded it, and auditing a running Prometheus. List `prometheus` in `chant.config.ts` and `chant run` loads the activities behind them.

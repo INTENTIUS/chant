@@ -2,6 +2,12 @@
 title: Package & Publish
 description: Bundle your lexicon for distribution with packagePipeline
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicon-authoring/package/.
+  Make the lexicon I name ready to publish: its `src/package-cli.ts` on `packagePipeline` behind `npm run bundle`, `files`, `exports` and the `prepack` chain shaped like `lexicons/k3s/package.json`, and `chantVersion` in the manifest.
+  Run `npm run prepack`, then `chant dev check-lexicon lexicons/<name>` until tier 1 is clean. Run `npm pack --dry-run`, show me the file list, and open a pull request.
+  Do not run `npm publish` or `chant dev publish`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The `package` lifecycle method bundles your lexicon's generated artifacts into a distributable format. Core provides `packagePipeline` to assemble the bundle and `writeBundleSpec` to put it on disk.

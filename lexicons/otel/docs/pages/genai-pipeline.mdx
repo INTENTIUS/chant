@@ -3,6 +3,12 @@ title: "GenAI Pipeline"
 description: "genAiPipeline(): remove prompt and completion content, and derive agent RED and token metrics from GenAI spans"
 diataxis: how-to
 order: 9
+prompt: |
+  Read https://intentius.io/chant/lexicons/otel/genai-pipeline/.
+  Add `genAiPipeline()` to this project's collector, with the trace and metric exporters I name, and keep prompt and completion content removed unless I say otherwise.
+  Run `npx chant build src --lexicon otel -o collector.yaml` and `npx chant lint src` until both are clean, and `otelcol-contrib validate --config collector.yaml` when the binary is installed.
+  Open a pull request with the result.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Agent and LLM workloads instrumented with the OpenTelemetry GenAI semantic conventions put two things on their spans that a collector has to deal with. Prompts, completions, system instructions and tool-call payloads can be recorded as attributes or events, and they often hold user data. The spans also carry what agent metrics need: the operation, the model, the tool, the error type and token counts. `genAiPipeline()` is a collector preset that removes the content by default and turns the spans into metrics.

@@ -2,6 +2,11 @@
 title: Custom Rules
 description: Defining project-specific lint rules
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lint-rules/custom-rules/.
+  Write the project lint rule I describe as a `rule({...})` call with an id under our own prefix, such as `ORG001`, in a file under `lint-rules/`, and add the file to `lint.plugins` in `chant.config.ts`.
+  Run `npx chant lint`, show me what the rule reports, and open a pull request with the rule and no fixes to the code it flags.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 You can define project-specific lint rules using the declarative `rule({...})` format.

@@ -5,6 +5,12 @@ description: "postgresApply makes a Postgres server hold what a build declares: 
 diataxis: how-to
 group: "Postgres"
 order: 13
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/postgres-applying/.
+  Add an `ApplyOp` with `target: "postgres"` for the environment I name, as `ops/schema-apply.op.ts`, and set the profile's `lockTimeoutMs` and `statementTimeoutMs` if I give values.
+  Build to `dist/schema.json`, run `npx chant sql plan <env> dist/schema.json` against the local Postgres from `npx chant emulator up --lexicon sql`, and try the Op there with `npx chant run schema-apply --no-record`.
+  Open a pull request with the Op and the config, with the plan and how each change is grouped into transactions in its description.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `postgresApply` makes the Postgres server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "postgres"`, and an Op step of its own for a hand-written Op. It sends the statements for every change [the classifier](../postgres-change-classifier/) does not put in the expand-and-contract class, and nothing for the objects that have one.

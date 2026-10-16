@@ -3,6 +3,12 @@ title: "Provisioning"
 description: "Load the built dashboards and datasources into Grafana with Docker or Kubernetes"
 diataxis: how-to
 order: 4
+prompt: |
+  Read https://intentius.io/chant/lexicons/grafana/provisioning/.
+  Deliver this project's dashboards and datasources the way I name: mounted provisioning files for Docker, `GrafanaConfigMaps` for the Grafana sidecar, `grafanaVolumes()` for a plain Deployment, or `GrafanaOperatorResources` for the Grafana Operator.
+  Run `npx chant build` for each lexicon involved (grafana, and k8s for a cluster) and `npx chant lint src` until both are clean, and open a pull request.
+  Load it only into a local container or a local k3d cluster, and show me the output. List the commands that apply it to a shared cluster; do not run them.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant build src --lexicon grafana -o dist/grafana/index.json` writes Grafana's provisioning files next to the index:

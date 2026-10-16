@@ -2,6 +2,12 @@
 title: Ops
 description: The terraform and choudoufu activities, the typed builders, and the apply, watch, adopt and pin rollout composites.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/terraform/ops/.
+  Declare the `TerraformApplyOp` I describe for the root I name, in `ops/<name>.op.ts`, with a gate that is not `"never"`.
+  Run `npx chant build` and `npx chant lint`, then run the root's plan with `terraform plan` (or `tofu plan`) and the credentials I give you, and put the plan summary in the pull request description.
+  Open a pull request with the Op. Print the `chant run` command for a person to run; do not run the Op.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Nine activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus four composite Ops built from them. Three act on one root: a gated apply, a scheduled watch, and a gated adoption. The fourth rolls a module version out across many roots as pin-bump pull requests.

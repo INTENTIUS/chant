@@ -5,6 +5,12 @@ description: "Declaring row-level security, policies, roles, grants and default 
 diataxis: how-to
 group: "Postgres"
 order: 13
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/postgres-access/.
+  Declare the row-level security, policies, roles and grants I describe next to the tables they protect, with the tags from `@intentius/chant-lexicon-sql/postgres`. Name a role the environment provisions as text; do not declare it.
+  Set `access: true` on the profiles of the environments I name, run `npx chant build` and `npx chant lint`, then `npx chant sql plan` against the local Postgres from `npx chant emulator up --lexicon sql`.
+  Open a pull request with the declarations, the config and the plan in its description.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Who can read and write which rows is part of a schema, so the Postgres dialect declares it next to the tables it is about, and the plan, the applier and drift cover it. It is off until a profile turns it on, so a project whose access is managed by another tool, or by hand, is not affected.

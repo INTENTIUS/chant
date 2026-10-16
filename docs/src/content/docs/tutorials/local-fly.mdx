@@ -2,6 +2,12 @@
 title: Deploy Fly Machines Offline
 description: One Fly App + Machine, authored in TypeScript and applied straight to the Machines API by flyApply — deployed end to end against the local mudflaps emulator with no Fly account, then against real Fly by dropping one override. No flyctl, no state file.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/local-fly/.
+  In `examples/local-fly`, run `npm install` and `npx chant run fly --no-record`. The run boots mudflaps and builds, applies and verifies the app there, then tears it all down.
+  Run it two more times and show me the output of each run.
+  Keep the local endpoint in `ops/fly.op.ts` and set no `FLY_API_TOKEN`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

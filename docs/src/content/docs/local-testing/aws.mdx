@@ -2,6 +2,11 @@
 title: Local Testing — AWS (Floci)
 description: Deploy chant's CloudFormation output to Floci with awsApply, which calls the CloudFormation API directly — the AWS twin of azApply/gcpApply, no aws CLI.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/local-testing/aws/.
+  In `examples/local-cloud-trio`, run `npm install` and then `npx chant run aws --no-record`. The run boots Floci and applies the stack with `awsApply`. It checks the bucket and then tears Floci down, and it needs Docker.
+  Keep the `endpoint` override on `http://localhost:4566`, and show me what the run prints.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

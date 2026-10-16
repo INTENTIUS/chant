@@ -3,6 +3,11 @@ title: "Checking with promtool and amtool"
 description: "Run promtool check rules and amtool check-config over what the lexicon builds, in tests and CI"
 diataxis: how-to
 order: 7
+prompt: |
+  Read https://intentius.io/chant/lexicons/prometheus/upstream-tools/.
+  Add tests that run `promtoolCheckRules`, `promtoolCheckConfig` and `amtoolCheckConfig` over this project's built files, skipped when the tool is missing, as the page shows.
+  Run them with the tools at the versions in `PROMETHEUS_PIN`, show me the output, and open a pull request with the tests.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The lexicon's own checks cover structure, references and PromQL syntax. `promtool` and `amtool` know the rest: PromQL types, the Go templates in annotations, every receiver field. chant doesn't bundle them and `chant build` doesn't run them, so a build gives the same answer on every machine. Run them in tests and CI instead.

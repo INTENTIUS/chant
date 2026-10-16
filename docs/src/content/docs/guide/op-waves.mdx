@@ -2,6 +2,12 @@
 title: Op Waves
 description: Apply an Op to each environment, or to every target in a set, one wave at a time, each wave behind one gate
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/op-waves/.
+  Write the waves spec I describe as `waves.json`, with a `gate` on every wave past the first and the `plan` command for each target.
+  Run `npx chant run --generate <forge> --spec waves.json` for this repository's forge, check the generated pipeline file, and open a pull request with the spec and the pipeline.
+  In its description, list each wave's gate name and the `chant approve` command a person runs for it. Do not run them, and do not run `chant run wave` or `chant run resume` yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This guide is for a project that applies the same Op to several places in order, such as dev before staging before prod, or one environment made of many databases. Each place is a run of the Op against one target. Runs that go out together form a wave, and each wave waits on one gate before it applies. `chant run --generate` renders the waves as a pipeline for GitHub, GitLab or Forgejo, and every job in it runs `chant run wave`.

@@ -2,6 +2,12 @@
 title: "Deploying to AKS"
 description: "How Azure ARM infrastructure connects to Kubernetes workloads on AKS via chant's cross-lexicon build."
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/azure/aks-kubernetes/.
+  Set up the cross-lexicon project the page describes: the azure lexicon for the cluster, registry, identities and DNS zone, the k8s lexicon for the workloads, with the ARM outputs flowing through `.env` into `config.ts`.
+  Run `npm run build` and `npx chant lint src`, and open a pull request with the source and the built template and manifests.
+  List the deploy steps (`az group create`, `npm run deploy-infra`, `npm run load-outputs`, `npm run apply`) for me to run in order, and do not run them or kubectl against any cluster yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

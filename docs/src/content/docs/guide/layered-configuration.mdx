@@ -2,6 +2,12 @@
 title: Layered Configuration
 description: One composite, many environments — per-environment config with plain object spread.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/layered-configuration/.
+  Where this project builds one composite for several environments, write one `base` config and one object per environment that spreads it, with a nested `...base.<key>` for each nested object to merge, in a `config.ts` as the page shows.
+  Give each environment its own `name`, use no merge helper or function call (EVL004), and call the composite once per environment.
+  Run `npx chant build` and `npx chant lint`, check each environment's output, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Code } from '@astrojs/starlight/components';

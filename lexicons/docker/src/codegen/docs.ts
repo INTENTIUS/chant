@@ -144,7 +144,8 @@ Write every Dockerfile stage as an ordered \`steps\` list, one instruction per s
 Where two Dockerfiles repeat a stage or a run of steps, export it once as a const (a \`DockerfileStage\` or a \`DockerfileStep[]\`) from its own module and import it in both. Spread imported consts, not function results; a Dockerfile that needs parameters is a \`Composite\`.
 Run \`chant build src --lexicon docker -o build/docker-compose.yml\` (Dockerfiles are written beside it) and compare with the original files, then \`chant lint src\`. Run \`chant lint src --fix\` for DKRS002 (per-kind fields to \`steps\`, then reorder the steps it writes), fix every other finding by hand, and repeat until lint is clean.
 Report the generated docker-compose.yml and each Dockerfile.<name>, and any finding you left and why.
-Never push an image, run \`docker compose up\` against anything but the local Docker daemon, or change files outside this project.`;
+Do not push an image, run \`docker compose up\` against anything but the local Docker daemon, or change files outside this project.
+Never deploy to a real cloud account or shared environment (with \`chant run\`, \`chant components\` or a platform's own CLI), approve (a pull request review, \`chant approve\` or \`chant run approve\`), override a policy denial (\`chant approve policy-override\`), or merge; never touch \`.chant/allowed_signers\` or \`chant/lifecycle\`.`;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
   const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));

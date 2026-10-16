@@ -2,6 +2,12 @@
 title: "GCP GKE + Kubernetes"
 description: "Deploy a production-grade GKE microservice with GCP Config Connector for infrastructure and the K8s lexicon for workloads — all in TypeScript."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/gke-kubernetes/.
+  Using `examples/k8s-gke-microservice` as the model, write the Config Connector and Kubernetes sources this repository needs, with a `WorkloadIdentityServiceAccount` per workload.
+  Run `npm run build` and `npx chant lint` until both pass, and open a pull request with the sources.
+  List in its description the deploy steps and the teardown order a person follows. Do not run the deploy scripts, `gcloud` or `kubectl apply` against a GCP project.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

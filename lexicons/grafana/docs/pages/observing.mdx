@@ -3,6 +3,12 @@ title: "Drift and Live Export"
 description: "Compare the dashboards and datasources you declared with what a running Grafana holds, and write a Grafana's dashboards back out as TypeScript"
 diataxis: how-to
 order: 6
+prompt: |
+  Read https://intentius.io/chant/lexicons/grafana/observing/.
+  Add the `grafana.profiles.<env>` entry for the environment I name to chant.config.ts, with its token named by an environment variable, and open a pull request.
+  Then run `npx chant lifecycle diff <env> --live` and tell me what changed in Grafana since the build, and which dashboards are unclaimed.
+  Read only: do not run `--update-baseline`, do not create a token, and do not change anything in Grafana.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A dashboard provisioned from chant can still change in Grafana: somebody edits a query in the editor and saves, or moves the dashboard to another folder. `chant lifecycle diff <env> --live` reads the environment's Grafana and reports those changes against your source, property by property. `chant import --from <env>` goes the other way and writes a Grafana's dashboards and datasources as TypeScript.

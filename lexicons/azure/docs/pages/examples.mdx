@@ -2,6 +2,11 @@
 title: "Examples"
 description: "Walkthrough of each example project"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/azure/examples/.
+  In a checkout of https://github.com/INTENTIUS/chant, build the example under lexicons/azure/examples/ closest to what I describe with `npx chant build` and `npx chant lint`, and show me the output.
+  Then copy it into this project as the starting point, adjust names and tags for this project, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The Azure lexicon ships with several example projects demonstrating common patterns.

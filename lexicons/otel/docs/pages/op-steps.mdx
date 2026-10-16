@@ -3,6 +3,12 @@ title: "Op Steps"
 description: "otelcol validate and components checks, collector health observation and the pin audit as chant Op steps"
 diataxis: how-to
 order: 8
+prompt: |
+  Read https://intentius.io/chant/lexicons/otel/op-steps/.
+  Write the `collector-checks` Op the page gives, with `otelcolValidate` and `otelcolComponents` over the built collector config, in ops/.
+  Run `npx chant build src --lexicon otel -o dist/collector.yaml`, then `npx chant run collector-checks --no-record`, and show me the output.
+  Open a pull request with ops/. Do not schedule the health or audit Ops against a shared environment.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The lexicon ships Op steps that run the collector binary over a built config, observe running collectors, and audit the lexicon's own pins. List `otel` in `chant.config.ts` and `chant run` loads the activities behind them. Every step has an activity contract, so `chant build` and `chant lint` check its arguments (OPS012) and any step-output reference to its result (OPS013).

@@ -2,6 +2,12 @@
 title: Converging Lifecycle
 description: ConvergeOp — the executable runbook. Observe, classify against a typed rule table, dispatch within a per-tick budget, record.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/converging-lifecycle/.
+  Write the ConvergeOp I describe as a `*.op.ts` file in this project, with `dial: "observe"` unless I name another dial. Give every rule a `why`, and give the Op a `budget`.
+  Run `npx chant build` and `npx chant lint` until both pass, and fix every OPS014 finding by changing the rule, never by removing its `why`.
+  Open a pull request with the Op. In its description, list each rule with the Op it dispatches and the dial it runs under.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 [Watching](/chant/guide/watching-lifecycle/) tells you an environment drifted. [Reconciling](/chant/guide/reconciling-lifecycle/) closes one gap, once, on request. `ConvergeOp` is the loop between those two: a scheduled tick that observes, decides what (if anything) to do about what it saw, and does it — on a schedule, within a bounded budget, every action traced back to a written rule.

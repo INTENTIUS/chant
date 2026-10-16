@@ -2,6 +2,12 @@
 title: Live Import
 description: Generate chant TypeScript from a running cloud or cluster with chant import --from — the cloud->code direction, and the way to adopt an orphaned resource back into source.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/live-import/.
+  Run `npx chant lifecycle plan <env>` and `npx chant import --from <env> --output src/` only for the environment I name, with `--name` or `--type` to select the resources I ask for. Both only read the live system.
+  Review the generated files for secrets before anything else, replace each secret with a reference, and tell me what you replaced.
+  Run `npx chant build` and `npx chant lint`, and open a pull request with the new source.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant import <template-file>` reads a template from disk. `chant import --from <env>` reads the **live** cloud or cluster instead, regenerating chant TypeScript from what is actually running. This is the `cloud → code` direction — the way to adopt infrastructure you didn't author, or pull an orphan back into source.

@@ -2,6 +2,12 @@
 title: "Examples: Resources"
 description: "Walkthrough of Kubernetes resource examples — deployments, services, autoscaling"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/k8s/examples/.
+  Write the workload I describe as typed resources in this project's src/, following the matching example on this page.
+  Run `npx chant build src --output dist/manifests.yaml` and `npx chant lint src` until both are clean, then `kubectl apply -f dist/manifests.yaml --dry-run=client`.
+  Open a pull request with src/.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## Basic Deployment

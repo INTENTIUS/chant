@@ -3,6 +3,11 @@ title: "Custom Components"
 description: "Add a collector component chant doesn't ship with defineComponent, and pin the schema its type follows"
 diataxis: how-to
 order: 4
+prompt: |
+  Read https://intentius.io/chant/lexicons/otel/custom-components/.
+  Declare the collector component I name with `defineComponent`, with its config type, a `pin` naming the source and version that type follows, and a `validate` function, in this project's src/.
+  Use it in a pipeline, run `npx chant build src --lexicon otel -o collector.yaml` and `npx chant lint src` until both are clean, and open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 chant ships a core set of components. A team or a plugin package adds any other component with `defineComponent`, and the result behaves like a built-in: the same serializer emits it, the same checks run over it, and `collectorTopology()` reports it.

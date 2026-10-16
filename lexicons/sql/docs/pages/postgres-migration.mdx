@@ -4,6 +4,12 @@ description: "PostgresMigrationOp runs a column rename or a type change across k
 diataxis: how-to
 group: "Postgres"
 order: 14
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/postgres-migration/.
+  Make the column rename or type change I describe in the declaration, run `npx chant sql diff` between the base and head builds, and declare the `PostgresMigrationOp` it names in `ops/<name>.op.ts`.
+  Run the Op against the local Postgres from `npx chant emulator up --lexicon sql` with `npx chant run <name> --no-record`, and when it stops at the first gate, show me the output and the approve command it printed, and stop there.
+  Open a pull request with the declaration and the Op.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Some column changes Postgres can make in a moment and still break every reader. `ALTER TABLE ... RENAME COLUMN` is a catalog change, but every query that still names the old column fails from the instant it commits. A type change between kinds, such as `text` to `numeric`, needs a `USING` expression and breaks readers that expect the old type. [The classifier](../postgres-change-classifier/) puts these in the expand-and-contract class (SQLPG205 and SQLPG208), and both `chant sql plan` and the [applier](../postgres-applying/) refuse them in place. `PostgresMigrationOp` is what runs them.

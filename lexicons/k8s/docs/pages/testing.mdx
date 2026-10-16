@@ -2,6 +2,11 @@
 title: "Testing & Validation"
 description: "Roundtrip tests and k3d cluster validation for the Kubernetes lexicon"
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/k8s/testing/.
+  In a chant checkout, run `just full-roundtrip --skip-clone` in lexicons/k8s (without `--skip-clone` the first time), then `just k3d-validate`, which creates and deletes a local k3d cluster.
+  Show me the output, and name each manifest that failed and the phase it failed in.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The Kubernetes lexicon includes scripts to verify the full import–serialize roundtrip and validate serialized YAML against a real cluster.

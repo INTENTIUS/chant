@@ -2,6 +2,12 @@
 title: "Linting & Type-Checking"
 description: Running lint and type checks on your chant project
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/linting/.
+  Run `npx chant lint` in this chant project, then `npx chant build` for the post-synth checks.
+  Fix each EVL and COR finding in source, and report any finding you left with its reason.
+  Open a pull request when both pass.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 chant includes a built-in linter that validates your resource files. Run it with:

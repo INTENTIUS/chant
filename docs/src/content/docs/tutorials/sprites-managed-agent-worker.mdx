@@ -2,6 +2,12 @@
 title: Managed Agents Worker on Sprites
 description: Run a Claude Managed Agents session inside a per-session Sprite — an egress allowlist, a keep-alive hold, the runner env-contract staged as a file, and the runner as a supervised service, torn down on exit. Runs offline against the emulator, or against real Sprites + real Managed Agents by changing two environment variables.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/sprites-managed-agent-worker/.
+  Run `npm install` and `npx chant emulator up` in `examples/sprites-managed-agent-worker`, then run `npx chant run managed-agent-session --no-record` with `SPRITES_BASE_URL=http://localhost:4290` exported.
+  Show me the output of each phase, then run `npx chant emulator down`.
+  Do not set an Anthropic key or a Sprites token, and do not put a key in a process argument or a file you commit.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

@@ -2,6 +2,12 @@
 title: Recording Decisions by Hand
 description: Turn a session's choices into proposed decision records, in whatever AI harness you're in, before anything harvests them automatically.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/recording-decisions-by-hand/.
+  List the choices in this session that picked one option over others for a stated reason.
+  Compare them with `npx chant workspace records --kind decisions/decision.kind.mjs --current --json`, mark duplicates and contests, and show me the list. Write nothing until I pick which to keep.
+  Write each one I keep with `npx chant workspace records new decisions/decision.kind.mjs --from -` as `state: "proposed"` with `choice: null`, and open a pull request. Do not run `chant workspace records amend` to mark a decision decided; people do that.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A choice gets made in a session, for a stated reason, and then nothing

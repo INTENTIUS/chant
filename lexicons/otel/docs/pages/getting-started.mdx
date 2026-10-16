@@ -3,6 +3,11 @@ title: "Getting Started"
 description: "Declare a first collector config with the otel lexicon and build it to collector YAML"
 diataxis: tutorial
 order: 1
+prompt: |
+  Read https://intentius.io/chant/lexicons/otel/getting-started/.
+  In a new directory, install the otel lexicon, declare the collector from the page in src/, and run `npx chant build src --lexicon otel -o collector.yaml` and `npx chant lint src`.
+  If `otelcol-contrib` is installed, run `otelcol-contrib validate --config collector.yaml`. Show me collector.yaml and the output.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This walks through a collector that receives OTLP, batches it and sends traces to a tracing backend.

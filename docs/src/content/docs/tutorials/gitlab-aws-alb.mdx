@@ -2,6 +2,12 @@
 title: "GitLab CI + AWS ALB"
 description: "Two lexicons (AWS, GitLab), two stacks, one ALB — deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/gitlab-aws-alb/.
+  Using `examples/gitlab-aws-alb-infra` and `examples/gitlab-aws-alb-services` as the model, build the CloudFormation templates and the GitLab CI pipelines with `npm run build`, and run `npx chant lint` until it passes.
+  Open a pull request with the sources and the generated `.gitlab-ci.yml`, and say in its description that the infra pipeline runs before the services pipeline.
+  Do not run the pipelines, `aws cloudformation deploy` or `docker push`, and do not create CI variables.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

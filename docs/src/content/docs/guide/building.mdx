@@ -2,6 +2,12 @@
 title: Building
 description: Synthesizing TypeScript resource definitions into deployment-ready output
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/building/.
+  In this chant project, run `npx chant build` with the `-o` path and `--format` the project's deploy step expects, and fix every error it reports.
+  If the build writes more than one file, list each one and what it holds.
+  Show me the output, and open a pull request if you changed source.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Diagram from '../../../components/Diagram.astro';

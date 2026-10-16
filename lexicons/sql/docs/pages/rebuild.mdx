@@ -4,6 +4,12 @@ description: "ClickHouseRebuildOp runs a change ALTER cannot make (a sorting key
 diataxis: how-to
 order: 4
 group: "ClickHouse"
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/rebuild/.
+  Make the sorting key, partition key, engine or key column change I describe in the declaration, run `npx chant sql diff` between the base and head builds, and declare the `ClickHouseRebuildOp` it names in `ops/<name>.op.ts`.
+  Run the Op against the local ClickHouse from `npx chant emulator up --lexicon sql` with `npx chant run <name> --no-record`, and when it stops at the swap gate, show me the output, the verification and the approve command it printed, and stop there.
+  Open a pull request with the declaration and the Op.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Some changes ClickHouse cannot make to the table it has. The sorting key is the on-disk order and, in a `ReplacingMergeTree`, the dedup identity, so changing it means writing every row again into a new table. [The classifier](../change-classifier/) puts these in the rebuild class, and both `chant sql plan` and the [applier](../applying/) refuse them in place. `ClickHouseRebuildOp` is what runs them.

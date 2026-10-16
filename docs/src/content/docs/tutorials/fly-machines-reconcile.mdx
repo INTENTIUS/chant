@@ -2,6 +2,12 @@
 title: Reconcile Fly Machines
 description: flyApply reconciles typed Machines against the live Fly control plane with no state file — create, no-op re-apply, in-place update, and owned-only prune that leaves foreign machines alone. Runs offline against a persistent mudflaps emulator, or real Fly by dropping one override.
 diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/fly-machines-reconcile/.
+  In `examples/fly-reconcile`, run `npm install` and boot mudflaps as the page shows. Run `npx chant run fly-reconcile --no-record` against it.
+  Run it again unchanged, then change a Machine in `src/infra.ts` and run it once more, and show me the output of each run.
+  Keep the local endpoint override in place and set no `FLY_API_TOKEN`. Shut mudflaps down at the end.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

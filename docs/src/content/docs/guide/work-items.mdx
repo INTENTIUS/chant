@@ -2,6 +2,12 @@
 title: Work Items
 description: Keep a queue of work as records in the workspace, with needs and implements links, and read which ones are ready with chant workspace records and chant workspace graph --intent.
 diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/work-items/.
+  Walk the region I name with `npx chant workspace graph --intent <path>` and show me its findings.
+  For the finding or ask I pick, write a work item with `npx chant workspace records new work --from -` and `state: "proposed"`. Give it its `source`, its `constrains` and its acceptance criteria, and open a pull request.
+  Do not move an item to `open` or `done`, and do not claim it with `chant workspace work claim`; a person keeps and closes work items.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A work item is a gap between what the workspace decided and what it holds, given an id, an owner and a lifecycle.
