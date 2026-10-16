@@ -10,6 +10,9 @@ shape-rendering="crispEdges", no text, no fonts).
                                            browser's light or dark scheme
     python3 logo.py --png <out.png>        a 48 px PNG favicon, light ink on a
                                            dark tile (standard library only)
+    python3 logo.py --og <out.png>         the 1200x630 share card that LinkedIn,
+                                           Slack and the rest show for a link
+                                           (they take PNG, not SVG)
 
 The site draws the logo with CSS mask-image over a colour token, so the fill
 in docs/public/brand/logo.svg only matters to its alpha.
@@ -88,17 +91,13 @@ def favicon(out):
         )
 
 
-def png(out, size=48):
-    # One art pixel per image pixel, centred on a dark tile.
-    ox = (size - W) // 2
-    oy = (size - H) // 2
-    raw = b""
-    for y in range(size):
+def write_png(out, width, height, pixel):
+    # pixel(x, y) gives an (r, g, b) tuple. Standard library only.
+    raw = bytearray()
+    for y in range(height):
         raw += b"\x00"
-        for x in range(size):
-            gx, gy = x - ox, y - oy
-            ink = 0 <= gy < H and 0 <= gx < len(GRID[gy]) and GRID[gy][gx] == "#"
-            raw += bytes(TILE_INK if ink else TILE)
+        for x in range(width):
+            raw += bytes(pixel(x, y))
 
     def chunk(kind, data):
         body = kind + data
@@ -106,9 +105,63 @@ def png(out, size=48):
 
     with open(out, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n")
-        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)))
-        f.write(chunk(b"IDAT", zlib.compress(raw, 9)))
+        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)))
+        f.write(chunk(b"IDAT", zlib.compress(bytes(raw), 9)))
         f.write(chunk(b"IEND", b""))
+
+
+def ink_at(grid, gx, gy):
+    return 0 <= gy < len(grid) and 0 <= gx < len(grid[gy]) and grid[gy][gx] == "#"
+
+
+def png(out, size=48):
+    # One art pixel per image pixel, centred on a dark tile.
+    ox = (size - W) // 2
+    oy = (size - H) // 2
+    write_png(out, size, size, lambda x, y: TILE_INK if ink_at(GRID, x - ox, y - oy) else TILE)
+
+
+# The share card's wordmark, CHANT in tracked pixel capitals (5x7 each).
+LETTERS = {
+    "C": [".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."],
+    "H": ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+    "A": [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+    "N": ["#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"],
+    "T": ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
+}
+WORD = ["".join(LETTERS[c][r] + "...." for c in "CHANT")[:-4] for r in range(7)]
+# The face ends at column 25; the sound waves to its right take the accent.
+WAVES_FROM = 26
+ACCENT = (0xa7, 0x8b, 0xfa)
+GOLD = (0xc9, 0xa9, 0x6e)
+
+
+def og(out, width=1200, height=630):
+    # The face 12 screen pixels per art pixel, the wordmark at 6, a gold
+    # hairline between them. Centred on the face, as the home page is.
+    fs, ws = 12, 6
+    face_w = WAVES_FROM - 1
+    word_w = len(WORD[0])
+    gap1, rule_h, gap2 = 48, 2, 40
+    block_h = H * fs + gap1 + rule_h + gap2 + 7 * ws
+    fx = (width - face_w * fs) // 2
+    fy = (height - block_h) // 2
+    ry = fy + H * fs + gap1
+    wx = (width - word_w * ws) // 2
+    wy = ry + rule_h + gap2
+    rule_w = 160
+
+    def pixel(x, y):
+        gx, gy = (x - fx) // fs, (y - fy) // fs
+        if x >= fx and y >= fy and ink_at(GRID, gx, gy):
+            return ACCENT if gx >= WAVES_FROM else TILE_INK
+        if ry <= y < ry + rule_h and abs(x - width // 2) < rule_w // 2:
+            return GOLD
+        if x >= wx and y >= wy and ink_at(WORD, (x - wx) // ws, (y - wy) // ws):
+            return TILE_INK
+        return TILE
+
+    write_png(out, width, height, pixel)
 
 
 if __name__ == "__main__":
@@ -116,5 +169,7 @@ if __name__ == "__main__":
         favicon(sys.argv[2])
     elif sys.argv[1] == "--png":
         png(sys.argv[2])
+    elif sys.argv[1] == "--og":
+        og(sys.argv[2])
     else:
         logo(sys.argv[1], sys.argv[2])
