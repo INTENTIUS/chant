@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-The fastest way to start a new lexicon is with `chant init lexicon`:
+Start a new lexicon with `chant init lexicon`:
 
 ```bash
 chant init lexicon acme
@@ -27,7 +27,7 @@ arguments the command takes, see the
 [init lexicon CLI reference](/chant/cli/init-lexicon/).
 
 The scaffold compiles as generated, and every required lifecycle method is
-present. What it does not do is pass `chant dev check-lexicon`, by design: five
+present. It fails `chant dev check-lexicon` by design: five
 tier-1 checks fail on a fresh scaffold and each one names work you still owe.
 See [What the scaffold leaves for you](#what-the-scaffold-leaves-for-you).
 
@@ -97,7 +97,7 @@ export const acmePlugin: LexiconPlugin = {
 
 `src/index.ts` re-exports `acmePlugin` and `acmeSerializer`. Its last line is a
 commented-out `export * from "./generated/index"`; uncomment it once generation
-has produced that file, or the resource classes are unreachable to users.
+has produced that file so users can import the resource classes.
 
 `src/codegen/generate.ts` is where core's `generatePipeline` is called with your
 provider-specific callbacks, and where most of the work happens. See
@@ -112,8 +112,7 @@ distributable bundle. See [Package & Publish](/chant/lexicon-authoring/package/)
 ## What the scaffold leaves for you
 
 Run `chant dev check-lexicon lexicons/acme` on a fresh scaffold and two tier-1
-checks fail (chant #2090 closed the other three). Each is a real gap rather than
-a defect in the tool:
+checks fail (chant #2090 closed the other three). Each one is work you still owe:
 
 | Failing check | What closes it |
 |---|---|

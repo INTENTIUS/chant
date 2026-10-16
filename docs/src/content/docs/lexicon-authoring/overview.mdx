@@ -6,7 +6,7 @@ diataxis: explanation
 
 import Diagram from '../../../components/Diagram.astro';
 
-A **lexicon** is a plugin that teaches chant one operational area. It contributes the types for that area, a serializer, and the rules that check the result. You can write one for any infrastructure platform, internal tool, or custom domain.
+A **lexicon** is a plugin that adds one platform to chant, such as CloudFormation or Kubernetes. It contributes the platform's types, a serializer, and the rules that check the output. You can write one for any platform or internal tool.
 
 :::tip[Working with an AI agent? Point it at the onboarding skill.]
 [Lexicon Onboarding Skill](/chant/lexicon-authoring/onboarding-skill/) is a single
@@ -210,7 +210,7 @@ inferred from it, and that inferred type is what augments `ChantConfig`. The
 runtime rule and the compile-time one cannot disagree because there is only one
 of them.
 
-Two things this fixes, both of which had bitten (chant #1344):
+This fixes two bugs (chant #1344):
 
 - An unknown key inside a declared namespace is now an error. The project
   config schema is `.passthrough()`, so `forgejo: { runnerLabel: ... }`, a typo
@@ -220,8 +220,7 @@ Two things this fixes, both of which had bitten (chant #1344):
   a config carrying a lexicon key was `error TS2353` until the lexicon augmented
   it. The augmentation applies only when the config file has the package in its
   program, which a bare `import "@intentius/chant-lexicon-mylexicon"`
-  guarantees. Forgetting it is a compile error rather than silence, which is the
-  safe direction.
+  guarantees. Forgetting it is a compile error, which is the safe way to fail.
 
 Use `z.strictObject` for nested objects. `validateLexiconConfig()`
 (`packages/core/src/lexicon-config.ts`) calls `schema.strict()` on the top level
@@ -247,13 +246,12 @@ export default {
 The CLI resolves lexicons by looking for `@intentius/chant-lexicon-{name}` packages in `node_modules`.
 
 :::tip[Reference Implementation]
-The **AWS CloudFormation lexicon** (`lexicons/aws/`) is the canonical reference implementation. Each page in this section notes which AWS source file demonstrates the pattern. When in doubt, read the AWS code — it exercises every core API.
+The **AWS CloudFormation lexicon** (`lexicons/aws/`) is the reference implementation. Each page in this section names the AWS source file that shows the pattern. When in doubt, read the AWS code. It exercises every core API.
 :::
 
 ## Authoring Workflow
 
-Each step depends on the one before it. Steps 1 through 3 are the ones nothing
-else can proceed without.
+Each step depends on the one before it. Everything else needs steps 1 through 3.
 
 | # | Step | What it produces |
 |---|------|------------------|
@@ -323,14 +321,14 @@ Only the four lifecycle methods above are required, so this compiles without
 `entity.entityType`; a serializer that emits authored properties reads
 `entity.props`, which is the subject of [Create a Serializer](/chant/lexicon-authoring/serializer/).
 
-Publish it as `@intentius/chant-lexicon-acme`. The package name is not free
-form: `loadPlugin()` in `packages/core/src/cli/plugins.ts` imports
+Publish it as `@intentius/chant-lexicon-acme`. The package name must follow
+that pattern. `loadPlugin()` in `packages/core/src/cli/plugins.ts` imports
 `@intentius/chant-lexicon-<name>` for each entry in the project's `lexicons`
 array, so a package published under any other name will not resolve.
 
 ## Background Reading
 
-These architecture pages cover the internals a lexicon author needs to understand:
+These architecture pages cover the internals a lexicon author needs:
 
 - [Core Type System](/chant/architecture/core-type-system/) — `Declarable`, `ResourceType`, and the evaluator's type model
 - [Lexicon Registry](/chant/architecture/lexicon-registry/) — how chant discovers, loads, and validates lexicon plugins

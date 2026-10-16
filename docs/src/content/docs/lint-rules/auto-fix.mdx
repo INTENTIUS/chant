@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Some lint rules provide structured fixes that can be applied automatically.
+Some lint rules come with fixes that `chant lint --fix` applies.
 
 ## Usage
 
@@ -17,7 +17,7 @@ Some lint rules provide structured fixes that can be applied automatically.
 chant lint --fix
 ```
 
-When `--fix` is not set, fixable diagnostics are annotated with `[fixable]` in text output:
+Without `--fix`, text output marks fixable diagnostics with `[fixable]`:
 
 ```
 src/storage.ts:3:5 warning [COR005] [fixable] Exported names should be camelCase

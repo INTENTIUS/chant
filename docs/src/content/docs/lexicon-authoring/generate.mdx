@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-The `generate` lifecycle method fetches the upstream spec, parses it, and produces TypeScript types, a runtime index, and a registry. Core provides `generatePipeline` to orchestrate this; you supply provider-specific callbacks.
+The `generate` lifecycle method fetches the upstream spec, parses it, and produces TypeScript types, a runtime index, and a registry. Core's `generatePipeline` runs these steps; you supply provider-specific callbacks.
 
 ## Generation Pipeline
 
@@ -56,7 +56,7 @@ interface ParsedResult {
 }
 ```
 
-The pipeline uses `.propertyTypes.length` and `.enums.length` for stats only — the arrays are passed through untouched to your generate callbacks. Extend `ParsedResult` with any additional fields your callbacks need:
+The pipeline uses `.propertyTypes.length` and `.enums.length` for stats only. The arrays are passed through untouched to your generate callbacks. Extend `ParsedResult` with any additional fields your callbacks need:
 
 ```typescript
 interface MyParsedResult extends ParsedResult {
@@ -106,7 +106,7 @@ const schemas = await extractFromZip(zipData, (name) => name.endsWith(".json"));
 
 > See `lexicons/aws/src/spec/fetch.ts` for the AWS schema fetcher.
 
-Reach for `fetchWithCache` from `src/spec/fetch.ts` and nowhere else. Generation is the one phase allowed to fetch: a serializer, a plugin hook or a lint rule that reached upstream would put a network call on `chant build`, which [Network Egress](/chant/reference/network-egress/) guarantees is offline and a guard test fails on. `fetchWithCache` also caches to disk and falls back to the committed snapshot when the endpoint is unreachable, so generation itself survives a network that is not there.
+Reach for `fetchWithCache` from `src/spec/fetch.ts` and nowhere else. Generation is the one phase allowed to fetch: a serializer, a plugin hook or a lint rule that reached upstream would put a network call on `chant build`, which [Network Egress](/chant/reference/network-egress/) guarantees is offline and a guard test fails on. `fetchWithCache` also caches to disk and falls back to the committed snapshot when the endpoint is unreachable, so generation still works offline.
 
 ## When there is no upstream JSON schema
 
@@ -277,9 +277,9 @@ upstreamPin: {
 
 k8s, k3s, gcp, gitlab, docker, cedar and sql declare one. `checkPinnedUpgrade`
 (`packages/core/src/codegen/pinned-upgrade.ts`) uses it to report an available
-upgrade, apply it, regenerate, and revert cleanly if the regeneration fails —
-which is the reason `replace` exists rather than the tooling doing a blind
-string substitution.
+upgrade and apply it. It then regenerates and reverts cleanly if the
+regeneration fails, which is why `replace` exists in place of a blind string
+substitution.
 
 `chant dev pinned-upgrade <dir>` loads the plugin at `<dir>` and uses whatever
 `upstreamPin` it declares; there is no list of supported lexicons in core. A
@@ -369,7 +369,7 @@ The tooling then behaves as follows.
 `upstreamPin` resolves a version constant against GitHub releases or tags. Some
 upstreams offer neither. The CloudFormation Registry schema is a single "latest"
 artifact on an S3-backed host, republished constantly, with no version anywhere
-in the path — so aws generated against whatever AWS shipped that morning, and a
+in the path. aws generated against whatever AWS shipped that morning, and a
 docs-only branch twice picked up a resource-count move with nothing in the
 commit explaining it (chant #1390).
 
@@ -386,7 +386,7 @@ The upstream CloudFormation schema has moved since the pinned one.
   added     AWS::Fake::NewThing
 ```
 
-Two details worth copying if you need the same thing:
+Copy two details if you need the same thing:
 
 - **Digest the extracted content, not the archive.** A repackaged zip has a new
   `ETag` and new bytes while the schemas inside are identical; a pin that fires
@@ -401,4 +401,4 @@ rewrites committed artifacts in a branch about something else.
 
 ## Next Steps
 
-With generation working, the next step is to [create a serializer](/chant/lexicon-authoring/serializer/) that converts evaluated resources to your target format.
+Next, [create a serializer](/chant/lexicon-authoring/serializer/) that converts evaluated resources to your target format.

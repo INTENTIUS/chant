@@ -24,7 +24,7 @@ sidebar group, built by `buildSectionGroup`
 (`packages/core/src/codegen/docs-in-site.ts`) from the pages' `diataxis`
 frontmatter. The main site's `astro.config.mjs` reads every fragment through
 `docs/src/lexicon-sidebar.mjs`. The whole directory is build output, gitignored
-and replaced on every run, so nothing in it is worth editing.
+and replaced on every run, so an edit there is lost.
 
 In standalone mode it generates `docs/astro.config.mjs`, `docs/package.json`,
 `docs/tsconfig.json`, `docs/src/content.config.ts`,
@@ -101,7 +101,7 @@ and calls the pipeline, and your prose under `docs/pages/*.mdx`.
 
 A lexicon docs site has two kinds of page:
 
-- Generated reference tables — `index`, `intrinsics`, `pseudo-parameters`, `rules`, `serialization` — produced by `docsPipeline()` from the packaged `dist/manifest.json`, `dist/meta.json` and the rule files under `src/`. Never edit these; they carry a `GENERATED-BY-CHANT-DOCS` marker and are rewritten on every run.
+- Generated reference tables (`index`, `intrinsics`, `pseudo-parameters`, `rules`, `serialization`), produced by `docsPipeline()` from the packaged `dist/manifest.json`, `dist/meta.json` and the rule files under `src/`. Never edit these; they carry a `GENERATED-BY-CHANT-DOCS` marker and are rewritten on every run.
 - Authored pages under `docs/pages/*.mdx`. The pipeline expands `{{file:...}}` markers, stamps the same marker (pointing back at the source file) and copies each one into the output: `docs/src/content/docs/lexicons/<name>/` of the main site, or the standalone site's `docs/src/content/docs/`. The copy is removed when the source is deleted.
 
 Each authored page names its [Diátaxis](https://diataxis.fr) quadrant, and the sidebar is grouped from it. Only non-empty groups appear.
@@ -209,7 +209,7 @@ Add a `docs` script to your lexicon's `package.json`, pointing at the
 
 ## Links Between Pages
 
-`scripts/build-docs.sh` generates every section and then runs one Astro build of `docs/`, written to `.docs-dist/chant/`. It derives the list from the filesystem: any package with a `src/codegen/docs-cli.ts` is generated. It used to carry one hardcoded block per package. k3d and k3s were simply absent from that list, so both published as 404s and lychee failed every page linking to them (chant #1720). `scripts/build-docs.test.ts` now fails if a lexicon with docs is left out.
+`scripts/build-docs.sh` generates every section and then runs one Astro build of `docs/`, written to `.docs-dist/chant/`. It derives the list from the filesystem: any package with a `src/codegen/docs-cli.ts` is generated. It used to carry one hardcoded block per package. k3d and k3s were absent from that list, so both published as 404s and lychee failed every page linking to them (chant #1720). `scripts/build-docs.test.ts` now fails if a lexicon with docs is left out.
 
 One package imports another's generated surface when it is bundled (forgejo imports `lexicons/github/src/generated`), so the script runs forgejo after github and everything else at once. The comments in the script say how that was measured.
 

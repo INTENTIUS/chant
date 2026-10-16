@@ -6,7 +6,7 @@ diataxis: explanation
 
 import { Aside } from '@astrojs/starlight/components';
 
-An applier writes declared source to a provider. This page is the write-side peer of [Implementing Observation](/chant/lexicon-authoring/observation/), and it exists for the same reason: a result that cannot say what it did *not* do is a result a caller cannot trust.
+An applier writes declared source to a provider. This page is the write-side peer of [Implementing Observation](/chant/lexicon-authoring/observation/), and it exists for the same reason: a caller can trust a result only when it says what it did *not* do.
 
 ## The tri-state
 
@@ -18,7 +18,7 @@ Per resource in the plan, an applier returns exactly one verdict:
 | **PRUNED** | owned, no longer declared, deleted |
 | **NOT-ATTEMPTED** | no provider call was made, carrying a total reason |
 
-The three are **disjoint and total**. Every resource handed to the applier appears in exactly one of them. A resource that appears in none was silently dropped, which is the failure this contract exists to prevent.
+The three are **disjoint and total**. Every resource handed to the applier appears in exactly one of them. A resource in none of them was silently dropped, and this contract prevents that.
 
 Each bucket is an array of one shape, all three extending `ApplyRef` so a resource is named the same way everywhere. `packages/core/src/apply.ts` is the contract.
 
@@ -42,7 +42,7 @@ interface NotAttemptedResource extends ApplyRef {
 
 ## Why NOT-ATTEMPTED
 
-The read path had two ways to return nothing for a declared entity and no way to tell them apart — the provider said it is absent, versus the lexicon never looked — and the second was classifying as `create`. That is what [`observation.ts`](/chant/lexicon-authoring/observation/) fixed.
+The read path had two ways to return nothing for a declared entity and no way to tell them apart (the provider said it is absent, or the lexicon never looked), and the second was classifying as `create`. That is what [`observation.ts`](/chant/lexicon-authoring/observation/) fixed.
 
 The write path had the identical hole:
 
@@ -68,9 +68,9 @@ type NotAttemptedReason =
   | "not-prunable";       // an owned orphan of a kind that cannot be enumerated
 ```
 
-Pick one. Consumers switch exhaustively, so a free-form string is not an option — which is deliberate, because a free-form string is what a `console.log` already was.
+Pick one. Consumers switch exhaustively over these values, so a reason is never a free-form string. A free-form string is what a `console.log` already was.
 
-`not-prunable` is the prune-side shape and worth calling out: it is the difference between *"there was nothing to prune"* and *"I could not look for anything to prune here."* An applier that cannot enumerate a kind cannot know whether an owned orphan of it exists.
+`not-prunable` is the prune-side reason. It separates *"there was nothing to prune"* from *"I could not look for anything to prune here."* An applier that cannot enumerate a kind cannot know whether an owned orphan of it exists.
 
 ## The envelope
 
@@ -80,9 +80,9 @@ import { applyResult } from "@intentius/chant";
 return applyResult(applied, pruned, notAttempted);
 ```
 
-Versioned and self-discriminating (`apply: "v1"`), so an un-migrated applier may keep returning its own shape — that normalizes to "everything I was handed, I attempted", which is exactly the claim it is implicitly making.
+Versioned and self-discriminating (`apply: "v1"`), so an un-migrated applier may keep returning its own shape. That shape normalizes to "everything I was handed, I attempted", which is the claim it already makes implicitly.
 
-Reporting NOT-ATTEMPTED requires the envelope. You cannot claim the guarantee without adopting the shape that can express its absence.
+Reporting NOT-ATTEMPTED requires the envelope, since only the envelope can express it.
 
 Two helpers come with it, both from `@intentius/chant`:
 
@@ -91,10 +91,10 @@ Two helpers come with it, both from `@intentius/chant`:
 | `notAttemptedAll(refs, reason, detail?)` | The whole-apply refusal. Turns every resource in the plan into a NOT-ATTEMPTED entry with one reason, for a bind that failed outright. The write-side peer of `unobservedAll`. |
 | `normalizeApply(value)` | Turns either accepted shape (or `undefined`) into three always-present arrays. What every consumer, and every conformance assertion, works with. |
 
-Returning nothing is not the way to say "I applied nothing because I could not". That normalizes to three empty arrays, which reads as an empty plan. Say it with `notAttemptedAll`.
+To say "I applied nothing because I could not", return `notAttemptedAll`. Returning nothing normalizes to three empty arrays, which reads as an empty plan.
 
 <Aside type="tip" title="Keep your own result too">
-The envelope is an interface, not a replacement. A lexicon's applier knows more than the shared vocabulary can hold. A CNRM `kind` and a per-resource `created`/`updated` flag have no place in it. Keep returning that, and project onto the envelope with a small `toApplyResult` exported beside the applier. `toApplyResult` in `lexicons/gcp/src/op/activities/gcp-apply.ts` is the reference; `lexicons/azure/src/op/activities/az-apply.ts`, `lexicons/fly/src/op/activities/fly-apply.ts`, `lexicons/grafana/src/op/activities/grafana-apply.ts`, `lexicons/sql/src/op/activities/clickhouse-apply.ts` and `lexicons/sql/src/op/activities/postgres-apply.ts` export the same pair. Core's apply activity looks the projection up by name, so an applier that exports the applier without it is refused rather than silently un-enveloped (`packages/core/src/op/activities/apply.ts`).
+The envelope sits beside your own result. A lexicon's applier knows more than the shared vocabulary can hold. A CNRM `kind` and a per-resource `created`/`updated` flag have no place in it. Keep returning that, and project onto the envelope with a small `toApplyResult` exported beside the applier. `toApplyResult` in `lexicons/gcp/src/op/activities/gcp-apply.ts` is the reference; `lexicons/azure/src/op/activities/az-apply.ts`, `lexicons/fly/src/op/activities/fly-apply.ts`, `lexicons/grafana/src/op/activities/grafana-apply.ts`, `lexicons/sql/src/op/activities/clickhouse-apply.ts` and `lexicons/sql/src/op/activities/postgres-apply.ts` export the same pair. Core's apply activity looks the projection up by name, so an applier that exports the applier without it is refused rather than silently un-enveloped (`packages/core/src/op/activities/apply.ts`).
 
 Exporting the pair from `op/activities` is what makes an applier an Op step. To make it an `ApplyOp` target too, `nativeApply` in `packages/core/src/op/activities/apply.ts` needs a branch for it: a target name in `ApplyTarget`, a loader that imports your `op/activities` subpath by a variable specifier (core never imports a lexicon statically), and a `defaultOutput` that matches your build's conventional output. `loadPostgresApplier` is the most recent example.
 </Aside>

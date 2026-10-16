@@ -12,12 +12,11 @@ prompt: |
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-After building your lexicon (see [Package & Publish](/chant/lexicon-authoring/package/)), you need to wire it into the monorepo's CI pipeline, smoke tests, and publish workflow. The `chant dev onboard` command automates most of this.
+After building your lexicon (see [Package & Publish](/chant/lexicon-authoring/package/)), wire it into the monorepo's CI, smoke tests and publish workflow. `chant dev onboard` does most of this.
 
 :::tip[Working with an AI agent? Point it at the onboarding skill.]
-This page explains what each patched file does and why. If you just need the ordered
-checklist — scaffold through first npm publish, including the npm trusted-publisher
-record that nothing here can create for you — hand your agent
+This page explains what each patched file does and why. For the ordered checklist from scaffold to first npm publish, including the
+npm trusted-publisher record you have to create by hand, give your agent
 [Lexicon Onboarding Skill](/chant/lexicon-authoring/onboarding-skill/) instead.
 :::
 
@@ -148,7 +147,7 @@ published at all until it was added.
 </Aside>
 
 Releases go out through `just release`, which bumps every package in lockstep,
-commits, and pushes the tag the workflow actually listens for:
+commits, and pushes the tag the workflow listens for:
 
 ```bash
 just release patch             # or: minor / major
@@ -165,7 +164,7 @@ The publish workflow's `test` job is the CI gate. Instead of running the suite
 again, `scripts/publish-verify-ci.sh` looks up the `chant` run through the API.
 A bump commit that changes only version fields is checked through its parent,
 the green commit the recipe picked; any other commit needs a green run of its
-own. Because the push that lands the tag is also what starts that run, the gate
+own. Because the tag push also starts that run, the gate
 polls until the run finishes rather than failing on a queued one. A successful
 run lets the release through. The gate fails when every run has completed
 without success, or when no run has appeared after 5 minutes.
@@ -249,16 +248,14 @@ that `packages/core` can dynamically import it:
 import(`@intentius/chant-lexicon-${name}`)
 ```
 
-Resolution does not actually depend on that entry. The root
+Resolution works without that entry. The root
 `workspaces: ["lexicons/*"]` glob symlinks every lexicon into `node_modules`
 whether or not it is listed, which is why three lexicons sat unlisted for
-months without anything breaking. The entry is an explicit declaration of what
-core may import, not the mechanism that makes the import work.
+months without anything breaking. The entry declares what core may import.
 
 It is kept complete anyway, and
 `packages/core/src/codegen/lexicon-wiring.test.ts` fails if a lexicon is
-missing from it — a hand-maintained list with no gate is how this drifted in
-the first place.
+missing from it. A hand-maintained list with no gate is how it drifted before.
 
 ## Why prepack steps are needed in Docker
 
@@ -266,7 +263,7 @@ Generated files (`lexicons/<name>/src/generated/`) are gitignored. When Docker b
 
 ## Generating a pipeline from the component graph
 
-A CI-provider lexicon — gitlab, github, forgejo — can turn a discovered
+A CI-provider lexicon (gitlab, github or forgejo) can turn a discovered
 component graph into pipeline YAML, behind
 `chant build --components --generate <name>`. Core owns the generic half
 (discovery, dependency waves, job ordering) and dispatches to the lexicon for
@@ -305,12 +302,11 @@ generates; forgejo writes a header comment naming the environment and stating
 that nothing on the forge enforces it. GitLab does have environments, and maps
 the option onto its own `environment:` key. If your provider has the concept,
 emit it and let the protection rules stay where they live, in the provider's
-own configuration. If it does not, be loud.
+own configuration. If it does not, say so in the generated file.
 
 Each job is a **thin trigger**: it runs the component's deploy command. The
-deploy logic stays in the component, not in the generated YAML — the whole point
-is that a cross-cutting change is one edit to the generator rather than an edit
-per pipeline file.
+deploy logic stays in the component, so a cross-cutting change is one edit to
+the generator rather than one per pipeline file.
 
 Omit this member entirely unless your lexicon *is* a CI provider. It is the only
 member with a hard "this kind of lexicon only" rule.
