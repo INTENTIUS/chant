@@ -1,8 +1,78 @@
 ---
-// Starlight's page title, then the page's agent prompt when it has a `prompt:`.
-// AgentPrompt.astro lives in chant core so lexicon docs sites render the same card.
+// Starlight's page title, then the tools for an agent reading the page: a
+// "Copy page as Markdown" button, a pointer to llms.txt, and, when the page
+// has a `prompt:`, the agent-prompt card. AgentPrompt.astro lives in chant
+// core so lexicon docs sites render the same card.
 import Default from '@astrojs/starlight/components/PageTitle.astro';
 import AgentPrompt from '../../../packages/core/src/codegen/docs-site/AgentPrompt.astro';
+import { pageMarkdown } from '../page-markdown';
+import { base } from '../site';
+
+const { entry } = Astro.locals.starlightRoute;
+const real = entry.id !== '404';
+const markdown = pageMarkdown({
+	title: entry.data.title,
+	url: new URL(Astro.url.pathname, Astro.site).href,
+	prompt: entry.data.prompt,
+	body: entry.data.markdown ?? entry.body ?? '',
+});
 ---
 <Default />
+{real && (
+	<div class="ch-page-tools not-content">
+		<button type="button" class="ch-page-copy" data-copy={markdown}>Copy page as Markdown</button>
+		<a href={`${base}/llms.txt`}>llms.txt</a>
+		<span>lists every page for an agent</span>
+	</div>
+)}
 <AgentPrompt />
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('.ch-page-copy')) {
+		const label = button.textContent;
+		button.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy ?? '');
+				button.textContent = 'Copied';
+			} catch {
+				button.textContent = 'Copy failed; use llms-full.txt';
+			}
+			setTimeout(() => (button.textContent = label), 2000);
+		});
+	}
+</script>
+
+<style>
+	.ch-page-tools {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem 0.6rem;
+		margin-top: 0.75rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	button {
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--ch-rule);
+		border-radius: 0.4rem;
+		padding: 0.2rem 0.7rem;
+		cursor: pointer;
+	}
+	button:hover {
+		border-color: var(--ch-gold);
+	}
+	a {
+		color: var(--sl-color-accent-high);
+		font-weight: 500;
+	}
+	/* On a phone the llms.txt link stands alone, without its note. */
+	@media (max-width: 40rem) {
+		span {
+			display: none;
+		}
+	}
+</style>

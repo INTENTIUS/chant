@@ -1,0 +1,20 @@
+---
+// One page per target platform tile and per role, at /chant/for/<id>/, from
+// data/rooms.mjs (the picker on the home page reads the same file). The page
+// carries its Markdown in `markdown` for "Copy page as Markdown".
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import Room from '../../components/Room.astro';
+import { ROOMS, checkRooms } from '../../data/rooms.mjs';
+import { roomMarkdown } from '../../data/room-markdown.mjs';
+
+export function getStaticPaths() {
+	checkRooms();
+	return ROOMS.map((r) => ({ params: { id: r.id } }));
+}
+
+const r = ROOMS.find((x) => x.id === Astro.params.id)!;
+const site = new URL(import.meta.env.BASE_URL, Astro.site).href.replace(/\/$/, '');
+---
+<StarlightPage frontmatter={{ title: r.title, description: r.lede, tableOfContents: false, markdown: roomMarkdown(r, site) }}>
+	<Room id={r.id} />
+</StarlightPage>

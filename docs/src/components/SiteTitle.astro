@@ -1,0 +1,41 @@
+---
+// The site title: the pixel face beside the name, drawn as a mask over the
+// text colour so it follows the theme (styles/chant.css). On a phone a Docs
+// link sits beside it, since Starlight hides the header's right side (where
+// SocialIcons.astro puts Docs) below its md width.
+import { docsHref } from '../site';
+
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
+---
+<a href={siteTitleHref} class="site-title sl-flex">
+	<span class="ch-logo" aria-hidden="true"></span>
+	<span translate="no">{siteTitle}</span>
+</a>
+<a class="ch-docs-phone" href={docsHref}>Docs</a>
+
+<style>
+	.site-title {
+		align-items: center;
+		gap: 0.7rem;
+		text-decoration: none;
+		white-space: nowrap;
+		min-width: 0;
+	}
+	.ch-docs-phone {
+		align-self: center;
+		margin-left: 0.75rem;
+		padding: 0.2rem 0.65rem;
+		font-size: var(--sl-text-xs);
+		font-weight: 600;
+		color: var(--sl-color-white);
+		text-decoration: none;
+		border: 1px solid var(--ch-rule);
+		border-radius: 999px;
+		white-space: nowrap;
+	}
+	@media (min-width: 50rem) {
+		.ch-docs-phone {
+			display: none;
+		}
+	}
+</style>

@@ -1,0 +1,69 @@
+---
+// A link table for the home page: a tracked caps label in the first column,
+// links after it, a hairline under each row. `set` names a table in
+// data/home.mjs; `rows` passes one directly. Each href is a path under the
+// site's base.
+import { base } from '../site';
+import { LEXICONS, NEXT } from '../data/home.mjs';
+
+type Rows = { label: string; links: { label: string; href: string }[] }[];
+interface Props {
+	set?: 'lexicons' | 'next';
+	rows?: Rows;
+}
+const sets: Record<string, Rows> = { lexicons: LEXICONS, next: NEXT };
+const rows = Astro.props.rows ?? sets[Astro.props.set ?? ''] ?? [];
+---
+<dl class="ch-rows not-content">
+	{rows.map((r) => (
+		<div>
+			<dt>{r.label}</dt>
+			<dd>{r.links.map((l) => <a href={`${base}${l.href}`}>{l.label}</a>)}</dd>
+		</div>
+	))}
+</dl>
+
+<style>
+	.ch-rows {
+		margin: 1.25rem 0 0;
+		border-top: 1px solid var(--ch-rule);
+	}
+	.ch-rows div {
+		display: grid;
+		grid-template-columns: 8.5rem 1fr;
+		gap: 1rem;
+		align-items: baseline;
+		padding: 0.7rem 0;
+		border-bottom: 1px solid var(--ch-rule);
+	}
+	dt {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	dd {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem 1rem;
+		margin: 0;
+		font-size: var(--sl-text-sm);
+	}
+	a {
+		color: var(--ch-accent);
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 0.2em;
+		text-decoration-color: color-mix(in srgb, var(--ch-accent) 35%, transparent);
+	}
+	a:hover {
+		text-decoration-color: var(--ch-gold);
+	}
+	@media (max-width: 30rem) {
+		.ch-rows div {
+			grid-template-columns: 1fr;
+			gap: 0.35rem;
+		}
+	}
+</style>

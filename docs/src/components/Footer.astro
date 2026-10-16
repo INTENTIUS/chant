@@ -1,0 +1,35 @@
+---
+// Starlight's footer, with the pixel face and the name under it on every
+// page, linking home.
+import Default from '@astrojs/starlight/components/Footer.astro';
+import { base } from '../site';
+---
+<Default />
+<p class="ch-foot not-content">
+	<a href={`${base}/`}><span class="ch-logo" aria-hidden="true"></span><span>chant</span></a>
+</p>
+
+<style>
+	.ch-foot {
+		margin: 2rem 0 1rem;
+		text-align: center;
+	}
+	.ch-foot a {
+		--ch-ink: var(--sl-color-gray-3);
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.45rem;
+		font-family: var(--ch-display);
+		font-size: var(--sl-text-xs);
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		padding-left: 0.2em;
+		text-transform: uppercase;
+		color: var(--ch-ink);
+		text-decoration: none;
+	}
+	.ch-foot a:hover {
+		--ch-ink: var(--sl-color-white);
+	}
+</style>

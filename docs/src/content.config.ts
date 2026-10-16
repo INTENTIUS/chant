@@ -18,6 +18,9 @@ export const collections = {
 					.string()
 					.optional()
 					.refine((p) => !p || /^Never\b/m.test(p), 'a prompt needs a line that starts with "Never" (what the agent must not do)'),
+				// A page built from data rather than a Markdown file (the rooms
+				// under /for/) carries its Markdown here, for "Copy page as Markdown".
+				markdown: z.string().optional(),
 			}),
 		}),
 	}),

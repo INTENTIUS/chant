@@ -24,11 +24,27 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'chant',
-			customCss: ['./src/styles/custom.css'],
-			// The title gets the page's agent prompt, when it has a `prompt:`.
-			components: { PageTitle: './src/components/PageTitle.astro' },
+			description: 'Typed infrastructure, end to end. chant builds typed TypeScript into each platform\'s own format, checks it with semantic lint rules, and runs the lifecycle you choose on top.',
+			// The pixel face and the sound waves (scripts/brand/), Geist, and the
+			// palette as tokens for both themes.
+			customCss: ['./src/styles/chant.css'],
+			// The title gets "Copy page as Markdown", the llms.txt pointer and the
+			// page's agent prompt. The site title and footer carry the logo, the
+			// header a Docs link, and the theme starts dark.
+			components: {
+				PageTitle: './src/components/PageTitle.astro',
+				Footer: './src/components/Footer.astro',
+				SocialIcons: './src/components/SocialIcons.astro',
+				SiteTitle: './src/components/SiteTitle.astro',
+				ThemeProvider: './src/components/ThemeProvider.astro',
+				ThemeSelect: './src/components/ThemeSelect.astro',
+			},
+			// public/favicon.svg is the logo, drawn by scripts/brand/logo.py; the
+			// PNG is the fallback for browsers without SVG favicons.
+			favicon: '/favicon.svg',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/intentius/chant' }],
 			head: [
+				{ tag: 'link', attrs: { rel: 'icon', href: '/chant/favicon-48.png', sizes: '48x48', type: 'image/png' } },
 				{
 					tag: 'script',
 					content: `
@@ -58,8 +74,31 @@ export default defineConfig({
 				// Grouped by Diátaxis quadrant (https://diataxis.fr), chant #1731.
 				// Every page carries a matching `diataxis` frontmatter field;
 				// scripts/check-docs-diataxis.mjs fails when the two disagree.
+				// Every group starts collapsed; Starlight opens the one holding the
+				// current page. "Start here" holds the room pages under /for/
+				// (src/pages/for/[id].astro), which are not content pages, so it
+				// sits outside the four quadrants. Its items are the tiles and roles of
+				// src/data/rooms.mjs, written out because the Diátaxis check reads
+				// this list as plain data; scripts/check-rooms.mjs fails the build
+				// when the two disagree.
+				{
+					label: 'Start here',
+					collapsed: true,
+					items: [
+						{ label: 'AWS', link: '/for/aws/' },
+						{ label: 'Kubernetes', link: '/for/kubernetes/' },
+						{ label: 'GCP and Azure', link: '/for/gcp-azure/' },
+						{ label: 'CI pipelines', link: '/for/ci/' },
+						{ label: 'Fly and containers', link: '/for/fly/' },
+						{ label: 'I work with a coding agent', link: '/for/agents/' },
+						{ label: 'I run a platform team', link: '/for/platform/' },
+						{ label: 'I review security', link: '/for/security/' },
+						{ label: 'I am evaluating', link: '/for/evaluate/' },
+					],
+				},
 				{
 					label: 'Tutorials',
+					collapsed: true,
 					items: [
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
@@ -68,6 +107,7 @@ export default defineConfig({
 						{ label: 'Run Ops on a Fountain Steward', slug: 'tutorials/fountain-steward' },
 						{
 							label: 'Fly',
+							collapsed: true,
 							items: [
 								{ label: 'Deploy Fly Machines Offline', slug: 'tutorials/local-fly' },
 								{ label: 'Reconcile Fly Machines', slug: 'tutorials/fly-machines-reconcile' },
@@ -96,11 +136,13 @@ export default defineConfig({
 				},
 				{
 					label: 'How-to guides',
+					collapsed: true,
 					items: [
 						{ label: 'Agents Start Here', slug: 'agents' },
 						{ label: 'Installation', slug: 'getting-started/installation' },
 						{
 							label: 'Author resources',
+							collapsed: true,
 							items: [
 								{ label: 'Writing Resources', slug: 'guide/writing-resources' },
 								{ label: 'Resource Naming', slug: 'guide/resource-naming' },
@@ -117,6 +159,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Lint and policy',
+							collapsed: true,
 							items: [
 								{ label: 'Linting & Type-Checking', slug: 'guide/linting' },
 								{ label: 'Organizational Policy', slug: 'guide/organizational-policy' },
@@ -126,6 +169,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Build and run',
+							collapsed: true,
 							items: [
 								{ label: 'Building', slug: 'guide/building' },
 								{ label: 'Watch Mode', slug: 'configuration/watch' },
@@ -142,6 +186,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Components',
+							collapsed: true,
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
 								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
@@ -149,6 +194,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Workspaces',
+							collapsed: true,
 							items: [
 								{ label: 'Asking How a File Got This Way', slug: 'guide/tracing-intent' },
 								{ label: 'Work Items', slug: 'guide/work-items' },
@@ -158,6 +204,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Local testing',
+							collapsed: true,
 							items: [
 								{ label: 'Overview', slug: 'local-testing/overview' },
 								{ label: 'AWS (Floci)', slug: 'local-testing/aws' },
@@ -201,6 +248,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Troubleshoot',
+							collapsed: true,
 							items: [
 								{ label: 'Common Errors', slug: 'troubleshooting/common-errors' },
 								{ label: 'Lexicon Issues', slug: 'troubleshooting/lexicon-issues' },
@@ -211,6 +259,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Reference',
+					collapsed: true,
 					items: [
 						{ label: 'Project Structure', slug: 'getting-started/project-structure' },
 						{ label: 'Network Egress', slug: 'reference/network-egress' },
@@ -229,6 +278,7 @@ export default defineConfig({
 						{ label: 'Owners of the Workspace Boundary', slug: 'reference/boundary' },
 						{
 							label: 'CLI',
+							collapsed: true,
 							items: [
 								{ label: 'Overview', slug: 'cli/overview' },
 								{ label: 'init', slug: 'cli/init' },
@@ -285,6 +335,7 @@ export default defineConfig({
 								{ label: 'serve mcp', slug: 'cli/mcp' },
 								{
 									label: 'dev',
+									collapsed: true,
 									items: [
 										{ label: 'init lexicon', slug: 'cli/init-lexicon' },
 										{ label: 'dev generate', slug: 'cli/generate' },
@@ -298,6 +349,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Configuration',
+							collapsed: true,
 							items: [
 								{ label: 'Config File', slug: 'configuration/config-file' },
 								{ label: 'TypeScript Configuration', slug: 'configuration/tsconfig' },
@@ -305,12 +357,14 @@ export default defineConfig({
 						},
 						{
 							label: 'Ops and lifecycle',
+							collapsed: true,
 							items: [
 								{ label: 'Ops Reference', slug: 'guide/ops-reference' },
 							],
 						},
 						{
 							label: 'Lint rules',
+							collapsed: true,
 							items: [
 								{ label: 'Overview', slug: 'lint-rules/overview' },
 								{ label: 'Audit Rules Reference', slug: 'lint-rules/audit-rules' },
@@ -326,6 +380,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Serialization',
+							collapsed: true,
 							items: [
 								{ label: 'Output Formats', slug: 'serialization/output-formats' },
 								{ label: 'Multi-Stack Output', slug: 'serialization/multi-stack' },
@@ -333,6 +388,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Components',
+							collapsed: true,
 							items: [
 								{ label: 'Component Contract', slug: 'components/component-contract' },
 								{ label: 'Capabilities', slug: 'components/capabilities' },
@@ -345,6 +401,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Lexicons',
+							collapsed: true,
 							items: [
 								{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
 								{ label: 'Azure ARM', link: '/lexicons/azure/' },
@@ -352,6 +409,7 @@ export default defineConfig({
 								{ label: 'Fly Machines', link: '/lexicons/fly/' },
 								{
 									label: 'Fountain',
+									collapsed: true,
 									items: [
 										{ label: 'Overview', link: '/lexicons/fountain/' },
 										{ label: 'The Steward', link: '/lexicons/fountain/steward/' },
@@ -363,6 +421,7 @@ export default defineConfig({
 								{ label: 'Cedar', link: '/lexicons/cedar/' },
 								{
 									label: 'Kubernetes',
+									collapsed: true,
 									items: [
 										{ label: 'Overview', link: '/lexicons/k8s/' },
 										{ label: 'Generic Composites', link: '/lexicons/k8s/composite-examples/' },
@@ -402,9 +461,11 @@ export default defineConfig({
 				},
 				{
 					label: 'Explanation',
+					collapsed: true,
 					items: [
 						{
 							label: 'Concepts',
+							collapsed: true,
 							items: [
 								{ label: 'Introduction', slug: 'getting-started/introduction' },
 								{ label: 'What chant is', slug: 'concepts/overview' },
@@ -428,6 +489,7 @@ export default defineConfig({
 						},
 						{
 							label: 'Components',
+							collapsed: true,
 							items: [
 								{ label: 'Overview', slug: 'components/overview' },
 								{ label: 'Supply-Chain Attestations', slug: 'components/supply-chain' },

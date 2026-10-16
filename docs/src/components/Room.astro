@@ -1,0 +1,304 @@
+---
+// One room of the site, from data/rooms.mjs: the lede, then three cards
+// (what works, what differs on each forge, the first step), the proof (the
+// example projects in the repository, counted from the filesystem) and the
+// pages to read next as tasks, background and reference. pages/for/[id].astro
+// renders it, with roomMarkdown() as the page's Markdown for "Copy page as
+// Markdown".
+import { Code, TabItem, Tabs } from '@astrojs/starlight/components';
+import { FORGES, TILES, room } from '../data/rooms.mjs';
+import { lexiconExamples, roomExamples } from '../data/proof.mjs';
+import { codeHtml, siteHref } from '../data/href.mjs';
+import { base } from '../site';
+
+interface Props {
+	id: string;
+}
+type Link = { label: string; href: string };
+
+const r = room(Astro.props.id);
+const href = (h: string) => siteHref(base, h);
+const differs = r.differs as Record<string, string[]>;
+const forgeLines = FORGES.map((f) => ({ label: f.label, lines: [...f.differs, ...(differs[f.id] ?? [])] }));
+
+const first = r.first as { note?: string; command: Record<string, string>; link: Link };
+const cmd = first.command;
+const single = cmd.any;
+
+const tile = TILES.find((t) => t.room === r.id);
+const lexicons = tile ? lexiconExamples(tile.lexicons) : [];
+const examples = roomExamples(r);
+const read = [
+	['Tasks', r.tasks],
+	['Background', r.background],
+	['Reference', r.reference],
+] as [string, Link[]][];
+---
+<div class="ch-room not-content">
+	<p class="lede">{r.lede}</p>
+	<div class="cols">
+		<section>
+			<h2 id="works">Works</h2>
+			<ul>{(r.works as string[]).map((w) => <li set:html={codeHtml(w)} />)}</ul>
+		</section>
+		<section>
+			<h2 id="differs">Differs</h2>
+			<h3>By forge</h3>
+			<Tabs syncKey="forge">
+				{forgeLines.map((f) => (
+					<TabItem label={f.label}>
+						<ul>{f.lines.map((l) => <li set:html={codeHtml(l)} />)}</ul>
+					</TabItem>
+				))}
+			</Tabs>
+		</section>
+		<section class="first">
+			<h2 id="first-step">First step</h2>
+			{first.note && <p set:html={codeHtml(first.note)} />}
+			{single ? (
+				<Code code={single} lang="sh" />
+			) : (
+				<Tabs syncKey="forge">
+					{FORGES.map((f) => (
+						<TabItem label={f.label}>
+							<Code code={cmd[f.id]} lang="sh" />
+						</TabItem>
+					))}
+				</Tabs>
+			)}
+			<p><a class="go" href={href(first.link.href)}>{first.link.label}</a></p>
+		</section>
+	</div>
+	<section>
+		<h2 id="proof">Proof</h2>
+		<p class="note">Example projects in the chant repository for this room, each with a README that has the commands to run it.{lexicons.length > 0 && ' The last rows count the examples each lexicon ships, read from the repository when this site was built.'}</p>
+		<table>
+			<thead><tr><th>Example</th><th>Where</th></tr></thead>
+			<tbody>
+				{examples.map((e) => (
+					<tr>
+						<td><code>{e.path.split('/').pop()}</code></td>
+						<td><a href={e.href}>{e.path}</a></td>
+					</tr>
+				))}
+				{lexicons.filter((l) => l.count > 0).map((l) => (
+					<tr>
+						<td>{l.count} {l.count === 1 ? 'example' : 'examples'}</td>
+						<td><a href={l.href}>lexicons/{l.lexicon}/examples</a></td>
+					</tr>
+				))}
+			</tbody>
+		</table>
+	</section>
+	<section class="read">
+		<h2 id="then-read">Then read</h2>
+		<dl>
+			{read.filter(([, links]) => links.length).map(([label, links]) => (
+				<>
+					<dt>{label}</dt>
+					<dd>{links.map((l) => <a href={href(l.href)}>{l.label}</a>)}</dd>
+				</>
+			))}
+		</dl>
+	</section>
+</div>
+
+<style>
+	.ch-room {
+		display: grid;
+		gap: 2.25rem;
+		font-size: var(--sl-text-sm);
+		line-height: 1.6;
+		color: var(--sl-color-gray-2);
+	}
+	.lede {
+		margin: 0;
+		font-size: var(--sl-text-base);
+		color: var(--sl-color-gray-2);
+	}
+	.cols {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+		gap: 0.75rem;
+	}
+	.cols .first {
+		grid-column: 1 / -1;
+	}
+	.cols section {
+		min-width: 0;
+		padding: 1rem 1.15rem;
+		border: 1px solid var(--ch-rule);
+		border-top: 1px solid var(--ch-gold);
+		border-radius: 0.6rem;
+		background: var(--ch-panel);
+	}
+	h2 {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0 0 0.7rem;
+		font-size: 0.68rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--sl-color-gray-3);
+	}
+	section:not(.cols section) > h2::before {
+		content: '';
+		width: 15px;
+		height: 15px;
+		background-color: var(--ch-gold);
+		-webkit-mask: var(--ch-mark) center / contain no-repeat;
+		mask: var(--ch-mark) center / contain no-repeat;
+	}
+	h3 {
+		margin: 0 0 0.2rem;
+		font-size: var(--sl-text-xs);
+		font-weight: 600;
+		color: var(--sl-color-gray-2);
+	}
+	ul {
+		display: grid;
+		gap: 0.45rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	li {
+		position: relative;
+		margin: 0;
+		padding-left: 1.75rem;
+		color: var(--sl-color-white);
+	}
+	li::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 6px;
+		width: 20px;
+		height: 11.5px;
+		background-color: var(--ch-ink);
+		-webkit-mask: var(--ch-logo) center / contain no-repeat;
+		mask: var(--ch-logo) center / contain no-repeat;
+	}
+	p {
+		margin: 0 0 0.7rem;
+	}
+	.note {
+		color: var(--sl-color-gray-3);
+	}
+	:global(.ch-room code) {
+		font-size: 0.85em;
+		padding: 0.05em 0.3em;
+		border: 1px solid var(--ch-rule);
+		border-radius: 0.3rem;
+		background: var(--sl-color-gray-6);
+	}
+	:global(.ch-room pre code) {
+		border: 0;
+		padding: 0;
+		background: none;
+	}
+	.cols :global(starlight-tabs) {
+		font-size: var(--sl-text-sm);
+	}
+	.cols :global(starlight-tabs [role='tablist']) {
+		margin-bottom: 0.6rem;
+	}
+	.cols :global(.expressive-code) {
+		margin-bottom: 0.8rem;
+	}
+	a {
+		color: var(--ch-accent);
+		text-decoration: none;
+	}
+	a:hover {
+		text-decoration: underline;
+		text-decoration-color: var(--ch-gold);
+		text-underline-offset: 0.2em;
+	}
+	.go {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.95rem;
+		font-weight: 600;
+		color: var(--sl-color-black);
+		background: var(--ch-accent);
+		border-radius: 0.5rem;
+	}
+	.go::after {
+		content: '\2192';
+	}
+	.go:hover {
+		text-decoration: none;
+		filter: brightness(1.1);
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.85rem;
+	}
+	th,
+	td {
+		padding: 0.6rem 0.9rem 0.6rem 0;
+		text-align: left;
+		vertical-align: top;
+		border-bottom: 1px solid var(--ch-rule);
+	}
+	th {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+		border-bottom-color: var(--ch-gold);
+	}
+	td:first-child {
+		color: var(--sl-color-white);
+		white-space: nowrap;
+	}
+	dl {
+		display: grid;
+		grid-template-columns: 7rem 1fr;
+		gap: 0.75rem 1.25rem;
+		margin: 0;
+	}
+	dt {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+		padding-top: 0.3rem;
+	}
+	dd {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		margin: 0;
+	}
+	dd a {
+		padding: 0.2rem 0.65rem;
+		white-space: nowrap;
+		color: var(--sl-color-white);
+		border: 1px solid var(--ch-rule);
+		border-radius: 999px;
+	}
+	dd a:hover {
+		text-decoration: none;
+		border-color: var(--ch-gold);
+	}
+	@media (max-width: 40rem) {
+		dl {
+			grid-template-columns: 1fr;
+			gap: 0.4rem;
+		}
+		dd {
+			margin-bottom: 0.6rem;
+		}
+		dd a {
+			white-space: normal;
+		}
+	}
+</style>
