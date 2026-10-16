@@ -1,11 +1,12 @@
 ---
 // The header's right side: a Docs link first, so the docs are one click from
-// the home page (whose splash layout has no sidebar), then Starlight's own
-// social icons.
+// the home page (whose splash layout has no sidebar), then the live demo, then
+// Starlight's own social icons.
 import Default from '@astrojs/starlight/components/SocialIcons.astro';
 import { docsHref } from '../site';
 ---
 <a class="ch-docs" href={docsHref}>Docs</a>
+<a class="ch-docs" href="https://demo.intentius.io">Demo</a>
 <Default />
 
 <style>

@@ -1,7 +1,7 @@
 ---
 // The site title: the pixel face beside the name, drawn as a mask over the
-// text colour so it follows the theme (styles/chant.css). On a phone a Docs
-// link sits beside it, since Starlight hides the header's right side (where
+// text colour so it follows the theme (styles/chant.css). On a phone the Docs
+// and Demo links sit beside it, since Starlight hides the header's right side (where
 // SocialIcons.astro puts Docs) below its md width.
 import { docsHref } from '../site';
 
@@ -12,6 +12,7 @@ const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 	<span translate="no">{siteTitle}</span>
 </a>
 <a class="ch-docs-phone" href={docsHref}>Docs</a>
+<a class="ch-docs-phone" href="https://demo.intentius.io">Demo</a>
 
 <style>
 	.site-title {
@@ -23,7 +24,7 @@ const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 	}
 	.ch-docs-phone {
 		align-self: center;
-		margin-left: 0.75rem;
+		margin-left: 0.5rem;
 		padding: 0.2rem 0.65rem;
 		font-size: var(--sl-text-xs);
 		font-weight: 600;
