@@ -167,8 +167,14 @@ export interface ParsedArgs {
   env?: string;
   /** `chant emulator up --port <container-port>=<host-port>`, repeatable (#3673); a bare `<host-port>` when one emulator is selected. */
   port?: string[];
-  /** `chant emulator up --image <ref>` (#3952): the image to start, when one emulator is selected. */
+  /**
+   * `chant emulator up --image <ref>` (#3952): the image to start, when one
+   * emulator is selected. `chant build --components --generate --image <ref>`
+   * (#4002): the image every generated job runs in.
+   */
   image?: string;
+  /** `chant build --components --generate --before-script <line>`, repeatable (#4002): shell lines every generated job runs before its command. */
+  beforeScript?: string[];
   /** `chant emulator up --network <name>` (#3952): the Docker network each started container joins. */
   network?: string;
   /** `chant emulator up --setting <KEY>=<VALUE>`, repeatable (#3952): an emulator setting such as `FLOCI_<NAME>`, passed as `-e`. */

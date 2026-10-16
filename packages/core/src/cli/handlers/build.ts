@@ -67,6 +67,8 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         paramsFile: args.paramsFile,
         ...(args.waveGate ? { waveGate: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } } : {}),
         ...(args.prLoop ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } } : {}),
+        ...(args.image ? { image: args.image } : {}),
+        ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       });
     } catch (err) {
       console.error(formatError({ message: memberPipeline.describeError(err) }));
@@ -93,6 +95,9 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       ...(args.prLoop
         ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } }
         : {}),
+      // #4002: the job image and the lines that install what it lacks, chant itself included.
+      ...(args.image ? { image: args.image } : {}),
+      ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
     },
     args.sandbox,
     paramsResolution.provenance,

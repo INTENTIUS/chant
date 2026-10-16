@@ -213,6 +213,10 @@ export interface ComponentPlanInput {
   prLoop?: { gate?: string; branch?: string };
   /** `--wave-gate` with its `--canary` and `--base` (#3049). */
   waveGate?: { gate: string; canary?: string[]; base?: string };
+  /** `--image` (#4002). */
+  image?: string;
+  /** `--before-script`, in order (#4002). */
+  beforeScript?: string[];
 }
 
 /** The generators' own default environment when `--env` is not given. */
@@ -252,6 +256,8 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
     if (input.prLoop.gate) parts.push("--gate", input.prLoop.gate);
     if (input.prLoop.branch) parts.push("--branch", input.prLoop.branch);
   }
+  if (input.image) parts.push("--image", input.image);
+  for (const line of input.beforeScript ?? []) parts.push("--before-script", line);
   for (const p of input.params ?? []) parts.push("--param", p);
   if (input.paramsFile) parts.push("--params-file", relPath(ctx.memberRoot, resolve(input.paramsFile)));
   if (input.output) parts.push("--output", relPath(ctx.memberRoot, target));

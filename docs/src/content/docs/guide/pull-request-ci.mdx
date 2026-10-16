@@ -72,7 +72,16 @@ chant build --components --generate gitlab --pr-loop --env prod --output .gitlab
 
 `--gate <name>` renames the gate from `pr-apply`. `--branch <name>` names the branch pull requests target, `main` by default on GitHub and Forgejo and the project's default branch on GitLab.
 
-Both commands measure the change with git, so the pipeline checks out the full history. The default image is `node:22`, which has git but no Terraform. Pick an image that has git, chant and your Terraform binary, or install them in the generator's `beforeScript`.
+Both commands measure the change with git, so the pipeline checks out the full history. The default image is `node:22`, which has git. The jobs install OpenTofu into it, but not chant. Pick an image that has git, chant and your Terraform binary with `--image`, or install them with `--before-script`, which every job runs before its command. With a `package.json` that pins `@intentius/chant` and the lexicons the project lists:
+
+```bash
+chant build --components --generate forgejo --pr-loop --env prod \
+  --before-script 'npm ci --no-audit --no-fund' \
+  --before-script 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"' \
+  --output .forgejo/workflows/chant-pr.yml
+```
+
+On GitLab, put the `node_modules/.bin` directory on the path with `export PATH="$PWD/node_modules/.bin:$PATH"` instead, since a GitLab job's lines share one shell.
 
 ### GitHub
 
