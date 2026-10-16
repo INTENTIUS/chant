@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-chant includes a watch mode that monitors your source files and automatically re-runs on changes. Available on both `build` and `lint` commands.
+`chant build` and `chant lint` take `--watch`, which re-runs the command when a source file changes.
 
 ## Usage
 
@@ -20,9 +20,9 @@ chant lint --watch
 
 ## How It Works
 
-1. **File system monitoring** — watches for file create, modify, and delete events
-2. **Debouncing** — changes are batched with a short debounce window
-3. **Full re-runs** — each batch of changes triggers a full rebuild or re-lint
+1. chant watches for file create, modify and delete events.
+2. It batches changes within a short debounce window.
+3. Each batch triggers a full rebuild or re-lint.
 
 ## Watched and Ignored Paths
 
@@ -38,5 +38,5 @@ Watch mode monitors all `.ts` files, with these exclusions:
 
 ## Tips
 
-- **Large projects:** Debouncing keeps re-runs efficient by batching rapid file saves
-- **Terminal multiplexing:** Run watch mode in one terminal pane and your editor in another
+- On a large project, debouncing batches rapid saves into one re-run.
+- Run watch mode in one terminal pane and your editor in another.

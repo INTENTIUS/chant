@@ -1,6 +1,6 @@
 ---
 title: "GitLab CI + AWS ALB"
-description: "Two lexicons (AWS, GitLab), two stacks, one ALB — deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
+description: "Two lexicons (AWS, GitLab), two stacks, one ALB: deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/gitlab-aws-alb/.
@@ -40,7 +40,7 @@ Two TypeScript source directories produce two CloudFormation stacks and two GitL
 `lexicons/aws/examples/shared-alb/`, `shared-alb-api/` and `shared-alb-ui/` hold the AWS-only halves of the same declarations, without the GitLab pipeline; `lexicons/aws/examples/multi-service-alb/` puts all of it in one stack.
 
 <Aside type="caution">
-NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone (us-east-1 list price, checked 2026-08 against chant 0.46.0; AWS list prices change and vary by region — re-price before relying on this number). Teardown after testing.
+NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone (us-east-1 list price, checked 2026-08 against chant 0.46.0; AWS list prices change and vary by region, so re-price before relying on this number). Tear down after testing.
 </Aside>
 
 ## What you'll learn
@@ -84,7 +84,7 @@ export const api = FargateService({
 
 Both services sit in one `src/`, so one `chant build` produces one template with both. They share the ALB parameters and differ only where they must: the path pattern and priority that route traffic to them, and which image parameter each one reads (`apiImage` or `uiImage`).
 
-The stack receives infra stack outputs as CloudFormation parameters — `clusterArn`, `listenerArn`, `vpcId`, subnet IDs, execution role ARN. The pipeline fetches them with `aws cloudformation describe-stacks` and passes them as `--parameter-overrides`.
+The stack receives infra stack outputs as CloudFormation parameters: `clusterArn`, `listenerArn`, `vpcId`, subnet IDs, execution role ARN. The pipeline fetches them with `aws cloudformation describe-stacks` and passes them as `--parameter-overrides`.
 
 ### amazon/aws-cli entrypoint override
 

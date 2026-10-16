@@ -13,8 +13,7 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 The [`fly-durable-deploy`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-durable-deploy)
-example runs a Fly Machines deploy that keeps running without anybody minding
-it. The op is scheduled on a [fountain steward](/chant/lexicons/fountain/steward/):
+example runs a Fly Machines deploy on a schedule, unattended. The op is scheduled on a [fountain steward](/chant/lexicons/fountain/steward/):
 one teammate, one persistent machine, one thread carrying every deploy this app
 has had.
 
@@ -136,7 +135,7 @@ and Machine rather than deploying a second one. That is the property the
 schedule leans on, and it is why nothing here has to be resumed.
 
 <Aside type="note">
-In a dev checkout, run through the workspace CLI —
+In a dev checkout, run through the workspace CLI:
 `npx tsx ../../packages/core/src/cli/main.ts run fly-durable-deploy`.
 </Aside>
 

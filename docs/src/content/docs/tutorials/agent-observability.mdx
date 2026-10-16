@@ -30,7 +30,7 @@ Each layer is declared with the lexicon that owns it, and each one reads the dec
 | Rules and routing | [prometheus](/chant/lexicons/prometheus/) | `Slo`, `Route`, `Receiver`, `InhibitRule` |
 | Dashboards | [grafana](/chant/lexicons/grafana/) | `Datasource`, `RedDashboard`, `SloDashboard`, `AgentDashboard` |
 
-The joins are where chant earns its keep:
+Where they join:
 
 - The agent's exporters come from `gatewayExporter(gateway, { loadBalance: true })`, so renaming the gateway or moving its namespace moves the agents with it, and the `loadbalancing` exporter sends every span of a trace to one gateway replica.
 - The gateway runs tail sampling after the `spanmetrics` connector and the GenAI preset's metrics branch, so metrics count every span and only traces are thinned.

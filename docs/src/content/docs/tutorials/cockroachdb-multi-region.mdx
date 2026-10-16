@@ -1,6 +1,6 @@
 ---
 title: "CockroachDB Multi-Region on GKE"
-description: "One CockroachDB cluster across three GCP regions — nine nodes, three composites, five Ops — with a local k3d smoke test that needs no cloud account."
+description: "One CockroachDB cluster across three GCP regions (nine nodes, three composites, five Ops), with a local k3d smoke test that needs no cloud account."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/cockroachdb-multi-region/.
@@ -32,7 +32,7 @@ One TypeScript project, eight output files, nine CockroachDB nodes across three 
 
 ## What you'll learn
 
-- Why `advertiseHostDomain` exists — a cluster-local FQDN does not resolve from another cluster, and nodes that advertise one come up healthy, never find each other, and sit there
+- Why `advertiseHostDomain` exists: a cluster-local FQDN does not resolve from another cluster, and nodes that advertise one come up healthy, never find each other, and sit there
 - How three composites collapse a 3-region estate to two files per region
 - How a 13-step deploy script becomes phases, and how the one wait nobody can automate became a converge rule
 - Why the operator you install with Helm belongs in the build output, pinned
@@ -69,7 +69,7 @@ export const smokeCluster = new Cluster({
 ```
 
 <Aside type="note" title="One cluster, not three">
-Cross-*cluster* gossip is the part that needs three k3d clusters, plus something standing in for Cloud DNS and triple the memory. One cluster still proves everything short of that: the manifests apply, a secure cluster forms across three localities on a shared CA, exactly one region initialises, and multi-region SQL works. What it cannot cover — ExternalDNS, Workload Identity, External Secrets, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement (k3s runs flannel, which ignores it) — is listed in `k3d/src/regions.ts`, next to the declarations it applies to.
+Cross-*cluster* gossip is the part that needs three k3d clusters, plus something standing in for Cloud DNS and triple the memory. One cluster still proves everything short of that: the manifests apply, a secure cluster forms across three localities on a shared CA, exactly one region initialises, and multi-region SQL works. `k3d/src/regions.ts` lists what it cannot cover, next to the declarations each gap applies to: ExternalDNS, Workload Identity, External Secrets, GCE Ingress, Cloud Armor, and NetworkPolicy enforcement (k3s runs flannel, which ignores it).
 </Aside>
 
 ## Key patterns
@@ -139,12 +139,12 @@ export const east = GkeCrdbRegion({
 ```
 
 <Aside type="tip" title="A gap in a composite is a lexicon fix">
-When one of these does not quite do what an estate needs, the answer is to change the composite, not to work around it in the example. Two of these three were extracted from an earlier version of this very example.
+When one of these falls short of what an estate needs, change the composite instead of working around it in the example. Two of these three were extracted from an earlier version of this very example.
 </Aside>
 
 ### Build parameters, not process.env
 
-Three values vary per deployment. Reading them from `process.env` at module scope is exactly the ambient read [synthesis refuses to fold](/chant/concepts/where-values-come-from/) — and it is not free: it forced nine of each region's eleven source files onto the run path, and every regional stack had to switch EVL001 off to permit it.
+Three values vary per deployment. Reading them from `process.env` at module scope is the ambient read [synthesis refuses to fold](/chant/concepts/where-values-come-from/). It forced nine of each region's eleven source files onto the run path, and every regional stack had to switch EVL001 off to permit it.
 
 ```typescript
 // chant.config.ts
@@ -184,11 +184,11 @@ phase("Clusters ready", [
 ], { parallel: true }),
 ```
 
-The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops-reference/#step-builders) reads their own Ready condition — and fails fast on a terminal one instead of polling out the timeout.
+The readiness phase is the clearest trade. The script waited on `kubectl wait --for=condition=Ready containercluster/...` and then polled `gcloud container node-pools describe` sixty times in a bash loop. Both are Config Connector resources, so [`waitForReady`](/chant/guide/ops-reference/#step-builders) reads their own Ready condition and fails fast on a terminal one instead of polling out the timeout.
 
 ### Where the wait goes
 
-Between two steps the old script printed a DNS-delegation reminder in an ASCII box and carried straight on. Delegating three subdomains at a registrar is the one action nobody can automate from inside GCP, and Google will not issue the managed certificates until the names resolve — so the deploy "succeeded" while three certificates sat in PROVISIONING and the UIs served 502 until somebody remembered.
+Between two steps the old script printed a DNS-delegation reminder in an ASCII box and carried straight on. Delegating three subdomains at a registrar is the one action nobody can automate from inside GCP, and Google will not issue the managed certificates until the names resolve. So the deploy "succeeded" while three certificates sat in PROVISIONING and the UIs served 502 until somebody remembered.
 
 Publishing the UIs is therefore its own Op, and the database does not wait on any of it:
 
@@ -207,7 +207,7 @@ export default Op({
 
 That Op held a 72-hour gate once, released by somebody who had to remember to send a signal after they had already done the work at the registrar. It holds nothing now. Run before delegation it fails on the certificate wait, which is the honest answer: the names do not resolve yet. Run after, it succeeds.
 
-Which means nobody has to remember. `ops/publish-ui-converge.op.ts` is a `ConvergeOp` that observes prod every quarter hour and dispatches `crdb-publish-ui` while the UI stack is short of what `src/` declares:
+So nobody has to remember. `ops/publish-ui-converge.op.ts` is a `ConvergeOp` that observes prod every quarter hour and dispatches `crdb-publish-ui` while the UI stack is short of what `src/` declares:
 
 ```typescript
 export const { op } = ConvergeOp({
@@ -242,7 +242,7 @@ chant run crdb-ui-converge --on fountain
 
 ### The operator belongs in the build output
 
-External Secrets Operator was installed by `helm repo add` + `helm upgrade --install` in the deploy script. That left `kubectl apply -f dist/` short of the actual deployment, and pinned no version at all — the chart has gone from 0.10 to 2.9 since this example was written, across a major version, and every region's `ClusterSecretStore` depends on the CRDs it installs.
+External Secrets Operator was installed by `helm repo add` + `helm upgrade --install` in the deploy script. That left `kubectl apply -f dist/` short of the actual deployment, and pinned no version. The chart has gone from 0.10 to 2.9 since this example was written, across a major version, and every region's `ClusterSecretStore` depends on the CRDs it installs.
 
 ```typescript
 // platform/eso.ts
@@ -258,7 +258,7 @@ export const externalSecrets = HelmRender({
 });
 ```
 
-[`HelmRender`](/chant/lexicons/helm/) runs `helm template` at synthesis and turns each rendered manifest into a Declarable, so the operator lands in `dist/eso.yaml` — 44 resources, 25 of them CRDs — and is applied like anything else. The render caches under `~/.chant/helm-renders`, keyed by repo, chart, version and values.
+[`HelmRender`](/chant/lexicons/helm/) runs `helm template` at synthesis and turns each rendered manifest into a Declarable, so the operator goes into `dist/eso.yaml` (44 resources, 25 of them CRDs) and is applied like anything else. The render caches under `~/.chant/helm-renders`, keyed by repo, chart, version and values.
 
 Getting the operator installed is only half of it. The deploy waits for both ExternalSecrets in every region to report `SecretSynced` before it waits on a single CockroachDB pod:
 
@@ -269,7 +269,7 @@ phase("Secrets synced",
   { parallel: true }),
 ```
 
-That gate is there because the chain was decorative until recently. The cert script created those Secrets itself with `kubectl create secret`, and ESO will not adopt a Secret it does not own — so both ExternalSecrets sat in permanent error while the deploy reported success on the pre-created bytes. Secret Manager, the ESO install and the Workload Identity bindings behind it delivered nothing, and nothing said so.
+That gate exists because until recently the chain did nothing. The cert script created those Secrets itself with `kubectl create secret`, and ESO will not adopt a Secret it does not own, so both ExternalSecrets sat in permanent error while the deploy reported success on the pre-created bytes. Secret Manager, the ESO install and the Workload Identity bindings behind it delivered nothing, and nothing said so.
 
 It lives in `platform/`, outside `src/`, because rendering wants the `helm` binary and, on a cold cache, the network. The four stacks under `src/` stay pure synthesis.
 
@@ -280,7 +280,7 @@ It lives in `platform/`, outside `src/`, because rendering wants the `helm` bina
 ownership: { stack: "crdb-multi-region" },
 ```
 
-Every one of the 193 emitted resources carries `chant.intentius.io/stack: crdb-multi-region`. That marker lives on the live resource, not in a state file chant hosts, which is what makes a later prune precise — and what makes this work:
+Every one of the 193 emitted resources carries `chant.intentius.io/stack: crdb-multi-region`. That marker lives on the live resource instead of in a state file chant hosts. It makes a later prune precise, and it makes this work:
 
 ```bash
 chant lifecycle diff prod --live
@@ -290,11 +290,11 @@ See [Lifecycle Models](/chant/concepts/lifecycle-models/) for why the marker and
 
 ### No two-pass build
 
-The GKE and EKS microservice examples build twice: infra first, then extract service-account emails or ARNs, then build the manifests with real values. This estate does not need it. One global VPC, one IAM system, and names that follow from the project and the domain — so everything resolves at synthesis, from three build parameters.
+The GKE and EKS microservice examples build twice: infra first, then extract service-account emails or ARNs, then build the manifests with real values. This estate does not need it. With one global VPC, one IAM system, and names that follow from the project and the domain, everything resolves at synthesis from three build parameters.
 
 ## Cost
 
-A dollar or two an hour at steady state — four regional control planes, twelve nodes, and the disks under them. The [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost) lists what to price; the numbers move, so price it for your own regions. Tear it down after testing.
+A dollar or two an hour at steady state, for four regional control planes, twelve nodes and the disks under them. The [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost) lists what to price; the numbers move, so price it for your own regions. Tear it down after testing.
 
 ## Deploy it
 
@@ -308,7 +308,7 @@ npm run bootstrap    # once: management cluster + Config Connector
 npm run deploy       # chant run crdb-deploy
 ```
 
-The [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke) has the full deploy, verification and troubleshooting walkthrough — including the one that costs the most time to diagnose: `cockroach sql` against `/cockroach/cockroach-certs` fails with `password authentication failed for user root`, because the node certs secret contains no client certificate.
+The [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke) has the full deploy, verification and troubleshooting walkthrough. It includes the failure that costs the most time to diagnose: `cockroach sql` against `/cockroach/cockroach-certs` fails with `password authentication failed for user root`, because the node certs secret contains no client certificate.
 
 ## Further reading
 

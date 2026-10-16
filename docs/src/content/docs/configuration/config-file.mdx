@@ -77,7 +77,7 @@ buildParams: {
 
 With that, `chant build --param env=prod` stamps `env=prod` into the marker and binds `params.env` to `"prod"` for source in the same resolution. A reference to a parameter the config does not declare, or one with no value for the build, is a build error. A literal `env` next to an `env` parameter that resolved to something else gets a warning naming both values.
 
-The marker is the record that later lets `delete` be precise without an authoritative state file — ownership lives on the cloud resource, not in a file chant has to host or lock. It is stamped into each target's native metadata channel:
+The marker is what lets a later `delete` be precise without an authoritative state file. Ownership lives on the cloud resource, so chant has no file to host or lock. It is stamped into each target's native metadata channel:
 
 | Channel | Targets | Keys |
 |---|---|---|
@@ -85,7 +85,7 @@ The marker is the record that later lets `delete` be precise without an authorit
 | Tags | AWS | `chant:managed-by=chant`, `chant:stack`, `chant:env` |
 | Tags | Azure | `chant-managed-by=chant`, `chant-stack`, `chant-env` |
 
-The marker carries **stack identity**, not just `managed=true`, so one stack never mistakes another's resources for its own. Ownership means "carries chant's marker", not "carries only chant's marker" — co-stamping with other tools (ArgoCD, Terraform) is fine, and explicit per-resource tags/labels win on key collisions. Walk-away cost stays zero: these are standard tags/labels, nothing proprietary.
+The marker carries **stack identity**, not just `managed=true`, so one stack never mistakes another's resources for its own. A resource is chant's when it carries chant's marker, even when other tools (ArgoCD, Terraform) stamp it too. Explicit per-resource tags/labels win on key collisions. The markers are standard tags/labels, so you can stop using chant and leave nothing proprietary behind.
 
 ### `telemetry`
 
@@ -118,23 +118,23 @@ codegen: { outDir: "infra/generated" },
 
 ### `environments`
 
-An optional array of environment names the project deploys to. An environment is just a named identity chant threads through the operational layer — there is no per-environment config block to maintain.
+An optional array of environment names the project deploys to. Each environment is a name chant passes to the commands below, with no config block of its own.
 
 ```typescript
 environments: ["local", "staging", "prod"],
 ```
 
-`--env <name>` selects one and defaults to `local` when omitted. The selected environment is what [`chant lifecycle`](/chant/cli/lifecycle/) diffs against, the environment organizational policy evaluates against during `chant build`, and the key the [component release ledger](/chant/components/observability/) records each deploy under — as in `chant run --components <name> --env <env>` and `chant components status <env>`. The `env` stamped into the [ownership](#ownership) marker is a separate setting, `ownership.env`, which can reference a build parameter so the two stay one value.
+`--env <name>` selects one and defaults to `local` when omitted. The selected environment is what [`chant lifecycle`](/chant/cli/lifecycle/) diffs against, the environment organizational policy evaluates against during `chant build`, and the key the [component release ledger](/chant/components/observability/) records each deploy under, as in `chant run --components <name> --env <env>` and `chant components status <env>`. The `env` stamped into the [ownership](#ownership) marker is a separate setting, `ownership.env`, which can reference a build parameter so the two stay one value.
 
-An entry containing `*` is a glob pattern, declaring an unbounded family of environments at once — per-PR previews, per-suite test copies:
+A `*` in an entry makes it a glob pattern that declares a family of environments at once, such as per-PR previews or per-suite test copies:
 
 ```typescript
 environments: ["staging", "prod", "pr-*"],
 ```
 
-`--env pr-42` (and, with a param-bound `ownership.env`, `--param env=pr-42`) is then legal; any name no entry covers is still rejected. Matching is literal first, then by pattern; `*` matches any run of characters and is the whole pattern syntax — no `?`, no character classes, no regex. A pattern entry can carry an `endpoint` like any other entry, and a literal entry always wins over a pattern for the same name.
+`--env pr-42` (and, with a param-bound `ownership.env`, `--param env=pr-42`) is then legal; any name no entry covers is still rejected. Matching is literal first, then by pattern; `*` matches any run of characters and is the whole pattern syntax, with no `?`, character classes or regex. A pattern entry can carry an `endpoint` like any other entry, and a literal entry always wins over a pattern for the same name.
 
-An entry can also carry the endpoint that environment's `--live` reads should target, instead of a bare name:
+To point an environment's `--live` reads at a specific endpoint, give it an object with `name` and `endpoint` instead of a bare name:
 
 ```typescript
 environments: [
@@ -143,7 +143,7 @@ environments: [
 ],
 ```
 
-This is for a local emulator (Floci, mudflaps) or any non-default endpoint: without it, `--live --env floci` shells out to each lexicon's CLI honoring whatever the ambient shell happens to export (`AWS_ENDPOINT_URL` for AWS, `FLY_FLAPS_BASE_URL` for Fly) — and if that var isn't set, the read silently targets real AWS/Fly instead of the emulator, returning an empty (but not erroring) result. Declaring the endpoint makes `--env floci` self-sufficient: chant injects it into the right ambient var for the read, unless that var is already set in the shell — an ambient value always wins, so nothing changes for a project that already exports it. If a `--live` describe still comes back with zero resources for an environment that has declared entities, chant warns rather than reporting a quiet "nothing here."
+This is for a local emulator (Floci, mudflaps) or any non-default endpoint. Without it, `--live --env floci` shells out to each lexicon's CLI with whatever the shell exports (`AWS_ENDPOINT_URL` for AWS, `FLY_FLAPS_BASE_URL` for Fly). If that var isn't set, the read targets real AWS/Fly instead of the emulator and returns an empty result with no error. With the endpoint declared, chant sets that var for the read unless the shell already sets it. A value from the shell always wins, so a project that already exports it sees no change. If a `--live` describe still returns zero resources for an environment that has declared entities, chant warns instead of reporting an empty result.
 
 ### `lint.extends`
 

@@ -28,7 +28,7 @@ const lexiconCount = readdirSync(lexiconsDir).filter((n) => statSync(join(lexico
 const pillars = [
 	{ title: 'Plain TypeScript, no DSL and no YAML', href: '/concepts/typescript-as-data/' },
 	{ title: 'Lint rules that check meaning', href: '/guide/linting/' },
-	{ title: "Output in each platform's own format", href: '/serialization/output-formats/' },
+	{ title: 'CloudFormation, Kubernetes YAML and more', href: '/serialization/output-formats/' },
 	{ title: `${lexiconCount} lexicons, and a contract for your own`, href: '/lexicons/overview/' },
 	{ title: 'Observe, reconcile or apply, per environment', href: '/concepts/lifecycle-models/' },
 	{ title: 'Ops with gates and rollback', href: '/guide/ops/' },
@@ -50,7 +50,7 @@ const pillars = [
 			<a class="hero-link" href={docsHref} aria-label="The docs"><span class="ch-logo hero-logo" aria-hidden="true"></span></a>
 			<h1 class="wordmark">CHANT</h1>
 			<span class="rule" aria-hidden="true"><span class="ch-mark"></span></span>
-			<p class="claim">Typed infrastructure, end to end</p>
+			<p class="claim">Typed infrastructure</p>
 			<p class="lede">Infrastructure in TypeScript, out as CloudFormation, Kubernetes YAML, GitHub Actions and more.</p>
 		</section>
 		<Picker />

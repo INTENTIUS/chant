@@ -1,6 +1,6 @@
 ---
 title: "Carve a resource out of Terraform"
-description: "Incrementally move a resource from a Terraform estate into native chant — advise, emit, audit, bridge, graduate — reversibly."
+description: "Move one resource from a Terraform estate into native chant, step by step and reversibly: advise, emit, audit, bridge, graduate."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/terraform-carve-out/.
@@ -13,17 +13,17 @@ prompt: |
 import { Aside } from '@astrojs/starlight/components';
 
 This tutorial carves a single resource out of a Terraform estate into native
-chant, incrementally and reversibly. You never carve the whole estate — small,
-cleanly-mappable pieces move; the long tail stays in Terraform.
+chant, incrementally and reversibly. Only small, cleanly mappable pieces move;
+the long tail stays in Terraform.
 
-**The whole flow runs offline** — no cloud account, no Terraform binary, no
-state backend. It works against the bundled estate and its state file. The one
+**The whole flow runs offline** against the bundled estate and its state file,
+with no cloud account, Terraform binary or state backend. The one
 genuinely live part (`terraform state rm` / `apply`) is shown but not required
 to follow along.
 
 The runnable estate is in
 [`examples/terraform-carve-out`](https://github.com/intentius/chant/tree/main/examples/terraform-carve-out).
-To watch the steps run end to end:
+To run all the steps at once:
 
 ```bash
 cd examples/terraform-carve-out
@@ -110,17 +110,17 @@ export const assets = new Bucket({
 Three things happened here beyond the property mapping:
 
 - The Terraform `aws_s3_bucket_versioning` sub-resource **folded into** the
-  bucket's own `VersioningConfiguration` — CloudFormation models it as one
+  bucket's own `VersioningConfiguration`. CloudFormation models it as one
   resource, so chant does too.
-- Attributes with no native spelling landed in the trailing comment instead of
+- Attributes with no native spelling went into the trailing comment instead of
   being dropped. You reconcile or delete them.
 - Emit persisted a **carve manifest**
   (`carveout/aws_s3_bucket-assets.carve.json`). The later steps read the target
   from it, so `--select` is only needed once.
 
 A Terraform-managed resource is created through the provider API, not
-CloudFormation, so it is not in any CFN stack — its resolved shape lives in the
-state file. `--state` adopts straight from there, no cloud call. (A resource
+CloudFormation, so it is in no CFN stack; its resolved shape lives in the
+state file. `--state` adopts straight from there, with no cloud call. (A resource
 already in a CloudFormation stack can be adopted live with `--env <env>`
 instead.) The resource now sits at the observe position: emitted, reversible,
 nothing applied.
@@ -140,13 +140,12 @@ error: [assets] S3 bucket "assets" is missing PublicAccessBlockConfiguration —
 error: [assets] S3 bucket "assets" has no bucket policy denying non-TLS requests — add a Deny statement on aws:SecureTransport = false (aws)
 ```
 
-The emitted source is a faithful copy of what Terraform managed — including its
+The emitted source is a faithful copy of what Terraform managed, including its
 missing security posture. chant's post-synth audit refuses to build an S3
-bucket that allows public access or plaintext transport. This audit is part of
-the value: chant tells you what is wrong with what you adopted, before you ever
-apply it.
+bucket that allows public access or plaintext transport. chant tells you what is
+wrong with what you adopted before you apply it.
 
-Fix it in `carveout/src/assets.ts` — block public access on the bucket and add
+In `carveout/src/assets.ts`, block public access on the bucket and add
 a companion TLS-only policy:
 
 ```ts
@@ -188,7 +187,7 @@ Now the build produces a valid CloudFormation template:
 chant build ./carveout/src --lexicon aws
 ```
 
-(Delete the unmapped-attributes comment once you have reconciled it —
+(Delete the unmapped-attributes comment once you have reconciled it:
 `region` is where the stack deploys; `force_destroy` was a Terraform-only
 behavior with no CFN equivalent.)
 
@@ -207,8 +206,8 @@ rewritten `main.tf` with the bucket's own `resource` block (and its folded
 versioning sub-resource) excised and the Lambda's references rewired to
 `data.aws_s3_bucket.assets.*`, a reversible runbook, and one git-applyable
 patch carrying the whole edit
-(`git apply --directory=<terraform-dir> carveout/aws_s3_bucket-assets-bridge.patch`
-— the patch's paths are relative to the Terraform dir, and `--directory` is
+(`git apply --directory=<terraform-dir> carveout/aws_s3_bucket-assets-bridge.patch`;
+the patch's paths are relative to the Terraform dir, and `--directory` is
 that dir relative to your repo root). Nothing in `./terraform` changes.
 `--apply-rewrites` edits the survivor `.tf` in place instead.
 
@@ -222,10 +221,10 @@ chant carve apply --from ./terraform --output ./carveout --env prod --stack asse
 ```
 
 `carve apply` resolves the ownership marker (`chant:managed-by` /
-`chant:stack` / `chant:env`), prints the graduation runbook, and — with
-`--write-source` — stamps the marker tags into the emitted source, so the
-built template carries them. It makes no cloud call — the apply is whatever
-lifecycle you brought.
+`chant:stack` / `chant:env`), prints the graduation runbook, and with
+`--write-source` stamps the marker tags into the emitted source, so the
+built template carries them. It makes no cloud call; you apply the template
+through your own deploy process.
 
 The one genuinely live part, when you are ready to hand off for real:
 
@@ -267,7 +266,7 @@ CARVABLE — has boundary work  (1)
 
 `kubernetes_manifest` maps to `K8s::*` rather than to one type because it has
 no fixed kind: the body is the object, and its `apiVersion`/`kind` say what it
-is. That is also why one carve rule covers every CRD — the second resource
+is. That is also why one carve rule covers every CRD. The second resource
 below is a cert-manager `Certificate`, and nothing in the path is cert-manager
 specific.
 
@@ -345,7 +344,7 @@ Survivor references follow that data source's attribute path.
 `kubernetes_manifest.app_config.object.metadata.name` becomes
 `data.kubernetes_resource.app_config.object.metadata.name`. The resource also
 exposes `manifest`, the body as declared, which the data source does not have,
-so a reference through `manifest` lands on `object` too:
+so a reference through `manifest` maps to `object` too:
 `kubernetes_manifest.app_config.manifest.data.LOG_LEVEL` becomes
 `data.kubernetes_resource.app_config.object.data.LOG_LEVEL`.
 
@@ -356,8 +355,7 @@ are repointed either way, leaving one edit between you and a valid plan.
 ## Try it on your own estate
 
 Point it at your own Terraform. Two of the five steps work on any tree today;
-the emit/apply half has narrower coverage, so it is worth knowing what to
-expect before you run them.
+the emit/apply half covers less, as the list below shows.
 
 - **`carve advise` and `carve bridge` — any Terraform tree.** Both are offline,
   read-only, and lexicon-agnostic. Run them against your real estate right now:

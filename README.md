@@ -1,6 +1,6 @@
 # chant
 
-A type system for operations.
+Infrastructure in TypeScript, out as CloudFormation, Kubernetes YAML, GitHub Actions and more.
 
 **Working with an agent?** Paste this setup prompt into it. It stops at a pull request; [intentius.io/chant/agents](https://intentius.io/chant/agents/) has the steps it follows:
 
@@ -12,19 +12,19 @@ Stop when `npx chant build` and `npx chant lint` pass, and open a pull request w
 Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ```
 
-Synthesis is pure and local. There is no authoritative state file — chant computes a precise change set against the live system using cloud-side ownership markers, so you get a plan without hosting state. When an apply needs approval gates or rollback, you declare the orchestration in an `*.op.ts` file. `chant run <op>` executes those phases in this process; a gate is a fact on the gate ledger, so a run that reaches an unapproved one records the pending fact and exits 3, `chant approve <op> <gate>` writes the resolution, and the next run walks through. `chant run <op> --on fountain` hands the same declaration to a steward when it needs a machine of its own. See [Ops as teammates](https://intentius.io/chant/concepts/durable-workflows/).
+The build is pure and runs locally. chant keeps no authoritative state file: it computes a precise change set against the live system from ownership markers on the cloud side, so you get a plan without hosting state. When an apply needs approval gates or rollback, declare its phases in an `*.op.ts` file. `chant run <op>` executes those phases in this process; a gate is a fact on the gate ledger, so a run that reaches an unapproved one records the pending fact and exits 3, `chant approve <op> <gate>` writes the resolution, and the next run walks through. `chant run <op> --on fountain` hands the same declaration to a steward when it needs a machine of its own. See [Ops as teammates](https://intentius.io/chant/concepts/durable-workflows/).
 
-**[Read the docs →](https://intentius.io/chant/getting-started/introduction/)**
+**[Read the docs](https://intentius.io/chant/getting-started/introduction/)**
 
 > chant is in active development. Packages are published under the [`@intentius`](https://www.npmjs.com/org/intentius) org on npm.
 
 ## What It Looks Like
 
-Declare infrastructure as TypeScript — see the [Quick Start](https://intentius.io/chant/getting-started/quick-start/) for a walkthrough.
+The [Quick Start](https://intentius.io/chant/getting-started/quick-start/) walks through a project.
 
 ## Audit any repo's CI/CD
 
-No project required — point [`chant audit`](https://intentius.io/chant/cli/audit/) at a repo and get a tiered CI security report (GitHub, GitLab, Forgejo/Codeberg):
+Point [`chant audit`](https://intentius.io/chant/cli/audit/) at any repo, with or without a chant project, for a tiered CI security report (GitHub, GitLab, Forgejo/Codeberg):
 
 ```bash
 chant audit https://github.com/owner/repo -f markdown -o report.md

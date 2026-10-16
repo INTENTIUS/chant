@@ -1,13 +1,13 @@
 ---
 title: Project Structure
-description: Understanding the layout of a chant project
+description: The files and directories in a chant project
 diataxis: reference
 ---
 
 import { Code } from '@astrojs/starlight/components';
 import chantConfigMinimalSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/chant-config-minimal.ts?raw';
 
-Running `chant init` creates a project layout designed to keep your resource definitions, type information, and configuration cleanly separated.
+`chant init` creates a project that keeps resource definitions, type information and configuration in separate places.
 
 ## Top-Level Layout
 
@@ -28,7 +28,7 @@ my-infra/
 
 ## Source Directory (`src/`)
 
-This is where your resource definitions live. Every `.ts` file that exports values contributes resources to the evaluated output.
+This is where your resource definitions live. Every `.ts` file that exports values adds resources to the build output.
 
 **`src/config.ts`** defines shared configuration using typed sub-resource constructors. These are imported directly by resource files via `import { ... } from "./config"`.
 
@@ -69,4 +69,4 @@ Standard TypeScript configuration for your editor and `tsc`. This is the file `c
 
 ## Examples to learn from
 
-The repository ships examples in three tiers — a golden teaching example to start from, small feature examples per lexicon, and full reference deployments. The [getting-started example](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started) is the place to begin. See [Examples — Tiers and Layout](/chant/contributing/examples/) for the full map.
+The repository ships examples in three tiers: a golden teaching example to start from, small feature examples per lexicon, and full reference deployments. Start with the [getting-started example](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started). See [Examples — Tiers and Layout](/chant/contributing/examples/) for the full map.

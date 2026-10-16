@@ -1,6 +1,6 @@
 ---
 title: Deploy Fly Machines Offline
-description: One Fly App + Machine, authored in TypeScript and applied straight to the Machines API by flyApply — deployed end to end against the local mudflaps emulator with no Fly account, then against real Fly by dropping one override. No flyctl, no state file.
+description: One Fly App + Machine in TypeScript, applied straight to the Machines API by flyApply, first against the local mudflaps emulator with no Fly account, then against real Fly by dropping one override. No flyctl, no state file.
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/local-fly/.
@@ -14,9 +14,9 @@ import { Aside } from '@astrojs/starlight/components';
 
 The [`local-fly`](https://github.com/INTENTIUS/chant/tree/main/examples/local-fly)
 example is the smallest complete Fly deploy: one **App** and one **Machine**,
-authored declaratively and applied straight to the Machines API. It runs end to
-end against a local emulator — no Fly account, no credentials, no cost — and
-deploys to a real Fly org by dropping a single override.
+authored declaratively and applied straight to the Machines API. It runs against a
+local emulator with no Fly account, credentials or cost, and deploys to a real
+Fly org by dropping a single override.
 
 | Resource | Serializes to | Applied by | Target |
 |----------|---------------|------------|--------|
@@ -25,8 +25,8 @@ deploys to a real Fly org by dropping a single override.
 Fly's control plane is the Machines API ("flaps"). There is **no** server-side
 declarative apply and **no** state file, so `flyApply` does the reconcile
 itself: GET-then-create per resource, then poll `/wait` until each machine
-reaches `started`. It speaks the flaps REST API directly — no `flyctl`, no
-shell-out. The local target is `mudflaps`, a stateful fake of the same API, so
+reaches `started`. It calls the flaps REST API directly, without `flyctl` or
+a shell-out. The local target is `mudflaps`, a stateful fake of the same API, so
 the applier runs against a real flaps-shaped control plane offline.
 
 ## The infra
@@ -52,15 +52,15 @@ const web = new Machine({
 export { app, web };
 ```
 
-`build:fly` serializes these into the create bodies `flyApply` POSTs — the App
+`build:fly` serializes these into the create bodies `flyApply` POSTs: the App
 into `POST /v1/apps { app_name, org_slug }`, the Machine into
 `POST /v1/apps/local-fly-demo/machines { name, region, config }`. The serializer
-stamps `managed-by: chant` into `config.metadata` on its own — the ownership
+stamps `managed-by: chant` into `config.metadata` on its own, as the ownership
 marker the owned-only prune reads back.
 
 ## The op
 
-`ops/fly.op.ts` is one line — the `flyDeploy` composite:
+`ops/fly.op.ts` is one line, the `flyDeploy` composite:
 
 ```ts
 import { flyDeploy } from "@intentius/chant-lexicon-fly";
@@ -106,31 +106,31 @@ Every phase is a modeled activity, not a shell script. Add `--json` for
 machine-readable output.
 
 <Aside type="note">
-In a dev checkout, run the Op through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run fly` — rather than a globally
-linked `chant`, which double-loads modules here and can produce an empty plan. A
+In a dev checkout, run the Op through the workspace CLI with
+`npx tsx ../../packages/core/src/cli/main.ts run fly`. A globally linked
+`chant` double-loads modules here and can produce an empty plan. A
 normal install of `chant` does not have this quirk.
 </Aside>
 
 ## What the reconcile proves
 
-The point of `flyApply` is that the platform holds the state, not a local file.
+With `flyApply`, the platform holds the state instead of a local file.
 Three re-runs show it:
 
 - **Re-apply is a no-op.** A second `chant run fly` finds the machine unchanged
-  and skips it — `flyApply` compares the desired `config` against the live
+  and skips it, since `flyApply` compares the desired `config` against the live
   machine.
 - **An image change updates in place.** Edit `config.image` in `src/infra.ts`
   and re-run; `flyApply` leases the machine, updates it, and waits the new
   `instance_id` to `started`.
 - **Removing the machine prunes it.** Delete the `web` machine and re-run with
-  prune on — `flyDeploy({ app: "local-fly-demo", prune: true })` — and the
+  prune on (`flyDeploy({ app: "local-fly-demo", prune: true })`), and the
   owned-only prune destroys it, because it carries the `managed-by: chant` marker.
   A machine created directly in mudflaps, without that marker, is left untouched.
 
 ## Run it against real Fly
 
-The same op deploys to a real Fly org with one change — drop the local endpoint
+The same op deploys to a real Fly org with one change: drop the local endpoint
 override and give it a token:
 
 ```ts
@@ -144,7 +144,7 @@ chant run fly
 
 `endpoint: null` drops the local override, so `flyApply` falls through to
 `FLY_FLAPS_BASE_URL` (or Fly's default `https://api.machines.dev`) and sends
-`Authorization: Bearer $FLY_API_TOKEN`. The emulator is just an endpoint swap —
-mudflaps accepts unauthenticated calls, real Fly needs the token. Real mode boots
+`Authorization: Bearer $FLY_API_TOKEN`. Only the endpoint and the token differ:
+mudflaps accepts unauthenticated calls, and real Fly needs the token. Real mode boots
 no container (no Docker required); the Apply step's own `/wait` on `started` is
 the verification there.

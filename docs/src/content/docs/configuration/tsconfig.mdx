@@ -4,7 +4,7 @@ description: Configuring tsconfig.json for chant projects
 diataxis: reference
 ---
 
-chant projects use a standard `tsconfig.json`. Nothing in it is chant-specific. chant reads your source with its own TypeScript, so this file serves your editor and `tsc`.
+chant projects use a standard `tsconfig.json`. Nothing in it is chant-specific. chant reads your source with its own TypeScript, so this file is for your editor and `tsc`.
 
 ## What `chant init` writes
 
@@ -33,7 +33,7 @@ The scaffolded `package.json` lists `typescript` as `^5.9.3 || ^7.0.0` and `@typ
 
 ### `strict: true`
 
-Enables all strict type-checking options. chant resource definitions benefit from strict mode because it catches:
+Enables all strict type-checking options. In chant resource definitions it catches:
 
 - Missing required properties on resources
 - Incorrect property types
@@ -49,9 +49,9 @@ TypeScript 6 and later no longer load every `@types` package by default. Naming 
 
 ## Editor Integration
 
-With `tsconfig.json` configured, your editor provides:
+With `tsconfig.json` in place, your editor gives you:
 
-- **Autocomplete** for resource property names
-- **Type errors** for invalid property values
-- **Go-to-definition** navigation into lexicon type definitions
-- **Hover documentation** for resource types
+- autocomplete for resource property names
+- type errors for invalid property values
+- go-to-definition into lexicon type definitions
+- hover documentation for resource types

@@ -310,7 +310,7 @@ export const ROOMS = [
 		title: 'chant for a platform team',
 		lede: 'For a team that sets the rules other teams build within: policy as project code, shared defaults as plain functions, and rollouts one environment at a time behind a gate.',
 		works: [
-			'Organizational policy as project-authored checks that know the environment, such as no public buckets in prod',
+			'Policy checks written in the project that read the environment, such as no public buckets in prod',
 			"Presets and composite resources that carry a team's defaults as plain functions",
 			'Op waves that apply to each environment, or each target in a set, one wave at a time behind one gate',
 			'Components run by one generic orchestrator, so a new component adds no new pipeline',
@@ -388,7 +388,7 @@ export const ROOMS = [
 		works: [
 			'A getting-started example that teaches chant in levels, starting with build, lint and list on nothing but Node',
 			'Local emulators for AWS, Azure, GCP and Fly, so a deploy runs with no account',
-			'Output native to the target spec, so the artifacts keep working if you stop using chant',
+			'Plain CloudFormation, Kubernetes YAML and workflow files, which keep working if you stop using chant',
 		],
 		differs: {},
 		first: {
