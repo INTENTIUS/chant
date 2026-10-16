@@ -11,7 +11,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-GCP has no native deployment service — Deployment Manager is retired, and Config Connector needs a cluster running its operator. `gcpApply` bridges chant's Config Connector output to a local emulator directly: it maps each resource to its underlying Google REST API and drives create, update, and delete itself against [floci-gcp](https://github.com/floci-io/floci).
+GCP has no native deployment service — Deployment Manager is retired, and Config Connector needs a cluster running its operator. `gcpApply` applies chant's Config Connector output to a local emulator itself: it maps each resource to its underlying Google REST API and drives create, update, and delete itself against [floci-gcp](https://github.com/floci-io/floci).
 
 <Aside type="tip">
 This page is one cloud of [`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio). Start from [Local Testing](/chant/local-testing/overview/) for the cross-cloud picture.

@@ -6,7 +6,7 @@ diataxis: explanation
 
 import { Aside } from '@astrojs/starlight/components';
 
-Drift is the gap between what you declared in source and what's actually deployed. Most IaC tools track this through an authoritative state file — chant doesn't. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection. For where this sits in the broader model — the dial from observe to reconcile to authoritative — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
+Drift is the gap between what you declared in source and what's actually deployed. Most IaC tools track it through an authoritative state file. chant has no authoritative state file. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection. For where this sits in the broader model — the dial from observe to reconcile to authoritative — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
 
 ## The observational snapshot model
 
@@ -14,7 +14,7 @@ Drift is the gap between what you declared in source and what's actually deploye
 
 This is the opposite of how Terraform, Pulumi, and CDK/CloudFormation think about state. Those tools treat state as **authoritative** — the state file *is* the truth, and `apply` reconciles the cloud to match. The state file must be locked during writes, secured against tampering, and protected from corruption because deployments depend on it.
 
-chant's snapshots are **observational**. They're a forensic record: "this is what we saw at 10:42 UTC on Tuesday." Snapshots don't drive deployments — they exist to be diffed against. Three consequences fall out:
+chant's snapshots are **observational**. They're a forensic record: "this is what we saw at 10:42 UTC on Tuesday." Snapshots don't drive deployments — they exist to be diffed against. This has three consequences:
 
 | Authoritative state (Terraform, Pulumi, CDK) | Observational state (chant) |
 |---|---|

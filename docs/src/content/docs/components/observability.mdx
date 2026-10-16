@@ -6,12 +6,12 @@ diataxis: reference
 
 import { Aside } from '@astrojs/starlight/components';
 
-Two different questions, two different ledgers, joined by one key. Conflating them is where teams lose the thread.
+Two questions, answered by two ledgers joined by one key:
 
 - **What's been built** — the build ledger. Identity is content-addressed: a `sha256:` digest, never a moving tag.
 - **What's been deployed** — the release ledger plus live truth. Two sub-questions: what we *recorded* deploying, and what's *actually running*.
 
-chant already had the live-truth half — [ownership markers](/chant/configuration/config-file/#ownership) and [`lifecycle diff --live`](/chant/cli/lifecycle/) compare declared vs. live, and snapshots on the `chant/lifecycle` branch give a forensic timeline. What was missing was the recorded half. This page covers the three pieces that fill it in: the release ledger, build-ledger referrer discovery, and the `chant components status` surface that joins them.
+chant already had the live-truth half — [ownership markers](/chant/configuration/config-file/#ownership) and [`lifecycle diff --live`](/chant/cli/lifecycle/) compare declared vs. live, and snapshots on the `chant/lifecycle` branch give a forensic timeline. This page covers the recorded half, in three pieces: the release ledger, build-ledger referrer discovery, and the `chant components status` surface that joins them.
 
 ## The release ledger
 

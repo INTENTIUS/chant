@@ -4,13 +4,13 @@ description: "What durability an infrastructure op actually needs, where each ha
 diataxis: explanation
 ---
 
-Synthesis is the easy half. Every IaC toolchain produces an artifact. The hard half is what happens after: the gated, multi-step, cross-system apply, and the rollback when step seven of nine fails. The others weld a fixed lifecycle to their engine and still leave that orchestration to shell scripts, CI YAML, and the operator's memory. chant keeps synthesis pure and holds no opinion of its own, then lets you declare the orchestration as code in `*.op.ts` files.
+Every IaC toolchain produces an artifact. The harder part comes after: the gated, multi-step, cross-system apply, and the rollback when step seven of nine fails. Other tools leave that orchestration to shell scripts, CI YAML, and the operator's memory. chant lets you declare it as code in `*.op.ts` files.
 
 An op is a convergent verb. Running it twice is the same as running it once, because every step re-observes and re-derives what it is about to do. That one property is what decides where an op's durability has to live, and it is why chant does not host a workflow engine.
 
 ## Four things people mean by "durable"
 
-Ask what an apply needs to survive and four different answers come back. They are not one feature, and they do not live in one place.
+Ask what an apply needs to survive and four different answers come back. Each lives in a different place.
 
 The first is the outcome, and it is the op itself. The apply has to reach a declared state and stay there; a convergent verb gets you there by re-running, so a run that dies halfway is answered by running it again rather than by resuming it in place. There is nothing to check-point because there is no mid-sequence position worth remembering. The other three are the subject of this page.
 

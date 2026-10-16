@@ -7,7 +7,7 @@ diataxis: explanation
 import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
-Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant runs it.
+Most infrastructure tools ship their lifecycle model inside the compiler, so you take both or neither. chant separates them: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** You bring the lifecycle and chant runs it.
 
 <Aside type="note" title='What "lifecycle" means here'>
 Three things wear this name; this page is careful about which:

@@ -1,6 +1,6 @@
 ---
 title: Local Testing — AWS (Floci)
-description: Deploy chant's CloudFormation output to Floci with awsApply, which calls the CloudFormation API directly — the AWS twin of azApply/gcpApply, no aws CLI.
+description: Deploy chant's CloudFormation output to Floci with awsApply, which calls the CloudFormation API directly — like azApply and gcpApply, without the aws CLI.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/local-testing/aws/.
@@ -11,7 +11,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-AWS keeps CloudFormation as its native format. `awsApply` deploys the built template by calling the CloudFormation API directly — create-or-update the stack, then poll it to a settled state — against Floci's emulated control plane or real AWS by endpoint override. It's the direct twin of `azApply` and `gcpApply`: it speaks the API over HTTP rather than shelling `aws cloudformation deploy`.
+AWS keeps CloudFormation as its native format. `awsApply` deploys the built template by calling the CloudFormation API directly — create-or-update the stack, then poll it to a settled state — against Floci's emulated control plane or real AWS by endpoint override. Like `azApply` and `gcpApply`, it calls the API over HTTP instead of running `aws cloudformation deploy`.
 
 <Aside type="tip">
 This page is one cloud of [`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio). Start from [Local Testing](/chant/local-testing/overview/) for the cross-cloud picture.
