@@ -24,6 +24,7 @@ import { RULES } from "sentences/lint/registry";
 import { runRules } from "sentences/lint/engine";
 import { buildDocAnalysis } from "sentences/lint/build-doc";
 import { extractProse } from "sentences/lint/markdown-prose";
+import { neverLine } from "../docs/src/prompts.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DOCS_ROOT = join(here, "..", "docs", "src", "content", "docs");
@@ -68,6 +69,42 @@ function docFiles(dir) {
   return out.sort();
 }
 
+/**
+ * A page's agent prompt (`prompt: |` in the front matter, chant #3996) is
+ * prose a reader copies, so it is linted like the body. On a page that has
+ * one, the rest of the front matter is blanked: its YAML keys and short values
+ * would otherwise run into the prompt as one sentence. Two of the prompt's
+ * lines are blanked as well. The never-line every prompt ends with is the
+ * same sentence on every task page, written once in docs/src/prompts.mjs and
+ * held word for word by scripts/lint-prompts.mjs, and the "Read <the page's
+ * URL>." line a prompt opens with reads as a fragment once the URL is taken
+ * out. A page with no prompt block is read as before, less a one-line prompt
+ * (`prompt: setup`). Blanking keeps every
+ * offset, so lines still map onto the source file.
+ */
+const READ_PAGE = /^\s*Read https:\/\/intentius\.io\/chant\/\S*\.$/;
+const PROMPT_BLOCK = /^prompt:\s*[|>][+-]?\s*$/;
+
+function promptProse(text) {
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  const m = /^---\n([\s\S]*?)\n---(?=\n|$)/.exec(text);
+  if (!m) return text;
+  const lines = m[0].split("\n");
+  // `prompt: setup` names the setup prompt in prompts.mjs; its line is blanked.
+  if (!lines.some((line) => PROMPT_BLOCK.test(line))) return lines.map((line) => (/^prompt:/.test(line) ? blank(line) : line)).join("\n") + text.slice(m[0].length);
+  let inPrompt = false;
+  const kept = lines.map((line) => {
+    if (PROMPT_BLOCK.test(line)) {
+      inPrompt = true;
+      return blank(line);
+    }
+    if (inPrompt && (line === "" || /^\s/.test(line))) return line.includes(neverLine) || READ_PAGE.test(line) ? blank(line) : line;
+    inPrompt = false;
+    return blank(line);
+  });
+  return kept.join("\n") + text.slice(m[0].length);
+}
+
 /** 1-based line of a prose-text offset — extractProse blanks non-prose but
  * preserves every offset, so spans map straight onto the source file. */
 function lineOf(text, offset) {
@@ -83,7 +120,7 @@ const detail = [];
 for (const file of files) {
   const rel = relative(join(here, ".."), file);
   const text = readFileSync(file, "utf8");
-  const prose = extractProse(text);
+  const prose = extractProse(promptProse(text));
   const doc = buildDocAnalysis(prose);
   const { findings, errors } = runRules(RULES, doc);
   for (const e of errors) detail.push(`${rel}: rule ${e.ruleId} errored: ${e.message}`);

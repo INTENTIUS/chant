@@ -46,7 +46,7 @@ jobs:
             -e '^lexicons/[^/]+/package\.json$' \
             -e '^packages/core/src/codegen/' \
             -e '^packages/core/src/fold/subset\.ts$' \
-            -e '^scripts/(build-docs\.sh|build-diagrams\.sh|check-docs-diataxis\.mjs|check-docs-citations\.ts|lint-docs-sentences\.mjs|docs-sentences-baseline\.json)$' \
+            -e '^scripts/(build-docs\.sh|build-diagrams\.sh|check-docs-diataxis\.mjs|check-docs-citations\.ts|lint-docs-sentences\.mjs|lint-prompts\.mjs|docs-sentences-baseline\.json)$' \
             -e '^justfile$' \
             -e '^package(-lock)?\.json$' \
             -e '^\.github/workflows/docs-check\.yml$' \
@@ -108,6 +108,16 @@ jobs:
       - name: Check Diátaxis classification and sidebar reachability
         if: steps.changes.outputs.docs == 'true'
         run: node scripts/check-docs-diataxis.mjs --require-lexicons
+
+      # chant #3996: the agent prompts. Every tutorial and how-to page, core
+      # and lexicon, and every room carries one that names its page and ends
+      # with the never-line in docs/src/prompts.mjs; README.md, the agents page
+      # and the home page carry the setup prompt. It reads lexicon pages from
+      # their sources, and after the build it also checks each lexicon
+      # overview's prompt.
+      - name: Check agent prompts
+        if: steps.changes.outputs.docs == 'true'
+        run: node scripts/lint-prompts.mjs
 
       - name: Run lychee link check
         if: steps.changes.outputs.docs == 'true'
