@@ -1,16 +1,16 @@
 ---
 title: Effect Receipts
-description: Cross-run memory for effects with no live twin — a declared resource whose value is the proof an effect ran, written by the effect step alone, readable without chant.
+description: Cross-run memory for effects that leave nothing in the live system: a declared resource whose value is the proof an effect ran, written by the effect step alone, readable without chant.
 diataxis: explanation
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Some operations leave nothing behind. A database migration, a cache purge, a one-shot bootstrap call — each changes the world, and nothing in the live system records that it happened. There is no resource to observe, no marker to read back, no attribute to diff. The effect has no live twin.
+Some operations leave nothing behind. A database migration, a cache purge, a one-shot bootstrap call — each changes the world, and nothing in the live system records that it happened. There is no resource to observe, no marker to read back, no attribute to diff.
 
 chant Ops run exactly these effects today: `shell` steps, migrations, pipeline triggers. A run's own ledger record remembers them *within* a run, but nothing remembered across runs. The [release ledger](/chant/components/observability/#the-release-ledger) records what deployed but never gates anything. So before receipts, every Op run re-ran every effect, or teams hand-rolled guards in scripts, and nothing at plan time could say "this apply will fire db-migration."
 
-An **effect receipt** closes that gap. It is a declared resource — discovered, diffed, and observed like any other — whose stored value is the proof that one effect ran. The memory lives in the live system, not in chant.
+An **effect receipt** records that the effect ran. It is a declared resource — discovered, diffed, and observed like any other — whose stored value is the proof that one effect ran. The memory lives in the live system, not in chant.
 
 ## The receipt model
 

@@ -6,7 +6,7 @@ diataxis: explanation
 
 import { Aside } from '@astrojs/starlight/components';
 
-A real application often needs to vary a build: which environment, which tier, which region. The naive way is `process.env.LOOM_TIER` read at module scope. It works, and it is exactly the kind of value [TypeScript as Data](/chant/concepts/typescript-as-data/) refuses to fold — an ambient read depends on whatever process happens to be running the build, not on the source. Build-time parameters are the supported alternative: the same environment-dependence, moved out of module scope and into the build invocation, where it is explicit, validated, and recorded.
+A real application often needs to vary a build: which environment, which tier, which region. The naive way is `process.env.LOOM_TIER` read at module scope. It works, but [TypeScript as Data](/chant/concepts/typescript-as-data/) refuses to fold it, because the value depends on the process running the build instead of the source. Build-time parameters move that input from module scope into the build command, where chant validates and records it.
 
 <Aside type="caution" title="Not the deploy-time Parameter()">
 The AWS lexicon already has a `Parameter` (`new Parameter("String", {...})`, see [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/)). That is a **deploy-time** CloudFormation parameter — it emits a `Parameters:` block and resolves when the *stack* deploys. A build-time parameter resolves before the template is even synthesized, so its value can change which resources are produced at all (a tier selecting `light` vs `production` vs `production-ha`). The two are unrelated; nothing here touches the emitted `Parameters:` section.

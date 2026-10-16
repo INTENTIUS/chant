@@ -120,11 +120,11 @@ When you install a lexicon package (e.g. `@intentius/chant-lexicon-aws`), the bu
 
 chant is provider-agnostic by design. The core handles parsing, module resolution, evaluation, and serialization — but knows nothing about specific infrastructure platforms.
 
-Lexicons bridge this gap:
+Lexicons hold that platform knowledge:
 
 - **The core stays lean** — no bundled provider SDKs or type catalogs
 - **Providers update independently** — new resource types ship as lexicon updates
-- **Custom targets are first-class** — organizations can author internal lexicons
+- **Custom targets work like built-in ones** — organizations can author internal lexicons
 - **Projects declare exactly what they need** — explicit, reproducible dependencies
 
 ## Next Steps

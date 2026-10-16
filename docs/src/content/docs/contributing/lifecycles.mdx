@@ -11,14 +11,14 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-chant's core is a compiler: pure, deterministic, lint-gated TypeScript-to-spec compilation. Everything past synthesis — state, apply, drift, reconcile, retire — is the **lifecycle**, a first-class layer you build on that core rather than a fixed part of it. The shape of the project is:
+chant's core is a compiler: pure, deterministic, lint-gated TypeScript-to-spec compilation. Everything after synthesis, such as apply and drift, is the **lifecycle**. You build it on the core and can swap it out. The shape of the project is:
 
 > **Pluggable lexicons in. Pluggable lifecycles out. Pure synthesis in the middle.**
 
 [Lexicons](/chant/lexicon-authoring/overview/) are the established pluggable axis. This page is about the other one: how you bring your own lifecycle. There are two doors.
 
 <Aside type="note">
-Open is not unopinionated. chant stays opinionated about synthesis — pure, deterministic, validated against lexicon rules. "Pluggable" applies to the lifecycle layer, not the compiler. Rigid where it should be deterministic; open where you should get to choose.
+chant stays strict about synthesis: pure, deterministic, validated against lexicon rules. "Pluggable" applies only to the lifecycle layer.
 </Aside>
 
 ## Door 1 — Write a lifecycle as Ops
@@ -56,7 +56,7 @@ To be precise about what exists: the primitives above ship, and Door 1 (lifecycl
 
 ## Why two doors, not one
 
-The two doors close the gap BYOL could otherwise open. "Bring your own lifecycle" must never read as "you're on your own": Door 1 gives you rails to build on today (chant runs the lifecycle you compose), and Door 2 means an existing investment isn't thrown away — it's plugged in. Own the socket, outlast the lifecycle war.
+The two doors close the gap BYOL could otherwise open. "Bring your own lifecycle" must never read as "you're on your own": Door 1 gives you rails to build on today (chant runs the lifecycle you compose), and Door 2 means an existing investment isn't thrown away — it's plugged in.
 
 ## See also
 

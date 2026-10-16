@@ -1,42 +1,38 @@
 ---
 title: How chant compares
-description: Where chant fits in the infrastructure tooling landscape.
+description: chant compared with other infrastructure-as-code tools.
 diataxis: explanation
 ---
 
 ## What chant is
 
-chant is typed infrastructure, end to end: a **compiler at its core** — TypeScript in, spec-native output out — with the lifecycle you choose built on top. You declare infrastructure as TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format — CloudFormation, GitLab CI, or whatever the lexicon targets.
+chant is a **compiler**: TypeScript in, spec-native output out. You declare infrastructure as TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format, such as CloudFormation or GitLab CI.
 
-The build path is pure synthesis: parsing, type-checking, linting, and emitting artifacts, with no API calls and no state. Deployment and drift live one layer up, in the lifecycle you choose — observational diff, `cloud → code` reconcile, or gated `code → cloud` apply — built as Ops on that core rather than welded into it.
-
-This isn't a reaction to other tools' failures — it's an approach that was always available. Nobody built it because the industry was racing to weld one lifecycle to the compiler. chant keeps the compiler deterministic and lets the lifecycle be yours.
+The build path is pure synthesis: parsing, type-checking, linting, and emitting artifacts, with no API calls and no state. Deployment and drift are separate steps you choose: observational diff, `cloud → code` reconcile, or gated `code → cloud` apply, each built as an Op that reads the build output.
 
 For the model behind the rows below — the three axes of state and where each tool sits — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
 
-**The agentic angle:** the operational layer — deploying, monitoring, remediating — is increasingly handled by agents and automation. chant handles the part that should be deterministic and auditable: turning typed declarations into spec-native output. The two layers are complementary.
+Agents and automation increasingly deploy, monitor and remediate. chant does the deterministic, auditable part: turning typed declarations into spec-native output.
 
 ## Nobody sells you a lifecycle
 
-Every infrastructure tool sells you a lifecycle. Synthesis, state, apply, drift, retire — owned end to end. A decade of investment goes into that lifecycle, into a better way to own it. The ownership is the product. That coupling is why a pure synthesis tool never existed. You could not get the compiler without the lifecycle welded to it.
+Most infrastructure tools sell the compiler and the deployment lifecycle as one product. You could not get the compiler without the rest.
 
-chant sells nothing. Synthesis is pure and the output is native spec — standard CloudFormation, GitLab CI, whatever the lexicon targets. Walk away and there is nothing to unwind. That is the test the claim has to pass, and it is the one most tools fail. You can leave a thing you were never sold.
+In chant, synthesis is pure and the output is native spec: standard CloudFormation, GitLab CI, or whatever the lexicon targets. If you stop using chant, you keep the output as is.
 
-The lifecycle is still there when you want it. You write your own. Ops are declared as code in `*.op.ts` files and run on a local executor for one-shot work, or on a [fountain steward](/chant/concepts/durable-workflows/) when the work needs a machine of its own, a standing record, or a cadence. The hosted version of what the others sell, for the lifecycle you chose rather than one chosen for you.
-
-Decoupled first. Durable when you ask.
+When you want deploy and drift steps, you write them yourself. Ops are declared as code in `*.op.ts` files and run on a local executor for one-shot work, or on a [fountain steward](/chant/concepts/durable-workflows/) when the work needs a machine of its own, a standing record, or a schedule.
 
 ## Owning less
 
-A pure synthesis core also owns less *machinery*. Because the build path makes no API calls, holds no state, and emits native spec, it needs little of the apparatus a full lifecycle pulls in at plan time — no provider SDKs, no state backend, no credentials, no network. What runs to turn source into output is a type-checker, an evaluator over a [static subset of TypeScript](/chant/concepts/typescript-as-data/), and the lexicon packages for the formats you target. That is the whole of it.
+A pure synthesis core also owns less *machinery*. Because the build path makes no API calls, holds no state, and emits native spec, it needs no provider SDKs, state backend, credentials, or network at plan time. Turning source into output takes a type-checker, an evaluator over a [static subset of TypeScript](/chant/concepts/typescript-as-data/), and the lexicon packages for the formats you target.
 
-A smaller build-time surface is a smaller thing to audit, and a smaller blast radius if something upstream is compromised: fewer packages execute during synthesis, and none of them reach the network or your cloud credentials. This is a property of the architecture, not a security feature — it falls out of synthesis being side-effect-free. The same boundary is described value-by-value in [Where Values Come From](/chant/concepts/where-values-come-from/).
+A smaller build-time surface is a smaller thing to audit, and a smaller blast radius if something upstream is compromised: fewer packages execute during synthesis, and none of them reach the network or your cloud credentials. This follows from synthesis being side-effect-free; chant does not add it as a separate security feature. The same boundary is described value-by-value in [Where Values Come From](/chant/concepts/where-values-come-from/).
 
-The scope is exact. This is the **build path**. The apply side is whatever lifecycle you brought — the CloudFormation CLI, a CI pipeline, an agent, [an Op](/chant/concepts/durable-workflows/) — and it carries its own dependencies and its own surface. chant shrinks the build-time surface; it does not remove the apply-time one. Owning less is a build-time property, and only that.
+This applies to the **build path** only. The apply side (the CloudFormation CLI, a CI pipeline, an agent, [an Op](/chant/concepts/durable-workflows/)) carries its own dependencies and its own attack surface, which chant does not shrink.
 
 ## Paradigms
 
-Configuration and infrastructure tools are grouped by several overlapping paradigms. Separating the terms makes the differences legible.
+Configuration and infrastructure tools are grouped by several overlapping paradigms. Separating the terms shows where the tools differ.
 
 - **Infrastructure as Code (IaC)** — infrastructure managed from machine-readable definitions rather than manual steps.
 - **Configuration as Code (CaC)** — configuration authored in a programming language, versioned and reviewed like code.
@@ -75,7 +71,7 @@ The paradigms say where each tool sits. Underneath, the mechanics differ.
 
 ## Design decisions and their consequences
 
-These tools make different design decisions, and each has consequences that suit some workflows and not others. What follows compares those architectural choices.
+Each design choice below suits some workflows and not others.
 
 | Decision | Terraform | CDK | chant |
 |---|---|---|---|
@@ -96,13 +92,13 @@ These tools make different design decisions, and each has consequences that suit
 
 ## The execution model difference
 
-The core architectural difference is what happens when you "run" each tool:
+The tools differ most in what happens when you "run" them:
 
 **Terraform:** HCL is parsed, a dependency graph is built, the provider checks current state against desired state, and changes are applied. The state file is the source of truth.
 
 **CDK:** Your TypeScript *executes*. Constructors run, methods are called, side effects happen. The result is captured as a CloudFormation template, which is then deployed. The execution can be nondeterministic — same code, different environment, potentially different output.
 
-**Alchemy:** Your TypeScript also executes, by design. Resources are Effect programs — Layers composed together and run inside a `Stack` — and the desired-state graph exists only once that run has produced it. Planning, applying, and destroying are separate CLI verbs, so there's a real preview step before anything changes; the graph the preview walks is still the output of a program run, not data that existed beforehand. This is an explicit design position, not an oversight — Alchemy's bet is that running the code is what buys composition, control flow, and Effect's type safety.
+**Alchemy:** Your TypeScript also executes, by design. Resources are Effect programs — Layers composed together and run inside a `Stack` — and the desired-state graph exists only once that run has produced it. Planning, applying, and destroying are separate CLI verbs, so there's a real preview step before anything changes; the graph the preview walks is still the output of a program run, not data that existed beforehand. Alchemy does this on purpose: running the code is what buys composition, control flow, and Effect's type safety.
 
 **chant:** by default, chant reduces your TypeScript directly from the AST to the resource objects it declares, executing none of it. Synthesis does nothing else. No API calls, no state, no deployment. Source outside that foldable subset falls back to being imported and run, per file; a separate evaluability lint pass (EVL) restricts source to literals, constants, and cross-resource references, so that executed result is equivalent to static data too. Same conforming source always produces the same output — see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run).
 
@@ -140,16 +136,16 @@ The most consequential design difference after execution model is the lifecycle 
 
 **CDK** optimizes for AWS-native development with familiar languages and high-level abstractions. L2/L3 constructs encode AWS best practices and reduce boilerplate. The trade-off: abstractions obscure what's actually deployed, and code execution means builds can be nondeterministic.
 
-**chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec, then lets you choose the lifecycle on top. The output is native to the target platform with zero lock-in. The trade-off: the build path itself doesn't apply — you deploy through a chant Op or hand the artifact to your own mechanism.
+**chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec. Deployment is a separate step. The output is the platform's native format, with no lock-in. The trade-off: the build path itself doesn't apply, so you deploy through a chant Op or hand the artifact to your own tool.
 
 ## Trade-offs
 
 chant's design decisions have real consequences:
 
-- **The build path doesn't apply.** Deployment runs one layer up — a chant Op (local or on a steward), the CloudFormation CLI, a CI pipeline, an agent. chant produces the artifact; an Op or your pipeline applies it. The build stays pure so that step is a choice, not a coupling.
+- **The build path doesn't apply.** A chant Op deploys the artifact, locally or on a steward, or your own tooling does, such as the CloudFormation CLI or a CI pipeline. The build stays pure so you choose that step.
 
 - **Static evaluation means no runtime lookups at build time.** You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work (via attribute references). For values that need to be resolved at deploy time, lexicons provide intrinsics. For values that need to be resolved before synthesis, agents or scripts can populate source files.
 
 - **Lexicon ecosystem is young, but covering.** Twenty-one lexicons ship today (AWS CloudFormation, Azure ARM, GCP Config Connector, Kubernetes, Helm, k3d, k3s, Docker, GitHub Actions, GitLab CI, Forgejo Actions, Fly Machines, Fountain, Render, Control Plane, Cedar, Terraform, OpenTelemetry Collector, Prometheus, Grafana, and SQL — Forgejo is a thin GitHub-Actions dialect, and SQL, ClickHouse first, is still in progress). The architecture supports any spec-based operational domain — see [Lexicons](/chant/lexicons/overview/) for the current set and [Lexicon Authoring](/chant/lexicon-authoring/overview/) for adding new ones.
 
-- **The static subset of TypeScript is a constraint.** No function calls, no control flow around resources, no dynamic property access. This is deliberate — it's what makes synthesis deterministic — but it means some patterns that work in CDK don't work in chant. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for exactly what's supported.
+- **The static subset of TypeScript is a constraint.** No function calls, no control flow around resources, no dynamic property access. This is what makes synthesis deterministic, but it means some patterns that work in CDK don't work in chant. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for exactly what's supported.
