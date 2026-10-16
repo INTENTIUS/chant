@@ -81,6 +81,27 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--image and each --before-script are forwarded to the generator, in order (#4002)", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "stages: []", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const exit = await runBuild({
+      args: makeArgs({ generate: "forgejo", prLoop: true, image: "node:22-bookworm", beforeScript: ["npm ci", "npm run setup"] }),
+      plugins: [],
+      serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock).toHaveBeenCalledWith(
+      ".",
+      "forgejo",
+      { env: undefined, prLoop: {}, image: "node:22-bookworm", beforeScript: ["npm ci", "npm run setup"] },
+      undefined,
+      [],
+    );
+    vi.restoreAllMocks();
+  });
+
   test("chant.config.ts's declared buildParams resolve, log, and are forwarded to generateComponentsPipeline", async () => {
     loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", default: "light" } } },

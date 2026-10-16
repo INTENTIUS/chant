@@ -372,6 +372,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.requireReview = true;
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
+    } else if (arg === "--before-script") {
+      const line = args[++i];
+      if (line === undefined || line === "") throw new Error("--before-script needs a shell line: --before-script '<line>'");
+      (result.beforeScript ??= []).push(line);
     } else if (arg === "--resume") {
       // `chant approve <op> <gate> --resume` (#3683) takes no value; the
       // fan-out and pull-request apply take the attempt file they resume.

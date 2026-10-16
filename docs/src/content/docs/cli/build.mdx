@@ -162,6 +162,19 @@ chant build --components --generate github --pr-loop --env prod --output .github
 
 `--pr-loop` is refused beside `--wave-gate` or `--promote-to`. Inside a workspace member it generates that member's loop, written to `chant-pr.<member>.<env>` in the forge's directory; see [inside a workspace member](/chant/guide/pull-request-ci/#inside-a-workspace-member).
 
+### The job image
+
+Every generated job runs in `node:22` unless `--image <ref>` names another image. `--before-script <line>` adds a shell line that every job runs after the checkout and before its command. Repeat it for more lines; they run in the order given. Use it to install what the image lacks. chant is one of those things: no default image has it.
+
+```bash
+chant build --components --generate forgejo --pr-loop --env prod \
+  --before-script 'npm ci --no-audit --no-fund' \
+  --before-script 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"' \
+  --output .forgejo/workflows/chant-pr.yml
+```
+
+The pull-request pipeline installs OpenTofu itself when the image is the default one. With `--image`, the image brings its Terraform binary.
+
 ### Inside a workspace member
 
 When the project sits in a member of a [workspace](/chant/cli/workspace-init/), the pipeline belongs to that member. chant finds the member from the `chant.workspace.json` above the project. The pipeline keeps the triggers it has outside a workspace, and a deploy pipeline never gains a `push` or `pull_request` trigger. What changes is where its jobs run and what they are called:

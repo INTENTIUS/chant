@@ -95,6 +95,23 @@ describe("the component pipeline's file and command", () => {
     expect(plan.command).toBe("chant build --components --generate github --env staging --pr-loop --gate infra-apply --branch trunk");
   });
 
+  test("the recorded command keeps --image and each --before-script, in order (#4002)", () => {
+    const dir = join(repo, "services/api");
+    const plan = planMemberComponentPipeline({
+      projectDir: dir,
+      found: findWorkspaceRoot(dir)!,
+      lexicon: "forgejo",
+      env: "staging",
+      output: join(dir, "pr.yml"),
+      prLoop: {},
+      image: "node:22-bookworm",
+      beforeScript: ["npm ci", 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"'],
+    })!;
+    expect(plan.command).toBe(
+      `chant build --components --generate forgejo --env staging --pr-loop --image node:22-bookworm --before-script 'npm ci' --before-script 'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"' --output pr.yml`,
+    );
+  });
+
   test("the recorded command keeps --wave-gate, --canary and --base (#3049)", () => {
     const dir = join(repo, "services/api");
     const plan = planMemberComponentPipeline({

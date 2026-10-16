@@ -16,6 +16,13 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["graph", "--traffic"])).toThrow(/--traffic needs a level/);
   });
 
+  test("--before-script is repeatable and keeps its order; --image takes a reference (#4002)", () => {
+    const args = parseArgs(["build", "--components", "--generate", "forgejo", "--image", "node:22-bookworm", "--before-script", "npm ci", "--before-script", "-x"]);
+    expect(args.image).toBe("node:22-bookworm");
+    expect(args.beforeScript).toEqual(["npm ci", "-x"]);
+    expect(() => parseArgs(["build", "--before-script"])).toThrow(/--before-script needs a shell line/);
+  });
+
   test("--skip-undeclarable reaches live import (#3911)", () => {
     expect(parseArgs(["import", "--from", "prod"]).skipUndeclarable).toBeUndefined();
     expect(parseArgs(["import", "--from", "prod", "--skip-undeclarable"]).skipUndeclarable).toBe(true);
