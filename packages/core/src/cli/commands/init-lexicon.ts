@@ -12,6 +12,7 @@ import { generatePackageJson, generateTsConfig, generateTsConfigBuild, generateJ
 import { generatePluginTestTs, generateSerializerTestTs, generateCompletionsTestTs, generateHoverTestTs } from "./init-lexicon/templates/tests";
 import { generateDocsPackageJson, generateDocsTsConfig, generateDocsAstroConfig, generateDocsContentConfig, generateDocsIndexMdx, generateDocsGettingStartedMdx } from "./init-lexicon/templates/docs";
 import { generateExamplePackageJson, generateExampleInfraTs } from "./init-lexicon/templates/examples";
+import { findChantDocsSite } from "../../codegen/docs-in-site";
 
 /**
  * Init-lexicon command options
@@ -101,6 +102,13 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     }
   }
 
+  // Inside the chant repository a lexicon's docs are a section of the main
+  // site (chant #3993): the pipeline writes its pages into docs/, so the
+  // lexicon gets only docs/pages/. Anywhere else it gets a standalone
+  // Starlight app of its own, as before.
+  const standaloneDocs = findChantDocsSite(targetDir) === undefined;
+  const standaloneDocsDirs = ["docs/src", "docs/src/content", "docs/src/content/docs"];
+
   // Create directory structure
   const dirs = [
     "",
@@ -112,9 +120,7 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/lsp",
     "src/generated",
     "docs",
-    "docs/src",
-    "docs/src/content",
-    "docs/src/content/docs",
+    ...(standaloneDocs ? standaloneDocsDirs : []),
     "docs/pages",
     "examples/getting-started",
     "examples/getting-started/src",
@@ -157,11 +163,15 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "justfile": generateJustfile(name),
     ".gitignore": generateGitignore(),
     "README.md": generateReadme(name, names),
-    "docs/package.json": generateDocsPackageJson(name),
-    "docs/tsconfig.json": generateDocsTsConfig(),
-    "docs/astro.config.mjs": generateDocsAstroConfig(name),
-    "docs/src/content.config.ts": generateDocsContentConfig(),
-    "docs/src/content/docs/index.mdx": generateDocsIndexMdx(name),
+    ...(standaloneDocs
+      ? {
+          "docs/package.json": generateDocsPackageJson(name),
+          "docs/tsconfig.json": generateDocsTsConfig(),
+          "docs/astro.config.mjs": generateDocsAstroConfig(name),
+          "docs/src/content.config.ts": generateDocsContentConfig(),
+          "docs/src/content/docs/index.mdx": generateDocsIndexMdx(name),
+        }
+      : {}),
     "docs/pages/getting-started.mdx": generateDocsGettingStartedMdx(name),
     "examples/getting-started/package.json": generateExamplePackageJson(name),
     "examples/getting-started/src/infra.ts": generateExampleInfraTs(name, names),

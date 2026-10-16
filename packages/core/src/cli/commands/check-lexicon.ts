@@ -457,12 +457,24 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     pass: hasSerializerTest,
   });
 
+  // A lexicon whose src/codegen/docs.ts runs docsPipeline always has a page:
+  // the pipeline writes the overview (index.mdx) from the manifest. Inside the
+  // chant repository that page is generated into the main docs site rather
+  // than committed under docs/ (chant #3993), so k3d, whose docs are all
+  // generated, has no .mdx of its own to count.
   const mdxFiles = findFiles(join(dir, "docs"), (n) => n.endsWith(".mdx"));
+  const docsTs = join(dir, "src", "codegen", "docs.ts");
+  const pipelineOverview = existsSync(docsTs) && readFileSync(docsTs, "utf-8").includes("docsPipeline(");
   items.push({
     name: "At least 1 .mdx doc page",
     tier: 1,
-    pass: mdxFiles.length > 0,
-    detail: mdxFiles.length > 0 ? `${mdxFiles.length} page(s)` : undefined,
+    pass: mdxFiles.length > 0 || pipelineOverview,
+    detail:
+      mdxFiles.length > 0
+        ? `${mdxFiles.length} page(s)`
+        : pipelineOverview
+          ? "the docs pipeline's generated overview"
+          : undefined,
   });
 
   // Counting pages says nothing about whether a reader can find them.

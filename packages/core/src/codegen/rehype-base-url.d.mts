@@ -3,6 +3,8 @@ export interface RehypeBaseUrlOptions {
   base: string;
   /** Project-wide base used to detect already-correctly-prefixed cross-site links. */
   projectBase?: string;
+  /** Per-page base, by the page's source path; undefined falls back to `base`. */
+  baseFor?: (path: string) => string | undefined;
 }
 
 type HastNode = {
@@ -14,4 +16,4 @@ type HastNode = {
 
 export default function rehypeBaseUrl(
   opts: RehypeBaseUrlOptions,
-): (tree: HastNode) => void;
+): (tree: HastNode, file?: { path?: string }) => void;

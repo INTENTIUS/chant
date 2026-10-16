@@ -88,3 +88,54 @@ describe("auditDocsReachability", () => {
     expect(auditDocsReachability(d).unreachable).toEqual(["a", "c"]);
   });
 });
+
+/**
+ * chant #3993: inside the chant repository a lexicon's pages are generated
+ * into the main docs site with a _sidebar.json beside them, and the audit
+ * reads those instead of a docs app the lexicon no longer has.
+ */
+describe("auditDocsReachability for a section of the main site", () => {
+  function mainSite(): void {
+    mkdirSync(join(dir, "docs"), { recursive: true });
+    writeFileSync(join(dir, "docs", "package.json"), JSON.stringify({ name: "@intentius/chant-docs" }));
+    writeFileSync(join(dir, "docs", "astro.config.mjs"), "export default {};\n");
+  }
+
+  function repoWithSection(pages: string[], group: unknown, hidden: string[] = []): string {
+    mainSite();
+    const section = join(dir, "docs", "src", "content", "docs", "lexicons", "fixture");
+    mkdirSync(section, { recursive: true });
+    for (const page of pages) writeFileSync(join(section, `${page}.mdx`), "body\n");
+    writeFileSync(join(section, "_sidebar.json"), JSON.stringify({ group, hidden }));
+    const lex = join(dir, "lexicons", "fixture");
+    mkdirSync(join(lex, "docs", "pages"), { recursive: true });
+    return lex;
+  }
+
+  test("every page in the fragment, or hidden by it, is reachable", () => {
+    const lex = repoWithSection(
+      ["index", "start", "secret"],
+      {
+        label: "Fixture",
+        items: [
+          { label: "Overview", slug: "lexicons/fixture" },
+          { label: "Tutorials", items: [{ label: "Start", slug: "lexicons/fixture/start" }] },
+        ],
+      },
+      ["lexicons/fixture/secret"],
+    );
+    expect(auditDocsReachability(lex)).toEqual({ hasSite: true, pages: ["index", "secret", "start"], unreachable: [] });
+  });
+
+  test("a page the fragment does not name is unreachable", () => {
+    const lex = repoWithSection(["index", "orphan"], { label: "Fixture", items: [{ label: "Overview", slug: "lexicons/fixture" }] });
+    expect(auditDocsReachability(lex).unreachable).toEqual(["orphan"]);
+  });
+
+  test("before the section is generated there is nothing to audit", () => {
+    mainSite();
+    const lex = join(dir, "lexicons", "fixture");
+    mkdirSync(lex, { recursive: true });
+    expect(auditDocsReachability(lex).hasSite).toBe(false);
+  });
+});
