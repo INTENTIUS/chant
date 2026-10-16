@@ -171,7 +171,7 @@ A `terraform` block with no `required_version` attribute.
 **Why it matters.** Sits beside TF002 on the same block: without
 `required_version`, a root can be applied by whatever Terraform binary
 happens to be on the runner's `PATH`. A binary upgrade that changes behavior
-surfaces as a surprise plan diff instead of a version-check failure up to
+surfaces as a surprise plan diff instead of a version-check failure before
 anything runs.
 
 **The fix.** Add `required_version = ">= <lowest supported version>"` to the
@@ -486,8 +486,8 @@ the bare keyword `all`. A list of named attributes is not reported.
 of the resource after it is created. A manual console edit, a deleted security
 group rule, a downgraded instance class: none of it appears in a plan again.
 The masking is silent, because a plan that finds nothing looks exactly like a
-plan that was told to look at nothing, and it switches off the observe half of
-the lifecycle chant exists to run.
+plan that was told to look at nothing, and it hides the resource from drift
+detection.
 
 **The fix.** Replace `all` with the specific attributes that genuinely change
 outside Terraform, so everything else is still reconciled. Naming them is what
@@ -1059,7 +1059,7 @@ should be deleted.
 `internal/live/lint` package checks a `policy` block for internal validity
 (an unrecognized or wrong-quadrant verb, an unscoped
 `undeclared_untagged = "delete"`), never against a
-`delete: "never" | "owned-only" | "gated"` classification — that vocabulary
+`delete: "never" | "owned-only" | "gated"` classification. That vocabulary
 is chant's own, applied here to a tool that does not itself carry the
 concept. See `audit-lineage.ts` for the full reasoning.
 
@@ -1172,10 +1172,10 @@ source, or a reference to a step that is not a `terraformPlan` call.
 **Why it matters.** The entire point of the plan/apply split is to review
 exactly what will change, then apply exactly that. Spelling the plan path out
 as a literal breaks the link between the two steps: the file applied can be
-stale, hand-edited by something else in the meantime, or simply the wrong
-plan for this root. Carrying the path forward from the producing step
-(`stepOutput(plan, "planFile")` or `plan.out.planFile`) is what keeps apply
-honest about which plan it is running.
+stale, hand-edited by something else in the meantime, or the wrong plan for
+this root. Carrying the path forward from the producing step
+(`stepOutput(plan, "planFile")` or `plan.out.planFile`) ties the apply to the
+plan it runs.
 
 **The fix.** Reference the preceding `terraformPlan` step's output instead of
 a literal path: `stepOutput(plan, "planFile")` or `plan.out.planFile`, where
@@ -1261,7 +1261,7 @@ export default {
 - `none` reads each root's own directory and nothing else.
 - `all` is tflint's "fetch registry and git modules too", which needs a
   `terraform init` first so the modules are on disk. chant fetches nothing, so
-  this is refused with a message rather than quietly behaving like `local`.
+  this is refused with a message instead of falling back to `local`.
 
 Two refusals keep the walk inside the repository it was pointed at. A source
 that resolves outside the project root is not read, and a source already on the
@@ -1385,7 +1385,7 @@ choudoufu reads for itself; `terraform.roots.<name>.estate` is what this
 lexicon would otherwise hand it as `-estate`. choudoufu refuses that flag
 beside a declaration outright — "This configuration's live block is what names
 its estate, and `-estate=...` would name a second one for this run only" — so
-the lexicon does not pass it, and the config value is simply never used.
+the lexicon does not pass it, and the config value is never used.
 
 A setting written down and silently ignored is worse than one that errors. An
 author who moves an environment by editing `roots.app.estate` gets a run
@@ -1395,7 +1395,7 @@ that happen to match still means one of them does nothing, and the next edit to
 the ignored one is the incident this rule exists to prevent.
 
 **The fix.** Pick one. A root whose directory is shared across environments
-declares no estate in HCL and names it per root in chant.config — that is the
+declares no estate in HCL and names it per root in chant.config. That is the
 environment dimension, and it is why `terraform.roots.<name>.estate` exists. A
 root with its own `live` block already has an estate and needs nothing in
 chant.config.

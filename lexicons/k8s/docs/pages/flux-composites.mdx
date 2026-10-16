@@ -1,15 +1,15 @@
 ---
 title: "Flux Composites"
-description: "Flux CD support in the k8s lexicon — the toolkit CRDs, FluxGitSource / FluxAppFor composites, the one-source-many-apps shape, the FLUX00x rules, and the flux-reconcile deploy step."
+description: "Flux CD support in the k8s lexicon: the toolkit CRDs, FluxGitSource / FluxAppFor composites, the one-source-many-apps shape, the FLUX00x rules, and the flux-reconcile deploy step."
 diataxis: reference
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Flux's `GitRepository`, `Kustomization`, `HelmRelease`, and the rest of the GitOps Toolkit are Kubernetes CRDs. The k8s lexicon registers all six groups via codegen (see [CRD-Generated Classes](../crd-classes/#flux)) — typed `K8s::Flux::*` resources, serializer, LSP, hover, and MCP for free. The value-add ships as composites, lint rules, and the `chant-k8s-flux` skill — the Flux counterpart of the [Argo CD composites](../argo-composites/).
+Flux's `GitRepository`, `Kustomization`, `HelmRelease`, and the rest of the GitOps Toolkit are Kubernetes CRDs. The k8s lexicon generates all six groups (see [CRD-Generated Classes](../crd-classes/#flux)) as typed `K8s::Flux::*` resources with the serializer, LSP hover and MCP. The lexicon adds composites, lint rules and the `chant-k8s-flux` skill, the Flux counterpart of the [Argo CD composites](../argo-composites/).
 
 <Aside type="note">
-The k8s lexicon stays **runtime-agnostic** — it only emits manifests. Flux is **opt-in** via the composites below; nothing here is implied unless you reach for it.
+The k8s lexicon only writes manifests. Flux comes in only when you use the composites below.
 </Aside>
 
 ## The split
@@ -20,7 +20,7 @@ The k8s lexicon stays **runtime-agnostic** — it only emits manifests. Flux is 
 | **Flux** | Continuously reconciling those manifests (source-controller fetches, kustomize-controller applies) |
 | **Chant again** | Reading convergence back — the `flux-reconcile` deploy step, `chant components status --live` |
 
-Flux never learns Chant exists — it fetches a git path and applies what it finds there. Where Argo's unit is the `Application`, Flux's is the `GitRepository` + `Kustomization` pair, and the pair is the composite boundary.
+Flux fetches a git path and applies what it finds there; it knows nothing about chant. Where Argo's unit is the `Application`, Flux's is the `GitRepository` + `Kustomization` pair, and the pair is the composite boundary.
 
 ## The CRDs
 
@@ -86,7 +86,7 @@ import { fluxReconcile } from "@intentius/chant-lexicon-k8s/components";
 fluxReconcile({ manifest: "dist/flux.yaml", stack: "my-estate", noRollback: "<reason>" });
 ```
 
-It applies the Flux CRs through the same server-side apply `kubectl-apply` uses (ownership stamping, marker-scoped prune, stack labels identical), then waits for every applied Flux CR to report Ready — **sources first**, so a wedged clone surfaces as the `GitRepository`'s error rather than a reconciler timeout downstream. Wedge reasons like `BuildFailed` or `UpgradeFailed` fail fast. A manifest that applies no Flux CR is refused — plain manifests belong on `kubectl-apply`, and two things applying the same resources is the failure mode worth engineering against.
+It applies the Flux CRs through the same server-side apply `kubectl-apply` uses (ownership stamping, marker-scoped prune, stack labels identical), then waits for every applied Flux CR to report Ready, **sources first**, so a wedged clone surfaces as the `GitRepository`'s error rather than a reconciler timeout downstream. Wedge reasons like `BuildFailed` or `UpgradeFailed` fail fast. A manifest that applies no Flux CR is refused. Plain manifests belong on `kubectl-apply`, so two steps never apply the same resources.
 
 ## See also
 

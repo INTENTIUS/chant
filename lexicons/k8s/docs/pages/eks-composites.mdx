@@ -1,13 +1,13 @@
 ---
 title: "EKS Composites"
-description: "Vendor-specific composites for Amazon EKS — IRSA, ALB Ingress, EBS/EFS storage, CloudWatch logging, ADOT metrics, and ExternalDNS."
+description: "Composites for Amazon EKS: IRSA, ALB Ingress, EBS/EFS storage, CloudWatch logging, ADOT metrics, and ExternalDNS."
 diataxis: reference
 group: "Vendor Composites"
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-These composites produce K8s YAML with EKS-specific annotations and configurations. They complement the [generic composites](../composite-examples/) by adding AWS service integrations.
+These composites write Kubernetes YAML with the annotations and settings EKS reads, for IRSA, the ALB controller, EBS and EFS, CloudWatch, Route53 and ADOT. Use them beside the [generic composites](../composite-examples/).
 
 ## IrsaServiceAccount
 
@@ -158,7 +158,7 @@ const result = AdotCollector({
 | Setup | OIDC provider + IAM role trust policy | EKS Pod Identity Agent add-on + association |
 | When to use | Existing clusters, broad compatibility | New clusters (EKS 1.28+), simpler management |
 
-For Pod Identity, no K8s-side composite is needed — configure the association via AWS API/CloudFormation and use a plain ServiceAccount.
+For Pod Identity, configure the association through the AWS API or CloudFormation and use a plain ServiceAccount.
 
 ## Fargate considerations
 

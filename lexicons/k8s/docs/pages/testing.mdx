@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-The Kubernetes lexicon includes scripts to verify the full import–serialize roundtrip and validate serialized YAML against a real cluster.
+The Kubernetes lexicon has scripts that check the import and serialize round trip and apply the serialized YAML to a real cluster.
 
 ## Roundtrip tests
 
@@ -51,7 +51,7 @@ just import-samples --skip-clone --verbose
 
 ## k3d cluster validation
 
-The k3d validation script applies serialized YAML to a real Kubernetes cluster to verify the output is valid and deployable.
+The k3d validation script applies serialized YAML to a real Kubernetes cluster to check that the cluster accepts it.
 
 ### Prerequisites
 
@@ -93,7 +93,7 @@ The script uses a curated allowlist of ~14 manifests known to work on bare k3d (
 
 For each manifest the script:
 
-1. Runs the full roundtrip (YAML → Chant DSL → YAML)
+1. Runs the full roundtrip (YAML to chant TypeScript and back to YAML)
 2. Applies the serialized YAML with `kubectl apply`
 3. Verifies the resource exists with `kubectl get`
 

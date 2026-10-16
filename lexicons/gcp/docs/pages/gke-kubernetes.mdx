@@ -1,6 +1,6 @@
 ---
 title: "Deploying to GKE"
-description: "How GCP Config Connector infrastructure connects to Kubernetes workloads on GKE via chant's cross-lexicon build."
+description: "Config Connector infrastructure and Kubernetes workloads on GKE in one chant project."
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/gcp/gke-kubernetes/.
@@ -12,7 +12,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-Chant supports cross-lexicon projects where GCP infrastructure and Kubernetes workloads live in the same `src/` directory. The GCP lexicon produces Config Connector YAML; the K8s lexicon produces kubectl-ready YAML.
+One chant project can hold GCP infrastructure and Kubernetes workloads in the same `src/` directory. The GCP lexicon produces Config Connector YAML; the K8s lexicon produces kubectl-ready YAML.
 
 ## Architecture
 
@@ -51,11 +51,11 @@ Config Connector resource outputs map to K8s composite props via `.env`:
 | `GCP_PROJECT_ID` | `gcpProjectId` / `projectId` props |
 | `GKE_CLUSTER_NAME` | `clusterName` props |
 
-Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+Values go from `.env` to `config.ts` to the K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
 
 ## K8s composites used
 
-The K8s lexicon provides GKE-specific composites for the workload side:
+The K8s lexicon has GKE composites for the workloads:
 
 - **WorkloadIdentityServiceAccount** — ServiceAccount with GCP SA email annotation
 - **GceIngress** — Ingress with GCE annotations, static IP, managed certificates
@@ -82,7 +82,7 @@ npm run apply          # kubectl apply
 ```
 
 <Aside type="note">
-GKE ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+GKE ships its own metrics-server, so HPA works without the `MetricsServer` composite.
 </Aside>
 
 ## Further reading

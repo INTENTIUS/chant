@@ -1,13 +1,13 @@
 ---
 title: "AKS Composites"
-description: "Vendor-specific composites for Azure AKS — Workload Identity, AGIC Ingress, Azure Disk/Files storage, Azure Monitor, and ExternalDNS."
+description: "Composites for Azure AKS: Workload Identity, AGIC Ingress, Azure Disk/Files storage, Azure Monitor, and ExternalDNS."
 diataxis: reference
 group: "Vendor Composites"
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-These composites produce K8s YAML with AKS-specific annotations and configurations. They complement the [generic composites](../composite-examples/) by adding Azure service integrations.
+These composites write Kubernetes YAML with the annotations and settings AKS reads, for Workload Identity, Application Gateway, Azure Disk and Files, Azure DNS and Azure Monitor. Use them beside the [generic composites](../composite-examples/).
 
 ## AksWorkloadIdentityServiceAccount
 
@@ -157,7 +157,7 @@ Application Gateway Ingress Controller (AGIC) manages an Azure Application Gatew
 - **TLS termination** — reference Key Vault certificates via `certificateArn` (the certificate URI or secret name)
 
 <Aside type="note">
-AKS ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+AKS ships its own metrics-server, so HPA works without the `MetricsServer` composite.
 </Aside>
 
 ## AKS add-ons

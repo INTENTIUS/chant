@@ -1,6 +1,6 @@
 ---
 title: Observation
-description: What chant can honestly say about a terraform root, and what answers "is this mine?" in each of its two modes
+description: How chant reads a terraform root, and what answers "is this mine?" in each of its two modes
 diataxis: explanation
 ---
 
@@ -34,14 +34,14 @@ Kubernetes object carries `app.kubernetes.io/managed-by` as an ordinary label.
 Ownership is a fact recorded on the resource, read back on every observation,
 and no file has to be hosted or locked for it to be true.
 
-Terraform sits on the **trusted state file** row, and this lexicon does not
-pretend otherwise. There is nowhere for chant to stamp a marker here: a
+Terraform sits on the **trusted state file** row. There is nowhere for chant
+to stamp a marker here: a
 resource's provider-side tags belong to whoever wrote the HCL, and writing
 into them would edit an estate this lexicon promises never to write. What
 terraform has instead is the record chant declines to host elsewhere, and that
 record already says precisely which addresses the configuration manages.
 
-So the rule is state membership, and it is the whole rule:
+So the rule is state membership:
 
 - an address `terraform show -json` returns is `owned`;
 - anything else is `unknown`.
@@ -90,7 +90,7 @@ omission reason is a reason chant could not look, and those are not-observed.
 Because a chant entity is the HCL block and the document's rows are instances,
 a block with `count` or `for_each` takes the aggregate of its instances, and
 the least certain instance wins: one not-observed instance makes the block
-not-observed. Partial knowledge is not knowledge.
+not-observed.
 
 ## What the estate holds that nothing declares
 
@@ -137,7 +137,7 @@ with one of two values:
 `"state"` means that entity's root was read with `terraform show -json`.
 `"live"` means it was read with `choudoufu live-plan -json`.
 
-Three things hold, and a consumer may rely on all three.
+A consumer may rely on three things.
 
 Every entity that belongs to a root has an entry, whatever verdict came back:
 present, absent and not-observed alike. Which read was attempted is a fact
@@ -156,8 +156,8 @@ why this is a map rather than one field on the result.
 
 Only `resource` and `data` blocks have rows in state. A `terraform`,
 `provider`, `variable`, `output` or `locals` block is reported as not-observed
-with reason `unsupported-kind`. That is honest rather than a gap: those blocks
-have no live counterpart to look for.
+with reason `unsupported-kind`, since those blocks have no live counterpart to
+look for.
 
 A live root reads one block narrower still. `live-plan`'s document is prior
 state for managed resources, so a `data` block has no row in it either and is

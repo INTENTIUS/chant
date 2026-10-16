@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Chant can parse existing Config Connector YAML manifests and generate TypeScript source files.
+`chant import` reads Config Connector YAML and writes TypeScript.
 
 ## How it works
 
@@ -17,7 +17,7 @@ Chant can parse existing Config Connector YAML manifests and generate TypeScript
 Input YAML → parse → generate TypeScript → export typed resources
 ```
 
-The importer reads multi-document YAML, identifies Config Connector resources by their `cnrm.cloud.google.com` apiVersion, and generates corresponding typed constructor calls.
+The importer reads multi-document YAML, identifies Config Connector resources by their `cnrm.cloud.google.com` apiVersion, and writes a typed constructor call for each.
 
 ## Example
 
