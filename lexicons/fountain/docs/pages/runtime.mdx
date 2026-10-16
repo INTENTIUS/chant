@@ -16,7 +16,7 @@ Nothing is stored on the client. `status`, `log` and `list` read fountain's turn
 
 ## Before the first run
 
-Declare an endpoint and a token. A profile in `chant.config.ts` is the version-controlled way:
+Declare an endpoint and a token, in a profile in `chant.config.ts` so they are under version control:
 
 ```ts
 import type { ChantConfig } from "@intentius/chant/config";
@@ -56,7 +56,7 @@ Resolved in this order, first hit wins:
 2. The profile's `team`, a teammate name. The post goes to `POST /api/team/:agent_id/messages`, the single-writer path.
 3. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a fresh conversation on that agent rather than joining a thread.
 
-With none of the four, the run refuses and names all three ways to fix it. Prefer the first: the steward is the declaration that put the Op on that machine in the first place, and it needs no second copy of the name in config.
+With none of the four, the run refuses and names all three ways to fix it. Prefer the first: the steward already names the machine the Op runs on, so config needs no second copy of the name.
 
 ## Reading a run back
 
@@ -98,9 +98,10 @@ Queueing behind it from a CLI that may be interrupted a second later would be a 
 
 ## Patience and reconnects
 
-fountain closes an idle event-stream connection after 60 seconds. A turn that thinks for a while and prints nothing therefore loses its connection, and that is not the end of the turn: the reader reconnects with `Last-Event-ID` and replays what arrived while it had none.
+fountain closes an idle event-stream connection after 60 seconds. A turn that prints nothing for that long loses its connection and keeps running; the reader reconnects with `Last-Event-ID` and replays what arrived while it had none.
 
-Only genuine silence ends the wait, after `FOUNTAIN_STREAM_IDLE_TIMEOUT` seconds (default 1800), and it ends it with an error naming the conversation rather than reporting a success nobody observed.
+The wait ends only after `FOUNTAIN_STREAM_IDLE_TIMEOUT` seconds (default 1800) with no events across reconnects, and then with an error naming the conversation rather than a success nobody observed.
+===
 
 ## What the sandbox is running
 

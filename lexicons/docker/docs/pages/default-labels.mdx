@@ -4,7 +4,7 @@ description: "Inject labels into all services with defaultLabels()"
 diataxis: reference
 ---
 
-`defaultLabels()` merges a set of labels into every `Service` in the same source file. Declare it once; all services inherit it automatically.
+`defaultLabels()` merges a set of labels into every `Service` in the same source file. Declare it once and every service gets the labels.
 
 ```typescript
 import { defaultLabels, Service } from "@intentius/chant-lexicon-docker";
@@ -19,7 +19,8 @@ export const api = new Service({ image: "myapp:1.0" });
 export const worker = new Service({ image: "myapp-worker:1.0" });
 ```
 
-Both `api` and `worker` will have all three labels in the output.
+Both `api` and `worker` have all three labels in the output.
+===
 
 ## Per-service override
 

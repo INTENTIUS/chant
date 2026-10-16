@@ -18,7 +18,7 @@ prompt: |
 | Build | `chant build src --lexicon docker -o docker-compose.yml` | Post-synth: unused volumes, SSH exposure, Dockerfile issues |
 | Validate config | `docker compose config` | Compose schema validation |
 
-Run lint on every edit. Build + `docker compose config` before deploying.
+Run lint on every edit, and build and `docker compose config` before deploying.
 
 ## Bring up a stack
 
@@ -100,8 +100,9 @@ export const api = new Service({
 
 ## Production safety
 
-- Pin image tags — avoid `:latest` (DKRS001 / DKRD001 flags this)
+- Pin image tags instead of `:latest` (DKRS001 / DKRD001 flags this)
 - Do not expose port 22 (DKRD003 flags this)
 - Set `restart: "unless-stopped"` or `restart: "always"` for long-running services
-- Use named volumes for persistent data — never rely on container filesystem
-- Use `env()` with `{ required: true }` for secrets rather than hardcoding
+- Keep persistent data in named volumes, not the container filesystem
+- Read secrets with `env()` and `{ required: true }` instead of writing them in source
+===

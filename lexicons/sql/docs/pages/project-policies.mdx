@@ -12,7 +12,7 @@ prompt: |
 
 The lexicon's checks cover what the database cares about. A team usually has rules of its own: every table has a primary key and a `created_at`, no Nullable column in a ClickHouse sort key, a comment on every column in prod. Write those as [`lint.policies`](/chant/guide/organizational-policy/) checks. A policy reads the build through `@intentius/chant-lexicon-sql/read`, which gives the parsed schema as typed values: tables with their columns (SQL type, nullability, default, comment), keys, indexes and engine, and views with their output columns and lineage.
 
-The lexicon's own post-synth checks read the same values, so a policy sees what `SQLPG101` or `SQLCH113` sees. Since the rules run on the parsed model, it makes no difference whether a table was written as a tagged template or in a plain `.sql` file.
+The lexicon's own post-synth checks read the same values, so a policy sees what `SQLPG101` or `SQLCH113` sees. The rules run on the parsed model, so a table in a plain `.sql` file is checked the same as one in a tagged template.
 
 ## Write the rule
 

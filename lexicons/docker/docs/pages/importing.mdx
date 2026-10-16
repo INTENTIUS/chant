@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-The Docker lexicon can parse existing `docker-compose.yml` files and `Dockerfile`s and generate TypeScript equivalents.
+`chant import` turns an existing `docker-compose.yml` or `Dockerfile` into chant TypeScript.
 
 ## Import docker-compose.yml
 
@@ -126,7 +126,7 @@ Exec-form values such as `CMD` stay strings; you can change them to lists (`{ cm
 
 Import is a one-time migration step, not an ongoing sync. After importing:
 
-1. Review the generated TypeScript — complex fields may need manual adjustment
+1. Review the generated TypeScript; complex fields may need edits by hand
 2. Run `chant lint src/` to catch issues
 3. Run `chant build src --lexicon docker -o build/docker-compose.yml` and diff the output (and the `Dockerfile.*` files beside it) against the originals
 4. Delete the original file and commit the TypeScript source
@@ -136,5 +136,6 @@ Import is a one-time migration step, not an ongoing sync. After importing:
 - `extends:` (Compose file inheritance) is not supported
 - Dockerfile comments and parser directives (`# syntax=...`, `# escape=...`) are dropped
 - `MAINTAINER`, which has no step, is left as a comment with a warning; use a `label` step instead
-- Build args with complex shell expressions may require manual cleanup
-- Environment variable syntax (`${VAR}`) is preserved as-is; replace with `env()` manually if desired
+- Build args with complex shell expressions may need cleanup by hand
+- Environment variable syntax (`${VAR}`) is kept as written; replace it with `env()` by hand if you want
+===

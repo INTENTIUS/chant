@@ -21,7 +21,7 @@ Rule groups and Alertmanager entities may sit in the same build root. The rule f
 
 ## The same group, anywhere
 
-`ruleGroupConfig()` is the one conversion from a `RuleGroup` to the plain group Prometheus reads. The serializer uses it for the rule file, the k8s lexicon uses it for `PrometheusRule` and `MonitoredService`, and a ConfigMap can hold `ruleFileYaml()`. An SLO declaration or any other composite that produces `RuleGroup`s gets all three destinations for free.
+`ruleGroupConfig()` is the one conversion from a `RuleGroup` to the plain group Prometheus reads. The serializer uses it for the rule file, the k8s lexicon uses it for `PrometheusRule` and `MonitoredService`, and a ConfigMap can hold `ruleFileYaml()`. An SLO declaration or any other composite that produces `RuleGroup`s renders to all three with no extra code.
 
 ## Order
 

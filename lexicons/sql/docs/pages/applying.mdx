@@ -13,7 +13,8 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-`clickhouseApply` makes the ClickHouse server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "clickhouse"`, and an Op step of its own for a hand-written Op. It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
+`clickhouseApply` makes the ClickHouse server an environment is bound to hold what a `chant build` declares. `ApplyOp` runs it for `target: "clickhouse"`, and a hand-written Op can call it as a step.
+=== It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
 
 ## Apply with ApplyOp
 

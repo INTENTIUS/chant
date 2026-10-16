@@ -5,7 +5,8 @@ diataxis: explanation
 order: 1
 ---
 
-An interpolation that holds a declared object (a ClickHouse `database`, `table` or `view`; a Postgres `schema`, `table`, `view`, `sequence`, `type`, `domain` or `extension`), or one of a table's or view's `.columns`, is not spliced into the statement as text. It stays a reference. The statement still reads the object's name in the place the reference sits, and the build also knows which object that name belongs to. Everything on this page follows from that.
+An interpolation that holds a declared object (a ClickHouse `database`, `table` or `view`; a Postgres `schema`, `table`, `view`, `sequence`, `type`, `domain` or `extension`), or one of a table's or view's `.columns`, is not spliced into the statement as text. It stays a reference. The statement still reads the object's name in the place the reference sits, and the build also knows which object that name belongs to.
+===
 
 ```ts
 export const byKind = view`

@@ -1,10 +1,10 @@
 ---
 title: "Profiles"
-description: "fountain.profiles in chant.config.ts — named endpoints and tokens for fountainApply, fountainRun, and chant run --on fountain."
+description: "fountain.profiles in chant.config.ts: named endpoints and tokens for fountainApply, fountainRun, and chant run --on fountain."
 diataxis: reference
 ---
 
-`fountainApply` and `fountainRun` need an endpoint and a token. Pre-#2124 that meant `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN` in the shell — fine for one instance and one account, wrong for a project that targets a self-hosted instance for staging and the hosted one for prod. The `fountain.profiles` namespace in `chant.config.ts` names one or more endpoint/token pairs so a project can switch between them with `--profile`.
+`fountainApply` and `fountainRun` need an endpoint and a token. Before #2124 that meant `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN` in the shell, which works for one instance and one account but not for a project that targets a self-hosted instance for staging and the hosted one for prod. The `fountain.profiles` namespace in `chant.config.ts` names one or more endpoint/token pairs so a project can switch between them with `--profile`.
 
 ## Profile shape
 
@@ -37,10 +37,10 @@ export default {
 | Field | Type | Description |
 |---|---|---|
 | `endpoint` | `string` | Base URL of the fountain instance this profile targets. |
-| `token` | `{ env: string }` | The name of the environment variable that holds the bearer token — never a literal value. FTN001 refuses a literal string here. |
-| `team` | `string` (optional) | The default steward — a `Teammate` name — that `chant run --on fountain` posts to when the op declares no steward of its own. |
+| `token` | `{ env: string }` | The name of the environment variable that holds the bearer token, never a literal value. FTN001 refuses a literal string here. |
+| `team` | `string` (optional) | The default steward, a `Teammate` name, that `chant run --on fountain` posts to when the op declares no steward of its own. |
 
-An unknown key anywhere in `fountain` — a namespace-level typo, or one inside a profile — fails config load naming the key, the same way `forgejo` does (chant #1344).
+An unknown key anywhere in `fountain`, at the namespace level or inside a profile, fails config load naming the key, the same way `forgejo` does (chant #1344).
 
 ## Precedence
 
@@ -50,7 +50,7 @@ An unknown key anywhere in `fountain` — a namespace-level typo, or one inside 
 2. Otherwise, the profile named by `defaultProfile`, if one exists.
 3. Otherwise, `undefined`.
 
-`fountainApply` and `fountainRun` resolve endpoint and token field by field: an explicit `endpoint` or `token` argument always wins over the profile. For whichever field an explicit argument doesn't cover, they call `resolveProfile` and, if it returns a profile, read that field from it. Once a profile resolves, it is authoritative — an unset token env var is an actionable error naming the variable, not a silent fall-through to `FOUNTAIN_TOKEN`. Only when `resolveProfile` returns `undefined` (no `fountain.profiles` declared, or neither the named nor the default profile exists) do the activities fall back to the pre-#2124 behavior: `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default endpoint.
+`fountainApply` and `fountainRun` resolve endpoint and token field by field: an explicit `endpoint` or `token` argument always wins over the profile. For whichever field an explicit argument doesn't cover, they call `resolveProfile` and, if it returns a profile, read that field from it. Once a profile resolves, it is authoritative: an unset token env var is an error naming the variable, and `FOUNTAIN_TOKEN` is not read. Only when `resolveProfile` returns `undefined` (no `fountain.profiles` declared, or neither the named nor the default profile exists) do the activities fall back to the pre-#2124 behavior: `FOUNTAIN_ENDPOINT` / `FOUNTAIN_TOKEN`, then the hosted default endpoint.
 
 ```typescript
 // Explicit args always win, per field.
@@ -77,7 +77,8 @@ chant run steward-converge --on fountain --profile prod
 
 ## Never a literal token
 
-A profile's `token` is always `{ env: "VAR_NAME" }` — an environment variable name, never a secret value. FTN001 refuses a literal string in that position under `fountain.profiles`, regardless of whether it happens to match a known credential shape:
+A profile's `token` is always `{ env: "VAR_NAME" }`: an environment variable name, never a secret value.
+=== FTN001 refuses a literal string in that position under `fountain.profiles`, regardless of whether it happens to match a known credential shape:
 
 ```ts
 fountain: {

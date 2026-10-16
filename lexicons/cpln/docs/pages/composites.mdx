@@ -5,7 +5,7 @@ diataxis: reference
 order: 4
 ---
 
-Five composites, each encoding rules that are easy to violate by omission rather than by writing something wrong.
+Five composites, each encoding rules that are easy to break by leaving something out.
 
 ## `GvcEnvironment`
 
@@ -20,7 +20,7 @@ export const { gvc } = GvcEnvironment({
 });
 ```
 
-Pull secrets are **GVC-level**, not per workload — looking for them on a workload is a common wrong turn. Location ids are validated against the `<provider>-<region>` form before they become links.
+Pull secrets are set on the **GVC**, not on each workload, which is where people usually look for them. Location ids are validated against the `<provider>-<region>` form before they become links.
 
 ## `ServerlessService`
 
@@ -28,11 +28,12 @@ A serverless workload with the port, firewall and autoscaling a public HTTP serv
 
 ## `CronJob`
 
-A scheduled workload. It has no knobs for probes, autoscaling or `timeoutSeconds` — cron accepts all three and ignores them, so offering them would invite a silent no-op.
+A scheduled workload. It has no fields for probes, autoscaling or `timeoutSeconds`, because cron accepts all three and ignores them.
 
 ## `StatefulService`
 
-A stateful workload and its volume set, mounted. Validates the performance class capacity floor at build time — `high-throughput-ssd` has a 200 GB minimum where the others have 10 GB — because `fileSystemType` and `performanceClass` are both immutable and correcting either later means data loss.
+A stateful workload and its volume set, mounted. Validates the performance class capacity floor at build time (`high-throughput-ssd` has a 200 GB minimum where the others have 10 GB), because
+=== `fileSystemType` and `performanceClass` are both immutable and correcting either later means data loss.
 
 ## `SecretAccess`
 
