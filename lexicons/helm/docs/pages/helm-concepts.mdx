@@ -1,9 +1,9 @@
 ---
 title: "Helm Concepts"
-description: "How chant generates Helm charts — Chart.yaml, values.yaml, templates, the values proxy, and built-in objects"
+description: "How chant generates Helm charts: Chart.yaml, values.yaml, templates, the values proxy, and built-in objects"
 diataxis: explanation
 ---
-Every exported resource declaration becomes part of the generated Helm chart. The serializer handles the translation from TypeScript to Helm chart files automatically.
+Every exported resource declaration becomes part of the generated Helm chart.
 
 ## Chart Structure
 
@@ -20,7 +20,7 @@ chant generates a standard Helm chart directory:
 
 ## The Values Proxy
 
-The `values` proxy is the core abstraction for referencing `.Values.*` paths in templates. Instead of writing raw template strings, use typed property access:
+The `values` proxy writes `.Values.*` paths into templates. Instead of writing raw template strings, use typed property access:
 
 ```typescript
 import { values, Deployment } from "@intentius/chant-lexicon-helm";

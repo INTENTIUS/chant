@@ -12,7 +12,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-Chant supports cross-lexicon projects where AWS infrastructure and Kubernetes workloads live in the same `src/` directory. The AWS lexicon produces a CloudFormation template; the K8s lexicon produces kubectl-ready YAML.
+AWS infrastructure and Kubernetes workloads can live in the same `src/` directory. The AWS lexicon produces a CloudFormation template; the K8s lexicon produces kubectl-ready YAML.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ CloudFormation stack outputs map to K8s composite props via `.env`:
 | ACM cert ARN | `AlbIngress({ certificateArn })` |
 | Cluster name | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
 
-Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+Values pass from `.env` to `config.ts` to the K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
 
 ## K8s composites used
 

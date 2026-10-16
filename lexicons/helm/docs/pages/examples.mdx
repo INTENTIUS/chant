@@ -1,6 +1,6 @@
 ---
 title: "Examples"
-description: "Walkthrough of Helm examples — basic composites, production patterns, and infrastructure charts"
+description: "Helm example projects: basic composites, production patterns and infrastructure charts"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/helm/examples/.
@@ -20,7 +20,7 @@ npx vitest run    # run the tests
 
 ## Composites Basic
 
-`examples/composites-basic/` — a simple web application chart using the `HelmWebApp` composite with a Deployment, Service, and Ingress.
+`examples/composites-basic/`: a simple web application chart using the `HelmWebApp` composite with a Deployment, Service, and Ingress.
 
 ```typescript
 import {
@@ -44,13 +44,13 @@ export const svc = new Service(result.service);
 
 **Key patterns:**
 - Uses `HelmWebApp` to wire up the standard web app resources
-- The composite generates sensible defaults for resource limits and health probes
+- The composite sets default resource limits and health probes
 - Ingress is configured with the provided hostname
 - `chant build` produces `dist/Chart.yaml`, `dist/values.yaml`, and `dist/templates/`
 
 ## Composites Production
 
-`examples/composites-production/` — a production-grade microservice chart using `HelmMicroservice` with HPA, PDB, ServiceAccount, pre-install database migration hook, and external secrets.
+`examples/composites-production/`: a microservice chart using `HelmMicroservice` with HPA, PDB, ServiceAccount, pre-install database migration hook, and external secrets.
 
 ```typescript
 import {
@@ -101,7 +101,7 @@ const secrets = HelmExternalSecret({
 
 ## Composites Infrastructure
 
-`examples/composites-infrastructure/` — infrastructure-layer charts using `HelmDaemonSet`, `HelmCRDLifecycle`, and `HelmMonitoredService` for cluster agents, CRD operators, and monitored services.
+`examples/composites-infrastructure/`: infrastructure-layer charts using `HelmDaemonSet`, `HelmCRDLifecycle`, and `HelmMonitoredService` for cluster agents, CRD operators, and monitored services.
 
 ```typescript
 import {

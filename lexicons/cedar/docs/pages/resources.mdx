@@ -28,7 +28,7 @@ Each `entity T = { … }` in the schema produces three things:
 | `DocumentAttributes` | property class | Its attribute record, usable standalone |
 | `DocumentUid` | type | ``App::Document::"${string}"`` — a template-literal type |
 
-`DocumentUid` is the one that earns its keep. It makes a mistyped namespace a
+`DocumentUid` is the useful one. It makes a mistyped namespace a
 compile error:
 
 ```typescript
@@ -40,7 +40,7 @@ const typo: DocumentUid = 'App::Docmnt::"contract-2026"';        // compile erro
 
 ## Action constants
 
-Each action produces a `const` (not a class — an action UID is a value, not a
+Each action produces a `const` (not a class, since an action UID is a value, not a
 constructor) and a context record type:
 
 ```typescript

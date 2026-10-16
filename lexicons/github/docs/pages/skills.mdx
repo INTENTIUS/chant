@@ -8,7 +8,7 @@ The GitHub Actions lexicon ships AI skills that teach AI coding agents (like Cla
 
 ## What are skills?
 
-Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+Skills are markdown documents bundled with a lexicon. An AI agent working in a chant project loads the relevant skills automatically, so it knows the build and deploy steps without the user explaining them.
 
 ## Installation
 
@@ -61,7 +61,7 @@ The lexicon provides MCP (Model Context Protocol) tools and resources that AI ag
 | `github:affected` | Given a job, the jobs that would re-run because they depend on it |
 | `github:workflow-yaml` | The generated workflow YAML |
 
-The `github:*` tools are **read-only context tools** (#327): each builds from your source and returns what chant already computes — before the workflow runs or merges. None touch the live GitHub instance, run history, or write anything.
+The `github:*` tools are **read-only context tools** (#327): each builds from your source and returns what chant already computes, before the workflow runs or merges. None touch the live GitHub instance, run history, or write anything.
 
 | MCP resource | Description |
 |--------------|-------------|

@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-Runnable examples live in the lexicon's `examples/` directory — one per built-in composite. Clone the repo and try them:
+Runnable examples live in the lexicon's `examples/` directory, one per built-in composite. Clone the repo and try them:
 
 ```bash
 cd examples/lambda-function
@@ -21,7 +21,7 @@ npx vitest run    # run the tests
 
 ## Lambda Function
 
-`examples/lambda-function/` — the simplest possible example. Uses `LambdaNode` to create a basic Lambda.
+`examples/lambda-function/`: the smallest example, a Lambda from `LambdaNode`.
 
 {{file:lambda-function/src/main.ts}}
 
@@ -29,7 +29,7 @@ Produces 2 CloudFormation resources: IAM Role + Lambda Function.
 
 ## Lambda S3
 
-`examples/lambda-s3/` — Lambda that lists S3 objects using the `LambdaS3` composite.
+`examples/lambda-s3/`: Lambda that lists S3 objects using the `LambdaS3` composite.
 
 {{file:lambda-s3/src/main.ts}}
 
@@ -37,7 +37,7 @@ Produces 4 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (w
 
 ## Lambda DynamoDB
 
-`examples/lambda-dynamodb/` — Lambda that reads/writes DynamoDB items using the `LambdaDynamoDB` composite.
+`examples/lambda-dynamodb/`: Lambda that reads/writes DynamoDB items using the `LambdaDynamoDB` composite.
 
 {{file:lambda-dynamodb/src/main.ts}}
 
@@ -45,7 +45,7 @@ Produces 3 resources: DynamoDB Table + IAM Role (with DynamoDB read/write policy
 
 ## Lambda SQS
 
-`examples/lambda-sqs/` — Lambda processing messages from an SQS queue using the `LambdaSqs` composite.
+`examples/lambda-sqs/`: Lambda processing messages from an SQS queue using the `LambdaSqs` composite.
 
 {{file:lambda-sqs/src/main.ts}}
 
@@ -53,7 +53,7 @@ Produces 4 resources: SQS Queue + IAM Role (with SQS receive policy) + Lambda Fu
 
 ## Lambda SNS
 
-`examples/lambda-sns/` — Lambda triggered by SNS notifications using the `LambdaSns` composite.
+`examples/lambda-sns/`: Lambda triggered by SNS notifications using the `LambdaSns` composite.
 
 {{file:lambda-sns/src/main.ts}}
 
@@ -61,7 +61,7 @@ Produces 5 resources: SNS Topic + IAM Role + Lambda Function + SNS Subscription 
 
 ## Lambda Scheduled
 
-`examples/lambda-scheduled/` — Lambda on a cron schedule using the `LambdaScheduled` composite.
+`examples/lambda-scheduled/`: Lambda on a cron schedule using the `LambdaScheduled` composite.
 
 {{file:lambda-scheduled/src/main.ts}}
 
@@ -69,7 +69,7 @@ Produces 4 resources: IAM Role + Lambda Function + EventBridge Rule + Lambda Per
 
 ## Lambda EventBridge
 
-`examples/lambda-eventbridge/` — Lambda triggered by EventBridge events using the `LambdaEventBridge` composite.
+`examples/lambda-eventbridge/`: Lambda triggered by EventBridge events using the `LambdaEventBridge` composite.
 
 {{file:lambda-eventbridge/src/main.ts}}
 
@@ -77,7 +77,7 @@ Produces 4 resources: EventBridge Rule + IAM Role + Lambda Function + Lambda Per
 
 ## VPC
 
-`examples/vpc/` — production-ready VPC using the `VpcDefault` composite.
+`examples/vpc/`: production-ready VPC using the `VpcDefault` composite.
 
 {{file:vpc/src/main.ts}}
 
@@ -85,7 +85,7 @@ Produces 17 CloudFormation resources: VPC, Internet Gateway, 2 public + 2 privat
 
 ## Fargate ALB
 
-`examples/fargate-alb/` — Fargate service behind an ALB, consuming a VPC. Demonstrates composite composability.
+`examples/fargate-alb/`: Fargate service behind an ALB, consuming a VPC. One composite takes another's outputs.
 
 {{file:fargate-alb/src/network.ts}}
 
@@ -95,7 +95,7 @@ Produces 28 CloudFormation resources: 17 from VpcDefault + 11 from FargateAlb (E
 
 ## Multi-Service ALB
 
-`examples/multi-service-alb/` — multiple Fargate services behind a single shared ALB using `AlbShared` + `FargateService`.
+`examples/multi-service-alb/`: multiple Fargate services behind a single shared ALB using `AlbShared` + `FargateService`.
 
 {{file:multi-service-alb/src/shared.ts}}
 
@@ -127,15 +127,15 @@ Each service stack receives shared infrastructure as parameters and deploys a si
 
 **Deployment pattern:**
 
-1. Deploy the infra stack first — creates VPC, ALB, ECS cluster, and ECR repos
+1. Deploy the infra stack first; it creates VPC, ALB, ECS cluster, and ECR repos
 2. Deploy each service stack independently with `--parameter-overrides` mapping infra outputs to service parameters
 3. Each service gets its own `image` parameter for CI/CD pipelines to inject the container image URI
 
-The separate-project pattern enables independent team ownership and deployment cadences. See the [GitLab CI/CD lexicon examples](/chant/lexicons/gitlab/examples/) for pipeline definitions that automate this workflow.
+Separate stacks let each team own and deploy its service on its own schedule. See the [GitLab CI/CD lexicon examples](/chant/lexicons/gitlab/examples/) for pipeline definitions that automate this workflow.
 
 ## Lambda API (Custom Composite)
 
-`examples/lambda-api/` — demonstrates building your own composite factory with presets and a custom lint rule. This is the only example that teaches custom composite authoring.
+`examples/lambda-api/`: your own composite factory with presets and a custom lint rule. It is the only example of custom composite authoring.
 
 ```
 src/
@@ -161,7 +161,7 @@ The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 
 
 ## RDS Instance
 
-`examples/rds-postgres/` — production RDS PostgreSQL instance using the `RdsInstance` composite with VPC networking and SSM parameter references.
+`examples/rds-postgres/`: production RDS PostgreSQL instance using the `RdsInstance` composite with VPC networking and SSM parameter references.
 
 {{file:rds-postgres/src/params.ts}}
 

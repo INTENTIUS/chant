@@ -59,7 +59,7 @@ The primary output file is named by the `-o` flag. Additional workflow files are
 | `export const weekly` | `weekly.yml` |
 | `export const ciLint` | `ci-lint.yml` |
 
-When building, pass the primary output path — all other workflows are written alongside it:
+When building, pass the primary output path; all other workflows are written alongside it:
 
 ```bash
 chant build src --lexicon github -o .github/workflows/pipeline.yml
@@ -108,7 +108,7 @@ export const deploy = new Workflow({
 
 ## Backwards compatibility
 
-Standalone `Job` exports without `Workflow.jobs` still work when there is only one `Workflow`. When multiple workflows are present and none define `Workflow.jobs`, standalone jobs fall back to the first workflow — the same behavior as before multi-workflow support was added. This keeps existing composite patterns (`DockerBuild`, `DeployEnvironment`) working unchanged.
+Standalone `Job` exports without `Workflow.jobs` still work when there is only one `Workflow`. When multiple workflows are present and none define `Workflow.jobs`, standalone jobs fall back to the first workflow, as they did before multi-workflow support, so composites such as `DockerBuild` and `DeployEnvironment` work unchanged.
 
 ## Ops workflow example
 
@@ -186,4 +186,4 @@ export const dbRestore = new Workflow({
 });
 ```
 
-Both workflows are declared in one file, produce separate `db-backup.yml` and `db-restore.yml` output files, and require no workaround directories.
+Both workflows are declared in one file and produce separate `db-backup.yml` and `db-restore.yml` output files.

@@ -1,6 +1,6 @@
 ---
 title: "Getting Started"
-description: "Scaffold, generate, build — in that order."
+description: "Scaffold, generate, build, in that order."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/lexicons/cedar/getting-started/.
@@ -30,7 +30,7 @@ against it.
 npx chant cedar generate
 ```
 
-This is not optional and it is not a one-time setup step. The classes and
+This step is required. The classes and
 action constants `policies.ts` imports **do not exist** until generate has read
 your schema. Re-run it whenever the schema changes.
 
@@ -67,8 +67,8 @@ npx chant build
 
 Three artifacts land in `dist/`: the `.cedar` text, `policies.cedar.json`,
 and your `schema.cedarschema`. The schema is emitted beside the policies so
-every policy set is validated against it by `cedar-wasm` — the real Cedar
-validator, running in-process. No CLI on PATH, no Docker. A project with no
+every policy set is validated against it by `cedar-wasm`, the Cedar
+validator, running in this process with no CLI or Docker. A project with no
 schema of its own gets a parse-only check and CEDE010 says so.
 
 ## Then
@@ -77,7 +77,7 @@ schema of its own gets a parse-only check and CEDE010 says so.
 npx chant cedar coverage   # is every schema declaration generated?
 ```
 
-The MCP tool `cedar:coverage` answers the harder question — which schema
+The MCP tool `cedar:coverage` reports which schema
 declarations the *policy set* actually reaches. See [Lint Rules](../lint-rules/).
 
 ## The example projects

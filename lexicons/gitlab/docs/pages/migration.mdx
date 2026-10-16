@@ -10,7 +10,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-`chant migrate` translates `.github/workflows/*.yml` into `.gitlab-ci.yml` or chant TypeScript source. It's the typed-compiler counterpart to the upstream `gitlab-org/ci-cd/github-actions-to-gitlab-ci` Agent Skill — same translation rules, but deterministic, testable, and re-runnable.
+`chant migrate` translates `.github/workflows/*.yml` into `.gitlab-ci.yml` or chant TypeScript source. It applies the translation rules of the upstream `gitlab-org/ci-cd/github-actions-to-gitlab-ci` Agent Skill as a deterministic compiler you can test and re-run.
 
 ## Install
 
@@ -122,7 +122,7 @@ Items the transformer flags for manual review (`severity: warning`, escalates to
 
 When the transformer recognises a Node-shaped pipeline, `--use-composites` collapses it into a single composite call:
 
-Before (literal — 25 lines of TypeScript):
+Before (literal, 25 lines of TypeScript):
 ```typescript
 export const build = new Job({
   image: "node:22",
@@ -138,7 +138,7 @@ export const test = new Job({
 });
 ```
 
-After (with `--use-composites` — 4 lines):
+After (with `--use-composites`, 4 lines):
 ```typescript
 export const app = NodePipeline({
   nodeVersion: "22",
@@ -156,8 +156,8 @@ Other shapes (Python, Docker, Go) are deferred follow-ups in the [umbrella issue
 
 `--validate` runs two backends against the migrated pipeline:
 
-1. **Syntax** — a local validator: `glci lint` (preferred — offline, no auth), falling back to `glab ci lint` (requires `glab auth login`). If neither tool is on PATH, syntax validation is skipped with a warning.
-2. **Security** — the GitLab security post-synth checks ([WGL029–048](/chant/lexicons/gitlab/lint-rules/)) run against the emitted `.gitlab-ci.yml`. The principle is *migrate, then prove the output clears the GitLab security bar* — anything lost in translation that lands as a concrete weakness on the target is caught here, and it composes for free since those checks already run on emitted GitLab YAML.
+1. **Syntax**: a local validator, `glci lint` (preferred: offline, no auth), falling back to `glab ci lint` (requires `glab auth login`). If neither tool is on PATH, syntax validation is skipped with a warning.
+2. **Security** — the GitLab security post-synth checks ([WGL029–048](/chant/lexicons/gitlab/lint-rules/)) run against the emitted `.gitlab-ci.yml`. Anything lost in translation that leaves a weakness in the GitLab pipeline is caught here, by the same checks that run on any emitted GitLab YAML.
 
 Pair with `--strict` to hard-fail on missing tools, syntax errors, or error-severity security findings.
 
@@ -180,7 +180,7 @@ The SARIF is v2.1.0 and ingests by GitHub's `codeql-action/upload-sarif` or GitL
 
 ## Security posture
 
-Migration is the edge between two security endpoints — the [github](/chant/lexicons/github/lint-rules/) and [gitlab](/chant/lexicons/gitlab/lint-rules/) supply-chain checks. Security properties do **not** translate 1:1: some carry across silently, some are lost, some need re-establishing on the GitLab side. Alongside the functional provenance (Translated / Approximated / NeedsReview / Lost), `chant migrate` classifies each security-relevant property's **fate** across the boundary and emits a *Security posture* section in the Markdown report.
+Migration sits between the [github](/chant/lexicons/github/lint-rules/) and [gitlab](/chant/lexicons/gitlab/lint-rules/) supply-chain checks. Security properties do **not** translate 1:1: some carry across silently, some are lost, some need re-establishing on the GitLab side. Alongside the functional provenance (Translated / Approximated / NeedsReview / Lost), `chant migrate` classifies each security-relevant property's **fate** across the boundary and emits a *Security posture* section in the Markdown report.
 
 | Property (GH → GL) | Fate | Rule | Why |
 |---|---|---|---|
@@ -190,21 +190,21 @@ Migration is the edge between two security endpoints — the [github](/chant/lex
 | Untrusted-input injection | **Translated (silently)** | `MIG-INJECTION-CARRIED` | An injection site translates verbatim — the risk carries across (WGL035). |
 | Trigger / fork trust boundary | **NeedsReview** | `MIG-TRUST-BOUNDARY` | `pull_request_target` → MR/fork pipelines that fork contributors can trigger; re-establish protected refs / approvals (WGL034 / WGL036). |
 
-Because both lexicons abstracted their security work to the **same core problems**, migration maps problem → problem (pin → pin, least-privilege → least-privilege), preserving the invariant rather than the syntax. Where a problem has a primitive on one side but not the other, that gap *is* a NeedsReview. Run `--validate` (above) to additionally prove the migrated YAML clears the live GitLab security checks.
+Because both lexicons organize their security checks around the **same core problems**, migration maps each problem to its counterpart (pin to pin, least-privilege to least-privilege), preserving the invariant rather than the syntax. Where a problem has a primitive on one side but not the other, that gap *is* a NeedsReview. Run `--validate` (above) to also check that the migrated YAML passes the GitLab security checks.
 
 ## Limitations (v1)
 
-- **Composite actions** (`.github/actions/*/action.yml`) — not recursively translated. Replace with `include:` or `extends:` after migration.
-- **Reusable workflows with typed `inputs:`/`outputs:`** — partial: `include:` is emitted but typed inputs require manual `spec:inputs` rewrite.
-- **Multi-file workflow trees** — `chant migrate` operates on one file at a time. Shell-loop for multiple files.
-- **Reverse direction** (GitLab → GitHub) — not implemented.
-- **Custom action-mapping plugins** — registry is internal; `--action-mapping <file>` is a follow-up.
+- **Composite actions** (`.github/actions/*/action.yml`): not recursively translated. Replace with `include:` or `extends:` after migration.
+- **Reusable workflows with typed `inputs:`/`outputs:`**: partial. `include:` is emitted but typed inputs require manual `spec:inputs` rewrite.
+- **Multi-file workflow trees**: `chant migrate` operates on one file at a time. Shell-loop for multiple files.
+- **Reverse direction** (GitLab to GitHub): not implemented.
+- **Custom action-mapping plugins**: the registry is internal; `--action-mapping <file>` is a follow-up.
 
 Follow-up tracking lives on [umbrella issue #97](https://github.com/INTENTIUS/chant/issues/97).
 
 ## Why chant migrate over the upstream skill
 
-The upstream [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci) skill (MIT) is excellent for one-shot translation inside an AI agent. chant migrate is the typed-compiler counterpart — same translation rules, different shape. Use chant when you need any of these:
+The upstream [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci) skill (MIT) is excellent for one-shot translation inside an AI agent. chant migrate applies the same translation rules as a typed compiler. Use chant when you need any of these:
 
 | You need… | The skill | chant migrate |
 |---|---|---|
@@ -219,9 +219,7 @@ The upstream [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com
 | **Lint the generated YAML against chant's own rules** | not applicable | 23 WGL lint rules + 19 post-synth checks run on the output via `chant lint` |
 | **Quick translation in an agent context** with no install | ✅ ideal fit — paste workflow, get answer | requires `npm install --save-dev @intentius/chant` first |
 
-The skills are complementary: if you're inside an AI agent helping a user evaluate GitLab CI/CD from a GitHub Actions background, use the upstream skill — it's optimised for that conversation. If you're committing the translation to a repository or running it from CI, use chant migrate.
-
-The chant version is not a replacement for the skill — it's the same translation rules wearing a compiler.
+The skills are complementary: if you're inside an AI agent helping a user evaluate GitLab CI/CD from a GitHub Actions background, use the upstream skill; it's optimised for that conversation. If you're committing the translation to a repository or running it from CI, use chant migrate.
 
 ## Coverage vs the upstream skill
 
@@ -248,14 +246,14 @@ chant migrate covers every capability documented in the upstream skill's [`SKILL
 
 ## Inspired by `github-actions-to-gitlab-ci`
 
-This tool is a typed-compiler port of [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci) — an MIT-licensed Agent Skill published by the GitLab CI team. Specifically derived:
+This tool is a typed-compiler port of [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci), an MIT-licensed Agent Skill published by the GitLab CI team. Specifically derived:
 
-- The four-category provenance model (Translated / Approximated / NeedsReview / Lost) — used verbatim.
-- The marketplace-action mapping table — ported as a typed `ActionMapping[]` registry in [`src/migrate/from-github/actions/`](https://github.com/INTENTIUS/chant/tree/main/lexicons/gitlab/src/migrate/from-github/actions). All 33 entries from the upstream `references/marketplace-actions.md` are present.
-- The syntax-mapping reference — the `github.*` / `runner.*` → `$CI_*` table is the same shape.
-- The validator-as-final-stage pattern (`glci` / `glab ci lint`) — kept as the last stage rather than replaced.
+- The four-category provenance model (Translated / Approximated / NeedsReview / Lost), used verbatim.
+- The marketplace-action mapping table, ported as a typed `ActionMapping[]` registry in [`src/migrate/from-github/actions/`](https://github.com/INTENTIUS/chant/tree/main/lexicons/gitlab/src/migrate/from-github/actions). All 33 entries from the upstream `references/marketplace-actions.md` are present.
+- The syntax-mapping reference: the table from `github.*` / `runner.*` to `$CI_*` has the same shape.
+- The validator-as-final-stage pattern (`glci` / `glab ci lint`), kept as the last stage rather than replaced.
 
-**What's different:** the upstream skill is a stateless LLM prompt over a curated table; `chant migrate` is a stateful compiler with those mappings encoded as typed, testable TypeScript modules. The skills are complementary — use the upstream skill for one-shot read-and-respond; use `chant migrate` when the translation has to be reproducible, testable, and re-runnable.
+**What's different:** the upstream skill is a stateless LLM prompt over a curated table; `chant migrate` is a stateful compiler with those mappings encoded as typed, testable TypeScript modules. The skills are complementary: use the upstream skill for one-shot read-and-respond; use `chant migrate` when the translation has to be reproducible, testable, and re-runnable.
 
 Full attribution: see [`lexicons/gitlab/ATTRIBUTIONS.md`](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/ATTRIBUTIONS.md).
 

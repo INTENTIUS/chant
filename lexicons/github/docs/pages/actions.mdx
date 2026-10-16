@@ -1,10 +1,10 @@
 ---
 title: "Actions & Composites"
-description: "Pre-built composites -- action wrappers, CI pipelines, Docker builds, and deploy environments"
+description: "Pre-built composites: action wrappers, CI pipelines, Docker builds, and deploy environments"
 diataxis: reference
 ---
 
-Composites are pre-built abstractions that produce typed GitHub Actions resources. They range from single-action wrappers to full multi-job workflow pipelines.
+Composites are functions that return typed GitHub Actions steps, jobs and workflows, from single-action wrappers to multi-job pipelines.
 
 ## Action wrappers
 
@@ -118,7 +118,7 @@ DownloadArtifact({
 
 ### NodeCI
 
-A batteries-included composite that produces a full CI workflow and job. Generates a `Workflow` (push + PR on main) and a `Job` with checkout, setup-node, install, build, and test steps.
+Returns a CI `Workflow` (push + PR on main) and a `Job` with checkout, setup-node, install, build, and test steps.
 
 ```typescript
 import { NodeCI } from "@intentius/chant-lexicon-github";
@@ -147,7 +147,7 @@ export const build = ci.job;
 
 ### NodePipeline
 
-A production-grade Node pipeline with separate build and test jobs connected by artifact passing. The build job uploads artifacts; the test job downloads them and runs tests with `needs: ["build"]`.
+A Node pipeline with separate build and test jobs that pass artifacts. The build job uploads artifacts; the test job downloads them and runs tests with `needs: ["build"]`.
 
 ```typescript
 import { NodePipeline } from "@intentius/chant-lexicon-github";
@@ -273,7 +273,7 @@ export const build = new Job({
 
 ## Using raw action references
 
-You can always use raw `uses:` strings for actions that do not have a typed composite wrapper:
+You can always use raw `uses:` strings for actions without a typed composite:
 
 ```typescript
 import { Step } from "@intentius/chant-lexicon-github";

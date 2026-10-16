@@ -33,13 +33,13 @@ The import pipeline has two stages:
 - **Parameters** — Converted to `CoreParameter` declarations
 - **Resource-level fields** — `sku`, `kind`, `identity`, `tags`, `zones`, `plan`, `location`
 - **Bracket expressions** — Converted to intrinsic function calls:
-  - `[resourceId(...)]` → `ResourceId(...)`
-  - `[reference(...)]` → `Reference(...)`
-  - `[parameters('name')]` → parameter reference
-  - `[resourceGroup().location]` → `Azure.ResourceGroupLocation`
-  - `[subscription().subscriptionId]` → `Azure.SubscriptionId`
-  - `[concat(...)]` → `Concat(...)`
-  - `[uniqueString(...)]` → `UniqueString(...)`
+  - `[resourceId(...)]` becomes `ResourceId(...)`
+  - `[reference(...)]` becomes `Reference(...)`
+  - `[parameters('name')]` becomes parameter reference
+  - `[resourceGroup().location]` becomes `Azure.ResourceGroupLocation`
+  - `[subscription().subscriptionId]` becomes `Azure.SubscriptionId`
+  - `[concat(...)]` becomes `Concat(...)`
+  - `[uniqueString(...)]` becomes `UniqueString(...)`
 - **dependsOn** — Preserved as dependency declarations
 
 ### Example
@@ -85,7 +85,7 @@ export const storage = new StorageAccount({
 
 ## Template detection
 
-The lexicon automatically detects ARM templates by checking for:
+The lexicon detects ARM templates by checking for:
 - A `$schema` property containing `deploymentTemplate`
 - A `resources` array
 
@@ -96,7 +96,7 @@ chant import template.json  # detects ARM format automatically
 
 ## Round-trip workflow
 
-1. Import an existing ARM template → TypeScript
+1. Import an existing ARM template to TypeScript
 2. Modify the TypeScript (add resources, apply composites, etc.)
 3. Build back to ARM JSON
 4. Deploy with Azure CLI

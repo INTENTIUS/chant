@@ -8,8 +8,8 @@ Rules under the `CED` prefix. The complete generated table is on [All Rules](../
 
 ## The two engines, and why there is only one
 
-Cedar's own validator runs in-process through `@cedar-policy/cedar-wasm` — the
-real thing, not a reimplementation. It answers "is this policy well-formed
+Cedar's own validator runs in-process through `@cedar-policy/cedar-wasm`, the
+upstream validator itself. It answers "is this policy well-formed
 against this schema".
 
 Everything else is a TypeScript check. There is no `cedarGate()`, because
@@ -50,7 +50,7 @@ A policy naming an entity type or action the schema does not declare fails
 
 ## Cross-domain checks
 
-The differentiator, and the thing no Cedar tool can express: Cedar only ever
+Cedar only ever
 sees policies, while a chant build holds the policies *and* the infrastructure
 they govern in one entity graph. So a post-synth check can span both:
 
@@ -58,8 +58,8 @@ they govern in one entity graph. So a post-synth check can span both:
 - every declared bucket is covered by at least one `forbid`
 - no schema action lacks any policy
 
-These are ordinary post-synth checks. Nothing exotic — they just need both
-halves in the same build, which is the arrangement chant already has.
+These are ordinary post-synth checks. They need both
+halves in the same build, which chant already has.
 
 ## Coverage, two ways
 
@@ -84,9 +84,9 @@ It builds the policy set, hands each policy to Cedar's own
 | `unresolved` | Policies the resolver rejected outright |
 | `parseErrors` | Why the set would not split into policies |
 
-Container entity types — the ones that appear in no action's `appliesTo` and
-exist only to be `in` — show as uncovered even under a bare permit. That is
-the resolver telling the truth: no request can name them.
+Container entity types (the ones that appear in no action's `appliesTo` and
+exist only to be `in`) show as uncovered even under a bare permit. That is
+correct: no request can name them.
 
 ## What is not here yet
 
