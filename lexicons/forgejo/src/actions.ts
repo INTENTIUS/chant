@@ -23,7 +23,26 @@ export const DEFAULT_ACTIONS_ROOT = "https://code.forgejo.org";
  *  - `url`:    an absolute base URL — independent of the actions root (used for
  *              actions not carried by the Forgejo mirror, e.g. `docker/*`).
  */
-export type ActionTarget = { kind: "mirror"; repo: string } | { kind: "url"; url: string };
+export type ActionTarget =
+  | {
+      kind: "mirror";
+      repo: string;
+      /**
+       * The newest major version that runs on a Forgejo runner, when an older
+       * one is needed: a ref asking for a later major is rewritten to this one.
+       */
+      newest?: string;
+    }
+  | { kind: "url"; url: string };
+
+/**
+ * `upload-artifact` and `download-artifact` v4 and later use `@actions/artifact`
+ * v2, which refuses to run on GitHub Enterprise Server, and a Forgejo runner
+ * presents itself to an action as one: the step fails with "@actions/artifact
+ * v2.0.0+, upload-artifact@v4+ and download-artifact@v4+ are not currently
+ * supported on GHES" (#4008). v3 talks to the artifact service Forgejo serves.
+ */
+export const FORGEJO_ARTIFACT_VERSION = "v3";
 
 /** Built-in mapping of GitHub action `owner/repo` → Forgejo-resolvable target. */
 export const KNOWN_ACTIONS: Record<string, ActionTarget> = {
@@ -35,8 +54,8 @@ export const KNOWN_ACTIONS: Record<string, ActionTarget> = {
   "actions/setup-java": { kind: "mirror", repo: "actions/setup-java" },
   "actions/setup-dotnet": { kind: "mirror", repo: "actions/setup-dotnet" },
   "actions/cache": { kind: "mirror", repo: "actions/cache" },
-  "actions/upload-artifact": { kind: "mirror", repo: "actions/upload-artifact" },
-  "actions/download-artifact": { kind: "mirror", repo: "actions/download-artifact" },
+  "actions/upload-artifact": { kind: "mirror", repo: "actions/upload-artifact", newest: FORGEJO_ARTIFACT_VERSION },
+  "actions/download-artifact": { kind: "mirror", repo: "actions/download-artifact", newest: FORGEJO_ARTIFACT_VERSION },
   // docker/* — not on the Forgejo mirror; pin to the full GitHub URL, which
   // Forgejo runners can fetch directly.
   "docker/build-push-action": { kind: "url", url: "https://github.com/docker/build-push-action" },
@@ -99,8 +118,20 @@ export function resolveActionRef(ref: string, options: ActionResolveOptions = {}
 
   const base = target.kind === "mirror" ? `${root}/${target.repo}` : target.url;
   const withSubpath = subpath ? `${base}/${subpath}` : base;
-  const rewritten = version ? `${withSubpath}@${version}` : withSubpath;
+  const pinned = target.kind === "mirror" && target.newest && laterMajor(version, target.newest) ? target.newest : version;
+  const rewritten = pinned ? `${withSubpath}@${pinned}` : withSubpath;
   return { rewritten };
+}
+
+/** Whether `version` (`v4`, `v4.1.0`) names a later major than `newest` (`v3`). A SHA or branch never does. */
+function laterMajor(version: string, newest: string): boolean {
+  const major = (v: string): number | undefined => {
+    const m = /^v?(\d+)(?:\.\d+)*$/.exec(v);
+    return m ? Number(m[1]) : undefined;
+  };
+  const a = major(version);
+  const b = major(newest);
+  return a !== undefined && b !== undefined && a > b;
 }
 
 function unresolvedWarning(ref: string): string {

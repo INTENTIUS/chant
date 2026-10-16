@@ -33,13 +33,11 @@ jobs:
         run: chant run wave --spec waves.json --wave 2 --decide
       - name: Keep wave 2's decision
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v4
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations/wave-2.json
           if-no-files-found: ignore
-          include-hidden-files: true
-          overwrite: true
   wave-2-prod-us:
     runs-on:
       - self-hosted
@@ -57,7 +55,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download wave 2's decision
-        uses: https://code.forgejo.org/actions/download-artifact@v4
+        uses: https://code.forgejo.org/actions/download-artifact@v3
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
@@ -73,7 +71,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download wave 2's decision
-        uses: https://code.forgejo.org/actions/download-artifact@v4
+        uses: https://code.forgejo.org/actions/download-artifact@v3
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations

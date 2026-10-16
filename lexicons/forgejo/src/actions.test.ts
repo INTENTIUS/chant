@@ -9,17 +9,24 @@ describe("resolveActionRef — mapped actions", () => {
   });
 
   test("rewrites the common actions/* set", () => {
-    for (const name of [
-      "actions/setup-node",
-      "actions/setup-go",
-      "actions/setup-python",
-      "actions/cache",
-      "actions/upload-artifact",
-      "actions/download-artifact",
-    ]) {
+    for (const name of ["actions/setup-node", "actions/setup-go", "actions/setup-python", "actions/cache"]) {
       const { rewritten, warning } = resolveActionRef(`${name}@v4`);
       expect(rewritten).toBe(`${DEFAULT_ACTIONS_ROOT}/${name}@v4`);
       expect(warning).toBeUndefined();
+    }
+  });
+
+  test("moves upload-artifact and download-artifact v4 and later to v3, which runs on a Forgejo runner (#4008)", () => {
+    for (const name of ["actions/upload-artifact", "actions/download-artifact"]) {
+      for (const v of ["v4", "v4.6.2", "v5"]) {
+        const { rewritten, warning } = resolveActionRef(`${name}@${v}`);
+        expect(rewritten).toBe(`${DEFAULT_ACTIONS_ROOT}/${name}@v3`);
+        expect(warning).toBeUndefined();
+      }
+      // v3 and earlier, a SHA and a branch are the author's to choose.
+      for (const v of ["v3", "v2.3.1", "0123456789abcdef0123456789abcdef01234567", "main"]) {
+        expect(resolveActionRef(`${name}@${v}`).rewritten).toBe(`${DEFAULT_ACTIONS_ROOT}/${name}@${v}`);
+      }
     }
   });
 
