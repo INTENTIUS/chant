@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import type { DriverComponent } from "@intentius/chant/components/driver";
+import { generateGithubPipeline } from "@intentius/chant-lexicon-github/components/generate-pipeline";
 import { generateForgejoPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -49,6 +50,18 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/restore@v4");
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/save@v4");
     expect(result.yaml).toContain("--forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json");
+  });
+
+  test("keeps its reports with upload-artifact v3, the version a Forgejo runner runs, while GitHub keeps v4 (#4008)", () => {
+    // v4 refuses a runner that reads as GitHub Enterprise Server, as Forgejo's does.
+    expect(result.yaml.match(/uses: https:\/\/code\.forgejo\.org\/actions\/upload-artifact@v3$/gm)).toHaveLength(2);
+    expect(result.yaml).not.toMatch(/(upload|download)-artifact@v4/);
+    // v3 uploads hidden files with no input asking for it, so .chant/pr is still kept.
+    expect(result.yaml).not.toContain("include-hidden-files");
+    expect(result.yaml).toContain("path: .chant/pr");
+    const github = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    expect(github.match(/uses: actions\/upload-artifact@v4$/gm)).toHaveLength(2);
+    expect(github).toContain("include-hidden-files: true");
   });
 
   test.skipIf(!hasActionlint())("passes actionlint, less the runner label and actions by URL", () => {

@@ -47,6 +47,12 @@ On build, the dialect:
   their full GitHub URL. Local (`./...`), `docker://`, and full-URL refs pass
   through untouched. Anything else passes through **and is reported** as a
   warning so it's never silently unresolvable.
+- **Pins the artifact actions to v3** — `actions/upload-artifact` and
+  `actions/download-artifact` v4 and later refuse to run on GitHub Enterprise
+  Server, and a Forgejo runner reads as one to an action, so the step fails.
+  Those refs become `@v3`, and an upload step loses the inputs only v4 has
+  (`include-hidden-files`, which v3 does by default, and `overwrite`). An
+  earlier version, a SHA or a branch is left as written.
 
 Everything else is emitted by the github serializer, which already produces
 the exact YAML shape Forgejo executes.

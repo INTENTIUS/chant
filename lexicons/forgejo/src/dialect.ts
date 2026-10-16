@@ -166,7 +166,27 @@ function transformValue(value: unknown, ctx: TransformCtx): unknown {
     }
     result[key] = transformValue(v, ctx);
   }
+  dropV4OnlyArtifactInputs(result);
   return result;
+}
+
+/**
+ * The inputs only `upload-artifact` v4 has, which a step moved to v3
+ * (`FORGEJO_ARTIFACT_VERSION`, #4008) loses. v3 always uploads hidden files,
+ * so dropping `include-hidden-files` keeps what the step uploads; and a v3
+ * artifact is not immutable, so a second upload under one name needs no
+ * `overwrite`.
+ */
+const V4_ONLY_UPLOAD_INPUTS = new Set(["include-hidden-files", "overwrite"]);
+
+/** Drop {@link V4_ONLY_UPLOAD_INPUTS} from a step that uses `upload-artifact@v3`. */
+function dropV4OnlyArtifactInputs(step: Record<string, unknown>): void {
+  const uses = step.uses;
+  const withs = step.with;
+  if (typeof uses !== "string" || !/\/actions\/upload-artifact@v3$/.test(uses)) return;
+  if (withs === null || typeof withs !== "object" || Array.isArray(withs)) return;
+  const kept = Object.fromEntries(Object.entries(withs as Record<string, unknown>).filter(([k]) => !V4_ONLY_UPLOAD_INPUTS.has(toKebabCase(k))));
+  step.with = kept;
 }
 
 /** Shallow-clone a Declarable, replacing its `props` with a transformed copy. */
