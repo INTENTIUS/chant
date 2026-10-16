@@ -15,7 +15,7 @@ chant build [path] --components --generate <lexicon> [--env <name>] [--promote-t
 
 `chant build` loads the project at the given path, parses all TypeScript source files, evaluates resource definitions, and serializes the output.
 
-It reaches no network. Every schema it needs is generated into the lexicon packages ahead of time, and a guard test runs the build over every example project with the socket layer replaced by a throwing stub — see [Network Egress](/chant/reference/network-egress/).
+It reaches no network. Every schema it needs is generated into the lexicon packages ahead of time, and a guard test runs the build over every example project with the socket layer replaced by a throwing stub. See [Network Egress](/chant/reference/network-egress/).
 
 ## Flags
 
@@ -80,7 +80,7 @@ chant build --components --generate github --env staging --output .github/workfl
 
 ## Fold vs run
 
-`chant build` reduces each file's AST directly to the resource spec by default, with no module execution — a file outside the supported subset (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)) falls back to being imported and run, transparently, per file. Nothing about how you write resources changes.
+`chant build` reduces each file's AST directly to the resource spec by default, with no module execution. A file outside the supported subset (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)) is imported and run instead, per file. You write resources the same way in both modes.
 
 Pass `--no-fold` to import and run every file instead, which is the pre-#1134 behavior. The same switch is settable project-wide:
 
@@ -103,11 +103,11 @@ Output goes to stdout. Everything else goes to stderr, in this order: a one-line
 ⚠ [apiDeployment] ...
 ```
 
-A file that ran instead of folding is not a problem. It is the expected outcome for source that computes values in functions, and the build output is the same either way. Pass `--verbose` to see each `[param] name = value (source)` line and each `[fold:fold]` / `[fold:run] <reason>` line.
+A file that ran instead of folding is expected for source that computes values in functions, and the build output is the same either way. Pass `--verbose` to see each `[param] name = value (source)` line and each `[fold:fold]` / `[fold:run] <reason>` line.
 
 ## Sandboxed execution
 
-`--sandbox` runs every run-fallback file for the build together, isolated, in one child process with the filesystem, process-spawn, worker-thread, and environment access locked down — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that isolates (and, importantly, what it doesn't: Node has no way to block network egress, so that's a documented residual risk with its own deployment guidance, not something this flag claims to close). It composes with `--fold`: the run-fallback remainder is what gets sandboxed.
+`--sandbox` runs every run-fallback file for the build together, isolated, in one child process with the filesystem, process-spawn, worker-thread, and environment access locked down. [Sandboxed Execution](/chant/architecture/sandbox/) lists what that isolates and what it leaves open: Node cannot block network egress, a documented residual risk with its own deployment guidance. It composes with `--fold`: the run-fallback remainder is what gets sandboxed.
 
 With `--sandbox`, no project source executes in the CLI's process at all. That is slightly stricter than folding alone: folding a `SomeComposite({...})` call or a `new SomeType({...})` has to invoke the real factory or constructor, so when those are imported from a *project* file rather than a lexicon package, the file falls back to the sandboxed run path instead of folding. [Sandboxed Execution](/chant/architecture/sandbox/#fold-coverage-today) reports what that costs across the example corpus.
 
@@ -128,7 +128,7 @@ A component whose `enabled` is `false` under the bound parameters gets no job, a
 
 A components-only project need not declare a lexicon plugin at all. Lexicons are loaded best-effort here, so a project whose `chant.config.ts` lists none still generates.
 
-`--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml, env }` on stdout, where `env` is the generator's own resolved environment (present whenever the generator returns one; omitted otherwise) rather than something a consumer has to re-derive by parsing the YAML back. The same stages, jobs and env are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
+`--env <name>` is threaded into the generated pipeline as the environment it deploys, and `--param` / `--params-file` bind build-time parameters the same way they do for a resource build. With `--format json` the result is `{ stages, jobs, yaml, env }` on stdout, where `env` is the generator's own resolved environment (present whenever the generator returns one), so a consumer reads it here instead of parsing the YAML. The same stages, jobs and env are available as graph IR through [`chant graph --components --format ir --projection <lexicon>`](/chant/cli/graph/#--projection-lexicon--the-cipipeline-projection-989).
 
 ### Promote job
 
@@ -222,17 +222,17 @@ chant build observability/ \
 
 Each named lexicon is built into its path, and the format follows that file's extension. Lexicons you do not name are written together to `-o <file>` when you pass it, and skipped otherwise. `--lexicon-output` cannot be combined with `--lexicon` or `--watch`, and a lexicon that has no entities in the project makes its build fail with the usual empty-output error.
 
-`--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
+`--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters (`buildParams` in `chant.config.ts`) so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter, never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for precedence and why it folds to a literal.
 
 ## At a workspace root
 
-When the project `chant build` acts on is the root of a [declared workspace](/chant/reference/workspace-declaration/), the build refuses with the code `WSP000` and exits 1 ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-023](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-023-root-shrink.md)). The declaration moves its members out of the root project, so a root build would quietly cover less than it did before the file existed. The message says how many members and example projects left, and points to [`chant workspace build`](/chant/cli/workspace-build/), which builds each member with its own chant.
+When the project `chant build` acts on is the root of a [declared workspace](/chant/reference/workspace-declaration/), the build refuses with the code `WSP000` and exits 1 ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-023](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-023-root-shrink.md)). The declaration moves its members out of the root project, so a root build would silently cover less than it did before the file existed. The message says how many members and example projects left, and points to [`chant workspace build`](/chant/cli/workspace-build/), which builds each member with its own chant.
 
 ```
 error: WSP000: this is the root of workspace acme (chant.workspace.json), which moves 3 members and 1 example project out of the root project. Run chant workspace build to build each member with its own toolchain, or pass --root-only (or set rootOnly: true in chant.config) to build the root project alone.
 ```
 
-`--root-only`, or `rootOnly: true` in the root's `chant.config.ts`, builds the root project on its own. Member directories and example-group matches are left out of discovery, on top of the project's own `exclude` globs. A build inside a member's directory or an example project is never refused, and a project with no `chant.workspace.json` is unaffected.
+`--root-only`, or `rootOnly: true` in the root's `chant.config.ts`, builds the root project on its own. Member directories and example-group matches are left out of discovery, in addition to the project's own `exclude` globs. A build inside a member's directory or an example project is never refused, and a project with no `chant.workspace.json` is unaffected.
 
 ## Exit Codes
 

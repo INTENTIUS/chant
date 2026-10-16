@@ -104,7 +104,7 @@ Without `--require` the report fails nothing over agent runs, so a workspace can
 - run: npx chant workspace verify --base origin/${{ github.base_ref }} --require attested-runs
 ```
 
-The base has to be a revision the change can't move, which is the target branch tip. With squash merges, the commit that lands is signed by the forge rather than the author. Records then read as `attested-unverifiable-here` on the target branch, so merge commits or rebase merges keep attestation.
+The base has to be a revision the change can't move, which is the target branch tip. With squash merges, the commit that merges is signed by the forge rather than the author. Records then read as `attested-unverifiable-here` on the target branch, so merge commits or rebase merges keep attestation.
 
 ## In the chant repository
 

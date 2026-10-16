@@ -14,7 +14,7 @@ chant migrate <file> [flags]
 
 `chant migrate` translates a workflow file from one lexicon's source format into another lexicon's output. v1 ships a single edge: GitHub Actions (`.github/workflows/*.yml`) -> GitLab CI (`.gitlab-ci.yml` or chant TypeScript).
 
-The translation is deterministic and typed — the same input produces the same output, every translation decision is recorded as per-key provenance, and unknown patterns surface as machine-readable diagnostics rather than guesswork.
+The translation is deterministic and typed. The same input produces the same output, every translation decision is recorded as per-key provenance, and an unknown pattern is reported as a machine-readable diagnostic instead of guessed.
 
 For the full surface (supported translations, marketplace-action coverage, NeedsReview catalog, `--use-composites`, validators), see [GitLab -> Migration](/chant/lexicons/gitlab/migration/).
 
@@ -60,7 +60,7 @@ chant migrate .github/workflows/ci.yml \
 
 ## Diagnostics
 
-Diagnostics surface as SARIF v2.1.0 (via `--report`) and as a Markdown summary on stderr. Each diagnostic carries:
+Diagnostics are written as SARIF v2.1.0 (via `--report`) and as a Markdown summary on stderr. Each diagnostic carries:
 
 - `ruleId` — e.g. `MIG-PERMISSIONS-001`, `MIG-ON-SCHEDULE`, `ACT-actions-checkout`
 - `severity` — `info` / `warning` / `error` (warning becomes error under `--strict`)

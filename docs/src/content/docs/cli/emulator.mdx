@@ -37,10 +37,10 @@ Every action is idempotent. `up` on an already-running emulator reports the
 existing endpoint rather than starting a second container.
 
 <Aside type="note" title="Which lexicons have one">
-An emulator is a lexicon capability. Five lexicons declare seven between them —
-a lexicon can ship more than one (chant #1345). Running the command in a project
-whose lexicons have none is not an error: it warns and exits 0, so a script that
-calls `chant emulator up` unconditionally still works.
+An emulator is a lexicon capability. Five lexicons declare seven between them,
+since a lexicon can ship more than one (chant #1345). In a project whose
+lexicons have none, the command warns and exits 0, so a script that calls
+`chant emulator up` unconditionally still works.
 </Aside>
 
 ## Subcommands
@@ -160,7 +160,7 @@ aws: chant-floci — up on http://localhost:4566
 
 ## `--json`
 
-The report is the contract other tools consume — [behold](https://github.com/INTENTIUS/behold)'s
+Other tools read this report. [behold](https://github.com/INTENTIUS/behold)'s
 `serve --local` uses it to point itself at a running emulator.
 
 ```bash
@@ -185,9 +185,8 @@ chant emulator up --json
 }
 ```
 
-`env` is the point of the report: exporting those variables is what makes the
-AWS SDK, `chant lifecycle --live`, and a triggered Op talk to the emulator
-rather than the real account.
+Export the `env` variables to make the AWS SDK, `chant lifecycle --live`, and a
+triggered Op talk to the emulator rather than the real account.
 
 ```bash
 eval "$(chant emulator up --json | jq -r '.emulators[].env | to_entries[] | "export \(.key)=\(.value)"')"
@@ -223,8 +222,8 @@ The ClickHouse emulator signs in as `default` with no password; the Postgres
 one as `postgres` with password `chant`.
 
 gcp has no endpoint variable because `gcpApply` takes the endpoint as an
-explicit argument rather than reading one — `chant emulator up --json` still
-reports the endpoint, there is just nothing to export.
+explicit argument rather than reading one. `chant emulator up --json` still
+reports the endpoint, with nothing to export.
 
 Every image is pinned rather than tracking `:latest`, so a local suite that
 passes today does not fail tomorrow because an image moved. A weekly workflow

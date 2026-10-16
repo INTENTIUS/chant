@@ -27,7 +27,7 @@ chant init <path> --from <dir>[#<member>] [--param <name>=<value>]... [--force]
 
 ## Description
 
-`chant init` creates a new project at the specified path. It generates the full directory layout, TypeScript configuration, lint configuration, and a sample resource file so you can begin writing definitions immediately.
+`chant init` creates a new project at the specified path. It writes the directory layout, the TypeScript and lint configuration, and a sample resource file.
 
 ### Generated files
 
@@ -56,7 +56,7 @@ chant init my-infra --lexicon aws --force
 
 With `--template`, init also writes `.chant/workspace.lock.json`. The lock records the template (`lexicon:<lexicon>/<template>`), the lexicon package and chant versions that rendered it, and the hash of every file init wrote, so a later upgrade can tell which files you have edited. The [Lineage Lock](/chant/reference/lineage-lock/) page describes the format.
 
-Plain `chant init` without `--template` writes no lock, and its output is unchanged.
+Without `--template`, `chant init` writes no lock.
 
 ## From a template repository
 
@@ -152,7 +152,7 @@ To scaffold a new **lexicon plugin** project (for lexicon authors), use:
 chant init lexicon <name> [path] [--force]
 ```
 
-This creates a complete lexicon plugin project with stubs for every required lifecycle method. See [`init lexicon`](/chant/cli/init-lexicon/) for full details.
+This creates a lexicon plugin project with a stub for every required lifecycle method. See [`init lexicon`](/chant/cli/init-lexicon/).
 
 ```bash
 # Scaffold a new lexicon

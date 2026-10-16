@@ -12,15 +12,15 @@ chant scenario check [flags]
 
 ## Description
 
-`chant scenario check` evaluates every [`Scenario`](/chant/concepts/plan-scenarios/) declared in the project. For each one it builds a `ChangeSet` the same way `chant lifecycle plan` does, with one substitution: the scenario's `given` fixture stands in for a live observation, so no plugin's `describeResources` ever runs and no credentials are ever read. Safe in CI, safe on every PR.
+`chant scenario check` evaluates every [`Scenario`](/chant/concepts/plan-scenarios/) declared in the project. For each one it builds a `ChangeSet` the same way `chant lifecycle plan` does, with one substitution: the scenario's `given` fixture stands in for a live observation, so no plugin's `describeResources` ever runs and no credentials are ever read. It is safe to run in CI on every PR.
 
-No provider is contacted on either fixture form. A `given` of `snapshot("fixtures/….json")` is a file read and reaches nothing at all; a `given` of `snapshot(env)` first runs `git fetch <remote> chant/lifecycle` to refresh the recorded snapshots, which reaches the git remote the repository is already cloned from and nothing else. [Network Egress](/chant/reference/network-egress/) has the full picture and the guard test that holds it.
+No provider is contacted on either fixture form. A `given` of `snapshot("fixtures/….json")` is a file read and reaches no network; a `given` of `snapshot(env)` first runs `git fetch <remote> chant/lifecycle` to refresh the recorded snapshots, which reaches the git remote the repository is already cloned from and nothing else. [Network Egress](/chant/reference/network-egress/) lists both, with the guard test that holds them.
 
-The resulting change set is checked against the scenario's `expect` clauses. Output is per-scenario pass/fail with a legible detail on every failing clause — what was expected and what the plan actually proposes, naming resources for `deletes` and `unobserved` failures.
+The resulting change set is checked against the scenario's `expect` clauses. Output is pass/fail per scenario. Each failing clause shows what was expected and what the plan proposes, naming resources for `deletes` and `unobserved` failures.
 
-A lexicon the fixture has no data for is never silently read as "nothing declared, all absent" — every entity it declares lands in the change set as `unobserved`, same as a live read that could not look (#1089). A hole the fixture can't fill is reported as a hole.
+A lexicon the fixture has no data for is never silently read as "nothing declared, all absent". Every entity it declares is in the change set as `unobserved`, the same as a live read that could not look (#1089). A hole the fixture can't fill is reported as a hole.
 
-A declared [effect receipt](/chant/concepts/effect-receipts/) gets the same treatment `chant lifecycle plan` gives it: its own `effect` classification against the fixture, not the generic create/update/delete axis. An unfired receipt never reads as a bare `create`; a receipt present in the fixture with a stale or mismatched value never reads as a clean `noop` — see [Plan Scenarios](/chant/concepts/plan-scenarios/#effect-receipts-in-a-scenario) for what a fixture needs to carry for a receipt to resolve offline.
+A declared [effect receipt](/chant/concepts/effect-receipts/) gets the same treatment `chant lifecycle plan` gives it: its own `effect` classification against the fixture, not the generic create/update/delete axis. An unfired receipt never reads as a bare `create`; a receipt present in the fixture with a stale or mismatched value never reads as a clean `noop`. See [Plan Scenarios](/chant/concepts/plan-scenarios/#effect-receipts-in-a-scenario) for what a fixture needs to carry for a receipt to resolve offline.
 
 See [Plan Scenarios](/chant/concepts/plan-scenarios/) for the `Scenario`/`snapshot()` declaration API and the full `expect` vocabulary.
 
@@ -69,7 +69,7 @@ chant lifecycle snapshot prod
 git show chant/lifecycle:prod/aws.json > fixtures/prod-baseline.json
 ```
 
-`given: snapshot("prod")` reads the *current* last-recorded snapshot for that environment straight off the `chant/lifecycle` branch — no file to keep in sync, but the scenario's answer moves whenever a new snapshot is recorded.
+`given: snapshot("prod")` reads the *current* last-recorded snapshot for that environment straight off the `chant/lifecycle` branch. There is no file to keep in sync, but the scenario's answer moves whenever a new snapshot is recorded.
 
 A `cost` clause reads the fixture's `behaviour` block, the `BehaviourResult` a lexicon's `predictBehaviour()` returned for that estate, recorded on the snapshot beside its resources. The block is held to the behaviour contract on the way in, so a hand-edited fixture with a negative rate is refused as not a prediction. A fixture with no block, or whose block is a refusal, fails the clause with that reason:
 

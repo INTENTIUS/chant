@@ -12,9 +12,9 @@ chant serve mcp [path]
 
 ## Description
 
-`chant serve mcp` starts an MCP (Model Context Protocol) server over stdio. This allows AI agents that support MCP — such as Claude Code, Cursor, and Windsurf — to interact with your chant project programmatically.
+`chant serve mcp` starts an MCP (Model Context Protocol) server over stdio. Agents that speak MCP, such as Claude Code, Cursor and Windsurf, use it to work with your chant project.
 
-Typically you don't run this directly. `chant init` detects your IDE and writes the MCP config to the appropriate global config file — `~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise. Your agent picks it up automatically. See [Agent Integration](/chant/guide/agent-integration/).
+You rarely run this yourself. `chant init` detects your IDE and writes the MCP config to its global config file (`~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise), and your agent picks it up. See [Agent Integration](/chant/guide/agent-integration/).
 
 ### At a workspace root
 
@@ -166,7 +166,7 @@ Show the state the runtime reports for an Op's latest run.
 | `name` | `string` | Yes | Op name |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
-Returns `{ op, runtime, runId, state, startedAt, endedAt, records, gate }`. `records` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)) — the same shape `--progress-json` streams. `gate` is the pending gate (`{ name, since }`), null when none is standing.
+Returns `{ op, runtime, runId, state, startedAt, endedAt, records, gate }`. `records` is the per-phase `StepRecord[]` array (present when the Op's `*.op.ts` is discoverable; see [Progress and gate state](/chant/guide/ops-reference/#progress-and-gate-state)), the same shape `--progress-json` streams. `gate` is the pending gate (`{ name, since }`), null when none is standing.
 
 ### `op-approve`
 
@@ -187,7 +187,7 @@ Returns `{ op, gate, resolvedBy, origin, timestamp, runtimeNotified }`.
 
 Every gate fact records the channel it came through, one of `cli`, `mcp` or `acp`. When a run reaches a gate over MCP, the pending fact says `mcp`, and this tool then refuses to answer it. `op-run` wrote the first half and `op-approve` would write the second, so one caller in one session would have written both, and the gate would have no second party in it.
 
-The refusal names the way through. Approve from a channel the run did not arrive on, which is normally `chant approve <op> <gate>` at a shell. A gate reached at a shell or over ACP is resolvable here, because that is the separation the gate exists for. `chant approve` carries an `--allow-same-origin` override for the operator who genuinely wants both halves in one session; this tool deliberately has no equivalent.
+The refusal names the way through. Approve from a channel the run did not arrive on, which is normally `chant approve <op> <gate>` at a shell. A gate reached at a shell or over ACP is resolvable here, because that is the separation the gate exists for. `chant approve` carries an `--allow-same-origin` override for the operator who wants both halves in one session; this tool has no equivalent.
 
 There is no `approver` parameter, and the resolution records `resolvedBy` as `unattested`. MCP cannot verify a name, so a name supplied here would sit on the ledger looking exactly like a name a person gave. A shell approval takes `--actor` and can be believed.
 
@@ -218,7 +218,7 @@ Return a markdown report for an Op's latest run.
 
 ### Plugin Tools
 
-Lexicon plugins can contribute additional tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
+Lexicon plugins can add tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
 
 ## Workspace tools
 
@@ -261,7 +261,7 @@ Each parameter stands for the CLI flag of the same name, written in camel case, 
 
 ## Resources
 
-The server provides resources that agents can read for context:
+Agents can read these resources:
 
 | URI | MIME Type | Description |
 |-----|-----------|-------------|
@@ -279,13 +279,13 @@ The server provides resources that agents can read for context:
 
 ### Plugin Resources
 
-Lexicon plugins can contribute additional resources, namespaced as `chant://{pluginName}/{path}`. Plugin resources with `/examples/` in their URI are automatically included in the examples list.
+Lexicon plugins can add resources, namespaced as `chant://{pluginName}/{path}`. Plugin resources with `/examples/` in their URI are included in the examples list.
 
 ## Configuration
 
 ### Automatic Setup
 
-`chant init` detects your IDE and adds the MCP server to the appropriate global config file:
+`chant init` detects your IDE and adds the MCP server to that IDE's global config file:
 
 | IDE | Config path |
 |-----|------------|
