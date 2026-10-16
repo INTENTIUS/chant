@@ -1,6 +1,11 @@
 /**
- * Docs site template generators for init-lexicon scaffold.
+ * Docs site template generators for init-lexicon scaffold. The app files
+ * (package.json, tsconfig, Astro config, content config) are written only for a
+ * lexicon outside the chant repository; inside it, the lexicon's docs are a
+ * section of the main site (chant #3993).
  */
+
+import { DOCS_SITE_DEPENDENCIES } from "../../../../codegen/docs-in-site";
 
 export function generateDocsPackageJson(name: string): string {
   return JSON.stringify(
@@ -14,11 +19,7 @@ export function generateDocsPackageJson(name: string): string {
         build: "astro build",
         preview: "astro preview",
       },
-      dependencies: {
-        "@astrojs/starlight": "^0.37.6",
-        astro: "^5.6.1",
-        sharp: "^0.34.2",
-      },
+      dependencies: { ...DOCS_SITE_DEPENDENCIES },
     },
     null,
     2,

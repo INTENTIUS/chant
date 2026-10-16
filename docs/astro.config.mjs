@@ -4,6 +4,7 @@ import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import rehypeBaseUrl from '../packages/core/src/codegen/rehype-base-url.mjs';
 import remarkAgentPrompt from './src/remark-agent-prompt.mjs';
+import { lexiconGroups, lexiconPageBase } from './src/lexicon-sidebar.mjs';
 
 // https://astro.build/config
 export default defineConfig({
@@ -11,7 +12,9 @@ export default defineConfig({
 	base: '/chant',
 	markdown: {
 		remarkPlugins: [remarkAgentPrompt],
-		rehypePlugins: [[rehypeBaseUrl, { base: '/chant' }]],
+		// A lexicon page's root-relative link means its own lexicon's root, as
+		// it did when each lexicon had its own site (chant #3993).
+		rehypePlugins: [[rehypeBaseUrl, { base: '/chant', projectBase: '/chant', baseFor: lexiconPageBase }]],
 	},
 	redirects: {
 		// Destination is base-prefixed: Astro's own redirect renderer emits this
@@ -45,10 +48,14 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/intentius/chant' }],
 			head: [
 				{ tag: 'link', attrs: { rel: 'icon', href: '/chant/favicon-48.png', sizes: '48x48', type: 'image/png' } },
+				// PostHog's loader snippet, with one change: its `n<o.length` reads
+				// `o.length>n`. lychee's HTML tokenizer took `<o.length...` for a tag
+				// and stopped reading the page there, so the link check saw three
+				// links per page and passed without checking the rest (chant #3993).
 				{
 					tag: 'script',
 					content: `
-						!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],Object.defineProperty(u,"toString",{configurable:!0,enumerable:!0,writable:!0,value:function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e}}),Object.defineProperty(u.people,"toString",{configurable:!0,enumerable:!0,writable:!0,value:function(){return u.toString(1)+".people (stub)"}}),o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+						!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],Object.defineProperty(u,"toString",{configurable:!0,enumerable:!0,writable:!0,value:function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e}}),Object.defineProperty(u.people,"toString",{configurable:!0,enumerable:!0,writable:!0,value:function(){return u.toString(1)+".people (stub)"}}),o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug".split(" "),n=0;o.length>n;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
 						posthog.init('phc_uAQ5KE5uLZeSiPqbqnsUPRkeJZem5ht9vMVP3TgX7yqj', {
 							api_host: 'https://us.i.posthog.com',
 							defaults: '2026-05-30',
@@ -118,20 +125,15 @@ export default defineConfig({
 							],
 						},
 						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
-						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
 						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },
-						{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
 						{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
-						{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
 						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
 						{ label: 'Per-PR Preview Environments', slug: 'tutorials/github-pr-preview' },
 						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
 						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
 						{ label: 'Ray + KubeRay on GKE', slug: 'tutorials/ray-kuberay-gke' },
 						{ label: 'Argo CD on GKE', slug: 'tutorials/argo-cd-gke' },
-						{ label: 'Argo CD Composites', link: '/lexicons/k8s/argo-composites/' },
 						{ label: 'Flux CD Self-Hosted', slug: 'tutorials/flux-apps' },
-						{ label: 'Flux Composites', link: '/lexicons/k8s/flux-composites/' },
 					],
 				},
 				{
@@ -400,53 +402,6 @@ export default defineConfig({
 							],
 						},
 						{
-							label: 'Lexicons',
-							collapsed: true,
-							items: [
-								{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
-								{ label: 'Azure ARM', link: '/lexicons/azure/' },
-								{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
-								{ label: 'Fly Machines', link: '/lexicons/fly/' },
-								{
-									label: 'Fountain',
-									collapsed: true,
-									items: [
-										{ label: 'Overview', link: '/lexicons/fountain/' },
-										{ label: 'The Steward', link: '/lexicons/fountain/steward/' },
-										{ label: 'Running an Op on fountain', link: '/lexicons/fountain/runtime/' },
-										{ label: 'chant acp', link: '/lexicons/fountain/acp/' },
-									],
-								},
-								{ label: 'Control Plane', link: '/lexicons/cpln/' },
-								{ label: 'Cedar', link: '/lexicons/cedar/' },
-								{
-									label: 'Kubernetes',
-									collapsed: true,
-									items: [
-										{ label: 'Overview', link: '/lexicons/k8s/' },
-										{ label: 'Generic Composites', link: '/lexicons/k8s/composite-examples/' },
-										{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
-										{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
-										{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
-									],
-								},
-								{ label: 'Helm Charts', link: '/lexicons/helm/' },
-								{ label: 'k3d', link: '/lexicons/k3d/' },
-								{ label: 'k3s', link: '/lexicons/k3s/' },
-								{ label: 'GitHub Actions', link: '/lexicons/github/' },
-								{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
-								{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
-								{ label: 'Docker', link: '/lexicons/docker/' },
-								{ label: 'OpenTelemetry Collector', link: '/lexicons/otel/' },
-								{ label: 'Grafana', link: '/lexicons/grafana/' },
-								{ label: 'Prometheus', link: '/lexicons/prometheus/' },
-								{ label: 'SQL (ClickHouse)', link: '/lexicons/sql/' },
-								{ label: 'Render', link: '/lexicons/render/' },
-								{ label: 'Terraform', link: '/lexicons/terraform/' },
-								{ label: 'augur (behaviour)', link: '/lexicons/augur/' },
-							],
-						},
-						{
 							label: 'Lexicon authoring',
 							collapsed: true,
 							badge: { text: 'Plugin Dev', variant: 'tip' },
@@ -525,6 +480,12 @@ export default defineConfig({
 						},
 					],
 				},
+				// One collapsed group per lexicon, Diátaxis subgroups inside, read from
+				// the _sidebar.json fragments the lexicon docs pipeline writes beside
+				// each lexicon's pages (src/lexicon-sidebar.mjs, chant #3993).
+				// scripts/check-docs-diataxis.mjs checks each page against the
+				// subgroup it sits in.
+				{ label: 'Lexicons', collapsed: true, items: lexiconGroups() },
 				{ label: "What's New", slug: 'whats-new' },
 			],
 		}),

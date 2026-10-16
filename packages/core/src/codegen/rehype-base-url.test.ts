@@ -159,3 +159,37 @@ describe("rehypeBaseUrl — tree traversal", () => {
     expect(root.children[0].properties.src).toBe("/foo.png");
   });
 });
+
+// chant #3993: the main site builds every lexicon's pages under
+// /chant/lexicons/<name>/, and a lexicon page's root-relative link keeps
+// meaning its own lexicon's root, as it did on the lexicon's own site.
+describe("rehypeBaseUrl — per-page base (baseFor)", () => {
+  const baseFor = (path: string): string | undefined => {
+    const name = path.match(/\/content\/docs\/lexicons\/([^/]+)\//)?.[1];
+    return name ? `/chant/lexicons/${name}` : undefined;
+  };
+  const opts = { base: "/chant", projectBase: "/chant", baseFor };
+
+  function runAt(path: string | undefined, href: string): string {
+    const plugin = rehypeBaseUrl(opts);
+    const root = tree(a(href));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (plugin as any)(root, path === undefined ? undefined : { path });
+    return root.children[0].properties.href as string;
+  }
+
+  it("prefixes a lexicon page's root-relative link with its lexicon's base", () => {
+    expect(runAt("/repo/docs/src/content/docs/lexicons/aws/composites.mdx", "/intrinsics/")).toBe(
+      "/chant/lexicons/aws/intrinsics/",
+    );
+  });
+
+  it("leaves a lexicon page's /chant/ link alone", () => {
+    expect(runAt("/repo/docs/src/content/docs/lexicons/aws/composites.mdx", "/chant/guide/ops/")).toBe("/chant/guide/ops/");
+  });
+
+  it("uses the site base for every other page", () => {
+    expect(runAt("/repo/docs/src/content/docs/guide/ops.mdx", "/lexicons/aws/")).toBe("/chant/lexicons/aws/");
+    expect(runAt(undefined, "/lexicons/aws/")).toBe("/chant/lexicons/aws/");
+  });
+});

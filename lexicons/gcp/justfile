@@ -9,8 +9,15 @@ bundle:
 validate:
     npx tsx src/validate-cli.ts
 
+# Generate this lexicon's docs into the main site (docs/src/content/docs/lexicons/), then start its dev server
 docs:
     npx tsx src/codegen/docs-cli.ts
+    npm install --prefix ../../docs
+    npm run --prefix ../../docs dev
+
+# Build the whole docs site, every lexicon's section included
+docs-build:
+    cd ../.. && bash scripts/build-docs.sh
 
 test:
     npx vitest run

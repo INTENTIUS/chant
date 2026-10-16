@@ -11,9 +11,16 @@
  * idempotently skips hrefs that already start with the site's own base or the
  * project-wide base.
  *
+ * `baseFor` lets one site hold sections with their own root (chant #3993): the
+ * main docs site builds every lexicon's pages under /chant/lexicons/<name>/,
+ * and a lexicon page's `/foo/` has always meant its own lexicon's root, as it
+ * did when each lexicon was a separate site. `baseFor(file.path)` returns the
+ * base for that page, or undefined to use `base`.
+ *
  * @typedef {Object} RehypeBaseUrlOptions
  * @property {string} base - Site base, e.g. "/chant" or "/chant/lexicons/aws". Trailing/leading slashes optional.
  * @property {string} [projectBase] - Project-wide base used to detect already-correctly-prefixed cross-site links.
+ * @property {(path: string) => string | undefined} [baseFor] - Per-page base, by the page's source path.
  */
 
 const PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:/i;
@@ -26,16 +33,12 @@ function normalizeBase(value) {
  * @param {RehypeBaseUrlOptions} opts
  */
 export default function rehypeBaseUrl(opts) {
-  const base = normalizeBase(opts.base);
-  if (base === "/") {
-    return () => {};
-  }
-  const ownPrefix = base + "/";
+  const siteBase = normalizeBase(opts.base);
   const projectPrefix = opts.projectBase
     ? normalizeBase(opts.projectBase) + "/"
     : null;
 
-  function rewrite(node) {
+  function rewrite(node, base, ownPrefix) {
     if (
       node &&
       node.type === "element" &&
@@ -58,11 +61,14 @@ export default function rehypeBaseUrl(opts) {
       }
     }
     if (node && node.children) {
-      for (const child of node.children) rewrite(child);
+      for (const child of node.children) rewrite(child, base, ownPrefix);
     }
   }
 
-  return (tree) => {
-    rewrite(tree);
+  return (tree, file) => {
+    const own = opts.baseFor && file && typeof file.path === "string" ? opts.baseFor(file.path) : undefined;
+    const base = own ? normalizeBase(own) : siteBase;
+    if (base === "/") return;
+    rewrite(tree, base, base + "/");
   };
 }

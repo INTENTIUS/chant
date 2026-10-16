@@ -1,7 +1,8 @@
 /**
  * GCP Config Connector documentation generator.
  *
- * Produces a standalone Starlight docs site at lexicons/gcp/docs/.
+ * writeDocsSite puts the pages in the main docs site under
+ * docs/src/content/docs/lexicons/gcp/ (chant #3993).
  */
 
 import { dirname, join } from "path";

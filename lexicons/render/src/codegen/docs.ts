@@ -2,8 +2,8 @@
  * render documentation generator.
  *
  * Calls the core docsPipeline with render-specific config: service grouping and
- * overview content. Produces a standalone Starlight docs site at
- * lexicons/render/docs/, like the fly and gcp lexicons.
+ * overview content. writeDocsSite puts the pages in the main docs site under
+ * docs/src/content/docs/lexicons/render/ (chant #3993).
  */
 
 import { dirname, join } from "path";

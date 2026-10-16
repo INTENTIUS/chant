@@ -1,16 +1,15 @@
 // Runs after `astro build` (npm run build) and fails it when a room page, the
 // home page or src/data/rooms.mjs links a page or an anchor that does not
-// exist. A link into a lexicon's docs site (/chant/lexicons/<name>/) passes
-// when lexicons/<name>/docs is a site in this repository: those sites are
-// built separately by scripts/build-docs.sh and served beside this one, where
-// lychee checks them. It also fails when the sidebar's "Start here" group and
-// the rooms' tiles and roles disagree.
+// exist. Lexicon pages (/chant/lexicons/<name>/) are part of this build
+// since chant #3993, so a link into one is checked like any other page: run
+// scripts/build-docs.sh, which generates every lexicon's section before
+// `astro build`, or the link fails as leading nowhere. It also fails when the
+// sidebar's "Start here" group and the rooms' tiles and roles disagree.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ROLES, TILES, roomLinks } from '../src/data/rooms.mjs';
-import { hasLexiconSite } from '../src/data/proof.mjs';
 import { siteHref } from '../src/data/href.mjs';
 
 const base = '/chant';
@@ -39,11 +38,11 @@ const broken = (href, from) => {
 	let file = from;
 	if (path) {
 		if (!path.startsWith(`${base}/`)) return `${href} is outside ${base}/`;
-		const lexicon = path.match(/^\/chant\/lexicons\/([^/]+)\//)?.[1];
 		file = target(path.split('?')[0]);
 		if (!file) {
-			if (lexicon && hasLexiconSite(lexicon)) return undefined;
-			return `${href} leads nowhere`;
+			const lexicon = path.match(/^\/chant\/lexicons\/([^/]+)\//)?.[1];
+			const hint = lexicon && !existsSync(join(docs, 'src', 'content', 'docs', 'lexicons', lexicon)) ? ` (the ${lexicon} lexicon's pages were not generated: run scripts/build-docs.sh)` : '';
+			return `${href} leads nowhere${hint}`;
 		}
 	}
 	if (anchor && file?.endsWith('.html') && !idsOf(file).has(decodeURIComponent(anchor))) return `${href} names an anchor the page does not have`;

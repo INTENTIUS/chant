@@ -8,10 +8,19 @@
  */
 
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 import { expandFileMarkers } from "./docs-file-markers";
+import {
+  DOCS_SITE_DEPENDENCIES,
+  buildSectionGroup,
+  hiddenSectionSlugs,
+  rebaseImports,
+  resolveDocsMode,
+  sectionContentDir,
+  withQuadrant,
+} from "./docs-in-site";
 import { readAuthoredPages } from "./docs-pages";
 import { scanRules, generateRules } from "./docs-rule-scanning";
 import { buildSidebar } from "./docs-sidebar";
@@ -22,6 +31,14 @@ import type { DocsConfig, DocsResult, ManifestJSON, MetaEntry, SidebarPage } fro
 export { expandFileMarkers } from "./docs-file-markers";
 export type { DocsConfig, DocsResult, Quadrant, SidebarPage } from "./docs-types";
 export { QUADRANTS, QUADRANT_LABELS, readAuthoredPages } from "./docs-pages";
+export {
+  DOCS_SITE_DEPENDENCIES,
+  buildSectionGroup,
+  findChantDocsSite,
+  resolveDocsMode,
+  sectionContentDir,
+  type DocsSiteMode,
+} from "./docs-in-site";
 
 // ── Pipeline ───────────────────────────────────────────────────────
 
@@ -280,13 +297,53 @@ export function writeDocsPages(result: DocsResult, outDir: string): void {
 }
 
 /**
+ * Write a lexicon's docs from pipeline results, in the mode
+ * {@link resolveDocsMode} picks: inside the chant repository, a section of the
+ * main site ({@link writeDocsSection}); anywhere else, a standalone Starlight
+ * app ({@link writeStandaloneDocsSite}). Every lexicon's `docs.ts` calls this,
+ * so neither they nor the `chant init-lexicon` scaffold choose a mode.
+ */
+export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
+  const { mode, siteDir } = resolveDocsMode(config);
+  if (mode === "in-site" && siteDir) writeDocsSection(config, result, siteDir);
+  else writeStandaloneDocsSite(config, result);
+}
+
+/**
+ * Write a lexicon's pages into the main docs site (chant #3993): every page
+ * under `docs/src/content/docs/lexicons/<name>/`, and `_sidebar.json` beside
+ * them with the lexicon's sidebar group and its hidden pages. The section is
+ * build output, so the directory is replaced whole on every run; a page the
+ * pipeline stopped emitting cannot linger. No app files are written.
+ */
+export function writeDocsSection(config: DocsConfig, result: DocsResult, siteDir: string): void {
+  const sectionDir = sectionContentDir(siteDir, config.name);
+  rmSync(sectionDir, { recursive: true, force: true });
+  mkdirSync(sectionDir, { recursive: true });
+
+  const quadrantOf = new Map(result.sidebarPages.map((p) => [`${p.slug}.mdx`, p.quadrant]));
+  for (const [filename, content] of result.pages) {
+    const filePath = join(sectionDir, filename);
+    const pageDir = dirname(filePath);
+    mkdirSync(pageDir, { recursive: true });
+    const page = rebaseImports(withQuadrant(content, quadrantOf.get(filename)), { outDir: config.outDir, siteDir, pageDir });
+    writeFileSync(filePath, page);
+  }
+
+  writeFileSync(
+    join(sectionDir, "_sidebar.json"),
+    JSON.stringify({ group: buildSectionGroup(config, result), hidden: hiddenSectionSlugs(config, result) }, null, 2) + "\n",
+  );
+}
+
+/**
  * Scaffold a standalone Starlight docs site from pipeline results.
  *
  * Writes: package.json, astro.config.mjs, tsconfig.json, and all content
  * pages under src/content/docs/. The resulting directory can be built with
  * `npm install && npm run build`.
  */
-export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
+export function writeStandaloneDocsSite(config: DocsConfig, result: DocsResult): void {
   const outDir = config.outDir;
   const contentDir = join(outDir, "src", "content", "docs");
 
@@ -350,11 +407,7 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
           build: "astro build",
           preview: "astro preview",
         },
-        dependencies: {
-          "@astrojs/starlight": "^0.37.6",
-          astro: "^5.6.1",
-          sharp: "^0.34.2",
-        },
+        dependencies: { ...DOCS_SITE_DEPENDENCIES },
       },
       null,
       2,

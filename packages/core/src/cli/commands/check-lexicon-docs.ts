@@ -15,7 +15,10 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { join } from "path";
+import { basename, join, resolve } from "path";
+
+import { collectSidebarSlugs } from "../../codegen/docs";
+import { findChantDocsSite, sectionContentDir } from "../../codegen/docs-in-site";
 
 export interface DocsReachability {
   /** Whether this lexicon ships a Starlight site at all. */
@@ -55,7 +58,7 @@ export function auditDocsReachability(lexiconDir: string): DocsReachability {
   const configPath = join(lexiconDir, "docs", "astro.config.mjs");
 
   if (!existsSync(contentDir) || !existsSync(configPath)) {
-    return { hasSite: false, pages: [], unreachable: [] };
+    return auditSectionReachability(lexiconDir);
   }
 
   const slugs = sidebarSlugs(readFileSync(configPath, "utf-8"));
@@ -98,4 +101,38 @@ export function auditDocsClassification(lexiconDir: string): DocsClassification 
     if (!value || !QUADRANTS.has(value)) unclassified.push(file);
   }
   return { hasPages: true, unclassified };
+}
+
+/**
+ * Reachability for a lexicon whose docs are a section of the chant main site
+ * (chant #3993): its generated pages under
+ * `docs/src/content/docs/lexicons/<name>/` against the `_sidebar.json` the
+ * pipeline wrote beside them. A page the fragment lists as hidden is
+ * deliberately URL-only and does not count. Before the section has been
+ * generated there is nothing to audit, which reads as no site, like a
+ * lexicon with no docs.
+ */
+function auditSectionReachability(lexiconDir: string): DocsReachability {
+  const site = findChantDocsSite(lexiconDir);
+  const name = basename(resolve(lexiconDir));
+  const dir = site ? sectionContentDir(site, name) : undefined;
+  const fragmentPath = dir ? join(dir, "_sidebar.json") : undefined;
+  if (!dir || !fragmentPath || !existsSync(fragmentPath)) return { hasSite: false, pages: [], unreachable: [] };
+
+  const fragment = JSON.parse(readFileSync(fragmentPath, "utf-8")) as {
+    group: Record<string, unknown>;
+    hidden?: string[];
+  };
+  const prefix = `lexicons/${name}/`;
+  const reached = new Set(
+    [...collectSidebarSlugs([fragment.group]), ...(fragment.hidden ?? [])].map((slug) =>
+      slug.startsWith(prefix) ? slug.slice(prefix.length) : slug,
+    ),
+  );
+  const pages = readdirSync(dir)
+    .filter((f) => f.endsWith(".mdx") || f.endsWith(".md"))
+    .map((f) => f.replace(/\.mdx?$/, ""))
+    .sort();
+  const unreachable = pages.filter((slug) => slug !== "index" && !reached.has(slug));
+  return { hasSite: true, pages, unreachable };
 }

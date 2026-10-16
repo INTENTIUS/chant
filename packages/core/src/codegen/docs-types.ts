@@ -38,8 +38,21 @@ export interface DocsConfig {
   suppressPages?: string[];
   /** Source directory for scanning rule files (defaults to srcDir sibling of distDir) */
   srcDir?: string;
-  /** Base path for the generated Astro site (e.g. '/lexicons/aws/') */
+  /** Base path for the generated Astro site (e.g. '/lexicons/aws/'). Standalone mode only. */
   basePath?: string;
+  /**
+   * Where `writeDocsSite` writes (chant #3993). `in-site`: the lexicon's pages
+   * and sidebar fragment go into the chant repository's main docs site.
+   * `standalone`: a Starlight app of its own in `outDir`. Unset, the
+   * `CHANT_DOCS_MODE` environment variable decides, and without it a lexicon
+   * inside the chant repository goes in-site and any other standalone.
+   */
+  mode?: "in-site" | "standalone";
+  /**
+   * The main docs site (`<chant repo>/docs`) for in-site mode. Defaults to
+   * `CHANT_DOCS_SITE`, then to the first one found walking up from `outDir`.
+   */
+  siteDir?: string;
   /** Root directory for resolving {{file:...}} markers in extra page content */
   examplesDir?: string;
   /**

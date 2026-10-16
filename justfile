@@ -155,7 +155,7 @@ diagrams:
 docs: diagrams
     npm --prefix docs run dev
 
-# Start a lexicon docs dev server (e.g. just docs-lexicon aws)
+# Generate one lexicon's docs into the main site and start its dev server (e.g. just docs-lexicon aws)
 docs-lexicon lexicon:
     just lexicons/{{lexicon}}/docs
 

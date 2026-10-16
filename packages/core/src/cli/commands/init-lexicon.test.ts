@@ -78,6 +78,31 @@ describe("initLexiconCommand", () => {
     }
   });
 
+  // chant #3993: inside the chant repository the lexicon's docs are a section
+  // of the main site, so only docs/pages/ is scaffolded.
+  test("inside the chant repository it scaffolds docs/pages/ and no docs app", async () => {
+    mkdirSync(join(tmpDir, "docs"), { recursive: true });
+    writeFileSync(join(tmpDir, "docs", "package.json"), JSON.stringify({ name: "@intentius/chant-docs" }));
+    writeFileSync(join(tmpDir, "docs", "astro.config.mjs"), "export default {};\n");
+    const targetDir = join(tmpDir, "lexicons", "in-repo");
+    const result = await initLexiconCommand({ name: "in-repo", path: targetDir });
+
+    expect(result.success).toBe(true);
+    expect(existsSync(join(targetDir, "docs/pages/getting-started.mdx"))).toBe(true);
+    for (const file of ["docs/package.json", "docs/tsconfig.json", "docs/astro.config.mjs", "docs/src"]) {
+      expect(existsSync(join(targetDir, file)), file).toBe(false);
+    }
+  });
+
+  test("a standalone docs app pins the main site's Starlight and Astro", async () => {
+    const targetDir = join(tmpDir, "pins");
+    await initLexiconCommand({ name: "pins", path: targetDir });
+    const docsPkg = JSON.parse(readFileSync(join(targetDir, "docs/package.json"), "utf-8"));
+    const mainPkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "..", "..", "..", "docs", "package.json"), "utf-8"));
+    expect(docsPkg.dependencies["@astrojs/starlight"]).toBe(mainPkg.dependencies["@astrojs/starlight"]);
+    expect(docsPkg.dependencies.astro).toBe(mainPkg.dependencies.astro);
+  });
+
   test("plugin.ts contains all 5 required lifecycle methods", async () => {
     const targetDir = join(tmpDir, "lifecycle");
     await initLexiconCommand({ name: "k8s", path: targetDir });

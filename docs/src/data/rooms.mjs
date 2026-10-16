@@ -8,8 +8,8 @@
 // A link's href is one of:
 //   a page of this site, as its slug with an optional #anchor
 //     ('guide/pull-request-ci', 'cli/audit#example');
-//   a lexicon's docs site, as 'lexicons/<name>/' (built from
-//     lexicons/<name>/docs and served beside this site);
+//   a lexicon's docs section, as 'lexicons/<name>/' (generated from
+//     lexicons/<name>/docs/pages into this site by scripts/build-docs.sh);
 //   a full https:// address.
 // scripts/check-rooms.mjs runs after `astro build` and fails the build when a
 // room or the picker links a page or anchor that does not exist. A room's

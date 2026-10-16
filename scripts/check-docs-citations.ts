@@ -38,10 +38,16 @@ const DOCS = join(ROOT, "docs", "src", "content", "docs");
 
 import { checkCitations, loadRules, describeFinding, bundledSpecDir } from "@intentius/tsad-conformance";
 
+// Each lexicon's generated section under lexicons/<name>/ is build output
+// (chant #3993) and was never part of this check; lexicons/overview.mdx is a
+// core page and stays in.
+const LEXICON_SECTIONS = join(DOCS, "lexicons");
+
 function docFiles(dir: string): string[] {
   return readdirSync(dir)
     .flatMap((entry) => {
       const path = join(dir, entry);
+      if (statSync(path).isDirectory() && dir === LEXICON_SECTIONS) return [];
       if (statSync(path).isDirectory()) return docFiles(path);
       return /\.mdx?$/.test(entry) ? [path] : [];
     })
