@@ -4,7 +4,7 @@ description: The routes a broker of box capabilities serves, and the conformance
 diataxis: reference
 ---
 
-A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability in its [box block](/chant/reference/workspace-declaration/#boxes) names a broker and a scope. The broker holds the credential and swaps the box's own token for it. It refuses what the scope does not allow. chant never runs a broker ([ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md)). This page is what one must answer, so that studio's lobby, fountain's broker or a broker a platform team runs itself can each serve the same box ([#3164](https://github.com/INTENTIUS/chant/issues/3164), [ws-097](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-097-a-broker-protocol-for-box-capabilities.md)).
+A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability in its [box block](/chant/reference/workspace-declaration/#boxes) names a broker and a scope. The broker holds the credential and swaps the box's own token for it. It refuses what the scope does not allow. chant never runs a broker ([ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md)). This page lists the routes a broker must serve, so that studio's lobby, fountain's broker or a broker a platform team runs itself can each serve the same box ([#3164](https://github.com/INTENTIUS/chant/issues/3164), [ws-097](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-097-a-broker-protocol-for-box-capabilities.md)).
 
 This is version 1. Its request and answer bodies are the `$defs` of `broker-protocol.schema.json`, which `@intentius/chant` ships at `@intentius/chant/workspace/broker-protocol.schema.json`. The routes and the scope words are in `@intentius/chant/workspace/broker-protocol`, which a broker written for Node can import.
 
@@ -18,7 +18,7 @@ The `broker` word in a box block names the broker the box reaches, not a product
 
 ## Routes
 
-Every route is relative to the broker's base URL, which the box is given (studio gives it as `STUDIO_URL`, and as `ANTHROPIC_BASE_URL=<broker>/llm/anthropic` for the agent). Every request carries the box's own token: `Authorization: Bearer <token>`, or `x-api-key: <token>` on the Anthropic routes as the Anthropic SDK sends it. On an egress route the token goes wherever the API expects its key. How a box gets its token is the broker's own: studio's door claims one when the box is enrolled, and fountain gives a sandbox its callback token.
+Every route is relative to the broker's base URL, which the box is given (studio gives it as `STUDIO_URL`, and as `ANTHROPIC_BASE_URL=<broker>/llm/anthropic` for the agent). Every request carries the box's own token: `Authorization: Bearer <token>`, or `x-api-key: <token>` on the Anthropic routes as the Anthropic SDK sends it. On an egress route the token goes wherever the API expects its key. Each broker decides how a box gets its token: studio's door claims one when the box is enrolled, and fountain gives a sandbox its callback token.
 
 | Route | Capability | Scope word | Body |
 |---|---|---|---|
@@ -84,7 +84,7 @@ A box is shared. Its owner, a visitor and the people they invite all prompt one 
 
 The broker issues a grant to a person for one box, through whatever surface signs that person in at the broker. The person's browser carries it to the box's surface, such as hud, which sends it on that person's turns only, as the `chant-grant` request header on `/llm/anthropic` and `/decide`. The grant is opaque to chant and to the box. It is printable ASCII with no spaces, at most 2048 characters (`isGrantValue`).
 
-Checking a grant is the broker's job, against its own records. It must have issued the grant for the box whose token the request carries, and the grant must not have expired or been revoked. The person must still hold a credential there. If all of that holds, that credential pays for the request and the answer says `chant-payer: visitor <principal>`. A grant that fails the check is ignored, not refused: the request is paid as it would have been without one, and the payer header says so. Where no grants are issued, the header is ignored.
+Only the broker checks a grant, against its own records. It must have issued the grant for the box whose token the request carries, and the grant must not have expired or been revoked. The person must still hold a credential there. If all of that holds, that credential pays for the request and the answer says `chant-payer: visitor <principal>`. A grant that fails the check is ignored, not refused: the request is paid as it would have been without one, and the payer header says so. Where no grants are issued, the header is ignored.
 
 A grant reaches the agent's process for the length of the person's turn, and code the agent runs on that turn can read it. It is bounded by its box, its expiry and the broker's revocation, not by the turn. A broker keeps grants short.
 
