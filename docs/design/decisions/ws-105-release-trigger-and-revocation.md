@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-105"
 title: "What triggers a release cut, and what a revoked commit does to its releases"
-state: "proposed"
+state: "decided"
 area: "D17"
 source:
   issue: "INTENTIUS/chant#4033"
@@ -22,8 +22,14 @@ options:
     label: "per environment: each environment in the promotion order declares whether a green commit reaches it on its own"
     how: "Each entry of a member's environments array gains a trigger, such as { name: \"dev\", trigger: \"green\" }, and a green commit is cut and promoted to the environments that say green, while the rest wait for a person."
     tradeoff: "It reads naturally for dev environments that should follow trunk. A release covers every environment at once (ws-104 question 1), so the cut can't be per environment: what this option sets per environment is whether a promote runs on its own, which is promotion, governed by #4030's order and the release gates (#4045), and not the cut."
-choice: null
-rejected: []
+choice:
+  option: "b"
+  reason: "Who may cut is already identity.gates.release (#4031), and ws-104 put cutting on a workstation with CI publishing (#4027), so cutting by hand keeps one producer of releases. A cut builds every environment, which does not belong in the small job that decides what is green. A project that wants every green commit released adds a pipeline step after the tick that runs release cut on ci last-green. Revocation is derived at read time from the commit's ci/revoked tag, with no new record, so the signed-tag rules apply in one place."
+rejected:
+  - option: "a"
+    why: "Cutting in the tick either lets runner keys cut releases or is refused wherever the release gate is declared, and it loads every member's build into the job that decides what is green."
+  - option: "c"
+    why: "A release is compiled for every environment at once, so there is nothing to cut per environment; when a promote runs is a separate question."
 supersedes: []
 evidence:
   - title: "INTENTIUS/chant#4033, what triggers a release cut, and what a revoked commit does to releases cut from it"
@@ -59,8 +65,8 @@ evidence:
   - title: "workspace/ci-green.ts at 509acfa56: readCiTags, which judges each ci tag under signedSince"
     url: "https://github.com/INTENTIUS/chant/blob/509acfa56/packages/core/src/workspace/ci-green.ts"
     as_of: "2026-10-16T00:00:00Z"
-decided_by: null
-decided_on: null
+decided_by: "lex00"
+decided_on: "2026-10-17"
 reviews: []
 constrains:
   - "INTENTIUS/chant#4033"
@@ -77,7 +83,7 @@ constrains:
 
 # What triggers a release cut, and what a revoked commit does to its releases
 
-Proposed for lex00's review. Code was read at origin/main 509acfa56, which has #4026's cut, #4045's release gate, #4031's signed cuts and tags, and #4044's runs as a status source. The option letters in the front matter answer question 1. Question 2 is answered here, and #4033's implementation follows the recommendation for it, so the decision on it can be read against working code.
+Decided by lex00 on 2026-10-17, accepting both recommendations below. Code was read at origin/main 509acfa56, which has #4026's cut, #4045's release gate, #4031's signed cuts and tags, and #4044's runs as a status source. The option letters in the front matter answer question 1. Question 2 is answered here, and #4033's implementation follows the recommendation for it, so the decision on it can be read against working code.
 
 ## 1. What triggers a cut
 
