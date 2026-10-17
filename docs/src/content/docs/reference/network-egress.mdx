@@ -185,7 +185,7 @@ A `k8sInclude` whose `source` is an `http(s)` URL is fetched by `chant build` th
 
 ### Tagging the commits that passed CI
 
-`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` reads local tags only and reaches nothing.
+`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` and `chant ci list` read local tags only and reach nothing, except that `chant ci list --forge github` reads the check runs of the commits that have no tag.
 
 | Module | Primitive | Destination | Why |
 |---|---|---|---|

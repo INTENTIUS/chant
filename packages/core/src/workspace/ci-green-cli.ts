@@ -2,12 +2,15 @@
  * `chant ci` (#3573, ws-103): which commits passed CI.
  *
  *   ci last-green [--json]               the newest commit on the branch with a green tag and no revoked tag
+ *   ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
+ *                                        the branch's commits within the window, each with its state and phase results
  *   ci tick [--dry-run] [--forge github] tag the commits that turned green, revoke the ones that turned red
  *   ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
  *               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
  *                                        write the root CI file that runs the tick
  *
- * `last-green --json` prints `ci-last-green.schema.json`. The tick and the
+ * `last-green --json` prints `ci-last-green.schema.json` and `list --json` prints
+ * `ci-list.schema.json`. The tick and the
  * workflow print text.
  */
 
@@ -16,14 +19,14 @@ import { join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
-import { ciTick, CiGreenError, formatTick, lastGreen } from "./ci-green";
+import { ciList, ciTick, CiGreenError, formatList, formatTick, lastGreen } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
 import { ACTIONS_NAME, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
 import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
-const USAGE = "chant ci last-green [--json] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]";
+const USAGE = "chant ci last-green [--json] | ci list [--json] [--limit <n>] [--since <rev>] [--forge github] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]";
 
 export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
   const doc = lastGreen({ cwd: process.cwd() });
@@ -41,6 +44,29 @@ export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
   }
   console.log(doc.commit.sha);
   return 0;
+}
+
+export async function runCiList(ctx: CommandContext): Promise<number> {
+  try {
+    const limit = ctx.args.limit;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new Error("--limit takes a whole number of commits, 1 or more");
+    // Only an explicit --forge reaches the network; without it the list reads local refs and tags.
+    const forge = ctx.args.forge !== undefined ? ciForgeFromEnv(ctx.args.forge) : undefined;
+    const doc = await ciList({ cwd: process.cwd(), limit, since: ctx.args.since, forge });
+    if (ctx.args.json) {
+      console.log(JSON.stringify(doc, null, 2));
+      return "error" in doc ? 1 : 0;
+    }
+    if ("error" in doc) {
+      console.error(formatError({ message: doc.error.message, hint: USAGE }));
+      return 1;
+    }
+    console.log(formatList(doc));
+    return 0;
+  } catch (err) {
+    console.error(formatError({ message: `chant ci list: ${describe(err)}`, hint: USAGE }));
+    return 1;
+  }
 }
 
 const describe = (err: unknown) => (err instanceof WorkspaceReadError ? err.describe() : err instanceof Error ? err.message : String(err));

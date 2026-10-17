@@ -422,3 +422,188 @@ export function lastGreen(req: { cwd: string; remote?: string }): LastGreenDocum
     throw err;
   }
 }
+
+// ── list ─────────────────────────────────────────────────────────────────────
+
+export const CI_LIST_CONTRACT_VERSION = 1;
+export const CI_LIST_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json";
+
+/** A commit's state from its tags: `green`, `revoked` (a revoked tag wins), or `undecided` (no ci tag). */
+export type CiCommitState = "green" | "revoked" | "undecided";
+
+/**
+ * One required phase's result on a commit. `pass` and `fail` are what a tag
+ * recorded or a live read found, `pending` is a live read with runs still
+ * going or not yet reported, and `unrecorded` means no tag holds the result
+ * and the forge was not asked.
+ */
+export type CiPhaseResult = "pass" | "fail" | "pending" | "unrecorded";
+
+export interface CiListRun {
+  name: string;
+  id: number | null;
+  conclusion: string | null;
+  url: string | null;
+}
+
+export interface CiListPhase {
+  phase: string;
+  result: CiPhaseResult;
+  runs: CiListRun[];
+}
+
+export interface CiListCommit {
+  sha: string;
+  /** Committer time, ISO 8601. */
+  committed: string;
+  state: CiCommitState;
+  /** The green tag's name and time, or null when the commit has none. `tagged` is null for a lightweight tag. */
+  green: { tag: string; tagged: string | null } | null;
+  /** The revoked tag's name, time, and the phase and run its annotation names. */
+  revoked: { tag: string; tagged: string | null; phase: string | null; run: CiListRun | null } | null;
+  /** Each required phase in `require` order. */
+  phases: CiListPhase[];
+}
+
+export type CiListDocument =
+  | {
+      $schema: string;
+      contract: number;
+      chant: string;
+      workspace: { name: string; root: string; file: string };
+      branch: string;
+      ref: string;
+      /** ci.green.window, or null when `since` replaced it. */
+      window: string | null;
+      /** The revision the walk stopped at (exclusive), when `since` was given. */
+      since: string | null;
+      /** ci.green.require. */
+      require: string[];
+      /** Newest first. */
+      commits: CiListCommit[];
+    }
+  | { $schema: string; contract: number; chant: string; error: { code: CiGreenErrorCode; message: string } };
+
+interface TagRecord {
+  tagged: string | null;
+  /** The annotation's JSON record, when the tag is annotated and parses. */
+  record: Record<string, unknown> | null;
+}
+
+/** The ci tags with their annotations, read from local refs. */
+function readCiTagRecords(top: string): { green: Map<string, TagRecord>; revoked: Map<string, TagRecord> } {
+  const green = new Map<string, TagRecord>();
+  const revoked = new Map<string, TagRecord>();
+  const raw = git(top, ["for-each-ref", "--format=%(refname:lstrip=2)%00%(taggerdate:iso-strict)%00%(contents)%01", `refs/tags/${CI_GREEN_TAG_PREFIX}`, `refs/tags/${CI_REVOKED_TAG_PREFIX}`]);
+  for (const entry of raw.split("\u0001")) {
+    const [tag, date, contents] = entry.replace(/^\n/, "").split("\u0000");
+    if (!tag) continue;
+    let record: TagRecord["record"] = null;
+    // A lightweight tag has no tagger date, and its "contents" are the commit's message.
+    if (date && contents && contents.includes("{")) {
+      try {
+        const parsed = JSON.parse(contents.slice(contents.indexOf("{")));
+        if (parsed && typeof parsed === "object") record = parsed as Record<string, unknown>;
+      } catch {
+        record = null;
+      }
+    }
+    const value = { tagged: date || null, record };
+    if (tag.startsWith(CI_GREEN_TAG_PREFIX)) green.set(tag.slice(CI_GREEN_TAG_PREFIX.length), value);
+    else revoked.set(tag.slice(CI_REVOKED_TAG_PREFIX.length), value);
+  }
+  return { green, revoked };
+}
+
+const asRun = (r: unknown): CiListRun | null => {
+  if (!r || typeof r !== "object") return null;
+  const o = r as Record<string, unknown>;
+  if (typeof o.name !== "string") return null;
+  return { name: o.name, id: typeof o.id === "number" ? o.id : null, conclusion: typeof o.conclusion === "string" ? o.conclusion : null, url: typeof o.url === "string" ? o.url : null };
+};
+
+/** What the green tag's annotation recorded for a phase: its runs, all of which passed when the tag was made. */
+function recordedPhase(green: TagRecord | undefined, phase: string): CiListPhase {
+  const runs = (green?.record?.phases as Record<string, unknown> | undefined)?.[phase];
+  if (!Array.isArray(runs)) return { phase, result: "unrecorded", runs: [] };
+  return { phase, result: "pass", runs: runs.map(asRun).filter((r): r is CiListRun => r !== null) };
+}
+
+export interface ListRequest {
+  cwd: string;
+  remote?: string;
+  /** Keep only the newest n commits. */
+  limit?: number;
+  /** Walk back to this revision, exclusive, instead of the declared window. */
+  since?: string;
+  /** Judge undecided commits from the forge's check runs. Without it they list as `unrecorded`. */
+  forge?: CiForge;
+  now?: Date;
+}
+
+/**
+ * `chant ci list`: the branch's first-parent commits within the window, each
+ * with its state from the ci tags and each required phase's result. Tags
+ * give the green and revoked results offline; only undecided commits need
+ * the forge, and only when a `forge` is given. It never fetches.
+ */
+export async function ciList(req: ListRequest): Promise<CiListDocument> {
+  const head = { $schema: CI_LIST_SCHEMA_ID, contract: CI_LIST_CONTRACT_VERSION, chant: readerVersion() };
+  try {
+    const { green, top, workspace } = readGreen(req.cwd);
+    const candidates = [`refs/remotes/${req.remote ?? "origin"}/${green.branch}`, `refs/heads/${green.branch}`];
+    const ref = candidates.find((r) => tryGit(top, ["rev-parse", "--verify", "--quiet", `${r}^{commit}`]) !== null);
+    if (!ref) throw new CiGreenError("ci-branch-unknown", `this repository has neither ${candidates.join(" nor ")}`);
+
+    const logArgs = ["log", "--first-parent", "--format=%H %ct"];
+    let cutoff = 0;
+    if (req.since !== undefined) {
+      if (tryGit(top, ["rev-parse", "--verify", "--quiet", `${req.since}^{commit}`]) === null) throw new WorkspaceReadError("revision-unknown", `--since ${req.since} names no commit in this repository`);
+      logArgs.push(`${req.since}..${ref}`);
+    } else {
+      cutoff = Math.floor(((req.now ?? new Date()).getTime() - windowMs(green.window)) / 1000);
+      logArgs.push(`--max-age=${cutoff}`, ref);
+    }
+    let commits = git(top, logArgs)
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split(" "))
+      .filter(([, ct]) => Number(ct) >= cutoff)
+      .map(([sha, ct]) => ({ sha, committed: iso(new Date(Number(ct) * 1000)) }));
+    if (req.limit !== undefined) commits = commits.slice(0, req.limit);
+
+    const tags = readCiTagRecords(top);
+    const out: CiListCommit[] = [];
+    for (const c of commits) {
+      const g = tags.green.get(c.sha);
+      const r = tags.revoked.get(c.sha);
+      const state: CiCommitState = r ? "revoked" : g ? "green" : "undecided";
+      let phases = green.require.map((name) => recordedPhase(g, name));
+      let revoked: CiListCommit["revoked"] = null;
+      if (r) {
+        const phase = typeof r.record?.phase === "string" ? r.record.phase : null;
+        const run = asRun(r.record?.run);
+        revoked = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, tagged: r.tagged, phase, run };
+        phases = phases.map((p) => (p.phase === phase ? { phase: p.phase, result: "fail", runs: run ? [run] : [] } : p));
+      } else if (!g && req.forge) {
+        const verdict = evaluateCommit(green, await req.forge.checkRuns(c.sha));
+        phases = verdict.phases.map((p) => ({ phase: p.phase, result: p.verdict, runs: p.runs.map(({ name, id, conclusion, url }) => ({ name, id, conclusion, url })) }));
+      }
+      out.push({ ...c, state, green: g ? { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, tagged: g.tagged } : null, revoked, phases });
+    }
+    return { ...head, workspace, branch: green.branch, ref, window: req.since === undefined ? green.window : null, since: req.since ?? null, require: [...green.require], commits: out };
+  } catch (err) {
+    if (err instanceof CiGreenError || err instanceof WorkspaceReadError) return { ...head, error: { code: err.code, message: err instanceof WorkspaceReadError ? err.describe() : err.message } };
+    throw err;
+  }
+}
+
+/** The text `chant ci list` prints: one line per commit. */
+export function formatList(doc: Extract<CiListDocument, { branch: string }>): string {
+  const lines = [`${doc.branch}, ${doc.since ? `commits after ${doc.since}` : `commits within ${doc.window}`}: ${doc.commits.length}`];
+  for (const c of doc.commits) {
+    const phases = c.phases.map((p) => `${p.phase}=${p.result}`).join(" ");
+    lines.push(`  ${c.sha.slice(0, 12)}  ${c.state.padEnd(9)}  ${phases}`);
+  }
+  return lines.join("\n");
+}
