@@ -308,7 +308,7 @@ describe("the forward coverage check (#2773)", () => {
     const step = await changeCoverage({ cwd: tree });
     expect(step).toMatchObject({ ok: true, work: "work/W-001", severity: "warn", summary: { paths: 2, covered: 1, uncovered: 1 } });
     expect(step.findings).toEqual([expect.objectContaining({ code: "change-uncovered", path: "docs/readme.md", triage: { finding: "change-uncovered", region: "docs/readme.md" } })]);
-    await expect(changeCoverage({ cwd: tree, severity: "fail" })).rejects.toThrow(/1 change finding at severity fail: change-uncovered docs\/readme.md/);
+    await expect(changeCoverage({ cwd: tree, severity: "fail" })).rejects.toThrow(/2 change findings at severity fail: change-uncovered docs\/readme.md, commit-unlinked /);
     await expect(changeCoverage({ cwd: root })).rejects.toThrow(/not on a chant\/work\/ branch/);
     git(root, "worktree", "remove", "--force", tree);
   });

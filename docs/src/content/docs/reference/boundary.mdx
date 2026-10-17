@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 217 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 219 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 51 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -263,6 +263,8 @@ Each row follows, in the order of the table above.
 | reason code | `record-ratified-below-quorum` | chant | points-write.schema.json, points.schema.json, records.schema.json | The record is in its kind's ratified state, and its quorum is not met: it was written to that state by hand. It stays valid. |
 | reason code | `change-uncovered` | chant | changes.schema.json | A path the diff changes is covered by no current decided record and no open work item, by path or by its member. |
 | reason code | `change-out-of-scope` | chant | changes.schema.json | A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its out_of_scope. |
+| reason code | `commit-unlinked` | chant | changes.schema.json | A trunk commit in the range names no work item: it has no Chant-Record trailer of a work kind and no Chant-Lease trailer. |
+| reason code | `commit-wrongly-linked` | chant | changes.schema.json | A trunk commit in the range names a work item that is not there: a Chant-Record whose id no work kind has or whose kind is not a work kind, a malformed Chant-Record, or a Chant-Lease that resolves to no work item, and no other trailer links it. |
 | reason code | `composites-no-chant-member` | chant | composites.schema.json | No member of kind chant was read, so nothing declares a composite instance or a component. |
 | reason code | `composites-none-declared` | chant | composites.schema.json | The members read declare no composite instance. |
 | reason code | `composites-no-component` | chant | composites.schema.json | The members read declare no component, so no composite instance has one. |

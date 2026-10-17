@@ -210,6 +210,17 @@
             }
           ]
         },
+        "links": {
+          "description": "Whether each trunk commit of the range names the work item it belongs to (#4029): the first-parent commits of base..head, merges left out. A commit names one with a `Chant-Record: <kind>:<id>` trailer of a work kind the declaration names, or a `Chant-Lease` trailer a lease history on chant/lifecycle resolves to a work item. A window match does not count. Null when no work kind was read. The field is added within contract version 1, and is written by chant 0.124.28 and newer; a reader that finds none is reading an older chant. Its findings follow `severity`, like `findings`.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/links"
+            }
+          ]
+        },
         "ok": {
           "type": "boolean",
           "description": "False when severity is fail and there is a finding, or when scope has a finding."
@@ -635,6 +646,130 @@
         },
         "message": {
           "type": "string"
+        }
+      }
+    },
+    "links": {
+      "type": "object",
+      "required": [
+        "kinds",
+        "commits",
+        "findings"
+      ],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The work kinds read, by name. A Chant-Record links a commit only when its kind is one of these."
+        },
+        "commits": {
+          "type": "array",
+          "description": "Oldest first.",
+          "items": {
+            "$ref": "#/$defs/linkCommit"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/linkFinding"
+          }
+        }
+      }
+    },
+    "linkCommit": {
+      "type": "object",
+      "required": [
+        "commit",
+        "subject",
+        "state",
+        "ids",
+        "problems"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "linked",
+            "unlinked",
+            "wrong"
+          ],
+          "description": "linked: a trailer names a work record that exists, or a lease that resolves to one (a lease is taken as linked when this checkout has no chant/lifecycle branch to read). unlinked: no Chant-Record or Chant-Lease trailer names anything. wrong: trailers name a work item but none of them is one that exists."
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The work records the trailers name, as <kind>:<id>. Empty unless state is linked."
+        },
+        "problems": {
+          "type": "array",
+          "description": "The trailers that do not link the commit. Empty unless state is wrong.",
+          "items": {
+            "type": "object",
+            "required": [
+              "trailer",
+              "message"
+            ],
+            "properties": {
+              "trailer": {
+                "type": "string",
+                "description": "The trailer as written, such as Chant-Record: decision:ws-075."
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "linkFinding": {
+      "type": "object",
+      "required": [
+        "id",
+        "code",
+        "commit",
+        "message",
+        "fix",
+        "severity"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "finding:<code>:<commit>."
+        },
+        "code": {
+          "enum": [
+            "commit-unlinked",
+            "commit-wrongly-linked"
+          ]
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "fix": {
+          "type": "string",
+          "description": "What to change so the commit names its work item."
+        },
+        "severity": {
+          "enum": [
+            "warn",
+            "fail"
+          ]
         }
       }
     }

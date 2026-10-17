@@ -287,6 +287,23 @@ warning   change-uncovered: docs/readme.md, in member docs, is modified, and no 
 
 `--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-forward-coverage-check) document, which follows `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json`. `chant serve mcp` serves it as the `workspace-changes` tool. Each finding's `triage` is the gap source a work item seeded from it takes, for the finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). When a work kind is read, `addressed` says whether a work item already came from that gap, and each path's `member` and `generated` fill the rest of the point's inputs ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). See [From a change finding](/chant/guide/decision-points/#from-a-change-finding). An Op that changes the checkout runs the check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records). The lines the diff changes come from [`chant workspace patch`](/chant/cli/workspace-patch/), which reads a range the same way.
 
+### Commits that name no work item
+
+When a work kind is read, `--changes` also checks that each trunk commit says which work item it belongs to ([#4029](https://github.com/INTENTIUS/chant/issues/4029)). It judges the first-parent commits of the range and leaves merges out. Either trailer links a commit to a work item: a `Chant-Record: <kind>:<id>` naming a record of a work kind, or a `Chant-Lease` that a lease history on `chant/lifecycle` resolves to a work item. Sitting inside a work item's window does not. The records are read at `<head>`. Two findings follow the `severity` above, each with a fix line:
+
+- `commit-unlinked` means the commit carries neither trailer.
+- `commit-wrongly-linked` means no trailer links the commit and one names something that is no work item. An id no work kind has and a record of another kind are the usual causes. A malformed `Chant-Record` and a lease that resolves to nothing count too.
+
+```
+links     3 commits: 1 name a work item, 1 do not, 1 name one that is not there; work kinds: work
+warning   commit-unlinked: 4c1e90ab "Tidy the readme" carries no Chant-Record trailer of a work kind and no Chant-Lease trailer, so it names no work item
+          fix: add a `Chant-Record: work:<id>` trailer when the commit is made (git commit --trailer "Chant-Record: work:<id>"), naming the work item the commit carries out
+warning   commit-wrongly-linked: 9d02e7f1 "Fix the port" names no work item that exists: Chant-Record: work:W-999 (the work kind has no record W-999)
+          fix: correct the trailer to name an existing work record, `Chant-Record: work:<id>`, or a lease taken on one
+```
+
+A checkout without a local `chant/lifecycle` branch can't read lease histories, so a lease there is taken as linked. [Link commits to work items](/chant/guide/work-items/#link-commits-to-work-items) says how to add the trailer.
+
 ### Write scope
 
 When the declaration at `<base>` has a [`writeScope` block or `agents`](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), `--changes` also judges every commit in the range against them ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). The declaration, its record kinds and the trust policy are read at `<base>`, so a change can't widen its own scope. A commit that edits the scope itself is judged by [`chant workspace verify`](/chant/cli/workspace-verify/#what-passes), which treats it as a protected write. Merges are left out, and the commits they bring are judged instead.

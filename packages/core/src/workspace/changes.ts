@@ -42,8 +42,9 @@ import { relative, resolve, sep } from "node:path";
 import picomatch from "picomatch";
 import { declaredRecordKinds, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ChangeSeverity, type Declaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
+import { COMMIT_UNLINKED_FIX, hasLeaseLedger, judgeCommits, mergeCommits, type CommitLink, type WorkIndex } from "./commit-links";
 import { isGeneratedPath } from "./generated-files";
-import { parseRegion } from "./intent";
+import { commitDetails, parseRegion } from "./intent";
 import { loadClassRegistry } from "./principal-classes";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
 import { loadRecordKind, RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
@@ -68,6 +69,45 @@ export const CHANGES_FINDING_CODES = [
   "change-out-of-scope",
 ] as const satisfies readonly ReasonCode[];
 export type ChangesFindingCode = (typeof CHANGES_FINDING_CODES)[number];
+
+/** The codes of a finding on a commit rather than a path (#4029). Closed. */
+export const COMMIT_LINK_FINDING_CODES = [
+  /** A trunk commit in the range names no work item: no Chant-Record of a work kind and no Chant-Lease. */
+  "commit-unlinked",
+  /** A trunk commit in the range names a work item that is not there: a record id no work kind has, a record of another kind, or a lease that resolves to nothing. */
+  "commit-wrongly-linked",
+] as const satisfies readonly ReasonCode[];
+export type CommitLinkFindingCode = (typeof COMMIT_LINK_FINDING_CODES)[number];
+
+/** One non-merge first-parent commit of the range, with whether it names a work item. */
+export interface LinkCommit {
+  commit: string;
+  subject: string;
+  state: Exclude<CommitLink["state"], "merge">;
+  /** The work records its trailers name, as `<kind>:<id>`. */
+  ids: string[];
+  /** The trailers that do not link it, when `state` is `wrong`. */
+  problems: CommitLink["problems"];
+}
+
+export interface LinkFinding {
+  /** `finding:<code>:<commit>`. */
+  id: string;
+  code: CommitLinkFindingCode;
+  commit: string;
+  message: string;
+  /** What to change so the commit names its work item. */
+  fix: string;
+  severity: "warn" | "fail";
+}
+
+/** Whether the range's commits name their work items (#4029). */
+export interface LinkReport {
+  /** The work kinds read, by name. */
+  kinds: string[];
+  commits: LinkCommit[];
+  findings: LinkFinding[];
+}
 
 /** Why the check failed as a whole: the declaration's codes, the record kind's, or a `--work` item no record has. */
 export const CHANGES_ERROR_CODES = [
@@ -180,6 +220,12 @@ export type ChangesDocument =
        * or null when that declaration restricts no one.
        */
       scope: ScopeReport | null;
+      /**
+       * Whether each trunk commit of the range names the work item it belongs
+       * to (#4029), or null when no work kind was read. Findings follow the
+       * severity, like `findings`.
+       */
+      links: LinkReport | null;
       /** False when severity is fail and there are findings, or when a commit writes outside its writer's scope. */
       ok: boolean;
     })
@@ -472,6 +518,7 @@ async function run(query: ChangesQuery, head: Head): Promise<Exclude<ChangesDocu
   }
   const count = (s: ChangeStatus) => paths.filter((p) => p.status === s).length;
   const scope = await writeScopeAtBase(query, top, range, workspacePrefix);
+  const links = commitLinks(top, range, kinds, severity);
   return {
     ...head,
     workspace: { name: declaration.name, root: located.root },
@@ -484,8 +531,43 @@ async function run(query: ChangesQuery, head: Head): Promise<Exclude<ChangesDocu
     findings,
     summary: { paths: paths.length, covered: count("covered"), uncovered: count("uncovered"), outOfScope: count("out-of-scope"), ignored: count("ignored"), records: count("record") },
     scope,
-    ok: !(severity === "fail" && findings.length > 0) && (scope === null || scope.findings.length === 0),
+    links,
+    ok: !(severity === "fail" && (findings.length > 0 || (links?.findings.length ?? 0) > 0)) && (scope === null || scope.findings.length === 0),
   };
+}
+
+/**
+ * Whether each trunk commit of the range, first-parent and merges left out,
+ * names a work item (#4029). Records are read at the head, as the paths are.
+ * Null when no work kind was read.
+ */
+function commitLinks(top: string, range: { base: string; head: string }, kinds: ReadKind[], severity: ChangeSeverity): LinkReport | null {
+  const work = kinds.filter((k) => k.role === "work");
+  if (work.length === 0) return null;
+  const index: WorkIndex = {
+    kinds: new Map(work.map((k) => [k.loaded.kind.name, new Set(k.records.flatMap((r) => (r.id === null ? [] : [r.id])))])),
+    ledger: hasLeaseLedger(top),
+  };
+  const shas = git(top, ["rev-list", "--first-parent", "--reverse", `${range.base}..${range.head}`]).split("\n").filter(Boolean);
+  const judged = judgeCommits(top, shas, index, mergeCommits(top, shas));
+  const details = commitDetails(top, shas);
+  const commits: LinkCommit[] = [];
+  const findings: LinkFinding[] = [];
+  for (const sha of shas) {
+    const link = judged.get(sha)!;
+    if (link.state === "merge") continue;
+    const subject = details.get(sha)?.subject ?? "";
+    commits.push({ commit: sha, subject, state: link.state, ids: link.ids, problems: link.problems });
+    if (link.state === "linked" || severity === "off") continue;
+    const short = sha.slice(0, 8);
+    if (link.state === "unlinked") {
+      findings.push({ id: `finding:commit-unlinked:${sha}`, code: "commit-unlinked", commit: sha, severity, message: `${short} "${subject}" carries no Chant-Record trailer of a work kind and no Chant-Lease trailer, so it names no work item`, fix: COMMIT_UNLINKED_FIX });
+    } else {
+      const named = link.problems.map((p) => `${p.trailer} (${p.message})`).join("; ");
+      findings.push({ id: `finding:commit-wrongly-linked:${sha}`, code: "commit-wrongly-linked", commit: sha, severity, message: `${short} "${subject}" names no work item that exists: ${named}`, fix: `correct the trailer to name an existing work record, \`Chant-Record: ${[...index.kinds.keys()][0]}:<id>\`, or a lease taken on one` });
+    }
+  }
+  return { kinds: [...index.kinds.keys()], commits, findings };
 }
 
 /**

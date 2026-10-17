@@ -126,7 +126,7 @@ export const workspaceReadTools: ToolDefinition[] = [
   {
     name: "workspace-changes",
     description:
-      "The forward coverage check over a diff: chant workspace check --changes <range> --json (changes.schema.json, #2773). Each changed path with the current records whose constrains cover it, and a change-uncovered or change-out-of-scope finding for each gap, at the severity the declaration's changes block sets. Returns the document unchanged.",
+      "The forward coverage check over a diff: chant workspace check --changes <range> --json (changes.schema.json, #2773). Each changed path with the current records whose constrains cover it, and a change-uncovered or change-out-of-scope finding for each gap, at the severity the declaration's changes block sets. links says whether each trunk commit of the range names its work item, with commit-unlinked and commit-wrongly-linked findings at the same severity. Returns the document unchanged.",
     inputSchema: {
       type: "object",
       properties: {
