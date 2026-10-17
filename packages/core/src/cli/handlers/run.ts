@@ -26,6 +26,8 @@ import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/loca
 import { ledgerRecordingOff, noRecordEndNote, noRecordStartNote, resetNoRecordLedger, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
+import { findStoredRun, readRunEvents } from "../../run-event-store";
+import type { RunEvent } from "../../run-event";
 import { openCliRunEvents, refusesBothStreams, stdoutLine } from "../run-events";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
@@ -461,6 +463,85 @@ async function runOpLogOnRuntime(ctx: CommandContext, name: string): Promise<num
 
   return 0;
 }
+
+// ── chant run events <run> ───────────────────────────────────────────────────
+
+/** One event as a line for a person: its time, its type, where it is and how it ended. */
+export function humanRunEventLine(e: RunEvent): string {
+  const x = e as unknown as Record<string, unknown>;
+  const where = [x.component, x.phase, x.step].filter((v): v is string => typeof v === "string").join("/");
+  const detail = [where, typeof x.status === "string" ? x.status : "", typeof x.error === "string" ? x.error : ""].filter(Boolean).join(" ");
+  return `${String(x.at ?? "")}  ${String(x.type).padEnd(16)}${detail}`.trimEnd();
+}
+
+/** The exit code a run's verdict maps to: `chant run`'s own (0 ok, 1 failed, 3 waiting on a person). */
+function exitOfSettle(status: unknown): number {
+  return status === "ok" ? 0 : status === "gated" || status === "waiting" ? 3 : 1;
+}
+
+/**
+ * `chant run events <run> [--json] [--follow]` (#4042): the events a run on
+ * this host kept, replayed. `<run>` is a run id, or the name of an Op or a
+ * component selection, for which the newest stored run stands. A settled run
+ * and a run in progress both replay what is in the file; `--follow` goes on
+ * from there until the run settles. `--json` prints the stored lines as they
+ * were written; without it each event is one line for a person.
+ *
+ * The exit code is the replayed run's verdict (0, 1, or 3 for a run waiting
+ * on a person). A replay of a run still going, and a follow cut short by
+ * Ctrl-C, exit 0.
+ */
+export async function runOpEvents(ctx: CommandContext): Promise<number> {
+  const ref = ctx.args.extraPositional;
+  if (!ref) {
+    console.error(formatError({ message: "A run id or an Op name is required: chant run events <run>" }));
+    return 1;
+  }
+  if (ctx.args.on !== undefined && ctx.args.on !== "local") {
+    console.error(formatError({
+      message: `run events reads the events kept on this host, so --on ${ctx.args.on} has none to read`,
+      hint: "A run hosted off this host is read once its in-flight state is off-host (#3990).",
+    }));
+    return 1;
+  }
+  const cwd = resolve(".");
+  let stored = await findStoredRun(cwd, ref);
+  if (!stored && ctx.args.follow) {
+    // The run may be starting: give it a moment to open its file.
+    const deadline = Date.now() + RUN_EVENTS_WAIT_MS;
+    while (!stored && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      stored = await findStoredRun(cwd, ref);
+    }
+  }
+  if (!stored) {
+    console.error(formatError({
+      message: `No events are kept for "${ref}" on this host`,
+      hint: "A run keeps its events when it records to the ledger (not under --no-record), and a command other than `chant run <op>` keeps them under --events-json. Chant 0.124.28 and newer write them.",
+    }));
+    return 1;
+  }
+
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.on("SIGINT", onSigint);
+  try {
+    const settle = await readRunEvents(
+      stored.file,
+      (event, line) => {
+        if (ctx.args.json) process.stdout.write(line);
+        else console.log(humanRunEventLine(event));
+      },
+      { follow: ctx.args.follow === true, signal: controller.signal },
+    );
+    return settle ? exitOfSettle((settle as unknown as { status?: unknown }).status) : 0;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
+/** How long `--follow` waits for a run's file to appear. */
+const RUN_EVENTS_WAIT_MS = 5000;
 
 // ── chant run approve <op> <gate> ────────────────────────────────────────────
 
@@ -1397,7 +1478,7 @@ async function resolveRunWork(
 export function runOpUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown run subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant run <name>, run list, run status, run approve, run cancel, run log",
+    hint: "Available: chant run <name>, run list, run status, run approve, run cancel, run log, run events",
   }));
   return Promise.resolve(1);
 }

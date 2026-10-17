@@ -114,6 +114,7 @@ const runOpApprove = lazyHandler(runHandlers, (m) => m.runOpApprove);
 const runOpSignalRenamed = lazyHandler(runHandlers, (m) => m.runOpSignalRenamed);
 const runOpCancel = lazyHandler(runHandlers, (m) => m.runOpCancel);
 const runOpLog = lazyHandler(runHandlers, (m) => m.runOpLog);
+const runOpEvents = lazyHandler(runHandlers, (m) => m.runOpEvents);
 const runWaveHandlers = () => import("./handlers/run-wave");
 const runOpWaveCommand = lazyHandler(runWaveHandlers, (m) => m.runOpWaveCommand);
 const operatorHandlers = () => import("./handlers/operator");
@@ -304,6 +305,10 @@ Ops:
   run approve <op> <gate>  Record a gate's resolution and wake the runtime
   run cancel <name>     Cancel the active run (requires --force)
   run log <name>        Show run history for an Op
+  run events <run>      Replay a run's events kept on this host (a run id, or
+                        an Op or component name for its newest run). --json
+                        prints the run-event lines; --follow streams a run in
+                        progress until run-settle (#4042)
   run wave --spec <file> --wave <k>  Plan, gate and apply wave k of an Op
                         waves spec (#3679): the job a generated waves
                         pipeline runs. --decide plans and decides only;
@@ -1281,6 +1286,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "run signal", handler: runOpSignalRenamed },
   { name: "run cancel", handler: runOpCancel },
   { name: "run log", handler: runOpLog },
+  { name: "run events", handler: runOpEvents },
   { name: "run wave", handler: runOpWaveCommand },
   // #3683 — start the CI jobs that wait at gates whose approval arrived. Imported on first use.
   { name: "run resume", handler: async (ctx) => (await import("./handlers/gate-resume")).runResumeCommand(ctx) },

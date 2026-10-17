@@ -80,6 +80,8 @@ export interface ParsedArgs {
    * `--progress-json`, which prints the older shapes to the same stdout.
    */
   eventsJson?: boolean;
+  /** `chant run events <run> --follow` (#4042) — stream the run's events as they happen, until `run-settle`. */
+  follow?: boolean;
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
   migrateFrom?: string;

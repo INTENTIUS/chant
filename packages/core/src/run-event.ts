@@ -8,8 +8,8 @@
  * the one writer: every emitter hands a writer the type-specific body and
  * the writer stamps the run's identity, the sequence number, the time and the
  * contract fields on it, then writes one JSON line. The emitters themselves
- * are in `./run-event-stream.ts` and the runtimes (#4041); replay and
- * `--follow` are #4042's.
+ * are in `./run-event-stream.ts` and the runtimes (#4041); the files
+ * they are kept in, replay and `--follow` are `./run-event-store.ts` (#4042).
  *
  * Two older streams predate this one and keep their shape behind
  * `--progress-json`, while `--events-json` prints this one (#4041):

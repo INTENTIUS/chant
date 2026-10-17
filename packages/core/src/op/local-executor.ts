@@ -57,6 +57,7 @@ import { runEnvOf } from "../lifecycle/run-ledger";
 import { resolveCommitSha } from "../lifecycle/commit-sha";
 import { resolveCiRun, type RunOrigin } from "../lifecycle/release-ledger";
 import { runEventsOfStepRecord, type RunEventRuntime, type RunEventSkipReason } from "../run-event";
+import { openRunEventStore, teeLines } from "../run-event-store";
 import { openRunEventStream, runEventRunOf, type RunEventSink, type RunEventStream } from "../run-event-stream";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateCheckpoint } from "../lifecycle/gate-checkpoint";
@@ -1442,7 +1443,15 @@ async function runOpInTurn(
   const ciRun = resolveCiRun();
   // #4041: the run's events name it the way its run record does: its own id,
   // the commit, and the CI run it is in.
-  const stream = options.runEvents
+  // #4042: a run that writes to the ledger also keeps its events on this host,
+  // beside its in-flight record, so `chant run events <run>` can replay it and
+  // `--follow` can tail it. The stream is opened for that even without
+  // `--events-json`; a run that records nothing (`--no-record`) keeps nothing.
+  const store = options.ledger
+    ? await openRunEventStore(options.ledger.cwd ?? options.cwd ?? process.cwd(), runId)
+    : undefined;
+  const eventsWrite = teeLines(options.runEvents?.write, store?.write.bind(store));
+  const stream = eventsWrite
     ? openRunEventStream(
         runEventRunOf({
           kind: "op",
@@ -1451,10 +1460,10 @@ async function runOpInTurn(
           ...(commit ? { gitSha: commit } : {}),
           ...(ciRun ? { ci: ciRun } : {}),
           steward: options.steward !== undefined,
-          ...(options.runEvents.runtime ? { runtime: options.runEvents.runtime } : {}),
-          ...(options.runEvents.runOrigin ? { runOrigin: options.runEvents.runOrigin } : {}),
+          ...(options.runEvents?.runtime ? { runtime: options.runEvents.runtime } : {}),
+          ...(options.runEvents?.runOrigin ? { runOrigin: options.runEvents.runOrigin } : {}),
         }),
-        options.runEvents.write,
+        eventsWrite,
       )
     : undefined;
   events.stream = stream;

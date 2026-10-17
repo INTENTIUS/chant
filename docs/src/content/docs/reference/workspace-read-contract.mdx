@@ -471,7 +471,7 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 
 An Op run, a component run and a CI pipeline run all report progress as one stream of events, one JSON object per line ([#4019](https://github.com/INTENTIUS/chant/issues/4019)). Each line follows `run-event.schema.json`, whose contract version 1 is written by chant `0.124.28` and newer. behold, terragucci and a CI log read the same fields wherever the run happened, and a step's state is in the event, so nobody parses log text for it.
 
-`@intentius/chant` exports the types (`RunEvent` and one type per event) and the one writer. `createRunEventWriter({ run, write })` keeps a run's identity and its sequence, and each `emit(body)` writes the next line. `writeRunEvent` and `buildRunEvent` do the same for a single event. Replay and `--follow` arrive with [#4042](https://github.com/INTENTIUS/chant/issues/4042).
+`@intentius/chant` exports the types (`RunEvent` and one type per event) and the one writer. `createRunEventWriter({ run, write })` keeps a run's identity and its sequence, and each `emit(body)` writes the next line. `writeRunEvent` and `buildRunEvent` do the same for a single event. Replay and `--follow` are [`chant run events`](/chant/cli/run/#run-events-run) ([#4042](https://github.com/INTENTIUS/chant/issues/4042)).
 
 `--events-json` prints the stream to stdout ([#4041](https://github.com/INTENTIUS/chant/issues/4041)). These commands take it.
 
@@ -485,6 +485,8 @@ An Op run, a component run and a CI pipeline run all report progress as one stre
 | `chant components pr-plan` and `pr-apply` | `component` | a `plan` phase with a `plan` step per component, the pull request's gate as a `gate` phase, and on pr-apply the waves and components of the apply. A refused apply settles `gated` |
 
 A component run, a promote, a fan-out and a pr-apply are named by the run id their release records carry, so the stream and the ledger join. In CI that is the CI run's id, with its `runOrigin`. An Op run keeps its own run id in CI, as its run record does, with the CI run's `runOrigin`. `--events-json` is refused beside `--progress-json`, since both print to stdout.
+
+A run on this host keeps its stream in a file, and `chant run events <run> --json` prints it back, one event per line, the lines as they were written. Replay adds no field and no schema: its lines are run-event contract version 1, written by chant `0.124.28` and newer, and a run from an older chant has none. A reader that wants a run in progress runs `chant run events <run> --json --follow` and reads until the `run-settle` line. Which runs keep a stream is on the [`run events`](/chant/cli/run/#run-events-run) page.
 
 Every event carries the fields in this table.
 

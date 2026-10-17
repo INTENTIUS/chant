@@ -13,6 +13,7 @@ chant run status <name> [flags]
 chant run approve <op> <gate> [flags]
 chant run cancel <name> [flags]
 chant run log <name> [flags]
+chant run events <run> [--json] [--follow]
 chant run wave --spec <file> --wave <k> [--decide | --share <i> | --group <name> [--share <i>]] [--base <ref>]
 chant run resume [--op <name>] [--gate <name>] [--dry-run] [--json]
 chant run wave --spec <file> --record-plans
@@ -221,6 +222,34 @@ Show the run history the selected runtime holds for an Op, newest first.
 chant run log alb-deploy
 chant run log alb-deploy --on fountain --limit 10
 ```
+
+### `run events <run>`
+
+Replay the events a run on this host kept, or follow a run that is still going ([#4042](https://github.com/INTENTIUS/chant/issues/4042)). The events are the [run-event stream](/chant/reference/workspace-read-contract/#run-events) that `--events-json` prints, read back from a file instead of from the run's stdout.
+
+```bash
+chant run events local-1792206777928 --json
+chant run events alb-deploy --json          # the newest run of the Op named alb-deploy
+chant run events alb-deploy --follow        # a run in progress, until it settles
+```
+
+`<run>` is a run id, or the name of an Op or a component selection, for which the newest kept run of that name stands. `--json` prints the kept lines exactly as the writer wrote them, one `run-event.schema.json` object per line. Without it each event is one line for a person, with its time and type, then the component, phase and step it belongs to, then its status. A settled run and a run in progress both replay what has been written so far. A run in progress replays up to now and exits 0.
+
+`--follow` replays what is kept and goes on printing each event as the run writes it. It returns when the run writes `run-settle`. It polls the file every 100 ms. If no file exists yet it waits up to 5 seconds for the run to open one, so `chant run <op> &` followed at once by `chant run events <op> --follow` works. Ctrl-C ends the follow without a verdict. A run killed with SIGKILL never writes `run-settle`, so its follow runs until interrupted; SIGINT and SIGTERM settle the run `failed` first. `--follow` reads this host only. A run hosted elsewhere (`--on fountain`) writes nothing here, and following one remotely waits on the off-host in-flight state of [#3990](https://github.com/INTENTIUS/chant/issues/3990). `--on` other than `local` is refused for that reason.
+
+The exit code is the replayed run's verdict, as `chant run` gives it: 0 for `ok`, 1 for `failed`, 3 for `gated` or `waiting`. A command that finds no kept events for `<run>` exits 1.
+
+Where the events are kept, and which runs keep them:
+
+- Each run gets one file, `<git-common-dir>/chant/run-events/<run id>.jsonl`, beside the in-flight records in `<git-common-dir>/chant/runs/`. It is outside the working tree and not on `chant/lifecycle`, so keeping events adds nothing to the ledger. A run id used again replaces the earlier file.
+- `chant run <op>` on the local runtime keeps its events whenever it records to the run ledger, with or without `--events-json`, because an Op run has an id and a ledger record from its first event. `--no-record` keeps nothing, as it keeps nothing else.
+- `chant run --components`, `components promote`, `rollback`, `redeploy`, `fan-out`, `pr-plan` and `pr-apply` keep the stream only when they were given `--events-json`, and then write each line to stdout and to the file. Without the flag they build no stream, so they are not replayable.
+- Files are not pruned. Retention of per-run records is [#4036](https://github.com/INTENTIUS/chant/issues/4036)'s concern, and the files are plain, so deleting old ones is safe.
+- A run written by a chant older than 0.124.28 has no events to replay.
+
+#### Why `events` is a reserved name and not part of `run log`
+
+`chant run <name>` takes an Op name where a subcommand would go, so each subcommand name is reserved: `list`, `status`, `log`, `cancel`, `approve`, `wave`, `resume` and now `events`. `run log` lists the runs a runtime holds for an Op, from the runtime's own history, and takes `--on`. `run events` takes a run id and prints what happened in that run, from files on this host. Folding replay into `run log` would give one subcommand two argument kinds and two outputs, so `events` is its own name. An Op named `events` can no longer be started with `chant run events`; rename it. The change is listed in [level-0 exceptions](/chant/reference/level-0-exceptions/).
 
 ### `run wave`
 
