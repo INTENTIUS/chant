@@ -25,6 +25,13 @@ import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
 import { humanQuorumSince, tallyGateApprovals, type GateApprovalRule } from "../op/gate";
 import type { ReasonCode } from "./reason-codes";
+import { CHANGE_SETS_DIR, changeSetFile } from "../lifecycle/change-set-store";
+
+/** The stored change-set directory beside a gate ledger directory: `<prefix>_change-sets`. */
+function changeSetDirFor(gatesDir: string): string {
+  const at = gatesDir.lastIndexOf("/");
+  return at < 0 ? CHANGE_SETS_DIR : `${gatesDir.slice(0, at)}/${CHANGE_SETS_DIR}`;
+}
 
 /** Why a member's gates can't be listed. Closed: a new code is a contract change. */
 export const GATE_REASON_CODES = [
@@ -65,6 +72,13 @@ export interface StatusGate {
   gitSha?: string;
   /** The run that reached the gate (#4020), from the pending fact: an Op run id, or the CI run id. Absent when the run had none. */
   runId?: string;
+  /**
+   * The change set the gate binds (#4022): `planDigest`, when a change-set
+   * document is stored under it in the member's `_change-sets/`, read with
+   * `chant change-set show <digest>`. Absent when none is stored, as for a
+   * component gate, which binds a lifecycle-plan digest.
+   */
+  changeSet?: string;
   expiresAt: string;
   /** The approvals that count toward the gate for this plan, oldest first. */
   approvals: StatusGateApproval[];
@@ -116,6 +130,21 @@ export type GateLedgerReader = (dir: string, commit: string, cwd: string) => Pro
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
 }
+
+/**
+ * Lists the file names in a stored change-set directory on the branch at
+ * `commit`, or an empty set when it doesn't exist or can't be read: a gate
+ * then shows no link, and its state is read the same.
+ */
+export type ChangeSetLister = (dir: string, commit: string, cwd: string) => Promise<Set<string>>;
+
+export const defaultChangeSetLister: ChangeSetLister = async (dir, commit, cwd) => {
+  try {
+    return new Set(git(cwd, ["ls-tree", "--name-only", `${commit}:${dir}`]).split("\n").filter(Boolean));
+  } catch {
+    return new Set();
+  }
+};
 
 export const defaultGateLedgerReader: GateLedgerReader = async (dir, commit, cwd) => {
   try {
@@ -232,6 +261,7 @@ export async function readMemberGates(
   now: string,
   read: GateLedgerReader = defaultGateLedgerReader,
   rules: GateRuleLookup = () => null,
+  listChangeSets: ChangeSetLister = defaultChangeSetLister,
 ): Promise<{ gates: StatusGate[]; ledger: StatusGateLedger }> {
   const ledger: StatusGateLedger = { layout, path: dir, shared: false, malformed: 0, reason: null };
   if (commit === null) {
@@ -252,6 +282,14 @@ export async function readMemberGates(
     const read = gatesInLedger(component, files.get(component)!, envs, now, rules);
     gates.push(...read.gates);
     ledger.malformed += read.malformed;
+  }
+  // #4022: link each gate to the change set stored under its plan digest,
+  // in the same member's `_change-sets/` beside `_gates/`.
+  if (gates.some((g) => g.planDigest !== null)) {
+    const stored = await listChangeSets(changeSetDirFor(dir), commit, cwd);
+    for (const g of gates) {
+      if (g.planDigest !== null && stored.has(changeSetFile(g.planDigest))) g.changeSet = g.planDigest;
+    }
   }
   return { gates, ledger };
 }

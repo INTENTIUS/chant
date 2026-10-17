@@ -20,6 +20,7 @@ The document is part of the [workspace read contract](/chant/reference/workspace
 | `entries` | one per resource change, sorted by member, address, deposed key and action |
 | `sideEffects` | the Terraform actions an apply runs, `{ member, address, type, trigger, event }`; absent when none |
 | `summary` | counts and the named deletes and replacements |
+| `graph` | on a [stored change set](#stored-change-sets), the graph the entries' `node` ids come from: `{ member, at }`, or `null` when none could be read |
 
 ### Members
 
@@ -54,6 +55,7 @@ A provisional member is left out of the document's digest, so approving the docu
 | `disruption` | on `update`, `replace` and `delete`: `in-place`, `rolling`, `replace`, `destroy` or `unknown` |
 | `region`, `scope` | where the change lands |
 | `attributes` | the top-level attributes the change writes |
+| `node` | on a stored change set, the graph node the change is made to, or `null` when the graph has none for the address |
 
 Each attribute is `{ path, before, after }`. `unknown: true` replaces `after` when the value is known only after apply. `sensitive: true` replaces both values when the planner marked either side sensitive. `forcesReplacement: true` marks the attributes that force a replace. Redaction follows the planner's marks. A value the planner leaves unmarked is carried as the plan JSON carries it.
 
@@ -85,9 +87,13 @@ Each member carries the value a gate on that member alone binds ([#2300](https:/
 
 The set digest is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member that is not provisional, sorted by member. `changeSetDigest(members)` computes it. A wave of [gated waves](https://github.com/INTENTIUS/chant/issues/3049) is a subset of members, and the wave's gate value is the set digest over that subset.
 
-The document's `digest` is `computePlanDigest("change-set-document", { set, members, entries, sideEffects })`. It covers the set digest and the entries and side effects. For each member it also covers the `member` name, `status` and `holes`. Provisional members and their entries are left out. `changeSetDocumentDigest(doc)` computes it. Members are sorted by name, entries and side effects as the document sorts them, so order makes no difference. The digest has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). It changes when any member's `planDigest` changes. A changed entry, hole or side effect changes it too. A set that names a member twice is refused.
+The document's `digest` is `computePlanDigest("change-set-document", { set, members, entries, sideEffects })`. It covers the set digest and the entries and side effects, leaving out each entry's `node`. For each member it also covers the `member` name, `status` and `holes`. Provisional members and their entries are left out. `changeSetDocumentDigest(doc)` computes it. Members are sorted by name, entries and side effects as the document sorts them, so order makes no difference. The digest has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). It changes when any member's `planDigest` changes. A changed entry, hole or side effect changes it too. A set that names a member twice is refused.
 
 An approval of the document therefore binds what the document says about each plan, so a resumed pull-request apply checks a re-planned member against entries the approval covers ([#3555](https://github.com/INTENTIUS/chant/issues/3555)). The summary is computed from the entries and is not hashed. A change to how chant projects a plan into entries moves the digest, so an approval given under one chant release can need giving again under the next. `verifyChangeSetDigest(doc)` recomputes the value from the document.
+
+## Stored change sets
+
+A gate that binds the document's `digest` stores the document on `chant/lifecycle` at `_change-sets/<digest>.json` ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). `chant components pr-apply` stores it before deciding the pull request's gate, and a release gate stores its own with [#4045](https://github.com/INTENTIUS/chant/issues/4045). Before storing, chant maps each entry onto the member's graph and sets `node` to the id [`chant workspace graph`](/chant/cli/workspace-graph/) gives the node, `<member>/<id>` in a workspace. `node` and `graph` are left out of the digest, so the stored document verifies against the value its gate bound. [`chant change-set show`](/chant/cli/change-set/#change-set-show) reads it back, and the [read contract](/chant/reference/workspace-read-contract/#stored-change-sets) gives the mapping rules.
 
 ## Adapters
 
