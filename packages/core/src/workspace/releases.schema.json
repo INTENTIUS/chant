@@ -85,8 +85,7 @@
         "artifactDigests",
         "targets",
         "cuts",
-        "environments",
-        "revoked"
+        "environments"
       ],
       "properties": {
         "releaseDigest": {
