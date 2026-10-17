@@ -246,7 +246,7 @@ Where the events are kept, and which runs keep them:
 - Each run gets one file, `<git-common-dir>/chant/run-events/<run id>.jsonl`, beside the in-flight records in `<git-common-dir>/chant/runs/`. It is outside the working tree and not on `chant/lifecycle`, so keeping events adds nothing to the ledger. A run id used again replaces the earlier file.
 - `chant run <op>` on the local runtime keeps its events whenever it records to the run ledger, with or without `--events-json`, because an Op run has an id and a ledger record from its first event. `--no-record` keeps nothing, as it keeps nothing else.
 - `chant run --components`, `components promote`, `rollback`, `redeploy`, `fan-out`, `pr-plan` and `pr-apply` keep the stream only when they were given `--events-json`, and then write each line to stdout and to the file. Without the flag they build no stream, so they are not replayable.
-- Files are not pruned. Retention of per-run records is [#4036](https://github.com/INTENTIUS/chant/issues/4036)'s concern, and the files are plain, so deleting old ones is safe.
+- Old files go when [`chant lifecycle gc --yes`](/chant/cli/lifecycle/#lifecycle-gc) runs. It deletes those older than the retention policy's `runEvents` window, 14 days by default, and keeps the newest 100 ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). Deleting old ones by hand is safe too, since the files are plain.
 - A run written by a chant older than 0.124.28 has no events to replay.
 
 #### Why `events` is a reserved name and not part of `run log`

@@ -164,6 +164,8 @@ export interface ParsedArgs {
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
    * (#1222). Without it the command plans and stops. */
   yes?: boolean;
+  /** `chant lifecycle gc --yes --push` (#4036): push the commit the prune wrote to chant/lifecycle. Without it the prune stays local. */
+  push?: boolean;
   /** `chant lifecycle teardown <env> --yes --confirm-prod` — the non-interactive
    * form of the extra confirmation a production-like environment name demands
    * (#1222). Meaningless without `--yes`. */

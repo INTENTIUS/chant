@@ -13,6 +13,8 @@ export * from "./receipt-plan";
 export * from "./affected";
 export * from "./release-ledger";
 export * from "./release-join";
+export * from "./retention-policy";
+export { planLifecycleGc, runLifecycleGc, type GcFile, type GcKept, type GcKeepCode, type GcKeepReason, type GcKind, type GcReport, type LifecycleGcPlan } from "./retention";
 export * from "./build-ledger";
 export * from "./build-ledger-store";
 export * from "./oras-referrer-lookup";

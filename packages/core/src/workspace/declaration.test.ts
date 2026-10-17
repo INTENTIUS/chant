@@ -421,3 +421,17 @@ describe("diagram artifacts (#2764)", () => {
     expect(failure(base([member([diagram({ render: "../out.svg" })])])).code).toBe("declaration-invalid");
   });
 });
+
+describe("retention (#4036)", () => {
+  test("the block is read as written, without x- keys, and is null when absent", () => {
+    expect(parse(base([])).retention).toBeNull();
+    const d = parse(base([], { minReader: "0.80.0", retention: { changeSets: { days: 30 }, releases: { keep: 3 }, runEvents: { days: 2, keep: 5 }, "x-why": "audits" } }));
+    expect(d.retention).toEqual({ changeSets: { days: 30 }, releases: { keep: 3 }, runEvents: { days: 2, keep: 5 } });
+  });
+
+  test("an unknown kind or field, a negative or fractional number, and keep on changeSets are refused", () => {
+    for (const retention of [{ plans: { days: 1 } }, { releases: { days: -1 } }, { releases: { days: 1.5 } }, { changeSets: { keep: 2 } }, { runEvents: { hours: 2 } }]) {
+      expect(failure(base([], { retention })).code).toBe("declaration-invalid");
+    }
+  });
+});

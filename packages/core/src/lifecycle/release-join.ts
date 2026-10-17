@@ -146,5 +146,22 @@ export async function joinRelease(from: ReleaseJoinStart, loc: LedgerLocation = 
 async function releaseOfAdmission(admission: ReleaseRecord["admission"], loc: LedgerLocation): Promise<string | undefined> {
   if (!admission || admission.op !== RELEASE_GATE_OP) return undefined;
   const { resolutions } = await readGateLedger(RELEASE_GATE_OP, loc);
-  return resolutions.find((r) => r.gate === admission.gate && r.timestamp === admission.resolvedAt && r.releaseDigest !== undefined)?.releaseDigest;
+  return releaseOfDeploy({ admission }, resolutions);
+}
+
+/**
+ * The release a deploy record names, over the release gate's resolutions
+ * already read: its own `releaseDigest`, else the one on the resolution its
+ * admission names. Undefined when it was not made from a release. The rule
+ * {@link joinRelease} follows, for a reader that holds the ledgers already,
+ * such as retention's garbage collection (#4036).
+ */
+export function releaseOfDeploy(
+  record: Pick<ReleaseRecord, "releaseDigest" | "admission">,
+  releaseGateResolutions: readonly Pick<GateResolutionRecord, "gate" | "timestamp" | "releaseDigest">[],
+): string | undefined {
+  if (record.releaseDigest !== undefined) return record.releaseDigest;
+  const admission = record.admission;
+  if (!admission || admission.op !== RELEASE_GATE_OP) return undefined;
+  return releaseGateResolutions.find((r) => r.gate === admission.gate && r.timestamp === admission.resolvedAt && r.releaseDigest !== undefined)?.releaseDigest;
 }

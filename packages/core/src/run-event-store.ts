@@ -8,13 +8,14 @@
  * as `--events-json` prints them. It sits beside the in-flight records
  * (`./op/run-live.ts`), outside the working tree and off `chant/lifecycle`:
  * the run ledger's growth is #4036's concern and these files add none to it.
- * Unlike the in-flight record they are kept after the run settles. They are
- * never pruned here; retention is #4036's.
+ * Unlike the in-flight record they are kept after the run settles, until
+ * `chant lifecycle gc --yes` deletes the ones its retention policy lets go
+ * (#4036, {@link planRunEventPrune}).
  *
  * Every write is best-effort. A run whose events cannot be kept still runs.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gitCommonDir } from "./op/run-live";
 import type { RunEvent } from "./run-event";
@@ -210,4 +211,63 @@ export async function readRunEvents(
       });
     }
   }
+}
+
+/** One run's event file, as retention sees it (#4036). */
+export interface RunEventFile {
+  file: string;
+  bytes: number;
+  /** The file's last write, ISO-8601. */
+  modified: string;
+}
+
+/** What {@link planRunEventPrune} would delete and keep. */
+export interface RunEventPrune {
+  /** The directory read, or null outside a checkout. */
+  dir: string | null;
+  remove: RunEventFile[];
+  keep: RunEventFile[];
+}
+
+/**
+ * Which run event files the policy lets go (#4036): every file older than
+ * `days` by its last write, apart from the newest `keep`. A run still going
+ * writes its file as it goes, so it is never older than the window. Reads
+ * only; {@link pruneRunEvents} deletes.
+ */
+export async function planRunEventPrune(cwd: string, policy: { days: number; keep: number }, now: Date): Promise<RunEventPrune> {
+  const dir = await runEventsDir(cwd);
+  if (!dir || !existsSync(dir)) return { dir, remove: [], keep: [] };
+  const files: Array<RunEventFile & { ms: number }> = [];
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith(".jsonl")) continue;
+    const file = join(dir, entry);
+    try {
+      const st = statSync(file);
+      if (!st.isFile()) continue;
+      files.push({ file, bytes: st.size, modified: new Date(st.mtimeMs).toISOString(), ms: st.mtimeMs });
+    } catch {
+      // Gone between the listing and the stat.
+    }
+  }
+  files.sort((a, b) => b.ms - a.ms || (a.file < b.file ? -1 : 1));
+  const cutoff = now.getTime() - policy.days * 86_400_000;
+  const remove: RunEventFile[] = [];
+  const keep: RunEventFile[] = [];
+  files.forEach(({ ms, ...f }, i) => (i >= policy.keep && ms < cutoff ? remove : keep).push(f));
+  return { dir, remove, keep };
+}
+
+/** Delete the files a plan lets go. Returns how many were deleted; a file already gone is not counted. */
+export function pruneRunEvents(plan: RunEventPrune): number {
+  let n = 0;
+  for (const f of plan.remove) {
+    try {
+      rmSync(f.file);
+      n++;
+    } catch {
+      // Already gone.
+    }
+  }
+  return n;
 }
