@@ -1,0 +1,91 @@
+---
+title: "chant release"
+description: Cut a release from a green commit, compiled once for every environment the member declares, and list the releases with the environments that run them
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant release cut [<label>] [--build <command>] [--param <name=value>]... [--params-file <file>] [--actor <name>] [--json]
+chant release list [--json]
+```
+
+A release is the compiled output of one green commit of one member ([#4026](https://github.com/INTENTIUS/chant/issues/4026), [ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md)). The commit is the source, and the release is what moves through the environments. A release holds the commit, the artifacts built once from it, and one target per environment. A target lists the templates compiled for that environment and the build parameters they were compiled with.
+
+This is a separate object from a deploy record. A deploy record is a line of `<env>/releases.jsonl` that `chant run --components` and `chant components promote` append when they deploy a component. [`chant components promote --release`](/chant/cli/components/#components-promote) deploys one target and names its digest on the deploy record it writes.
+
+## release cut
+
+Cuts a release of the member in the current directory from the checkout's `HEAD`.
+
+```bash
+git fetch origin --tags
+git checkout "$(chant ci last-green)"
+chant release cut v1.4.0 --build "npm run build"
+```
+
+The cut refuses before it writes anything when:
+
+| Code | When |
+|---|---|
+| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. |
+| `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
+| `release-worktree-dirty` | A tracked file has uncommitted changes, so the compile would not be the commit's. |
+| `release-no-environments` | The member's `chant.config.ts` declares no `environments`. |
+| `release-no-components` | No component was discovered in any environment. A release of a project with no components is [#4046](https://github.com/INTENTIUS/chant/issues/4046). |
+| `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
+
+The code is printed in square brackets at the end of the message.
+
+### What the cut compiles
+
+The environments are the entries of the member's [`environments`](/chant/configuration/config-file/#promotion-order-and-canary) array, in order. A pattern entry such as `pr-*` is not compiled. Each environment is compiled in a child process with `CHANT_ENV` set to it, since a template is synthesized for one environment per process. In each one the cut:
+
+1. runs `--build <command>` in the member's directory, when given, with `CHANT_ENV` set;
+2. resolves the build parameters the way `chant build --env <env>` does, with `{env}` in a `--params-file` path replaced by the environment's name;
+3. discovers the components enabled under those parameters;
+4. reads each template their deploys name.
+
+A template is a file named by a literal path in a deploy step's `template`, `manifest` or `values` field, such as `cfn-deploy`'s `template: "dist/api.template.json"`. A path with the `archive:` prefix names the file after the prefix. Build and publish steps are not read, and a path that names a directory, such as a helm chart, is not a template. A template that does not exist after the build stops the cut.
+
+The artifacts are built once. Each component's `docker-build`, `zip-package` and `jvm-build` steps run, and nothing else, in the first environment the component is enabled in. `docker-build` gives an `image` entry and the other two an `asset` entry, each with the archive path and the digest. When a component's source did not change since the release cut from the nearest earlier commit, its entries are carried from that release and nothing is built. Unchanged means git sees no change between the two commits in the component's file, the member's `chant.config.ts`, and the paths the build steps read (`context` and the Dockerfile, `source`, `path`). A commit that only changes a flag or a parameter then gets a release of its own with the same artifact digests.
+
+### The release digest and the label
+
+The release is stored on `chant/lifecycle` under its digest, and a cut is a line appended to the cut log:
+
+| Path | Holds |
+|---|---|
+| `_releases/<releaseDigest>.json` | The release, written once and never rewritten. `:` is written as `_`. |
+| `_releases/cuts.jsonl` | One line per cut: `{ version, releaseDigest, label, actor, timestamp, runOrigin, signature }`. |
+| `_releases/templates/<digest>.txt` | Each template's bytes, by content digest, for a promote to deploy. |
+
+A workspace member's copies sit under `_members/<member>/`. The cut writes the local branch and pushes it when there is a remote.
+
+`releaseDigest` is `computePlanDigest("release", subject)`. The subject is what deploys:
+
+| In the digest | Outside it |
+|---|---|
+| `member`, `commit` and `artifactDigests` | each parameter's `source` |
+| each target's `env` and `templates` | the cut line's `label`, `actor`, `timestamp`, `runOrigin` and `signature` |
+| each parameter's `name` and `value` | the chant version |
+
+So two cuts of one commit give the same digest.
+
+The label is a human name such as `v1.4.0`. It starts with a letter or digit, and after that it may also hold `.`, `_`, `+` and `-`. Within a member, a label names one digest and a digest takes at most one label. Cutting the same digest again is a no-op that prints its label. Cutting it under another label is refused with `release-already-labelled`, and a label that already names another digest is refused with `release-label-taken`. A digest cut without a label can be given one by a later cut. `signature` is `null` until signing ships ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). `runOrigin` names the CI run, or is `null` outside CI.
+
+| Flag | Meaning |
+|---|---|
+| `<label>` or `--label <label>` | The release's label. Optional. |
+| `--build <command>` | A shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. |
+| `--param <name=value>` | A build parameter for every environment. Repeatable. |
+| `--params-file <file>` | A JSON file of build parameters. `{env}` in the path is replaced by each environment's name, as in `params.{env}.json`. |
+| `--actor <name>` | Who made the cut. Defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN` or `USER`. |
+| `--json` | Print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release. |
+
+## release list
+
+Lists every release of the member, newest cut first. Each line gives the label and the digest first, then the commit and where it runs.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.

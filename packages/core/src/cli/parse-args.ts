@@ -77,6 +77,7 @@ const BOOLEAN_FLAGS = new Set([
   "--decide",
   "--record-plans",
   "--loopback",
+  "--artifacts",
 ]);
 
 /**
@@ -593,6 +594,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
     } else if (arg === "--release-plan") {
       result.releasePlanFile = args[++i];
+    } else if (arg === "--release") {
+      // `chant components promote --release <label|digest>` (#4026)
+      result.release = args[++i];
+      if (!result.release || result.release.startsWith("-")) throw new Error("--release needs a release's label or digest: --release <label|digest>");
+    } else if (arg === "--build") {
+      // `chant release cut --build <command>` (#4026)
+      result.buildCommand = args[++i];
+      if (!result.buildCommand) throw new Error("--build needs a shell command: --build '<command>'");
+    } else if (arg === "--artifacts") {
+      // `chant release compile --artifacts` (#4026, internal)
+      result.artifacts = true;
     } else if (arg === "--git-sha") {
       result.gitSha = args[++i];
     } else if (arg === "--run-id") {

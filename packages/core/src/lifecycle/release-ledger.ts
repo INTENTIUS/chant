@@ -217,6 +217,13 @@ export interface ReleaseRecord {
    * partway. Absent on every other record.
    */
   redeploys?: ReleaseRef;
+  /**
+   * Optional: the release this deploy came from (#4026, ws-104), the
+   * `releaseDigest` of `_releases/<releaseDigest>.json`. Written by
+   * `chant components promote --release` since 0.124.28. Absent on every
+   * deploy that was not made from a release.
+   */
+  releaseDigest?: string;
 }
 
 /** Thrown by `appendReleaseRecord` when the record is missing a required field — a release record can never be recorded partially, since it is never editable afterward. */

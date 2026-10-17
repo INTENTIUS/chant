@@ -250,6 +250,18 @@ CI:
                         or a GitHub App's id and key, pushes the tags with a
                         token that may tag commits changing workflow files.
 
+Releases:
+  release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>]
+                        Cut a release of this member from HEAD, which must
+                        carry a ci/green tag: compile every environment in
+                        the config's environments, build the artifacts once,
+                        and store it on chant/lifecycle under its digest.
+                        --build runs before each environment's templates are
+                        read, with CHANT_ENV set; {env} in --params-file is
+                        replaced by the environment.
+  release list [--json]  Every release of this member with its targets, its
+                        cuts and the environments that run it.
+
 Change sets:
   change-set summary <file>  The grouped plan summary of a change-set
                         [--format text|json|markdown]  document: members taking
@@ -800,6 +812,7 @@ Component release ledger + status:
   components promote        Deploy the digests one environment's release
                             ledger records to another, without a build
                             (--to <env> [--from <env>] [--allow-skip]
+                             [--release <label|digest>]
                              [--component <name> [--digest <sha256:...>]];
                              --from defaults to the environment before --to
                              in the config's environments; --dry-run prints
@@ -948,7 +961,7 @@ Options:
                         chant.config.ts's build.sandbox: true; #1045)
   --param <name=value>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
-                        components redeploy) Bind a
+                        components redeploy, release cut) Bind a
                         declared build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -960,7 +973,7 @@ Options:
                         chant.template.json declares instead (#2627).
   --params-file <path>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
-                        components redeploy) JSON file
+                        components redeploy, release cut) JSON file
                         of { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
                         init --from refuses it: pass --param instead.
@@ -1212,6 +1225,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
+  // #4026: the release cut from a green commit (ws-104). Imported on first use.
+  { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
+  { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
+  { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },
   // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
   { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
@@ -1350,6 +1367,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
   { name: "components", handler: runComponentsUnknown },
+  { name: "release", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseUnknown(ctx) },
   { name: "workspace", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceUnknown(ctx) },
 ];
 

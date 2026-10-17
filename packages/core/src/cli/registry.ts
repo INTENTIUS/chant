@@ -549,6 +549,12 @@ export interface ParsedArgs {
   digest?: string;
   /** `chant components release record --release-plan <file>` (ws-055, #2733) — path to a release plan JSON file, persisted content-addressed to `_plans/<digest>.json` on chant/lifecycle and read back through the read contract (`chant workspace status --json`). The plan's own `digest` field supplies `--digest` when it is omitted, and must match it when both are given. Distinct from `--plan` (#2300, below), the Op gate-approval plan digest. */
   releasePlanFile?: string;
+  /** `chant components promote --release <label|digest>` (#4026): deploy under that release, reading the templates its target for `--to` recorded. */
+  release?: string;
+  /** `chant release cut --build <command>` (#4026): the shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. */
+  buildCommand?: string;
+  /** `chant release compile --artifacts` (#4026, internal): build the artifacts of `--component` instead of compiling the environment. */
+  artifacts?: boolean;
   /** Every `--digest` value, in order (#2602). `chant components promote --digest <component>=<sha256:...>` is repeatable, one per component; the other commands read the single {@link digest}. */
   digests?: string[];
   /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
