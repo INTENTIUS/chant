@@ -52,6 +52,9 @@ beforeEach(() => {
   // A CI run's id would land on them as well (#4020).
   vi.stubEnv("GITHUB_RUN_ID", "");
   vi.stubEnv("CI_PIPELINE_ID", "");
+  // And the commit the CI job started for, which a decision point's gate reads from the environment.
+  vi.stubEnv("GITHUB_SHA", "");
+  vi.stubEnv("CI_COMMIT_SHA", "");
 });
 afterEach(() => vi.unstubAllEnvs());
 
