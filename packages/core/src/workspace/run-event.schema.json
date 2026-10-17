@@ -29,7 +29,7 @@
         "seq": { "type": "integer", "minimum": 0, "description": "The event's place in its run's stream: 0 for run-start, one more for each event after it." },
         "at": { "type": "string", "description": "When the event happened, ISO-8601." },
         "type": { "type": "string" },
-        "runId": { "type": "string", "minLength": 1, "description": "The run's id, in the id space runOrigin.forge names: the Op run id, the GitHub or Forgejo run id, the GitLab pipeline id, or one minted locally." },
+        "runId": { "type": "string", "minLength": 1, "description": "The run's own id: an Op run's id, a component run's id (the id its release records carry, the CI run id in CI, else one minted locally), or the CI run id for a pipeline run. runOrigin says where it ran, which for an Op run in CI is the CI run, not the id space of runId." },
         "kind": { "enum": ["op", "component", "pipeline"], "description": "What ran: an Op, a component selection (chant run --components), or a CI pipeline." },
         "name": { "type": "string", "description": "The Op's name, the component selection as given, or the pipeline's name." },
         "gitSha": {
@@ -46,12 +46,12 @@
     },
     "runOrigin": {
       "type": "object",
-      "description": "The id space runId lives in and how to reach the run: RunOrigin from lifecycle/release-ledger.ts, the shape a release record's runOrigin has.",
+      "description": "Where the run ran and how to reach it: RunOrigin from lifecycle/release-ledger.ts, the shape a release record's runOrigin has. For an Op run in CI it locates the CI run, as the Op's run record does (#4020), while runId stays the Op run's own id.",
       "required": ["forge"],
       "properties": {
         "forge": {
           "enum": ["github", "gitlab", "op", "local"],
-          "description": "github: a GitHub Actions run id, also the spelling Forgejo Actions uses. gitlab: a CI pipeline id. op: an Op run id, which a steward's run carries. local: minted on the machine that ran it."
+          "description": "github: a GitHub Actions run, also the spelling Forgejo Actions uses. gitlab: a CI pipeline. op: a steward's run, named by its Op run id. local: a run on the machine that started it, outside CI."
         },
         "repo": { "type": "string", "description": "The repository or project slug on the forge, when the environment named one." },
         "url": { "type": "string", "description": "A link to the run, when the environment gave enough to build one." }
@@ -61,6 +61,7 @@
       "enum": ["ok", "failed", "gated", "waiting"],
       "description": "How a run, wave, component or phase settled. gated: it stopped at a gate nobody has approved. waiting: it stopped at a decision point nobody has answered. Neither is a failure."
     },
+    "stepIndex": { "type": "integer", "minimum": 0, "description": "The step's place in its phase as authored, counting from 0, so two steps of one phase that share a name stay apart. Optional, added within contract 1 by chant 0.124.28 (#4041). A writer leaves it out for a step it has no authored place for, and a reader without it pairs a step-start with its step-settle by component, phase and step in stream order." },
     "component": {
       "type": ["string", "null"],
       "description": "The component whose composition the phase or step belongs to in a component run, and null in an Op or pipeline run."
@@ -196,13 +197,14 @@
         { "$ref": "#/$defs/envelope" },
         {
           "type": "object",
-          "description": "A step is about to run: an Op or composition step, or a pipeline's job.",
+          "description": "A step is about to run: an Op or composition step, or a pipeline's job. A step that never started, such as one an earlier failure stopped, has a step-settle and no step-start.",
           "required": ["type", "component", "phase", "step"],
           "properties": {
             "type": { "const": "step-start" },
             "component": { "$ref": "#/$defs/component" },
             "phase": { "type": "string" },
-            "step": { "type": "string", "description": "The step's activity, gate:<name> for a gate, effect:<name> for an effect, or the job's name." }
+            "step": { "type": "string", "description": "The step's activity, gate:<name> for a gate, effect:<name> for an effect, or the job's name." },
+            "index": { "$ref": "#/$defs/stepIndex" }
           }
         }
       ]
@@ -219,6 +221,7 @@
             "component": { "$ref": "#/$defs/component" },
             "phase": { "type": "string" },
             "step": { "type": "string" },
+            "index": { "$ref": "#/$defs/stepIndex" },
             "status": {
               "enum": ["ok", "failed", "skipped", "cached", "gated", "waiting"],
               "description": "ok: it ran and succeeded. failed: it ran and failed. skipped: it did not run, and skip says why. cached: a cache hit stood in for running it (#4015). gated: it stopped the run at a gate nobody has approved. waiting: it stopped the run at a decision point nobody has answered."
@@ -246,6 +249,7 @@
             "component": { "$ref": "#/$defs/component" },
             "phase": { "type": "string" },
             "step": { "type": "string" },
+            "index": { "$ref": "#/$defs/stepIndex" },
             "op": { "type": "string", "description": "The op the gate is recorded under, which chant approve takes. It differs from name when a step's command stopped at a gate of its own." },
             "gate": { "type": ["string", "null"], "description": "The gate's name, or null when the step waits on a decision point alone." },
             "point": { "type": ["string", "null"], "description": "The answer record id of the open question, which points answer takes, or null." },
@@ -266,6 +270,7 @@
             "component": { "$ref": "#/$defs/component" },
             "phase": { "type": "string" },
             "step": { "type": "string" },
+            "index": { "$ref": "#/$defs/stepIndex" },
             "op": { "type": "string" },
             "gate": { "type": "string" },
             "resolvedBy": { "type": "string", "description": "Who approved it." },

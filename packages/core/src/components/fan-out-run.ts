@@ -49,11 +49,17 @@ import type { ReleaseIdentity } from "../telemetry-attribution";
 import { downstreamWithin, remainingFanOut, type FanOutPlan, type FanOutProgress, type FanOutSkip } from "./fan-out";
 import { evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "../op/gate";
 import type { RunProgressEvent } from "./run-progress";
+import { emitGateStep, joinRunEventSinks, progressSinkOf, type RunEventSink } from "../run-event-stream";
 import type { CapabilityRegistry } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
 import { decideWaveGate, runWaveLoop, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
+
+/** The sink a fan-out emits to: run events, and the older stream through them. */
+function fanOutSink(options: FanOutRunOptions): RunEventSink | undefined {
+  return joinRunEventSinks(options.onRunEvent, progressSinkOf(options.onProgress));
+}
 
 /**
  * One gate per wave (#3049), each bound to its wave's set digest. The other
@@ -115,6 +121,12 @@ export interface FanOutRunOptions {
   /** Outputs of components this run is not running: the ones the plan lists in `seeds`. */
   componentOutputs?: Record<string, Record<string, unknown>>;
   onProgress?: (event: RunProgressEvent) => void;
+  /**
+   * Where the run's events go (#4041, `--events-json`). A gate over the set
+   * or over a wave is a `gate:<name>` step of a `gate` phase with no
+   * component, settled before the components it lets through start.
+   */
+  onRunEvent?: RunEventSink;
   gates?: GateLedgerPort;
   now?: string;
   /** One approval over the ordered set, bound to `plan.digest`. */
@@ -206,18 +218,25 @@ export async function runFanOut(
     return runGatedWaves(plan, active, components, registry, options, options.waveGate, gates, componentOutputs);
   }
 
+  const emit = fanOutSink(options);
+  emit?.({ type: "run-start", waves: active.waves });
+
   if (options.gate) {
-    const check = await evaluateGate(gates.port, {
-      op: options.gate.op,
-      gate: options.gate.gate,
-      planDigest: active.digest,
-      ...(options.gate.description ? { description: options.gate.description } : {}),
-      ...(options.gate.timeout ? { timeout: options.gate.timeout } : {}),
-      ...(options.now ? { now: options.now } : {}),
-    });
+    const gate = options.gate;
+    const check = await emitGateStep(emit, gate, () =>
+      evaluateGate(gates.port, {
+        op: gate.op,
+        gate: gate.gate,
+        planDigest: active.digest,
+        ...(gate.description ? { description: gate.description } : {}),
+        ...(gate.timeout ? { timeout: gate.timeout } : {}),
+        ...(options.now ? { now: options.now } : {}),
+      }),
+    );
     if (!check.satisfied) {
       // Nothing ran, so nothing is half-applied and there is nothing to
       // compensate. A gate is a fact, not a failure.
+      emit?.({ type: "run-settle", status: "gated", durationMs: null });
       return {
         plan: active,
         status: "gated",
@@ -246,29 +265,28 @@ export async function runFanOut(
     }
   };
 
-  options.onProgress?.({ type: "run-start", waves: active.waves });
-
   for (const [waveIndex, wave] of active.waves.entries()) {
     const waveNum = waveIndex + 1;
     // A component whose upstream failed in an earlier wave is not dispatched.
     const runnable = wave.filter((name) => inPlan.has(name) && !blockedBy.has(name));
     if (runnable.length === 0) continue;
 
-    options.onProgress?.({ type: "wave-start", wave: waveNum, components: runnable });
+    emit?.({ type: "wave-start", wave: waveNum, components: runnable });
     const waveResults = await Promise.all(
       runnable.map(async (name) => {
-        options.onProgress?.({ type: "component-start", wave: waveNum, component: name });
+        emit?.({ type: "component-start", wave: waveNum, component: name });
         const planned = options.plans?.[name];
         const result = await runComponentDeploy(
           byName.get(name)!,
           { ...fanOutContext(options, name), ...(planned && Object.keys(planned).length > 0 ? { plans: planned } : {}) },
           registry,
           componentOutputs,
-          options.onProgress,
+          undefined,
           gates,
+          emit,
         );
-        options.onProgress?.({
-          type: "component-done",
+        emit?.({
+          type: "component-settle",
           wave: waveNum,
           component: name,
           status: result.status === "fail" ? "failed" : result.status,
@@ -297,8 +315,8 @@ export async function runFanOut(
     }
 
     const waveFailed = waveResults.some((r) => r.status === "fail");
-    options.onProgress?.({
-      type: "wave-done",
+    emit?.({
+      type: "wave-settle",
       wave: waveNum,
       status: waveFailed ? "failed" : waveResults.some((r) => r.status === "gated") ? "gated" : "ok",
     });
@@ -311,7 +329,7 @@ export async function runFanOut(
   // A failure outranks a gate: something is actually broken, and reporting the
   // run as "waiting on a human" would hide it. Same precedence the driver uses.
   const status: FanOutRunResult["status"] = failed.length > 0 ? "fail" : gatedFact ? "gated" : "ok";
-  options.onProgress?.({ type: "run-done", status: status === "fail" ? "failed" : status });
+  emit?.({ type: "run-settle", status: status === "fail" ? "failed" : status, durationMs: null });
 
   return {
     plan: active,
@@ -391,7 +409,8 @@ async function runGatedWaves(
     }
   };
 
-  options.onProgress?.({ type: "run-start", waves: plan.waves });
+  const emit = fanOutSink(options);
+  emit?.({ type: "run-start", waves: plan.waves });
 
   /** What planning one wave gave. */
   interface Planned {
@@ -477,14 +496,16 @@ async function runGatedWaves(
         return { end: "next" };
       }
 
-      const check = await decideWaveGate(gates.port, {
-        op: waveGate.op,
-        gate: gateName,
-        digest,
-        description: waveGate.description ?? `wave ${waveNum} of ${plan.waves.length}: ${toRun.join(", ")}`,
-        ...(waveGate.timeout ? { timeout: waveGate.timeout } : {}),
-        ...(options.now ? { now: options.now } : {}),
-      });
+      const check = await emitGateStep(emit, { op: waveGate.op, gate: gateName }, () =>
+        decideWaveGate(gates.port, {
+          op: waveGate.op,
+          gate: gateName,
+          digest,
+          description: waveGate.description ?? `wave ${waveNum} of ${plan.waves.length}: ${toRun.join(", ")}`,
+          ...(waveGate.timeout ? { timeout: waveGate.timeout } : {}),
+          ...(options.now ? { now: options.now } : {}),
+        }),
+      );
       if (!check.satisfied) {
         // Nothing in this wave ran, and no later wave is planned: its plan
         // would read outputs this wave has not written.
@@ -502,15 +523,15 @@ async function runGatedWaves(
     },
 
     async apply({ k: waveNum }, { contexts, plansFor, waveFailures }, { check, record, toRun }) {
-      options.onProgress?.({ type: "wave-start", wave: waveNum, components: toRun });
+      emit?.({ type: "wave-start", wave: waveNum, components: toRun });
       const waveResults = await Promise.all(
         toRun.map(async (name) => {
-          options.onProgress?.({ type: "component-start", wave: waveNum, component: name });
+          emit?.({ type: "component-start", wave: waveNum, component: name });
           const plans = plansFor.get(name)!;
           const ctx = { ...contexts.get(name)!, ...(Object.keys(plans).length > 0 ? { plans } : {}) };
-          const result = await runComponentDeploy(byName.get(name)!, ctx, registry, componentOutputs, options.onProgress, gates);
-          options.onProgress?.({
-            type: "component-done",
+          const result = await runComponentDeploy(byName.get(name)!, ctx, registry, componentOutputs, undefined, gates, emit);
+          emit?.({
+            type: "component-settle",
             wave: waveNum,
             component: name,
             status: result.status === "fail" ? "failed" : result.status,
@@ -543,8 +564,8 @@ async function runGatedWaves(
       };
       waves.push(settled);
       options.onWaveSettled?.(settled);
-      options.onProgress?.({
-        type: "wave-done",
+      emit?.({
+        type: "wave-settle",
         wave: waveNum,
         status: waveFailures.length > 0 ? "failed" : waveResults.some((r) => r.status === "gated") ? "gated" : "ok",
       });
@@ -557,7 +578,7 @@ async function runGatedWaves(
     .map(([component, by]) => ({ component, reason: "blocked" as const, blockedBy: by }));
 
   const status: FanOutRunResult["status"] = failed.length > 0 ? "fail" : gatedFact ? "gated" : "ok";
-  options.onProgress?.({ type: "run-done", status: status === "fail" ? "failed" : status });
+  emit?.({ type: "run-settle", status: status === "fail" ? "failed" : status, durationMs: null });
 
   return {
     // The derivation's waves, not the narrowed re-layering: their numbers name the gates.

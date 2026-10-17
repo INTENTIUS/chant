@@ -53,6 +53,7 @@ import {
 } from "./driver";
 import type { GateLedgerPort } from "../op/gate";
 import type { RunProgressEvent } from "./run-progress";
+import type { RunEventSink } from "../run-event-stream";
 
 /**
  * Step kinds that produce an artifact at build time: the build family, and the
@@ -537,6 +538,8 @@ export interface RunPromotionOptions {
   gates?: GateLedgerPort;
   now?: string;
   onProgress?: (event: RunProgressEvent) => void;
+  /** Where the run's events go (#4041, `--events-json`). */
+  onRunEvent?: RunEventSink;
 }
 
 /**
@@ -566,6 +569,7 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
         return item ? { version: item.digest, revision: item.source.gitSha } : undefined;
       },
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+      ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
       ...(options.gates ? { gates: options.gates } : {}),
       ...(options.now ? { now: options.now } : {}),
     });

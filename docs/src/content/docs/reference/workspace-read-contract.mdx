@@ -470,7 +470,20 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 
 An Op run, a component run and a CI pipeline run all report progress as one stream of events, one JSON object per line ([#4019](https://github.com/INTENTIUS/chant/issues/4019)). Each line follows `run-event.schema.json`, whose contract version 1 is written by chant `0.124.28` and newer. behold, terragucci and a CI log read the same fields wherever the run happened, and a step's state is in the event, so nobody parses log text for it.
 
-`@intentius/chant` exports the types (`RunEvent` and one type per event) and the one writer. `createRunEventWriter({ run, write })` keeps a run's identity and its sequence, and each `emit(body)` writes the next line. `writeRunEvent` and `buildRunEvent` do the same for a single event. The commands start printing this stream with [#4041](https://github.com/INTENTIUS/chant/issues/4041), and replay and `--follow` arrive with [#4042](https://github.com/INTENTIUS/chant/issues/4042).
+`@intentius/chant` exports the types (`RunEvent` and one type per event) and the one writer. `createRunEventWriter({ run, write })` keeps a run's identity and its sequence, and each `emit(body)` writes the next line. `writeRunEvent` and `buildRunEvent` do the same for a single event. Replay and `--follow` arrive with [#4042](https://github.com/INTENTIUS/chant/issues/4042).
+
+`--events-json` prints the stream to stdout ([#4041](https://github.com/INTENTIUS/chant/issues/4041)). These commands take it.
+
+| Command | `kind`, `runtime` | What the stream holds |
+|---|---|---|
+| `chant run <op>` on the local runtime | `op`, `local` (`ci` in a CI job, `steward` in a steward's turn) | each phase, each step, each gate's decision. `runId` is the run record's id |
+| `chant run <op> --on fountain` | `op`, `steward` | a phase per stage the steward's turn reports and a step per tool call, as they happen. `runId` is the conversation's id and `gitSha` is `null`, since the run builds from whatever the steward's sandbox holds |
+| `chant run --components` | `component` | waves, components, each composition's phases and steps, and component gates |
+| `chant components promote`, `rollback` and `redeploy` | `component` | the same, named `<verb> <components> in <env>` |
+| `chant components fan-out` | `component` | the same, with `--gate` or `--wave-gate` as a `gate` phase with no component, settled before the components it lets through start |
+| `chant components pr-plan` and `pr-apply` | `component` | a `plan` phase with a `plan` step per component, the pull request's gate as a `gate` phase, and on pr-apply the waves and components of the apply. A refused apply settles `gated` |
+
+A component run, a promote, a fan-out and a pr-apply are named by the run id their release records carry, so the stream and the ledger join. In CI that is the CI run's id, with its `runOrigin`. An Op run keeps its own run id in CI, as its run record does, with the CI run's `runOrigin`. `--events-json` is refused beside `--progress-json`, since both print to stdout.
 
 Every event carries the fields in this table.
 
@@ -478,7 +491,8 @@ Every event carries the fields in this table.
 |---|---|
 | `$schema`, `contract`, `chant` | the schema's `$id`, `1`, and the version of the chant that wrote it |
 | `seq`, `at` | the event's place in the stream, `0` for `run-start`, and when it happened |
-| `runId`, `runOrigin` | the run's id and its locator, the `RunOrigin` shape a release record carries: `forge` (`github`, `gitlab`, `op` or `local`; Forgejo spells itself `github`), and `repo` and `url` when known |
+| `runId` | the run's own id: an Op run's id, a component run's id, or the CI run id for a pipeline run |
+| `runOrigin` | where the run ran, the `RunOrigin` shape a release record carries: `forge` (`github`, `gitlab`, `op` or `local`; Forgejo spells itself `github`), and `repo` and `url` when known. For an Op run in CI it locates the CI run, while `runId` stays the Op run's own id |
 | `kind`, `name` | `op`, `component` or `pipeline`, and the Op's name, the component selection as given, or the pipeline's name |
 | `gitSha` | the commit the run built from, `null` outside a git checkout |
 | `runtime` | `local`, `steward` or `ci` |
@@ -491,9 +505,9 @@ The `type` field names the event. A stream opens with `run-start` and ends with 
 | `wave-start`, `wave-settle` | `wave`, counted from 1, and `components` or `status` |
 | `component-start`, `component-settle` | `wave`, `component`, and `status` on settle |
 | `phase-start`, `phase-settle` | `component` (`null` outside a component run), `phase`, and `status` on settle |
-| `step-start`, `step-settle` | `component`, `phase`, `step`; on settle `status`, `durationMs`, and `skip`, `error` or `message` when they apply |
-| `gate-waiting` | `component`, `phase`, `step`, `op` (what `chant approve` takes), `gate` and `point`, the answer record id of an open question |
-| `gate-resolved` | `component`, `phase`, `step`, `op`, `gate`, `resolvedBy`, `resolvedAt`, `via` and `url` |
+| `step-start`, `step-settle` | `component`, `phase`, `step`, `index`; on settle `status`, `durationMs`, and `skip`, `error` or `message` when they apply |
+| `gate-waiting` | `component`, `phase`, `step`, `index`, `op` (what `chant approve` takes), `gate` and `point`, the answer record id of an open question |
+| `gate-resolved` | `component`, `phase`, `step`, `index`, `op`, `gate`, `resolvedBy`, `resolvedAt`, `via` and `url` |
 | `run-settle` | `status`, `durationMs`, and `error` on a failed run |
 
 A run, wave, component or phase settles `ok`, `failed`, `gated` or `waiting`. `gated` stops at a gate nobody has approved, and `waiting` stops at a decision point nobody has answered. Neither is a failure. A step settles `ok`, `failed`, `skipped`, `cached`, `gated` or `waiting`. `cached` is for a cache hit standing in for the step ([#4015](https://github.com/INTENTIUS/chant/issues/4015)). In a pipeline run a stage is a phase and a job is a step. A skipped step says why in `skip`.
@@ -506,7 +520,9 @@ A run, wave, component or phase settles `ok`, `failed`, `gated` or `waiting`. `g
 | `not-run` | never ran, because an earlier step stopped the run |
 | `null` | was skipped for a reason the writer can't tell |
 
-The two older streams keep their shape until #4041 moves them. `runEventOfProgress` maps a `RunProgressEvent`, a line of `chant run --components --progress-json`, onto a run-event body. `runEventsOfStepRecord` maps a `StepRecord` line of `chant run <op> --progress-json` onto a `step-settle`. When the record holds a gate, a `gate-resolved` or `gate-waiting` comes before it. The executor writes one bare skipped `StepRecord` for several of these cases, so such a record maps to `skip: null`. New readers should read the run-event stream rather than either older shape.
+A step that starts gets a `step-start` before its `step-settle`, and a step that never started, such as one a failure or a gate stopped, gets only a `skipped` settle. `index` is the step's place in its phase as authored, counted from 0, so two steps of one phase with the same name stay apart. It is optional and was added within contract 1 by chant `0.124.28`. A writer leaves it out for a step it has no authored place for, such as a steward's tool call, and a reader without it pairs a start with its settle by `component`, `phase` and `step` in stream order. The emitters report `gated` for a gate nobody approved, `skip: "receipt"` for the steps of an effect whose receipt matched, and `skip: "not-run"` for a step an earlier one stopped.
+
+The two older streams keep their shape behind `--progress-json`. `runEventOfProgress` maps a `RunProgressEvent`, a line of `chant run --components --progress-json`, onto a run-event body. `runEventsOfStepRecord` maps a `StepRecord` line of `chant run <op> --progress-json` onto a `step-settle`. When the record holds a gate, a `gate-resolved` or `gate-waiting` comes before it. The executor writes one bare skipped `StepRecord` for several of these cases, so such a record maps to `skip: null`. New readers should read the run-event stream rather than either older shape.
 
 ## Decision points
 

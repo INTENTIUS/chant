@@ -27,6 +27,8 @@ import {
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { memoryGateLedgerPort } from "../op/gate";
 import type { DriverComponent, RunProgressEvent } from "./driver";
+import { openRunEventStream } from "../run-event-stream";
+import { checkRunEventLines, stepTrail } from "../workspace/__fixtures__/run-event-check";
 
 // A minimal stand-in for the real gitlab lexicon plugin, satisfying
 // `isLexiconPlugin` (../lexicon.ts) — used only by the `generateComponentsPipeline`
@@ -1104,5 +1106,85 @@ describe("runComponents — onProgress (--progress-json wiring, M3)", () => {
     const result = await runComponents(testDir, "svc", { registry: fakeRegistry() });
     expect(result.success).toBe(true);
     expect(result.run?.ok).toBe(true);
+  });
+});
+
+describe("runComponents — onRunEvent (`chant run --components --events-json`, #4041)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-run-components-events-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** The run's stream, as `--events-json` opens it. */
+  function stream() {
+    const lines: string[] = [];
+    const s = openRunEventStream(
+      { runId: "local-1", kind: "component", name: "all", gitSha: null, runtime: "local", runOrigin: { forge: "local" } },
+      (l) => lines.push(l),
+    );
+    return { s, lines };
+  }
+
+  test("a two-wave run: schema-valid, waves and components framed, each step started before it settles", async () => {
+    await writeFile(
+      join(testDir, "alb.component.ts"),
+      `export const alb = { name: "shared-alb", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "search-service", dependsOn: ["shared-alb"], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+    const { s, lines } = stream();
+    const result = await runComponents(testDir, "all", { registry: fakeRegistry(), onRunEvent: s.emit });
+
+    expect(result.success).toBe(true);
+    const events = checkRunEventLines(lines);
+    expect(events[0]).toMatchObject({ type: "run-start", waves: [["shared-alb"], ["search-service"]] });
+    expect(events.filter((e) => e.type === "step-start")).toEqual([
+      expect.objectContaining({ component: "shared-alb", phase: "Apply", step: "deploy-thing", index: 0 }),
+      expect.objectContaining({ component: "search-service", phase: "Apply", step: "deploy-thing", index: 0 }),
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
+  });
+
+  test("a gate nobody approved: gate-waiting and a gated settle, the step after it not-run, the run gated", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "prod-ok" }, { kind: "deploy-thing" }] }] };`,
+    );
+    const { s, lines } = stream();
+    const result = await runComponents(testDir, "svc", { registry: fakeRegistry(), gates: memoryGateLedgerPort(), onRunEvent: s.emit });
+
+    expect(result.gated).toBeDefined();
+    const events = checkRunEventLines(lines);
+    expect(stepTrail(events)).toEqual([
+      ["step-start", "gate:prod-ok"],
+      ["gate-waiting", "gate:prod-ok"],
+      ["step-settle", "gate:prod-ok", "gated"],
+      ["step-settle", "deploy-thing", "skipped:not-run"],
+    ]);
+    expect(events.find((e) => e.type === "gate-waiting")).toMatchObject({ component: "svc", op: "svc", gate: "prod-ok", point: null });
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "gated" });
+  });
+
+  test("onProgress beside onRunEvent prints what it printed alone: the older stream is unchanged", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "prod-ok" }, { kind: "deploy-thing" }] }] };`,
+    );
+    const alone: RunProgressEvent[] = [];
+    await runComponents(testDir, "svc", { registry: fakeRegistry({ failRun: true }), gates: memoryGateLedgerPort(), onProgress: (e) => alone.push(e) });
+    const beside: RunProgressEvent[] = [];
+    const { s } = stream();
+    await runComponents(testDir, "svc", { registry: fakeRegistry({ failRun: true }), gates: memoryGateLedgerPort(), onProgress: (e) => beside.push(e), onRunEvent: s.emit });
+    expect(beside).toEqual(alone);
+    // The gate step, its decision and the not-run step after it are not in the older stream.
+    expect(alone.map((e) => e.type)).toEqual(["run-start", "wave-start", "component-start", "phase-start", "phase-done", "component-done", "wave-done", "run-done"]);
   });
 });

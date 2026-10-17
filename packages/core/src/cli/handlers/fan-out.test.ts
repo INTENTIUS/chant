@@ -52,6 +52,7 @@ const sealedGates = new Set<string>();
 const { CapabilityRegistry } = await import("../../components/capability");
 const { memoryGateLedgerPort } = await import("../../op/gate");
 const { runComponentsFanOut } = await import("./fan-out");
+const { checkRunEventLines } = await import("../../workspace/__fixtures__/run-event-check");
 
 let gateLedger = memoryGateLedgerPort();
 
@@ -620,5 +621,52 @@ describe("gated waves (#3049): one gate per wave, bound to the wave's set digest
     expect(stderr()).toContain("--gate and --wave-gate both name a gate");
     expect(await runComponentsFanOut(ctx({ base: "main", wave: 1 }))).toBe(1);
     expect(stderr()).toContain("--wave runs one wave");
+  });
+});
+
+describe("--events-json (#4041)", () => {
+  const lines = () => stdoutLines.filter((l) => l.startsWith('{"$schema"'));
+
+  test("a fan-out over the set: the gate is a gate phase settled gated, and nothing after it starts", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", eventsJson: true }))).toBe(3);
+    const events = checkRunEventLines(lines());
+    expect(events[0]).toMatchObject({ type: "run-start", kind: "component", waves: [["net"], ["cluster-a", "cluster-b"], ["app-one", "app-three", "app-two"]] });
+    expect(events.map((e) => e.type)).toEqual(["run-start", "phase-start", "step-start", "gate-waiting", "step-settle", "phase-settle", "run-settle"]);
+    expect(events.find((e) => e.type === "gate-waiting")).toMatchObject({ component: null, phase: "gate", step: "gate:release", op: "fan-out", gate: "release" });
+    expect(events.at(-1)).toMatchObject({ status: "gated" });
+  });
+
+  test("approved, the gate resolves and every wave and component follows, each step started before it settles", async () => {
+    await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release" }));
+    const pending = gateLedger.appended[0];
+    gateLedger = memoryGateLedgerPort({
+      pending: [pending],
+      resolutions: [{
+        version: 1, kind: "resolution", op: "fan-out", gate: "release", resolvedBy: "operator",
+        timestamp: new Date(Date.parse(pending.timestamp) + 1000).toISOString(), planDigest: pending.planDigest,
+      }],
+    });
+    stdoutLines = [];
+    failing = ["cluster-b"];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", eventsJson: true }))).toBe(1);
+    const events = checkRunEventLines(lines());
+    expect(events.find((e) => e.type === "gate-resolved")).toMatchObject({ gate: "release", resolvedBy: "operator" });
+    expect(events.filter((e) => e.type === "wave-start").map((e) => (e as { wave: number }).wave)).toEqual([1, 2, 3]);
+    expect(events.find((e) => e.type === "component-settle" && e.component === "cluster-b")).toMatchObject({ status: "failed" });
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed" });
+  });
+
+  test("--progress-json on a set the gate stops now prints run-start and run-done gated (a level-0 change)", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", progressJson: true }))).toBe(3);
+    const progress = stdoutLines.filter((l) => l.startsWith('{"type"')).map((l) => JSON.parse(l));
+    expect(progress).toEqual([
+      { type: "run-start", waves: [["net"], ["cluster-a", "cluster-b"], ["app-one", "app-three", "app-two"]] },
+      { type: "run-done", status: "gated" },
+    ]);
+  });
+
+  test("beside --progress-json it is refused", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", eventsJson: true, progressJson: true }))).toBe(1);
+    expect(stderr()).toContain("--events-json and --progress-json both stream to stdout");
   });
 });

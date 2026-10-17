@@ -10,6 +10,9 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
+import type { RunEvent } from "@intentius/chant";
+import runEventSchema from "@intentius/chant/workspace/run-event.schema.json";
 import type { ChantConfig } from "@intentius/chant/config";
 import type { OpConfig, StepRecord } from "@intentius/chant/op";
 import {
@@ -1310,5 +1313,85 @@ describe("the plugin registers the provider", () => {
     createFountainOpRuntime({});
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+});
+
+// ── the run-event stream (#4041) ──────────────────────────────────────────
+
+describe("tailConversation runEvents (#4041)", () => {
+  // The draft 2020-12 validator core's own contract tests use, loaded from core:
+  // this package carries no ajv of its own.
+  const { default: Ajv2020 } = createRequire(import.meta.resolve("@intentius/chant"))("ajv/dist/2020") as { default: new (o: object) => { compile(s: object): ((d: unknown) => boolean) & { errors?: unknown } } };
+  const validate = new Ajv2020({ strict: true, allErrors: true }).compile(runEventSchema);
+
+  /** Parse and check a stream: schema-valid, framed, one run, each step started before it settles. */
+  function check(lines: string[]) {
+    const events = lines.map((l) => JSON.parse(l) as RunEvent);
+    for (const e of events) expect(validate(e), JSON.stringify(validate.errors)).toBe(true);
+    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i));
+    expect(events[0]?.type).toBe("run-start");
+    expect(events.at(-1)?.type).toBe("run-settle");
+    return events;
+  }
+
+  it("streams the steward's stages as phases and its tool calls as steps, on the steward runtime", async () => {
+    const { sse } = fakeSse([
+      [
+        sseEvent("1", { stream: "stage", stage: "plan" }),
+        sseEvent("2", { stream: "stdout", blocks: [{ kind: "tool_call", id: "t1", title: "plan" }] }),
+        sseEvent("3", { stream: "stdout", blocks: [{ kind: "tool_call_update", tool_call_id: "t1", status: "completed" }] }),
+        sseEvent("4", { stream: "stage", stage: "apply" }),
+        sseEvent("5", { stream: "stdout", blocks: [{ kind: "tool_call", id: "t2", title: "apply" }] }),
+        sseEvent("6", { stream: "stdout", blocks: [{ kind: "tool_call_update", tool_call_id: "t2", status: "failed" }] }),
+        sseEvent("7", { stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] }),
+        sseEvent("8", { stream: "stage", stage: "turn", state: "done" }),
+      ],
+    ]);
+    const lines: string[] = [];
+    const status = await tailConversation({
+      sse,
+      conversationId: "conv-1",
+      op: "alb-deploy",
+      startedAt: "2026-03-01T10:00:00.000Z",
+      idleTimeoutMs: 60_000,
+      now: fakeClock(),
+      runEvents: (l) => lines.push(l),
+    });
+
+    expect(status.state).toBe("completed");
+    const events = check(lines);
+    expect(events[0]).toMatchObject({ runId: "conv-1", kind: "op", name: "alb-deploy", gitSha: null, runtime: "steward", runOrigin: { forge: "op" } });
+    expect(events.map((e) => [e.type, "phase" in e ? e.phase : undefined, "step" in e ? e.step : undefined, "status" in e ? e.status : undefined])).toEqual([
+      ["run-start", undefined, undefined, undefined],
+      ["phase-start", "plan", undefined, undefined],
+      ["step-start", "plan", "plan", undefined],
+      ["step-settle", "plan", "plan", "ok"],
+      ["phase-settle", "plan", undefined, "ok"],
+      ["phase-start", "apply", undefined, undefined],
+      ["step-start", "apply", "apply", undefined],
+      ["step-settle", "apply", "apply", "failed"],
+      ["phase-settle", "apply", undefined, "failed"],
+      ["run-settle", undefined, undefined, "ok"],
+    ]);
+  });
+
+  it("a tail that gives up still ends the stream, failed with the reason", async () => {
+    const sse: FountainSse = () => ({
+      [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => {}) }),
+    });
+    const lines: string[] = [];
+    await expect(
+      tailConversation({
+        sse,
+        conversationId: "conv-1",
+        op: "alb-deploy",
+        startedAt: "2026-03-01T10:00:00.000Z",
+        idleTimeoutMs: 5,
+        now: () => Date.now(),
+        runEvents: (l) => lines.push(l),
+      }),
+    ).rejects.toThrow(/nothing arrived/);
+    const events = check(lines);
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed", error: expect.stringMatching(/nothing arrived on conversation conv-1/) });
   });
 });

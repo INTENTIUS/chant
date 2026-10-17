@@ -52,6 +52,7 @@ import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../..
 import { describeChangedWave, withWaveRecord, type WaveRecord } from "../../gated-waves";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
+import { openCliRunEvents, refusesBothStreams } from "../run-events";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
 import { approveCommand, gateIsSealed } from "../../op/gate";
 import { getHeadCommit } from "../../lifecycle/git";
@@ -172,10 +173,11 @@ export async function resolveChangedUnits(
  * chant components fan-out --base <ref> | --from-affected <file>
  *   [--head <ref>] [--include-dependents] [--env <env>] [--gate <name>]
  *   [--dry-run] [--json] [--resume <file>] [--seed-outputs <file>]
- *   [--dump-outputs <file>] [--progress-json]
+ *   [--dump-outputs <file>] [--progress-json | --events-json]
  */
 export async function runComponentsFanOut(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (refusesBothStreams(args)) return 1;
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
 
@@ -334,6 +336,11 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     writeFanOutAttempt(resumePath, attempt);
   };
 
+  // The run id the release records carry, chosen before the run so that
+  // `--events-json` (#4041) names the run by it too.
+  const release = autoReleaseRun(`fan-out-${Date.now()}`);
+  const events = await openCliRunEvents(args, { kind: "component", name: `fan-out ${derived.plan.order.join(",")}`, runId: release.runId, cwd: projectPath });
+
   let result;
   try {
     result = await runFanOut(derived.plan, derived.components, registry, {
@@ -364,6 +371,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
           }
         : {}),
       ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
+      ...(events ? { onRunEvent: events.emit } : {}),
       ...(resumePath
         ? {
             onComponentSettled: (settled, outputs) => {
@@ -379,6 +387,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
         : {}),
     });
   } catch (err) {
+    events?.settle("failed", err instanceof Error ? err.message : String(err));
     // `--wave <n>` reached before an earlier wave applied: nothing ran.
     if (err instanceof EarlierWaveNotAppliedError) {
       console.error(formatError({ message: err.message }));
@@ -386,6 +395,8 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     }
     throw err;
   }
+  // The fan-out settles the stream; this only ends one it left open.
+  events?.settle(result.status === "fail" ? "failed" : result.status);
 
   if (args.dumpOutputs) {
     const dumpPath = resolve(args.dumpOutputs);
@@ -417,7 +428,6 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // A gated-wave run can stop at a later wave's gate after earlier waves
   // applied, and those applies are recorded like any other.
   if (result.status !== "gated" || result.completed.length > 0) {
-    const release = autoReleaseRun(`fan-out-${Date.now()}`);
     await recordAutoReleasesForRun(
       result.results,
       args.env ?? "local",

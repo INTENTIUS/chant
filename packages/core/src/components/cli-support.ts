@@ -45,6 +45,7 @@ import type { GateDigestMismatch, GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import type { RunProgressEvent } from "./run-progress";
+import { joinRunEventSinks, progressSinkOf, type RunEventSink } from "../run-event-stream";
 import { dirname, relative } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { getHeadCommit } from "../lifecycle/git";
@@ -438,6 +439,11 @@ export interface RunComponentsOptions {
    */
   onProgress?: (event: RunProgressEvent) => void;
   /**
+   * Where the run's events go (#4041, `--events-json`): run-event bodies,
+   * with the same single-wave framing for a single component as `onProgress`.
+   */
+  onRunEvent?: RunEventSink;
+  /**
    * chant #1108 — this run's resolved build-time parameter values, resolved
    * the exact same way `chant build` resolves them
    * (../cli/build-params-cli.ts's `resolveCliBuildParams`, driven by
@@ -681,7 +687,7 @@ export async function runComponents(
   // from a caller (a downstream CI job passing an upstream job's dumped
   // outputs via `--seed-outputs`); grows as this run's components complete.
   const seedOutputs = options.componentOutputs ?? {};
-  const { onProgress } = options;
+  const emit = joinRunEventSinks(options.onRunEvent, progressSinkOf(options.onProgress));
 
   const gates = options.gates;
   // #3061: the commit this run deploys, for the workloads' vcs.ref.head.revision. The digest comes
@@ -705,7 +711,7 @@ export async function runComponents(
         env,
         releaseIdentity,
         componentOutputs: seedOutputs,
-        onProgress,
+        ...(emit ? { onRunEvent: emit } : {}),
         ...(gates ? { gates } : {}),
       });
       return {
@@ -741,21 +747,22 @@ export async function runComponents(
     // `run.waves`/`run.order` below already give it.
     const componentOutputs = { ...seedOutputs };
     const componentName = resolvedTargets[0].name;
-    onProgress?.({ type: "run-start", waves: [selected] });
-    onProgress?.({ type: "wave-start", wave: 1, components: selected });
-    onProgress?.({ type: "component-start", wave: 1, component: componentName });
+    emit?.({ type: "run-start", waves: [selected] });
+    emit?.({ type: "wave-start", wave: 1, components: selected });
+    emit?.({ type: "component-start", wave: 1, component: componentName });
     const componentResult = await runComponentDeploy(
       resolvedTargets[0],
       deployContext({ env, releaseIdentity }, componentName),
       registry,
       componentOutputs,
-      onProgress,
+      undefined,
       gates ? { port: gates } : undefined,
+      emit,
     );
     const status = componentResult.status === "fail" ? "failed" : componentResult.status;
-    onProgress?.({ type: "component-done", wave: 1, component: componentName, status });
-    onProgress?.({ type: "wave-done", wave: 1, status });
-    onProgress?.({ type: "run-done", status });
+    emit?.({ type: "component-settle", wave: 1, component: componentName, status });
+    emit?.({ type: "wave-settle", wave: 1, status });
+    emit?.({ type: "run-settle", status, durationMs: null });
     const run: DriverRunResult = {
       order: selected,
       waves: [selected],

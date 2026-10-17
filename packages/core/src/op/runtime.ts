@@ -201,6 +201,14 @@ export interface OpRunStartOptions {
   profile?: string;
   /** Called once per settled step, so `--progress-json` can stream. */
   progress?: (record: StepRecord) => void;
+  /**
+   * Where the run's event stream goes (#4041, `--events-json`): one
+   * `run-event.schema.json` line at a time, written through the one writer
+   * (`createRunEventWriter`). The local runtime writes `runtime: "local"`
+   * events (`ci` in a CI job); a hosted runtime writes its own, as fountain
+   * writes `runtime: "steward"` ones. A runtime that cannot stream omits it.
+   */
+  runEvents?: (line: string) => void;
   /** Aborts in-flight work (Ctrl-C). */
   signal?: AbortSignal;
   /**

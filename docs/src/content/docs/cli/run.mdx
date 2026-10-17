@@ -66,7 +66,7 @@ The endpoint and the token come from `fountain.profiles` in `chant.config.ts`, a
 
 A teammate runs one turn at a time. A prompt sent while another op is running comes back as `conversation_busy`, and chant reports it with the conversation's address rather than queueing behind a turn whose length it cannot predict. Wait for the thread to go idle and run the command again.
 
-Tool calls on the stream become phases, so `--progress-json` and the human renderer show the run's shape as it happens. Fountain closes an idle stream connection after 60 seconds, which is not the end of a turn: the reader reconnects with `Last-Event-ID` and the server replays what arrived meanwhile. Only real silence ends the wait, after 30 minutes, and `FOUNTAIN_STREAM_IDLE_TIMEOUT` (in seconds) widens that for a run that thinks for longer.
+Tool calls on the stream become phases, so `--progress-json` and the human renderer show the run's shape as it happens. With `--events-json` the tail writes the run-event stream on the `steward` runtime: a phase per stage the turn reports, and a step per tool call, started when the call starts. Fountain closes an idle stream connection after 60 seconds, which is not the end of a turn: the reader reconnects with `Last-Event-ID` and the server replays what arrived meanwhile. Only real silence ends the wait, after 30 minutes, and `FOUNTAIN_STREAM_IDLE_TIMEOUT` (in seconds) widens that for a run that thinks for longer.
 
 `chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op> --on local` to the steward, with `--approver` and `--url` on it (quoted when the approver's name holds a space), and with the `--param`s, `--work`, `--holder` and `--env` the gated run carried. `--env` on the approve line names the environment for the re-run in place of the gated run's. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; until the endpoint it needs ships, the flag refuses and names the upstream issue.
 
@@ -300,7 +300,9 @@ chant components promote --from staging --to prod --digest "$(cat search-service
 
 #### Streaming progress: `--progress-json`
 
-`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged. Both shapes are deprecated for new readers. They give way to the [run-event stream](/chant/reference/workspace-read-contract/#run-events), whose every line names its run. The `--progress-json` output moves to it with [#4041](https://github.com/INTENTIUS/chant/issues/4041).
+`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged. Both shapes are deprecated for new readers.
+
+`--events-json` prints the [run-event stream](/chant/reference/workspace-read-contract/#run-events) instead ([#4041](https://github.com/INTENTIUS/chant/issues/4041)). Every line names its run, its commit and its runtime. A step's start comes before its settle, and a gate's decision is an event of its own. On `chant run <name>` the runtime writes it: the local runtime as the run executes, and fountain as the steward's turn goes. The two flags are refused together, since both print to stdout.
 
 On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact, `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. It is a CLI step after the run, outside the composition, and runs only when the deploy succeeds. See [Auto-recorded releases](#auto-recorded-releases) below.
 
@@ -385,6 +387,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--holder <name>` | Who holds the run's work lease; `<steward>/<op>@<process>` for an Op a steward lists, this process's id otherwise (`run <name>`, local runtime) |
 | `--force` | Required for `run cancel` |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes |
+| `--events-json` | Stream the run's events to stdout, one `run-event.schema.json` line each |
 | `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |
 | `--seed-outputs <file>` | Before the run, load outputs written by `--dump-outputs`; repeatable (`run --components`) |
 | `--digest-file <file>` | After a successful run, write one `<component>=<digest>` line per release the run recorded (`run --components`) |

@@ -29,6 +29,12 @@
  *
  * Every run writes `pr-plan.json` or `pr-apply.json` (`pr-report.schema.json`),
  * `change-set.json` and `pr-note.md` under `--output` (default `.chant/pr`). *
+ * `--events-json` (#4041, #4007) streams the stage's run events to stdout,
+ * one `run-event.schema.json` line each: the planning as a `plan` phase with
+ * a step per component, the gate's decision as a `gate` phase, and on
+ * pr-apply the apply's waves and components as `chant run --components`
+ * streams them.
+ *
  * `--member <name>` (#3465) runs a workspace member's loop: the member's
  * generated pipeline passes it from the member's directory. The gate is
  * recorded under `pr-<n>-<member>`, and the note and the statuses carry the
@@ -54,7 +60,10 @@ import {
 } from "../../components/pr-run";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
-import { gitGateLedgerPort } from "../../op/gate";
+import { gitGateLedgerPort, type GateCheck } from "../../op/gate";
+import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
+import type { RunEventSettleStatus } from "../../run-event";
+import { openCliRunEvents, refusesEventsWithJson } from "../run-events";
 import {
   describePlanChanged,
   PR_APPLY_GATE,
@@ -225,8 +234,32 @@ async function checkMember(projectPath: string, names: string[]): Promise<string
 }
 
 /** Plan every member the derivation selects. */
-function planAll(p: Prepared): Promise<PrPlanSet> {
-  return planPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: p.env, seededOutputs: p.seededOutputs });
+function planAll(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
+  return planPrSet({
+    components: p.components,
+    plan: p.plan,
+    registry: p.registry,
+    env: p.env,
+    seededOutputs: p.seededOutputs,
+    ...(onRunEvent ? { onRunEvent } : {}),
+  });
+}
+
+/**
+ * How a stage's report settles its run's events (#4041): a refusal waits on
+ * a person, as a gate does, and exits the same way.
+ */
+function settleOf(status: PrReport["status"]): RunEventSettleStatus {
+  switch (status) {
+    case "nothing":
+    case "planned":
+    case "applied":
+      return "ok";
+    case "refused":
+      return "gated";
+    default:
+      return "failed";
+  }
 }
 
 /** Write the report, the change set and the note; print the note's path. */
@@ -284,20 +317,50 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport): Promi
   if (ctx.args.json) console.log(JSON.stringify(report, null, 2));
 }
 
-/** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] */
-export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> {
+/** A stage's stream, held so that a stage that returns or throws before it settles still ends it. */
+interface StageEvents {
+  stream?: RunEventStream;
+}
+
+/** Run a stage, and end its stream as `failed` when the stage did not settle it. */
+async function withStageEvents(stage: string, run: (events: StageEvents) => Promise<number>): Promise<number> {
+  const events: StageEvents = {};
+  try {
+    return await run(events);
+  } catch (err) {
+    events.stream?.settle("failed", err instanceof Error ? err.message : String(err));
+    throw err;
+  } finally {
+    events.stream?.settle("failed", `${stage} stopped before it finished`);
+  }
+}
+
+/** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] */
+export function runComponentsPrPlan(ctx: CommandContext): Promise<number> {
+  if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
+  return withStageEvents("pr-plan", (events) => prPlan(ctx, events));
+}
+
+async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> {
   if (ctx.args.pr === undefined) {
     return fail("pr-plan needs the pull or merge request: --pr <n>", "Its approval is recorded under op pr-<n>, so one pull request's approval never answers another's.");
   }
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
-  const set = await planAll(p);
   const op = prOp(ctx.args.pr, p.member);
+  // `--events-json` (#4041): planning, then where the approval stands.
+  const events = await openCliRunEvents(ctx.args, { kind: "component", name: `pr-plan ${op}`, cwd: resolve(".") });
+  stage.stream = events;
+  events?.emit({ type: "run-start", waves: p.plan.waves });
+  const set = await planAll(p, events?.emit);
 
   let approval: PrApproval = { status: "pending" };
   if (p.plan.order.length > 0) {
     try {
-      approval = approvalOf(await decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: set.doc.digest }));
+      const check = await emitGateStep(events?.emit, { op, gate: p.gate }, () =>
+        decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: set.doc.digest }),
+      );
+      approval = approvalOf(check);
     } catch (err) {
       console.error(formatWarning({ message: `could not read the gate ledger, so the approval reads as pending: ${err instanceof Error ? err.message : String(err)}` }));
     }
@@ -319,6 +382,8 @@ export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> 
     status,
   });
   await finish(ctx, p, report);
+  // The plan stage settles on its planning: an approval still to come is what it reports, not a stop.
+  events?.settle(settleOf(status), status === "plan-failed" ? "a member failed to plan" : undefined);
 
   console.error(formatInfo(`pr-plan: ${report.members.length} member(s), ${status}`));
   printMembers(report);
@@ -329,8 +394,13 @@ export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> 
   return status === "plan-failed" ? 1 : 0;
 }
 
-/** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] */
-export async function runComponentsPrApply(ctx: CommandContext): Promise<number> {
+/** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] */
+export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
+  if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
+  return withStageEvents("pr-apply", (events) => prApply(ctx, events));
+}
+
+async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number> {
   const { args } = ctx;
   if (args.requireReview && !args.forge) return fail("--require-review reads the pull request's reviews, so it needs --forge <kind>");
   const p = await prepare(ctx, "apply");
@@ -345,6 +415,12 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     }
   }
   const op = pr === null ? "pr-unknown" : prOp(pr, p.member);
+  // The run id the release records carry, chosen before the run so that
+  // `--events-json` (#4041, #4007) names the run by it too.
+  const release = autoReleaseRun(`${op}-${Date.now()}`);
+  const events = await openCliRunEvents(args, { kind: "component", name: `pr-apply ${op}`, runId: release.runId, cwd: resolve(".") });
+  stage.stream = events;
+  events?.emit({ type: "run-start", waves: p.plan.waves });
 
   // `--resume` (#3464): an earlier attempt at this change on this commit
   // applied part of an approved set. When the members left are covered by
@@ -360,10 +436,12 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
   }
   const resumed = pr !== null && p.plan.order.length > 0 && attempt ? await tryResume(p, attempt, args.resume!, op) : undefined;
 
-  const set = resumed?.set ?? (await planAll(p));
+  if (resumed) emitResumedGate(events, op, p.gate, resumed.check);
+  const set = resumed?.set ?? (await planAll(p, events?.emit));
   const base = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set };
 
-  const stop = async (report: PrReport, code: number): Promise<number> => {
+  const stop = async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
+    events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-apply ${report.status}` : undefined);
     await finish(ctx, p, report);
     console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-apply: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
     if (report.message) console.error(report.message);
@@ -402,12 +480,23 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
   if (resumed) {
     approval = resumed.approval;
   } else {
-    const check = await decidePrGate(gitGateLedgerPort(), {
-      op,
-      gate: p.gate,
-      digest: set.doc.digest,
-      description: `pull request #${pr}: ${p.plan.order.join(", ")}`,
-    });
+    const check = await emitGateStep(
+      events?.emit,
+      { op, gate: p.gate },
+      () =>
+        decidePrGate(gitGateLedgerPort(), {
+          op,
+          gate: p.gate,
+          digest: set.doc.digest,
+          description: `pull request #${pr}: ${p.plan.order.join(", ")}`,
+        }),
+      (unapproved) => {
+        const a = approvalOf(unapproved);
+        return a.status === "changed"
+          ? describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval: a })
+          : `No approval stands for this plan. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}`;
+      },
+    );
     approval = approvalOf(check);
     if (!check.satisfied) {
       const partial = { ...base, approval, status: "refused" as const };
@@ -431,19 +520,12 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     }
     const strangers = approversWithoutReview(approval.approvedBy ?? [], reviewers);
     if (strangers.length > 0) {
-      return stop(
-        prReport({
-          ...base,
-          approval,
-          status: "refused",
-          refusal: "not-a-reviewer",
-          message:
-            `The plan is approved by ${strangers.join(", ")}, who ${strangers.length === 1 ? "has" : "have"} no approving review on #${pr}` +
-            ` (approving reviews: ${reviewers.join(", ") || "none"}). Nothing was applied. ` +
-            `An approval counts when it names the reviewer the way the forge does: ${p.forge.principalOf("<login>")}.`,
-        }),
-        GATED_EXIT_CODE,
-      );
+      const message =
+        `The plan is approved by ${strangers.join(", ")}, who ${strangers.length === 1 ? "has" : "have"} no approving review on #${pr}` +
+        ` (approving reviews: ${reviewers.join(", ") || "none"}). Nothing was applied. ` +
+        `An approval counts when it names the reviewer the way the forge does: ${p.forge.principalOf("<login>")}.`;
+      emitReviewStop(events, message);
+      return stop(prReport({ ...base, approval, status: "refused", refusal: "not-a-reviewer", message }), GATED_EXIT_CODE);
     }
   }
 
@@ -482,6 +564,8 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     env: p.env,
     set,
     ...(resumed ? { resumed: prior } : {}),
+    // The apply is this run's waves, so the fan-out's own run framing is dropped.
+    ...(events ? { onRunEvent: events.nested } : {}),
     ...(resumePath
       ? {
           onComponentSettled: (settled, outputs) => {
@@ -497,7 +581,6 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
       : {}),
   });
   recordAttempt();
-  const release = autoReleaseRun(`${op}-${Date.now()}`);
   await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), release.runOrigin);
   const report = prReport({
     ...base,
@@ -506,14 +589,36 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     members: applied.members,
     ...(resumed ? { resumed: resumed.completed } : {}),
   });
-  const code = await stop(report, applied.status === "applied" ? 0 : 1);
+  // A component that stopped at a gate of its own leaves the apply waiting on a person.
+  const code = await stop(report, applied.status === "applied" ? 0 : 1, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
+}
+
+/** A resumed apply's gate (#3464), decided against the approved digest, as the run's `gate` phase. */
+function emitResumedGate(events: RunEventStream | undefined, op: string, gate: string, check: GateCheck): void {
+  if (!events) return;
+  const where = { component: null, phase: GATE_PHASE, step: `gate:${gate}` };
+  events.emit({ type: "phase-start", component: null, phase: GATE_PHASE });
+  events.emit({ type: "step-start", ...where });
+  for (const body of gateEventsOf(check, { ...where, op, gate }, { durationMs: null })) events.emit(body);
+  events.emit({ type: "phase-settle", component: null, phase: GATE_PHASE, status: check.satisfied ? "ok" : "gated" });
+}
+
+/** An approval by someone with no approving review (#3183) stops the apply: a `review` phase that settles `gated`. */
+function emitReviewStop(events: RunEventStream | undefined, message: string): void {
+  if (!events) return;
+  events.emit({ type: "phase-start", component: null, phase: "review" });
+  events.emit({ type: "step-start", component: null, phase: "review", step: "review" });
+  events.emit({ type: "step-settle", component: null, phase: "review", step: "review", status: "gated", durationMs: null, message });
+  events.emit({ type: "phase-settle", component: null, phase: "review", status: "gated" });
 }
 
 interface Resumed {
   plan: FanOutPlan;
   set: PrPlanSet;
+  /** The gate's decision against the approved digest. */
+  check: GateCheck;
   approval: PrApproval;
   completed: string[];
   outputs: Record<string, Record<string, unknown>>;
@@ -558,5 +663,5 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
   });
   if (!resumed.ok) return skip(`what is left is not what was approved. ${resumed.reasons.join("; ")}`);
   console.error(formatInfo(`resume  : ${attempt.completed.join(", ")} applied in an earlier attempt; applying ${resumed.plan.order.join(", ") || "nothing more"} under the approval of ${record.digest}`));
-  return { plan: resumed.plan, set: resumed.set, approval: approvalOf(check), completed: attempt.completed, outputs };
+  return { plan: resumed.plan, set: resumed.set, check, approval: approvalOf(check), completed: attempt.completed, outputs };
 }
