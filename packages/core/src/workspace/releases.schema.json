@@ -274,7 +274,6 @@
         "label",
         "actor",
         "timestamp",
-        "runId",
         "runOrigin",
         "signature"
       ],
