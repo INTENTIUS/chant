@@ -12,6 +12,7 @@ export * from "./unobserved-gate";
 export * from "./receipt-plan";
 export * from "./affected";
 export * from "./release-ledger";
+export * from "./release-join";
 export * from "./build-ledger";
 export * from "./build-ledger-store";
 export * from "./oras-referrer-lookup";

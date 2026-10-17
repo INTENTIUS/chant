@@ -641,6 +641,11 @@ function refTo(record: ReleaseRecord) {
   return { env: record.env, runId: record.runId, timestamp: record.timestamp };
 }
 
+/** A rollback and a redeploy put an earlier deploy back, so they name the release it came from (#4043). */
+function releaseOf(source: ReleaseRecord): { releaseDigest?: string } {
+  return source.releaseDigest !== undefined ? { releaseDigest: source.releaseDigest } : {};
+}
+
 /**
  * The release record a successful promotion appends to the target ledger.
  * The digest, git sha and archive identities are the source release's own,
@@ -657,7 +662,7 @@ export function promotionRecord(item: PromotionItem, to: string, run: DeployRunI
  * release.
  */
 export function rollbackRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
-  return { ...sharedRecord(item, env, run), restores: refTo(item.source) };
+  return { ...sharedRecord(item, env, run), restores: refTo(item.source), ...releaseOf(item.source) };
 }
 
 /**
@@ -667,5 +672,5 @@ export function rollbackRecord(item: PromotionItem, env: string, run: DeployRunI
  * change, and the record says when it was last put back.
  */
 export function redeployRecord(item: PromotionItem, env: string, run: DeployRunInfo): ReleaseRecordInput {
-  return { ...sharedRecord(item, env, run), redeploys: refTo(item.source) };
+  return { ...sharedRecord(item, env, run), redeploys: refTo(item.source), ...releaseOf(item.source) };
 }

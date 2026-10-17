@@ -344,7 +344,9 @@ Ops:
                         run, and prints that order first (#3950).
                         On success, auto-emits a release-ledger record per
                         component that published a digest (default: on;
-                        --no-release-record to opt out; #597)
+                        --no-release-record to opt out; #597).
+                        --release <label|digest>: the run is of that release,
+                        cut from this checkout's commit; the records name it (#4043)
                         --progress-json: stream one NDJSON RunProgressEvent
                         per line to stdout while the run executes, for a
                         consumer to render live wave/component/phase/step

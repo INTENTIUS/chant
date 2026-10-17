@@ -795,6 +795,8 @@ A run that stops on an open decision point has `status: "waiting"`, and its `las
 
 A reader joins a release to a deploy record by `releaseDigest`, and to the commit's CI state by `commit` and the `ci/green/<sha>` tag. A release whose commit is revoked keeps its file; the revocation is read from the tags.
 
+The four records join through the release digest ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). A commit reaches its releases through the `commit` of `_releases/*.json`. A release reaches its gates through `releaseDigest` on the pending facts and resolutions of `_gates/release.jsonl`, and its deploy records through `releaseDigest` on every environment's `releases.jsonl`. A deploy record written before chant `0.124.29` has no `releaseDigest`, and a deploy that was not made from a release never has one; neither joins to a release. A `run --components` deploy has one only when it ran with `--release`, so a reader never treats a missing `releaseDigest` as a deploy of an uncut commit. The library function `joinRelease` does the walk, see [Joining a release](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys).
+
 The release model adds these fields to contract 1. Every one is optional or nullable, so a reader treats its absence as an older chant. A row's floor is the first release that ships the issue that adds it. The rows still waiting name the issue.
 
 | Field | On | Holds | Floor |
@@ -804,8 +806,7 @@ The release model adds these fields to contract 1. Every one is optional or null
 | `_releases/templates/<digest>.txt` | `chant/lifecycle` | each template's bytes, by content digest | 0.124.28 |
 | `signature` | each cut line | the actor's ssh signature in the `chant-release` namespace over the digest, the label, the actor and the time; `null` for an unsigned cut ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) | 0.124.28 |
 | the `releases` output schema, `v1` | the read contract | releases with their targets and the environments running each | 0.124.28 |
-| `releaseDigest` | `ReleaseRecord` | the release a deploy came from. `components promote --release` writes it from 0.124.28; `run --components`, `rollback` and `redeploy` with #4043 | 0.124.28 for a promote |
-| `releaseDigest`, `releaseLabel` | `status` release item | the same, and the release's label, `null` without one | the release with #4043 |
+| `releaseDigest` | `ReleaseRecord` | the release a deploy came from. `components promote --release` and `run --components --release` write it, and `rollback` and `redeploy` copy it from the record they restore ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). With the record's `env` it names the release target | 0.124.28 for `promote --release`; 0.124.29 for `run --components`, `rollback` and `redeploy` |
 | `releaseDigest` | `PendingGateRecord`, `GateResolutionRecord` | the release a gate binds, on a release gate: the gate `components promote --release` passes, under the op `release` | 0.124.28 |
 | `releaseDigest` | `status` gate item | the same | 0.124.28 |
 | `empty` | `GateResolutionRecord` | `true` for a pass over an empty change set | 0.124.28 |
@@ -830,6 +831,8 @@ These fields are optional in their documents. Each schema description names the 
 | Document | Field | Floor | Meaning |
 |---|---|---|---|
 | `status` | `releases[].approver` | 0.124.28 | Who approved the change at its gate, or `null` for an ungated release. The release ledger has recorded it since [#1035](https://github.com/INTENTIUS/chant/issues/1035), and `status` first lists it here |
+| `status` | `releases[].releaseDigest` | 0.124.29 | The release the deploy was made from, or `null` for a deploy that named none ([#4043](https://github.com/INTENTIUS/chant/issues/4043)) |
+| `status` | `releases[].releaseLabel` | 0.124.29 | The label that release was cut with, or `null` when there is none or the cut line can't be read |
 | `status` | `releases[].admission` | 0.124.28 | The gate resolution that admitted the release: `op`, `gate` and `resolvedAt`. `null` for an ungated release and for one recorded by an older chant ([#4020](https://github.com/INTENTIUS/chant/issues/4020)) |
 | `status` | `members[].promotionOrder` | 0.124.28 | The member's promotion order ([#4030](https://github.com/INTENTIUS/chant/issues/4030)): the literal entries of the `environments` array in its `chant.config.ts`, in order, each as `name` and `canary`. `[]` when the config declares none, `null` when it could not be read. `canary` is declared and shown, and no command acts on it yet |
 | `status` | `gates[].gitSha` | 0.124.28 | The commit the run reached the gate at |

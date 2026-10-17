@@ -101,6 +101,8 @@ export interface AutoReleaseRunInfo {
   profileOverride?: string;
   /** The deploy's input-side digest, when `digest` is a rendered-content identity (a pinned helm deploy, chant #1242) — recorded as the release record's `inputDigest` so ledger queries can still join on inputs across clusters whose bytes legitimately differ. */
   inputDigest?: string;
+  /** The release the deploy was made under (#4043), recorded as the release record's `releaseDigest`. Set only when the caller named a release; never inferred. */
+  releaseDigest?: string;
 }
 
 /** Opt-out + field-override knobs for auto-release recording, threaded from CLI flags/config (#597: "opt-out-able (flag/config), documented default"). */
@@ -191,6 +193,7 @@ export async function maybeRecordAutoRelease(
         ...(run.admission ? { admission: run.admission } : {}),
         ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
         ...(run.inputDigest ? { inputDigest: run.inputDigest } : {}),
+        ...(run.releaseDigest ? { releaseDigest: run.releaseDigest } : {}),
       },
       { cwd: options.cwd },
     );

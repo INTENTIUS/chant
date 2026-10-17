@@ -108,6 +108,15 @@ describe("maybeRecordAutoRelease", () => {
     expect(input).toMatchObject({ runId: "9001", runOrigin: { forge: "github", repo: "acme/app" }, approver: "alice", admission });
   });
 
+  test("a run under a release records its releaseDigest, and one under none records none (#4043)", async () => {
+    appendReleaseRecordMock.mockResolvedValue({ commit: "c".repeat(40), record: { version: 1 } });
+    const releaseDigest = `jcs1-sha256:${"c".repeat(64)}`;
+    await maybeRecordAutoRelease({ component: "svc", env: "dev", success: true, records: [publishRecord("sha256:abc")], runId: "r", releaseDigest }, { actor: "alice" });
+    await maybeRecordAutoRelease({ component: "svc", env: "dev", success: true, records: [publishRecord("sha256:abc")], runId: "r" }, { actor: "alice" });
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ releaseDigest });
+    expect(appendReleaseRecordMock.mock.calls[1][0]).not.toHaveProperty("releaseDigest");
+  });
+
   test("an ungated deploy records neither", async () => {
     appendReleaseRecordMock.mockResolvedValue({ commit: "c".repeat(40), record: { version: 1 } });
     await maybeRecordAutoRelease({ component: "svc", env: "prod", success: true, records: [publishRecord("sha256:abc")], runId: "r" }, { actor: "alice" });

@@ -143,3 +143,18 @@ This is how a project with no components deploys what it cut. [`chant components
 Lists every release of the member, newest cut first. Each line starts with the label and the digest. The commit comes next, then the newest cut's signature (`signed by <actor>`, `unsigned` or `unverified`), then where the release runs. An `unverified` signature's reason goes to stderr.
 
 `--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. Each cut carries `signatureCheck`, `{ status, key, reason }`. Its `status` is `verified`, `unsigned` or `unverified`, and `key` is the fingerprint in the signature. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.
+
+## Joining a release to its commit, gates and deploys
+
+The records name one another through the release digest ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). From a commit, a release, a release gate or a deploy record, the others are one lookup away:
+
+| From | To | Through |
+|---|---|---|
+| commit | releases | the `commit` of each `_releases/<releaseDigest>.json` |
+| release | gates | `releaseDigest` on the facts of `_gates/release.jsonl` |
+| release | deploy records | `releaseDigest` on the records of every `<env>/releases.jsonl` |
+| deploy record | release | its `releaseDigest`, or for a record with none but an `admission` of op `release`, the resolution that admission names |
+
+A deploy record's `env` with its `releaseDigest` names the target. `components promote --release` and [`run --components --release`](/chant/cli/run/#running-a-release---release) write the field, and `components rollback` and `components redeploy` copy it from the record they restore. [`workspace status`](/chant/cli/workspace-status/) lists it on each item as `releaseDigest`, with `releaseLabel`, the label the cut gave.
+
+`joinRelease` in `lifecycle/release-join.ts` does the walk for a library reader. It takes `{ commit }`, `{ release }`, `{ deploy }` or `{ gate }` and returns what it found, each with its `label`, `commit`, `cuts`, `gates` and `deploys`. A commit can have several. A starting point that names nothing returns an empty list and a `reason`.

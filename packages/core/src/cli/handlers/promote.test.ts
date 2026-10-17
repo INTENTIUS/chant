@@ -602,6 +602,24 @@ describe("chant components rollback", () => {
     expect(appendReleaseRecordMock.mock.calls[0][0]).not.toHaveProperty("promotedFrom");
   });
 
+  test("copies the release off the record it restores, and writes none for a record of no release (#4043)", async () => {
+    const RELEASE = `jcs1-sha256:${"b".repeat(64)}`;
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [{ ...prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), releaseDigest: RELEASE }, prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+    expect(await runComponentsRollback(rb({}))).toBe(0);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ digest: "sha256:old", releaseDigest: RELEASE });
+
+    appendReleaseRecordMock.mockClear();
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+    expect(await runComponentsRollback(rb({}))).toBe(0);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).not.toHaveProperty("releaseDigest");
+  });
+
   test("a comma list is refused: rollback acts on one component (#3950)", async () => {
     expect(await runComponentsRollback(rb({ component: "api,web" }))).toBe(1);
     expect(errors.join("\n")).toMatch(/--component takes one component name, not a list/);
@@ -666,6 +684,16 @@ describe("chant components redeploy", () => {
     expect(written).not.toHaveProperty("promotedFrom");
     expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
     expect(errors.join("\n")).toMatch(/Redeployed .*api.* in prod at sha256:new/);
+  });
+
+  test("copies the release off the record it redeploys (#4043)", async () => {
+    const RELEASE = `jcs1-sha256:${"b".repeat(64)}`;
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [{ ...prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2"), releaseDigest: RELEASE }],
+      malformed: 0,
+    });
+    expect(await runComponentsRedeploy(rd({}))).toBe(0);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ digest: "sha256:new", releaseDigest: RELEASE, redeploys: { runId: "run-2" } });
   });
 
   test("the same digest rollback refuses is the one redeploy accepts", async () => {
