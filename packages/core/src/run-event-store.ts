@@ -27,8 +27,18 @@ export function runEventFileName(runId: string): string {
   return `${runId.replace(/[^A-Za-z0-9._@-]/g, "_")}.jsonl`;
 }
 
-/** The directory the checkout at `cwd` keeps run events in, or null outside a checkout. */
+/**
+ * The environment variable that names the directory run events are kept in,
+ * in place of the checkout's. The test suite sets it to a per-run temp
+ * directory, so no test writes to the real repository's store (worktrees
+ * share one git directory).
+ */
+export const RUN_EVENTS_DIR_ENV = "CHANT_RUN_EVENTS_DIR";
+
+/** The directory the checkout at `cwd` keeps run events in (`CHANT_RUN_EVENTS_DIR` when set), or null outside a checkout. */
 export async function runEventsDir(cwd: string): Promise<string | null> {
+  const override = process.env[RUN_EVENTS_DIR_ENV];
+  if (override) return override;
   const common = await gitCommonDir(cwd);
   return common ? join(common, "chant", RUN_EVENTS_DIR) : null;
 }

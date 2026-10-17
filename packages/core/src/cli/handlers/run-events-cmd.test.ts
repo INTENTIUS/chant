@@ -19,6 +19,7 @@ let cwd: string;
 let out: string[];
 beforeEach(() => {
   cwd = process.cwd();
+  vi.stubEnv("CHANT_RUN_EVENTS_DIR", "");
   dir = realpathSync(mkdtempSync(join(tmpdir(), "run-events-cmd-")));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: dir });
@@ -30,6 +31,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   process.chdir(cwd);
   rmSync(dir, { recursive: true, force: true });
 });

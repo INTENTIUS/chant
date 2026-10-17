@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { runOpLocally } from "./op/local-executor";
 import { memoryGateLedgerPort } from "./op/gate";
 import type { ActivityFn } from "./op/activity-registry";
@@ -19,7 +19,10 @@ import { findStoredRun, listStoredRuns, openRunEventStore, readRunEvents, runEve
 import { checkRunEventLines } from "./workspace/__fixtures__/run-event-check";
 
 const dirs: string[] = [];
+// These tests read the store a temp checkout keeps under its own git directory.
+beforeEach(() => void vi.stubEnv("CHANT_RUN_EVENTS_DIR", ""));
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 

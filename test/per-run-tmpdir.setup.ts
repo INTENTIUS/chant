@@ -22,6 +22,9 @@ import { join } from "node:path";
  *   and the chant processes they start, never touch the user's cache. It is
  *   set here rather than in the config's `test.env` because the config is
  *   read before this runs, when `tmpdir()` is still the machine's.
+ * - chant's run-event store (chant #4042). Worktrees share one git directory,
+ *   where `chant run` keeps each run's events, so CHANT_RUN_EVENTS_DIR points
+ *   at `<dir>/run-events` and no test writes to the real repository's store.
  *
  * A run killed before teardown leaves its directory behind; the next run
  * removes any such directory older than a day.
@@ -47,6 +50,7 @@ export default function setup(): (() => void) | undefined {
     TMP: process.env.TMP,
     TEMP: process.env.TEMP,
     CHANT_CACHE_DIR: process.env.CHANT_CACHE_DIR,
+    CHANT_RUN_EVENTS_DIR: process.env.CHANT_RUN_EVENTS_DIR,
     [MARK]: undefined,
   };
   process.env[MARK] = dir;
@@ -54,6 +58,7 @@ export default function setup(): (() => void) | undefined {
   process.env.TMP = dir;
   process.env.TEMP = dir;
   process.env.CHANT_CACHE_DIR = join(dir, "chant-cache");
+  process.env.CHANT_RUN_EVENTS_DIR = join(dir, "run-events");
 
   return () => {
     for (const [key, value] of Object.entries(saved)) {
