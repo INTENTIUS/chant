@@ -214,8 +214,19 @@ export interface CiGreen {
    * tag needs a statement.
    */
   signedSince: string | null;
+  /**
+   * Where the tick reads each phase's results (#4044): `checks` (the
+   * default), the forge's check runs, whose names the phases' patterns
+   * match; or `runs`, chant's own Op runs on `chant/lifecycle`, whose Op
+   * names the patterns match, each counted only with a statement signed by
+   * a runner key.
+   */
+  source: CiSource;
   pointer: string;
 }
+
+/** Where `ci tick` reads phase results (#4044): forge check runs, or chant Op runs. */
+export type CiSource = "checks" | "runs";
 
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
@@ -1038,7 +1049,7 @@ function identityOf(raw: unknown): IdentityPolicy | null {
  */
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string } };
+  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string; source?: CiSource } };
   if (block.green === undefined) return { green: null };
   const g = block.green;
   const phases: CiPhase[] = Object.entries(g.phases).map(([name, p]) => ({
@@ -1055,7 +1066,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       at(`/ci/green/require/${i}`),
     );
   }
-  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, pointer: "/ci/green" } };
+  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" } };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

@@ -146,6 +146,8 @@ export interface LsCiGreen {
   require: string[];
   /** The first commit whose ci tags need a signed statement (#4031). Present only when the declaration sets it. */
   signedSince?: string;
+  /** Where the tick reads phase results (#4044). Present only when it is `runs`; absent means the forge's check runs. */
+  source?: "runs";
 }
 
 export interface LsGroup {
@@ -325,6 +327,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
                   phases: declaration.ci.green.phases.map((p) => ({ name: p.name, runs: p.runs, skipped: p.skipped })),
                   require: declaration.ci.green.require,
                   ...(declaration.ci.green.signedSince !== null ? { signedSince: declaration.ci.green.signedSince } : {}),
+                  ...(declaration.ci.green.source === "runs" ? { source: "runs" as const } : {}),
                 }
               : null,
           }

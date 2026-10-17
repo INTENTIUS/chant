@@ -173,6 +173,16 @@ export interface OpRunRecord {
    * run id. Absent outside CI and on a record written before 0.124.28.
    */
   runOrigin?: RunOrigin;
+  /**
+   * The run's statement (#4044): a DSSE envelope over an in-toto statement
+   * (`https://intentius.io/chant/op-run/v1`) a runner key signed at the end
+   * of the run, naming the run, its commit and the SHA-256 of this record
+   * without the statement (`../workspace/trust/op-run-statement.ts`).
+   * `chant ci tick` with `ci.green.source: "runs"` counts only a run that
+   * carries one. Absent on a run given no runner key, and on a record
+   * written before 0.124.28.
+   */
+  statement?: { payloadType: string; payload: string; signatures: { keyid: string; sig: string }[] };
 }
 
 /** An {@link OpRunRecord} before the ledger stamps its version and mints an id. */
@@ -227,6 +237,13 @@ export interface OpRunStartOptions {
    * and the run `chant run status --on fountain` reports carry the same id.
    */
   runId?: string;
+  /**
+   * Signs the run's record when it settles (#4044), for `chant run <op>
+   * --key` or `CHANT_RUNNER_KEY`: the local runtime stores what it returns
+   * on the record as `statement`. A runtime that writes no record here
+   * ignores it.
+   */
+  signRecord?: (record: OpRunRecord) => NonNullable<OpRunRecord["statement"]>;
 }
 
 /** What a caller hands {@link OpRuntimeProvider.resolveGate} besides the resolution. */

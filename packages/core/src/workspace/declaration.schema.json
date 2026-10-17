@@ -1455,6 +1455,13 @@
           "type": "string",
           "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
           "description": "Added by #4031, read by chant 0.124.28 and newer. The full sha of the first commit on branch whose ci/green and ci/revoked tags must carry a DSSE statement in their annotation, signed by a key .chant/trust.json at base lists under runners for a principal holding the runner role. A tag on a strict first-parent ancestor of this commit counts unsigned, so existing tags keep working; a tag on any other commit, this one included, needs a statement. Position in history decides, never a date, which whoever makes a commit or a tag sets. A reader refuses a sha that names no commit in its clone with declaration-invalid. Absent, no tag needs a statement."
+        },
+        "source": {
+          "enum": [
+            "checks",
+            "runs"
+          ],
+          "description": "Added by #4044, read by chant 0.124.28 and newer, so a declaration that sets it sets minReader to 0.124.28 or newer. Where chant ci tick reads each phase's results. checks (the default): the forge's check runs, whose names the phases' patterns match. runs: chant's own Op runs, read from the run ledger on chant/lifecycle, for a project whose pipelines run as chant Ops, such as one on GitLab or Forgejo. A phase's patterns then match Op names, a run counts for the commit its record names as gitSha, and the latest run of each Op decides. A run counts only when its record carries a statement signed by a key .chant/trust.json at base lists under runners for a principal holding the runner role; the tick ignores and reports any other. A tick from runs signs every tag it makes, so it needs a runner key."
         }
       },
       "patternProperties": {

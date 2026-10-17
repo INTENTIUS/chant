@@ -2,9 +2,9 @@
  * `chant ci` (#3573, ws-103): which commits passed CI.
  *
  *   ci last-green [--json] [--from <rev>] the newest commit on the branch with a green tag and no revoked tag
- *   ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
+ *   ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
  *                                        the branch's commits within the window, each with its state and phase results
- *   ci tick [--dry-run] [--forge github] [--key <runner key.pem>]
+ *   ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
  *                                        tag the commits that turned green, revoke the ones that turned red
  *   ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
  *               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]
@@ -13,6 +13,10 @@
  * The tick signs its tags with a runner key (#4031) from `--key <file>` or
  * the PEM in `CHANT_RUNNER_KEY`, which the generated workflow sets from the
  * secret `--runner-key-secret` names.
+ *
+ * `--source runs` (or `ci.green.source: "runs"`) reads phase results from
+ * chant's own signed Op runs on `chant/lifecycle` in place of the forge's
+ * check runs (#4044); a tick from runs needs no forge token.
  *
  * `last-green --json` prints `ci-last-green.schema.json` and `list --json` prints
  * `ci-list.schema.json`. The tick and the
@@ -24,19 +28,26 @@ import { join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
-import { ciList, ciTick, CiGreenError, formatList, formatTick, lastGreen } from "./ci-green";
+import { ciList, ciTick, CiGreenError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
 import { ACTIONS_NAME, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
-import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
+import { readDeclaration, readerVersion, WorkspaceReadError, type CiSource } from "./declaration";
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
 const USAGE =
-  "chant ci last-green [--json] [--from <rev>] | ci list [--json] [--limit <n>] [--since <rev>] [--forge github] | ci tick [--dry-run] [--forge github] [--key <runner key.pem>] | " +
+  "chant ci last-green [--json] [--from <rev>] | ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
   "ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]";
 
-/** The environment variable a tick reads its runner key from, as PEM, when `--key` is not given (#4031). */
-export const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
+export { RUNNER_KEY_ENV };
+
+/** `--source`, checked (#4044): `checks` or `runs`, or undefined to follow `ci.green.source`. */
+function sourceOf(args: CommandContext["args"]): CiSource | undefined {
+  const v = args.source;
+  if (v === undefined) return undefined;
+  if (v !== "checks" && v !== "runs") throw new Error(`--source takes checks (the forge's check runs) or runs (chant's own Op runs), not ${JSON.stringify(v)}`);
+  return v;
+}
 
 /** Each ignored tag as a warning line for stderr (#4031). */
 function warnIgnored(ignored: readonly { tag: string; status: string; reason: string }[]): void {
@@ -68,7 +79,8 @@ export async function runCiList(ctx: CommandContext): Promise<number> {
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new Error("--limit takes a whole number of commits, 1 or more");
     // Only an explicit --forge reaches the network; without it the list reads local refs and tags.
     const forge = ctx.args.forge !== undefined ? ciForgeFromEnv(ctx.args.forge) : undefined;
-    const doc = await ciList({ cwd: process.cwd(), limit, since: ctx.args.since, forge });
+    const source = sourceOf(ctx.args);
+    const doc = await ciList({ cwd: process.cwd(), limit, since: ctx.args.since, forge, ...(source ? { source } : {}) });
     if (ctx.args.json) {
       console.log(JSON.stringify(doc, null, 2));
       return "error" in doc ? 1 : 0;
@@ -89,9 +101,11 @@ const describe = (err: unknown) => (err instanceof WorkspaceReadError ? err.desc
 
 export async function runCiTick(ctx: CommandContext): Promise<number> {
   try {
-    const forge = ciForgeFromEnv(ctx.args.forge ?? "github");
+    const source = sourceOf(ctx.args);
+    // The forge is made only when the source is check runs, so a tick from chant runs needs no forge token.
+    const forge = () => ciForgeFromEnv(ctx.args.forge ?? "github");
     const runnerKey = ctx.args.key !== undefined ? readFileSync(resolve(ctx.args.key), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
-    const result = await ciTick({ cwd: process.cwd(), forge, dryRun: ctx.args.dryRun === true, ...(runnerKey !== undefined ? { runnerKey } : {}) });
+    const result = await ciTick({ cwd: process.cwd(), forge, dryRun: ctx.args.dryRun === true, ...(source ? { source } : {}), ...(runnerKey !== undefined ? { runnerKey } : {}) });
     console.log(formatTick(result, ctx.args.dryRun === true));
     return 0;
   } catch (err) {

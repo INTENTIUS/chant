@@ -1310,6 +1310,16 @@ export interface RunOpOptions {
    */
   ledger?: { cwd?: string };
   /**
+   * Signs the run's record when it settles (#4044): given the record without
+   * a statement, returns the DSSE envelope stored on it as `statement`
+   * (`../workspace/trust/op-run-statement.ts`). `chant run <op> --key` and
+   * `CHANT_RUNNER_KEY` pass one made from a runner key. When it throws, the
+   * record is written unsigned and `onSignError` hears why.
+   */
+  signRecord?: (record: OpRunRecord) => NonNullable<OpRunRecord["statement"]>;
+  /** Called when {@link signRecord} throws. The run's outcome stands. */
+  onSignError?: (err: unknown) => void;
+  /**
    * Called when the ledger append itself fails. The run's own outcome is
    * already decided by then, so a ledger failure is reported to the caller,
    * never promoted into a run failure.
@@ -1605,7 +1615,16 @@ async function runOpInTurn(
       ...(ciRun ? { runOrigin: ciRun.runOrigin } : {}),
       phaseDurations,
     });
-    const record: OpRunRecord = { version: 1, ...input, id: runId };
+    let record: OpRunRecord = { version: 1, ...input, id: runId };
+    if (options.signRecord) {
+      try {
+        const statement = options.signRecord(record);
+        input.statement = statement;
+        record = { ...record, statement };
+      } catch (err) {
+        options.onSignError?.(err);
+      }
+    }
     // The stream settles as the run does, with the first failing step's error.
     const firstError = status === "fail" ? settled.find((r) => r.status === "fail")?.error : undefined;
     stream?.settle(status === "fail" ? "failed" : status, firstError);

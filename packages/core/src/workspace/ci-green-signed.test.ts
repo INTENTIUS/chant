@@ -107,6 +107,7 @@ const GREEN_DECL: CiGreen = {
   ],
   require: ["lint", "test"],
   signedSince: null,
+  source: "checks",
   pointer: "/ci/green",
 };
 

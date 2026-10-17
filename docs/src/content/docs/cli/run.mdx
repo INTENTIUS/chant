@@ -171,6 +171,8 @@ Every run appends one record to the run ledger on the `chant/lifecycle` branch, 
 
 The record also names where the run was built and where it ran ([#4020](https://github.com/INTENTIUS/chant/issues/4020)). `gitSha` is the checkout's `HEAD`, or the commit the CI job started for when the checkout has no git. `runOrigin` is set when the Op ran in CI and has the same shape as a [release record's `runOrigin`](/chant/components/observability/#the-release-ledger): the forge (`github`, which also covers Forgejo, or `gitlab`), the repository and a link to the CI run. The record's `id` stays the Op's own run id. The gate facts the run writes carry the same `gitSha` and the run id, so a gate joins to its run by either. Chant 0.124.28 and newer write these fields, and a record from an older chant has neither.
 
+Given a runner key, with `--key <file>` or the PEM in `CHANT_RUNNER_KEY`, the run signs its record as it settles ([#4044](https://github.com/INTENTIUS/chant/issues/4044)). The record gains `statement`, which `--json` prints too. It is a DSSE envelope over a statement that names the run and its commit and hashes the record. [`chant ci tick` from chant runs](/chant/cli/ci/#chant-runs-as-the-status-source) counts only a run that carries one. The key must be one `.chant/trust.json` at `HEAD` lists under `runners`, for a principal holding the `runner` role. `--key` refuses any other before the run starts. A `CHANT_RUNNER_KEY` that is not such a key prints a warning, and the run is recorded unsigned. A run without a key records no `statement`, as before. Chant 0.124.28 and newer write it.
+
 ### `run list`
 
 List all discovered Ops (`*.op.ts` files) with their declared `labels` and the run state the selected runtime reports for each.
@@ -411,6 +413,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--no-record` | Run every step but record nothing on `chant/lifecycle` and push nothing; a gate step fails. `CHANT_NO_RECORD=1` does the same for every chant process that inherits it (`run <name>`, `run --components`, local runtime) |
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the run's ledger record as JSON on stdout (`run <name>`); the structured run result for `run --components` |
+| `--key <file>` | Sign the run's record with this runner key, an Ed25519 private key in PEM, so `ci tick` from chant runs counts it. `CHANT_RUNNER_KEY` holds the PEM when the flag is absent (`run <name>`, local runtime) |
 | `--gated-exit <code>` | Exit code for a run that stopped at an unapproved gate, instead of the default 3. Only that outcome is remapped; a failure is still 1 |
 | `--work <id>` | The work item an Op with a `workLease` runs under, in place of the Op's own (`run <name>`, local runtime) |
 | `--holder <name>` | Who holds the run's work lease; `<steward>/<op>@<process>` for an Op a steward lists, this process's id otherwise (`run <name>`, local runtime) |
