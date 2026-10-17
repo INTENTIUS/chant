@@ -39,6 +39,12 @@ export function targetFor(release: Release, env: string): { target: ReleaseTarge
   };
 }
 
+/** Whether a release is of a project with no components (#4046): no artifact, and every template it records has `component: null`. */
+export function isImplicitRelease(release: Release): boolean {
+  const templates = release.targets.flatMap((t) => t.templates);
+  return release.artifactDigests.length === 0 && templates.length > 0 && templates.every((t) => t.component === null);
+}
+
 function isGate(step: DriverStep | DriverGate | DriverPhase): step is DriverGate {
   return (step as { kind?: unknown }).kind === "gate";
 }
@@ -107,6 +113,48 @@ export async function pinReleaseTemplates(
     out.push({ ...component, deploy: component.deploy.map(rewrite) });
   }
   return errors.length > 0 ? { errors } : { components: out, files };
+}
+
+/**
+ * The files a release's target records, read back by digest and checked, for
+ * `chant release export` (#4046). A project with no components has no deploy
+ * step for a promote to point at the recorded bytes, so its deploy (an Op such
+ * as `chant run deploy`, or a CI job) reads the files this writes instead of
+ * building them again. Each path is the one the build wrote, relative to the
+ * member's directory; a template whose bytes are missing or don't hash to the
+ * target's digest is refused, as {@link pinReleaseTemplates} refuses one.
+ */
+export async function targetFiles(
+  release: Release,
+  target: ReleaseTarget,
+  readTemplate: (digest: string) => Promise<string | null>,
+): Promise<{ files: PinnedTemplate[] } | { errors: string[] }> {
+  const errors: string[] = [];
+  const files: PinnedTemplate[] = [];
+  for (const t of target.templates) {
+    const who = t.component === null ? "" : `component "${t.component}": `;
+    if (t.path.startsWith("/") || t.path.split("/").includes("..")) {
+      errors.push(`${who}template "${t.path}" is not a path inside the member's directory; refusing to write it`);
+      continue;
+    }
+    const content = await readTemplate(t.digest);
+    if (content === null) {
+      errors.push(`${who}the bytes of template "${t.path}" (${t.digest}) are not on the chant/lifecycle branch; fetch it and try again`);
+      continue;
+    }
+    const got = contentDigest(content);
+    if (got !== t.digest) {
+      errors.push(`${who}template "${t.path}" hashes to ${got}, but release ${release.releaseDigest} records ${t.digest} for "${target.env}"; refusing to write it`);
+      continue;
+    }
+    const same = files.find((f) => f.path === t.path);
+    if (same) {
+      if (same.content !== content) errors.push(`two components record different bytes at "${t.path}" for "${target.env}", so they can't both be written there`);
+      continue;
+    }
+    files.push({ path: t.path, content });
+  }
+  return errors.length > 0 ? { errors } : { files };
 }
 
 /** Write the pinned templates under `dir`, the member's directory. */

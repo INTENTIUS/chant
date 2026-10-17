@@ -118,6 +118,20 @@ export interface BuildOptions {
    * outputs of its own `serializers`, so the sources are evaluated once.
    */
   sharedBuild?: { serializers: Serializer[]; result?: ReturnType<typeof build> };
+
+  /**
+   * Where each output file goes: called with its absolute path and its
+   * content in place of creating the directory and writing the file. A
+   * release cut (#4046) passes one that keeps the files in memory, so it
+   * records exactly what this build writes and nothing left on disk by an
+   * earlier one.
+   */
+  writeFile?: (path: string, content: string) => void;
+}
+
+function writeFileCreatingDir(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content);
 }
 
 /**
@@ -735,6 +749,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   }
 
   // Handle output
+  const writeOutput = options.writeFile ?? writeFileCreatingDir;
   if (result.errors.length === 0 && errors.length === 0) {
     // Extract primary content and collect additional files from SerializerResult.
     // Each entry remembers which lexicon produced it, so a same-basename
@@ -866,8 +881,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       additionalFiles.delete(filename);
       try {
         const targetPath = join(projectDist, filename);
-        mkdirSync(dirname(targetPath), { recursive: true });
-        writeFileSync(targetPath, entry.content);
+        writeOutput(targetPath, entry.content);
         opsWritten += 1;
       } catch (err) {
         errors.push(
@@ -893,8 +907,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       if (!config?.name) continue;
       try {
         const targetPath = join(projectDist, "ops", config.name, "op.json");
-        mkdirSync(dirname(targetPath), { recursive: true });
-        writeFileSync(targetPath, serializeOpIR(config));
+        writeOutput(targetPath, serializeOpIR(config));
         irWritten += 1;
       } catch (err) {
         errors.push(
@@ -913,8 +926,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       // output path and any nested additional-file paths (e.g. ops/<name>/...).
       try {
         const outputPath = resolve(options.output);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, output);
+        writeOutput(outputPath, output);
 
         // Write additional files (e.g. nested stack templates) alongside the primary output
         if (additionalFiles.size > 0) {
@@ -935,8 +947,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
               }
             }
             const targetPath = join(outputDir, filename);
-            mkdirSync(dirname(targetPath), { recursive: true });
-            writeFileSync(targetPath, fileContent);
+            writeOutput(targetPath, fileContent);
           }
         }
       } catch (err) {

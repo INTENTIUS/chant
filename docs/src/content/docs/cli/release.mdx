@@ -7,8 +7,10 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant release cut [<label>] [--build <command>] [--param <name=value>]... [--params-file <file>] [--actor <name>] [--sign [<key file>]] [--json]
+chant release cut [<label>] [--build <command>] [--param <name=value>]... [--params-file <file>]
+                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
 chant release list [--json]
+chant release export <label|digest> --env <env> [-o <dir>] [--json]
 ```
 
 A release is the compiled output of one green commit of one member ([#4026](https://github.com/INTENTIUS/chant/issues/4026), [ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md)). The commit is the source, and the release is what moves through the environments. A release holds the commit, the artifacts built once from it, and one target per environment. A target lists the templates compiled for that environment and the build parameters they were compiled with.
@@ -33,7 +35,7 @@ The cut refuses before it writes anything when:
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
 | `release-worktree-dirty` | A tracked file has uncommitted changes, so the compile would not be the commit's. |
 | `release-no-environments` | The member's `chant.config.ts` declares no `environments`. |
-| `release-no-components` | No component was discovered in any environment. A release of a project with no components is [#4046](https://github.com/INTENTIUS/chant/issues/4046). |
+| `release-no-components` | The member declares components, none is enabled in any environment, and nothing was compiled. A project that declares no component is released from its build output instead, see [a project with no components](#a-project-with-no-components). |
 | `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and the cut is not signed. See [Who may cut](#who-may-cut). |
 | `release-signer-refused` | The cut's signature does not verify for the actor against the signers file at base, or the actor is not in the `release` gate's class. Nothing is written. |
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
@@ -52,6 +54,20 @@ The environments are the entries of the member's [`environments`](/chant/configu
 A template is a file named by a literal path in a deploy step's `template`, `manifest` or `values` field, such as `cfn-deploy`'s `template: "dist/api.template.json"`. A path with the `archive:` prefix names the file after the prefix. Build and publish steps are not read, and a path that names a directory, such as a helm chart, is not a template. A template that does not exist after the build stops the cut.
 
 The artifacts are built once. Each component's `docker-build`, `zip-package` and `jvm-build` steps run, and nothing else, in the first environment the component is enabled in. `docker-build` gives an `image` entry and the other two an `asset` entry, each with the archive path and the digest. When a component's source did not change since the release cut from the nearest earlier commit, its entries are carried from that release and nothing is built. Unchanged means git sees no change between the two commits in the component's file, the member's `chant.config.ts`, and the paths the build steps read (`context` and the Dockerfile, `source`, `path`). A commit that only changes a flag or a parameter then gets a release of its own with the same artifact digests.
+
+### A project with no components
+
+A project with no `*.component.ts` file is cut from what `chant build` writes ([#4046](https://github.com/INTENTIUS/chant/issues/4046)). For each environment the child process builds the project as `chant build <src> --env <env> -o <output>` would, with the environment's build parameters, and every file that build writes becomes a template with `component: null`. The target's `params` are the build's resolved parameters, and `artifactDigests` is empty.
+
+| Flag | Meaning |
+|---|---|
+| `--src <dir>` | The build root, relative to the member's directory. Defaults to `chant.config.ts` `sourceDir`, then the member's directory, as [`chant lifecycle`](/chant/cli/lifecycle/) resolves it. A project that declares `stacks` must name one. |
+| `-o <file>` | The build's output file, relative to the member's directory. Defaults to `dist/build.yaml`. As with `chant build -o`, a `.yaml` or `.yml` name writes YAML and any other name JSON, a lexicon whose output is YAML (k8s, helm) writes YAML whatever the name, and the extra files a lexicon emits are written beside it. |
+| `--lexicon <name>` | Build only this lexicon. |
+
+An Op's IR is written under the build root, so a project with `sourceDir: "src"` and an Op records `src/dist/ops/<op>/op.json` as well. The files are kept in memory and nothing is written to the checkout, so a file an earlier build left there is never recorded.
+
+A build is deterministic. Two cuts of one commit record the same bytes for each environment and get one digest, whichever clone or directory they run in.
 
 ### The release digest and the label
 
@@ -110,6 +126,17 @@ The signature is `ssh-keygen -Y sign` in the `chant-release` namespace over four
 | `--actor <name>` | Who made the cut. Defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN` or `USER`. A signed cut names the signer here. |
 | `--sign [<key file>]` | Sign the cut with an ssh key, or with git's `user.signingkey` when no file is given. See [Who may cut](#who-may-cut). |
 | `--json` | Print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release. |
+
+## release export
+
+Writes the files a cut recorded for one environment, each at the path it was compiled to, under `-o <dir>` (the member's directory by default). Each file's bytes are read from `chant/lifecycle`, after a best-effort fetch, and checked against the target's digest first. A missing or changed file stops the export before anything is written.
+
+```bash
+chant release export v1.4.0 --env prod
+kubectl apply -f dist/build.yaml
+```
+
+This is how a project with no components deploys what it cut. [`chant components promote --release`](/chant/cli/components/#components-promote) deploys components, and refuses such a cut with a pointer to this command. The project's own deploy, an Op such as `chant run deploy` or a CI job, then reads the exported files. An Op whose first phase runs the build again would overwrite them, so drop that phase when it deploys exported files. `--json` prints the digest and label with the environment and the directory written to. It also prints the target's templates and params.
 
 ## release list
 

@@ -1,12 +1,15 @@
 /**
  * `chant release` (#4026, ws-104): the release is what graduates.
  *
- *   release cut [<label>] [--build <command>] [--param k=v]... [--params-file <file>] [--actor <name>] [--sign [<key file>]] [--json]
+ *   release cut [<label>] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
  *       cut a release of this member from the checkout's HEAD, which must be green;
- *       --sign signs the cut with the actor's ssh key (#4031)
+ *       --sign signs the cut with the actor's ssh key (#4031); `--src`, `-o` and
+ *       `--lexicon` shape the build of a project with no components (#4046)
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
+ *   release export <label|digest> --env <env> [-o <dir>] [--json]
+ *       write the files the release recorded for <env>, checked against their digests (#4046)
  *   release compile --env <env> [--build <command>] [--artifacts --component <a,b>] --json
  *       internal: what the cut runs in a child process per environment
  *
@@ -21,7 +24,21 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--actor <name>] [--sign [<key file>]] [--json] | release list [--json]";
+  "chant release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+
+/** The build inputs `release cut` and `release compile` share. */
+function compileInputs(ctx: CommandContext, params: Record<string, string> | undefined): import("../../components/release-compile").CompileInputs {
+  const { args } = ctx;
+  return {
+    projectDir: resolve("."),
+    ...(args.buildCommand ? { buildCommand: args.buildCommand } : {}),
+    ...(params ? { params } : {}),
+    ...(args.paramsFile ? { paramsFile: args.paramsFile } : {}),
+    ...(args.src ? { src: args.src } : {}),
+    ...(args.output ? { output: args.output } : {}),
+    ...(args.lexicon ? { lexicon: args.lexicon } : {}),
+  };
+}
 
 function resolveActor(ctx: CommandContext): string | undefined {
   return ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
@@ -46,12 +63,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   const { ReleaseLabelError } = await import("../../lifecycle/release-store");
   const { pushLifecycleReport } = await import("../../lifecycle/git");
   const params = parseParamFlags(args.param);
-  const compiler = spawnTargetCompiler({
-    projectDir: cwd,
-    ...(args.buildCommand ? { buildCommand: args.buildCommand } : {}),
-    ...(params ? { params } : {}),
-    ...(args.paramsFile ? { paramsFile: args.paramsFile } : {}),
-  });
+  const compiler = spawnTargetCompiler(compileInputs(ctx, params));
   try {
     const result = await cutRelease({ cwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) });
     const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
@@ -113,6 +125,56 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
+/**
+ * `release export <label|digest> --env <env> [-o <dir>]` (#4046): write each
+ * file the release's target for <env> records, at the path it was compiled to,
+ * under <dir> (the member's directory by default), after checking each one's
+ * bytes against its digest. This is how a project with no components deploys
+ * a release: its own deploy reads these files instead of building again.
+ */
+export async function runReleaseExport(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional;
+  if (!ref || !args.env) {
+    console.error(formatError({ message: "release export needs a release and an environment", hint: USAGE }));
+    return 1;
+  }
+  const { fetchLifecycle } = await import("../../lifecycle/git");
+  const { resolveRelease, readReleaseTemplate } = await import("../../lifecycle/release-store");
+  const { targetFor, targetFiles, writePinnedTemplates } = await import("../../components/release-promote");
+  await fetchLifecycle().catch(() => false);
+  const found = await resolveRelease(ref);
+  if (!found) {
+    console.error(formatError({ message: `no release is labelled or digested "${ref}" in this member`, hint: "List them with: chant release list" }));
+    return 1;
+  }
+  const target = targetFor(found.release, args.env);
+  if ("error" in target) {
+    console.error(formatError({ message: target.error }));
+    return 1;
+  }
+  const read = await targetFiles(found.release, target.target, (digest) => readReleaseTemplate(digest));
+  if ("errors" in read) {
+    for (const e of read.errors) console.error(formatError({ message: e }));
+    return 1;
+  }
+  const dir = resolve(args.output ?? ".");
+  writePinnedTemplates(dir, read.files);
+  if (args.json) {
+    console.log(
+      JSON.stringify(
+        { releaseDigest: found.release.releaseDigest, label: found.label, env: args.env, dir, templates: target.target.templates, params: target.target.params },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.error(formatSuccess(`Wrote ${read.files.length} file(s) of ${found.label ? formatBold(found.label) : found.release.releaseDigest} for "${args.env}"`));
+    for (const f of read.files) console.log(f.path);
+  }
+  return 0;
+}
+
 /** Internal: compile one environment, or build artifacts, in this process, and print the JSON the cut reads. */
 export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -123,12 +185,7 @@ export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
   }
   const { compileEnvironment, buildReleaseArtifacts } = await import("../../components/release-compile");
   const params = parseParamFlags(args.param);
-  const inputs = {
-    projectDir: resolve("."),
-    ...(args.buildCommand ? { buildCommand: args.buildCommand } : {}),
-    ...(params ? { params } : {}),
-    ...(args.paramsFile ? { paramsFile: args.paramsFile } : {}),
-  };
+  const inputs = compileInputs(ctx, params);
   try {
     if (args.artifacts) {
       const names = (args.component ?? "").split(",").map((n) => n.trim()).filter(Boolean);

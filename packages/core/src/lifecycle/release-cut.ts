@@ -17,6 +17,10 @@
  * component's own file, the member's `chant.config.ts` and the paths its
  * build steps read.
  *
+ * A project with no components (#4046) needs no special case here: its
+ * targets hold the files `chant build --env <env>` writes, each with
+ * `component: null`, and `artifactDigests` is empty.
+ *
  * Compiling goes through a {@link TargetCompiler}, so a test hands the cut
  * fixtures and the CLI hands it child processes.
  *
@@ -247,8 +251,13 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
   const compiled: CompiledTarget[] = [];
   for (const env of envs) compiled.push(await req.compiler.compile(env));
 
-  if (compiled.every((t) => t.components.length === 0)) {
-    throw new ReleaseCutError("release-no-components", "no components were discovered in any environment; a release of a project with no components is not cut yet");
+  // A project with no components compiles to its build output (#4046), so only a target with neither is empty.
+  if (compiled.every((t) => t.components.length === 0 && t.templates.length === 0)) {
+    throw new ReleaseCutError(
+      "release-no-components",
+      "no component is enabled in any environment and nothing was compiled, so there is nothing to release",
+      "Enable a component under one environment's parameters, or remove the component files so the project's build output is released.",
+    );
   }
   const differing = differingBuildSteps(compiled);
   if (differing.length > 0) {
