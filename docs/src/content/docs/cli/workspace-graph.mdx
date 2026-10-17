@@ -455,6 +455,12 @@ export function commitJoins(commit, context) {
 
 Apart from [chant's own trailers](#chants-trailers), core reads trailers as git parses them and gives no key a meaning of its own. A commit that carries an authorship trailer and is not `attested` is the finding `intent-trailer-unverified`. A join that throws leaves that commit without its unit, adds the reason `intent-plugin-failed`, and makes the command exit 1 with the document still printed. A finding code outside the kind's namespace counts as a throw.
 
+### How long a trace takes
+
+A trace over one region may take at most twice as long as [`chant workspace status <env> --json`](/chant/cli/workspace-status/) on the same machine, comparing the median of 5 runs of each ([#4032](https://github.com/INTENTIUS/chant/issues/4032)). Both commands start node and load chant, so the ratio measures the trace's own work, most of it reading git.
+
+`scripts/bench-trace.ts` measures it on chant's own repository and fails when a trace is over budget. Its targets are the CLI's most edited file, a file with one commit, and a symbol. It runs in the `check` job of every pull request, on a full clone. On chant's repository at 0.124.27 a trace of `packages/core/src/cli/main.ts` takes about as long as `workspace status`. It took 6.4 to 6.9 times as long before #4032, when judging each commit's signature started a `git merge-base` for each step of a binary search over the base's first-parent history. That history is now read once per read, and the windows of the decisions once per revision.
+
 ## Options
 
 | Option | Effect |
