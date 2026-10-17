@@ -625,14 +625,14 @@ function emitReviewStop(events: RunEventStream | undefined, message: string): vo
  * decides the same either way.
  */
 async function storeChangeSetForGate(ctx: CommandContext, p: Prepared, doc: PrPlanSet["doc"]): Promise<void> {
-  const { storeGateChangeSet, readGraphIds } = await import("../../lifecycle/gate-change-set");
+  const { storeGateChangeSet, gateGraphReader } = await import("../../lifecycle/gate-change-set");
   const { pushLifecycleReport } = await import("../../lifecycle/git");
   const graphArgs = [
     ...(ctx.args.param ?? []).flatMap((kv) => ["--param", kv]),
     ...(ctx.args.paramsFile ? ["--params-file", ctx.args.paramsFile] : []),
   ];
   try {
-    const stored = await storeGateChangeSet({ doc, cwd: resolve("."), at: p.head, readGraph: (dir) => readGraphIds(dir, graphArgs) });
+    const stored = await storeGateChangeSet({ doc, cwd: resolve("."), at: p.head, readGraph: gateGraphReader(graphArgs) });
     if (stored.warning) console.error(formatWarning({ message: stored.warning }));
     // The push's own outcome is said by the gate's pending fact, or by the
     // release records the apply writes, which push the same branch.

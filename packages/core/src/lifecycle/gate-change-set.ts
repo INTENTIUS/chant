@@ -63,6 +63,23 @@ export async function readGraphIds(projectDir: string, args: readonly string[] =
   return { ids: read.ir.nodes.map((n) => n.id) };
 }
 
+let graphReaderOverride: GraphIdReader | undefined;
+
+/**
+ * Replace how a gate reads the graph wherever the default is taken, such as
+ * in `components pr-apply`; `undefined` restores {@link readGraphIds}. For
+ * tests that drive a gate and read node ids in process, so they don't start a
+ * `chant graph` child process (`gate-change-set.e2e.test.ts` covers that one).
+ */
+export function setGraphIdReader(reader: GraphIdReader | undefined): void {
+  graphReaderOverride = reader;
+}
+
+/** The graph reader a gate uses: the one {@link setGraphIdReader} set, else {@link readGraphIds} with `args`. */
+export function gateGraphReader(args: readonly string[] = []): GraphIdReader {
+  return graphReaderOverride ?? ((dir) => readGraphIds(dir, args));
+}
+
 export interface StoreGateChangeSetInput {
   /** The document whose `digest` the gate binds. */
   doc: ChangeSetDocument;
@@ -70,7 +87,7 @@ export interface StoreGateChangeSetInput {
   cwd: string;
   /** The commit the document was planned at, recorded as the graph's `at`. */
   at?: string | null;
-  /** How to read the graph. Defaults to {@link readGraphIds}. */
+  /** How to read the graph. Defaults to {@link gateGraphReader}. */
   readGraph?: GraphIdReader;
 }
 
@@ -98,7 +115,7 @@ export async function storeGateChangeSet(input: StoreGateChangeSetInput): Promis
   let nodes: ChangeSetGraphNodes | null = null;
   let warning: string | undefined;
   try {
-    const read = await (input.readGraph ?? readGraphIds)(cwd);
+    const read = await (input.readGraph ?? gateGraphReader())(cwd);
     if ("error" in read) warning = read.error;
     else nodes = { member, at: input.at ?? null, ids: read.ids };
   } catch (err) {

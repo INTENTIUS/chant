@@ -22,7 +22,9 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import type { ParsedArgs } from "@intentius/chant/cli/registry";
 import type { PrReport } from "@intentius/chant/pr-loop";
+import { buildGraphIr } from "@intentius/chant/graph-ir";
 import { terraformPlugin } from "../plugin";
+import { renderTerraformRoots } from "../hcl/roots";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 
@@ -46,6 +48,19 @@ const ROOTS: Record<string, string> = {
 
 // The source passes `chant lint`, since `chant graph --format ir`, which maps
 // the stored change set onto nodes (#4022), refuses source that does not.
+/**
+ * The estate's graph node ids, read in process with the pair `chant graph
+ * --format ir` runs for terraform roots (`renderTerraformRoots`, then
+ * `buildGraphIr`), so pr-apply maps its stored change set without starting a
+ * chant child process. `change-set-graph.e2e.test.ts` holds these ids equal
+ * to the spawned `chant graph --format ir`'s.
+ */
+async function estateGraphIds(projectRoot: string): Promise<{ ids: string[] }> {
+  const config = JSON.parse(readFileSync(join(projectRoot, "chant.config.json"), "utf8")) as { terraform: { binary?: string; roots: Record<string, { dir: string }> } };
+  const rendered = await renderTerraformRoots({ projectRoot, roots: config.terraform.roots, ...(config.terraform.binary ? { binary: config.terraform.binary } : {}) });
+  return { ids: buildGraphIr(rendered.entities).nodes.map((n) => n.id) };
+}
+
 const COMPONENTS = `import { phase, stackOutput, type Component } from "@intentius/chant/components";
 
 const apply = (root: string, vars?: Record<string, unknown>) =>
@@ -153,6 +168,7 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     });
     vi.stubGlobal("fetch", github.fetch);
     handlers = await import("@intentius/chant/cli/handlers/pr");
+    (await import("@intentius/chant/lifecycle/gate-change-set")).setGraphIdReader(estateGraphIds);
     ({ recordGateApproval } = await import("@intentius/chant/cli/handlers/operator"));
 
     // Every root applied once, so each has state and outputs to read.
@@ -161,7 +177,8 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     expect(await runComponentsFanOut(ctx({ fromAffected: "all.json" }) as never)).toBe(0);
   }, 240_000);
 
-  afterAll(() => {
+  afterAll(async () => {
+    (await import("@intentius/chant/lifecycle/gate-change-set")).setGraphIdReader(undefined);
     vi.unstubAllGlobals();
     if (cwd) process.chdir(cwd);
     for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
@@ -227,7 +244,6 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
   test("the change set the approval bound is stored by its digest, each entry on its graph node (#4022)", async () => {
     const applied = report("apply");
     const { changeSetShowDocument } = await import("@intentius/chant/workspace/change-set-show");
-    const { readGraphIds } = await import("@intentius/chant/lifecycle/gate-change-set");
     const shown = await changeSetShowDocument({ cwd: dir, digest: applied.digest });
     if ("error" in shown) throw new Error(shown.error.message);
     expect(shown).toMatchObject({ member: null, digest: applied.digest, reason: null });
@@ -239,9 +255,8 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
       ["a", "terraform_data.subnet", "update", "a/terraform_data.subnet"],
       ["app", "terraform_data.app", "no-op", "app/terraform_data.app"],
     ]);
-    // And those are the ids `chant graph --format ir` gives this estate.
-    const graph = await readGraphIds(dir);
-    if ("error" in graph) throw new Error(graph.error);
+    // And those are ids the estate's graph has.
+    const graph = await estateGraphIds(dir);
     for (const e of stored.entries) expect(graph.ids).toContain(e.node);
   }, 240_000);
 
