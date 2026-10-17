@@ -73,6 +73,28 @@ export interface BuildParamsInput {
   fromFile?: Record<string, unknown>;
   /** The process environment, consulted only for a parameter that declares an `env` mapping, and only once `cli`/`fromFile` have no value for it. */
   env?: Record<string, string | undefined>;
+  /**
+   * The workspace flags that back parameters in this build's environment
+   * (#4024), read by `./flag-params.ts`. A flag-backed parameter takes the
+   * flag's value for the environment, recorded with `source: "flag:<id>"`,
+   * ahead of its `env` mapping and its default. Absent outside a workspace
+   * and without `--env`.
+   */
+  flags?: BuildParamFlags;
+}
+
+/** The flags that back parameters in one environment (#4024). */
+export interface BuildParamFlags {
+  /** The environment the build is for. */
+  env: string;
+  /** Each flag-backed parameter by name: the flag's name, and its value in `env` (undefined when the flag gives it none). */
+  byParam: Record<string, { flag: string; value: BuildParamValue | undefined }>;
+  /**
+   * The environment has a gate (#4024's precedence rule): a `--param`,
+   * `--params-file` or env-var value for a flag-backed parameter is refused,
+   * so no path flips a flag around the gate.
+   */
+  gated?: boolean;
 }
 
 /** Result of resolving a project's declared parameters against one build invocation's inputs. */
@@ -118,7 +140,11 @@ function coerce(name: string, raw: BuildParamValue, def: BuildParamDef, errors: 
  * Resolve a project's declared build-time parameters against one build's
  * supplied inputs. Precedence per parameter, most to least specific:
  * `cli` (`--param name=value`) > `fromFile` (`--params-file`) > the
- * parameter's own declared `env` mapping (only if set) > `def.default`.
+ * parameter's own declared `env` mapping (only if set) > a workspace flag's
+ * value for the build's environment (`input.flags`, #4024) > `def.default`.
+ * When `input.flags.gated` is set, a flag-backed parameter takes none of the
+ * first three: a value from any of them is a build error, so a flag can't be
+ * flipped around the environment's gate.
  *
  * A parameter with no declared `default` and no value from any source is a
  * build error, not a silently-`undefined` value — a build-time parameter
@@ -153,9 +179,26 @@ export function resolveBuildParams(defs: BuildParamsConfig | undefined, input: B
     }
   }
 
+  const flags = input.flags;
+  for (const [name, binding] of Object.entries(flags?.byParam ?? {})) {
+    if (!(name in declared)) {
+      errors.push(`flag "${binding.flag}" sets build parameter "${name}", which chant.config.ts's buildParams does not declare`);
+    }
+  }
+
   for (const [name, def] of Object.entries(declared)) {
     let raw: BuildParamValue | undefined;
     let source: BuildParamProvenance["source"] | undefined;
+    const binding = flags?.byParam[name];
+
+    if (binding && flags?.gated) {
+      // #4024: in an environment with a gate, the flag record is the only way to set the parameter.
+      const around = name in cli ? "--param" : name in fromFile ? "--params-file" : def.env && env[def.env] !== undefined ? `the env var ${def.env}` : null;
+      if (around !== null) {
+        errors.push(flagGateRefusal(name, binding.flag, flags.env, around));
+        continue;
+      }
+    }
 
     if (name in cli) {
       raw = cli[name];
@@ -171,6 +214,9 @@ export function resolveBuildParams(defs: BuildParamsConfig | undefined, input: B
     } else if (def.env && env[def.env] !== undefined) {
       raw = env[def.env];
       source = "env";
+    } else if (binding && binding.value !== undefined) {
+      raw = binding.value;
+      source = `flag:${binding.flag}`;
     } else if (def.default !== undefined) {
       raw = def.default;
       source = "default";
@@ -199,6 +245,14 @@ export function resolveBuildParams(defs: BuildParamsConfig | undefined, input: B
   }
 
   return { provenance, errors };
+}
+
+/**
+ * The build error for a flag-backed parameter that `around` (`--param`,
+ * `--params-file` or an env var) set in an environment with a gate (#4024).
+ */
+export function flagGateRefusal(name: string, flag: string, env: string, around: string): string {
+  return `build parameter "${name}" is backed by the flag "${flag}", and "${env}" has a gate, so ${around} can't set it; change the flag record and let the change go through the gate`;
 }
 
 /** Project the resolved provenance records down to a plain `{ name: value }` map — what actually gets bound to `params.<name>` (see ./params.ts). */

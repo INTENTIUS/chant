@@ -14,6 +14,7 @@ import { queryRecords, RECORDS_CONTRACT_VERSION, RECORDS_OUTPUT_SCHEMA_ID, type 
 import { READ_ERROR_CODES, RECORD_REASON_CODES, RECORD_WARNING_CODES, recordTextDigest, REVIEW_REASON_CODES, SEAL_WARNING_CODES } from "./records";
 import { WORK_WARNING_CODES } from "./work";
 import { ANSWER_WARNING_CODES } from "./points";
+import { FLAG_WARNING_CODES } from "./flags";
 import schema from "./records.schema.json";
 import { PROVENANCE_LEVELS } from "./trust/attestor";
 
@@ -152,7 +153,7 @@ describe("records output schema", () => {
   test("lists exactly the warning codes the code can return", () => {
     // A work kind's records carry the work warnings too (#2683), work-done-gap-open included since records walks a done item's region (#2686),
     // an answer kind's the answer warnings (ws-058), and records adds record-unattested for an author seal under a signers file at base (#2688).
-    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES, ...ANSWER_WARNING_CODES, ...SEAL_WARNING_CODES]);
+    expect(schema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES, ...ANSWER_WARNING_CODES, ...SEAL_WARNING_CODES, ...FLAG_WARNING_CODES]);
   });
 
   test("every failure validates with its code", async () => {

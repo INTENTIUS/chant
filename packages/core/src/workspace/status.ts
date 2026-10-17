@@ -53,6 +53,8 @@ import { loadKindRegistry, resolveMemberFields, type MemberFields } from "./kind
 import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
 import { declaredRecordKinds, extensionsAt, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import type { FlagDecision, FlagValue } from "./flags";
+import type { WorkLink } from "./work";
 import { readMemberPromotionOrder, type PromotionStep } from "./promotion-order";
 import { gateAdmissionFrom, releaseRuleFrom } from "./identity";
 import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
@@ -241,6 +243,35 @@ export interface StatusMember {
    * cuts could not be read. Added in contract 1 by chant 0.124.28.
    */
   releaseCuts: StatusReleaseCut[] | null;
+  /**
+   * The member's feature flags (#4024): each record of a declared flag kind
+   * that names this member, with its value per environment and the work item
+   * it hides. Sorted by id. `[]` when none names it, null when the flag
+   * records could not be read. Called `featureFlags` because a release
+   * record's `flags` already means something else. Added in contract 1 by
+   * chant 0.124.29.
+   */
+  featureFlags: StatusFeatureFlag[] | null;
+}
+
+/** One feature flag of a member (#4024), as `status --json` lists it. */
+export interface StatusFeatureFlag {
+  /** The flag's name, its record's id. */
+  id: string;
+  /** The build parameter of the member the flag sets. */
+  param: string;
+  owner: string;
+  /** The value per environment, as the record writes it. An environment it leaves out builds with the parameter's default. */
+  values: Record<string, FlagValue>;
+  /** The work item the flag hides, with its state (null when no record has it), or null when the record names none. */
+  work: WorkLink | null;
+  /** Each decision the work item implements, with its state and whether it is confirmed. */
+  implements: FlagDecision[];
+  /** True when every decision the work item implements is confirmed: the flag is due for removal (check WSP118). */
+  stale: boolean;
+  /** The kind file and the record file, from the workspace root. */
+  kind: string;
+  path: string;
 }
 
 /** One cut of a member's release (#4031), as `status --json` lists it. */
@@ -678,6 +709,8 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     // Tags that can't be judged read as none revoked; workspace check reports the declaration.
     let revokedCommits: Promise<ReadonlyMap<string, ReleaseRevocation>> | undefined;
     const revoked = () => (revokedCommits ??= revokedCommitsAt(top, ruleSource.declaration?.ci?.green ?? null).catch(() => new Map()));
+    // #4024: the flag records, read once for every member. Unreadable records list as null.
+    const flags = await readStatusFlags(declaration, found.dir);
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const revokedOf = revokedReleaseLookup(resolve(found.dir, m.dir), revoked);
@@ -728,6 +761,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         stewardReasons: stewards.reasons,
         promotionOrder: await (query.readPromotionOrder ?? readMemberPromotionOrder)(resolve(found.dir, m.dir)),
         releaseCuts: await readReleaseCuts(resolve(found.dir, m.dir), releaseRule),
+        featureFlags: flags === null ? null : flags.filter((f) => f.member === m.name).map(({ member: _member, ...f }) => f),
         ...x(m.pointer),
       });
     }
@@ -812,6 +846,20 @@ async function readWorkspaceLeases(members: Member[], cwd: string, now: Date): P
     for (const lease of await listWorkLeases({ cwd, memberPrefix: l.prefix, now })) out.push({ ...lease, member: l.member });
   }
   return out;
+}
+
+/** Every flag of the declared flag kinds (#4024), read in the working tree, sorted by id; null when they can't be read. */
+async function readStatusFlags(declaration: Declaration, root: string): Promise<Array<StatusFeatureFlag & { member: string }> | null> {
+  if (declaredRecordKinds(declaration).length === 0) return [];
+  try {
+    const { readWorkspaceFlags } = await import("./flags-read");
+    const { flags } = await readWorkspaceFlags(root);
+    return flags
+      .map((f) => ({ id: f.id, member: f.member, param: f.param, owner: f.owner, values: f.values, work: f.work, implements: f.implements, stale: f.stale, kind: f.kind, path: f.path }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  } catch {
+    return null;
+  }
 }
 
 /** The acceptance counts of every declared work kind with criteria (#2772), read in the working tree. */
@@ -941,6 +989,18 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
     const rows: string[][] = [["MEMBER", "RELEASE", "COMMIT", "CUT BY", "SIGNATURE"]];
     for (const m of cut) {
       for (const c of m.releaseCuts!) rows.push([m.name, c.label ?? c.releaseDigest.slice(0, 24), c.commit?.slice(0, 12) ?? "-", c.actor, c.signatureCheck.status]);
+    }
+    lines.push(...table(rows));
+  }
+  const flagged = doc.members.filter((m) => (m.featureFlags ?? []).length > 0);
+  if (flagged.length > 0) {
+    lines.push("");
+    const rows: string[][] = [["FLAG", "PARAM", doc.env.toUpperCase(), "WORK ITEM", ""]];
+    for (const m of flagged) {
+      for (const f of m.featureFlags!) {
+        const value = f.values[doc.env];
+        rows.push([`${m.name}/${f.id}`, f.param, value === undefined ? "default" : JSON.stringify(value), f.work ? `${f.work.id} (${f.work.state ?? "unknown"})` : "-", f.stale ? "due for removal" : ""]);
+      }
     }
     lines.push(...table(rows));
   }

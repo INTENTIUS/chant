@@ -16,10 +16,18 @@
  * | WSP115 | a record kind the declaration names is missing or does not load as one (fixed, #2680) |
  * | WSP116 | an answer kind's decision points file is missing or not valid (fixed, ws-058, #2738) |
  * | WSP117 | a done work item has an acceptance criterion no passing evidence meets (#2772) |
+ * | WSP118 | a feature flag whose work item's decisions are all confirmed, so it is due for removal (#4024) |
  *
  * WSP117 reads the records of every declared work kind with acceptance
  * criteria, in the working tree, and the records of `--kind`. It carries the
  * reason code `work-acceptance-unmet`.
+ *
+ * WSP118 reads the records of every declared flag kind (#4024), in the
+ * working tree. A flag is due for removal when the work item it hides
+ * implements at least one decision and every one is confirmed: closed in its
+ * kind and superseded by nothing. It is a warning by default, since a flag
+ * left on trunk breaks nothing; the declaration's `checks` can raise it. It
+ * carries the reason code `flag-stale`.
  */
 
 import type { WorkspaceCheck, WorkspaceDiagnostic } from "../checks";
@@ -27,7 +35,7 @@ import type { ReasonCode } from "../reason-codes";
 import type { ReadErrorCode, RecordEntry } from "../records";
 
 /** The read contract's codes the record checks carry as `code`: WSP117's (#2772). */
-export const RECORD_FINDING_CODES = ["work-acceptance-unmet"] as const satisfies readonly ReasonCode[];
+export const RECORD_FINDING_CODES = ["work-acceptance-unmet", "flag-stale"] as const satisfies readonly ReasonCode[];
 
 /** The records `check --kind` read, or why they could not be read. */
 export type RecordFacts =
@@ -165,6 +173,32 @@ export const RECORD_CHECKS: readonly WorkspaceCheck[] = [
             pointer: "",
             file: a.file,
             code: "work-acceptance-unmet",
+          });
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: "WSP118",
+    name: "flag-stale",
+    description:
+      "No feature flag outlives its work: a flag whose work item implements decisions that are all confirmed (closed in their kind and superseded by nothing) is due for removal, with the parameter it backs (#4024).",
+    severity: "warning",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const k of ctx.facts?.declaredKinds ?? []) {
+        for (const f of k.flags ?? []) {
+          if (f.stale === null) continue;
+          out.push({
+            checkId: this.id,
+            severity: this.severity,
+            message: `flag ${f.flag} ${f.stale}; remove the flag record and the parameter it backs`,
+            ...(k.declared.member !== null ? { entity: k.declared.member } : {}),
+            pointer: "",
+            file: f.file,
+            code: "flag-stale",
           });
         }
       }

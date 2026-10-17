@@ -19,6 +19,7 @@ import { pinFile, queryRecords, type RecordsDocument } from "./records-cli";
 import { parseFrontMatter, RECORD_WARNING_CODES, SEAL_WARNING_CODES } from "./records";
 import { WORK_WARNING_CODES } from "./work";
 import { ANSWER_WARNING_CODES } from "./points";
+import { FLAG_WARNING_CODES } from "./flags";
 import { workspaceGraph } from "./graph-cli";
 import graphSchema from "./graph.schema.json";
 import recordsSchema from "./records.schema.json";
@@ -172,7 +173,7 @@ describe("chant workspace records checks each pin", () => {
   test("the schema lists exactly the warning codes", () => {
     // A work kind's records carry the work warnings too (#2683), work-done-gap-open included since records walks a done item's region (#2686),
     // an answer kind's the answer warnings (ws-058), and records adds record-unattested for an author seal under a signers file at base (#2688).
-    expect(recordsSchema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES, ...ANSWER_WARNING_CODES, ...SEAL_WARNING_CODES]);
+    expect(recordsSchema.$defs.warning.properties.code.enum).toEqual([...RECORD_WARNING_CODES, ...WORK_WARNING_CODES, ...ANSWER_WARNING_CODES, ...SEAL_WARNING_CODES, ...FLAG_WARNING_CODES]);
   });
 
   test("records pin <path> prints the entry's path from the workspace root and the file's hash", () => {

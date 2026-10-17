@@ -266,7 +266,45 @@
               }
             }
           }
+        },
+        "featureFlags": {
+          "description": "The member's feature flags (#4024): each record of a declared flag kind whose member field names this member, sorted by id. A flag is a workspace record the member's build reads as one build-time parameter, with chant build --env <env>; its value in an environment is recorded on the build, and on a release's target, as a param whose source is flag:<id>. Named featureFlags because a release record's flags already holds legacy-digest. Empty when no flag names the member, and null when the flag records could not be read. Optional: written from chant 0.124.29, absent from older output.",
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/featureFlag" }
         }
+      }
+    },
+    "featureFlag": {
+      "type": "object",
+      "required": ["id", "param", "owner", "values", "work", "implements", "stale", "kind", "path"],
+      "properties": {
+        "id": { "type": "string", "description": "The flag's name, its record's id." },
+        "param": { "type": "string", "description": "The build parameter of the member the flag sets: a key of buildParams in its chant.config.ts." },
+        "owner": { "type": "string", "description": "Who owns the flag, and removes it when its work is settled." },
+        "values": {
+          "type": "object",
+          "description": "The flag's value per environment, as the record writes it. An environment it leaves out builds with the parameter's declared default.",
+          "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
+        },
+        "work": {
+          "description": "The work item the flag hides, with that item's state, which is null when no record of the flag kind's work kind has the id. Null when the record names none.",
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "required": ["id", "state"], "properties": { "id": { "type": "string" }, "state": { "type": ["string", "null"] } } }
+          ]
+        },
+        "implements": {
+          "type": "array",
+          "description": "Each decision the work item implements, with its state, and confirmed: true when the decision is in one of its kind's closed states and nothing supersedes it.",
+          "items": {
+            "type": "object",
+            "required": ["id", "state", "confirmed"],
+            "properties": { "id": { "type": "string" }, "state": { "type": ["string", "null"] }, "confirmed": { "type": "boolean" } }
+          }
+        },
+        "stale": { "type": "boolean", "description": "True when the work item implements at least one decision and every one is confirmed: the flag is due for removal, and chant workspace check reports it (WSP118)." },
+        "kind": { "type": "string", "description": "The flag kind file, from the workspace root." },
+        "path": { "type": "string", "description": "The flag record file, from the workspace root." }
       }
     },
     "stewardForm": { "enum": ["local", "fountain"] },

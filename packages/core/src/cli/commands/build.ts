@@ -12,7 +12,7 @@ import { resolveTelemetryAttribution } from "../../telemetry-attribution";
 import { loadOkfBundle } from "../../okf-read";
 import { unknownEnvError } from "../../env";
 import type { OwnershipMarker } from "../../ownership";
-import { resolveCliBuildParams } from "../build-params-cli";
+import { resolveFlaggedBuildParams } from "../../flag-params";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks, type PostSynthDiagnostic } from "../../lint/post-synth";
@@ -297,11 +297,14 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // project's own `params.ts` does before migrating to this mechanism). Also
   // logs a one-line count on success, or every resolved value (`[param] name =
   // value (source)`) under --verbose (#1424).
-  const paramsResolution = resolveCliBuildParams(config.buildParams, {
+  // #4024: in a workspace member, a build for an environment also reads the
+  // flag records that back its parameters, and refuses an override of one
+  // where the environment has a gate (../../flag-params.ts).
+  const paramsResolution = await resolveFlaggedBuildParams(configDir, config.buildParams, {
     cli: options.params,
     paramsFile: options.paramsFile,
     verbose: options.verbose,
-  });
+  }, options.env);
   if (!paramsResolution.success) {
     errors.push(...paramsResolution.errors);
     return { success: false, resourceCount: 0, fileCount: 0, errors, warnings };

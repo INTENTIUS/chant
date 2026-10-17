@@ -28,7 +28,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { loadChantConfig, type ChantConfig } from "../config";
-import { resolveCliBuildParams } from "../cli/build-params-cli";
+import { resolveFlaggedBuildParams } from "../flag-params";
 import { discoverComponents } from "./discover";
 import { withoutDisabled } from "./cli-support";
 import { applyConfigDefaults } from "./config-defaults";
@@ -201,10 +201,11 @@ async function loadComponents(
   env: string,
 ): Promise<{ config: ChantConfig; params: ReleaseParam[]; declared: number; components: Array<{ component: DriverComponent; file: string }> }> {
   const { config } = await loadChantConfig(inputs.projectDir).catch(() => ({ config: {} as ChantConfig }));
-  const resolved = resolveCliBuildParams(config.buildParams, {
+  // #4024: a workspace member's flag records back their parameters, so a flag's value is a param with source flag:<name>.
+  const resolved = await resolveFlaggedBuildParams(inputs.projectDir, config.buildParams, {
     ...(inputs.params ? { cli: inputs.params } : {}),
     ...(inputs.paramsFile ? { paramsFile: inputs.paramsFile.replaceAll("{env}", env) } : {}),
-  });
+  }, env);
   if (!resolved.success) throw new ReleaseCompileError(`build parameters for "${env}" did not resolve:\n${resolved.errors.join("\n")}`);
   const discovered = await discoverComponents(inputs.projectDir, { buildParams: resolved.provenance });
   if (discovered.errors.length > 0) throw new ReleaseCompileError(discovered.errors.map((e) => e.message).join("\n"));

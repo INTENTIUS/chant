@@ -30,6 +30,7 @@
  * | WSP115 | the record kinds the declaration names (#2680) |
  * | WSP116 | the decision points file of each declared answer kind (ws-058) |
  * | WSP117 | a done work item's acceptance criteria all met (#2772) |
+ * | WSP118 | no feature flag outlives its work: a flag whose work item's decisions are all confirmed is due for removal (#4024) |
  * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
  * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
  * | WSP125 | boxes: a fountain Box declares the callback token fountain gives its sandbox (#2780) |
@@ -521,7 +522,7 @@ export async function runDeclarationChecks(
   const gathered = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
   // The declared record kinds load from the working tree; under --at only whether each exists at the revision is checked (#2680).
   // A declared work kind's acceptance criteria are counted in the working tree too (#2772).
-  const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree, acceptance: !options.tree });
+  const declaredKinds = options.gather === false ? undefined : await loadDeclaredKinds(declaration, tree, root, { load: !options.tree, acceptance: !options.tree, flags: !options.tree });
   // A box's intent is read from the working tree's records, so not under --at (#2850).
   const boxIntents = declaredKinds && !options.tree ? await resolveBoxIntents(declaration, root, declaredKinds) : undefined;
   // A linked member's lexicons name its tables and columns as outputs (#3931); reading them folds its source, never runs it.

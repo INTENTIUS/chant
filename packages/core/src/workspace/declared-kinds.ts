@@ -43,6 +43,22 @@ export interface DeclaredKind {
    * and when its records can't be read (`records` reports why).
    */
   acceptance?: DeclaredAcceptance[];
+  /**
+   * For a flag kind (#4024), read with `flags: true`: each current flag
+   * record, with its `flag-stale` warning when it is due for removal. Absent
+   * for any other kind, when the kind wasn't loaded, and when its records
+   * can't be read (`records` reports why).
+   */
+  flags?: DeclaredFlag[];
+}
+
+/** One flag record, as `check` reads it for WSP118 (#4024). */
+export interface DeclaredFlag {
+  flag: string;
+  /** The record file on disk, absolute. */
+  file: string;
+  /** The record's `flag-stale` warning, when the flag is due for removal; null otherwise. */
+  stale: string | null;
 }
 
 /** One work record's acceptance criteria, counted, as `ls`, `status` and `check` read them (#2772). */
@@ -72,7 +88,7 @@ export async function loadDeclaredKinds(
   declaration: Declaration,
   tree: WorkspaceTree,
   rootOnDisk: string,
-  options: { load?: boolean; acceptance?: boolean; at?: string } = {},
+  options: { load?: boolean; acceptance?: boolean; flags?: boolean; at?: string } = {},
 ): Promise<DeclaredKind[]> {
   const declared = declaredRecordKinds(declaration);
   if (declared.length === 0) return [];
@@ -95,6 +111,10 @@ export async function loadDeclaredKinds(
       if (loaded.kind.work?.acceptance && options.acceptance) {
         const counted = await countAcceptance(file, rootOnDisk, options.at);
         if (counted) entry.acceptance = counted;
+      }
+      if (loaded.kind.flag && options.flags) {
+        const flags = await readFlags(file, rootOnDisk, options.at);
+        if (flags) entry.flags = flags;
       }
       out.push(entry);
     } catch (err) {
@@ -121,6 +141,25 @@ async function countAcceptance(file: string, rootOnDisk: string, at: string | un
         total: r.acceptance.total,
         file: join(read.root, ...r.path.split("/")),
         unmet: r.warnings.find((w) => w.code === "work-acceptance-unmet")?.message ?? null,
+      }));
+  } catch (err) {
+    if (err instanceof RecordReadError) return undefined;
+    throw err;
+  }
+}
+
+/** A flag kind's current records with their stale warnings (#4024), or undefined when they can't be read. */
+async function readFlags(file: string, rootOnDisk: string, at: string | undefined): Promise<DeclaredFlag[] | undefined> {
+  const { readRecordsFor } = await import("./records-cli");
+  const { RecordReadError } = await import("./records");
+  try {
+    const read = await readRecordsFor({ kind: file, cwd: rootOnDisk, current: true, ...(at !== undefined ? { at } : {}) });
+    return read.result.records
+      .filter((r): r is typeof r & { id: string } => r.id !== null)
+      .map((r) => ({
+        flag: r.id,
+        file: join(read.root, ...r.path.split("/")),
+        stale: r.warnings.find((w) => w.code === "flag-stale")?.message ?? null,
       }));
   } catch (err) {
     if (err instanceof RecordReadError) return undefined;

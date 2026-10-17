@@ -51,9 +51,9 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 219 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 221 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 51 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 52 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
@@ -250,6 +250,8 @@ Each row follows, in the order of the table above.
 | reason code | `work-contract-unknown` | chant | intent.schema.json, records.schema.json | A work record names a contract that no record of its kind's contract kind has. |
 | reason code | `work-contract-undecided` | chant | intent.schema.json, records.schema.json | A work record names a contract whose state is not approved, such as a draft. |
 | reason code | `work-tier-unknown` | chant | intent.schema.json, records.schema.json | A work record names a builder tier that its kind's work.tier.tiers does not list. |
+| reason code | `flag-work-unknown` | chant | records.schema.json | A flag record names a work item that no record of its kind's work kind has. |
+| reason code | `flag-stale` | chant | check.schema.json, records.schema.json | Every decision a flag's work item implements is confirmed, so the flag is due for removal. check reports it (WSP118). |
 | reason code | `review-decider` | chant | records.schema.json | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | reason code | `review-agent` | chant | records.schema.json | The reviewer holds the agent role in the trust policy at base. |
 | reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
@@ -471,6 +473,7 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP115` `record-kind-unloadable` | chant | check.schema.json | Every record kind the declaration names is a file that exports a valid recordKind, with the schema it names. |
 | WSP check | `WSP116` `decision-points-invalid` | chant | check.schema.json | Every answer kind the declaration names has a decision points file that matches decision-points.schema.json, with each input naming a read-contract output, pinned model ids and a chain ending in its one quorum (ws-058). |
 | WSP check | `WSP117` `work-acceptance-unmet` | chant | check.schema.json | Every done work item meets its acceptance criteria: each has evidence that names it, passed, and has the verification the criterion expects, and a manual verdict is from someone other than the implementer (#2772). |
+| WSP check | `WSP118` `flag-stale` | chant | check.schema.json | No feature flag outlives its work: a flag whose work item implements decisions that are all confirmed (closed in their kind and superseded by nothing) is due for removal, with the parameter it backs (#4024). |
 | WSP check | `WSP121` `box-credential-declared` | chant | check.schema.json | A box holds no credential: no file in a box member's directory carries a literal secret, in its declarations, an env or a vault's defaults. Variable references and secret-manager references (op://, bws://, infisical://) are not secrets. |
 | WSP check | `WSP122` `box-capability-unbrokered` | chant | check.schema.json | Every capability a box declares names the broker that holds its credential and enforces its scope. |
 | WSP check | `WSP123` `box-isolation-collision` | chant | check.schema.json | No two boxes on one host resolve to the same port, state path or cookie name, and no two ports in one box share an offset. |

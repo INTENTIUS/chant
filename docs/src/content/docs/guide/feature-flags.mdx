@@ -1,0 +1,111 @@
+---
+title: Feature Flags
+description: Keep unfinished work on trunk behind a flag that is a workspace record, read by the member's build as a build-time parameter, turned on by a reviewed commit and a gated release, and removed once its work is settled.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/feature-flags/.
+  For the work item I name, add a flag record under the workspace's flag kind directory (such as `flags/<name>.flag.md`) that names the work item, the member and the build parameter it sets, with the value off in every environment, and declare that parameter in the member's `chant.config.ts` `buildParams` if it is missing.
+  Check it with `npx chant workspace records --kind flags/flag.kind.mjs --json` and `npx chant build --env <env>` in the member, then open a pull request. Do not turn a flag on in an environment yourself; a person does that in a reviewed change.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A feature flag lets unfinished work live on trunk while it is off. In chant it is a record in the workspace, and a member's build reads it as a [build-time parameter](/chant/concepts/build-time-parameters/) ([#4024](https://github.com/INTENTIUS/chant/issues/4024), decided in [#4016](https://github.com/INTENTIUS/chant/issues/4016)). Turning one on in an environment is a commit that changes the record, so it is reviewed like any change. The release cut from that commit carries the new value through the environment's gate, and `chant workspace check` reports it once its work is settled.
+
+## Declare the kind
+
+chant ships the kind as data: `flag.kind.mjs` and `flag.schema.json` in `@intentius/chant` at `src/workspace/reference-kinds/flag/`. Copy both into a directory such as `flags/` and name the kind file in the declaration's `records`:
+
+```json
+{
+  "records": [
+    { "kind": "decisions/decision.kind.mjs" },
+    { "kind": "work/work.kind.mjs" },
+    { "kind": "flags/flag.kind.mjs" }
+  ]
+}
+```
+
+Its `flag` block names the fields chant reads, and the work kind file, relative to the kind file. The copy points at `../work/work.kind.mjs`. Change `work.kind` if the workspace keeps its work items elsewhere.
+
+```js
+flag: {
+  member: "member",
+  param: "param",
+  owner: "owner",
+  values: "values",
+  work: { field: "work", kind: "../work/work.kind.mjs" },
+},
+```
+
+A kind with this block names its id with `idField`, since the id is the name a build records. Any record kind can carry the block, so a workspace may write its own schema with more fields.
+
+## Write one
+
+Each is a Markdown file named `<id>.flag.md`, with front matter the schema checks:
+
+```yaml
+---
+schema: 1
+id: "new-checkout"
+owner: "alice"
+work: "W-012"
+member: "shop"
+param: "newCheckout"
+values:
+  dev: true
+  staging: false
+  prod: false
+---
+
+The new checkout flow, off until W-012 is done.
+```
+
+`member` is the workspace member whose build reads it, and `param` is one of its declared `buildParams`. `values` holds the value per environment. An environment left out builds with the parameter's default. `work` names the work item it hides. A work item's `implements` names decisions only, so the link sits here.
+
+The member declares the parameter as usual, and reads it as `params.newCheckout`:
+
+```typescript
+// shop/chant.config.ts
+export default {
+  environments: ["dev", "staging", "prod"],
+  buildParams: {
+    newCheckout: { type: "boolean", default: false },
+  },
+} satisfies ChantConfig;
+```
+
+The value must have the parameter's type and fit its `enum`, as a value from any other source must. Naming a parameter the member does not declare is a build error. So are two flags that set one parameter, and a file that fails its schema and names the member.
+
+## Build with it
+
+`chant build --env <env>` in the member resolves the parameter from the flag and keeps it on `BuildResult.buildParams` with `source: "flag:<id>"`. `chant run --components --env <env>` does the same, and so does each environment a [release cut](/chant/cli/release/#release-cut) compiles. A build with no `--env` reads none of them, and neither does a project outside a workspace.
+
+| Source | Where it sits |
+|---|---|
+| `--param` | first |
+| `--params-file` | second |
+| the parameter's `env` mapping | third |
+| the flag's value for the environment | fourth |
+| `default` | last |
+
+In an environment with a gate, the first three can't set the parameter, and the build refuses with this error.
+
+```
+build parameter "newCheckout" is backed by the flag "new-checkout", and "prod" has a gate, so --param can't set it; change the flag record and let the change go through the gate (gates: prod-release)
+```
+
+An environment has a gate when a component enabled in it declares a gate step, the same test `chant components promote --release` uses to bind its [release gate](/chant/cli/components/). chant runs that test only when one of the three sources set a flag-backed parameter, since it imports the member's components. When the components can't be read, the build refuses too, since the gate can't be ruled out. A member with no gate in the environment, or with no components, still takes an override.
+
+## Turn it on
+
+Change the value in the file and commit it. Once the commit is green, `chant release cut` cuts a release of its own ([ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md)). Each target's `params` entry for the parameter has the new value and `source: "flag:new-checkout"`. No artifact source changed, so the release's `artifactDigests` are the previous release's. The change set `chant components promote --release` plans for each environment shows `param:newCheckout` where the value moved, and the gate there binds that change set. Environments whose value did not move have an empty change set and pass without an approval. A flag change ships with every trunk commit merged before it (ws-104 question 6).
+
+## See them
+
+`chant workspace status <env> --json` lists them per member under `featureFlags`. Each entry has its values per environment and its work item, and says in `stale` whether it is due for removal. The text view adds a table with each one's value in `<env>`. `chant workspace records --kind flags/flag.kind.mjs --json` also gives each record a `flag` object with the work item's state and the decisions the item implements.
+
+## Remove it when its work is settled
+
+A flag is due for removal once its work item implements at least one decision and every one is confirmed, meaning closed in its kind and superseded by nothing. For chant's decision kind that is `ratified`. `records` warns `flag-stale` on the record, and `chant workspace check` reports it as `WSP118`, a warning the declaration's `checks` can raise to an error. Remove the file and the parameter together, with the code paths the parameter chose between.
+
+A flag naming an unknown work item is warned `flag-work-unknown`, and is never stale.

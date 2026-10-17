@@ -295,11 +295,12 @@
             "box-intent-unknown",
             "box-intent-unconstrained",
             "work-acceptance-unmet",
+            "flag-stale",
             "diagram-source-missing",
             "diagram-render-missing",
             "diagram-render-drift"
           ],
-          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP131 to WSP133, the diagram finding (#2764)."
+          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP118, flag-stale (#4024). For WSP131 to WSP133, the diagram finding (#2764)."
         }
       }
     },
@@ -373,11 +374,12 @@
             "box-intent-unknown",
             "box-intent-unconstrained",
             "work-acceptance-unmet",
+            "flag-stale",
             "diagram-source-missing",
             "diagram-render-missing",
             "diagram-render-drift"
           ],
-          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP131 to WSP133, the diagram finding (#2764)."
+          "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP118, flag-stale (#4024). For WSP131 to WSP133, the diagram finding (#2764)."
         },
         "reason": {
           "type": "string"

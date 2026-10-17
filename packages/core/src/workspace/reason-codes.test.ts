@@ -34,6 +34,7 @@ import { RUN_STATEMENT_FAILURE_CODES } from "./trust/run-statement";
 import { WORK_EVIDENCE_ERROR_CODES } from "./work-evidence";
 import { RECORD_FINDING_CODES } from "./checks/records";
 import { ANSWER_WARNING_CODES } from "./points";
+import { FLAG_WARNING_CODES } from "./flags";
 import { POINTS_ERROR_CODES, POINTS_SOURCE_REASON_CODES } from "./points-cli";
 import { POINTS_WRITE_ERROR_CODES } from "./decide";
 import { PATCH_ERROR_CODES } from "./patch";
@@ -101,6 +102,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RUN_STATEMENT_FAILURE_CODES,
   WORK_EVIDENCE_ERROR_CODES,
   RECORD_FINDING_CODES,
+  FLAG_WARNING_CODES,
   ANSWER_WARNING_CODES,
   POINTS_ERROR_CODES,
   POINTS_SOURCE_REASON_CODES,

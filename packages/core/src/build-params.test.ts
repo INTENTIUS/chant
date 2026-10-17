@@ -194,3 +194,49 @@ describe("buildParamValues", () => {
     expect(buildParamValues([])).toEqual({});
   });
 });
+
+describe("resolveBuildParams — workspace flags (#4024)", () => {
+  const defs: BuildParamsConfig = { newCheckout: { type: "boolean", default: false, env: "NEW_CHECKOUT" }, tier: { type: "string", default: "light" } };
+  const flags = (value: boolean | undefined, gated = false) => ({ env: "prod", byParam: { newCheckout: { flag: "new-checkout", value } }, ...(gated ? { gated: true } : {}) });
+
+  test("a flag's value for the environment is recorded with source flag:<name>, ahead of the default", () => {
+    const r = resolveBuildParams(defs, { flags: flags(true) });
+    expect(r.errors).toEqual([]);
+    expect(r.provenance).toEqual([
+      { name: "newCheckout", value: true, source: "flag:new-checkout" },
+      { name: "tier", value: "light", source: "default" },
+    ]);
+  });
+
+  test("a flag that gives the environment no value leaves the parameter at its default", () => {
+    expect(resolveBuildParams(defs, { flags: flags(undefined) }).provenance[0]).toEqual({ name: "newCheckout", value: false, source: "default" });
+  });
+
+  test("where the environment has no gate, --param, --params-file and the env var still win over the flag", () => {
+    expect(resolveBuildParams(defs, { cli: { newCheckout: "false" }, flags: flags(true) }).provenance[0].source).toBe("cli");
+    expect(resolveBuildParams(defs, { fromFile: { newCheckout: false }, flags: flags(true) }).provenance[0].source).toBe("params-file");
+    expect(resolveBuildParams(defs, { env: { NEW_CHECKOUT: "false" }, flags: flags(true) }).provenance[0].source).toBe("env");
+  });
+
+  test("where the environment has a gate, --param, --params-file and the env var can't set a flag-backed parameter", () => {
+    const viaCli = resolveBuildParams(defs, { cli: { newCheckout: "true" }, flags: flags(false, true) });
+    expect(viaCli.errors).toEqual([
+      'build parameter "newCheckout" is backed by the flag "new-checkout", and "prod" has a gate, so --param can\'t set it; change the flag record and let the change go through the gate',
+    ]);
+    expect(viaCli.provenance.map((p) => p.name)).toEqual(["tier"]);
+    expect(resolveBuildParams(defs, { fromFile: { newCheckout: true }, flags: flags(false, true) }).errors[0]).toMatch(/so --params-file can't set it/);
+    expect(resolveBuildParams(defs, { env: { NEW_CHECKOUT: "true" }, flags: flags(false, true) }).errors[0]).toMatch(/so the env var NEW_CHECKOUT can't set it/);
+    // A parameter no flag backs is not affected.
+    expect(resolveBuildParams(defs, { cli: { tier: "big" }, flags: flags(false, true) }).errors).toEqual([]);
+  });
+
+  test("a flag that sets a parameter the config does not declare is an error", () => {
+    const r = resolveBuildParams({}, { flags: flags(true) });
+    expect(r.errors).toEqual([`flag "new-checkout" sets build parameter "newCheckout", which chant.config.ts's buildParams does not declare`]);
+  });
+
+  test("a flag value of the wrong type, or outside the enum, fails like any other source", () => {
+    const strict: BuildParamsConfig = { newCheckout: { type: "string", enum: ["a", "b"] } };
+    expect(resolveBuildParams(strict, { flags: { env: "prod", byParam: { newCheckout: { flag: "new-checkout", value: "c" } } } }).errors[0]).toMatch(/must be one of "a", "b", got "c"/);
+  });
+});

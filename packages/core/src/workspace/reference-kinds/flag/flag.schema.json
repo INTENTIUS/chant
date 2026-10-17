@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:flag:1",
+  "title": "Feature flag front matter",
+  "description": "The front matter of one feature flag record (#4024): a workspace record one member's build reads as a build-time parameter. The file is named <id>.flag.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "required": ["schema", "id", "owner", "work", "member", "param", "values"],
+  "properties": {
+    "schema": {
+      "description": "Format version of this file. Bumped only by a change to this schema.",
+      "const": 1
+    },
+    "id": {
+      "description": "The flag's name, which the build records as the source flag:<id> of the parameter it sets. Lowercase, with dashes.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "title": {
+      "description": "What the flag hides, in a few words. Optional.",
+      "type": "string"
+    },
+    "owner": {
+      "description": "Who owns the flag, and removes it once its work is settled.",
+      "type": "string",
+      "minLength": 1
+    },
+    "work": {
+      "description": "The id of the work item the flag hides, a record of the work kind the flag kind names. A work item's implements names a decision, never a flag, so the link is kept here.",
+      "type": "string",
+      "minLength": 1
+    },
+    "member": {
+      "description": "The workspace member whose build parameter the flag sets, by its name in chant.workspace.json.",
+      "type": "string",
+      "minLength": 1
+    },
+    "param": {
+      "description": "The build parameter the flag sets: a key of buildParams in the member's chant.config.ts. Its value per environment must have the parameter's type and, when it declares one, be in its enum.",
+      "type": "string",
+      "minLength": 1
+    },
+    "values": {
+      "description": "The flag's value per environment, keyed by the environment's name. An environment left out builds with the parameter's declared default.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    }
+  }
+}
