@@ -136,15 +136,10 @@ export async function greenState(
   sha: string,
   green: import("../workspace/declaration").CiGreen | null = null,
 ): Promise<{ state: "green" | "revoked" | "none"; ignored: Array<{ tag: string; status: string; reason: string }> }> {
-  const { readCiTags } = await import("../workspace/ci-green");
-  const base = green
-    ? (tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${green.branch}^{commit}`]) ??
-      tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]) ??
-      tryGit(top, ["rev-parse", "HEAD"]))
-    : null;
-  let tags: ReturnType<typeof readCiTags>;
+  const { judgedCiTags } = await import("./release-revocation");
+  let tags: Awaited<ReturnType<typeof judgedCiTags>>;
   try {
-    tags = readCiTags(top, green, base);
+    tags = await judgedCiTags(top, green);
   } catch (err) {
     const { WorkspaceReadError } = await import("../workspace/declaration");
     if (err instanceof WorkspaceReadError) throw new ReleaseCutError("declaration-invalid", err.message);

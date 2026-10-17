@@ -11,6 +11,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendPendingGate, readGateLedger } from "../../lifecycle/gate-ledger";
 import { resetGateOrigin } from "../../lifecycle/gate-origin";
+import { makeRelease, persistRelease } from "../../lifecycle/release-store";
 
 vi.mock("../../op/discover", () => ({ discoverOps: async () => ({ errors: [], ops: new Map() }) }));
 
@@ -20,7 +21,9 @@ function git(args: string[], cwd: string): void {
   spawnSync("git", args, { cwd, encoding: "utf-8" });
 }
 
-const RELEASE = `jcs1-sha256:${"a".repeat(64)}`;
+/** The release the gate binds. #4033: approve reads it to check its commit isn't revoked, so it is stored. */
+const STORED = makeRelease({ member: null, commit: "1".repeat(40), artifactDigests: [], targets: [{ env: "prod", templates: [], params: [] }] });
+const RELEASE = STORED.releaseDigest;
 const DOC = `jcs1-sha256:${"d".repeat(64)}`;
 
 async function repoWithReleaseGate(dir: string): Promise<void> {
@@ -30,6 +33,7 @@ async function repoWithReleaseGate(dir: string): Promise<void> {
   writeFileSync(join(dir, "README.md"), "x\n");
   git(["add", "."], dir);
   git(["commit", "-q", "-m", "init"], dir);
+  await persistRelease(STORED, [], { cwd: dir });
   await appendPendingGate(
     {
       op: "release",

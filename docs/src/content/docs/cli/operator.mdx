@@ -126,6 +126,8 @@ The approval copies the plan digest off the gate's standing pending fact, and th
 
 An approval of a gate that a newer gate lists as an alias ([#3949](https://github.com/INTENTIUS/chant/issues/3949)) is recorded under the old name while the newer gate has no standing pending fact, and the command says which gate the next run counts it toward. Once the newer gate records a pending fact, `chant approve` refuses and names that gate's own `chant approve` line ([Renaming a gate](/chant/guide/ops/#renaming-a-gate)).
 
+A release gate, the gate `chant components promote --release` passes, is refused when its release was cut from a commit that has since been revoked ([#4033](https://github.com/INTENTIUS/chant/issues/4033)). The command reads the local `ci/revoked/<sha>` tags and refuses with `release-revoked` whatever `--plan` names, and with `release-unreadable` when the release file can't be read. Expire the pending fact with `--expire` and promote a release cut from a green commit instead. See [revoked releases](/chant/cli/release/#revoked-releases).
+
 ```bash
 chant approve fountain-apply rollout-gate
 chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"

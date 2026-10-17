@@ -582,6 +582,28 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       }));
       return 1;
     }
+    // #4033 (ws-105): a release cut from a revoked commit is never deployed,
+    // so a gate pending for it can't pass. Read from local tags, as the cut reads them.
+    const { readRevokedCommits, revocationOf, revokedRefusal } = await import("../../lifecycle/release-revocation");
+    let revoked: Awaited<ReturnType<typeof readRevokedCommits>>;
+    try {
+      revoked = await readRevokedCommits(process.cwd());
+    } catch (err) {
+      console.error(formatError({
+        message: `the ci tags can't be judged, so whether release ${found.label ?? found.release.releaseDigest} is revoked is unknown: ${err instanceof Error ? err.message : String(err)} [declaration-invalid]`,
+        hint: "Fix ci.green in chant.workspace.json at base; chant workspace check names the problem.",
+      }));
+      return 1;
+    }
+    const revocation = revocationOf(found.release, revoked);
+    if (revocation) {
+      console.error(formatError(revokedRefusal(
+        { releaseDigest: found.release.releaseDigest, label: found.label },
+        revocation,
+        "Promote a release cut from a green commit: `chant ci last-green` names the newest, and `chant release list` marks the revoked releases. Fetch the tags first: git fetch origin --tags",
+      )));
+      return 1;
+    }
     under = { release: found.release, label: found.label, target: target.target };
   }
 

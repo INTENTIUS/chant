@@ -256,6 +256,46 @@ export type GateApprovalOutcome =
   | { ok: false };
 
 /**
+ * Refuse the approval of a release gate whose release is revoked (#4033,
+ * ws-105): its commit carries a `ci/revoked/<sha>` tag that counts, read from
+ * local tags as `release cut` reads them. Prints the refusal and returns true
+ * when it refuses. A release file that can't be read, or tags that can't be
+ * judged, refuse too, since whether the release is revoked is then unknown.
+ */
+async function refuseRevokedRelease(opName: string, gate: string, releaseDigest: string, cwd: string): Promise<boolean> {
+  const { readRelease, readCuts, labelsByDigest } = await import("../../lifecycle/release-store");
+  const { readRevokedCommits, revocationOf, revokedRefusal } = await import("../../lifecycle/release-revocation");
+  const release = await readRelease(releaseDigest, { cwd }).catch(() => null);
+  if (!release) {
+    console.error(formatError({
+      message: `Gate "${gate}" on "${opName}" binds release ${releaseDigest}, which can't be read from ${LIFECYCLE_BRANCH}, so whether it is revoked is unknown [release-unreadable]`,
+      hint: `Fetch the ledger branch (git fetch origin ${LIFECYCLE_BRANCH}:${LIFECYCLE_BRANCH}) and approve again from the member's directory.`,
+    }));
+    return true;
+  }
+  let revoked: Awaited<ReturnType<typeof readRevokedCommits>>;
+  try {
+    revoked = await readRevokedCommits(cwd);
+  } catch (err) {
+    console.error(formatError({
+      message: `Gate "${gate}" on "${opName}" binds release ${releaseDigest}, and the ci tags can't be judged: ${err instanceof Error ? err.message : String(err)} [declaration-invalid]`,
+      hint: "Fix ci.green in chant.workspace.json at base; chant workspace check names the problem.",
+    }));
+    return true;
+  }
+  const r = revocationOf(release, revoked);
+  if (!r) return false;
+  const label = labelsByDigest((await readCuts({ cwd }).catch(() => ({ cuts: [] }))).cuts).get(releaseDigest) ?? null;
+  console.error(formatError(revokedRefusal(
+    { releaseDigest, label },
+    r,
+    `Clear the pending gate with \`chant approve ${opName} ${gate} --expire\`, then promote a release cut from a green commit: ` +
+      "`chant ci last-green` names the newest, and `chant release list` marks the revoked releases.",
+  )));
+  return true;
+}
+
+/**
  * The ledger write behind `chant approve` — extracted so `chant run approve`
  * (#2121) records the identical fact before waking the runtime that hosts the
  * gated run, instead of growing a second, drifting writer.
@@ -400,6 +440,13 @@ export async function recordGateApproval(
   // approval of another plan names none, and no release gate counts it.
   const releaseDigest =
     standing?.releaseDigest !== undefined && samePlanDigest(planDigest, standing.planDigest) ? standing.releaseDigest : undefined;
+  // #4033 (ws-105): a release gate whose release was cut from a revoked
+  // commit is superseded. Its promote refuses the release, so an approval of
+  // it would count for nothing; refuse it here, whatever plan is named.
+  if (standing?.releaseDigest !== undefined) {
+    const refused = await refuseRevokedRelease(opName, gate, standing.releaseDigest, opts.cwd ?? process.cwd());
+    if (refused) return { ok: false };
+  }
 
   // chant#2384 — the gate's whole value is that its two halves have different
   // authors. At a shell they do: a person runs, reads the plan, and approves.

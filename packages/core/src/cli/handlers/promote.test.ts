@@ -130,6 +130,13 @@ vi.mock("../../components/release-promote", async () => {
   };
 });
 
+// #4033: the revoked commits come from a map, not from this checkout's tags.
+const revokedCommits = new Map<string, import("../../lifecycle/release-revocation").ReleaseRevocation>();
+vi.mock("../../lifecycle/release-revocation", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/release-revocation")>("../../lifecycle/release-revocation");
+  return { ...actual, readRevokedCommits: async () => revokedCommits };
+});
+
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
@@ -185,6 +192,7 @@ beforeEach(() => {
   storedChangeSets.clear();
   storeFails = false;
   knownReleases.clear();
+  revokedCommits.clear();
   removedTemplates.length = 0;
   ran.length = 0;
   stepInputs.length = 0;
@@ -497,6 +505,33 @@ describe("chant components promote --release binds its gate (#4045)", () => {
       approver: "alice",
       admission: { op: "release", gate: "prod-release" },
     });
+  });
+
+  test("a release cut from a revoked commit is refused before anything runs, so its pending gate never passes (#4033)", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    const pending = releaseGatePort!.appended[0];
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "prod-release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: pending.planDigest, environment: "prod", releaseDigest: r1.releaseDigest,
+    });
+    // The commit went red after the approval: a run from chant runs (#4044) names its run in opRun, with id null.
+    revokedCommits.set(r1.commit, {
+      commit: r1.commit,
+      tag: `ci/revoked/${r1.commit}`,
+      tagged: "2026-10-16T12:00:00.000Z",
+      phase: "e2e",
+      run: { name: "smoke", id: null, conclusion: "failure", url: null, opRun: { id: "r-12", env: "staging", signer: "runner:ci" } },
+      signer: "runner:ci",
+    });
+    ran.length = 0;
+    errors.length = 0;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(1);
+    const said = errors.join("\n");
+    expect(said).toMatch(/release v1\.0\.0 was cut from commit abc123000000, which ci\/revoked\/abc1230{34} revokes \(phase e2e failed in smoke \(Op run r-12 in staging\)\)/);
+    expect(said).toMatch(/\[release-revoked\]/);
+    expect(said).toMatch(/chant ci last-green/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
   });
 
   test("an approval for one release can't be used by another", async () => {

@@ -85,7 +85,8 @@
         "artifactDigests",
         "targets",
         "cuts",
-        "environments"
+        "environments",
+        "revoked"
       ],
       "properties": {
         "releaseDigest": {
@@ -177,6 +178,17 @@
               }
             }
           }
+        },
+        "revoked": {
+          "description": "Added within contract version 1 by #4033, written by chant 0.124.29 and newer. The ci/revoked/<sha> tag on the release's commit, or null when the commit is not revoked. A revoked release is never promoted (chant components promote --release refuses it) and its pending release gates refuse approval. Null too when the ci tags can't be judged, as when ci.green.signedSince names no commit here, which chant workspace check reports.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/revocation"
+            }
+          ]
         }
       }
     },
@@ -384,6 +396,110 @@
               "type": "string"
             }
           }
+        }
+      }
+    },
+    "revocation": {
+      "type": "object",
+      "description": "A revoked tag on a release's commit (#4033, ws-105), as chant ci list --json shows a commit's revoked tag, with the commit. Read from local tags at read time and judged as release cut judges them: with ci.green.signedSince, a revoked tag without a valid runner statement is ignored and revokes nothing.",
+      "required": [
+        "commit",
+        "tag",
+        "tagged",
+        "phase",
+        "run",
+        "signer"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "description": "The release's commit, which the tag names."
+        },
+        "tag": {
+          "type": "string",
+          "description": "ci/revoked/<sha>."
+        },
+        "tagged": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "When the tag was made, ISO 8601, or null for a lightweight tag."
+        },
+        "phase": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The phase the annotation names as failed, or null when the annotation can't be read."
+        },
+        "run": {
+          "description": "The run the annotation names as failed, or null.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "id",
+                "conclusion",
+                "url"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "The check run's id, or null for a chant Op run."
+                },
+                "conclusion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "opRun": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "env",
+                    "signer"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "env": {
+                      "type": "string"
+                    },
+                    "signer": {
+                      "type": "string"
+                    }
+                  },
+                  "description": "Present only when the run is a chant Op run (ci.green.source runs, #4044): its id, the env it is recorded under and the runner whose statement it carries. id above is then null."
+                }
+              }
+            }
+          ]
+        },
+        "signer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The runner principal whose statement the tag carries, or null when it counts unsigned."
         }
       }
     }
