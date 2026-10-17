@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json",
   "title": "chant ci list output",
-  "description": "What `chant ci list --json` prints (#4021, ws-103): the first-parent commits of the branch ci.green names, newest first, within ci.green.window or after --since, each with its state from the ci/green/<sha> and ci/revoked/<sha> tags and the result of each required phase. It reads local refs and tags and never fetches; with --forge it also reads check runs for the commits that have no ci tag. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version, so a later release may add a field to each commit, such as the work item it applied. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "description": "What `chant ci list --json` prints (#4021, ws-103): the first-parent commits of the branch ci.green names, newest first, within ci.green.window or after --since, each with its state from the ci/green/<sha> and ci/revoked/<sha> tags and the result of each required phase. It reads local refs and tags and never fetches; with --forge it also reads check runs for the commits that have no ci tag. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version, so a later release may add more fields to each commit. `work` says whether the commit names its work item; it was added by #4029. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -286,6 +286,59 @@
                     }
                   }
                 }
+              },
+              "work": {
+                "description": "Whether the commit names the work item it belongs to (#4029), by the definition `workspace check --changes` uses: a Chant-Record trailer of a work kind the declaration names whose record exists, or a Chant-Lease trailer that resolves to a work item. The records are read at `ref`. A window match does not count. Null when the checkout is not in a workspace that declares a work kind, or the kinds can't be read. Added within contract version 1, and written by chant 0.124.28 and newer; a reader that finds no `work` is reading an older chant, and one that finds null has been told nothing. A commit that is unlinked or wrong is why its work item is unknown.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "state",
+                      "ids",
+                      "problems"
+                    ],
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "linked",
+                          "unlinked",
+                          "wrong",
+                          "merge"
+                        ],
+                        "description": "linked: a trailer names a work record that exists, or a lease that resolves to one (a lease is taken as linked when this checkout has no chant/lifecycle branch to read). unlinked: no Chant-Record or Chant-Lease trailer names anything. wrong: trailers name a work item but none of them is one that exists. merge: a merge commit, whose work is the commits it brings."
+                      },
+                      "ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The work records the trailers name, as <kind>:<id>. Empty unless state is linked."
+                      },
+                      "problems": {
+                        "type": "array",
+                        "description": "The trailers that do not link the commit. Empty unless state is wrong.",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "trailer",
+                            "message"
+                          ],
+                          "properties": {
+                            "trailer": {
+                              "type": "string"
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
               }
             }
           }

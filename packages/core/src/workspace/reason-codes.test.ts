@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { REPO } from "./__fixtures__/contract-repo";
-import { CHANGES_ERROR_CODES, CHANGES_FINDING_CODES } from "./changes";
+import { CHANGES_ERROR_CODES, CHANGES_FINDING_CODES, COMMIT_LINK_FINDING_CODES } from "./changes";
 import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import { COMPOSITES_ENVIRONMENT_REASON_CODES, COMPOSITES_ERROR_CODES, COMPOSITES_REASON_CODES, COMPOSITES_RUNTIME_REASON_CODES } from "./composites";
 import { WORKSPACE_ERROR_CODES } from "./declaration";
@@ -85,6 +85,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   INTENT_REASON_CODES,
   INTENT_WHY_CODES,
   CHANGES_FINDING_CODES,
+  COMMIT_LINK_FINDING_CODES,
   CHANGES_ERROR_CODES,
   COMPOSITES_ERROR_CODES,
   COMPOSITES_REASON_CODES,

@@ -282,6 +282,40 @@ declareSteward({ name: "box-steward", ops: [converge], beside: [{ op: factory, r
 
 A criterion verified `manual` or `runtime` is never the factory's to tick, so an item with one is not done by the factory. A failed build is never retried on its own: a person asks for one more by amending the item's `retry` to `{ after: <the failed build's lease token>, by, at }`, so one request starts one run. Publishing a done item is a separate call, [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work). The reference workspace declares the Op in `delivery/src/factory.op.ts` with stub hooks.
 
+## Link commits to work items
+
+Every trunk commit should say which work item it carries out ([#4029](https://github.com/INTENTIUS/chant/issues/4029)). A commit is linked to a work item when it carries either of these trailers:
+
+- `Chant-Record: <kind>:<id>`, where `<kind>` is the name of a work kind the declaration names (`work` in the reference workspace) and that kind has a record `<id>`.
+- `Chant-Lease: <token>`, where a lease history on the local `chant/lifecycle` branch names a work item for the token and a work kind has a record for that item.
+
+A commit inside a work item's window is not linked, since the commit never said so itself. The graph shows it as `worked`.
+
+To link a commit, add the trailer when you make it, with git 2.32 or newer:
+
+```bash
+git commit -m "Render the home screen" --trailer "Chant-Record: work:W-001"
+```
+
+`git commit --amend --trailer "Chant-Record: work:W-001"` adds it to a commit you have not pushed. Without `--trailer`, put the line in the last paragraph of the message, after a blank line, so git reads it as a trailer. A squash-merged pull request leaves the squash commit on the trunk, and that commit's message needs the trailer.
+
+`chant workspace check --changes <base>..<head>` judges the first-parent commits of the range, and leaves merge commits out. It reports two findings, each with a `fix` line:
+
+| Finding | When |
+|---|---|
+| `commit-unlinked` | The commit has no `Chant-Record` of a work kind and no `Chant-Lease`. |
+| `commit-wrongly-linked` | No trailer links the commit, and at least one names something that is not a work item: an id no work kind has, a record of a kind that is not a work kind (`decision:ws-075`), a `Chant-Record` that is not `<kind>:<id>`, or a lease no history names or whose item has no work record. |
+
+A commit with one good trailer is linked even when it carries another record beside it, such as a `Chant-Record` for the decision it carries out. The findings are warnings. `--severity fail`, or `changes.severity` in the declaration, makes them fail the check, and `off` reports none. [`chant ci list`](/chant/cli/ci/#ci-list) and [`chant ci tick`](/chant/cli/ci/#ci-tick) show the same judgement for the commits on the trunk branch: a commit that is unlinked or wrongly linked is listed with `why unknown`.
+
+The program that makes a commit writes its trailers, because chant never commits for a caller ([ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md)):
+
+| Commit made by | Trailers |
+|---|---|
+| a person | whatever they add, as above |
+| the [factory Op](#run-the-factory-reference-op) | `Chant-Record: <kind>:<item>` for the item, then any records the build names, and `Chant-Lease` with the lease's token (`commitAll` in `packages/core/src/op/activities/factory.ts`) |
+| hud and studio | `Chant-Lease` for the lease they hold |
+
 ## The window and the three findings
 
 The window of W-001 runs from the commit that added its record to the commit that moved it to `done` or `dropped`. While it is open, the window runs to the revision the walk reads. A commit that changes the region inside the window has a `within` edge to W-001 with the state `worked`. The commit's own state still comes from the decisions, because a work record says who is doing something, and a decision says what was chosen.

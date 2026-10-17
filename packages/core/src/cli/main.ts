@@ -670,7 +670,13 @@ Workspace (level 1, #2524):
                         the severity (warn by default) and ignore globs. When
                         the declaration at base has writeScope or agents, each
                         commit that writes outside its writer's scope fails
-                        the check (write-scope-member, write-scope-kind)
+                        the check (write-scope-member, write-scope-kind). Each
+                        first-parent commit of the range should name its work
+                        item in a Chant-Record: <work kind>:<id> or a
+                        Chant-Lease trailer. commit-unlinked is a commit that
+                        names none, commit-wrongly-linked one whose trailers
+                        name no work item that exists; both follow the
+                        severity
   workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json]
   workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
                         The hunks of a diff, file by file: a range, a work

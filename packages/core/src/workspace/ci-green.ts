@@ -29,6 +29,7 @@
  * are fetched from and pushed to the remote with git.
  */
 
+import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./commit-links";
 import { execFileSync } from "node:child_process";
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase } from "./declaration";
 import type { CheckRun, CiForge } from "./ci-green-forge";
@@ -152,6 +153,8 @@ export interface TickCommit {
   verdict?: CommitVerdict;
   /** The tag the tick made, if any. */
   made: { tag: string; message: string } | null;
+  /** Whether the commit names its work item (#4029), or undefined when the workspace declares no work kind. */
+  work?: CommitLink;
 }
 
 export interface TickPlanInput {
@@ -309,6 +312,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     .filter(([, ct]) => Number(ct) >= cutoff)
     .map(([sha, ct]) => ({ sha, committed: iso(new Date(Number(ct) * 1000)) }));
 
+  const links = await commitLinks(req.cwd, top, tracking, commits.map((c) => c.sha));
   const tags = readCiTags(top);
   const planned = await planTick({
     green,
@@ -318,6 +322,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     checkRuns: (sha) => req.forge.checkRuns(sha),
     now,
   });
+  if (links) for (const c of planned) c.work = links.get(c.sha);
   const due = planned.filter((c) => c.made !== null);
   if (!req.dryRun && due.length > 0) {
     const ident = taggerConfig(top);
@@ -361,11 +366,37 @@ function stderrOf(err: unknown): string {
   return String(e.stderr ?? e.message ?? err).trim();
 }
 
+/**
+ * Whether each commit names its work item (#4029), judged against the work
+ * records at `ref`. Undefined when the workspace declares no work kind or
+ * they can't be read: then no commit has a link state to report.
+ */
+async function commitLinks(cwd: string, top: string, ref: string, shas: string[]): Promise<Map<string, CommitLink> | undefined> {
+  if (shas.length === 0) return undefined;
+  try {
+    const index = await readWorkIndex(cwd, top, ref);
+    if (!index) return undefined;
+    return judgeCommits(top, shas, index, mergeCommits(top, shas));
+  } catch {
+    // A tag and a green list stand without the link, which only explains a commit.
+    return undefined;
+  }
+}
+
+/** Why a commit's work item is unknown, for the text of `ci tick` and `ci list`; undefined for a commit that names one. */
+export function whyWorkUnknown(work: CommitLink | null | undefined): string | undefined {
+  if (!work) return undefined;
+  if (work.state === "unlinked") return "no Chant-Record or Chant-Lease trailer names a work item";
+  if (work.state === "wrong") return `the work item named is not there: ${work.problems.map((p) => `${p.trailer} (${p.message})`).join("; ")}`;
+  return undefined;
+}
+
 /** The text `chant ci tick` prints. */
 export function formatTick(r: TickResult, dryRun = false): string {
   const lines = [`${r.branch}, commits within ${r.window}: ${r.commits.length}`];
   for (const c of r.commits) {
     const short = c.sha.slice(0, 12);
+    const before = lines.length;
     if (c.made) {
       lines.push(`  ${short}  ${dryRun ? "would make" : "made"} ${c.made.tag.slice(0, c.made.tag.lastIndexOf("/"))}${c.verdict?.failure ? `: phase ${c.verdict.failure.phase}, ${c.verdict.failure.run.name} ${c.verdict.failure.run.conclusion}` : ""}`);
     } else if (c.before === "revoked") {
@@ -376,6 +407,8 @@ export function formatTick(r: TickResult, dryRun = false): string {
       const what = c.before === "green" ? "green" : v.verdict === "fail" ? `failed: phase ${v.failure!.phase}, ${v.failure!.run.name} ${v.failure!.run.conclusion}` : `undecided: ${waiting.join(", ")}`;
       lines.push(`  ${short}  ${what}`);
     }
+    const why = whyWorkUnknown(c.work);
+    if (why) lines[before] += `; why unknown: ${why}`;
   }
   return lines.join("\n");
 }
@@ -463,6 +496,11 @@ export interface CiListCommit {
   revoked: { tag: string; tagged: string | null; phase: string | null; run: CiListRun | null } | null;
   /** Each required phase in `require` order. */
   phases: CiListPhase[];
+  /**
+   * Whether the commit names its work item (#4029), or null when the checkout
+   * is in no workspace that declares a work kind.
+   */
+  work: CommitLink | null;
 }
 
 export type CiListDocument =
@@ -572,6 +610,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
       .map(([sha, ct]) => ({ sha, committed: iso(new Date(Number(ct) * 1000)) }));
     if (req.limit !== undefined) commits = commits.slice(0, req.limit);
 
+    const links = await commitLinks(req.cwd, top, ref, commits.map((c) => c.sha));
     const tags = readCiTagRecords(top);
     const out: CiListCommit[] = [];
     for (const c of commits) {
@@ -589,7 +628,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
         const verdict = evaluateCommit(green, await req.forge.checkRuns(c.sha));
         phases = verdict.phases.map((p) => ({ phase: p.phase, result: p.verdict, runs: p.runs.map(({ name, id, conclusion, url }) => ({ name, id, conclusion, url })) }));
       }
-      out.push({ ...c, state, green: g ? { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, tagged: g.tagged } : null, revoked, phases });
+      out.push({ ...c, state, green: g ? { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, tagged: g.tagged } : null, revoked, phases, work: links?.get(c.sha) ?? null });
     }
     return { ...head, workspace, branch: green.branch, ref, window: req.since === undefined ? green.window : null, since: req.since ?? null, require: [...green.require], commits: out };
   } catch (err) {
@@ -603,7 +642,8 @@ export function formatList(doc: Extract<CiListDocument, { branch: string }>): st
   const lines = [`${doc.branch}, ${doc.since ? `commits after ${doc.since}` : `commits within ${doc.window}`}: ${doc.commits.length}`];
   for (const c of doc.commits) {
     const phases = c.phases.map((p) => `${p.phase}=${p.result}`).join(" ");
-    lines.push(`  ${c.sha.slice(0, 12)}  ${c.state.padEnd(9)}  ${phases}`);
+    const why = whyWorkUnknown(c.work);
+    lines.push(`  ${c.sha.slice(0, 12)}  ${c.state.padEnd(9)}  ${phases}${why ? `; why unknown: ${why}` : ""}`);
   }
   return lines.join("\n");
 }

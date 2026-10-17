@@ -32,13 +32,22 @@ export function formatChanges(doc: Result): string {
     out.push(`${p.status.padEnd(12)} ${p.change.padEnd(8)} ${p.path}${p.from ? ` (from ${p.from})` : ""}${why ? `; ${why}` : ""}`);
   }
   for (const f of doc.findings) out.push(`${f.severity === "fail" ? "error  " : "warning"}   ${f.code}: ${f.message}`);
+  if (doc.links) {
+    const l = doc.links;
+    const n = (state: string) => l.commits.filter((c) => c.state === state).length;
+    out.push(`links     ${l.commits.length} commits: ${n("linked")} name a work item, ${n("unlinked")} do not, ${n("wrong")} name one that is not there; work kinds: ${l.kinds.join(", ")}`);
+    for (const f of l.findings) {
+      out.push(`${f.severity === "fail" ? "error  " : "warning"}   ${f.code}: ${f.message}`);
+      out.push(`          fix: ${f.fix}`);
+    }
+  }
   if (doc.scope) {
     const sc = doc.scope;
     out.push(`scope     ${sc.commits.length} commits judged against the declaration at ${sc.base.slice(0, 8)}; restricted: ${sc.restricted.join(", ") || "none"}`);
     for (const f of sc.findings) out.push(`error     ${f.code}: ${f.message}`);
   }
   const s = doc.summary;
-  out.push(`${s.paths} changed paths: ${s.covered} covered, ${s.uncovered} uncovered, ${s.outOfScope} out of scope, ${s.ignored} ignored, ${s.records} records; ${doc.findings.length} findings`);
+  out.push(`${s.paths} changed paths: ${s.covered} covered, ${s.uncovered} uncovered, ${s.outOfScope} out of scope, ${s.ignored} ignored, ${s.records} records; ${doc.findings.length} findings${doc.links ? `, ${doc.links.findings.length} commit link findings` : ""}`);
   return out.join("\n");
 }
 

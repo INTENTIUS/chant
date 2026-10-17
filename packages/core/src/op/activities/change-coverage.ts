@@ -55,6 +55,9 @@ export async function changeCoverage(args: ChangeCoverageArgs = {}): Promise<Cha
     findings: doc.findings.map(({ code, path, message, severity, records, triage }) => ({ code, path, message, severity, records, triage })),
     summary: doc.summary,
   };
-  if (!doc.ok) throw new Error(`changeCoverage: ${doc.findings.length} change ${doc.findings.length === 1 ? "finding" : "findings"} at severity fail: ${doc.findings.map((f) => `${f.code} ${f.path}`).join(", ")}`);
+  if (!doc.ok) {
+    const all = [...doc.findings.map((f) => `${f.code} ${f.path}`), ...(doc.links?.findings ?? []).map((f) => `${f.code} ${f.commit.slice(0, 8)}`)];
+    throw new Error(`changeCoverage: ${all.length} change ${all.length === 1 ? "finding" : "findings"} at severity fail: ${all.join(", ")}`);
+  }
   return result;
 }

@@ -205,6 +205,9 @@ export const REASONS = {
   // The forward coverage check (check --changes, #2773): findings, one per changed path.
   "change-uncovered": "A path the diff changes is covered by no current decided record and no open work item, by path or by its member.",
   "change-out-of-scope": "A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its out_of_scope.",
+  // The commit link check (check --changes, #4029): findings, one per trunk commit.
+  "commit-unlinked": "A trunk commit in the range names no work item: it has no Chant-Record trailer of a work kind and no Chant-Lease trailer.",
+  "commit-wrongly-linked": "A trunk commit in the range names a work item that is not there: a Chant-Record whose id no work kind has or whose kind is not a work kind, a malformed Chant-Record, or a Chant-Lease that resolves to no work item, and no other trailer links it.",
   // The patch read (workspace patch): a read that fails.
   "patch-path-invalid": "workspace patch --path names a path that is not relative and inside the workspace.",
   // Composite instances joined to components (graph --composites, #2662): why the list is empty or has no component.
