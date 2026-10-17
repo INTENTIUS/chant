@@ -47,7 +47,7 @@ import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
 import type { GateApprovalSource } from "../op/op-waves";
 import type { GateRunLocator } from "../op/gate-run-locator";
-import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
+import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError, type LedgerLocation } from "./git";
 
 // The facts a pending record is written with live apart, so a bundle can import them without git (#3816).
 export { DEFAULT_GATE_EXPIRY, isApprovalUrl, resolveApprovalUrl } from "./gate-pending";
@@ -519,7 +519,7 @@ async function appendGateLine(
  */
 export async function readGateLedger(
   op: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number }> {
   const content = await readBlobFromPath(DIR, filename(op), opts);
   if (!content) return { resolutions: [], pending: [], malformed: 0 };

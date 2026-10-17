@@ -126,6 +126,10 @@ export interface StatusRelease {
   approver: string | null;
   /** The gate resolution that admitted the release (#4020): the gate and when it was resolved. Null for an ungated release and for one recorded before chant 0.124.28. */
   admission: { op: string; gate: string; resolvedAt: string } | null;
+  /** The release this deploy was made from (#4043): the `releaseDigest` of `_releases/<releaseDigest>.json`. Null for a deploy that named no release and for one recorded before chant 0.124.29. */
+  releaseDigest: string | null;
+  /** The label that release was cut with (#4043), or null when it has none, when no release is named, or when the cut can't be read. Chant 0.124.29 and newer write it. */
+  releaseLabel: string | null;
   /** Read flags, such as `legacy-digest` (#2514). */
   flags: string[];
   /**
@@ -470,6 +474,16 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
   // member (see plan-ledger.ts's readReleasePlan doc).
   const planPrefix = ledger.layout === "members" ? `${MEMBERS_DIR}/${member.name}/` : "";
   const latest = [...latestPerComponent(records).values()].sort((a, b) => (a.component < b.component ? -1 : a.component > b.component ? 1 : 0));
+  // #4043: a release item names the label of the release it was deployed from.
+  let labels = new Map<string, string>();
+  if (latest.some((r) => r.releaseDigest !== undefined)) {
+    try {
+      const { readCuts, labelsByDigest } = await import("../lifecycle/release-store");
+      labels = labelsByDigest((await readCuts({ cwd: resolve(cwd, member.dir) })).cuts);
+    } catch {
+      // The label is a convenience; the digest is the join key.
+    }
+  }
   const releases: StatusRelease[] = await Promise.all(
     latest.map(async (r) => ({
       component: r.component,
@@ -481,6 +495,8 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       actor: r.actor,
       approver: r.approver ?? null,
       admission: r.admission ? { op: r.admission.op, gate: r.admission.gate, resolvedAt: r.admission.resolvedAt } : null,
+      releaseDigest: r.releaseDigest ?? null,
+      releaseLabel: (r.releaseDigest !== undefined ? labels.get(r.releaseDigest) : undefined) ?? null,
       flags: [...(r.flags ?? [])],
       plan: await readReleasePlan(r.digest, { cwd, prefix: planPrefix }),
     })),

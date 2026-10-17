@@ -46,6 +46,15 @@ describe("recordAutoReleasesForRun", () => {
     expect(plain).not.toHaveProperty("admission");
   });
 
+  test("a run under --release records the release digest on each component, one without it records none (#4043)", async () => {
+    const release = `jcs1-sha256:${"c".repeat(64)}`;
+    await recordAutoReleasesForRun([plainResult], "dev", "9001", false, { forge: "local" }, release);
+    expect(maybeRecordAutoReleaseMock.mock.calls[0][0]).toMatchObject({ releaseDigest: release });
+    maybeRecordAutoReleaseMock.mockClear();
+    await recordAutoReleasesForRun([plainResult], "dev", "9001", false, { forge: "local" });
+    expect(maybeRecordAutoReleaseMock.mock.calls[0][0]).not.toHaveProperty("releaseDigest");
+  });
+
   test("the origin defaults to local", async () => {
     await recordAutoReleasesForRun([plainResult], "prod", "local-1", false);
     expect(maybeRecordAutoReleaseMock.mock.calls[0][0]).toMatchObject({ runId: "local-1", runOrigin: { forge: "local" } });

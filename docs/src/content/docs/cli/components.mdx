@@ -476,7 +476,7 @@ The rollback runs the component's composition against `<env>` with its build ste
 
 Gates in the composition apply to a rollback exactly as they do to a deploy, including exit 3 and the `chant approve` line. The approval is bound to `<env>` and to the release being restored, so one given for a deploy or for another rollback does not pass the gate.
 
-When the rollback succeeds, `<env>`'s ledger gains a record with the restored release's artifact identities and a `restores` field naming that release. Run id, actor and approver are filled in as a promote fills them:
+When the rollback succeeds, `<env>`'s ledger gains a record with the restored release's artifact identities and a `restores` field naming that release. Run id, actor and approver are filled in as a promote fills them: When the release restored came from a [release](/chant/cli/release/), the new record copies its `releaseDigest`, so the environment still reads as running that release ([#4043](https://github.com/INTENTIUS/chant/issues/4043)).
 
 ```json
 {
@@ -515,7 +515,7 @@ A deploy writes its release record only after it succeeds, so a failed one leave
 
 The redeploy picks the newest record for the component in `<env>` and runs it the way a rollback runs an earlier release. Build steps are taken out and the publish step is replaced by a `recorded-digest` step, so a composition a rollback refuses is refused here too. A gate in the composition stops a redeploy the same way it stops a rollback, with exit 3 and the `chant approve` command to run before trying again. Its approval counts only for `<env>` and the current release. An approval given for a plain deploy is refused, and so is one given while another release was current. Since the composition it runs is exactly what a rollback to that release runs, approving either one covers both. With `--digest`, the redeploy checks that the digest is the current one and refuses anything else before it runs, which catches a deploy recorded since you last read the ledger. An earlier digest is a job for `components rollback --digest`, and the error says so.
 
-A successful redeploy appends a record to `<env>`'s ledger that carries the current release's artifact identities, plus a `redeploys` field pointing at that release. The current digest stays the same, and the record shows who put the release back and when:
+A successful redeploy appends a record to `<env>`'s ledger that carries the current release's artifact identities, plus a `redeploys` field pointing at that release. The current digest stays the same, and the record shows who put the release back and when. A record that restores a deploy made under a cut carries that deploy's `releaseDigest` as well:
 
 ```json
 {
