@@ -22,8 +22,10 @@
 # failed. There the tags decide, the same "green" `chant ci last-green` reads,
 # and gh is not asked. Every other repository is checked as below.
 #
-# When that declaration also sets ci.green.signedSince (#4031), a tag on a
-# commit made since counts only with a statement signed by a runner key,
+# When that declaration also sets ci.green.signedSince (#4031), the sha of
+# the first commit whose tags must be signed, a tag on any commit that is not
+# a strict first-parent ancestor of it counts only with a statement signed
+# by a runner key,
 # which the shell can't check. Then chant reads the tags: `ci last-green
 # --from <commit>`, run with $CHANT_CLI (default: this checkout's source
 # through tsx). A tag it ignores is printed and never releases.

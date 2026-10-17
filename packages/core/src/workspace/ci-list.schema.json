@@ -149,7 +149,7 @@
                           "string",
                           "null"
                         ],
-                        "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The runner principal whose statement the tag carries, or null when it counts unsigned: ci.green.signedSince is not set, or the commit is older than it."
+                        "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The runner principal whose statement the tag carries, or null when it counts unsigned: ci.green.signedSince is not set, or the commit is a strict first-parent ancestor of it."
                       }
                     }
                   }
@@ -233,7 +233,7 @@
                           "string",
                           "null"
                         ],
-                        "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The runner principal whose statement the tag carries, or null when it counts unsigned: ci.green.signedSince is not set, or the commit is older than it."
+                        "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The runner principal whose statement the tag carries, or null when it counts unsigned: ci.green.signedSince is not set, or the commit is a strict first-parent ancestor of it."
                       }
                     }
                   }
@@ -356,7 +356,7 @@
               },
               "ignored": {
                 "type": "array",
-                "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The commit's ci tags that do not count for want of a valid statement signed by a runner key. A tag on a commit committed at or after ci.green.signedSince needs one; empty when signedSince is not set. state, green and revoked count only the tags that are not ignored.",
+                "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The commit's ci tags that do not count for want of a valid statement signed by a runner key. A tag on any commit that is not a strict first-parent ancestor of ci.green.signedSince needs one; empty when signedSince is not set. state, green and revoked count only the tags that are not ignored.",
                 "items": {
                   "type": "object",
                   "required": [

@@ -28,9 +28,9 @@
  * The forge is asked only for check runs (`./ci-green-forge.ts`). The tags
  * are fetched from and pushed to the remote with git.
  *
- * Signed tags (#4031): when `ci.green.signedSince` is set, a tag on a commit
- * committed at or after that time counts only when its annotation carries a
- * statement signed by a runner key (`./trust/ci-tag-statement.ts`). Every
+ * Signed tags (#4031): when `ci.green.signedSince` names a commit, a tag on
+ * any commit that is not a strict first-parent ancestor of it counts only
+ * when its annotation carries a statement signed by a runner key (`./trust/ci-tag-statement.ts`). Every
  * reader here, and the release cut, ignores a tag without a valid one and
  * reports it. A tick given a runner key signs the tags it makes. Without
  * `signedSince` every tag counts, as before.
@@ -281,17 +281,15 @@ interface CiTagRef {
   record: Record<string, unknown> | null;
   /** The commit the tag points at. */
   target: string;
-  /** That commit's committer time, in seconds, or null when git can't say. */
-  committed: number | null;
 }
 
 /** Every ci tag in the repository, read from local refs. */
 function readCiTagRefs(top: string): CiTagRef[] {
   const out: CiTagRef[] = [];
-  const format = "%(refname:lstrip=2)%00%(objecttype)%00%(objectname)%00%(*objectname)%00%(taggerdate:iso-strict)%00%(committerdate:unix)%00%(*committerdate:unix)%00%(contents)%01";
+  const format = "%(refname:lstrip=2)%00%(objecttype)%00%(objectname)%00%(*objectname)%00%(taggerdate:iso-strict)%00%(contents)%01";
   const raw = git(top, ["for-each-ref", `--format=${format}`, `refs/tags/${CI_GREEN_TAG_PREFIX}`, `refs/tags/${CI_REVOKED_TAG_PREFIX}`]);
   for (const entry of raw.split("\u0001")) {
-    const [tag, type, object, peeled, date, ct, peeledCt, contents] = entry.replace(/^\n/, "").split("\u0000");
+    const [tag, type, object, peeled, date, contents] = entry.replace(/^\n/, "").split("\u0000");
     if (!tag) continue;
     const annotated = type === "tag";
     let record: CiTagRef["record"] = null;
@@ -305,7 +303,6 @@ function readCiTagRefs(top: string): CiTagRef[] {
       }
     }
     const green = tag.startsWith(CI_GREEN_TAG_PREFIX);
-    const seconds = Number(annotated ? peeledCt : ct);
     out.push({
       kind: green ? "green" : "revoked",
       sha: tag.slice((green ? CI_GREEN_TAG_PREFIX : CI_REVOKED_TAG_PREFIX).length),
@@ -313,7 +310,6 @@ function readCiTagRefs(top: string): CiTagRef[] {
       tagged: date || null,
       record,
       target: (annotated ? peeled : object) ?? "",
-      committed: (annotated ? peeledCt : ct) && Number.isFinite(seconds) ? seconds : null,
     });
   }
   return out;
@@ -345,22 +341,40 @@ export interface CiTags {
 }
 
 /**
+ * The commits whose tags count unsigned under `signedSince` (#4031): its
+ * strict first-parent ancestors, the history the green branch had before the
+ * first commit whose tags must be signed. Position in history is something a
+ * committer can't set, unlike a commit's or a tag's date (ws-069 d). Throws
+ * `declaration-invalid` when `signedSince` names no commit here.
+ */
+export function unsignedHistory(top: string, signedSince: string): Set<string> {
+  if (tryGit(top, ["rev-parse", "--verify", "--quiet", `${signedSince}^{commit}`]) === null) {
+    throw new WorkspaceReadError(
+      "declaration-invalid",
+      `ci.green.signedSince names ${signedSince}, which is not a commit in this repository; it must be the full sha of the first commit on the green branch whose tags must be signed (fetch the branch if it is newer than this clone)`,
+    );
+  }
+  return new Set(git(top, ["rev-list", "--first-parent", `${signedSince}^@`]).split("\n").filter(Boolean));
+}
+
+/**
  * Read the ci tags and judge each one (#4031). Without `signedSince` in
- * `green` every tag counts, as before. With it, a tag on a commit committed
- * before `signedSince` counts unsigned, and any other tag counts only when it
- * points at the commit its name gives and its annotation carries a statement
- * a runner key at `base` signed for that commit, tag and branch. The runner
- * keys and roles are read from `.chant/trust.json` at `base`, the commit the
- * caller reads the branch at.
+ * `green` every tag counts, as before. With it, a tag on a strict
+ * first-parent ancestor of `signedSince` counts unsigned, and any other tag
+ * counts only when it points at the commit its name gives and its annotation
+ * carries a statement a runner key at `base` signed for that commit, tag and
+ * branch. The runner keys and roles are read from `.chant/trust.json` at
+ * `base`, the commit the caller reads the branch at. Throws
+ * `declaration-invalid` when `signedSince` names no commit here.
  */
 export function readCiTags(top: string, green: CiGreen | null = null, base: string | null = null): CiTags {
   const out: CiTags = { green: new Map(), revoked: new Map(), ignored: new Map() };
-  const since = green?.signedSince ? Date.parse(green.signedSince) / 1000 : null;
+  const before = green?.signedSince ? unsignedHistory(top, green.signedSince) : null;
   let policy: ReturnType<typeof readTrustPolicy> | undefined;
   const policyAtBase = () => (policy ??= base ? readTrustPolicy(gitRevisionSource(top, base), base) : emptyPolicy(null));
   for (const t of readCiTagRefs(top)) {
     const counted = (signer: string | null) => (t.kind === "green" ? out.green : out.revoked).set(t.sha, { tagged: t.tagged, record: t.record, signer });
-    if (since === null) {
+    if (before === null) {
       counted(null);
       continue;
     }
@@ -369,14 +383,14 @@ export function readCiTags(top: string, green: CiGreen | null = null, base: stri
       ignore("mismatch", `${t.tag} points at ${t.target.slice(0, 12) || "nothing"}, not at the commit its name gives`);
       continue;
     }
-    if (t.committed !== null && t.committed < since) {
+    if (before.has(t.sha)) {
       counted(null);
       continue;
     }
     const p = policyAtBase();
     const v = verifyCiTagStatement(t.record, { sha: t.sha, kind: t.kind, branch: green!.branch }, p.runners, p.roles);
     if (v.status === "signed") counted(v.signer);
-    else ignore(v.status, `${v.reason}; ci.green.signedSince is ${green!.signedSince}, so a tag on a commit made since needs one`);
+    else ignore(v.status, `${v.reason}; ci.green.signedSince is ${green!.signedSince}, so a tag on a commit that is not a strict first-parent ancestor of it needs one`);
   }
   return out;
 }

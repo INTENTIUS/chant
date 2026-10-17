@@ -66,7 +66,7 @@ The check runs come from the forge. GitHub is the only one so far: the tick read
 
 ## Signed tags
 
-The tags are plain git tags, so anyone who may push a tag could make `ci/green/<sha>` by hand and go around CI ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). Setting `ci.green.signedSince` in the [declaration](/chant/reference/workspace-declaration/#ci) closes that: a tag on a commit committed at or after that time counts only when its annotation carries a statement signed by a runner key. Without `signedSince`, every tag counts, as before.
+The tags are plain git tags, so anyone who may push a tag could make `ci/green/<sha>` by hand and go around CI ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). Setting `ci.green.signedSince` in the [declaration](/chant/reference/workspace-declaration/#ci) closes that. It names the full sha of the first commit on the branch whose tags must be signed, and a tag on that commit or any later one counts only when its annotation carries a statement signed by a runner key. Without `signedSince`, every tag counts, as before.
 
 ```json
 "ci": {
@@ -74,14 +74,14 @@ The tags are plain git tags, so anyone who may push a tag could make `ci/green/<
     "branch": "main",
     "phases": { "test": ["test"] },
     "require": ["test"],
-    "signedSince": "2026-11-01T00:00:00Z"
+    "signedSince": "8b045980cf9cd1351dd4f60c9c46ee69d45ec0d7"
   }
 }
 ```
 
 The statement is the one [runner evidence](/chant/cli/workspace-evidence/) and [agent-run statements](/chant/cli/workspace-runs/#signed-statements) use: an in-toto statement in a DSSE envelope, signed with an Ed25519 key. Its subject is the tagged commit, and its predicate (`https://intentius.io/chant/ci-tag/v1`) holds the signer and the tag's JSON record. The envelope sits in that record as `statement`, so a reader that doesn't know it reads the record as before.
 
-A reader counts a tag after `signedSince` when all of these hold, and otherwise ignores it with one of four statuses:
+A reader counts such a tag when all of these hold, and otherwise ignores it with one of four statuses:
 
 | Status | When |
 |---|---|
@@ -90,7 +90,7 @@ A reader counts a tag after `signedSince` when all of these hold, and otherwise 
 | `untrusted` | No key that `.chant/trust.json` lists under `runners` signed it, or its principal holds no `runner` role there. Both are read where the branch is, at `refs/remotes/origin/<branch>` or the local branch. |
 | `mismatch` | It signs another commit, another kind of tag or another branch, the annotation's record is not the one signed, or the tag points at another commit than its name gives. |
 
-A tag on a commit committed before `signedSince` counts without a statement, so the tags a workspace already has keep working. The commit's committer time decides, never the tag's date, which whoever makes the tag chooses. A backdated tag on a new commit therefore gains nothing. Every reader judges the tags the same way: `ci tick`, `ci list`, `ci last-green`, [`release cut`](/chant/cli/release/#release-cut) and chant's own `scripts/release-preflight.sh`.
+A tag on a strict first-parent ancestor of `signedSince` counts without a statement, so the tags a workspace already has keep working. Position in history decides, never a date: whoever makes a commit or a tag sets its time, so a backdated commit or tag outside that ancestry gains nothing. A `signedSince` that names no commit in the clone is refused with `declaration-invalid`, so fetch the branch before reading the tags. Every reader judges the tags the same way: `ci tick`, `ci list`, `ci last-green`, [`release cut`](/chant/cli/release/#release-cut) and chant's own `scripts/release-preflight.sh`.
 
 ### The runner key
 
@@ -112,7 +112,7 @@ openssl genpkey -algorithm ed25519 -out runner.pem
 
 A tick given a key the file doesn't list yet refuses it and prints the key's `ssh-ed25519` line to add under `runners`. Keep `runner.pem` out of the repository.
 
-On GitHub the key lives in a repository secret, and `chant ci workflow --runner-key-secret <NAME>` hands it to the tick as `CHANT_RUNNER_KEY`. Turn signing on in this order: add the key to `runners` and the principal to `roles.runner`, store the secret and regenerate the workflow, then set `signedSince`. A chant older than 0.124.28 refuses a declaration with `signedSince`, so set `minReader` to `0.124.28` with it.
+On GitHub the key lives in a repository secret, and `chant ci workflow --runner-key-secret <NAME>` hands it to the tick as `CHANT_RUNNER_KEY`. Turn signing on in this order: add the key to `runners` and the principal to `roles.runner`, store the secret and regenerate the workflow, then set `signedSince` to the next commit the tick will tag, such as the commit that sets it. A chant older than 0.124.28 refuses a declaration with `signedSince`, so set `minReader` to `0.124.28` with it.
 
 ## ci workflow
 

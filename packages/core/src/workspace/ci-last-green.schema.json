@@ -67,7 +67,7 @@
           "description": "The ref whose first-parent commits were walked: refs/remotes/origin/<branch> when the checkout has it, else refs/heads/<branch>, or the revision --from names (#4031)."
         },
         "commit": {
-          "description": "The newest green commit that is not revoked, or null when there is none. Only tags that count are read: with ci.green.signedSince set, a tag on a commit committed at or after it counts only with a valid statement signed by a runner key (#4031).",
+          "description": "The newest green commit that is not revoked, or null when there is none. Only tags that count are read: with ci.green.signedSince set, a tag on a commit that is not a strict first-parent ancestor of it counts only with a valid statement signed by a runner key (#4031).",
           "oneOf": [
             {
               "type": "null"

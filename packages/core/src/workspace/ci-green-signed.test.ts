@@ -23,10 +23,7 @@ afterAll(cleanScratch);
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
-/** Commits made 10 hours ago or later need a signed tag. */
-const SIGNED_SINCE = hoursAgo(10);
-
-const GREEN = { branch: "main", phases: { lint: ["lint"], test: ["test"] }, require: ["lint", "test"], signedSince: SIGNED_SINCE };
+const GREEN = { branch: "main", phases: { lint: ["lint"], test: ["test"] }, require: ["lint", "test"] };
 const run = (id: number, name: string, conclusion: string): CheckRun => ({ id, name, status: "completed", conclusion, completedAt: null, url: null });
 const PASSING = [run(1, "lint", "success"), run(2, "test", "success")];
 const FAILING = [run(1, "lint", "success"), run(9, "test", "failure")];
@@ -61,24 +58,38 @@ function commitAt(root: string, hours: number, file: string): string {
 const BOT = runnerKey();
 
 /**
- * A checkout on main with a bare origin, declaring `ci.green` with
- * `signedSince` and listing BOT as the runner `ci-bot`, which holds the
- * runner role unless `roles` says otherwise.
+ * A checkout on main with a bare origin, declaring `ci.green` and listing
+ * BOT as the runner `ci-bot`, which holds the runner role unless `roles`
+ * says otherwise. Unless `unsigned`, history then reads: an init commit 23
+ * hours ago, whatever `before` commits, a pivot commit 15 hours ago, and a
+ * commit 14 hours ago that sets `signedSince` to the pivot. Tags on the
+ * pivot's strict first-parent ancestors count unsigned; tags on the pivot
+ * and everything after it need a statement.
  */
-function workspace(opts: { roles?: Record<string, string[]>; green?: unknown } = {}): { root: string; origin: string } {
+function workspace(opts: { roles?: Record<string, string[]>; unsigned?: boolean; before?: (root: string) => void } = {}): { root: string; origin: string; pivot: string | null } {
   const origin = scratchDir("chant-ci-signed-origin-");
   git(origin, "init", "-q", "--bare");
   const root = scratchDir("chant-ci-signed-");
   git(root, "init", "-q");
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
+  const decl = (green: unknown) => declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green } });
   writeFiles(root, {
-    "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green: opts.green ?? GREEN } }),
+    "chant.workspace.json": decl(GREEN),
     ".chant/trust.json": JSON.stringify({ schema: 1, runners: [{ principal: "ci-bot", class: "runner", key: BOT.ssh }], roles: opts.roles ?? { runner: ["ci-bot"] } }),
     "app/a.txt": "a\n",
   });
   git(root, "remote", "add", "origin", origin);
-  return { root, origin };
+  commitAt(root, 23, "app/init.txt");
+  if (opts.unsigned) return { root, origin, pivot: null };
+  opts.before?.(root);
+  const pivot = commitAt(root, 15, "app/pivot.txt");
+  writeFiles(root, { "chant.workspace.json": decl({ ...GREEN, signedSince: pivot }) });
+  gitAt(root, hoursAgo(14), "commit", "-q", "-am", "require signed ci tags from the pivot on");
+  return { root, origin, pivot };
 }
+
+/** The listed commits among `shas`, in list order. */
+const only = <T extends { sha: string }>(commits: T[], ...shas: string[]) => commits.filter((c) => shas.includes(c.sha));
 
 /** Push a tag made by hand, the way someone with push rights could go around CI. */
 function handTag(root: string, tag: string, sha: string, message: string, hours = 0): void {
@@ -95,7 +106,7 @@ const GREEN_DECL: CiGreen = {
     { name: "test", runs: ["test"], skipped: "fail", pointer: "" },
   ],
   require: ["lint", "test"],
-  signedSince: SIGNED_SINCE,
+  signedSince: null,
   pointer: "/ci/green",
 };
 
@@ -137,16 +148,16 @@ describe("signed ci tags (#4031)", () => {
     const list = await ciList({ cwd: root, now: NOW });
     readList.expectValid(list);
     const listed = (list as Extract<typeof list, { commits: unknown }>).commits;
-    expect(listed.map((c) => [c.sha, c.state, c.green?.signer ?? null, c.ignored.map((t) => t.status)])).toEqual([
+    expect(only(listed, a, b).map((c) => [c.sha, c.state, c.green?.signer ?? null, c.ignored.map((t) => t.status)])).toEqual([
       [b, "undecided", null, ["unsigned"]],
       [a, "green", "ci-bot", []],
     ]);
     expect(formatList(list as Extract<typeof list, { commits: unknown }>)).toContain(`ignored ci/green/${b} (unsigned)`);
   });
 
-  test("a tag on a commit older than ci.green.signedSince is accepted unsigned", async () => {
-    const { root } = workspace();
-    const old = commitAt(root, 20, "app/old.txt");
+  test("a tag on a strict first-parent ancestor of ci.green.signedSince is accepted unsigned", async () => {
+    let old = "";
+    const { root, pivot } = workspace({ before: (r) => void (old = commitAt(r, 20, "app/old.txt")) });
     const fresh = commitAt(root, 2, "app/fresh.txt");
     git(root, "push", "-q", "origin", "main");
     // A tag made the way every tag was made before #4031: no statement.
@@ -156,13 +167,39 @@ describe("signed ci tags (#4031)", () => {
     expect(last.commit?.sha).toBe(old);
     expect(last.ignored).toEqual([]);
     const list = (await ciList({ cwd: root, now: NOW })) as Extract<Awaited<ReturnType<typeof ciList>>, { commits: unknown }>;
-    expect(list.commits.map((c) => [c.sha, c.state, c.green?.signer ?? null])).toEqual([
+    expect(only(list.commits, fresh, pivot!, old).map((c) => [c.sha, c.state, c.green?.signer ?? null])).toEqual([
       [fresh, "undecided", null],
+      [pivot, "undecided", null],
       [old, "green", null],
     ]);
-    // A backdated tag on a newer commit gains nothing: the commit's time decides, not the tag's.
-    handTag(root, `ci/green/${fresh}`, fresh, greenOf(fresh), 30);
-    expect((lastGreen({ cwd: root }) as Extract<LastGreenDocument, { branch: string }>).commit?.sha).toBe(old);
+    // The pivot itself is not a strict ancestor: its unsigned tag is ignored.
+    handTag(root, `ci/green/${pivot}`, pivot!, greenOf(pivot!), 14);
+    const after = lastGreen({ cwd: root }) as Extract<LastGreenDocument, { branch: string }>;
+    expect(after.commit?.sha).toBe(old);
+    expect(after.ignored.map((t) => [t.tag, t.status])).toEqual([[`ci/green/${pivot}`, "unsigned"]]);
+  });
+
+  test("a backdated commit outside the ancestry, with an unsigned tag, is ignored", async () => {
+    let old = "";
+    const { root } = workspace({ before: (r) => void (old = commitAt(r, 20, "app/old.txt")) });
+    handTag(root, `ci/green/${old}`, old, greenOf(old), 19);
+    // Committed after signedSince, but with its author and committer times set 40 hours back, before every other commit.
+    const backdated = commitAt(root, 40, "app/backdated.txt");
+    git(root, "push", "-q", "origin", "main");
+    handTag(root, `ci/green/${backdated}`, backdated, greenOf(backdated), 40);
+
+    const last = lastGreen({ cwd: root }) as Extract<LastGreenDocument, { branch: string }>;
+    expect(last.commit?.sha).toBe(old);
+    expect(last.ignored).toEqual([{ tag: `ci/green/${backdated}`, status: "unsigned", reason: expect.stringContaining("not a strict first-parent ancestor") }]);
+  });
+
+  test("a signedSince that names no commit here is refused as declaration-invalid", async () => {
+    const { root } = workspace({ unsigned: true });
+    writeFiles(root, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green: { ...GREEN, signedSince: "f".repeat(40) } } }) });
+    expect(lastGreen({ cwd: root })).toMatchObject({ error: { code: "declaration-invalid", message: expect.stringContaining("is not a commit in this repository") } });
+    expect(await ciList({ cwd: root, now: NOW })).toMatchObject({ error: { code: "declaration-invalid" } });
+    git(root, "push", "-q", "origin", "main");
+    await expect(ciTick({ cwd: root, forge: fakeForge(new Map()), now: NOW, runnerKey: BOT.pem })).rejects.toThrow(/signedSince names f{40}, which is not a commit/);
   });
 
   test("a hand-pushed revoked tag without a valid statement is ignored and reported, and the tick's own revocation is signed", async () => {
@@ -178,7 +215,7 @@ describe("signed ci tags (#4031)", () => {
     expect(last.commit?.sha).toBe(a);
     expect(last.ignored.map((t) => [t.tag, t.status])).toEqual([[`ci/revoked/${a}`, "unsigned"]]);
     const list = (await ciList({ cwd: root, now: NOW })) as Extract<Awaited<ReturnType<typeof ciList>>, { commits: unknown }>;
-    expect(list.commits[0]).toMatchObject({ sha: a, state: "green", revoked: null, ignored: [{ tag: `ci/revoked/${a}`, status: "unsigned" }] });
+    expect(only(list.commits, a)[0]).toMatchObject({ sha: a, state: "green", revoked: null, ignored: [{ tag: `ci/revoked/${a}`, status: "unsigned" }] });
 
     // When a really goes red, the tick can't revoke it while the hand-made tag holds the name, and says so.
     runs.set(a, FAILING);
@@ -210,7 +247,7 @@ describe("signed ci tags (#4031)", () => {
     const forC = greenAnnotation(GREEN_DECL, c, evaluateCommit(GREEN_DECL, PASSING), NOW, signer(BOT, "ci-bot"));
     handTag(root, `ci/green/${b}`, b, forC);
     const list = (await ciList({ cwd: root, now: NOW })) as Extract<Awaited<ReturnType<typeof ciList>>, { commits: unknown }>;
-    expect(list.commits.map((x) => [x.sha, x.state, x.ignored.map((t) => t.status)])).toEqual([
+    expect(only(list.commits, a, b, c).map((x) => [x.sha, x.state, x.ignored.map((t) => t.status)])).toEqual([
       [c, "undecided", []],
       [b, "undecided", ["mismatch"]],
       [a, "undecided", ["untrusted"]],
@@ -241,7 +278,7 @@ describe("signed ci tags (#4031)", () => {
   });
 
   test("without signedSince every tag counts, as before", async () => {
-    const { root } = workspace({ green: { branch: "main", phases: GREEN.phases, require: GREEN.require } });
+    const { root } = workspace({ unsigned: true });
     const a = commitAt(root, 2, "app/a.txt");
     git(root, "push", "-q", "origin", "main");
     git(root, "tag", `ci/green/${a}`, a);

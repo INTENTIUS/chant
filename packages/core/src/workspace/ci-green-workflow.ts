@@ -36,8 +36,8 @@
  *
  * `--runner-key-secret <NAME>` (#4031) hands the tick the runner key it
  * signs its tags with, from `secrets.<NAME>` as `CHANT_RUNNER_KEY`. A
- * declaration that sets `ci.green.signedSince` needs it: a tag on a newer
- * commit without a statement is ignored.
+ * declaration that sets `ci.green.signedSince` needs it: a tag outside that
+ * commit's strict first-parent ancestry without a statement is ignored.
  *
  * Like a member's pipelines (./member-pipeline.ts), the file starts with the
  * generated-file header naming the command, and the member whose directory

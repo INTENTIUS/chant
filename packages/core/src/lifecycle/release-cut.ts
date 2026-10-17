@@ -61,7 +61,8 @@ export type ReleaseCutCode =
   | "release-no-components"
   | "release-build-inputs-differ"
   | "release-unsigned"
-  | "release-signer-refused";
+  | "release-signer-refused"
+  | "declaration-invalid";
 
 export class ReleaseCutError extends Error {
   constructor(
@@ -137,7 +138,14 @@ export async function greenState(
       tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]) ??
       tryGit(top, ["rev-parse", "HEAD"]))
     : null;
-  const tags = readCiTags(top, green, base);
+  let tags: ReturnType<typeof readCiTags>;
+  try {
+    tags = readCiTags(top, green, base);
+  } catch (err) {
+    const { WorkspaceReadError } = await import("../workspace/declaration");
+    if (err instanceof WorkspaceReadError) throw new ReleaseCutError("declaration-invalid", err.message);
+    throw err;
+  }
   const ignored = tags.ignored.get(sha) ?? [];
   if (tags.revoked.has(sha)) return { state: "revoked", ignored };
   return { state: tags.green.has(sha) ? "green" : "none", ignored };

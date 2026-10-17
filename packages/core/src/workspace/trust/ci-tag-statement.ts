@@ -4,9 +4,10 @@
  *
  * `ci/green/<sha>` and `ci/revoked/<sha>` are plain git tags (ws-103), so
  * anyone who may push a tag could make one by hand and go around CI. When the
- * declaration sets `ci.green.signedSince`, a tag on a commit committed at or
- * after that time counts only when its annotation holds a statement signed by
- * a runner key, and readers ignore and report a tag without a valid one.
+ * declaration sets `ci.green.signedSince` to a commit, a tag on any commit
+ * that is not a strict first-parent ancestor of it counts only when its
+ * annotation holds a statement signed by a runner key, and readers ignore
+ * and report a tag without a valid one.
  *
  * The statement reuses what runner evidence (#2553, ws-069) and the agent-run
  * statement (#3192, ws-090) already use: an in-toto Statement v1 in a DSSE

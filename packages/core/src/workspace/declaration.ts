@@ -206,10 +206,12 @@ export interface CiGreen {
   /** The phases a commit must pass, by name, in file order. */
   require: string[];
   /**
-   * From this time on a ci tag needs a statement signed by a runner key
-   * (#4031): a tag on a commit committed at or after it counts only with
-   * one, and a tag on an older commit counts unsigned. Null when the
-   * declaration sets none, and then no tag needs a statement.
+   * The full sha of the first commit on the branch whose ci tags need a
+   * statement signed by a runner key (#4031). A tag on a strict
+   * first-parent ancestor of it counts unsigned, and any other tag counts
+   * only with one. Readers refuse a sha that names no commit with
+   * `declaration-invalid`. Null when the declaration sets none, and then no
+   * tag needs a statement.
    */
   signedSince: string | null;
   pointer: string;
@@ -1052,9 +1054,6 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       `ci.green.require names the phase ${JSON.stringify(name)}, which ci.green.phases does not declare; declared phases: ${phases.map((p) => p.name).join(", ")}`,
       at(`/ci/green/require/${i}`),
     );
-  }
-  if (g.signedSince !== undefined && Number.isNaN(Date.parse(g.signedSince))) {
-    throw new WorkspaceReadError("declaration-invalid", `ci.green.signedSince must be a time, such as 2026-10-16T00:00:00Z, not ${JSON.stringify(g.signedSince)}`, at("/ci/green/signedSince"));
   }
   return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, pointer: "/ci/green" } };
 }

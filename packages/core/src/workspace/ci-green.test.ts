@@ -48,7 +48,7 @@ describe("the ci.green block (#3573)", () => {
       signedSince: null,
       pointer: "/ci/green",
     });
-    expect(parseDeclaration(decl({ green: { ...GREEN, signedSince: "2026-10-16T00:00:00Z" } }), "chant.workspace.json").ci!.green!.signedSince).toBe("2026-10-16T00:00:00Z");
+    expect(parseDeclaration(decl({ green: { ...GREEN, signedSince: "a".repeat(40) } }), "chant.workspace.json").ci!.green!.signedSince).toBe("a".repeat(40));
     expect(parseDeclaration(decl({ green: { ...GREEN, window: "90m" } }), "chant.workspace.json").ci!.green!.window).toBe("90m");
     expect(parseDeclaration(decl({}), "chant.workspace.json").ci).toEqual({ green: null });
     expect(parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [] }), "chant.workspace.json").ci).toBeNull();
@@ -65,7 +65,8 @@ describe("the ci.green block (#3573)", () => {
       { phases: GREEN.phases, require: GREEN.require },
       { ...GREEN, branch: "has space" },
       { ...GREEN, signedSince: "yesterday" },
-      { ...GREEN, signedSince: "2026-13-45T00:00:00Z" },
+      { ...GREEN, signedSince: "2026-10-16T00:00:00Z" },
+      { ...GREEN, signedSince: "abc1234" },
     ]) {
       expect(() => parseDeclaration(decl({ green: bad }), "chant.workspace.json"), JSON.stringify(bad)).toThrow();
     }

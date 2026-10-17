@@ -334,7 +334,7 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 | `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
 | `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. |
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
-| `signedSince` | no | A time, such as `2026-11-01T00:00:00Z`. A tag on a commit committed at or after it counts only with a statement signed by a runner key; an older commit's tag counts unsigned. Absent, every tag counts. See [signed tags](/chant/cli/ci/#signed-tags). Read by chant 0.124.28 and newer, so set `minReader` with it. |
+| `signedSince` | no | The full sha of the first commit on `branch` whose tags must be signed. A tag on it or on any commit that is not a strict first-parent ancestor of it counts only with a statement signed by a runner key; a tag on an ancestor counts unsigned. A sha that names no commit in the clone is refused with `declaration-invalid`. Absent, every tag counts. See [signed tags](/chant/cli/ci/#signed-tags). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 
 A phase passes when every check run its patterns match finished with `success`, judged by each run's latest attempt. A run that finished as `skipped` passes only in a phase with `"skipped": "pass"`, which suits a job that a path filter runs on some commits only. The default, `fail`, never lets a skipped run pass. A run still queued or in progress, or a pattern that no run matches yet, leaves the commit undecided. A commit is green when every required phase passes, and it fails as soon as one of them fails.
 
@@ -347,7 +347,7 @@ The result is kept as two kinds of annotated tag. chant makes each one once, and
 
 A revoked commit doesn't go green again by itself. Deleting its `ci/revoked/<sha>` tag by hand makes it count as green again, since its green tag is still there.
 
-With `signedSince`, the annotation also holds the statement a runner key signed, and every reader ignores and reports a tag on a newer commit without a valid one ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
+With `signedSince`, the annotation also holds the statement a runner key signed, and every reader ignores and reports a tag outside the ancestry of `signedSince` without a valid one ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
 
 ## Diagrams
 

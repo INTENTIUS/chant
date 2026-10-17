@@ -157,15 +157,24 @@ describe.skipIf(!hasSshKeygen)("who may cut a release (#4031)", () => {
   });
 
   test("with ci.green.signedSince, a hand-pushed green tag cuts nothing", async () => {
-    const { r, alice } = setup({
-      ...RELEASE_GATE,
-      ci: { green: { branch: "main", phases: { test: ["test"] }, require: ["test"], signedSince: "2000-01-01T00:00:00Z" } },
-    });
-    const head = r.git(["rev-parse", "HEAD"]).trim();
-    r.git(["tag", "-a", "-m", "ci: by hand", `ci/green/${head}`]);
+    const green = { branch: "main", phases: { test: ["test"] }, require: ["test"] };
+    const { r, alice, head: pivot } = setup({ ...RELEASE_GATE, ci: { green } });
+    // Tags on commits from the pivot on need a statement; the declaration says so in the next commit.
+    const decl = JSON.parse(r.git(["show", "HEAD:chant.workspace.json"]));
+    r.write("chant.workspace.json", JSON.stringify({ ...decl, ci: { green: { ...green, signedSince: pivot } } }, null, 2));
+    const head = r.commit("require signed ci tags");
+    r.git(["tag", "-a", "-m", "ci: by hand", `ci/green/${head}`, head]);
     const err = await cut(r, "alice", alice).catch((e: unknown) => e);
     expect((err as ReleaseCutError).code).toBe("release-commit-not-green");
     expect((err as ReleaseCutError).message).toMatch(/no ci\/green tag that counts.*ignored: ci\/green\/[0-9a-f]+ \(unsigned\)/);
+    expect(noLedger(r)).toBe(true);
+
+    // A signedSince that names no commit here refuses the cut.
+    r.write("chant.workspace.json", JSON.stringify({ ...decl, ci: { green: { ...green, signedSince: "f".repeat(40) } } }, null, 2));
+    const broken = r.commit("a signedSince from another clone");
+    r.git(["tag", `ci/green/${broken}`, broken]);
+    const refused = await cut(r, "alice", alice).catch((e: unknown) => e);
+    expect((refused as ReleaseCutError).code).toBe("declaration-invalid");
     expect(noLedger(r)).toBe(true);
   });
 });
