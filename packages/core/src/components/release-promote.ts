@@ -13,12 +13,14 @@
  * so a gate approval bound to the promote's plan still matches on a re-run.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { contentDigest } from "../content-digest";
 import type { DriverComponent, DriverGate, DriverPhase, DriverStep } from "./driver";
 import { TEMPLATE_FIELDS, templateRefs } from "./release-compile";
 import type { Release, ReleaseTarget } from "../lifecycle/release-store";
+import type { ReleaseRecord } from "../lifecycle/release-ledger";
+import type { BuildArchiveManifest } from "./verbs/build-archive";
 
 /** Where a promote under a release writes the recorded templates, relative to the member's directory. */
 export const RELEASE_TEMPLATES_DIR = ".chant/release-templates";
@@ -164,4 +166,67 @@ export function writePinnedTemplates(dir: string, files: readonly PinnedTemplate
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, f.content);
   }
+}
+
+/**
+ * Remove the templates {@link writePinnedTemplates} wrote once the promote is
+ * done, and {@link RELEASE_TEMPLATES_DIR} with them when nothing else is in
+ * it, so a promote leaves the checkout as it found it. A re-run writes them
+ * again from the release.
+ */
+export function removePinnedTemplates(dir: string, files: readonly PinnedTemplate[]): void {
+  for (const f of files) rmSync(dirname(join(dir, f.path)), { recursive: true, force: true });
+  const root = join(dir, RELEASE_TEMPLATES_DIR);
+  try {
+    if (readdirSync(root).length === 0) rmdirSync(root);
+  } catch {
+    // Already gone, or not ours to remove.
+  }
+}
+
+/**
+ * Whether the artifact a promote deploys under a release is one the release
+ * built (#4045, the rule #4026 left open). The release records build digests
+ * (`artifactDigests`, the digest the archive step returned), and a deploy
+ * record carries the publish digest, which is another value for an image, so
+ * the two are compared through the build manifest the source deploy record
+ * names (`manifestDigest`), whose entries carry build digests at the same
+ * archive paths:
+ *
+ * - a source record that names this release in `releaseDigest` matches;
+ * - else, each of the release's artifacts for the component must be in that
+ *   manifest at its path with the release's digest, and one that differs is
+ *   a mismatch;
+ * - a record with no `manifestDigest`, a manifest that isn't stored, or an
+ *   artifact path the manifest doesn't hold can't be compared.
+ *
+ * A mismatch is a warning, not a refusal. The environment promoted from was
+ * deployed by its own `run --components`, which builds again, and an image
+ * build is not reproducible, so its digest differs from the cut's for the
+ * same commit. Refusing would refuse every image promote until a deploy can
+ * run the release's own artifacts (#4043).
+ */
+export async function releaseArtifactMismatches(
+  release: Release,
+  sources: ReadonlyArray<{ component: string; source: ReleaseRecord }>,
+  readManifest: (manifestDigest: string) => Promise<BuildArchiveManifest | null>,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const { component, source } of sources) {
+    if (source.releaseDigest === release.releaseDigest) continue;
+    const artifacts = release.artifactDigests.filter((a) => a.component === component);
+    if (artifacts.length === 0 || source.manifestDigest === undefined) continue;
+    const manifest = await readManifest(source.manifestDigest);
+    if (!manifest) continue;
+    for (const a of artifacts) {
+      const entry = manifest.contents.find((e) => e.path === a.path && e.kind === a.kind);
+      if (entry && entry.digest !== a.digest) {
+        out.push(
+          `${component}: the ${source.env} deploy being promoted was built with ${a.path} at ${entry.digest}, ` +
+            `but release ${release.releaseDigest} built it at ${a.digest}, so the artifact deployed is not the release's own`,
+        );
+      }
+    }
+  }
+  return out;
 }

@@ -22,6 +22,7 @@ import { resolvePromotionSource } from "../../components/promote-order";
 import { fetchLifecycle, getHeadCommit, pushLifecycle } from "../../lifecycle/git";
 import {
   appendReleaseRecord,
+  latestPerComponent,
   readReleaseLedger,
   resolveRunId,
   type ReleaseRecord,
@@ -51,7 +52,9 @@ import {
 } from "../../components/promote";
 import type { DriverComponent } from "../../components/driver";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
-import { approveCommand, describeGateMismatch, gateIsSealed } from "../../op/gate";
+import { approveCommand, describeGateMismatch, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../../op/gate";
+import type { ReleaseGateBinding } from "../../components/driver";
+import type { ChangeSetDocument } from "../../change-set";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { GATED_EXIT_CODE } from "./run";
@@ -141,6 +144,115 @@ async function readLedger(env: string): Promise<ReleaseRecord[]> {
 }
 
 /**
+ * Plan, store and bind the release gate for a promote under a release
+ * (#4045, ws-104 questions 2 and 6). Undefined when no promoted composition
+ * declares a gate, so there is nothing to bind. A number is the exit code of
+ * a refusal already printed: a provisional member, or a member that failed
+ * to plan. On an empty change set, each gate gets an `empty: true`
+ * resolution the run then counts once it reads the stored document back.
+ */
+async function bindReleaseGate(input: {
+  plan: PromotionPlan;
+  prepared: DriverComponent[];
+  under: UnderRelease;
+  registry: Awaited<ReturnType<typeof fanOutRegistry>>;
+  port: GateLedgerPort;
+  seededOutputs: Record<string, Record<string, unknown>>;
+  actor: string;
+  projectPath: string;
+  head: string | undefined;
+}): Promise<{ binding: ReleaseGateBinding; doc: ChangeSetDocument; empty: boolean } | number | undefined> {
+  const { plan, under, port } = input;
+  const gate = await import("../../components/release-gate");
+  const gates = gate.gateNamesOf(input.prepared);
+  if (gates.length === 0) return undefined;
+  const env = plan.to;
+  const releaseDigest = under.release.releaseDigest;
+
+  // What the environment runs now, to compare each component with.
+  const { readRelease } = await import("../../lifecycle/release-store");
+  const latest = latestPerComponent((await readLedger(env)).filter((r) => r.env === env));
+  const releases = new Map<string, import("../../lifecycle/release-store").Release | null>();
+  const current = new Map<string, import("../../components/release-gate").CurrentDeploy>();
+  for (const item of plan.items) {
+    const record = latest.get(item.component);
+    if (!record) continue;
+    const named = record.releaseDigest;
+    if (named !== undefined && !releases.has(named)) releases.set(named, await readRelease(named).catch(() => null));
+    current.set(item.component, { record, release: named !== undefined ? (releases.get(named) ?? null) : null });
+  }
+
+  const doc = await gate.planReleaseChangeSet({
+    release: under.release,
+    env,
+    components: input.prepared,
+    digests: new Map(plan.items.map((i) => [i.component, i.digest])),
+    registry: input.registry,
+    current,
+    seededOutputs: input.seededOutputs,
+  });
+  const provisional = gate.provisionalMembers(doc);
+  if (provisional.length > 0) {
+    console.error(formatError({
+      message: `the change set of release ${under.label ?? releaseDigest} for "${env}" has provisional members (${provisional.join(", ")}), which no approval covers; nothing was deployed`,
+      hint: "Deploy what they read first, so they plan against real values.",
+    }));
+    return 1;
+  }
+  const failed = doc.members.filter((m) => m.status === "failed");
+  if (failed.length > 0) {
+    for (const m of failed) console.error(formatError({ message: `${m.member} failed to plan for "${env}"${m.error ? `: ${m.error}` : ""}` }));
+    console.error(formatError({ message: "nothing was deployed" }));
+    return 1;
+  }
+
+  // The document is stored before the gate is decided, so the plan a pending
+  // gate waits on can be read, and an empty pass can be checked.
+  const { storeGateChangeSet } = await import("../../lifecycle/gate-change-set");
+  try {
+    const stored = await storeGateChangeSet({ doc, cwd: input.projectPath, at: input.head ?? null });
+    if (stored.warning) console.error(formatWarning({ message: stored.warning }));
+  } catch (err) {
+    console.error(formatWarning({ message: `could not store the change set ${doc.digest}: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+  const { isEmptyChangeSet } = await import("../../change-set");
+  const empty = isEmptyChangeSet(doc);
+  console.error(formatInfo(
+    `release gate: change set ${doc.digest} for "${env}"` +
+      (empty ? ", empty: its gates pass without an approval" : `, ${doc.summary.entries} entr${doc.summary.entries === 1 ? "y" : "ies"}, ${doc.summary.holes} hole(s)`) +
+      ` (chant change-set show ${doc.digest})`,
+  ));
+
+  if (empty) {
+    if (!port.appendResolution) throw new Error("the gate ledger can't record a resolution, so an empty change set can't pass its gates");
+    const { resolutions } = await port.read(gate.RELEASE_GATE_OP);
+    const timestamp = new Date().toISOString();
+    for (const name of gates) {
+      const standing = resolutions.some(
+        (r) => r.empty === true && r.gate === name && r.environment === env && r.releaseDigest === releaseDigest && r.planDigest === doc.digest,
+      );
+      if (standing) continue;
+      // Pushed with the resolution; the deploy records the promote writes push the same branch.
+      await port.appendResolution(
+        gate.emptyResolution({ gate: name, doc, actor: input.actor, timestamp, ...(input.head ? { gitSha: input.head } : {}) }),
+      );
+    }
+  }
+
+  const { readStoredChangeSet } = await import("../../lifecycle/change-set-store");
+  return {
+    doc,
+    empty,
+    binding: {
+      op: gate.RELEASE_GATE_OP,
+      planDigest: doc.digest,
+      releaseDigest,
+      verifyEmpty: gate.emptyVerifier((digest) => readStoredChangeSet(digest, { cwd: input.projectPath }), { releaseDigest, environment: env }),
+    },
+  };
+}
+
+/**
  * Prepare, run and record a plan. Shared by promote, rollback and redeploy,
  * which differ only in how the plan was chosen, whether the publish step runs,
  * and which field names the earlier release on the new record.
@@ -199,6 +311,15 @@ async function deployPlan(
         console.error(formatWarning({ message: `${item.component}: the ${plan.from} deploy being promoted came from release ${named}, not ${under.release.releaseDigest}` }));
       }
     }
+    // #4045: the artifact deployed against the artifacts the release built.
+    const { releaseArtifactMismatches } = await import("../../components/release-promote");
+    const { readBuildManifest } = await import("../../lifecycle/build-ledger-store");
+    const mismatches = await releaseArtifactMismatches(
+      under.release,
+      plan.items.map((i) => ({ component: i.component, source: i.source })),
+      (digest) => readBuildManifest(digest).catch(() => null),
+    );
+    for (const message of mismatches) console.error(formatWarning({ message }));
   }
 
   // The composition deployed is this checkout's. Say so when it is not the
@@ -213,7 +334,9 @@ async function deployPlan(
     }
   }
 
-  const releaseJson = under ? { release: { releaseDigest: under.release.releaseDigest, label: under.label, templates: under.target.templates } } : {};
+  const releaseJson: { release?: { releaseDigest: string; label: string | null; templates: unknown[] } } = under
+    ? { release: { releaseDigest: under.release.releaseDigest, label: under.label, templates: under.target.templates } }
+    : {};
   if (args.dryRun) {
     if (args.json) console.log(JSON.stringify({ ...planJson(plan, removed), ...releaseJson }, null, 2));
     else {
@@ -223,10 +346,12 @@ async function deployPlan(
     return 0;
   }
   if (!args.json) renderPlan(verb, plan, removed);
-  if (pinnedFiles.length > 0) {
-    const { writePinnedTemplates } = await import("../../components/release-promote");
-    writePinnedTemplates(project.projectPath, pinnedFiles);
-  }
+  // #4045: the pinned templates are written for this run and removed after it.
+  const { writePinnedTemplates, removePinnedTemplates } = await import("../../components/release-promote");
+  const tidy = () => {
+    if (pinnedFiles.length > 0) removePinnedTemplates(project.projectPath, pinnedFiles);
+  };
+  if (pinnedFiles.length > 0) writePinnedTemplates(project.projectPath, pinnedFiles);
 
   const seededOutputs: Record<string, Record<string, unknown>> = {};
   for (const file of args.seedOutputs ?? []) {
@@ -234,11 +359,32 @@ async function deployPlan(
       Object.assign(seededOutputs, JSON.parse(readFileSync(resolve(file), "utf8")));
     } catch (err) {
       console.error(formatError({ message: `--seed-outputs: could not read "${file}": ${err instanceof Error ? err.message : String(err)}` }));
+      tidy();
       return 1;
     }
   }
 
   const registry = await fanOutRegistry(project.projectPath, project.config);
+  const port = gitGateLedgerPort();
+  // #4045: under a release, every gate binds the release's change set for this environment.
+  let releaseGate: ReleaseGateBinding | undefined;
+  let changeSetJson: { changeSet: string; empty: boolean } | undefined;
+  if (under) {
+    try {
+      const bound = await bindReleaseGate({ plan, prepared, under, registry, port, seededOutputs, actor: actor!, projectPath: project.projectPath, head });
+      if (typeof bound === "number") {
+        tidy();
+        return bound;
+      }
+      if (bound) {
+        releaseGate = bound.binding;
+        changeSetJson = { changeSet: bound.doc.digest, empty: bound.empty };
+      }
+    } catch (err) {
+      tidy();
+      throw err;
+    }
+  }
   // The run id the release records carry, chosen before the run so that
   // `--events-json` (#4041) names the run by it too.
   const { runId, runOrigin } = resolveRunId(args.runId);
@@ -255,12 +401,16 @@ async function deployPlan(
       components: prepared,
       registry,
       componentOutputs: seededOutputs,
+      gates: port,
+      ...(releaseGate ? { releaseGate } : {}),
       ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
       ...(events ? { onRunEvent: events.emit } : {}),
     });
   } catch (err) {
     events?.settle("failed", err instanceof Error ? err.message : String(err));
     throw err;
+  } finally {
+    tidy();
   }
   // The driver settles the stream; this only ends one it left open.
   events?.settle(run.status === "fail" ? "failed" : run.status);
@@ -290,7 +440,8 @@ async function deployPlan(
   }
 
   if (args.json) {
-    console.log(JSON.stringify({ ...planJson(plan, removed), ...releaseJson, run, recorded }, null, 2));
+    const withChangeSet = under && changeSetJson ? { release: { ...releaseJson.release!, ...changeSetJson } } : releaseJson;
+    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, run, recorded }, null, 2));
   } else {
     for (const r of recorded) {
       console.error(formatSuccess(

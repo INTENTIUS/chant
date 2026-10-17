@@ -162,6 +162,26 @@ export interface GateResolutionRecord {
    */
   environment?: string;
   /**
+   * The release this approval is for (#4045, ws-104 question 2), copied off
+   * the pending fact it answers. Set on a release gate, the gate `chant
+   * components promote --release` passes for an environment. A release gate
+   * counts only a resolution recorded for its own release, environment and
+   * change-set document digest (`planDigest`), so it names the release it
+   * admitted. Absent on every other gate, and on a resolution written before
+   * 0.124.28.
+   */
+  releaseDigest?: string;
+  /**
+   * The resolution passes a release gate over an empty change set (#4045,
+   * ws-104 question 6): the promote wrote it itself, with the actor running
+   * it in `resolvedBy`, because the change set its `planDigest` names changes
+   * nothing. A gate counts it only after it reads the stored document under
+   * `planDigest` and finds it empty, and neither a quorum nor a signing rule
+   * applies to it. It never counts as a person's approval. Absent on every
+   * other resolution.
+   */
+  empty?: true;
+  /**
    * The channel this resolution was authored on (chant#2384) — set by the
    * writer, never by the caller. `chant approve` records `"cli"`, the
    * `op-approve` MCP tool records `"mcp"`, an ACP-driven approve records
@@ -356,6 +376,13 @@ export interface PendingGateRecord {
    */
   environment?: string;
   /**
+   * The release the run reached this gate for (#4045): on a release gate, the
+   * `releaseDigest` of the release `chant components promote --release`
+   * deploys. `chant approve` copies it onto the approval with the plan.
+   * Absent on every other gate, and on a fact written before 0.124.28.
+   */
+  releaseDigest?: string;
+  /**
    * The channel the run that reached this gate was driven from (chant#2384).
    *
    * This is the half a resolution is compared against: a gate reached over MCP
@@ -537,6 +564,18 @@ export function parseGateLedger(
       // approval is bound to.
       const rawEnv: unknown = (parsed as { environment?: unknown }).environment;
       if (rawEnv !== undefined && typeof rawEnv !== "string") {
+        malformed++;
+        continue;
+      }
+      // #4045: and for the release a release gate approval is bound to.
+      const rawRelease: unknown = (parsed as { releaseDigest?: unknown }).releaseDigest;
+      if (rawRelease !== undefined && typeof rawRelease !== "string") {
+        malformed++;
+        continue;
+      }
+      // #4045: an `empty` that is not a boolean can't be told from a pass or an approval.
+      const rawEmpty: unknown = (parsed as { empty?: unknown }).empty;
+      if (rawEmpty !== undefined && typeof rawEmpty !== "boolean") {
         malformed++;
         continue;
       }

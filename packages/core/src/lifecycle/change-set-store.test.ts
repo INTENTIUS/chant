@@ -187,3 +187,31 @@ describe("a gate in workspace status links to its stored change set", () => {
     });
   });
 });
+
+describe("a release gate's stored change set (#4045)", () => {
+  test("names the release and environment it was planned for, and a release gate in status names its release", async () => {
+    await withTestDir(async (dir) => {
+      initRepo(dir);
+      clearMemberLedgerCache();
+      const releaseDigest = "jcs1-sha256:" + "a".repeat(64);
+      const d = composeChangeSet([lifecyclePlanPart({ member: "queues", plan })], { planned: { releaseDigest, environment: "prod" } });
+      await storeGateChangeSet({ doc: d, cwd: dir, readGraph: async () => ({ ids: ["jobs"] }) });
+      const read = await readStoredChangeSet(d.digest, { cwd: dir });
+      if (read.status !== "found") throw new Error(read.status);
+      expect(read.document).toMatchObject({ releaseDigest, environment: "prod" });
+      expect(validator(changeSetSchema)(read.document)).toBe(true);
+      const shown = await changeSetShowDocument({ cwd: dir, digest: d.digest });
+      expect(shown).toMatchObject({ changeSet: { releaseDigest, environment: "prod" } });
+      expect(validator(showSchema)(shown)).toBe(true);
+
+      const now = "2026-10-16T00:00:00.000Z";
+      await appendPendingGate(
+        { op: "release", gate: "prod-release", planDigest: d.digest, environment: "prod", releaseDigest, timestamp: now, expiresAt: "2026-10-17T00:00:00.000Z" },
+        { cwd: dir },
+      );
+      const commit = git(dir, "rev-parse", "chant/lifecycle");
+      const { gates } = await readMemberGates("_gates", "flat", commit, ["prod"], dir, now);
+      expect(gates).toEqual([expect.objectContaining({ component: "release", releaseDigest, changeSet: d.digest, state: "pending" })]);
+    });
+  });
+});

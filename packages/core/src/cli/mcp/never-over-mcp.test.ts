@@ -217,6 +217,8 @@ describe("neverOverMcp (chant#3447)", () => {
   const gateOnlyOps: Array<{ op: string; gate: string }> = [
     { op: "workspace-upgrade", gate: "." },
     { op: "pr-12", gate: "pr-apply" },
+    // #4045: a release gate approves a change to an environment, as a pull request's does.
+    { op: "release", gate: "prod-release" },
   ];
 
   for (const { op, gate } of gateOnlyOps) {

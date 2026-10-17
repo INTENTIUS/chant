@@ -324,6 +324,25 @@ export interface GateCheckInput {
    * carried earlier counts only while its alias is still declared.
    */
   aliases?: readonly ResolvedGateAlias[];
+  /**
+   * The release this gate binds (#4045, ws-104 question 2): set on a release
+   * gate, the gate `chant components promote --release` passes for an
+   * environment, with `planDigest` the change-set document's digest and
+   * `environment` the environment. Set, a resolution counts only when it was
+   * recorded for this release as well as this plan and environment, and the
+   * pending fact it records carries it. Absent, a resolution recorded for a
+   * release never counts.
+   */
+  releaseDigest?: string;
+  /**
+   * Whether the change set stored under a digest is empty (#4045, ws-104
+   * question 6): read back from `chant/lifecycle` and recomputed, never
+   * taken from the resolution. Given, an `empty: true` resolution for this
+   * gate, environment, release and plan passes the gate when this says its
+   * document is empty; quorum and approval rules don't apply to it. Absent,
+   * no `empty` resolution counts.
+   */
+  verifyEmpty?: (planDigest: string) => Promise<boolean>;
 }
 
 /**
@@ -389,14 +408,18 @@ export type GateCheck =
        * Set on a gate that declares `approval` (#2508). `"quorum"` when enough
        * human approvals were recorded, `"policy"` when an `enforce`-mode permit
        * passed it on its own. `"alias"` (#3949) when an approval recorded
-       * under one of the gate's aliases counted, on any gate.
+       * under one of the gate's aliases counted, on any gate. `"empty"`
+       * (#4045) when a release gate passed over an empty change set, on the
+       * `empty: true` resolution the promote wrote, after the stored
+       * document was read back and found empty.
        */
-      via?: "quorum" | "policy" | "alias";
+      via?: "quorum" | "policy" | "alias" | "empty";
       /** Every approval that counted toward the quorum. Set with `via`. */
       approvals?: GateResolutionRecord[];
       /** The approvals this run carried from an alias and wrote under the gate's name (#3949). Set when `via` is `"alias"`. */
       carried?: GateResolutionRecord[];
     }
+
   | {
       satisfied: false;
       pending: PendingGateRecord;
@@ -596,6 +619,7 @@ export function carriedApproval(r: GateResolutionRecord, op: string, gate: strin
     ...(r.url ? { url: r.url } : {}),
     ...(r.planDigest !== undefined ? { planDigest: r.planDigest } : {}),
     ...(r.environment !== undefined ? { environment: r.environment } : {}),
+    ...(r.releaseDigest !== undefined ? { releaseDigest: r.releaseDigest } : {}),
     ...(r.origin ? { origin: r.origin } : {}),
     ...(r.sameOriginOverride ? { sameOriginOverride: true } : {}),
     approver: approverOf(r),
@@ -705,20 +729,48 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // a mismatch with a message instead of silently not counting.
   const env = input.environment;
   const pending = env === undefined ? ledger.pending : ledger.pending.filter((p) => p.environment === env);
+  // #4045: an approval is for one release. On this gate, a resolution for
+  // another release (or for one, on a gate that binds none) never counts; the
+  // newest one since the standing fact comes back as a mismatch instead.
+  const forOtherRelease = (r: GateResolutionRecord) => r.gate === input.gate && r.releaseDigest !== input.releaseDigest;
   // #3163: a gate the workspace's identity.gates names counts only signed approvals from its class.
   const rule = (await port.approvalRule?.(input.gate)) ?? null;
   const standing = latestPendingGate(pending, input.gate);
   const since = standing?.timestamp ?? EPOCH;
+
+  // #4045: a pass over an empty change set. The promote wrote it, and it
+  // counts only once the document stored under its plan reads back empty.
+  const envResolutions = env === undefined ? ledger.resolutions : ledger.resolutions.filter((r) => r.environment === env);
+  if (input.verifyEmpty && input.planDigest !== undefined) {
+    const passes = envResolutions
+      .filter(
+        (r) =>
+          r.empty === true && r.gate === input.gate && !forOtherRelease(r) && samePlanDigest(r.planDigest, input.planDigest) &&
+          new Date(r.timestamp).getTime() >= new Date(since).getTime() &&
+          (input.spent === undefined || !isApprovalSpent(input.spent, r)),
+      )
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const pass = passes[passes.length - 1];
+    if (pass && (await input.verifyEmpty(input.planDigest))) return { satisfied: true, resolution: pass, via: "empty" };
+  }
   // #3949: aliases admit only approvals of this run's plan, and carrying one writes a line.
   const aliases = input.planDigest !== undefined && port.appendResolution ? (input.aliases ?? []) : [];
   const aliased = (from: { op: string; gate: string }) => aliases.some((a) => a.op === from.op && a.gate === from.gate);
   // #3841: an approval of this plan the rule refuses is named, so a wait says why.
   const refused: GateRefusedApproval[] = [];
+  const otherRelease: GateResolutionRecord[] = [];
   const resolutions = (
     env === undefined
       ? ledger.resolutions
       : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env)
   )
+    // #4045: an `empty` pass is never an approval; it counts only above.
+    .filter((r) => r.empty !== true)
+    .filter((r) => {
+      if (!forOtherRelease(r)) return true;
+      otherRelease.push(r);
+      return false;
+    })
     // #3949: a carried approval counts only while the gate still names its alias.
     .filter((r) => r.gate !== input.gate || r.carriedFrom === undefined || aliased(r.carriedFrom))
     .filter((r) => input.spent === undefined || r.gate !== input.gate || !isApprovalSpent(input.spent, r))
@@ -791,6 +843,16 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     mismatched = found.mismatched;
   }
 
+  // #4045: an approval of this gate for another release stands as a mismatch
+  // when nothing closer does, so the refusal says an approval exists.
+  if (!mismatched && input.planDigest !== undefined) {
+    const sinceMs = new Date(since).getTime();
+    mismatched = otherRelease
+      .filter((r) => new Date(r.timestamp).getTime() >= sinceMs)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .at(-1);
+  }
+
   // `input.planDigest` is defined whenever `mismatched` is — `latestResolutionForPlan`
   // returns a mismatch only on the plan-bound path.
   const mismatch: GateDigestMismatch | undefined = mismatched
@@ -816,6 +878,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // that already carries a checkpoint stands: an approval copies that one.
   if (
     standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) &&
+    standing.releaseDigest === input.releaseDigest &&
     sameApproval(standing.approval, input.approval) &&
     (input.checkpoint === undefined || port.writeCheckpoint === undefined || standing.checkpointDigest !== undefined)
   ) {
@@ -850,6 +913,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(env !== undefined ? { environment: env } : {}),
+    ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
     ...(input.approval ? { approval: input.approval } : {}),
     ...(input.neverOverMcp ? { neverOverMcp: true as const } : {}),
   });

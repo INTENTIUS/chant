@@ -47,6 +47,7 @@ import {
   type DriverComponent,
   type DriverComponentResult,
   type DriverGate,
+  type ReleaseGateBinding,
   type DriverPhase,
   type DriverRunResult,
   type DriverStep,
@@ -536,6 +537,8 @@ export interface RunPromotionOptions {
   registry: CapabilityRegistry;
   componentOutputs?: Record<string, Record<string, unknown>>;
   gates?: GateLedgerPort;
+  /** A promote under a release (#4045): what every gate it reaches binds. */
+  releaseGate?: ReleaseGateBinding;
   now?: string;
   onProgress?: (event: RunProgressEvent) => void;
   /** Where the run's events go (#4041, `--events-json`). */
@@ -571,6 +574,7 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
       ...(options.gates ? { gates: options.gates } : {}),
+      ...(options.releaseGate ? { releaseGate: options.releaseGate } : {}),
       ...(options.now ? { now: options.now } : {}),
     });
   } catch (err) {
@@ -596,7 +600,8 @@ export function gateApprover(result: DriverComponentResult | undefined): string 
 export function gateAdmission(result: DriverComponentResult | undefined): ReleaseAdmission | undefined {
   let admission: ReleaseAdmission | undefined;
   for (const record of result?.records ?? []) {
-    if (record.approval) admission = { op: result!.component, gate: record.approval.gate, resolvedAt: record.approval.timestamp };
+    // #4045: a release gate's resolution is in the release gate's ledger, not the component's.
+    if (record.approval) admission = { op: record.approval.op ?? result!.component, gate: record.approval.gate, resolvedAt: record.approval.timestamp };
   }
   return admission;
 }

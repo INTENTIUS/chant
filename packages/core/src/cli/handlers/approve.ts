@@ -21,7 +21,7 @@ import {
   type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
 } from "../../op/gate-approval";
 import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate";
-import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
+import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, RELEASE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
@@ -129,6 +129,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
           ? `The next \`chant components pr-apply\` decides this gate from scratch and records a fresh pending fact.`
           : opName === WORKSPACE_UPGRADE_GATE_OP
           ? `The next \`chant workspace upgrade ${gate}\` decides this gate from scratch and records a fresh pending fact.`
+          : opName === RELEASE_GATE_OP
+          ? `The next \`chant components promote --release\` decides this gate from scratch and records a fresh pending fact.`
           : `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
     ));
     return 0;
@@ -179,6 +181,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
           ? `The pull request's apply (\`chant components pr-apply\`) walks through gate "${gate}" when it plans this same digest.`
           : opName === WORKSPACE_UPGRADE_GATE_OP
           ? `Repeat \`chant workspace upgrade ${gate}\` with the same target, and it applies the patch this approval names.`
+          : opName === RELEASE_GATE_OP
+          ? `Repeat the same \`chant components promote --release\`, and it walks through gate "${gate}" when it plans this same change set for this release.`
           : `Run \`chant run ${opName}\` and it walks through gate "${gate}".`),
   ));
   return 0;
@@ -285,7 +289,7 @@ export async function recordGateApproval(
   // so there is no `*.op.ts` to find and nothing is wrong when none is there.
   // #3949: a gate that lists this one as an alias, after an Op was restructured.
   const successor = aliasingGate([...ops.values()].map((o) => o.config), opName, gate);
-  if (!successor && !ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== OVERRIDE_GATE_OP) {
+  if (!successor && !ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== OVERRIDE_GATE_OP && opName !== RELEASE_GATE_OP) {
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));
@@ -391,6 +395,11 @@ export async function recordGateApproval(
     standing?.checkpointDigest !== undefined && samePlanDigest(planDigest, standing.planDigest)
       ? standing.checkpointDigest
       : undefined;
+  // #4045: a release gate's fact names the release its change set was
+  // planned for. An approval of that fact's plan is for that release too; an
+  // approval of another plan names none, and no release gate counts it.
+  const releaseDigest =
+    standing?.releaseDigest !== undefined && samePlanDigest(planDigest, standing.planDigest) ? standing.releaseDigest : undefined;
 
   // chant#2384 — the gate's whole value is that its two halves have different
   // authors. At a shell they do: a person runs, reads the plan, and approves.
@@ -589,6 +598,7 @@ export async function recordGateApproval(
     ...(planDigest !== undefined ? { planDigest } : {}),
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(environment !== undefined ? { environment } : {}),
+    ...(releaseDigest !== undefined ? { releaseDigest } : {}),
     // #4020: the commit and run the gate waited on, off the fact this approves.
     ...(standing?.gitSha ? { gitSha: standing.gitSha } : {}),
     ...(standing?.runId ? { runId: standing.runId } : {}),
@@ -612,6 +622,7 @@ export async function recordGateApproval(
     console.error(formatInfo(
       `This approves the plan ${record.planDigest}` +
         (record.environment !== undefined ? ` in environment "${record.environment}"` : "") +
+        (record.releaseDigest !== undefined ? ` for release ${record.releaseDigest}` : "") +
         ", and only that plan. A run whose fresh plan differs refuses rather than applying it.",
     ));
   }
