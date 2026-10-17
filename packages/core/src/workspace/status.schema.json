@@ -987,6 +987,8 @@
             }
           ]
         },
+        "releaseDigest": { "type": ["string", "null"], "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "Added in contract 1 by #4043, written by chant 0.124.28 and newer. The release this deploy was made from: the releaseDigest of _releases/<releaseDigest>.json. A promote with --release writes it, a run --components with --release writes it, and a rollback or redeploy copies it from the record it restores. Null for a deploy that named no release. With the item's environment it names the release target." },
+        "releaseLabel": { "type": ["string", "null"], "description": "Added in contract 1 by #4043, written by chant 0.124.28 and newer. The label that release was cut with, from _releases/cuts.jsonl. Null when releaseDigest is null, when the release has no label, and when the cuts can't be read." },
         "flags": { "type": "array", "items": { "enum": ["legacy-digest"] } },
         "plan": {
           "type": ["object", "null"],

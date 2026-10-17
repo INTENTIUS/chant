@@ -926,6 +926,7 @@ export async function recordAutoReleasesForRun(
   runId: string,
   disabled: boolean,
   runOrigin: RunOrigin = { forge: "local" },
+  releaseDigest?: string,
 ): Promise<ReleaseRecord[]> {
   const recorded: ReleaseRecord[] = [];
   for (const componentResult of results) {
@@ -942,6 +943,8 @@ export async function recordAutoReleasesForRun(
         // #1035, #4020: who approved at the gate and which resolution admitted the deploy.
         ...(gateApprover(componentResult) ? { approver: gateApprover(componentResult) } : {}),
         ...(gateAdmission(componentResult) ? { admission: gateAdmission(componentResult) } : {}),
+        // #4043: the release the deploy was made under, when `--release` named one.
+        ...(releaseDigest !== undefined ? { releaseDigest } : {}),
       },
       { disabled },
     );
@@ -1051,6 +1054,44 @@ function refusesNoRecordOn(runtime: Pick<OpRuntimeProvider, "name">): boolean {
   return true;
 }
 
+/**
+ * Resolve the release `chant run --components --release` names (#4043), or the
+ * reason it can't be used. The run builds from the checked-out commit, so the
+ * release's commit must be HEAD, and the release needs a target for `env`.
+ */
+export async function resolveRunRelease(ref: string, env: string, cwd: string) {
+  const { fetchLifecycle, getHeadCommit } = await import("../../lifecycle/git");
+  const { resolveRelease } = await import("../../lifecycle/release-store");
+  const { targetFor } = await import("../../components/release-promote");
+  await fetchLifecycle({ cwd }).catch(() => false);
+  const found = await resolveRelease(ref, { cwd });
+  if (!found) return `no release is labelled or digested "${ref}" in this member`;
+  const name = found.label ?? found.release.releaseDigest;
+  const head = await getHeadCommit({ cwd });
+  if (found.release.commit !== head) {
+    return `release ${name} was cut from ${found.release.commit.slice(0, 12)} and this checkout is at ${head.slice(0, 12)}; run builds from the checkout, so check out the release's commit, or deploy it with \`chant components promote --release\``;
+  }
+  const target = targetFor(found.release, env);
+  if ("error" in target) return target.error;
+  return { releaseDigest: found.release.releaseDigest, label: found.label, release: found.release };
+}
+
+/** A rebuilt image need not digest as the release's own did; say so, as promote does. Never fails the run. */
+async function warnOnArtifactMismatch(release: import("../../lifecycle/release-store").Release, recorded: readonly ReleaseRecord[]): Promise<void> {
+  try {
+    const { releaseArtifactMismatches } = await import("../../components/release-promote");
+    const { readBuildManifest } = await import("../../lifecycle/build-ledger-store");
+    const mismatches = await releaseArtifactMismatches(
+      release,
+      recorded.map((r) => ({ component: r.component, source: r })),
+      (digest) => readBuildManifest(digest).catch(() => null),
+    );
+    for (const message of mismatches) console.error(formatWarning({ message }));
+  } catch {
+    // The record is written; a manifest that can't be read is not worth failing the run for.
+  }
+}
+
 async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
   if (!selector || selector === ".") {
@@ -1088,6 +1129,20 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   }
 
   const env = ctx.args.env ?? "local";
+
+  // #4043: `--release <label|digest>` says this run deploys that release. The
+  // run builds from the checked-out commit, so the release must have been cut
+  // from it, and must have a target for the environment. Both are checked
+  // before anything deploys; nothing is inferred when the flag is absent.
+  let underRelease: { releaseDigest: string; label: string | null; release: import("../../lifecycle/release-store").Release } | undefined;
+  if (ctx.args.release) {
+    const refused = await resolveRunRelease(ctx.args.release, env, projectPath);
+    if (typeof refused === "string") {
+      console.error(formatError({ message: refused, hint: "List the releases with: chant release list" }));
+      return 1;
+    }
+    underRelease = refused;
+  }
   // Seed cross-component/cross-stack outputs from upstream jobs' dumped files
   // (`--seed-outputs`), so a single-component run resolves references to a
   // component that ran in an earlier CI job.
@@ -1207,7 +1262,8 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   if (result.success && result.run) {
     // #3955: a run that records nothing has no release to report either.
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
-    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin);
+    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest);
+    if (underRelease) await warnOnArtifactMismatch(underRelease.release, recorded);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote
     // --digest` takes. A generated promote job reads it to promote exactly

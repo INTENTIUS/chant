@@ -478,6 +478,35 @@ describe("commit, run and gate on the records status --json lists (#4020)", () =
   });
 });
 
+describe("the release a deploy was made from, on the records status --json lists (#4043)", () => {
+  test("a release item carries the releaseDigest and the label it was cut with, and null when there is none", async () => {
+    const root = twoLayouts();
+    const rd = `jcs1-sha256:${"e".repeat(64)}`;
+    const cut = JSON.stringify({ version: 1, releaseDigest: rd, label: "v1.2.0", actor: "alice", timestamp: "2026-09-19T00:00:00.000Z", runOrigin: null, signature: null });
+    lifecycle(root, {
+      "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), "a".repeat(40), { releaseDigest: rd })),
+      "_members/web/_releases/cuts.jsonl": `${cut}\n`,
+      "staging/releases.jsonl": jsonl(release("api", "staging", D("b"), "b".repeat(40))),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging", now: NOW }));
+    expectValid(doc);
+    const [, web, api] = doc.members;
+    expect(web.environments[0].releases[0]).toMatchObject({ releaseDigest: rd, releaseLabel: "v1.2.0" });
+    expect(api.environments[0].releases[0]).toMatchObject({ releaseDigest: null, releaseLabel: null });
+  });
+
+  test("a release with no cut line keeps its digest and has no label", async () => {
+    const root = twoLayouts();
+    const rd = `jcs1-sha256:${"e".repeat(64)}`;
+    lifecycle(root, {
+      "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), "a".repeat(40), { releaseDigest: rd })),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging", now: NOW }));
+    expectValid(doc);
+    expect(doc.members[1].environments[0].releases[0]).toMatchObject({ releaseDigest: rd, releaseLabel: null });
+  });
+});
+
 describe("gate state in chant workspace status --json (#2674)", () => {
   test("each member lists its gates with state, approvals, quorum and the approve line", async () => {
     const doc = result(await workspaceStatus({ cwd: gated(), env: "staging", compareTo: "prod", now: NOW }));
