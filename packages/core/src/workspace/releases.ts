@@ -8,6 +8,10 @@
  * `releaseDigest`. A promote under a release writes that field; deploys made
  * any other way do not name a release yet (#4043), so they list nowhere.
  *
+ * Each cut carries `signatureCheck` (#4031): whether its signature verifies
+ * for its actor against the signers at base, and, when the declaration names
+ * a `release` gate with a class, whether the actor is in it.
+ *
  * A release file that is not a release, or whose content does not hash to its
  * digest, and a cut line that is not a cut, are left out and counted under
  * `reason` with `ledger-malformed`; the rest are listed. A read that fails
@@ -19,6 +23,7 @@ import { latestPerComponent, listReleaseEnvironments, readReleaseLedger } from "
 import { readAllReleases, readCuts, type Release, type ReleaseCut } from "../lifecycle/release-store";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { readerVersion } from "./declaration";
+import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
 
 export const RELEASES_CONTRACT_VERSION = 1;
 export const RELEASES_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json";
@@ -32,8 +37,8 @@ export const RELEASES_REASON_CODES = ["ledger-malformed"] as const;
 export interface ReleaseEntry extends Omit<Release, "version"> {
   /** The label its cuts gave it, or null. */
   label: string | null;
-  /** Its cuts, oldest first. */
-  cuts: Array<Omit<ReleaseCut, "version" | "releaseDigest">>;
+  /** Its cuts, oldest first, each with whether its signature verifies against the signers at base (#4031). */
+  cuts: Array<Omit<ReleaseCut, "version" | "releaseDigest"> & { signatureCheck: ReleaseSignatureCheck }>;
   /** The environments that run it, and in each the components whose latest deploy names it. Sorted by env. */
   environments: Array<{ env: string; components: string[] }>;
 }
@@ -50,6 +55,16 @@ export type ReleasesDocument =
       reason: { code: (typeof RELEASES_REASON_CODES)[number]; message: string } | null;
     }
   | { $schema: string; contract: number; chant: string; error: { code: (typeof RELEASES_ERROR_CODES)[number]; message: string } };
+
+/**
+ * The rule a cut's signature is judged by (#4031): the declaration's
+ * `identity.gates.release` and the signers and role grants, all read at base.
+ */
+export async function releaseRule(cwd: string): Promise<GateAdmissionRule> {
+  const { scopeSource } = await import("./write-scope");
+  const { releaseRuleFrom } = await import("./identity");
+  return releaseRuleFrom(scopeSource(cwd)).rule;
+}
 
 /** Read the releases of the member at `cwd`. */
 export async function releasesDocument(req: { cwd: string }): Promise<ReleasesDocument> {
@@ -77,12 +92,13 @@ export async function releasesDocument(req: { cwd: string }): Promise<ReleasesDo
       }
     }
 
+    const rule = await releaseRule(req.cwd);
     const entries: ReleaseEntry[] = releases.map(({ version: _v, ...release }) => {
       const own = cuts.filter((c) => c.releaseDigest === release.releaseDigest);
       return {
         ...release,
         label: own.find((c) => c.label !== null)?.label ?? null,
-        cuts: own.map(({ version: _cv, releaseDigest: _d, ...cut }) => cut),
+        cuts: own.map(({ version: _cv, releaseDigest: _d, ...cut }) => ({ ...cut, signatureCheck: checkReleaseSignature(rule, { releaseDigest: release.releaseDigest, ...cut }) })),
         environments: [...(running.get(release.releaseDigest) ?? new Map<string, string[]>())]
           .map(([env, components]) => ({ env, components }))
           .sort((a, b) => (a.env < b.env ? -1 : 1)),

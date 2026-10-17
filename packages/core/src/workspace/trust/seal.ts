@@ -31,6 +31,7 @@ import { type TrustPolicy } from "./policy";
 import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
 import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "./gate-seal";
+import { RELEASE_SEAL_NAMESPACE, releaseSealPayload } from "../identity-gate-rule";
 
 export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "./gate-seal";
 
@@ -319,6 +320,15 @@ export function sealRecord(keyFile: string, r: { record: string; digest: string;
  */
 export function sealGateApproval(keyFile: string, a: SealedGateApproval): VerdictSeal {
   return sign(keyFile, gateSealPayload(a), GATE_SEAL_NAMESPACE, a.resolvedBy);
+}
+
+/**
+ * Sign a release cut (#4031) with the key in `keyFile`, over
+ * `releaseSealPayload` in the `chant-release` namespace. The cut line keeps
+ * the armored signature; its actor is the signer. Throws a {@link SealError}.
+ */
+export function sealReleaseCut(keyFile: string, cut: { releaseDigest: string; label: string | null; actor: string; timestamp: string }): VerdictSeal {
+  return sign(keyFile, releaseSealPayload(cut), RELEASE_SEAL_NAMESPACE, cut.actor);
 }
 
 function sign(keyFile: string, payload: Buffer, namespace: string, signer: string): VerdictSeal {

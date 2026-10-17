@@ -1450,6 +1450,11 @@
           "items": {
             "$ref": "#/$defs/ciPhaseName"
           }
+        },
+        "signedSince": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+          "description": "Added by #4031, read by chant 0.124.28 and newer. The full sha of the first commit on branch whose ci/green and ci/revoked tags must carry a DSSE statement in their annotation, signed by a key .chant/trust.json at base lists under runners for a principal holding the runner role. A tag on a strict first-parent ancestor of this commit counts unsigned, so existing tags keep working; a tag on any other commit, this one included, needs a statement. Position in history decides, never a date, which whoever makes a commit or a tag sets. A reader refuses a sha that names no commit in its clone with declaration-invalid. Absent, no tag needs a statement."
         }
       },
       "patternProperties": {

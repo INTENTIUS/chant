@@ -292,7 +292,7 @@ The role grants in `.chant/trust.json` and the signers file name people by the s
 | Field | Value |
 |---|---|
 | `attribution` | `any`, the default, takes any name. `identified` refuses a name: [`records new`, `amend` and `review`](/chant/cli/workspace-records/#writing-records), [`points answer`](/chant/cli/workspace-points/) and `chant approve` refuse a `--by`, author field, answerer or `--actor` that is not a forge identity, a signer or a role holder, with `principal-unidentified`. |
-| `gates` | Gates by name. A gate of that name, in any member, Op or component, counts only an approval sealed with `chant approve --sign` by a key the signers file at base lists for its approver. With `class`, the approver must also be in that class, read from the role grants at base. A class no pinned package supplies lets nothing through. Without a signers file at base, nothing passes. |
+| `gates` | Gates by name. A gate of that name, in any member, Op or component, counts only an approval sealed with `chant approve --sign` by a key the signers file at base lists for its approver. With `class`, the approver must also be in that class, read from the role grants at base. A class no pinned package supplies lets nothing through. Without a signers file at base, nothing passes. The gate named `release` also says who may cut a release: [`chant release cut`](/chant/cli/release/#who-may-cut) then needs `--sign`, by an actor in its class. |
 
 Both are read from the declaration at base, so a change can't loosen its own rule. A run, `chant workspace status` and `chant approve` all apply `gates`. `chant approve` refuses an approval the rule would not count before writing it, and a run or status leaves out any such approval already on the ledger, so a hud invite link alone can't clear the gate. `status --json` marks such a gate with `signed`.
 
@@ -334,6 +334,7 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 | `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
 | `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. |
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
+| `signedSince` | no | The full sha of the first commit on `branch` whose tags must be signed. A tag on it or on any commit that is not a strict first-parent ancestor of it counts only with a statement signed by a runner key; a tag on an ancestor counts unsigned. A sha that names no commit in the clone is refused with `declaration-invalid`. Absent, every tag counts. See [signed tags](/chant/cli/ci/#signed-tags). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 
 A phase passes when every check run its patterns match finished with `success`, judged by each run's latest attempt. A run that finished as `skipped` passes only in a phase with `"skipped": "pass"`, which suits a job that a path filter runs on some commits only. The default, `fail`, never lets a skipped run pass. A run still queued or in progress, or a pattern that no run matches yet, leaves the commit undecided. A commit is green when every required phase passes, and it fails as soon as one of them fails.
 
@@ -345,6 +346,8 @@ The result is kept as two kinds of annotated tag. chant makes each one once, and
 | `ci/revoked/<sha>` | a commit with a green tag later fails a required phase, as a re-run that went red does | the phase, the run that failed, and the time |
 
 A revoked commit doesn't go green again by itself. Deleting its `ci/revoked/<sha>` tag by hand makes it count as green again, since its green tag is still there.
+
+With `signedSince`, the annotation also holds the statement a runner key signed, and every reader ignores and reports a tag outside the ancestry of `signedSince` without a valid one ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
 
 ## Diagrams
 

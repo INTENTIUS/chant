@@ -143,6 +143,13 @@
                           "null"
                         ],
                         "description": "When the tag was made, ISO 8601, or null for a lightweight tag."
+                      },
+                      "signer": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The runner principal whose statement the tag carries, or null when it counts unsigned: ci.green.signedSince is not set, or the commit is a strict first-parent ancestor of it."
                       }
                     }
                   }
@@ -220,6 +227,13 @@
                           }
                         ],
                         "description": "The run the annotation names as failed."
+                      },
+                      "signer": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The runner principal whose statement the tag carries, or null when it counts unsigned: ci.green.signedSince is not set, or the commit is a strict first-parent ancestor of it."
                       }
                     }
                   }
@@ -339,6 +353,36 @@
                     }
                   }
                 ]
+              },
+              "ignored": {
+                "type": "array",
+                "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The commit's ci tags that do not count for want of a valid statement signed by a runner key. A tag on any commit that is not a strict first-parent ancestor of ci.green.signedSince needs one; empty when signedSince is not set. state, green and revoked count only the tags that are not ignored.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "tag",
+                    "status",
+                    "reason"
+                  ],
+                  "properties": {
+                    "tag": {
+                      "type": "string",
+                      "description": "ci/green/<sha> or ci/revoked/<sha>."
+                    },
+                    "status": {
+                      "enum": [
+                        "unsigned",
+                        "invalid",
+                        "untrusted",
+                        "mismatch"
+                      ],
+                      "description": "unsigned: the annotation carries no statement. invalid: the statement is not a ci-tag statement, or names another signer than the key's. untrusted: no runner key .chant/trust.json lists at base signed it, or its principal holds no runner role. mismatch: it signs another commit, tag kind or branch, the annotation's record is not the one signed, or the tag points at another commit than its name gives."
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
               }
             }
           }

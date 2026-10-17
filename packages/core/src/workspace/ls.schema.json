@@ -25,7 +25,8 @@
             }
           }
         },
-        "require": { "type": "array", "items": { "type": "string" } }
+        "require": { "type": "array", "items": { "type": "string" } },
+        "signedSince": { "type": "string", "description": "Added in contract 1 by #4031, written by chant 0.124.28 and newer, and only when the declaration sets it: the full sha of the first commit whose ci tags count only with a statement signed by a runner key. Tags on its strict first-parent ancestors count unsigned." }
       }
     },
     "result": {

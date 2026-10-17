@@ -27,6 +27,13 @@
  *
  * The forge is asked only for check runs (`./ci-green-forge.ts`). The tags
  * are fetched from and pushed to the remote with git.
+ *
+ * Signed tags (#4031): when `ci.green.signedSince` names a commit, a tag on
+ * any commit that is not a strict first-parent ancestor of it counts only
+ * when its annotation carries a statement signed by a runner key (`./trust/ci-tag-statement.ts`). Every
+ * reader here, and the release cut, ignores a tag without a valid one and
+ * reports it. A tick given a runner key signs the tags it makes. Without
+ * `signedSince` every tag counts, as before.
  */
 
 import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./commit-links";
@@ -36,6 +43,10 @@ import type { CheckRun, CiForge } from "./ci-green-forge";
 import type { ReasonCode } from "./reason-codes";
 import { gitTop } from "./tree";
 import { locateWorkspace } from "./which-chant";
+import { gitRevisionSource } from "./record-source";
+import { emptyPolicy, readTrustPolicy } from "./trust/policy";
+import { loadRunnerKey } from "./trust/dsse";
+import { signCiTagRecord, verifyCiTagStatement, CI_TAG_SIGNER_ROLE, type CiTagFailure, type CiTagRecord, type CiTagSigner } from "./trust/ci-tag-statement";
 
 export const CI_GREEN_TAG_PREFIX = "ci/green/";
 export const CI_REVOKED_TAG_PREFIX = "ci/revoked/";
@@ -155,6 +166,10 @@ export interface TickCommit {
   made: { tag: string; message: string } | null;
   /** Whether the commit names its work item (#4029), or undefined when the workspace declares no work kind. */
   work?: CommitLink;
+  /** The commit's ci tags that were ignored, each without a valid statement (#4031). Absent when none were. */
+  ignored?: IgnoredCiTag[];
+  /** The tag the tick would have made, when an ignored tag already holds its name (#4031). Nothing is made until a person deletes that tag. */
+  blocked?: string;
 }
 
 export interface TickPlanInput {
@@ -162,8 +177,12 @@ export interface TickPlanInput {
   commits: readonly { sha: string; committed: string }[];
   greenTags: ReadonlySet<string>;
   revokedTags: ReadonlySet<string>;
+  /** Tags that exist but were ignored (#4031), by commit. The tick does not make a tag whose name one of them holds. */
+  ignored?: ReadonlyMap<string, readonly IgnoredCiTag[]>;
   checkRuns(sha: string): Promise<CheckRun[]>;
   now: Date;
+  /** Signs each tag's record (#4031). Without it the tags carry no statement. */
+  signer?: CiTagSigner;
 }
 
 /** A time as an annotation and a tick report write it: UTC, to the second. */
@@ -178,9 +197,14 @@ export function windowMs(window: string): number {
 
 const runRecord = (r: RunVerdict) => ({ name: r.name, id: r.id, conclusion: r.conclusion, url: r.url });
 
-/** The annotation of a green tag: a subject line, then the record as JSON. */
-export function greenAnnotation(green: CiGreen, sha: string, verdict: CommitVerdict, at: Date): string {
-  const record = {
+/** The record as JSON, with the statement that signs it when a signer is given (#4031). */
+function recordJson(record: CiTagRecord, signer: CiTagSigner | undefined): string {
+  return JSON.stringify(signer ? { ...record, statement: signCiTagRecord(record, signer) } : record, null, 2);
+}
+
+/** The annotation of a green tag: a subject line, then the record as JSON, signed when `signer` is given (#4031). */
+export function greenAnnotation(green: CiGreen, sha: string, verdict: CommitVerdict, at: Date, signer?: CiTagSigner): string {
+  const record: CiTagRecord = {
     schema: 1,
     tag: "green",
     commit: sha,
@@ -188,13 +212,13 @@ export function greenAnnotation(green: CiGreen, sha: string, verdict: CommitVerd
     at: iso(at),
     phases: Object.fromEntries(verdict.phases.map((p) => [p.phase, p.runs.map(runRecord)])),
   };
-  return `ci: every required phase passed (${green.require.join(", ")})\n\n${JSON.stringify(record, null, 2)}\n`;
+  return `ci: every required phase passed (${green.require.join(", ")})\n\n${recordJson(record, signer)}\n`;
 }
 
-/** The annotation of a revoked tag: the phase and the run that failed, and the time. */
-export function revokedAnnotation(green: CiGreen, sha: string, failure: NonNullable<CommitVerdict["failure"]>, at: Date): string {
-  const record = { schema: 1, tag: "revoked", commit: sha, branch: green.branch, at: iso(at), phase: failure.phase, run: runRecord(failure.run) };
-  return `ci: phase ${failure.phase} failed in ${failure.run.name} (${failure.run.conclusion ?? failure.run.status})\n\n${JSON.stringify(record, null, 2)}\n`;
+/** The annotation of a revoked tag: the phase and the run that failed, and the time, signed when `signer` is given (#4031). */
+export function revokedAnnotation(green: CiGreen, sha: string, failure: NonNullable<CommitVerdict["failure"]>, at: Date, signer?: CiTagSigner): string {
+  const record: CiTagRecord = { schema: 1, tag: "revoked", commit: sha, branch: green.branch, at: iso(at), phase: failure.phase, run: runRecord(failure.run) };
+  return `ci: phase ${failure.phase} failed in ${failure.run.name} (${failure.run.conclusion ?? failure.run.status})\n\n${recordJson(record, signer)}\n`;
 }
 
 /**
@@ -208,17 +232,21 @@ export async function planTick(input: TickPlanInput): Promise<TickCommit[]> {
   for (const c of input.commits) {
     const before: TagState = input.revokedTags.has(c.sha) ? "revoked" : input.greenTags.has(c.sha) ? "green" : "none";
     if (before === "revoked") {
-      out.push({ ...c, before, made: null });
+      const ignored = input.ignored?.get(c.sha);
+      out.push({ ...c, before, made: null, ...(ignored && ignored.length > 0 ? { ignored: [...ignored] } : {}) });
       continue;
     }
     const verdict = evaluateCommit(input.green, await input.checkRuns(c.sha));
     let made: TickCommit["made"] = null;
     if (before === "none" && verdict.verdict === "pass") {
-      made = { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, message: greenAnnotation(input.green, c.sha, verdict, input.now) };
+      made = { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, message: greenAnnotation(input.green, c.sha, verdict, input.now, input.signer) };
     } else if (before === "green" && verdict.verdict === "fail") {
-      made = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, message: revokedAnnotation(input.green, c.sha, verdict.failure!, input.now) };
+      made = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, message: revokedAnnotation(input.green, c.sha, verdict.failure!, input.now, input.signer) };
     }
-    out.push({ ...c, before, verdict, made });
+    const ignored = input.ignored?.get(c.sha);
+    // A tag is never moved or deleted by chant, so an ignored tag holding the name stops the tick making it.
+    const blocked = made !== null && ignored?.some((t) => t.tag === made!.tag) ? made.tag : undefined;
+    out.push({ ...c, before, verdict, made: blocked ? null : made, ...(ignored && ignored.length > 0 ? { ignored: [...ignored] } : {}), ...(blocked ? { blocked } : {}) });
   }
   return out;
 }
@@ -241,17 +269,130 @@ function tryGit(top: string, args: string[]): string | null {
   }
 }
 
-/** The ci tags in the repository: the commits with a green tag, and those with a revoked one. */
-export function readCiTags(top: string): { green: Map<string, string>; revoked: Set<string> } {
-  const green = new Map<string, string>();
-  const revoked = new Set<string>();
-  const lines = git(top, ["for-each-ref", "--format=%(refname:lstrip=2)%09%(taggerdate:iso-strict)", `refs/tags/${CI_GREEN_TAG_PREFIX}`, `refs/tags/${CI_REVOKED_TAG_PREFIX}`]);
-  for (const line of lines.split("\n").filter(Boolean)) {
-    const [tag, date] = line.split("\t");
-    if (tag.startsWith(CI_GREEN_TAG_PREFIX)) green.set(tag.slice(CI_GREEN_TAG_PREFIX.length), date ?? "");
-    else revoked.add(tag.slice(CI_REVOKED_TAG_PREFIX.length));
+/** A ci tag as git holds it, before it is judged. */
+interface CiTagRef {
+  kind: "green" | "revoked";
+  /** The commit the tag's name gives. */
+  sha: string;
+  tag: string;
+  /** The tagger's date, or null for a lightweight tag. */
+  tagged: string | null;
+  /** The annotation's JSON record, when the tag is annotated and it parses. */
+  record: Record<string, unknown> | null;
+  /** The commit the tag points at. */
+  target: string;
+}
+
+/** Every ci tag in the repository, read from local refs. */
+function readCiTagRefs(top: string): CiTagRef[] {
+  const out: CiTagRef[] = [];
+  const format = "%(refname:lstrip=2)%00%(objecttype)%00%(objectname)%00%(*objectname)%00%(taggerdate:iso-strict)%00%(contents)%01";
+  const raw = git(top, ["for-each-ref", `--format=${format}`, `refs/tags/${CI_GREEN_TAG_PREFIX}`, `refs/tags/${CI_REVOKED_TAG_PREFIX}`]);
+  for (const entry of raw.split("\u0001")) {
+    const [tag, type, object, peeled, date, contents] = entry.replace(/^\n/, "").split("\u0000");
+    if (!tag) continue;
+    const annotated = type === "tag";
+    let record: CiTagRef["record"] = null;
+    // A lightweight tag has no tagger date, and its "contents" are the commit's message.
+    if (annotated && date && contents && contents.includes("{")) {
+      try {
+        const parsed = JSON.parse(contents.slice(contents.indexOf("{")));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) record = parsed as Record<string, unknown>;
+      } catch {
+        record = null;
+      }
+    }
+    const green = tag.startsWith(CI_GREEN_TAG_PREFIX);
+    out.push({
+      kind: green ? "green" : "revoked",
+      sha: tag.slice((green ? CI_GREEN_TAG_PREFIX : CI_REVOKED_TAG_PREFIX).length),
+      tag,
+      tagged: date || null,
+      record,
+      target: (annotated ? peeled : object) ?? "",
+    });
   }
-  return { green, revoked };
+  return out;
+}
+
+/** A ci tag that exists and does not count (#4031), and why. */
+export interface IgnoredCiTag {
+  tag: string;
+  /** `unsigned`, `invalid`, `untrusted` or `mismatch`, as a run statement's attestation says it. */
+  status: CiTagFailure;
+  reason: string;
+}
+
+/** A tag that counts, with what its annotation recorded. */
+export interface CountedCiTag {
+  tagged: string | null;
+  /** The annotation's JSON record, when the tag is annotated and it parses. */
+  record: Record<string, unknown> | null;
+  /** The runner whose statement it carries, or null when it counts unsigned (#4031). */
+  signer: string | null;
+}
+
+/** The ci tags as readers count them (#4031). */
+export interface CiTags {
+  green: Map<string, CountedCiTag>;
+  revoked: Map<string, CountedCiTag>;
+  /** Tags that exist and do not count, by the commit their name gives. */
+  ignored: Map<string, IgnoredCiTag[]>;
+}
+
+/**
+ * The commits whose tags count unsigned under `signedSince` (#4031): its
+ * strict first-parent ancestors, the history the green branch had before the
+ * first commit whose tags must be signed. Position in history is something a
+ * committer can't set, unlike a commit's or a tag's date (ws-069 d). Throws
+ * `declaration-invalid` when `signedSince` names no commit here.
+ */
+export function unsignedHistory(top: string, signedSince: string): Set<string> {
+  if (tryGit(top, ["rev-parse", "--verify", "--quiet", `${signedSince}^{commit}`]) === null) {
+    throw new WorkspaceReadError(
+      "declaration-invalid",
+      `ci.green.signedSince names ${signedSince}, which is not a commit in this repository; it must be the full sha of the first commit on the green branch whose tags must be signed (fetch the branch if it is newer than this clone)`,
+    );
+  }
+  return new Set(git(top, ["rev-list", "--first-parent", `${signedSince}^@`]).split("\n").filter(Boolean));
+}
+
+/**
+ * Read the ci tags and judge each one (#4031). Without `signedSince` in
+ * `green` every tag counts, as before. With it, a tag on a strict
+ * first-parent ancestor of `signedSince` counts unsigned, and any other tag
+ * counts only when it points at the commit its name gives and its annotation
+ * carries a statement a runner key at `base` signed for that commit, tag and
+ * branch. The runner keys and roles are read from `.chant/trust.json` at
+ * `base`, the commit the caller reads the branch at. Throws
+ * `declaration-invalid` when `signedSince` names no commit here.
+ */
+export function readCiTags(top: string, green: CiGreen | null = null, base: string | null = null): CiTags {
+  const out: CiTags = { green: new Map(), revoked: new Map(), ignored: new Map() };
+  const before = green?.signedSince ? unsignedHistory(top, green.signedSince) : null;
+  let policy: ReturnType<typeof readTrustPolicy> | undefined;
+  const policyAtBase = () => (policy ??= base ? readTrustPolicy(gitRevisionSource(top, base), base) : emptyPolicy(null));
+  for (const t of readCiTagRefs(top)) {
+    const counted = (signer: string | null) => (t.kind === "green" ? out.green : out.revoked).set(t.sha, { tagged: t.tagged, record: t.record, signer });
+    if (before === null) {
+      counted(null);
+      continue;
+    }
+    const ignore = (status: CiTagFailure, reason: string) => out.ignored.set(t.sha, [...(out.ignored.get(t.sha) ?? []), { tag: t.tag, status, reason }]);
+    if (t.target !== t.sha) {
+      ignore("mismatch", `${t.tag} points at ${t.target.slice(0, 12) || "nothing"}, not at the commit its name gives`);
+      continue;
+    }
+    if (before.has(t.sha)) {
+      counted(null);
+      continue;
+    }
+    const p = policyAtBase();
+    const v = verifyCiTagStatement(t.record, { sha: t.sha, kind: t.kind, branch: green!.branch }, p.runners, p.roles);
+    if (v.status === "signed") counted(v.signer);
+    else ignore(v.status, `${v.reason}; ci.green.signedSince is ${green!.signedSince}, so a tag on a commit that is not a strict first-parent ancestor of it needs one`);
+  }
+  return out;
 }
 
 /** The declaration's `ci.green`, read where `cwd` is, and the git top. */
@@ -273,6 +414,13 @@ export interface TickRequest {
   /** Decide and report, and make and push no tag. */
   dryRun?: boolean;
   now?: Date;
+  /**
+   * A runner's Ed25519 private key in PEM (#4031). The tick signs each tag
+   * it makes with it, and refuses a key `.chant/trust.json` at the branch tip
+   * does not list as a runner whose principal holds the `runner` role. When
+   * `ci.green.signedSince` is set the tick needs one.
+   */
+  runnerKey?: string;
 }
 
 export interface TickResult {
@@ -283,6 +431,32 @@ export interface TickResult {
   commits: TickCommit[];
   /** The tags made and pushed, or that would be under `dryRun`. */
   made: string[];
+  /** The runner the tags were signed as (#4031), or null when they carry no statement. */
+  signer: string | null;
+}
+
+/**
+ * The signer a runner key makes (#4031): the principal `.chant/trust.json`
+ * at `base` lists the key for, who must hold the `runner` role. Throws when
+ * the key is not one, so a tick never makes a tag its readers would ignore.
+ */
+export function ciTagSigner(top: string, base: string, pem: string): CiTagSigner {
+  let loaded: ReturnType<typeof loadRunnerKey>;
+  try {
+    loaded = loadRunnerKey(pem);
+  } catch (err) {
+    throw new Error(`the runner key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const policy = readTrustPolicy(gitRevisionSource(top, base), base);
+  const at = `.chant/trust.json at ${base.slice(0, 12)}`;
+  if (policy.signers.some((s) => s.key === loaded.publicKey)) {
+    throw new Error(`the runner key is a signer's key in ${policy.signersPath}; ci tags are signed by a CI identity's key, never by a person's`);
+  }
+  const listed = policy.runners.find((r) => r.key === loaded.publicKey);
+  if (!listed) throw new Error(`${at} lists no runner with this key, so the tags it signed would be ignored. Add it under "runners" first:\n  ${loaded.publicKey}`);
+  const holds = (policy.roles[CI_TAG_SIGNER_ROLE] ?? []).some((p) => p.normalize("NFKC").trim().toLowerCase() === listed.principal.normalize("NFKC").trim().toLowerCase());
+  if (!holds) throw new Error(`${listed.principal} holds no ${CI_TAG_SIGNER_ROLE} role in ${at}, so the tags it signed would be ignored. Grant it: "roles": { "${CI_TAG_SIGNER_ROLE}": ["${listed.principal}"] }`);
+  return { principal: listed.principal, key: loaded.key, publicKey: loaded.publicKey };
 }
 
 /**
@@ -312,15 +486,24 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     .filter(([, ct]) => Number(ct) >= cutoff)
     .map(([sha, ct]) => ({ sha, committed: iso(new Date(Number(ct) * 1000)) }));
 
+  const base = git(top, ["rev-parse", `${tracking}^{commit}`]);
+  if (green.signedSince && req.runnerKey === undefined && !req.dryRun) {
+    throw new Error(
+      `ci.green.signedSince is ${green.signedSince}, so every tag the tick makes needs a statement signed by a runner key, and none was given: pass --key <runner key.pem> or set CHANT_RUNNER_KEY`,
+    );
+  }
+  const signer = req.runnerKey !== undefined ? ciTagSigner(top, base, req.runnerKey) : undefined;
   const links = await commitLinks(req.cwd, top, tracking, commits.map((c) => c.sha));
-  const tags = readCiTags(top);
+  const tags = readCiTags(top, green, base);
   const planned = await planTick({
     green,
     commits,
     greenTags: new Set(tags.green.keys()),
-    revokedTags: tags.revoked,
+    revokedTags: new Set(tags.revoked.keys()),
+    ignored: tags.ignored,
     checkRuns: (sha) => req.forge.checkRuns(sha),
     now,
+    signer,
   });
   if (links) for (const c of planned) c.work = links.get(c.sha);
   const due = planned.filter((c) => c.made !== null);
@@ -336,7 +519,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       throw new Error(`could not push ${due.map((c) => c.made!.tag).join(", ")} to ${remote}: ${cause ? `${cause}\n` : ""}${stderr}`);
     }
   }
-  return { branch: green.branch, window: green.window, ref: tracking, commits: planned, made: due.map((c) => c.made!.tag) };
+  return { branch: green.branch, window: green.window, ref: tracking, commits: planned, made: due.map((c) => c.made!.tag), signer: signer?.principal ?? null };
 }
 
 /**
@@ -409,11 +592,22 @@ export function formatTick(r: TickResult, dryRun = false): string {
     }
     const why = whyWorkUnknown(c.work);
     if (why) lines[before] += `; why unknown: ${why}`;
+    for (const t of c.ignored ?? []) lines.push(`      ignored ${t.tag} (${t.status}): ${t.reason}`);
+    if (c.blocked) lines.push(`      did not make ${c.blocked}: an ignored tag holds the name. Delete it to let the tick tag the commit: git push origin :refs/tags/${c.blocked}`);
   }
+  if (r.signer && r.made.length > 0) lines.push(`signed as ${r.signer}`);
   return lines.join("\n");
 }
 
 // ── last-green ───────────────────────────────────────────────────────────────
+
+/** The ref a reader walks: the remote-tracking branch when there is one, else the local branch. */
+function branchRefOf(top: string, green: CiGreen, remote = "origin"): string {
+  const candidates = [`refs/remotes/${remote}/${green.branch}`, `refs/heads/${green.branch}`];
+  const ref = candidates.find((r) => tryGit(top, ["rev-parse", "--verify", "--quiet", `${r}^{commit}`]) !== null);
+  if (!ref) throw new CiGreenError("ci-branch-unknown", `this repository has neither ${candidates.join(" nor ")}`);
+  return ref;
+}
 
 export type LastGreenDocument =
   | {
@@ -422,9 +616,11 @@ export type LastGreenDocument =
       chant: string;
       workspace: { name: string; root: string; file: string };
       branch: string;
-      /** The ref walked: the remote-tracking branch when there is one, else the local branch. */
+      /** The ref walked: the remote-tracking branch when there is one, else the local branch, or the revision `from` named. */
       ref: string;
       commit: { sha: string; tag: string; tagged: string | null; committed: string } | null;
+      /** Tags on the commits walked, down to the one found, that were ignored for want of a valid statement (#4031). Newest first. */
+      ignored: IgnoredCiTag[];
     }
   | { $schema: string; contract: number; chant: string; error: { code: CiGreenErrorCode; message: string } };
 
@@ -433,23 +629,31 @@ export type LastGreenDocument =
  * green tag and no revoked tag. It reads local refs and tags and never
  * fetches, so a reader fetches first (`git fetch origin --tags`).
  */
-export function lastGreen(req: { cwd: string; remote?: string }): LastGreenDocument {
+export function lastGreen(req: { cwd: string; remote?: string; from?: string }): LastGreenDocument {
   const head = { $schema: CI_LAST_GREEN_SCHEMA_ID, contract: CI_LAST_GREEN_CONTRACT_VERSION, chant: readerVersion() };
   try {
     const { green, top, workspace } = readGreen(req.cwd);
-    const candidates = [`refs/remotes/${req.remote ?? "origin"}/${green.branch}`, `refs/heads/${green.branch}`];
-    const ref = candidates.find((r) => tryGit(top, ["rev-parse", "--verify", "--quiet", `${r}^{commit}`]) !== null);
-    if (!ref) throw new CiGreenError("ci-branch-unknown", `this repository has neither ${candidates.join(" nor ")}`);
-    const tags = readCiTags(top);
+    const branchRef = branchRefOf(top, green, req.remote);
+    let ref = branchRef;
+    if (req.from !== undefined) {
+      if (req.from.startsWith("-") || tryGit(top, ["rev-parse", "--verify", "--quiet", `${req.from}^{commit}`]) === null) {
+        throw new WorkspaceReadError("revision-unknown", `--from ${req.from} names no commit in this repository`);
+      }
+      ref = req.from;
+    }
+    // The runner keys are read where the branch is, whichever commit the walk starts from.
+    const tags = readCiTags(top, green, git(top, ["rev-parse", `${branchRef}^{commit}`]));
     let commit: Extract<LastGreenDocument, { branch: string }>["commit"] = null;
-    if (tags.green.size > 0) {
+    const ignored: IgnoredCiTag[] = [];
+    if (tags.green.size > 0 || tags.ignored.size > 0) {
       for (const sha of git(top, ["rev-list", "--first-parent", ref]).split("\n")) {
+        ignored.push(...(tags.ignored.get(sha) ?? []));
         if (!tags.green.has(sha) || tags.revoked.has(sha)) continue;
-        commit = { sha, tag: `${CI_GREEN_TAG_PREFIX}${sha}`, tagged: tags.green.get(sha) || null, committed: git(top, ["show", "-s", "--format=%cI", sha]) };
+        commit = { sha, tag: `${CI_GREEN_TAG_PREFIX}${sha}`, tagged: tags.green.get(sha)!.tagged, committed: git(top, ["show", "-s", "--format=%cI", sha]) };
         break;
       }
     }
-    return { ...head, workspace, branch: green.branch, ref, commit };
+    return { ...head, workspace, branch: green.branch, ref, commit, ignored };
   } catch (err) {
     if (err instanceof CiGreenError || err instanceof WorkspaceReadError) return { ...head, error: { code: err.code, message: err instanceof WorkspaceReadError ? err.describe() : err.message } };
     throw err;
@@ -490,10 +694,16 @@ export interface CiListCommit {
   /** Committer time, ISO 8601. */
   committed: string;
   state: CiCommitState;
-  /** The green tag's name and time, or null when the commit has none. `tagged` is null for a lightweight tag. */
-  green: { tag: string; tagged: string | null } | null;
-  /** The revoked tag's name, time, and the phase and run its annotation names. */
-  revoked: { tag: string; tagged: string | null; phase: string | null; run: CiListRun | null } | null;
+  /**
+   * The green tag's name and time, or null when the commit has none that
+   * counts. `tagged` is null for a lightweight tag. `signer` is the runner
+   * whose statement it carries, or null when it counts unsigned (#4031).
+   */
+  green: { tag: string; tagged: string | null; signer: string | null } | null;
+  /** The revoked tag's name, time, the phase and run its annotation names, and its signer as for `green`. */
+  revoked: { tag: string; tagged: string | null; phase: string | null; run: CiListRun | null; signer: string | null } | null;
+  /** The commit's ci tags that do not count, each for want of a valid statement (#4031). Empty unless ci.green.signedSince is set. */
+  ignored: IgnoredCiTag[];
   /** Each required phase in `require` order. */
   phases: CiListPhase[];
   /**
@@ -522,37 +732,6 @@ export type CiListDocument =
     }
   | { $schema: string; contract: number; chant: string; error: { code: CiGreenErrorCode; message: string } };
 
-interface TagRecord {
-  tagged: string | null;
-  /** The annotation's JSON record, when the tag is annotated and parses. */
-  record: Record<string, unknown> | null;
-}
-
-/** The ci tags with their annotations, read from local refs. */
-function readCiTagRecords(top: string): { green: Map<string, TagRecord>; revoked: Map<string, TagRecord> } {
-  const green = new Map<string, TagRecord>();
-  const revoked = new Map<string, TagRecord>();
-  const raw = git(top, ["for-each-ref", "--format=%(refname:lstrip=2)%00%(taggerdate:iso-strict)%00%(contents)%01", `refs/tags/${CI_GREEN_TAG_PREFIX}`, `refs/tags/${CI_REVOKED_TAG_PREFIX}`]);
-  for (const entry of raw.split("\u0001")) {
-    const [tag, date, contents] = entry.replace(/^\n/, "").split("\u0000");
-    if (!tag) continue;
-    let record: TagRecord["record"] = null;
-    // A lightweight tag has no tagger date, and its "contents" are the commit's message.
-    if (date && contents && contents.includes("{")) {
-      try {
-        const parsed = JSON.parse(contents.slice(contents.indexOf("{")));
-        if (parsed && typeof parsed === "object") record = parsed as Record<string, unknown>;
-      } catch {
-        record = null;
-      }
-    }
-    const value = { tagged: date || null, record };
-    if (tag.startsWith(CI_GREEN_TAG_PREFIX)) green.set(tag.slice(CI_GREEN_TAG_PREFIX.length), value);
-    else revoked.set(tag.slice(CI_REVOKED_TAG_PREFIX.length), value);
-  }
-  return { green, revoked };
-}
-
 const asRun = (r: unknown): CiListRun | null => {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
@@ -561,7 +740,7 @@ const asRun = (r: unknown): CiListRun | null => {
 };
 
 /** What the green tag's annotation recorded for a phase: its runs, all of which passed when the tag was made. */
-function recordedPhase(green: TagRecord | undefined, phase: string): CiListPhase {
+function recordedPhase(green: CountedCiTag | undefined, phase: string): CiListPhase {
   const runs = (green?.record?.phases as Record<string, unknown> | undefined)?.[phase];
   if (!Array.isArray(runs)) return { phase, result: "unrecorded", runs: [] };
   return { phase, result: "pass", runs: runs.map(asRun).filter((r): r is CiListRun => r !== null) };
@@ -589,9 +768,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
   const head = { $schema: CI_LIST_SCHEMA_ID, contract: CI_LIST_CONTRACT_VERSION, chant: readerVersion() };
   try {
     const { green, top, workspace } = readGreen(req.cwd);
-    const candidates = [`refs/remotes/${req.remote ?? "origin"}/${green.branch}`, `refs/heads/${green.branch}`];
-    const ref = candidates.find((r) => tryGit(top, ["rev-parse", "--verify", "--quiet", `${r}^{commit}`]) !== null);
-    if (!ref) throw new CiGreenError("ci-branch-unknown", `this repository has neither ${candidates.join(" nor ")}`);
+    const ref = branchRefOf(top, green, req.remote);
 
     const logArgs = ["log", "--first-parent", "--format=%H %ct"];
     let cutoff = 0;
@@ -611,7 +788,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
     if (req.limit !== undefined) commits = commits.slice(0, req.limit);
 
     const links = await commitLinks(req.cwd, top, ref, commits.map((c) => c.sha));
-    const tags = readCiTagRecords(top);
+    const tags = readCiTags(top, green, git(top, ["rev-parse", `${ref}^{commit}`]));
     const out: CiListCommit[] = [];
     for (const c of commits) {
       const g = tags.green.get(c.sha);
@@ -622,13 +799,21 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
       if (r) {
         const phase = typeof r.record?.phase === "string" ? r.record.phase : null;
         const run = asRun(r.record?.run);
-        revoked = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, tagged: r.tagged, phase, run };
+        revoked = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, tagged: r.tagged, phase, run, signer: r.signer };
         phases = phases.map((p) => (p.phase === phase ? { phase: p.phase, result: "fail", runs: run ? [run] : [] } : p));
       } else if (!g && req.forge) {
         const verdict = evaluateCommit(green, await req.forge.checkRuns(c.sha));
         phases = verdict.phases.map((p) => ({ phase: p.phase, result: p.verdict, runs: p.runs.map(({ name, id, conclusion, url }) => ({ name, id, conclusion, url })) }));
       }
-      out.push({ ...c, state, green: g ? { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, tagged: g.tagged } : null, revoked, phases, work: links?.get(c.sha) ?? null });
+      out.push({
+        ...c,
+        state,
+        green: g ? { tag: `${CI_GREEN_TAG_PREFIX}${c.sha}`, tagged: g.tagged, signer: g.signer } : null,
+        revoked,
+        phases,
+        work: links?.get(c.sha) ?? null,
+        ignored: tags.ignored.get(c.sha) ?? [],
+      });
     }
     return { ...head, workspace, branch: green.branch, ref, window: req.since === undefined ? green.window : null, since: req.since ?? null, require: [...green.require], commits: out };
   } catch (err) {
@@ -644,6 +829,7 @@ export function formatList(doc: Extract<CiListDocument, { branch: string }>): st
     const phases = c.phases.map((p) => `${p.phase}=${p.result}`).join(" ");
     const why = whyWorkUnknown(c.work);
     lines.push(`  ${c.sha.slice(0, 12)}  ${c.state.padEnd(9)}  ${phases}${why ? `; why unknown: ${why}` : ""}`);
+    for (const t of c.ignored) lines.push(`      ignored ${t.tag} (${t.status}): ${t.reason}`);
   }
   return lines.join("\n");
 }

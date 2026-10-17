@@ -194,8 +194,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.overlayAnchor = v;
     } else if (arg === "--from") {
       // Shared by `migrate --from <lexicon>`, `import --from <env>`,
-      // `components promote --from <env>` and `init --from <repo>@<ref>`;
-      // the commands never run together, so one field carries all four.
+      // `components promote --from <env>`, `init --from <repo>@<ref>` and
+      // `ci last-green --from <rev>` (#4031); the commands never run
+      // together, so one field carries all five.
       result.migrateFrom = args[++i];
     } else if (arg === "--kustomize") {
       // `chant import --kustomize <dir>` (#1548): render the overlay, import
@@ -511,6 +512,10 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--app-key-secret") {
       result.ciAppKeySecret = args[++i];
       if (!result.ciAppKeySecret || result.ciAppKeySecret.startsWith("-")) throw new Error("--app-key-secret needs the secret holding the App's private key: --app-key-secret <NAME>");
+    } else if (arg === "--runner-key-secret") {
+      // `chant ci workflow --runner-key-secret <NAME>` (#4031): the secret holding the runner key the tick signs its tags with.
+      result.ciRunnerKeySecret = args[++i];
+      if (!result.ciRunnerKeySecret || result.ciRunnerKeySecret.startsWith("-")) throw new Error("--runner-key-secret needs the repository secret holding the runner key, such as CHANT_RUNNER_KEY: --runner-key-secret <NAME>");
     } else if (arg === "--verdict") {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];

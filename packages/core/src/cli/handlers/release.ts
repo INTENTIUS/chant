@@ -1,15 +1,18 @@
 /**
  * `chant release` (#4026, ws-104): the release is what graduates.
  *
- *   release cut [<label>] [--build <command>] [--param k=v]... [--params-file <file>] [--actor <name>] [--json]
- *       cut a release of this member from the checkout's HEAD, which must be green
+ *   release cut [<label>] [--build <command>] [--param k=v]... [--params-file <file>] [--actor <name>] [--sign [<key file>]] [--json]
+ *       cut a release of this member from the checkout's HEAD, which must be green;
+ *       --sign signs the cut with the actor's ssh key (#4031)
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
  *   release compile --env <env> [--build <command>] [--artifacts --component <a,b>] --json
  *       internal: what the cut runs in a child process per environment
  *
- * The workstation UX for `cut` grows in #4027; signing the cut is #4031.
+ * The workstation UX for `cut` grows in #4027. A declaration whose
+ * `identity.gates` names a `release` gate requires a signed cut by an actor
+ * in its class (#4031).
  */
 
 import { resolve } from "node:path";
@@ -18,7 +21,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--actor <name>] [--json] | release list [--json]";
+  "chant release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--actor <name>] [--sign [<key file>]] [--json] | release list [--json]";
 
 function resolveActor(ctx: CommandContext): string | undefined {
   return ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
@@ -50,7 +53,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     ...(args.paramsFile ? { paramsFile: args.paramsFile } : {}),
   });
   try {
-    const result = await cutRelease({ cwd, compiler, label, actor });
+    const result = await cutRelease({ cwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) });
     const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
     if (args.json) {
       console.log(JSON.stringify({ release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused }, null, 2));
@@ -59,6 +62,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       if (result.cut) console.error(formatSuccess(`Cut ${name}: ${result.release.releaseDigest}`));
       else console.error(formatSuccess(`Already cut${result.label ? ` as ${formatBold(result.label)}` : ""}: ${result.release.releaseDigest}`));
       console.error(`  commit ${result.release.commit}`);
+      if (result.cut) console.error(result.cut.signature ? `  signed by ${result.cut.actor}` : "  not signed");
       console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
       for (const r of result.reused) console.error(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
       console.log(result.release.releaseDigest);
@@ -100,7 +104,11 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
   }
   for (const r of doc.releases) {
     const where = r.environments.map((e) => e.env).join(", ") || "not deployed from the release";
-    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${where}`);
+    // #4031: the newest cut's signature, as the policy at base judges it.
+    const newest = r.cuts.at(-1);
+    const signature = newest ? (newest.signatureCheck.status === "verified" ? `signed by ${newest.actor}` : newest.signatureCheck.status) : "-";
+    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}`);
+    if (newest?.signatureCheck.status === "unverified") console.error(`  ${r.label ?? r.releaseDigest}: ${newest.signatureCheck.reason}`);
   }
   return 0;
 }

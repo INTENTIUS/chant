@@ -113,7 +113,12 @@ export interface ReleaseCut {
   timestamp: string;
   /** The CI run the cut ran in, or null outside CI. */
   runOrigin: RunOrigin | null;
-  /** The signer's signature over the digest and label. Written by #4031; null until then. */
+  /**
+   * The cut's signature (#4031): an armored ssh signature by the actor's key
+   * in the `chant-release` namespace over the release digest, the label, the
+   * actor and the time, one per line (`releaseSealPayload`). Null for an
+   * unsigned cut, and on every cut written before 0.124.28.
+   */
   signature: string | null;
 }
 

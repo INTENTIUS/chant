@@ -315,7 +315,36 @@
             "string",
             "null"
           ],
-          "description": "The signer's signature over the digest and label. Null until #4031 writes it."
+          "description": "Added by #4031, written by chant 0.124.28 and newer. The cut's armored ssh signature (ssh-keygen -Y sign, namespace chant-release) by the actor's key, over the release digest, the label (empty for none), the actor and the timestamp, joined by LF with no final newline. Null for an unsigned cut. A reader checks it against .chant/allowed_signers at base; signatureCheck is chant's own check."
+        },
+        "signatureCheck": {
+          "type": "object",
+          "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. Whether signature verifies for actor against the signers file at base and, when the declaration at base names a release gate in identity.gates with a class, whether the role grants in .chant/trust.json at base put actor in it. Judged on every read.",
+          "required": [
+            "status",
+            "key",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "verified",
+                "unsigned",
+                "unverified"
+              ],
+              "description": "verified: the signature verifies, and the actor is in the release gate's class when it names one. unsigned: the cut has no signature. unverified: it has one that does not count, and reason says why."
+            },
+            "key": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The fingerprint (SHA256:...) of the key in the signature, or null for an unsigned cut or a signature that can't be read. Reported, never trusted."
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
         }
       }
     },

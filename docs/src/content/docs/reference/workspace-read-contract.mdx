@@ -797,7 +797,7 @@ The release model adds these fields to contract 1. Every one is optional or null
 | `_releases/<releaseDigest>.json` | `chant/lifecycle` | the release: `version`, `releaseDigest`, `member`, `commit`, `artifactDigests`, `targets` | 0.124.28 |
 | `_releases/cuts.jsonl` | `chant/lifecycle` | one line per cut, with `label` | 0.124.28 |
 | `_releases/templates/<digest>.txt` | `chant/lifecycle` | each template's bytes, by content digest | 0.124.28 |
-| `signature` | each cut line | the signer's signature over the digest and label; `null` until then | the release with #4031 |
+| `signature` | each cut line | the actor's ssh signature in the `chant-release` namespace over the digest, the label, the actor and the time; `null` for an unsigned cut ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) | 0.124.28 |
 | the `releases` output schema, `v1` | the read contract | releases with their targets and the environments running each | 0.124.28 |
 | `releaseDigest` | `ReleaseRecord` | the release a deploy came from. `components promote --release` writes it from 0.124.28; `run --components`, `rollback` and `redeploy` with #4043 | 0.124.28 for a promote |
 | `releaseDigest`, `releaseLabel` | `status` release item | the same, and the release's label, `null` without one | the release with #4043 |
@@ -820,6 +820,12 @@ These fields are optional in their documents. Each schema description names the 
 | `status` | `gates[].runId` | 0.124.28 | The run that reached the gate: an Op run id, or the CI run id for a component gate that ran in CI |
 | `status` | `stewards[].ops[].lastRun.gitSha` | 0.124.28 | The commit the run built from |
 | `status` | `stewards[].ops[].lastRun.runOrigin` | 0.124.28 | The CI run the Op ran in, as a release's `runOrigin` names its run. Absent outside CI |
+| `status` | `members[].releaseCuts` | 0.124.28 | The member's release cuts, each with `releaseDigest`, `label`, `commit`, `actor`, `timestamp`, `signature` and `signatureCheck` ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). `[]` when none is cut, `null` when the cuts can't be read |
+| `releases` | `releases[].cuts[].signatureCheck` | 0.124.28 | Whether the cut's signature verifies for its actor against the signers at base, and the actor is in the `release` gate's class when it names one: `status` (`verified`, `unsigned` or `unverified`), `key` and `reason` ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
+| `ci-list` | `commits[].green.signer`, `commits[].revoked.signer` | 0.124.28 | The runner whose statement the tag carries, or `null` for a tag that counts unsigned ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
+| `ci-list` | `commits[].ignored` | 0.124.28 | The commit's ci tags that don't count for want of a valid statement, each `{ tag, status, reason }`, with `status` one of `unsigned`, `invalid`, `untrusted` and `mismatch`. Empty unless `ci.green.signedSince` is set. A tag counts unsigned only on a strict first-parent ancestor of that commit ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
+| `ci-last-green` | `ignored` | 0.124.28 | The tags the walk passed over for want of a valid statement, newest first, shaped as in `ci-list` ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
+| `ls` | `ci.green.signedSince` | 0.124.28 | The declaration's `ci.green.signedSince`, the full sha of the first commit whose tags must be signed, present only when it is set ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
 
 The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.
 

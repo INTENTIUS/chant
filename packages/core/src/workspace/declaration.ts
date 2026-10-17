@@ -205,6 +205,15 @@ export interface CiGreen {
   phases: CiPhase[];
   /** The phases a commit must pass, by name, in file order. */
   require: string[];
+  /**
+   * The full sha of the first commit on the branch whose ci tags need a
+   * statement signed by a runner key (#4031). A tag on a strict
+   * first-parent ancestor of it counts unsigned, and any other tag counts
+   * only with one. Readers refuse a sha that names no commit with
+   * `declaration-invalid`. Null when the declaration sets none, and then no
+   * tag needs a statement.
+   */
+  signedSince: string | null;
   pointer: string;
 }
 
@@ -1029,7 +1038,7 @@ function identityOf(raw: unknown): IdentityPolicy | null {
  */
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[] } };
+  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string } };
   if (block.green === undefined) return { green: null };
   const g = block.green;
   const phases: CiPhase[] = Object.entries(g.phases).map(([name, p]) => ({
@@ -1046,7 +1055,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       at(`/ci/green/require/${i}`),
     );
   }
-  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], pointer: "/ci/green" } };
+  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, pointer: "/ci/green" } };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

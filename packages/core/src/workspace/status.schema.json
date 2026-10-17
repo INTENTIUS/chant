@@ -240,6 +240,32 @@
               "canary": { "type": "boolean", "description": "True when the entry sets canary: true." }
             }
           }
+        },
+        "releaseCuts": {
+          "description": "The member's release cuts (#4026, ws-104), oldest first, from _releases/cuts.jsonl on the local chant/lifecycle, each with whether its signature verifies (#4031). Empty when none is cut, null when the cuts could not be read. Optional: written from chant 0.124.28, absent from older output.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["releaseDigest", "label", "commit", "actor", "timestamp", "signature", "signatureCheck"],
+            "properties": {
+              "releaseDigest": { "type": "string", "pattern": "^(jcs1-)?sha256:[0-9a-f]{64}$" },
+              "label": { "type": ["string", "null"] },
+              "commit": { "type": ["string", "null"], "description": "The release's commit, or null when its release file can't be read." },
+              "actor": { "type": "string", "description": "Who cut it." },
+              "timestamp": { "type": "string", "description": "ISO 8601." },
+              "signature": { "type": ["string", "null"], "description": "The cut's armored ssh signature in the chant-release namespace over the release digest, the label (empty for none), the actor and the timestamp, joined by LF. Null for an unsigned cut." },
+              "signatureCheck": {
+                "type": "object",
+                "description": "Whether signature verifies for actor against the signers file at base and, when the declaration at base names a release gate in identity.gates with a class, whether .chant/trust.json at base puts actor in it. Judged on every read.",
+                "required": ["status", "key", "reason"],
+                "properties": {
+                  "status": { "enum": ["verified", "unsigned", "unverified"] },
+                  "key": { "type": ["string", "null"], "description": "The fingerprint of the key in the signature. Reported, never trusted." },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
         }
       }
     },

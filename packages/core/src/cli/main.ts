@@ -227,38 +227,47 @@ Commands:
                                           applied) and path. Read-only.
 
 CI:
-  ci last-green [--json]  The newest first-parent commit of ci.green's branch
-                        with a ci/green tag and no ci/revoked tag. Reads local
-                        tags only; fetch them first.
+  ci last-green [--json] [--from <rev>]  The newest first-parent commit of
+                        ci.green's branch, or of --from, with a ci/green tag
+                        and no ci/revoked tag. Reads local tags only; fetch
+                        them first. With ci.green.signedSince, a tag without a
+                        valid runner statement is ignored and reported.
   ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
                         The first-parent commits of ci.green's branch within
                         its window, newest first, each green, revoked or
                         undecided with its required phases' results. Reads
                         local tags; --forge reads check runs for undecided
                         commits. --since replaces the window.
-  ci tick [--dry-run] [--forge github]  Tag each commit within ci.green's
-                        window whose required phases all passed ci/green/<sha>,
-                        and revoke a green one that now fails ci/revoked/<sha>.
-                        Reads check runs from the forge, pushes the tags.
+  ci tick [--dry-run] [--forge github] [--key <runner key.pem>]  Tag each
+                        commit within ci.green's window whose required phases
+                        all passed ci/green/<sha>, and revoke a green one that
+                        now fails ci/revoked/<sha>. Reads check runs from the
+                        forge, pushes the tags. --key, or the PEM in
+                        CHANT_RUNNER_KEY, signs each tag with a runner key.
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
+              [--runner-key-secret <NAME>]
                         .github/workflows/chant-ci-green.yml, which runs the
                         tick when a required workflow completes and every 15m.
                         --chant replaces the npx @intentius/chant pin the tick
                         runs; --install adds a step before it. --token-secret,
                         or a GitHub App's id and key, pushes the tags with a
                         token that may tag commits changing workflow files.
+                        --runner-key-secret hands the tick the runner key it
+                        signs its tags with.
 
 Releases:
-  release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>]
+  release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--sign [<key file>]]
                         Cut a release of this member from HEAD, which must
                         carry a ci/green tag: compile every environment in
                         the config's environments, build the artifacts once,
                         and store it on chant/lifecycle under its digest.
                         --build runs before each environment's templates are
                         read, with CHANT_ENV set; {env} in --params-file is
-                        replaced by the environment.
+                        replaced by the environment. --sign signs the cut with
+                        the actor's ssh key; an identity.gates release entry
+                        requires it.
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
 

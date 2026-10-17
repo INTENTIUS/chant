@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant release cut [<label>] [--build <command>] [--param <name=value>]... [--params-file <file>] [--actor <name>] [--json]
+chant release cut [<label>] [--build <command>] [--param <name=value>]... [--params-file <file>] [--actor <name>] [--sign [<key file>]] [--json]
 chant release list [--json]
 ```
 
@@ -29,11 +29,13 @@ The cut refuses before it writes anything when:
 
 | Code | When |
 |---|---|
-| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. |
+| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
 | `release-worktree-dirty` | A tracked file has uncommitted changes, so the compile would not be the commit's. |
 | `release-no-environments` | The member's `chant.config.ts` declares no `environments`. |
 | `release-no-components` | No component was discovered in any environment. A release of a project with no components is [#4046](https://github.com/INTENTIUS/chant/issues/4046). |
+| `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and the cut is not signed. See [Who may cut](#who-may-cut). |
+| `release-signer-refused` | The cut's signature does not verify for the actor against the signers file at base, or the actor is not in the `release` gate's class. Nothing is written. |
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
 
 The code is printed in square brackets at the end of the message.
@@ -73,7 +75,31 @@ A workspace member's copies sit under `_members/<member>/`. The cut writes the l
 
 So two cuts of one commit give the same digest.
 
-The label is a human name such as `v1.4.0`. It starts with a letter or digit, and after that it may also hold `.`, `_`, `+` and `-`. Within a member, a label names one digest and a digest takes at most one label. Cutting the same digest again is a no-op that prints its label. Cutting it under another label is refused with `release-already-labelled`, and a label that already names another digest is refused with `release-label-taken`. A digest cut without a label can be given one by a later cut. `signature` is `null` until signing ships ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). `runOrigin` names the CI run, or is `null` outside CI.
+The label is a human name such as `v1.4.0`. It starts with a letter or digit, and after that it may also hold `.`, `_`, `+` and `-`. Within a member, a label names one digest and a digest takes at most one label. Cutting the same digest again is a no-op that prints its label. Cutting it under another label is refused with `release-already-labelled`, and a label that already names another digest is refused with `release-label-taken`. A digest cut without a label can be given one by a later cut. `signature` holds the cut's signature, or `null` for an unsigned cut. `runOrigin` names the CI run, or is `null` outside CI.
+
+### Who may cut
+
+Who may cut a release is an `identity.gates` entry for a gate named `release` ([#4031](https://github.com/INTENTIUS/chant/issues/4031)), read from the declaration at base like every [identity gate](/chant/reference/workspace-declaration/#identity):
+
+```json
+"identity": {
+  "gates": {
+    "release": { "class": "releaser" }
+  }
+}
+```
+
+With the entry, a cut must be signed with `--sign`, by a key `.chant/allowed_signers` at base lists for the actor. With `class`, the role grants in `.chant/trust.json` at base must also put the actor in that class. A class no pinned package supplies lets nothing through. Without the entry anyone may cut, and a signature is optional.
+
+`--sign <key file>` signs with that ssh key, and `--sign` alone uses git's `user.signingkey` when `gpg.format` is `ssh`, as `chant approve --sign` does for a [signed gate](/chant/reference/workspace-declaration/#identity). `--actor` names the signer, as in the cut below.
+
+```bash
+chant release cut v1.4.0 --actor github:alice --sign ~/.ssh/id_ed25519
+```
+
+The signature is `ssh-keygen -Y sign` in the `chant-release` namespace over four lines. They hold the release digest and the label (empty for none), then the actor and the cut's time. Changing any of them in the cut line stops it verifying. The cut checks the signature and the class before it stores anything.
+
+`release list` and [`workspace status`](/chant/cli/workspace-status/) check each cut's signature again on every read, against the signers file and the role grants at base. A key removed from the signers file makes the cuts it signed read as `unverified` from then on.
 
 | Flag | Meaning |
 |---|---|
@@ -81,11 +107,12 @@ The label is a human name such as `v1.4.0`. It starts with a letter or digit, an
 | `--build <command>` | A shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. |
 | `--param <name=value>` | A build parameter for every environment. Repeatable. |
 | `--params-file <file>` | A JSON file of build parameters. `{env}` in the path is replaced by each environment's name, as in `params.{env}.json`. |
-| `--actor <name>` | Who made the cut. Defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN` or `USER`. |
+| `--actor <name>` | Who made the cut. Defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN` or `USER`. A signed cut names the signer here. |
+| `--sign [<key file>]` | Sign the cut with an ssh key, or with git's `user.signingkey` when no file is given. See [Who may cut](#who-may-cut). |
 | `--json` | Print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release. |
 
 ## release list
 
-Lists every release of the member, newest cut first. Each line gives the label and the digest first, then the commit and where it runs.
+Lists every release of the member, newest cut first. Each line starts with the label and the digest. The commit comes next, then the newest cut's signature (`signed by <actor>`, `unsigned` or `unverified`), then where the release runs. An `unverified` signature's reason goes to stderr.
 
-`--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. Each cut carries `signatureCheck`, `{ status, key, reason }`. Its `status` is `verified`, `unsigned` or `unverified`, and `key` is the fingerprint in the signature. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.
