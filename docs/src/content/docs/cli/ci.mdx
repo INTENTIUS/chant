@@ -112,7 +112,7 @@ openssl genpkey -algorithm ed25519 -out runner.pem
 
 A tick given a key the file doesn't list yet refuses it and prints the key's `ssh-ed25519` line to add under `runners`. Keep `runner.pem` out of the repository.
 
-On GitHub the key lives in a repository secret, and `chant ci workflow --runner-key-secret <NAME>` hands it to the tick as `CHANT_RUNNER_KEY`. Turn signing on in this order: add the key to `runners` and the principal to `roles.runner`, store the secret and regenerate the workflow, then set `signedSince` to the next commit the tick will tag, such as the commit that sets it. A chant older than 0.124.28 refuses a declaration with `signedSince`, so set `minReader` to `0.124.28` with it.
+On GitHub the key lives in a repository secret, and `chant ci workflow --runner-key-secret <NAME>` hands it to the tick as `CHANT_RUNNER_KEY`. Turn signing on in this order: add the key to `runners` and the principal to `roles.runner`, store the secret and regenerate the workflow, then set `signedSince` to the sha of the branch's current tip. A commit can't name its own sha, so the commit that sets `signedSince` comes after it, and its tags and every later commit's must be signed. A chant older than 0.124.28 refuses a declaration with `signedSince`, so set `minReader` to `0.124.28` with it.
 
 ## ci workflow
 
