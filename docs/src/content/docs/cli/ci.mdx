@@ -1,6 +1,6 @@
 ---
 title: "chant ci"
-description: Tag each commit that passed its required CI phases, revoke the tag when it later fails, and read the newest green commit from git
+description: Tag each commit that passed its required CI phases and revoke the tag when it later fails. Read the newest green commit, or the state of every recent commit, from git
 diataxis: reference
 ---
 
@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant ci last-green [--json]
+chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
 chant ci tick [--dry-run] [--forge github]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -28,6 +29,22 @@ When no commit qualifies, a message goes to stderr and the exit code is 1.
 
 `--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
 
+## ci list
+
+Prints what happened to the branch's recent history: the first-parent commits inside `ci.green.window`, newest first. Each has a state and the result of every required phase ([#4021](https://github.com/INTENTIUS/chant/issues/4021)). It follows the same ref as `ci last-green` and reads local tags only, so fetch them first with `git fetch origin --tags`.
+
+| State | Meaning |
+|---|---|
+| `green` | The commit has `ci/green/<sha>` and no revoked tag. |
+| `revoked` | The commit has `ci/revoked/<sha>`. |
+| `undecided` | The commit has neither tag. |
+
+A phase's result comes from the tags. A green tag's annotation records the runs of each phase that passed, so a green commit lists every required phase as `pass` with its runs. A revoked one keeps those and shows the phase its revoked tag names as `fail`, with the failed run. An undecided commit has no tag to read, so its phases are `unrecorded` and have no runs. Add `--forge github` to read the check runs of undecided commits from the forge, as `ci tick` does, and each phase becomes `pass`, `fail` or `pending`. The forge is asked about nothing else, and without `--forge` the command reaches no network.
+
+`--limit <n>` keeps the newest `n`. `--since <rev>` lists what came after `rev` and replaces the window, so a reader holding the last sha it saw can ask for what is new.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-list.schema.json`, with `window`, `since`, `require` and a `commits` array. Each entry has `sha`, `committed`, `state`, `phases`, and a `green` and a `revoked` object holding the tag and the time it was made, plus the failed phase and run for a revoked tag. Either object is `null` when the tag is absent. A field linking an entry to other records can be added later, and a reader ignores fields it does not know. A failure uses the codes of `ci last-green`, and `revision-unknown` when `--since` names no commit, with exit code 1.
+
 ## ci tick
 
 One pass over the branch. It fetches the branch and the `ci/*` tags from `origin`, and the fetch prunes a `ci/*` tag deleted there by hand. It reads the check runs of each first-parent commit within `window`, then makes the tags that are due and pushes them, never forced:
@@ -40,7 +57,7 @@ One pass over the branch. It fetches the branch and the `ci/*` tags from `origin
 
 Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag.
 
-The check runs come from the forge. GitHub is the only one so far: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused until a client maps their jobs and statuses to check runs. Pushing the tags needs `contents: write` on the remote.
+The check runs come from the forge. GitHub is the only one so far: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused. GitLab and Forgejo get no status reader. The decision is to cover them through the results of chant's own runs ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) instead of mapping pipeline jobs and commit statuses to check runs: GitLab reports jobs per pipeline and Forgejo reports statuses per context. Each mapping needs its own rules for retries and skips. A run result is the same on every forge. Until #4044 ships, the tags and `ci list` work on any forge's repository, but `ci tick` has no status source there. Pushing the tags needs `contents: write` on the remote.
 
 ## ci workflow
 

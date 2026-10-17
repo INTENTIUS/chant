@@ -106,7 +106,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "ci",
     label: "Tagging the commits that passed CI",
     summary:
-      "`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` reads local tags only and reaches nothing.",
+      "`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` and `chant ci list` read local tags only and reach nothing, except that `chant ci list --forge github` reads the check runs of the commits that have no tag.",
   },
   {
     id: "maintenance",

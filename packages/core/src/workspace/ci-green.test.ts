@@ -10,10 +10,11 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import { parseDeclaration, type CiPhase } from "./declaration";
 import { cleanScratch, contract, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
-import { ciTick, pushRefusalCause, evaluateCommit, evaluatePhase, latestAttempts, lastGreen, matchesCheckRun, windowMs, type LastGreenDocument } from "./ci-green";
+import { ciList, ciTick, pushRefusalCause, evaluateCommit, evaluatePhase, latestAttempts, lastGreen, matchesCheckRun, windowMs, type LastGreenDocument } from "./ci-green";
 import type { CheckRun, CiForge } from "./ci-green-forge";
-import { runCiLastGreen } from "./ci-green-cli";
+import { runCiLastGreen, runCiList } from "./ci-green-cli";
 import lastGreenSchema from "./ci-last-green.schema.json";
+import listSchema from "./ci-list.schema.json";
 import lsSchema from "./ls.schema.json";
 import { listWorkspace, type LsDocument } from "./ls";
 import type { CommandContext } from "../cli/registry";
@@ -397,5 +398,127 @@ describe("chant ci last-green (#3573)", () => {
       ],
       require: ["lint", "test", "macos"],
     });
+  });
+});
+
+// ── list ─────────────────────────────────────────────────────────────────────
+
+describe("chant ci list (#4021)", () => {
+  const readList = contract(listSchema);
+  type Listed = Extract<Awaited<ReturnType<typeof ciList>>, { branch: string }>;
+
+  /** a green, b revoked (test went red), c undecided, d and e outside the 24h window. */
+  async function scenario() {
+    const { root, origin } = workspace();
+    const e = commitAt(root, 40, "app/e.txt");
+    const d = commitAt(root, 30, "app/d.txt");
+    const a = commitAt(root, 5, "app/a.txt");
+    const b = commitAt(root, 4, "app/b.txt");
+    const c = commitAt(root, 1, "app/c.txt");
+    push(root);
+    const runs = new Map([
+      [a, PASSING],
+      [b, PASSING],
+      [c, [run(1, "lint", "success")]],
+    ]);
+    await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+    runs.set(b, [...PASSING, run(9, "test", "failure")]);
+    await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+    return { root, origin, a, b, c, d, e, runs };
+  }
+
+  test("lists the window newest first with each commit's state and phase results, from local tags alone", async () => {
+    const { root, a, b, c } = await scenario();
+    const doc = (await ciList({ cwd: root, now: NOW })) as Listed;
+    readList.expectValid(doc);
+    expect(doc).toMatchObject({ contract: 1, branch: "main", ref: "refs/remotes/origin/main", window: "24h", since: null, require: ["lint", "test", "macos"] });
+    expect(doc.commits.map((x) => [x.sha, x.state])).toEqual([
+      [c, "undecided"],
+      [b, "revoked"],
+      [a, "green"],
+    ]);
+
+    const green = doc.commits[2];
+    expect(green.committed).toBe(hoursAgo(5).replace(/\.\d{3}Z$/, "Z"));
+    expect(green.green).toMatchObject({ tag: `ci/green/${a}` });
+    expect(green.green!.tagged).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect(green.revoked).toBeNull();
+    expect(green.phases.map((p) => [p.phase, p.result])).toEqual([["lint", "pass"], ["test", "pass"], ["macos", "pass"]]);
+    expect(green.phases[1].runs.map((r) => r.name)).toEqual(["test", "e2e (chromium)"]);
+
+    // The revoked commit keeps what its green tag recorded, and shows the failed phase and run.
+    const revoked = doc.commits[1];
+    expect(revoked.green).not.toBeNull();
+    expect(revoked.revoked).toMatchObject({ tag: `ci/revoked/${b}`, phase: "test", run: { name: "test", id: 9, conclusion: "failure" } });
+    expect(revoked.phases.map((p) => [p.phase, p.result])).toEqual([["lint", "pass"], ["test", "fail"], ["macos", "pass"]]);
+    expect(revoked.phases[1].runs).toEqual([expect.objectContaining({ name: "test", id: 9 })]);
+
+    // No tag, no forge: nothing is recorded, and nothing is guessed.
+    expect(doc.commits[0].phases.map((p) => [p.phase, p.result, p.runs.length])).toEqual([["lint", "unrecorded", 0], ["test", "unrecorded", 0], ["macos", "unrecorded", 0]]);
+    expect(doc.commits[0]).toMatchObject({ green: null, revoked: null });
+  });
+
+  test("--forge judges the undecided commits only, and --limit and --since narrow the walk", async () => {
+    const { root, a, b, c, d, e, runs } = await scenario();
+    const forge = fakeForge(runs);
+    const live = (await ciList({ cwd: root, now: NOW, forge })) as Listed;
+    readList.expectValid(live);
+    expect(forge.asked).toEqual([c]);
+    expect(live.commits[0].phases.map((p) => [p.phase, p.result])).toEqual([["lint", "pass"], ["test", "pending"], ["macos", "pending"]]);
+    expect(live.commits[0].phases[0].runs).toEqual([expect.objectContaining({ name: "lint", id: 1, conclusion: "success" })]);
+
+    const two = (await ciList({ cwd: root, now: NOW, limit: 2 })) as Listed;
+    expect(two.commits.map((x) => x.sha)).toEqual([c, b]);
+
+    const after = (await ciList({ cwd: root, now: NOW, since: a })) as Listed;
+    readList.expectValid(after);
+    expect(after).toMatchObject({ window: null, since: a });
+    expect(after.commits.map((x) => x.sha)).toEqual([c, b]);
+    // --since replaces the window, so a commit older than 24h is listed when the range reaches it.
+    const all = (await ciList({ cwd: root, now: NOW, since: e })) as Listed;
+    expect(all.commits.map((x) => x.sha)).toEqual([c, b, a, d]);
+  });
+
+  test("an unknown --since, no ci.green and an unknown branch are failures in the schema", async () => {
+    const { root } = await scenario();
+    const bad = await ciList({ cwd: root, now: NOW, since: "no-such-rev" });
+    readList.expectValid(bad);
+    expect(bad).toMatchObject({ error: { code: "revision-unknown" } });
+
+    const plain = scratchDir("chant-ci-plain-");
+    git(plain, "init", "-q");
+    writeFiles(plain, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "x" }]), "app/a.txt": "a\n" });
+    const undeclared = await ciList({ cwd: plain });
+    readList.expectValid(undeclared);
+    expect(undeclared).toMatchObject({ error: { code: "ci-green-undeclared" } });
+
+    const none = workspace();
+    readList.expectValid(await ciList({ cwd: none.root }));
+  });
+
+  test("the command prints the document under --json and a line per commit otherwise", async () => {
+    const { root, a, b, c, e } = await scenario();
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    try {
+      // The command reads the real clock, so these commits sit outside its window: --since names them.
+      const text = await captured(() => runCiList({ args: { limit: 3, since: e } } as unknown as CommandContext));
+      expect(text.code).toBe(0);
+      expect(text.out).toContain(`${c.slice(0, 12)}  undecided  lint=unrecorded test=unrecorded macos=unrecorded`);
+      expect(text.out).toContain(`${b.slice(0, 12)}  revoked    lint=pass test=fail macos=pass`);
+      expect(text.out).toContain(`${a.slice(0, 12)}  green      lint=pass test=pass macos=pass`);
+
+      const json = await captured(() => runCiList({ args: { json: true, since: a } } as unknown as CommandContext));
+      expect(json.code).toBe(0);
+      readList.expectValid(JSON.parse(json.out));
+      expect((JSON.parse(json.out) as Listed).commits).toHaveLength(2);
+
+      expect((await captured(() => runCiList({ args: { limit: 0 } } as unknown as CommandContext))).code).toBe(1);
+      const refused = await captured(() => runCiList({ args: { json: true, since: "no-such-rev" } } as unknown as CommandContext));
+      expect(refused.code).toBe(1);
+      expect(JSON.parse(refused.out)).toMatchObject({ error: { code: "revision-unknown" } });
+      expect((await captured(() => runCiList({ args: { forge: "gitlab" } } as unknown as CommandContext))).code).toBe(1);
+    } finally {
+      cwd.mockRestore();
+    }
   });
 });

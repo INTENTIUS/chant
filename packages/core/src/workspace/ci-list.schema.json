@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json",
+  "title": "chant ci list output",
+  "description": "What `chant ci list --json` prints (#4021, ws-103): the first-parent commits of the branch ci.green names, newest first, within ci.green.window or after --since, each with its state from the ci/green/<sha> and ci/revoked/<sha> tags and the result of each required phase. It reads local refs and tags and never fetches; with --forge it also reads check runs for the commits that have no ci tag. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version, so a later release may add a field to each commit, such as the work item it applied. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "Exit code 0, with or without commits.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "branch",
+        "ref",
+        "window",
+        "since",
+        "require",
+        "commits"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root",
+            "file"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself."
+            },
+            "file": {
+              "enum": [
+                "chant.workspace.json",
+                "chant.workspace.jsonc"
+              ]
+            }
+          }
+        },
+        "branch": {
+          "type": "string",
+          "description": "ci.green.branch."
+        },
+        "ref": {
+          "type": "string",
+          "description": "The ref whose first-parent commits were walked: refs/remotes/origin/<branch> when the checkout has it, else refs/heads/<branch>."
+        },
+        "window": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "ci.green.window, or null when --since replaced it."
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The revision --since named; the commits listed come after it. Null when it was not given."
+        },
+        "require": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "ci.green.require: the phases a commit must pass, in order. Each commit's phases list them in the same order."
+        },
+        "commits": {
+          "type": "array",
+          "description": "Newest first.",
+          "items": {
+            "type": "object",
+            "required": [
+              "sha",
+              "committed",
+              "state",
+              "green",
+              "revoked",
+              "phases"
+            ],
+            "properties": {
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "committed": {
+                "type": "string",
+                "description": "The commit's committer time, ISO 8601, UTC."
+              },
+              "state": {
+                "enum": [
+                  "green",
+                  "revoked",
+                  "undecided"
+                ],
+                "description": "revoked when the commit has a revoked tag, else green when it has a green tag, else undecided."
+              },
+              "green": {
+                "description": "The commit's green tag, or null.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "tag",
+                      "tagged"
+                    ],
+                    "properties": {
+                      "tag": {
+                        "type": "string",
+                        "description": "ci/green/<sha>."
+                      },
+                      "tagged": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "When the tag was made, ISO 8601, or null for a lightweight tag."
+                      }
+                    }
+                  }
+                ]
+              },
+              "revoked": {
+                "description": "The commit's revoked tag, or null.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "tag",
+                      "tagged",
+                      "phase",
+                      "run"
+                    ],
+                    "properties": {
+                      "tag": {
+                        "type": "string",
+                        "description": "ci/revoked/<sha>."
+                      },
+                      "tagged": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "When the tag was made, ISO 8601, or null for a lightweight tag."
+                      },
+                      "phase": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The phase the annotation names as failed, or null when the annotation can't be read."
+                      },
+                      "run": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "required": [
+                              "name",
+                              "id",
+                              "conclusion",
+                              "url"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "conclusion": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "url": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            }
+                          }
+                        ],
+                        "description": "The run the annotation names as failed."
+                      }
+                    }
+                  }
+                ]
+              },
+              "phases": {
+                "type": "array",
+                "description": "Each required phase, in `require` order.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "result",
+                    "runs"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "pending",
+                        "unrecorded"
+                      ],
+                      "description": "pass and fail come from the tags (a green tag records the phases that passed, a revoked tag the one that failed) or, for an undecided commit, from the forge under --forge. pending is a forge read with runs still going or not yet reported. unrecorded means no tag holds the result and the forge was not asked."
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "id",
+                          "conclusion",
+                          "url"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "conclusion": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      "description": "The check runs behind the result: those the green tag recorded, the failed run a revoked tag names, or those the forge returned. Empty when unrecorded."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "ci-green-undeclared",
+                "ci-branch-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

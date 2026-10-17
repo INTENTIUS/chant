@@ -230,6 +230,12 @@ CI:
   ci last-green [--json]  The newest first-parent commit of ci.green's branch
                         with a ci/green tag and no ci/revoked tag. Reads local
                         tags only; fetch them first.
+  ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
+                        The first-parent commits of ci.green's branch within
+                        its window, newest first, each green, revoked or
+                        undecided with its required phases' results. Reads
+                        local tags; --forge reads check runs for undecided
+                        commits. --since replaces the window.
   ci tick [--dry-run] [--forge github]  Tag each commit within ci.green's
                         window whose required phases all passed ci/green/<sha>,
                         and revoke a green one that now fails ci/revoked/<sha>.
@@ -1195,6 +1201,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "carve status", handler: runCarveStatus },
   // #3573 — which commits passed CI, kept as ci/green and ci/revoked tags (ws-103). Imported on first use.
   { name: "ci last-green", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiLastGreen(ctx) },
+  { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
