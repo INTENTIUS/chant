@@ -80,6 +80,7 @@ const BOOLEAN_FLAGS = new Set([
   "--record-plans",
   "--loopback",
   "--artifacts",
+  "--push",
 ]);
 
 /**
@@ -248,6 +249,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.dryRun = true;
     } else if (arg === "--yes") {
       result.yes = true;
+    } else if (arg === "--push") {
+      // `chant lifecycle gc --yes --push` (#4036): push the prune commit.
+      result.push = true;
     } else if (arg === "--confirm-prod") {
       result.confirmProd = true;
     } else if (arg === "--strict") {

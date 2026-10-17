@@ -17,6 +17,7 @@ chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--j
 chant lifecycle whoami <env> [lexicon] [--json] [--strict]
 chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
 chant lifecycle log [env]
+chant lifecycle gc [--yes] [--push] [--json] [--verbose]
 ```
 
 ## Description
@@ -640,6 +641,55 @@ List the history of snapshots. Omit `env` to show all environments.
 chant lifecycle log         # all environments
 chant lifecycle log dev     # just dev
 ```
+
+### `lifecycle gc`
+
+Prune the stored records that grow `chant/lifecycle` without bound, by a retention policy ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). On the branch it prunes stored change sets in `_change-sets/` and releases in `_releases/`. A pruned release takes with it the template bytes in `_releases/templates/` that no kept release names. On this host it deletes old run event files in `<git-common-dir>/chant/run-events/`.
+
+```bash
+chant lifecycle gc                 # dry run: what would go, and the sizes before and after
+chant lifecycle gc --yes           # prune: one commit on the local chant/lifecycle
+chant lifecycle gc --yes --push    # prune and push the commit
+```
+
+| Flag | Meaning |
+|---|---|
+| `--yes` | Prune. Without it the command is a dry run and changes nothing |
+| `--push` | Push the prune commit to the ledger remote. Without it the commit stays local until the next push of `chant/lifecycle` |
+| `--json` | Print the report as JSON: the policy, every file removed and kept with the reasons it is kept, the tree's size before and after, and the run event files |
+| `--verbose` | List each file removed |
+
+The command reads the whole branch, every member's ledger at once, from anywhere in the repository. It fetches `chant/lifecycle` first, so the plan sees the remote's newest gate facts, and refuses to prune when the local branch and the remote's have forked or the remote did not answer.
+
+#### The policy
+
+| Kind | Default | Kept while |
+|---|---|---|
+| `changeSets` | 14 days | it was stored, or named by a gate fact, within `days` |
+| `releases` | 14 days, newest 10 | it is promotable: cut within `days`, or among the newest `keep` of its member, and its commit has no `ci/revoked` tag |
+| `runEvents` | 14 days, newest 100 | its file was written within `days`, or it is among the newest `keep` files |
+
+A workspace overrides any of these in the `retention` block of its declaration, read at base. See [Retention](/chant/reference/workspace-declaration/#retention). A project with no declaration uses the defaults.
+
+#### What is never pruned
+
+Whatever the policy says, `gc` keeps what these rules name. The `--json` report gives each kept file its reasons, by the code in the first column.
+
+| Code | Kept |
+|---|---|
+| `deployed` | A release that the latest deploy record of a component in an environment names, by its `releaseDigest` or by the release gate approval its `admission` names. A promotion takes what the step before runs, so this keeps every release a promotion picks up by default |
+| `pending-gate` | The change set and release a pending fact binds, until the fact expires |
+| `newest`, `within-window` | A release still promotable, as the table above defines it. For a change set, `within-window` is its window |
+| `kept-release` | A template that a kept release names, and a change set that an approval, an `empty` resolution or a pending fact names with a kept release |
+| `unreadable` | A file in `_releases/` that can't be read as a release, and then every template of its member |
+
+#### What a prune changes
+
+A prune is one new commit on top of the branch that removes files. It never rewrites history and never force-pushes. Other clones and tools read `chant/lifecycle`, and every removed file stays in the commits before the prune, so `git log chant/lifecycle -- <path>` still finds it. A prune therefore bounds the tree a reader walks at the tip. The repository's history goes on growing by what chant writes, plus the small prune commit.
+
+No `.jsonl` file on the branch is pruned or edited. That covers `_releases/cuts.jsonl`, `<env>/releases.jsonl`, `_gates/<op>.jsonl` and the run ledgers. They are append-only. The rules above read them to learn what an environment runs and which gate is pending. A cut line stays when its release is pruned. Its label still names that digest and can't be given to another release. After a prune, `chant release list` no longer lists a pruned release, and `chant change-set show` reports a pruned change set as missing. Snapshots, `_plans/` and `_builds/` have no policy yet and are not pruned.
+
+`retention-growth.e2e.test.ts` writes a month at chant's own rate to a test repository: 28.5 runs, 25 pull-request gates and 4.7 release cuts a day. Pruned with the defaults at the end of the month, its tree goes from 2277 files (5174 KiB) to 1477 files (3036 KiB). The packed history grows from 8643 KiB to 8662 KiB. The run event files go from 855 (6264 KiB) to 399 (2925 KiB). The ledgers stay at 771 files (1142 KiB). `retention-growth.e2e.test.ts` writes that month.
 
 ## Exit Codes
 

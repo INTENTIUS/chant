@@ -179,6 +179,42 @@
           "$ref": "#/$defs/ciGreen"
         }
       }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": true
+      },
+      "description": "How long chant lifecycle gc keeps each kind of stored record (#4036). A kind or field left out keeps its default: changeSets 14 days; releases 14 days and the newest 10 of each member; runEvents 14 days and the newest 100. Whatever the policy, gc never prunes a release an environment runs, what a pending gate binds, or a change set a gate names with a kept release. Read from the declaration at base. Added in schema 1 by chant 0.124.29, so a declaration that uses it sets minReader to 0.124.29 or newer.",
+      "properties": {
+        "changeSets": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Stored change sets, _change-sets/<digest>.json on chant/lifecycle.",
+          "properties": {
+            "days": { "$ref": "#/$defs/retentionDays" }
+          }
+        },
+        "releases": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Releases, _releases/<digest>.json on chant/lifecycle, with the template bytes only they name. A release stays promotable for days after its newest cut, and the newest keep releases of each member stay promotable at any age, unless their commit is revoked.",
+          "properties": {
+            "days": { "$ref": "#/$defs/retentionDays" },
+            "keep": { "$ref": "#/$defs/retentionKeep" }
+          }
+        },
+        "runEvents": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Run event files, <git-common-dir>/chant/run-events/<run>.jsonl on each host. A file is kept for days after its last write, and the newest keep files at any age.",
+          "properties": {
+            "days": { "$ref": "#/$defs/retentionDays" },
+            "keep": { "$ref": "#/$defs/retentionKeep" }
+          }
+        }
+      }
     }
   },
   "patternProperties": {
@@ -186,6 +222,18 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "retentionDays": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 36500,
+      "description": "Days a record is kept past its last write or use. 0 lets every record go that no never-prune rule keeps."
+    },
+    "retentionKeep": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000,
+      "description": "How many of the newest are kept at any age."
+    },
     "name": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",

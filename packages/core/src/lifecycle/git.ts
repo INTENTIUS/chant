@@ -172,6 +172,21 @@ export interface LedgerFileWrite {
 }
 
 /**
+ * One file for {@link writeLedgerFiles} to remove (#4036): retention's
+ * garbage collection takes a stored change set, release or template out of
+ * the tree in a new commit. The history keeps it.
+ */
+export interface LedgerFileRemoval {
+  /** The file's full path on the branch. No prefix is added. */
+  path: string;
+  remove: true;
+  /** The blob sha the caller saw at the path; a different sha, or no file, is a conflict. */
+  expectPriorSha?: string | null;
+}
+
+const isRemoval = (f: LedgerFileWrite | LedgerFileRemoval): f is LedgerFileRemoval => (f as LedgerFileRemoval).remove === true;
+
+/**
  * Write several files to the branch in one commit (#2538). Paths are full
  * branch paths, so one commit can write the ledgers of several members, for
  * example `_members/api/prod/releases.jsonl` and
@@ -185,9 +200,18 @@ export interface LedgerFileWrite {
  * of an unchanged directory keeps its sha.
  */
 export async function writeLedgerFiles(
-  files: LedgerFileWrite[],
+  files: Array<LedgerFileWrite | LedgerFileRemoval>,
   commitMessage: string,
-  opts?: { cwd?: string },
+  opts?: {
+    cwd?: string;
+    /**
+     * The branch tip the caller read before deciding what to write (#4036).
+     * A different tip is a conflict, thrown at once and never retried here,
+     * so a caller whose choice depends on files it does not write (garbage
+     * collection reading the gate ledgers) reads again.
+     */
+    expectTip?: string;
+  },
 ): Promise<string> {
   const rt = getRuntime();
   const cwd = opts?.cwd;
@@ -208,8 +232,13 @@ export async function writeLedgerFiles(
   // kubectl.kubernetes.io/last-applied-configuration annotation) and no
   // shell-quoting dance around embedded single quotes. Content-addressed
   // and idempotent, so this stays outside the retry loop below.
-  const blobs: { path: string; sha: string }[] = [];
+  // A removal has no blob: its sha is null, and step 3 deletes the entry.
+  const blobs: { path: string; sha: string | null }[] = [];
   for (const f of files) {
+    if (isRemoval(f)) {
+      blobs.push({ path: f.path, sha: null });
+      continue;
+    }
     const blobResult = await rt.spawn(["git", "hash-object", "-w", "--stdin"], { cwd, stdin: f.content });
     if (blobResult.exitCode !== 0) {
       throw ledgerWriteError("git hash-object", f.path, blobResult.stderr);
@@ -283,6 +312,9 @@ export async function writeLedgerFiles(
     // there instead can observe a newer tip than the listings reflect, which
     // makes the CAS succeed against a tree built from a stale read.
     const tip = await getStateBranchTip(cwd);
+    if (opts?.expectTip !== undefined && tip !== opts.expectTip) {
+      throw new RefCASConflictError(`refs/heads/${STATE_BRANCH}`, opts.expectTip, `the branch moved to ${tip ?? "(none)"} since it was read`);
+    }
     const trees = new Map<string, Map<string, TreeLine>>();
     const listing = async (dir: string): Promise<Map<string, TreeLine>> => {
       let entries = trees.get(dir);
@@ -312,16 +344,22 @@ export async function writeLedgerFiles(
     // rebuild below has each parent in hand.
     for (const b of blobs) {
       const { dir, name } = splitPath(b.path);
-      (await listing(dir)).set(name, { mode: "100644", type: "blob", sha: b.sha });
+      if (b.sha === null) (await listing(dir)).delete(name);
+      else (await listing(dir)).set(name, { mode: "100644", type: "blob", sha: b.sha });
       for (let d = dir; d !== ""; d = parentDir(d)) await listing(parentDir(d));
     }
 
-    // 4. Rebuild the touched trees, deepest first, then the root.
+    // 4. Rebuild the touched trees, deepest first, then the root. A directory
+    // a removal left empty is dropped from its parent, as git itself would.
     const touched = [...trees.keys()].sort((a, b) => depth(b) - depth(a) || (a < b ? -1 : 1));
     let rootTreeSha = "";
     for (const dir of touched) {
+      if (dir !== "" && trees.get(dir)!.size === 0) {
+        trees.get(parentDir(dir))!.delete(baseName(dir));
+        continue;
+      }
       const lines = [...trees.get(dir)!].map(([name, e]) => `${e.mode} ${e.type} ${e.sha}\t${name}`).join("\n");
-      const result = await rt.spawn(["git", "mktree"], { cwd, stdin: `${lines}\n` });
+      const result = await rt.spawn(["git", "mktree"], { cwd, stdin: lines === "" ? "" : `${lines}\n` });
       if (result.exitCode !== 0) {
         throw ledgerWriteError(`git mktree (${dir === "" ? "root" : dir})`, path, result.stderr);
       }

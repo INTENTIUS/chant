@@ -798,6 +798,13 @@ Lifecycle (alias: lc):
                             executes the plan (production-like names also need
                             --confirm-prod, or an interactive confirmation)
   lifecycle log [env]       History of lifecycle snapshots
+  lifecycle gc [--yes] [--push] [--json]
+                            Prune stored change sets, releases and run event
+                            files by the retention policy (#4036). A dry run
+                            without --yes; --yes writes one commit removing
+                            them on the local chant/lifecycle and deletes the
+                            run event files; --push pushes it. History is
+                            never rewritten, and the ledgers are never pruned
 
 Plan scenarios (#1292):
   scenario check            Evaluate every declared Scenario's expect clause
@@ -1375,6 +1382,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "lifecycle whoami", requiresPlugins: true, handler: runLifecycleWhoami },
   { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
+  // #4036 — retention's garbage collection. Imported on first use.
+  { name: "lifecycle gc", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lifecycle-gc")).runLifecycleGc(ctx) },
 
   // Plan scenarios (#1292) — fully offline, no plugin network calls, but
   // requiresPlugins:true so the build step has serializers to partition

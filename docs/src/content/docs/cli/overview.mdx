@@ -98,6 +98,7 @@ Capture and compare deployed infrastructure state. Snapshots are stored on an or
 | [`lifecycle diff <env> --live`](/chant/cli/lifecycle/) | Query cloud right now and report drift (seven categories: missing, orphan, disappeared, newly observed, drifted, unchanged, unobserved) |
 | [`lifecycle whoami <env>`](/chant/cli/lifecycle/#lifecycle-whoami-env) | Who chant would act as in each configured lexicon, and what that principal is scoped to — read-only, before anything acts |
 | [`lifecycle log [env]`](/chant/cli/lifecycle/) | History of lifecycle snapshots |
+| [`lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) | Prune stored change sets, releases and run event files by the retention policy; a dry run without `--yes` |
 
 ## Component Release Ledger + Status
 

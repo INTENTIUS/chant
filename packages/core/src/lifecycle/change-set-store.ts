@@ -21,7 +21,8 @@
  * component gate in a plain `run --components` binds a lifecycle-plan digest
  * and stores nothing here.
  *
- * How long a stored change set is kept is #4036's retention policy.
+ * `chant lifecycle gc` removes a stored change set from the branch's tree
+ * once #4036's retention policy lets it go (./retention.ts); history keeps it.
  */
 
 import { sortedJsonReplacer } from "../utils";

@@ -16,6 +16,7 @@
  * runs. The level-0 goldens (#2526) fail if a level-0 command loads it.
  */
 
+import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-policy";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
@@ -601,6 +602,12 @@ export interface Declaration {
   identity: IdentityPolicy | null;
   /** What the workspace's CI decides about its commits (#3573), or null when the declaration has no `ci` block. */
   ci: CiDeclaration | null;
+  /**
+   * The `retention` block as written (#4036): the kinds and fields it sets,
+   * which `resolveRetention` (../lifecycle/retention-policy.ts) lays over the
+   * defaults. Null when the declaration has no `retention` block.
+   */
+  retention: RetentionOverride | null;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -977,6 +984,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     agents,
     identity: identityOf(obj.identity),
     ci,
+    retention: retentionOf(obj.retention),
     file,
   };
   written.set(declaration, raw);
@@ -1047,6 +1055,21 @@ function identityOf(raw: unknown): IdentityPolicy | null {
  * The `ci` block, already validated by the schema, with its defaults and the
  * rule the schema can't say (#3573): every phase `require` names is declared.
  */
+/** The `retention` block, already validated by the schema, without its `x-` keys (#4036). */
+function retentionOf(raw: unknown): RetentionOverride | null {
+  if (!raw || typeof raw !== "object") return null;
+  const out: RetentionOverride = {};
+  for (const kind of RETENTION_KINDS) {
+    const k = (raw as Record<string, Record<string, unknown> | undefined>)[kind];
+    if (!k) continue;
+    out[kind] = {
+      ...(typeof k.days === "number" ? { days: k.days } : {}),
+      ...(typeof k.keep === "number" ? { keep: k.keep } : {}),
+    };
+  }
+  return out;
+}
+
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
   const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string; source?: CiSource } };

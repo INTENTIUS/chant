@@ -62,6 +62,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `agents` | no | The agent sessions, each bound to one member or several. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0, and a session's `members` in chant 0.105.0. |
 | `identity` | no | Who a person-attributed record or gate approval may name, and which gates pass only on a signed approval. See [Identity](#identity). It was added in chant 0.102.0. |
 | `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.108.0. |
+| `retention` | no | How long `chant lifecycle gc` keeps stored change sets, releases and run event files. See [Retention](#retention). It was added in chant 0.124.29. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. [`status --json`](/chant/cli/workspace-status/#output) and [`ls --json`](/chant/cli/workspace-ls/#output) print them back, as written, on the object of their output that the declaration holds them on ([#3595](https://github.com/INTENTIUS/chant/issues/3595)), so a tool reads what it wrote without parsing the file. |
@@ -349,6 +350,26 @@ The result is kept as two kinds of annotated tag. chant makes each one once, and
 A revoked commit doesn't go green again by itself. Deleting its `ci/revoked/<sha>` tag by hand makes it count as green again, since its green tag is still there.
 
 With `signedSince`, the annotation also holds the statement a runner key signed, and every reader ignores and reports a tag outside the ancestry of `signedSince` without a valid one ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
+
+## Retention
+
+`retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.
+
+```json
+"retention": {
+  "changeSets": { "days": 30 },
+  "releases": { "days": 30, "keep": 20 },
+  "runEvents": { "days": 7, "keep": 50 }
+}
+```
+
+| Kind | Where it is kept | `days` default | `keep` default |
+|---|---|---|---|
+| `changeSets` | `_change-sets/<digest>.json` on `chant/lifecycle` | 14, counted from when it was stored or last named by a gate fact | does not apply |
+| `releases` | `_releases/<digest>.json` on `chant/lifecycle`, with the templates only they name | 14, counted from the newest cut | 10 per member |
+| `runEvents` | `<git-common-dir>/chant/run-events/<run>.jsonl` on each host | 14, counted from the last write | 100 |
+
+`days` and `keep` are whole numbers from 0. A release is kept while it is promotable: cut within `days`, or among the newest `keep` releases of its member, and its commit has no `ci/revoked` tag. The policy never lets go of a release an environment runs, of what a pending gate binds, or of a change set a gate names with a kept release; [What is never pruned](/chant/cli/lifecycle/#what-is-never-pruned) lists the rules. The ledgers are never pruned. A declaration with `retention` sets `minReader` to `0.124.29` or newer.
 
 ## Diagrams
 
@@ -861,6 +882,8 @@ chant records each lifecycle fact on the orphan branch `chant/lifecycle`, and ke
 | Converge tick records | `<ledger><env>/converge.jsonl` |
 | Gate facts, pending and resolved | `<ledger>_gates/<op>.jsonl` |
 | Build manifests | `<ledger>_builds/<digest>.json` |
+| Stored change sets | `<ledger>_change-sets/<digest>.json`, pruned by [retention](#retention) |
+| Releases, their cuts and template bytes | `<ledger>_releases/<digest>.json`, `<ledger>_releases/cuts.jsonl` and `<ledger>_releases/templates/<digest>.txt`; the release files and templates are pruned by [retention](#retention) |
 | Operator leases | the ref `refs/chant/lease/<ledger><op>` |
 
 chant looks up from a project's directory to the git root for a declaration. The entry that owns the directory decides the ledger.
