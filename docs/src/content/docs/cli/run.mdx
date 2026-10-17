@@ -298,7 +298,7 @@ chant components promote --from staging --to prod --digest "$(cat search-service
 
 #### Streaming progress: `--progress-json`
 
-`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged.
+`--progress-json` streams one NDJSON record per line to stdout while the run executes, so a consumer can render live progress instead of tailing logs. On the component path each line is a `RunProgressEvent` (wave, component, phase, step). On `chant run <name>` each line is a `StepRecord` for a settled step, fed by whatever runtime is hosting the run. Run semantics, ordering and exit code are unchanged. Both shapes are deprecated for new readers. They give way to the [run-event stream](/chant/reference/workspace-read-contract/#run-events), whose every line names its run. The `--progress-json` output moves to it with [#4041](https://github.com/INTENTIUS/chant/issues/4041).
 
 On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact, `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. It is a CLI step after the run, outside the composition, and runs only when the deploy succeeds. See [Auto-recorded releases](#auto-recorded-releases) below.
 

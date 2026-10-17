@@ -153,6 +153,8 @@ export type { SymbolDeclaration, SymbolResolver } from "./workspace/symbols";
 export * from "./lsp/lexicon-providers";
 export * from "./mcp/types";
 export * from "./lifecycle/index";
+// The run-event contract (#4019): the types and the one writer of a run's stream.
+export * from "./run-event";
 // Op builders — use explicit exports to avoid collision with the core `build` function
 export { Op, phase, activity, gate, kubectlApply, helmInstall, waitForStack,
          gitlabPipeline, lifecycleSnapshot, shell, teardown, OpResource } from "./op/index";

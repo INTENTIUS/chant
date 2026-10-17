@@ -64,6 +64,16 @@ export { parseDuration } from "./duration";
 
 // ── Records ─────────────────────────────────────────────────────────────────
 
+/**
+ * One settled step of an Op run, as `OpRunResult.records` holds it.
+ *
+ * As a `chant run <op> --progress-json` line it is deprecated: read
+ * `RunEvent` (`../run-event.ts`, exported from `@intentius/chant`)
+ * instead, whose `step-settle` carries the run id, commit and runtime too,
+ * and whose step statuses are `ok`, `failed`, `skipped`, `cached`, `gated`
+ * and `waiting` (#4019). `runEventsOfStepRecord` maps a record onto it.
+ * `--progress-json` keeps printing records until #4041 moves it.
+ */
 export interface StepRecord {
   phase: string;
   fn: string;
