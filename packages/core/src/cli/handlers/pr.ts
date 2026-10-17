@@ -476,6 +476,11 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     );
   }
 
+  // #4022: keep the change set the gate binds on chant/lifecycle under its
+  // digest before deciding the gate, so the plan an approval bound, or the
+  // one a pending fact waits on, can be read once this job is gone.
+  await storeChangeSetForGate(ctx, p, set.doc);
+
   let approval: PrApproval;
   if (resumed) {
     approval = resumed.approval;
@@ -612,6 +617,29 @@ function emitReviewStop(events: RunEventStream | undefined, message: string): vo
   events.emit({ type: "step-start", component: null, phase: "review", step: "review" });
   events.emit({ type: "step-settle", component: null, phase: "review", step: "review", status: "gated", durationMs: null, message });
   events.emit({ type: "phase-settle", component: null, phase: "review", status: "gated" });
+}
+
+/**
+ * Store `doc` under its digest with its entries mapped onto the member's
+ * graph (`storeGateChangeSet`), and push. A failure is a warning: the gate
+ * decides the same either way.
+ */
+async function storeChangeSetForGate(ctx: CommandContext, p: Prepared, doc: PrPlanSet["doc"]): Promise<void> {
+  const { storeGateChangeSet, gateGraphReader } = await import("../../lifecycle/gate-change-set");
+  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  const graphArgs = [
+    ...(ctx.args.param ?? []).flatMap((kv) => ["--param", kv]),
+    ...(ctx.args.paramsFile ? ["--params-file", ctx.args.paramsFile] : []),
+  ];
+  try {
+    const stored = await storeGateChangeSet({ doc, cwd: resolve("."), at: p.head, readGraph: gateGraphReader(graphArgs) });
+    if (stored.warning) console.error(formatWarning({ message: stored.warning }));
+    // The push's own outcome is said by the gate's pending fact, or by the
+    // release records the apply writes, which push the same branch.
+    if (stored.written) await pushLifecycleReport();
+  } catch (err) {
+    console.error(formatWarning({ message: `could not store the change set ${doc.digest}: ${err instanceof Error ? err.message : String(err)}` }));
+  }
 }
 
 interface Resumed {

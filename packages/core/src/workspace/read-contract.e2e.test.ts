@@ -45,13 +45,14 @@ import recordsSinceSchema from "./records-since.schema.json";
 import { workspacePoints } from "./points-cli";
 import pointsSchema from "./points.schema.json";
 import releasesSchema from "./releases.schema.json";
+import changeSetShowSchema from "./change-set-show.schema.json";
 import { workspaceStatus } from "./status";
 import statusSchema from "./status.schema.json";
 
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema, patch: patchSchema, "ci-last-green": ciLastGreenSchema, "ci-list": ciListSchema, releases: releasesSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema, patch: patchSchema, "ci-last-green": ciLastGreenSchema, "ci-list": ciListSchema, releases: releasesSchema, "change-set-show": changeSetShowSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {

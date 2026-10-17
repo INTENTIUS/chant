@@ -278,6 +278,10 @@ Change sets:
                                           replacement, failure and hole named.
                                           markdown fits an MR/PR note of --limit
                                           characters (default 65536). Read-only.
+  change-set show <digest>  The change set a pull-request or release gate
+                        [--member <name>] [--json]  bound, stored on
+                                          chant/lifecycle under its digest, each
+                                          entry with its graph node. Read-only.
 
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
@@ -1245,6 +1249,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },
   // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
   { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
+  // #4022: the change set a gate bound, read from chant/lifecycle by its digest.
+  { name: "change-set show", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetShow(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

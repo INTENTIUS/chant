@@ -1,6 +1,6 @@
 ---
-title: "chant change-set summary"
-description: Group the members of a change set that take the same change, and name every destroy
+title: "chant change-set"
+description: Group the members of a change set that take the same change, name every destroy, and show the change set a gate bound
 diataxis: reference
 ---
 
@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant change-set summary <change-set.json> [--format text|json|markdown] [--limit <chars>]
+chant change-set show <digest> [--member <name>] [--json]
 ```
 
 ## Description
@@ -93,6 +94,33 @@ Its blocks keep the text order. When they do not fit, whole groups are dropped f
 | `--format text\|json\|markdown` | the output, `text` by default |
 | `--json` | the same as `--format json` |
 | `--limit <chars>` | the markdown note's size, at least 200; 65,536 by default |
+
+## change-set show
+
+`chant change-set show <digest>` prints the change set a gate bound, stored on `chant/lifecycle` under its digest ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). The digest is the gate's `planDigest`, and the gate's `changeSet` in `chant workspace status --json`. `chant components pr-apply` stores the change set before it decides the pull request's gate, so the plan a pending gate waits on can be read before anyone approves it, and the plan an approval bound can be read after the run is gone. A release gate stores its change set with [#4045](https://github.com/INTENTIUS/chant/issues/4045). A component gate in `chant run --components` binds a lifecycle plan and stores no change set.
+
+Each entry carries `node`, the graph node it changes, as [`chant workspace graph`](/chant/cli/workspace-graph/) names it. chant reads the member's `chant graph --format ir` when it stores the change set and maps each address onto it, so a terraform instance `module.app.terraform_data.instance[0]` in root `estate` sits on `estate/module.app/terraform_data.instance`. An address the graph holds no node for, such as a block the change deletes, has `node: null`. The [read contract](/chant/reference/workspace-read-contract/#stored-change-sets) gives the rules.
+
+```
+$ chant change-set show jcs1-sha256:7b65...e13b
+1 member: 1 group, 0 destroys or replacements.
+...
+
+Nodes from the graph of this project at 5859d7a10514:
+  update   a  terraform_data.subnet  a/terraform_data.subnet
+```
+
+`--json` prints the `change-set-show` document, `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json`, shipped at `src/workspace/change-set-show.schema.json`:
+
+| Field | Holds |
+|---|---|
+| `$schema`, `contract`, `chant` | the schema's `$id`, `1`, and the chant that read it |
+| `member` | the workspace member whose ledger was read, or `null` outside a workspace |
+| `digest` | the digest asked for |
+| `changeSet` | the stored [change-set document](/chant/reference/change-set/), each entry with `node` and the document with `graph`, or `null` when none is stored under the digest |
+| `reason` | `null`, or `ledger-malformed` when the file stored under the digest is not the change set it names |
+
+The read never fetches. The ledger read is the one of the member that owns the current directory, or of `--member <name>` from anywhere in the checkout. The command exits 1 when `changeSet` is `null`, and on the failures `not-a-git-repository` and `ledger-unreadable`.
 
 ## In a bundle
 

@@ -26,7 +26,7 @@
     "digest": {
       "type": "string",
       "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
-      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries and the side effects, provisional members and their entries left out. What a gate over the whole run binds."
+      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries without their node, and the side effects, provisional members and their entries left out. What a gate over the whole run binds."
     },
     "members": {
       "type": "array",
@@ -59,6 +59,20 @@
     },
     "summary": {
       "$ref": "#/$defs/summary"
+    },
+    "graph": {
+      "description": "Added in contract 1 by #4022, written by chant 0.124.28 and newer on a stored change set. The graph the entries' node ids come from: the workspace member whose graph it is (null outside a workspace) and the commit it was read at (null when unknown). Null when no graph could be read, so every node is null. Absent on a document never mapped. Not part of digest.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["member", "at"],
+          "properties": {
+            "member": { "type": ["string", "null"] },
+            "at": { "type": ["string", "null"] }
+          }
+        }
+      ]
     }
   },
   "$defs": {
@@ -244,6 +258,10 @@
           "items": {
             "$ref": "#/$defs/attribute"
           }
+        },
+        "node": {
+          "type": ["string", "null"],
+          "description": "Added in contract 1 by #4022, written by chant 0.124.28 and newer on a stored change set (chant change-set show). The graph node the entry changes, as chant graph --format ir names it, with the member in front (<member>/<id>) inside a workspace, as chant workspace graph names it. A chant entry's node is its address; a terraform-family entry's is <root>/<block key>, where the block key is each module call as module.<name>/ and then the block's address with no index. Null when the graph holds no node for the address, such as a delete of a block the source no longer declares. Absent on a document never mapped onto a graph. Not part of digest."
         }
       }
     },

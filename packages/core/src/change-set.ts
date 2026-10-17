@@ -113,6 +113,15 @@ export interface ChangeSetEntry {
   /** The estate, environment or org the change lands in. */
   scope?: string;
   attributes: ChangeSetAttribute[];
+  /**
+   * The graph node the entry changes, as `chant graph --format ir` and
+   * `chant workspace graph` name it (#4022): `<member>/<id>` inside a
+   * workspace. Null when the graph holds no node for the address, such as
+   * a delete of a block the source no longer declares. Absent until the
+   * document is mapped onto a graph (`./change-set-graph.ts`), and never
+   * part of the digest.
+   */
+  node?: string | null;
 }
 
 /** Something a planner could not read, so the plan says nothing about it. */
@@ -201,6 +210,19 @@ export interface ChangeSetDocument {
   /** Triggered actions, sorted by member and address. Absent when no member runs one. */
   sideEffects?: ChangeSetSideEffect[];
   summary: ChangeSetSummary;
+  /**
+   * The graph the entries' `node` ids come from (#4022): the workspace member
+   * whose graph it is, or null outside a workspace, and the commit it was
+   * read at, or null when that is unknown. Null when no graph could be read,
+   * so every `node` is null. Absent on a document never mapped. Not hashed.
+   */
+  graph?: ChangeSetGraph | null;
+}
+
+/** Where a document's node ids come from. */
+export interface ChangeSetGraph {
+  member: string | null;
+  at: string | null;
 }
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -235,7 +257,8 @@ export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "me
 /**
  * The document's digest: `computePlanDigest("change-set-document", …)` over
  * the set digest ({@link changeSetDigest}), each member's name, status and
- * holes, the entries and the side effects. Members are sorted by name and
+ * holes, the entries (without their graph `node`) and the side effects.
+ * Members are sorted by name and
  * entries and side effects by the keys {@link composeChangeSet} sorts them by,
  * so order makes no difference.
  *
@@ -248,7 +271,13 @@ export function changeSetDocumentDigest(doc: Pick<ChangeSetDocument, "members" |
     .filter((m) => !provisional.has(m.member))
     .map((m) => ({ member: m.member, status: m.status, holes: m.holes }))
     .sort((a, b) => byString(a.member, b.member));
-  const entries = doc.entries.filter((e) => !provisional.has(e.member)).sort((a, b) => byString(entryKey(a), entryKey(b)));
+  // An entry's graph node (#4022) says where on the graph the change is,
+  // not what the plan does, so it stays outside the digest: mapping a stored
+  // document onto a graph never moves the value its gate bound.
+  const entries = doc.entries
+    .filter((e) => !provisional.has(e.member))
+    .map(({ node: _node, ...e }) => e)
+    .sort((a, b) => byString(entryKey(a), entryKey(b)));
   const sideEffects = (doc.sideEffects ?? []).filter((s) => !provisional.has(s.member)).sort(bySideEffect);
   return computePlanDigest("change-set-document", { set: changeSetDigest(doc.members), members, entries, sideEffects });
 }

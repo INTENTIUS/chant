@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json",
+  "title": "chant change-set show output",
+  "description": "What `chant change-set show <digest> --json` prints (#4022): the change-set document a gate bound, stored on chant/lifecycle under its digest (_change-sets/<digest>.json, under _members/<member>/ for a workspace member). A pull-request gate's apply stores it; a release gate and an empty resolution store it with #4045. Each entry carries the graph node it changes. It reads the local chant/lifecycle branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "The ledger was read. Exit code 0 when a change set is shown, 1 when changeSet is null.",
+      "required": ["$schema", "contract", "chant", "member", "digest", "changeSet", "reason"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "error": false,
+        "member": {
+          "type": ["string", "null"],
+          "description": "The member whose ledger was read, its path of names joined with / when nested, or null for a project outside a workspace."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
+          "description": "The digest asked for: a gate's planDigest."
+        },
+        "changeSet": {
+          "description": "The stored change-set document (change-set.schema.json), whose digest equals digest. Each entry has node, the graph node it changes as chant workspace graph names it (<member>/<id> in a workspace), or null when the graph holds no node for its address. Its graph says which member's graph that was and the commit it was read at, or is null when no graph could be read. Null when nothing is stored under digest, as for a component gate, which binds a lifecycle-plan digest, and when reason is ledger-malformed.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["$schema", "contract", "digest", "members", "entries", "summary"],
+              "properties": {
+                "$schema": { "const": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json" },
+                "contract": { "const": 1 },
+                "digest": { "type": "string" },
+                "members": { "type": "array" },
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["member", "address", "action", "node"],
+                    "properties": {
+                      "node": { "type": ["string", "null"] }
+                    }
+                  }
+                },
+                "graph": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["member", "at"],
+                      "properties": {
+                        "member": { "type": ["string", "null"] },
+                        "at": { "type": ["string", "null"] }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "reason": {
+          "description": "Null when the file was read, or when none is stored. ledger-malformed when a file is stored under digest and it is not a change-set document whose content hashes to digest.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["ledger-malformed"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": ["$schema", "contract", "chant", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "enum": ["not-a-git-repository", "ledger-unreadable"] },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

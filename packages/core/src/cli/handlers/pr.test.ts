@@ -31,6 +31,20 @@ vi.mock("./fan-out", () => ({
   resolveChangedUnits: async () => ({ units: { changed: ["net"], indeterminate: [] } }),
 }));
 
+// #4022: pr-apply stores the change set its gate binds on chant/lifecycle and
+// pushes it. These tests run in the chant checkout, so the store is replaced:
+// it must never write or push the real repository's lifecycle branch.
+vi.mock("../../lifecycle/gate-change-set", () => ({
+  storeGateChangeSet: async () => ({ written: false }),
+  readGraphIds: async () => ({ ids: [] }),
+  setGraphIdReader: () => {},
+  gateGraphReader: () => async () => ({ ids: [] }),
+}));
+vi.mock("../../lifecycle/git", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
+  return { ...actual, pushLifecycleReport: async () => { throw new Error("pr.test must not push chant/lifecycle"); } };
+});
+
 vi.mock("./run", () => ({
   GATED_EXIT_CODE: 3,
   autoReleaseRun: (id: string) => ({ runId: id, runOrigin: { forge: "local" } }),
