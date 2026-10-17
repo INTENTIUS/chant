@@ -82,13 +82,21 @@ describe("an implicit release of a project with no components", () => {
         git(a, "add", ".");
         git(a, "commit", "-q", "-m", "init");
         const sha = git(a, "rev-parse", "HEAD");
-        git(a, "tag", `ci/green/${sha}`);
-        git(root, "clone", "-q", a, b);
-        git(b, "remote", "remove", "origin");
+        // Each clone has a bare remote of its own holding main, so the commit is on trunk and pushed (#4027).
+        git(root, "init", "-q", "--bare", "-b", "main", "a.git");
+        git(a, "remote", "add", "origin", join(root, "a.git"));
+        git(a, "push", "-q", "origin", "main");
+        git(a, "fetch", "-q", "origin");
+        git(root, "clone", "-q", join(root, "a.git"), b);
+        git(root, "init", "-q", "--bare", "-b", "main", "b.git");
+        git(b, "remote", "set-url", "origin", join(root, "b.git"));
+        git(b, "push", "-q", "origin", "main");
+        git(b, "fetch", "-q", "origin");
+        for (const d of [a, b]) git(d, "tag", `ci/green/${sha}`);
         for (const d of [a, b]) symlinkSync(join(REPO, "node_modules"), join(d, "node_modules"), "dir");
 
         const cuts = [a, b].map((d, i) => {
-          const r = chant(d, "release", "cut", ...(i === 0 ? ["v1"] : []), "--params-file", "params.{env}.json", "--json");
+          const r = chant(d, "release", "cut", ...(i === 0 ? ["v1"] : []), "--params-file", "params.{env}.json", "--yes", "--json");
           expect(r.code, r.stderr).toBe(0);
           return JSON.parse(r.stdout);
         });

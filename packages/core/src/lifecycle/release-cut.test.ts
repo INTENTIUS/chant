@@ -8,7 +8,7 @@ import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cutRelease, differingBuildSteps, ReleaseCutError } from "./release-cut";
+import { cutRelease, differingBuildSteps, planRelease, ReleaseCutError } from "./release-cut";
 import {
   appendCut,
   computeReleaseDigest,
@@ -149,7 +149,16 @@ describe("cutRelease", () => {
       expect(await readReleaseTemplate(prod.templates[0].digest, { cwd: dir })).toBe(`{"env":"prod"}\n`);
       const { cuts } = await readCuts({ cwd: dir });
       expect(cuts).toEqual([
-        { version: 1, releaseDigest: release.releaseDigest, label: "v1.0.0", actor: "alice", timestamp: "2026-10-16T10:00:00.000Z", runOrigin: null, signature: null },
+        {
+          version: 1,
+          releaseDigest: release.releaseDigest,
+          label: "v1.0.0",
+          actor: "alice",
+          timestamp: "2026-10-16T10:00:00.000Z",
+          runId: `local-${Date.parse("2026-10-16T10:00:00.000Z")}`,
+          runOrigin: { forge: "local" },
+          signature: null,
+        },
       ]);
       expect(git(dir, "ls-tree", "-r", "--name-only", "chant/lifecycle").split("\n").filter((p) => p.endsWith("releases.jsonl"))).toEqual([]);
       expect(await resolveRelease("v1.0.0", { cwd: dir })).toEqual({ release, label: "v1.0.0" });
@@ -408,4 +417,67 @@ describe("differingBuildSteps", () => {
     const t = (env: string, steps: Record<string, unknown[]>): CompiledTarget => ({ env, params: [], components: Object.keys(steps), buildSteps: steps, buildInputs: {}, componentFiles: {}, templates: [] });
     expect(differingBuildSteps([t("dev", { a: [{ x: 1 }], b: [{ y: 1 }] }), t("prod", { a: [{ x: 2 }], b: [{ y: 1 }] }), t("qa", { c: [] })])).toEqual([{ component: "a", envs: ["dev", "prod"] }]);
   });
+});
+
+describe("the dry run of a cut (#4027)", () => {
+  const plan = (dir: string, compiler: TargetCompiler, label: string | null) =>
+    planRelease({ cwd: dir, compiler, label, actor: "alice", env: {}, now: () => new Date("2026-10-16T10:00:00.000Z") });
+
+  test("compiles every environment and says what it would build, without building, storing or cutting", () =>
+    withTestDir(async (dir) => {
+      green(dir, initRepo(dir));
+      const compiler = fixtureCompiler();
+      const p = await plan(dir, compiler, "v1.0.0");
+      expect(compiler.compiled).toEqual(["dev", "staging", "prod"]);
+      expect(compiler.built).toEqual([]);
+      expect(p).toMatchObject({ label: "v1.0.0", releaseDigest: null, alreadyCut: null, build: [{ component: "api", env: "dev" }], reused: [], signatureRequired: false });
+      expect(p.targets.map((t) => [t.env, t.templates])).toEqual([
+        ["dev", [{ component: "api", path: "dist/api.template.json" }]],
+        ["staging", [{ component: "api", path: "dist/api.template.json" }]],
+        ["prod", [{ component: "api", path: "dist/api.template.json" }]],
+      ]);
+      expect(spawnSync("git", ["rev-parse", "--verify", "--quiet", "refs/heads/chant/lifecycle"], { cwd: dir }).status).not.toBe(0);
+    }));
+
+  test("knows the digest when every artifact is carried, and that it is already cut", () =>
+    withTestDir(async (dir) => {
+      green(dir, initRepo(dir));
+      const first = await cut(dir, fixtureCompiler(), "v1.0.0");
+      const sha = commitFile(dir, "README.md", "docs only\n");
+      green(dir, sha);
+      const p = await plan(dir, fixtureCompiler(), "v1.1.0");
+      expect(p.build).toEqual([]);
+      expect(p.reused).toEqual([{ component: "api", from: first.release.releaseDigest }]);
+      const second = await cut(dir, fixtureCompiler(), "v1.1.0");
+      expect(p.releaseDigest).toBe(second.release.releaseDigest);
+      expect((await plan(dir, fixtureCompiler(), "v1.1.0")).alreadyCut).toBe(second.release.releaseDigest);
+      expect((await plan(dir, fixtureCompiler(), null)).alreadyCut).toBe(second.release.releaseDigest);
+    }));
+
+  test("refuses a label another commit's release holds, and one that is not a label", () =>
+    withTestDir(async (dir) => {
+      green(dir, initRepo(dir));
+      await cut(dir, fixtureCompiler(), "v1.0.0");
+      green(dir, commitFile(dir, "api/Dockerfile", "FROM busybox\n"));
+      const taken = await plan(dir, fixtureCompiler(), "v1.0.0").catch((e: unknown) => e);
+      expect(taken).toBeInstanceOf(ReleaseLabelError);
+      expect((taken as ReleaseLabelError).code).toBe("release-label-taken");
+      expect((taken as ReleaseLabelError).message).toMatch(/cut from commit [0-9a-f]{12}/);
+      expect(((await plan(dir, fixtureCompiler(), "-bad").catch((e: unknown) => e)) as ReleaseLabelError).code).toBe("release-label-invalid");
+    }));
+
+  test("lists each component's publish steps with the environments whose deploy runs them", () =>
+    withTestDir(async (dir) => {
+      green(dir, initRepo(dir));
+      const base = fixtureCompiler();
+      const compiler: TargetCompiler = {
+        ...base,
+        async compile(env) {
+          const t = await base.compile(env);
+          return { ...t, publishSteps: { api: [{ kind: "publish-image", from: "archive", to: "$env.registry" }] } };
+        },
+      };
+      const p = await plan(dir, compiler, null);
+      expect(p.publishSteps).toEqual([{ component: "api", kind: "publish-image", to: "$env.registry", envs: ["dev", "staging", "prod"] }]);
+    }));
 });

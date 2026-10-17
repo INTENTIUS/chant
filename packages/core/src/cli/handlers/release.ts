@@ -1,10 +1,16 @@
 /**
  * `chant release` (#4026, ws-104): the release is what graduates.
  *
- *   release cut [<label>] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
- *       cut a release of this member from the checkout's HEAD, which must be green;
+ *   release cut [<label>] [--yes] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
+ *       a dry run of a cut of this member from the checkout's HEAD, which must be
+ *       clean, on trunk and pushed, and green (#4027); `--yes` cuts, records,
+ *       and tags the commit `release/<label>` locally;
  *       --sign signs the cut with the actor's ssh key (#4031); `--src`, `-o` and
  *       `--lexicon` shape the build of a project with no components (#4046)
+ *   release publish <label|digest> [--json]
+ *       publish a cut release (#4027): refuses a revoked one, and an unsigned one
+ *       under identity.gates.release; warns with no OIDC provenance; its
+ *       targets are #4047's, so today it publishes nothing and says so
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
@@ -13,18 +19,21 @@
  *   release compile --env <env> [--build <command>] [--artifacts --component <a,b>] --json
  *       internal: what the cut runs in a child process per environment
  *
- * The workstation UX for `cut` grows in #4027. A declaration whose
- * `identity.gates` names a `release` gate requires a signed cut by an actor
- * in its class (#4031).
+ * The workstation checks, the actor and the tag are in
+ * ../../lifecycle/release-workstation.ts, and the publish contract in
+ * ../../lifecycle/release-publish.ts. A declaration whose `identity.gates`
+ * names a `release` gate requires a signed cut by an actor in its class (#4031).
  */
 
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(ctx: CommandContext, params: Record<string, string> | undefined): import("../../components/release-compile").CompileInputs {
@@ -40,10 +49,54 @@ function compileInputs(ctx: CommandContext, params: Record<string, string> | und
   };
 }
 
-function resolveActor(ctx: CommandContext): string | undefined {
-  return ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+/** What to run after a cut (#4027): publish from CI, or push the tag so CI publishes, or deploy the first environment. */
+export function nextCommands(req: {
+  ref: string;
+  tag: string | null;
+  inCi: boolean;
+  firstEnv: string | null;
+  /** A project with no components deploys with `release export`, not promote (#4046). */
+  noComponents: boolean;
+}): string[] {
+  const publish = `chant release publish ${req.ref}`;
+  const deploy = req.firstEnv === null
+    ? null
+    : req.noComponents
+      ? `chant release export ${req.ref} --env ${req.firstEnv}`
+      : `chant components promote --release ${req.ref} --to ${req.firstEnv}`;
+  if (req.inCi) return [publish, ...(deploy ? [deploy] : [])];
+  return [...(req.tag ? [`git push origin ${req.tag}`] : []), publish, ...(deploy ? [deploy] : [])];
 }
 
+/** The command line that ran, without `--json`, with `--yes` added: what a dry run says to run next. */
+export function sameWithYes(argv: readonly string[]): string {
+  const quote = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`);
+  return ["chant", ...argv.filter((a) => a !== "--json"), "--yes"].map(quote).join(" ");
+}
+
+function describeActorSource(source: import("../../lifecycle/release-workstation").ActorSource): string {
+  switch (source) {
+    case "flag":
+      return "--actor";
+    case "signer":
+      return "the signers file at base, for the signing key";
+    case "ci":
+      return "the CI's actor";
+    case "git":
+      return "git user.email";
+    case "user":
+      return "$USER";
+  }
+}
+
+/**
+ * `release cut [<label>]` (#4026, #4027). A dry run unless `--yes`: it
+ * refuses a dirty tree, a commit that is not on trunk and pushed, and one
+ * that is not green, compiles every environment, and prints what the cut
+ * would record, build and tag, and what publishes where. With `--yes` it
+ * cuts, signs with `--sign`, records the cut with its actor and run id,
+ * tags the commit locally and prints the next command.
+ */
 export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const positional = args.extraPositional;
@@ -52,50 +105,268 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     return 1;
   }
   const label = positional ?? args.label ?? null;
-  const actor = resolveActor(ctx);
-  if (!actor) {
-    console.error(formatError({ message: "Could not resolve --actor from the environment", hint: "Pass --actor explicitly, or set GITHUB_ACTOR / GITLAB_USER_LOGIN / USER." }));
-    return 1;
-  }
+  const dryRun = args.yes !== true;
   const cwd = resolve(".");
   const { spawnTargetCompiler, ReleaseCompileError } = await import("../../components/release-compile");
-  const { cutRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");
+  const { cutRelease, planRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");
   const { ReleaseLabelError } = await import("../../lifecycle/release-store");
-  const { pushLifecycleReport } = await import("../../lifecycle/git");
-  const params = parseParamFlags(args.param);
-  const compiler = spawnTargetCompiler(compileInputs(ctx, params));
+  const { pushLifecycleReport, getHeadCommit } = await import("../../lifecycle/git");
+  const { resolveCiRun } = await import("../../lifecycle/release-ledger");
+  const ws = await import("../../lifecycle/release-workstation");
+  const { detectProvenance } = await import("../../lifecycle/release-publish");
+  const fail = (code: string, message: string, fix?: string): number => {
+    console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+
   try {
-    const result = await cutRelease({ cwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) });
+    // The workstation checks come first, in the order #4027 lists them; the
+    // green check and the rest are the cut's own.
+    const top = (() => {
+      try {
+        return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    })();
+    let commit: string | null = null;
+    let trunk: import("../../lifecycle/release-workstation").Trunk | null = null;
+    let signers: readonly import("../../workspace/trust/trust-files").Signer[] = [];
+    let member: string | null = null;
+    if (top) {
+      commit = await getHeadCommit({ cwd });
+      ws.checkCleanTree(top, commit);
+      const { scopeSource } = await import("../../workspace/write-scope");
+      const { releaseRuleFrom } = await import("../../workspace/identity");
+      const source = scopeSource(cwd);
+      trunk = ws.resolveTrunk(top, source.declaration?.ci?.green?.branch ?? null);
+      ws.checkOnTrunk(top, commit, trunk);
+      signers = releaseRuleFrom(source).rule.signers.signers;
+      const { resolveMemberLedger } = await import("../../lifecycle/member-ledger");
+      const ledger = await resolveMemberLedger(cwd);
+      member = ledger.members.length > 0 ? ledger.members.join("/") : null;
+    }
+
+    // The signing key is resolved now, so a dry run shows a key that can't be read.
+    let publicKey: string | null = null;
+    if (args.sign !== undefined) {
+      const { resolveSigningKey, SealError } = await import("../../workspace/trust/seal");
+      try {
+        const key = resolveSigningKey(args.sign, cwd);
+        try {
+          if (!existsSync(key.file)) return fail("release-signer-refused", `no release was cut: the signing key ${key.file} does not exist`);
+          publicKey = ws.publicKeyOf(key.file);
+        } finally {
+          key.cleanup();
+        }
+      } catch (err) {
+        if (!(err instanceof SealError)) throw err;
+        return fail("release-signer-refused", `no release was cut: ${err.message}`);
+      }
+    }
+    const who = ws.resolveCutActor({ cwd, ...(args.actor ? { explicit: args.actor } : {}), publicKey, signers });
+    if (!who) {
+      console.error(formatError({ message: "Could not resolve --actor", hint: "Pass --actor explicitly, or set git's user.email, GITHUB_ACTOR, GITLAB_USER_LOGIN or USER." }));
+      return 1;
+    }
+    const actor = who.actor;
+    const tag = label !== null && commit !== null && top ? { name: ws.releaseTagName(member, label), state: ws.checkReleaseTag(top, ws.releaseTagName(member, label), commit) } : null;
+    const ci = resolveCiRun(process.env);
+    const params = parseParamFlags(args.param);
+    const compiler = spawnTargetCompiler(compileInputs(ctx, params));
+    const request = { cwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) };
+
+    if (dryRun) {
+      const plan = await planRelease(request);
+      // Under the release gate, a key the signers file at base lists for someone else is refused now, not after the build.
+      if (plan.signatureRequired && publicKey !== null && !signers.some((s) => s.key === publicKey && s.principal.trim().toLowerCase() === actor.trim().toLowerCase())) {
+        return fail(
+          "release-signer-refused",
+          `no release would be cut: the signing key is not listed for ${actor} in the signers file at base, and identity.gates.release counts only a cut its signer signs`,
+          "Pass --actor <principal> naming the key's signer, or sign with that principal's key.",
+        );
+      }
+      const ref = plan.label ?? plan.alreadyCut ?? plan.releaseDigest;
+      const provenance = detectProvenance();
+      const deployRef = plan.label ?? "<label|digest>";
+      const doc = {
+        dryRun: true,
+        ...plan,
+        actor,
+        actorSource: who.source,
+        run: ci ? { runId: ci.runId, runOrigin: ci.runOrigin } : { runId: null, runOrigin: { forge: "local" as const } },
+        trunk,
+        sign: args.sign !== undefined ? { key: publicKey !== null ? publicKey.split(" ")[0] : null, readable: publicKey !== null } : null,
+        tag: tag ? { name: tag.name, exists: tag.state === "present" } : null,
+        publish: { targets: [] as string[], provenance },
+        next: [sameWithYes(process.argv.slice(2))],
+      };
+      if (args.json) {
+        console.log(JSON.stringify(doc, null, 2));
+        return 0;
+      }
+      const name = plan.label ? formatBold(plan.label) : "an unlabelled release";
+      console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${trunk ? ` (on ${trunk.remote}/${trunk.branch}, green)` : ""}`);
+      if (plan.alreadyCut) console.log(`  already cut as ${plan.alreadyCut}: the cut would record nothing new`);
+      console.log(`  actor ${actor} (from ${describeActorSource(who.source)})`);
+      console.log(`  run ${ci ? `${ci.runId} (${ci.runOrigin.forge})` : "minted on this machine at the cut (local)"}`);
+      console.log(
+        `  ${args.sign !== undefined ? `signed with ${publicKey ? publicKey.split(" ")[0] : "a key whose public half can't be read until it signs"}` : "not signed"}` +
+          (plan.signatureRequired ? "; identity.gates.release requires a signed cut" : ""),
+      );
+      console.log(`  tag ${tag ? `${tag.name}${tag.state === "present" ? " (exists)" : ""}, made here and not pushed` : "none, since the release has no label"}`);
+      for (const t of plan.targets) {
+        console.log(`  ${t.env}: ${t.templates.length} template(s)${t.params.length > 0 ? `, ${t.params.map((p) => `${p.name}=${p.value}`).join(" ")}` : ""}`);
+      }
+      for (const b of plan.build) console.log(`  ${b.component}: artifacts built in ${b.env}`);
+      for (const r of plan.reused) console.log(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
+      console.log(`  digest ${plan.releaseDigest ?? "decided when the artifacts are built"}`);
+      console.log("What will be published where:");
+      if (plan.publishSteps.length === 0) console.log("  no component declares a publish step");
+      for (const p of plan.publishSteps) {
+        console.log(`  ${p.component}: ${p.kind}${p.to ? ` to ${p.to}` : ""} in ${p.envs.join(", ")}, by that environment's deploy (chant components promote --release ${deployRef})`);
+      }
+      console.log(`  chant release publish ${ref ?? "<label|digest>"}: nothing, since chant has no publish target for a release yet (#4047)`);
+      if (!provenance.oidc) console.log(`  a publish from here would carry no OIDC provenance: ${provenance.reason}`);
+      console.error(`Dry run: nothing was cut, signed or tagged. Run again with --yes to cut: ${doc.next[0]}`);
+      return 0;
+    }
+
+    const result = await cutRelease(request);
     const push = await pushLifecycleReport({ cwd }).catch(() => ({ pushed: false, pushWarning: undefined }));
+    // The tag names the release's label, which a re-cut with no label reads from the earlier cut.
+    let tagged: { name: string; created: boolean } | null = null;
+    let tagWarning: string | undefined;
+    if (result.label !== null && top) {
+      const name = ws.releaseTagName(member, result.label);
+      try {
+        const state = ws.checkReleaseTag(top, name, result.release.commit);
+        if (state === "absent") ws.createReleaseTag(top, name, result.release.commit, { releaseDigest: result.release.releaseDigest, label: result.label, member });
+        tagged = { name, created: state === "absent" };
+      } catch (err) {
+        tagWarning = `the release was cut, and the commit was not tagged: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    const firstEnv = result.release.targets[0]?.env ?? null;
+    const next = nextCommands({
+      ref: result.label ?? result.release.releaseDigest,
+      tag: tagged?.name ?? null,
+      inCi: ci !== undefined,
+      firstEnv,
+      noComponents: result.release.targets.every((t) => t.templates.every((tpl) => tpl.component === null)) && result.release.artifactDigests.length === 0,
+    });
     if (args.json) {
-      console.log(JSON.stringify({ release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused }, null, 2));
+      console.log(
+        JSON.stringify(
+          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, actor, actorSource: who.source, tag: tagged, next },
+          null,
+          2,
+        ),
+      );
     } else {
       const name = result.label ? formatBold(result.label) : "unlabelled release";
       if (result.cut) console.error(formatSuccess(`Cut ${name}: ${result.release.releaseDigest}`));
       else console.error(formatSuccess(`Already cut${result.label ? ` as ${formatBold(result.label)}` : ""}: ${result.release.releaseDigest}`));
       console.error(`  commit ${result.release.commit}`);
-      if (result.cut) console.error(result.cut.signature ? `  signed by ${result.cut.actor}` : "  not signed");
+      if (result.cut) console.error(`  ${result.cut.signature ? `signed by ${result.cut.actor}` : `not signed; actor ${result.cut.actor}`}, run ${result.cut.runId}`);
       console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
       for (const r of result.reused) console.error(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
+      if (tagged) console.error(`  tag ${tagged.name}${tagged.created ? "" : " (already there)"}, not pushed`);
+      console.error(`Next: ${next[0]}`);
+      for (const n of next.slice(1)) console.error(`  or: ${n}`);
       console.log(result.release.releaseDigest);
     }
     if (push.pushWarning) console.error(formatWarning({ message: push.pushWarning }));
+    if (tagWarning) console.error(formatWarning({ message: tagWarning }));
     return 0;
   } catch (err) {
-    if (err instanceof ReleaseCutError) {
-      console.error(formatError({ message: `${err.message} [${err.code}]`, ...(err.fix ? { hint: err.fix } : {}) }));
-      return 1;
+    if (err instanceof ws.WorkstationCheckError || err instanceof ReleaseCutError) {
+      return fail(err.code, err.message, err.fix);
     }
-    if (err instanceof ReleaseLabelError) {
-      console.error(formatError({ message: `${err.message} [${err.code}]` }));
-      return 1;
-    }
+    if (err instanceof ReleaseLabelError) return fail(err.code, err.message);
     if (err instanceof ReleaseCompileError) {
       console.error(formatError({ message: `no release was cut: ${err.message}` }));
       return 1;
     }
     throw err;
   }
+}
+
+/**
+ * `release publish <label|digest>` (#4027): publish a cut release. It
+ * refuses a release no cut names, one cut from a revoked commit, and under
+ * identity.gates.release one with no verified signature. It warns before
+ * publishing when the run has no OIDC token, so what it publishes carries no
+ * provenance. The targets are #4047's: until then it publishes nothing and
+ * says so. Nothing is recorded.
+ */
+export async function runReleasePublish(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional;
+  if (!ref) {
+    console.error(formatError({ message: "release publish needs a release", hint: USAGE }));
+    return 1;
+  }
+  const cwd = resolve(".");
+  const fail = (code: string, message: string, fix?: string): number => {
+    console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  const { fetchLifecycle } = await import("../../lifecycle/git");
+  const { preparePublish } = await import("../../lifecycle/release-publish");
+  await fetchLifecycle({ cwd }).catch(() => false);
+  const prepared = await preparePublish({ cwd, ref });
+  if ("refusal" in prepared) return fail(prepared.refusal.code, prepared.refusal.message, prepared.refusal.fix);
+  const { release, label, signature, provenance, warning, targets } = prepared;
+  const name = label ?? release.releaseDigest;
+  const deploySteps = release.targets.map((t) => t.env);
+
+  if (!args.json) {
+    console.error(`Publishing ${formatBold(name)} (${release.releaseDigest}) from commit ${release.commit.slice(0, 12)}`);
+    console.error(`  ${signature.status === "verified" ? `signed by ${signature.actor}` : signature.status === "unsigned" ? "not signed" : `signature unverified: ${signature.reason}`}`);
+  }
+  // The warning goes to stderr with --json too, before any target runs.
+  if (warning) console.error(formatWarning({ message: warning }));
+  const published: Array<{ target: string; destination: string }> = [];
+  for (const target of targets) {
+    if (!args.json) console.error(`  publishing to ${target.destination}`);
+    published.push(await target.publish({ release, label, provenance, cwd }));
+  }
+  const nothing = targets.length === 0;
+  if (args.json) {
+    console.log(
+      JSON.stringify(
+        {
+          releaseDigest: release.releaseDigest,
+          label,
+          commit: release.commit,
+          signature,
+          provenance,
+          warnings: warning ? [warning] : [],
+          targets: targets.map((t) => ({ name: t.name, destination: t.destination })),
+          published,
+          environments: deploySteps,
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
+  if (nothing) {
+    console.error(`Nothing was published: chant has no publish target for a release yet (#4047).`);
+    if (deploySteps.length > 0) {
+      const noComponents = release.artifactDigests.length === 0 && release.targets.every((t) => t.templates.every((tpl) => tpl.component === null));
+      console.error(
+        noComponents
+          ? `  Each environment deploys the files the release recorded: chant release export ${name} --env ${deploySteps[0]}`
+          : `  A component's publish steps run in each environment's deploy of the release: chant components promote --release ${name} --to ${deploySteps[0]}`,
+      );
+    }
+  } else {
+    console.error(formatSuccess(`Published ${name} to ${published.length} target(s)`));
+  }
+  return 0;
 }
 
 export async function runReleaseList(ctx: CommandContext): Promise<number> {

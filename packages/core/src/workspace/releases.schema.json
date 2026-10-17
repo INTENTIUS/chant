@@ -274,6 +274,7 @@
         "label",
         "actor",
         "timestamp",
+        "runId",
         "runOrigin",
         "signature"
       ],
@@ -290,6 +291,13 @@
         "timestamp": {
           "type": "string",
           "description": "ISO 8601."
+        },
+        "runId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Added by #4027, written by chant 0.124.29 and newer. The run the cut ran in: the CI run's id in CI (GITHUB_RUN_ID, CI_PIPELINE_ID), or outside CI an id minted on the machine that cut, local-<epoch ms>. Null on a cut written before 0.124.29."
         },
         "runOrigin": {
           "oneOf": [
@@ -319,7 +327,7 @@
               }
             }
           ],
-          "description": "The CI run the cut ran in: the forge (github for GitHub and Forgejo, gitlab), the repo or project, and a link to the run. Null outside CI."
+          "description": "The run the cut ran in: the forge (github for GitHub and Forgejo, gitlab, or local for an id minted outside CI), the repo or project, and a link to the run. From chant 0.124.29 a cut outside CI writes { forge: local } (#4027); a cut written before reads null outside CI."
         },
         "signature": {
           "type": [

@@ -1,0 +1,125 @@
+---
+title: Release from Your Workstation
+description: "Cut and sign a release of a green commit on your own machine, check its plan, then push its tag so CI ships it with OIDC provenance"
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/release-from-workstation/.
+  Add the publish workflow the page shows for this repository's forge, triggered by release/** tags, in a pull request.
+  Run `npx chant release cut <version>` without `--yes` on a clean checkout of a green trunk commit, and show me what it prints; do not run it with `--yes`, push a tag, or run `chant release publish` yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This page cuts a release on your machine and ships it from CI ([#4027](https://github.com/INTENTIUS/chant/issues/4027)). The split follows from what each side holds. Your machine holds the decision and the signing key. CI holds the OIDC token that gives an uploaded package its provenance, which npm trusted publishing needs.
+
+A release is the compiled output of one green commit, cut once and promoted through every environment ([ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md)). Only `chant release cut` cuts one; a green tick never does ([ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). The commands below run unchanged in CI, so you can move the cut there later without changing what it records.
+
+## Before you start
+
+You need a project whose commits get `ci/green/<sha>` tags from [`chant ci`](/chant/cli/ci/), and whose `chant.config.ts` lists its `environments`. If the workspace declaration names a `release` gate in `identity.gates`, you also need an ssh key that `.chant/allowed_signers` at base lists for you. See [who may cut](/chant/cli/release/#who-may-cut).
+
+## Check out a green trunk commit
+
+The cut refuses a dirty tree, a commit that is not on trunk and pushed, and a commit with no green tag. Trunk is the branch `ci.green.branch` names, else the one `origin/HEAD` names, else `main`. Fetch the branch and the tags, then check out the newest green commit:
+
+```bash
+git fetch origin main --tags
+git checkout "$(chant ci last-green)"
+git status --short   # prints nothing on a clean tree
+```
+
+An untracked file that `.gitignore` does not cover counts as dirty, since the compile would read it.
+
+## Look at the dry run
+
+Without `--yes`, `chant release cut` compiles every environment and prints what it would do. It writes nothing.
+
+```bash
+chant release cut v1.4.0 --build "npm run build" --sign
+```
+
+Read three parts of the output before you go on:
+
+- The `actor` line names who the cut will record. With `--sign` it is the principal the signers file lists for your key, otherwise git's `user.email`. Pass `--actor <name>` to name someone else.
+- The `tag` line names the tag the cut makes, `release/v1.4.0`.
+- The lines under `What will be published where` list each component's `publish-*` steps with the environments whose deploy runs them, and what the release command would upload.
+
+<Aside type="caution">
+`chant release publish` has no targets yet. They arrive with [#4047](https://github.com/INTENTIUS/chant/issues/4047). Until then it makes its checks and prints its warning, and uploads nothing. A component's `publish-image` and `publish-artifact` steps run when an environment deploys the release with `chant components promote --release`.
+</Aside>
+
+## Cut, sign and tag
+
+Run the same command with `--yes`:
+
+```bash
+chant release cut v1.4.0 --build "npm run build" --sign --yes
+```
+
+The cut builds the artifacts once, stores the release on `chant/lifecycle`, and appends a cut line with the actor and a run id minted on your machine (`local-<epoch ms>`). It pushes `chant/lifecycle` when there is a remote, then tags the commit `release/v1.4.0` in your clone. It ends by naming the next command:
+
+```
+Next: git push origin release/v1.4.0
+  or: chant release publish v1.4.0
+  or: chant components promote --release v1.4.0 --to dev
+```
+
+## Push the tag
+
+chant never pushes the tag. Push it yourself when you are ready for CI to take over:
+
+```bash
+git push origin release/v1.4.0
+```
+
+## Publish from CI
+
+The workflow below runs on a `release/**` tag and ships the release the tag names. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance.
+
+```yaml
+# .github/workflows/release-publish.yml
+name: release publish
+on:
+  push:
+    tags: ["release/**"]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: npx chant release publish "${GITHUB_REF_NAME#release/}"
+```
+
+`chant release publish` fetches `chant/lifecycle` itself. It refuses a release whose commit was revoked after the cut, and under a `release` gate it refuses one with no verified signature. On GitLab, the job declares an ID token instead:
+
+```yaml
+release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - npx chant release publish "${CI_COMMIT_TAG#release/}"
+```
+
+## Ship with no CI
+
+A project with no CI can run `chant release publish v1.4.0` on the workstation. Before it uploads anything it warns that the run has no OIDC token, so nothing it uploads carries provenance. The warning does not stop it.
+
+## Cut in CI instead
+
+The cut is the same command in a CI job, with `--yes`. There the cut line records the CI run's id and origin and the CI's actor, and the next command it prints is `chant release publish`. A cut of one commit on a workstation and one in CI store the same release files, and their cut lines differ only in `runId`, `runOrigin`, `actor` and `timestamp`. See [what --yes records](/chant/cli/release/#what-yes-records).
