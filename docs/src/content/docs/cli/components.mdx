@@ -351,7 +351,7 @@ The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) pass
 | `--resume <file>` | `pr-apply` only. Write the attempt record here, and finish an earlier attempt it records under the same approval. See above. |
 | `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
 | `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
-| `--events-json` | Stream the stage's events to stdout, one `run-event.schema.json` line each: a `plan` phase with a step per component, the gate's decision as a `gate` phase, and on `pr-apply` the apply's waves and components. See [run events](/chant/reference/workspace-read-contract/#run-events). |
+| `--events-json` | Stream the stage's events to stdout, one `run-event.schema.json` line each: a `plan` phase with a step per component, the gate's decision as a `gate` phase, and on `pr-apply` the apply's waves and components. Refused beside `--json`, which prints the report to stdout too. See [run events](/chant/reference/workspace-read-contract/#run-events). |
 | `--json` | Print the report on stdout. |
 
 ### `components promote`

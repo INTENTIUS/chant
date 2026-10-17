@@ -63,7 +63,7 @@ import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { gitGateLedgerPort, type GateCheck } from "../../op/gate";
 import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
 import type { RunEventSettleStatus } from "../../run-event";
-import { openCliRunEvents } from "../run-events";
+import { openCliRunEvents, refusesEventsWithJson } from "../run-events";
 import {
   describePlanChanged,
   PR_APPLY_GATE,
@@ -337,6 +337,7 @@ async function withStageEvents(stage: string, run: (events: StageEvents) => Prom
 
 /** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] */
 export function runComponentsPrPlan(ctx: CommandContext): Promise<number> {
+  if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
   return withStageEvents("pr-plan", (events) => prPlan(ctx, events));
 }
 
@@ -395,6 +396,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
 
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] */
 export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
+  if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
   return withStageEvents("pr-apply", (events) => prApply(ctx, events));
 }
 

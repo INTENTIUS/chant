@@ -167,3 +167,14 @@ describe("pr-apply --events-json", () => {
     expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed" });
   });
 });
+
+describe("--events-json beside --json", () => {
+  test("is refused on pr-plan and pr-apply before anything plans, since both print to stdout", async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.join(" ")); });
+    expect(await runComponentsPrPlan(ctx({ pr: 12, json: true }))).toBe(1);
+    expect(await runComponentsPrApply(ctx({ pr: 12, json: true }))).toBe(1);
+    expect(errors.filter((e) => /--events-json and --json both stream to stdout/.test(e))).toHaveLength(2);
+    expect(out).toEqual([]);
+  });
+});

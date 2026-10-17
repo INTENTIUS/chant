@@ -62,7 +62,10 @@ export type RunEventGateVia = "quorum" | "policy" | "point" | "alias";
 
 /** The run every event of a stream names: the same on every line. */
 export interface RunEventRun {
-  /** The run's id, in the id space `runOrigin.forge` names. */
+  /**
+   * The run's own id: an Op run's id, a component run's id (the id its
+   * release records carry), or the CI run id for a pipeline run.
+   */
   runId: string;
   kind: RunEventKind;
   /** The Op's name, the component selection as given, or the pipeline's name. */
@@ -70,7 +73,11 @@ export interface RunEventRun {
   /** The commit the run built from, or null when it did not start in a git checkout. */
   gitSha: string | null;
   runtime: RunEventRuntime;
-  /** The locator: the shape a release record's `runOrigin` has. */
+  /**
+   * Where the run ran and how to reach it, the shape a release record's
+   * `runOrigin` has. For an Op run in CI it locates the CI run, as the run
+   * record does (#4020), while `runId` stays the Op run's own id.
+   */
   runOrigin: RunOrigin;
 }
 

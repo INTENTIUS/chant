@@ -29,7 +29,7 @@
         "seq": { "type": "integer", "minimum": 0, "description": "The event's place in its run's stream: 0 for run-start, one more for each event after it." },
         "at": { "type": "string", "description": "When the event happened, ISO-8601." },
         "type": { "type": "string" },
-        "runId": { "type": "string", "minLength": 1, "description": "The run's id, in the id space runOrigin.forge names: the Op run id, the GitHub or Forgejo run id, the GitLab pipeline id, or one minted locally." },
+        "runId": { "type": "string", "minLength": 1, "description": "The run's own id: an Op run's id, a component run's id (the id its release records carry, the CI run id in CI, else one minted locally), or the CI run id for a pipeline run. runOrigin says where it ran, which for an Op run in CI is the CI run, not the id space of runId." },
         "kind": { "enum": ["op", "component", "pipeline"], "description": "What ran: an Op, a component selection (chant run --components), or a CI pipeline." },
         "name": { "type": "string", "description": "The Op's name, the component selection as given, or the pipeline's name." },
         "gitSha": {
@@ -46,12 +46,12 @@
     },
     "runOrigin": {
       "type": "object",
-      "description": "The id space runId lives in and how to reach the run: RunOrigin from lifecycle/release-ledger.ts, the shape a release record's runOrigin has.",
+      "description": "Where the run ran and how to reach it: RunOrigin from lifecycle/release-ledger.ts, the shape a release record's runOrigin has. For an Op run in CI it locates the CI run, as the Op's run record does (#4020), while runId stays the Op run's own id.",
       "required": ["forge"],
       "properties": {
         "forge": {
           "enum": ["github", "gitlab", "op", "local"],
-          "description": "github: a GitHub Actions run id, also the spelling Forgejo Actions uses. gitlab: a CI pipeline id. op: an Op run id, which a steward's run carries. local: minted on the machine that ran it."
+          "description": "github: a GitHub Actions run, also the spelling Forgejo Actions uses. gitlab: a CI pipeline. op: a steward's run, named by its Op run id. local: a run on the machine that started it, outside CI."
         },
         "repo": { "type": "string", "description": "The repository or project slug on the forge, when the environment named one." },
         "url": { "type": "string", "description": "A link to the run, when the environment gave enough to build one." }

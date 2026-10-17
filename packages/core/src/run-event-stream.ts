@@ -145,7 +145,8 @@ export async function resolveRunEventRun(input: {
   const ci = resolveCiRun(env);
   const gitSha = await resolveCommitSha({ ...(input.cwd ? { cwd: input.cwd } : {}), env });
   const runId = input.runId ?? ci?.runId ?? `local-${Date.now()}`;
-  // An explicit id that is not the CI run's lives in no CI id space.
+  // An explicit id that is not the CI run's is one the caller minted, so the
+  // origin says local, as `resolveRunId` records it on a release.
   const inCiSpace = ci !== undefined && runId === ci.runId;
   return runEventRunOf({
     kind: input.kind,

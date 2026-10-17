@@ -20,6 +20,16 @@ export function refusesBothStreams(args: Pick<ParsedArgs, "eventsJson" | "progre
   return true;
 }
 
+/** Refuse `--events-json` beside `--json` where `--json` prints a report to stdout (pr-plan, pr-apply). Returns true after printing why. */
+export function refusesEventsWithJson(args: Pick<ParsedArgs, "eventsJson" | "json">, report: string): boolean {
+  if (!args.eventsJson || !args.json) return false;
+  console.error(formatError({
+    message: "--events-json and --json both stream to stdout",
+    hint: `Pass one. --events-json prints the run-event stream; --json prints ${report}.`,
+  }));
+  return true;
+}
+
 /** Writes one line to stdout. */
 export const stdoutLine = (line: string): void => void process.stdout.write(line);
 

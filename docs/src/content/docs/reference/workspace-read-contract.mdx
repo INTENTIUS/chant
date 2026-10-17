@@ -491,7 +491,8 @@ Every event carries the fields in this table.
 |---|---|
 | `$schema`, `contract`, `chant` | the schema's `$id`, `1`, and the version of the chant that wrote it |
 | `seq`, `at` | the event's place in the stream, `0` for `run-start`, and when it happened |
-| `runId`, `runOrigin` | the run's id and its locator, the `RunOrigin` shape a release record carries: `forge` (`github`, `gitlab`, `op` or `local`; Forgejo spells itself `github`), and `repo` and `url` when known |
+| `runId` | the run's own id: an Op run's id, a component run's id, or the CI run id for a pipeline run |
+| `runOrigin` | where the run ran, the `RunOrigin` shape a release record carries: `forge` (`github`, `gitlab`, `op` or `local`; Forgejo spells itself `github`), and `repo` and `url` when known. For an Op run in CI it locates the CI run, while `runId` stays the Op run's own id |
 | `kind`, `name` | `op`, `component` or `pipeline`, and the Op's name, the component selection as given, or the pipeline's name |
 | `gitSha` | the commit the run built from, `null` outside a git checkout |
 | `runtime` | `local`, `steward` or `ci` |
