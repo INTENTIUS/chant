@@ -371,6 +371,14 @@ A promote runs the component's `deploy` composition against the `--to` environme
 - Gates run. A gate in the composition stops the promote with exit 3 and the `chant approve` line, the same as any deploy to that environment, and running the same promote again after the approval continues past it. The approval is bound to the `--to` environment and to this promote's plan, which includes the digest being promoted. An approval for a plain deploy, or for a promote of another digest, does not pass the gate.
 - The remaining steps run against the target environment as they are written in this checkout. The artifact comes from the source release but the deploy steps come from here, so the promote warns when this checkout is not the commit the artifact was built from.
 
+#### Promoting a release
+
+`--release <label|digest>` deploys under a [release](/chant/cli/release/) cut from a green commit ([#4026](https://github.com/INTENTIUS/chant/issues/4026)). The release must have a target for `--to`. Each template a promoted component's deploy reads is then the one that target recorded, not the file in this checkout. Its bytes are read from `chant/lifecycle` and checked against the target's digest, the way the publish output is checked against the recorded digest, and written under `.chant/release-templates/<digest>/` for the step to read. The promote refuses before anything runs when a template's bytes do not hash to the target's digest, when they are missing from the branch, and when the deploy reads a template the target does not record, which means this checkout's deploy is not the one the release was compiled from. Each deploy record the promote writes carries `releaseDigest`, naming the release, and [`chant release list`](/chant/cli/release/#release-list) then lists `--to` among the environments that run it. Without `--release` a promote works as before.
+
+```bash
+chant components promote --to prod --release v1.4.0 --dry-run
+```
+
 Some compositions cannot be pinned to one recorded digest, and a promote refuses them before anything runs: a component with no publish step (nothing in its deploy carries the digest), one with more than one publish step (a release record carries one digest), and one whose remaining steps read an output of a removed build step, such as `@Build.archivePath`.
 
 A `dependsOn` edge to a component outside the promotion is dropped, as a single-component `chant run --components` drops it. `--seed-outputs <file>` loads the outputs such a dependency produced, for `stackOutput()` references into it.
@@ -400,6 +408,7 @@ When a promote fails partway, the component's in-run unwind undoes the steps it 
 | `--from <env>` | The environment whose release ledger holds the digests. Defaults to the environment before `--to` in the member's [promotion order](#the-promotion-order); required when the member declares none. |
 | `--to <env>` | Required. The environment to deploy them to. Must differ from `--from`. |
 | `--allow-skip` | Promote past a step of the promotion order, for example dev straight to prod. |
+| `--release <label\|digest>` | Deploy under this release: the templates come from its target for `--to`, checked against their digests, and each record names the release in `releaseDigest`. See [Promoting a release](#promoting-a-release). |
 | `--component <name>` | Promote only this component. |
 | `--digest <sha256:...>` | With `--component`, promote this recorded digest rather than the latest one. |
 | `--digest <component>=<sha256:...>` | Without `--component`, promote only the named components, each at this recorded digest. Repeatable. [`chant run --components --digest-file`](/chant/cli/run/#the-recorded-digest---digest-file) writes the value. |

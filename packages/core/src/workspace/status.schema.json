@@ -937,7 +937,7 @@
       "required": ["component", "digest", "gitSha", "inputDigest", "runId", "timestamp", "actor", "flags", "plan"],
       "properties": {
         "component": { "type": "string" },
-        "digest": { "type": "string", "description": "The artifact digest the release deployed." },
+        "digest": { "type": "string", "description": "What the deploy record names, as its producer writes it: an artifact digest, a release-plan digest for a runner that records plans (_plans/<digest>.json, ws-055), or a product's own digest such as a schema digest (ws-104 question 3)." },
         "gitSha": { "type": "string", "description": "The commit the artifact was built from." },
         "inputDigest": { "type": ["string", "null"], "description": "The input-side digest when digest is a rendered one. Compare joins on it when present." },
         "runId": { "type": "string" },

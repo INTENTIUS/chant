@@ -304,6 +304,7 @@ export default defineConfig({
 								{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },
 								{ label: 'change-set summary', slug: 'cli/change-set' },
 								{ label: 'ci', slug: 'cli/ci' },
+								{ label: 'release', slug: 'cli/release' },
 								{ label: 'audit', slug: 'cli/audit' },
 								{ label: 'migrate', slug: 'cli/migrate' },
 								{ label: 'update', slug: 'cli/update' },

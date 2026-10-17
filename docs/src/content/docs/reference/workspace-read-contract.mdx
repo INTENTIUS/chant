@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list` and `run-event`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `releases` and `run-event`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -47,6 +47,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
 | [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
+| [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
@@ -148,7 +149,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `placement-invalid` | error | A member or group match breaks a [placement rule](/chant/reference/workspace-declaration/#placement). |
 | `reader-too-old` | error | The declaration's `minReader` is newer than the chant reading it. |
 | `root-chant-required` | error | The declaration pins another chant, and it is not installed at the workspace root. |
-| `not-a-git-repository` | error | `--at`, `status` or `work` needs a git repository and there is none. |
+| `not-a-git-repository` | error | `--at`, `status`, `work` or `release list` needs a git repository and there is none. |
 | `revision-unknown` | error | `--at`, or `ci list --since`, names no commit. |
 | `live-at-revision` | error, `graph` | `--live` was given with `--at`. A live read is of the account now, not of a revision. |
 | `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
@@ -160,8 +161,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `command-failed` | member, `graph` | The member's own `chant graph` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. |
 | `output-unreadable` | member, `graph` | The member's chant printed something that isn't a graph IR. |
 | `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
-| `ledger-unreadable` | ledger, `status` | Reading the ledger failed, so nothing from it is listed. |
-| `ledger-malformed` | ledger, `status` | Some ledger lines aren't release records, and the rest are listed. |
+| `ledger-unreadable` | ledger, `status`; error, `releases` | Reading the ledger failed, so nothing from it is listed. |
+| `ledger-malformed` | ledger, `status` and `releases` | Some ledger lines aren't release records, or for `releases` some release files or cut lines can't be read, and the rest are listed. |
 | `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
 | `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
 | `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
@@ -766,6 +767,29 @@ A box block may also declare `replicate`, where the box's work in progress is pu
 `chant workspace status --json` also lists each member's stewards in `stewards` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)), a contract version 1 addition that readers who don't know it ignore. A steward is the one writer that runs a member's operational Ops: the fountain lexicon's Agent and Teammate, or `chant operator --steward` in the box. An entry names the steward and the file that declares it. `form` is where it runs in the environment asked for, and `forms` is the declared default with its per-environment exceptions. `capabilities` lists the box capabilities the steward reaches through a broker, joined with the member's box block (`broker`, and `declared: false` when the block doesn't list one), and `vault` names the vault a steward holds when it isn't behind a broker. `lease` is the lease a local steward holds while it runs, or `null`. Each entry in `ops` has the Op's `schedule`, the `env` its runs are recorded under and its `lastRun` from the run ledger; the schedule is `null` for an Op run only on request, and `lastRun` is `null` before the first run. Only members of kind `chant` with a config of their own are read, and only their `*.op.ts` files are imported. `stewardReasons` says when a steward or a last run could not be read. An Op also has `changesCheckout` and `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)): `workLease` is `null` for an Op that runs under no work lease, and otherwise names the work kind whose ledger holds the lease and lists in `held` the leases the steward's turns of that Op hold, by holder `<steward>/<op>@<process>`. A ConvergeOp also has `lastTick`, its newest tick on the converge ledger with the rules that fired and the resources its observer step reported, and `null` for any other Op ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). An Op the steward runs beside its turns has `beside`, with `ready` and the Op's own `lease`, and every other Op has `beside: null` ([#2861](https://github.com/INTENTIUS/chant/issues/2861)). `lastRun.phases` gives each phase's `status` and `durationMs`. `inFlight` is the run in flight now, or `null`: its current `phase` and `step`, the `phases` it has finished and the newest `activity` lines its steps reported through the file in `CHANT_RUN_ACTIVITY`. The run keeps it under the checkout's git directory, not on `chant/lifecycle`, and removes it once its ledger record is written. hud and the studio read this to show which steward owns a box, what it last did and which work item its current turn holds.
 
 A run that stops on an open decision point has `status: "waiting"`, and its `lastRun.point` names the question: its answer record's `id`, the `point`, its `state`, `path`, `subject` and `since` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The `state` is the question's now, read as `points` reads it, so it is `answered` once a person has answered. When the questions can't be read, or the answer record is gone, it is the state the run ledger recorded. The steward's `waiting` lists the questions still open, one for each Op whose newest run is the steward's own and stopped on one, with the Op and the run. It leaves out a question answered since, and one whose Op has a newer run in flight that has not written its record yet: the Op's lease or one of its work leases was taken after the waiting run ended and is still held. In `points --open` the question carries `askedBy`, which names the steward and the run that asked it. hud joins the two by `id` to ask a person. The steward never answers a question itself, and runs the Op again on the first round after a person does.
+
+## Releases
+
+`chant release list --json` prints the member's releases ([#4026](https://github.com/INTENTIUS/chant/issues/4026), [ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md)). A release is one green commit of one member, compiled: `commit`, the `artifactDigests` built once, and `targets`, one per environment with its `templates` and `params`. Each release also has its `label`, its `cuts`, and `environments`, the environments whose latest deploy record names it in `releaseDigest`, with the components that do. The document is at `v1` within contract 1, and its failures reuse `ledger-unreadable` and `ledger-malformed`. The [`release` page](/chant/cli/release/) describes the cut and the digest.
+
+A reader joins a release to a deploy record by `releaseDigest`, and to the commit's CI state by `commit` and the `ci/green/<sha>` tag. A release whose commit is revoked keeps its file; the revocation is read from the tags.
+
+The release model adds these fields to contract 1. Every one is optional or nullable, so a reader treats its absence as an older chant. A row's floor is the first release that ships the issue that adds it. The rows still waiting name the issue.
+
+| Field | On | Holds | Floor |
+|---|---|---|---|
+| `_releases/<releaseDigest>.json` | `chant/lifecycle` | the release: `version`, `releaseDigest`, `member`, `commit`, `artifactDigests`, `targets` | 0.124.28 |
+| `_releases/cuts.jsonl` | `chant/lifecycle` | one line per cut, with `label` | 0.124.28 |
+| `_releases/templates/<digest>.txt` | `chant/lifecycle` | each template's bytes, by content digest | 0.124.28 |
+| `signature` | each cut line | the signer's signature over the digest and label; `null` until then | the release with #4031 |
+| the `releases` output schema, `v1` | the read contract | releases with their targets and the environments running each | 0.124.28 |
+| `releaseDigest` | `ReleaseRecord` | the release a deploy came from. `components promote --release` writes it from 0.124.28; `run --components`, `rollback` and `redeploy` with #4043 | 0.124.28 for a promote |
+| `releaseDigest`, `releaseLabel` | `status` release item | the same, and the release's label, `null` without one | the release with #4043 |
+| `releaseDigest` | `PendingGateRecord`, `GateResolutionRecord` | the release a gate binds | the release with #4045 |
+| `releaseDigest` | `status` gate item | the same | the release with #4045 |
+| `empty` | `GateResolutionRecord` | `true` for a pass over an empty change set | the release with #4045 |
+| stored change sets, keyed by document `digest` | `chant/lifecycle` | the document a release or pull-request gate bound | the release with #4022 |
+| `featureFlags` | `status` member | each flag and its value per environment | the release with #4024 |
 
 ## Fields added within version 1
 

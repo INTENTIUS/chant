@@ -57,13 +57,20 @@ import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
 
 const PROMOTE_USAGE =
-  "chant components promote --to <env> [--from <env>] [--allow-skip] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
+  "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 const REDEPLOY_USAGE =
   "chant components redeploy <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 
 type Verb = "promote" | "rollback" | "redeploy";
+
+/** The release a promote deploys under (#4026), and its target for the environment promoted to. */
+interface UnderRelease {
+  release: import("../../lifecycle/release-store").Release;
+  label: string | null;
+  target: import("../../lifecycle/release-store").ReleaseTarget;
+}
 
 function renderPlan(verb: Verb, plan: PromotionPlan, removed: Map<string, string[]>): void {
   console.error(formatBold(verb === "promote" ? `promote ${plan.from} -> ${plan.to}` : `${verb} ${plan.to}`));
@@ -144,6 +151,7 @@ async function deployPlan(
   project: { projectPath: string; config: ChantConfig; targets: DriverComponent[] },
   actor: string | undefined,
   record: (item: PromotionItem, env: string, run: DeployRunInfo) => ReleaseRecordInput,
+  under?: UnderRelease,
 ): Promise<number> {
   const { args } = ctx;
   const byName = new Map(project.targets.map((c) => [c.name, applyConfigDefaults(c, project.config)]));
@@ -169,6 +177,28 @@ async function deployPlan(
     return 1;
   }
 
+  // #4026: under a release, the deploy reads the templates the release
+  // recorded for this environment, checked against their digests.
+  let pinnedFiles: import("../../components/release-promote").PinnedTemplate[] = [];
+  if (under) {
+    const { pinReleaseTemplates } = await import("../../components/release-promote");
+    const { readReleaseTemplate } = await import("../../lifecycle/release-store");
+    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest) => readReleaseTemplate(digest));
+    if ("errors" in pinned) {
+      for (const message of pinned.errors) console.error(formatError({ message }));
+      console.error(formatError({ message: `nothing was deployed` }));
+      return 1;
+    }
+    prepared.splice(0, prepared.length, ...pinned.components);
+    pinnedFiles = pinned.files;
+    for (const item of plan.items) {
+      const named = item.source.releaseDigest;
+      if (named !== undefined && named !== under.release.releaseDigest) {
+        console.error(formatWarning({ message: `${item.component}: the ${plan.from} deploy being promoted came from release ${named}, not ${under.release.releaseDigest}` }));
+      }
+    }
+  }
+
   // The composition deployed is this checkout's. Say so when it is not the
   // commit the artifact was built from.
   const head = await getHeadCommit().catch(() => undefined);
@@ -181,12 +211,20 @@ async function deployPlan(
     }
   }
 
+  const releaseJson = under ? { release: { releaseDigest: under.release.releaseDigest, label: under.label, templates: under.target.templates } } : {};
   if (args.dryRun) {
-    if (args.json) console.log(JSON.stringify(planJson(plan, removed), null, 2));
-    else renderPlan(verb, plan, removed);
+    if (args.json) console.log(JSON.stringify({ ...planJson(plan, removed), ...releaseJson }, null, 2));
+    else {
+      renderPlan(verb, plan, removed);
+      if (under) console.error(`  under release ${under.label ?? under.release.releaseDigest}: ${under.target.templates.length} template(s) from its "${plan.to}" target`);
+    }
     return 0;
   }
   if (!args.json) renderPlan(verb, plan, removed);
+  if (pinnedFiles.length > 0) {
+    const { writePinnedTemplates } = await import("../../components/release-promote");
+    writePinnedTemplates(project.projectPath, pinnedFiles);
+  }
 
   const seededOutputs: Record<string, Record<string, unknown>> = {};
   for (const file of args.seedOutputs ?? []) {
@@ -222,9 +260,8 @@ async function deployPlan(
         const result = run.results.find((r) => r.component === item.component);
         const approver = gateApprover(result);
         const admission = gateAdmission(result);
-        const { record: written } = await appendReleaseRecord(
-          record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}) }),
-        );
+        const input = record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}) });
+        const { record: written } = await appendReleaseRecord(under ? { ...input, releaseDigest: under.release.releaseDigest } : input);
         recorded.push(written);
       }
       await pushLifecycle();
@@ -234,7 +271,7 @@ async function deployPlan(
   }
 
   if (args.json) {
-    console.log(JSON.stringify({ ...planJson(plan, removed), run, recorded }, null, 2));
+    console.log(JSON.stringify({ ...planJson(plan, removed), ...releaseJson, run, recorded }, null, 2));
   } else {
     for (const r of recorded) {
       console.error(formatSuccess(
@@ -349,6 +386,25 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   }
 
   await fetchLifecycle().catch(() => false);
+
+  // #4026: --release names the release this promote deploys, by label or digest.
+  let under: UnderRelease | undefined;
+  if (args.release) {
+    const { resolveRelease } = await import("../../lifecycle/release-store");
+    const { targetFor } = await import("../../components/release-promote");
+    const found = await resolveRelease(args.release);
+    if (!found) {
+      console.error(formatError({ message: `no release is labelled or digested "${args.release}" in this member`, hint: "List them with: chant release list" }));
+      return 1;
+    }
+    const target = targetFor(found.release, to);
+    if ("error" in target) {
+      console.error(formatError({ message: target.error }));
+      return 1;
+    }
+    under = { release: found.release, label: found.label, target: target.target };
+  }
+
   const plan = planPromotion({
     from,
     to,
@@ -362,7 +418,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     console.error(formatError({ message: plan.error, hint: PROMOTE_USAGE }));
     return 1;
   }
-  return deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord);
+  return deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under);
 }
 
 export async function runComponentsRollback(ctx: CommandContext): Promise<number> {

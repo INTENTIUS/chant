@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json",
+  "title": "chant release list output",
+  "description": "What `chant release list --json` prints (#4026, ws-104): every release of one member, each the compiled output of one green commit, with its artifact digests, one target per environment, its cuts and the environments that run it. It reads the local chant/lifecycle branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "Exit code 0, with or without releases.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "member",
+        "releases",
+        "reason"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The workspace member read, its path of names joined with / when nested, or null for a project outside a workspace (the flat ledger layout)."
+        },
+        "releases": {
+          "type": "array",
+          "description": "Newest cut first. A release stored with no cut comes last.",
+          "items": {
+            "$ref": "#/$defs/release"
+          }
+        },
+        "reason": {
+          "description": "Null when everything was read. ledger-malformed when some release files or cut lines could not be read; the rest are listed.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ledger-malformed"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "required": [
+        "releaseDigest",
+        "label",
+        "member",
+        "commit",
+        "artifactDigests",
+        "targets",
+        "cuts",
+        "environments"
+      ],
+      "properties": {
+        "releaseDigest": {
+          "type": "string",
+          "pattern": "^(jcs1-)?sha256:[0-9a-f]{64}$",
+          "description": "computePlanDigest(\"release\", subject) over member, commit, artifactDigests, and each target's env, templates and the name and value of each param. The file is _releases/<releaseDigest>.json on chant/lifecycle, with : written as _."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release's label, from its cuts, or null. A label names one release in a member and a release takes at most one label."
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The full sha of the green commit the release was cut from."
+        },
+        "artifactDigests": {
+          "type": "array",
+          "description": "Each image and asset built once from the commit, sorted by component, then path. A config-only release carries the previous release's entries.",
+          "items": {
+            "type": "object",
+            "required": [
+              "component",
+              "kind",
+              "path",
+              "digest"
+            ],
+            "properties": {
+              "component": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "image",
+                  "asset"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "description": "One per environment the member declares, sorted by env.",
+          "items": {
+            "$ref": "#/$defs/target"
+          }
+        },
+        "cuts": {
+          "type": "array",
+          "description": "Each cut of the release, oldest first.",
+          "items": {
+            "$ref": "#/$defs/cut"
+          }
+        },
+        "environments": {
+          "type": "array",
+          "description": "The environments that run the release, sorted by env: in each, the components whose latest deploy record names this release in releaseDigest. A promote with --release writes that field. An environment can run components of several releases.",
+          "items": {
+            "type": "object",
+            "required": [
+              "env",
+              "components"
+            ],
+            "properties": {
+              "env": {
+                "type": "string"
+              },
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "env",
+        "templates",
+        "params"
+      ],
+      "properties": {
+        "env": {
+          "type": "string"
+        },
+        "templates": {
+          "type": "array",
+          "description": "The files the environment's deploys read, compiled for it, sorted by component, then path.",
+          "items": {
+            "type": "object",
+            "required": [
+              "component",
+              "path",
+              "digest"
+            ],
+            "properties": {
+              "component": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The component whose deploy reads it, or null for a project with no components."
+              },
+              "path": {
+                "type": "string",
+                "description": "The path the deploy step names, relative to the member's directory."
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^(jcs1-)?sha256:[0-9a-f]{64}$",
+                "description": "sha256 of the file's bytes."
+              }
+            }
+          }
+        },
+        "params": {
+          "type": "array",
+          "description": "The resolved build parameters the environment was compiled with, sorted by name. source is outside the release digest.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "value",
+              "source"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "source": {
+                "type": "string",
+                "description": "cli, params-file, env or default."
+              }
+            }
+          }
+        }
+      }
+    },
+    "cut": {
+      "type": "object",
+      "required": [
+        "label",
+        "actor",
+        "timestamp",
+        "runOrigin",
+        "signature"
+      ],
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actor": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO 8601."
+        },
+        "runOrigin": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "forge"
+              ],
+              "properties": {
+                "forge": {
+                  "enum": [
+                    "github",
+                    "gitlab",
+                    "op",
+                    "local"
+                  ]
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          ],
+          "description": "The CI run the cut ran in: the forge (github for GitHub and Forgejo, gitlab), the repo or project, and a link to the run. Null outside CI."
+        },
+        "signature": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The signer's signature over the digest and label. Null until #4031 writes it."
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "ledger-unreadable"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -9,12 +9,18 @@ import { CapabilityRegistry, type DeployContext } from "../../components/capabil
 import type { DriverComponent } from "../../components/driver";
 import type { ReleaseRecord } from "../../lifecycle/release-ledger";
 import type { ParsedArgs } from "../registry";
+import { makeRelease } from "../../lifecycle/release-store";
+import { contentDigest } from "../../content-digest";
 
 const appendReleaseRecordMock = vi.fn();
 const readReleaseLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 const resolveTargetsMock = vi.fn();
 const ran: string[] = [];
+const stepInputs: Array<{ kind: string; input: unknown }> = [];
+let releaseFixture: { release: import("../../lifecycle/release-store").Release; label: string | null } | null = null;
+let storedTemplate: string | null = null;
+const writtenTemplates: unknown[] = [];
 let configEnvironments: unknown[] | undefined;
 let publishedDigest = "sha256:api";
 let failApplyFor: string | undefined;
@@ -48,7 +54,7 @@ vi.mock("../../components/fan-out-support", () => ({
   fanOutRegistry: async () => {
     const registry = new CapabilityRegistry();
     const step = (kind: string, output: (ctx: DeployContext) => unknown) =>
-      registry.register({ kind, async run(ctx: DeployContext) { ran.push(`${ctx.env}:${kind}`); return output(ctx); } } as never);
+      registry.register({ kind, async run(ctx: DeployContext, input: unknown) { ran.push(`${ctx.env}:${kind}`); stepInputs.push({ kind, input }); return output(ctx); } } as never);
     step("docker-build", () => ({ digest: "sha256:rebuilt" }));
     step("publish-image", () => ({ digest: publishedDigest, uri: `reg/api@${publishedDigest}` }));
     step("apply", (ctx) => {
@@ -66,6 +72,20 @@ vi.mock("../../op/gate", async () => {
   return { ...actual, gitGateLedgerPort: () => port, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
 });
 const sealedGates = new Set<string>();
+
+// #4026: the release store holds one release and one template's bytes.
+vi.mock("../../lifecycle/release-store", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/release-store")>("../../lifecycle/release-store");
+  return {
+    ...actual,
+    resolveRelease: async (ref: string) => (releaseFixture && (ref === releaseFixture.label || ref === releaseFixture.release.releaseDigest) ? releaseFixture : null),
+    readReleaseTemplate: async () => storedTemplate,
+  };
+});
+vi.mock("../../components/release-promote", async () => {
+  const actual = await vi.importActual<typeof import("../../components/release-promote")>("../../components/release-promote");
+  return { ...actual, writePinnedTemplates: (_dir: string, files: unknown[]) => writtenTemplates.push(...files) };
+});
 
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
@@ -118,6 +138,10 @@ let logs: string[];
 beforeEach(() => {
   sealedGates.clear();
   ran.length = 0;
+  stepInputs.length = 0;
+  writtenTemplates.length = 0;
+  releaseFixture = null;
+  storedTemplate = null;
   configEnvironments = undefined;
   publishedDigest = "sha256:api";
   failApplyFor = undefined;
@@ -297,6 +321,62 @@ describe("chant components promote", () => {
     expect(await runComponentsPromote(ctx({}))).toBe(1);
     expect(errors.join("\n")).toMatch(/no publish step/);
     expect(ran).toEqual([]);
+  });
+});
+
+describe("chant components promote --release (#4026)", () => {
+  const prodTemplate = `{"env":"prod"}\n`;
+  const withTemplate: DriverComponent = {
+    ...api,
+    deploy: [...api.deploy.slice(0, 2), { phase: "Apply", steps: [{ kind: "apply", template: "dist/api.template.json", imageRef: "@Publish.digest" }] }],
+  };
+  const release = makeRelease({
+    member: null,
+    commit: "abc123".padEnd(40, "0"),
+    artifactDigests: [{ component: "api", kind: "image", path: "api.tar", digest: "sha256:api" }],
+    targets: [
+      { env: "staging", templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(`{"env":"staging"}\n`) }], params: [] },
+      { env: "prod", templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(prodTemplate) }], params: [] },
+    ],
+  });
+
+  beforeEach(() => {
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [withTemplate] });
+    releaseFixture = { release, label: "v1.0.0" };
+    storedTemplate = prodTemplate;
+  });
+
+  test("deploys the template the release recorded for --to, and names the release on the record", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(ran).toEqual(["prod:publish-image", "prod:apply"]);
+    const prodPath = `.chant/release-templates/${release.targets.find((t) => t.env === "prod")!.templates[0].digest.replace(/:/g, "_")}/api.template.json`;
+    expect(stepInputs.find((s) => s.kind === "apply")?.input).toMatchObject({ template: prodPath });
+    expect(writtenTemplates).toEqual([{ path: prodPath, content: prodTemplate }]);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", digest: "sha256:api", releaseDigest: release.releaseDigest });
+  });
+
+  test("refuses a template whose digest differs from the target's, and deploys nothing", async () => {
+    storedTemplate = `{"env":"prod","edited":true}\n`;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/hashes to sha256:[0-9a-f]{64}, but the release's target for "prod" records/);
+    expect(errors.join("\n")).toMatch(/nothing was deployed/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("refuses a release it can't find, and one with no target for --to", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v9" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/no release is labelled or digested "v9"/);
+    errors.length = 0;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0", migrateTo: "qa" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/has no target for "qa"/);
+    expect(ran).toEqual([]);
+  });
+
+  test("a promote without --release reads the checkout's template as before", async () => {
+    expect(await runComponentsPromote(ctx({}))).toBe(0);
+    expect(stepInputs.find((s) => s.kind === "apply")?.input).toMatchObject({ template: "dist/api.template.json" });
+    expect(appendReleaseRecordMock.mock.calls[0][0].releaseDigest).toBeUndefined();
   });
 });
 
