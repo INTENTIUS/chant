@@ -850,6 +850,43 @@ describe("runApprove — the resolution names the plan it approves (#2300)", () 
     errSpy.mockRestore();
   });
 
+  // #4020: the resolution names the commit and run the gate waited on, off the fact it answers.
+  test("it copies the standing fact's commit and run onto the resolution", async () => {
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [{
+        version: 1, kind: "pending", op: "fountain-apply", gate: "rollout-gate",
+        timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+        planDigest: PLAN_A, gitSha: "f".repeat(40), runId: "9001",
+      }],
+      malformed: 0,
+    });
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ gitSha: "f".repeat(40), runId: "9001" }));
+    errSpy.mockRestore();
+  });
+
+  test("a standing fact from before the commit was recorded gives a resolution without one", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex" }))).toBe(0);
+    const written = appendGateResolutionMock.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(written).not.toHaveProperty("gitSha");
+    expect(written).not.toHaveProperty("runId");
+    errSpy.mockRestore();
+  });
+
   test("--plan names one explicitly, and wins over the standing fact's", async () => {
     const other = `sha256:${"b".repeat(64)}`;
     seedPending("fountain-apply", "rollout-gate", PLAN_A);

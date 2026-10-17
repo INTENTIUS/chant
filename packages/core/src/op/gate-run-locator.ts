@@ -7,6 +7,7 @@
  */
 
 import type { ForgeKind } from "../pr-forge";
+import type { RunOrigin } from "../lifecycle/release-ledger";
 
 /** Where the job that recorded a pending fact runs, and what its forge needs to start it again. */
 export interface GateRunLocator {
@@ -102,4 +103,38 @@ export function isGateRunLocator(value: unknown): value is GateRunLocator {
   if (v.forge === "gitlab") return typeof v.job === "string";
   if (v.forge === "forgejo") return typeof v.workflow === "string" && typeof v.ref === "string";
   return false;
+}
+
+/**
+ * The CI run a {@link GateRunLocator} names, in the shape a run and a deploy
+ * record carry (#4020). `runId` is the locator's `run`. Forge `github` and
+ * `forgejo` both become `github`, as `RunOrigin.forge` documents (the `url`
+ * names the host), and `gitlab` stays `gitlab`. `repo` and `url` carry over.
+ * The API base, attempt, job and workflow fields stay on the locator, which
+ * exists to start the job again.
+ */
+export function runOriginOfLocator(locator: GateRunLocator): { runId: string; runOrigin: RunOrigin } {
+  return {
+    runId: locator.run,
+    runOrigin: {
+      forge: locator.forge === "gitlab" ? "gitlab" : "github",
+      repo: locator.repo,
+      ...(locator.url ? { url: locator.url } : {}),
+    },
+  };
+}
+
+/**
+ * The id of the CI run this process is in, or undefined outside CI: the
+ * GitHub (and Forgejo) run id, else the GitLab pipeline id. The same
+ * precedence `resolveRunId` (../lifecycle/release-ledger.ts) uses for a
+ * deploy record, so a gate and a deploy name the run alike.
+ */
+export function ciRunIdFromEnv(env: Record<string, string | undefined> = process.env): string | undefined {
+  return env.GITHUB_RUN_ID || env.CI_PIPELINE_ID || undefined;
+}
+
+/** The commit the CI job was started for: `GITHUB_SHA` (GitHub and Forgejo) or `CI_COMMIT_SHA` (GitLab). Undefined outside CI. */
+export function ciCommitFromEnv(env: Record<string, string | undefined> = process.env): string | undefined {
+  return env.GITHUB_SHA || env.CI_COMMIT_SHA || undefined;
 }

@@ -56,6 +56,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
           }
         ],
@@ -70,6 +71,7 @@
             "approver": {
               "kind": "human"
             },
+            "gitSha": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
             "note": "approved by the review of #7 at hhhhhhhhhhhh: github:erin",
             "url": "https://example.test/pr/7",
             "review": {
@@ -125,6 +127,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
           },
           "recorded": true,
@@ -149,6 +152,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
           }
         ],
@@ -198,6 +202,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
           },
           "recorded": true,
@@ -225,6 +230,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
           }
         ],
@@ -378,6 +384,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 2 (staging): 1 run, gate on-destructive, approval pr-review",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d"
       },
       "recorded": true,

@@ -95,6 +95,27 @@ describe("maybeRecordAutoRelease", () => {
     expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
   });
 
+  test("a deploy that passed a gate records the approver and the admission (#4020)", async () => {
+    appendReleaseRecordMock.mockResolvedValue({ commit: "c".repeat(40), record: { version: 1 } });
+    const admission = { op: "svc", gate: "approve-prod", resolvedAt: "2026-01-01T00:05:00.000Z" };
+
+    await maybeRecordAutoRelease(
+      { component: "svc", env: "prod", success: true, records: [publishRecord("sha256:abc")], runId: "9001", runOrigin: { forge: "github", repo: "acme/app" }, approver: "alice", admission },
+      { actor: "alice" },
+    );
+
+    const [input] = appendReleaseRecordMock.mock.calls[0];
+    expect(input).toMatchObject({ runId: "9001", runOrigin: { forge: "github", repo: "acme/app" }, approver: "alice", admission });
+  });
+
+  test("an ungated deploy records neither", async () => {
+    appendReleaseRecordMock.mockResolvedValue({ commit: "c".repeat(40), record: { version: 1 } });
+    await maybeRecordAutoRelease({ component: "svc", env: "prod", success: true, records: [publishRecord("sha256:abc")], runId: "r" }, { actor: "alice" });
+    const [input] = appendReleaseRecordMock.mock.calls[0];
+    expect(input).not.toHaveProperty("approver");
+    expect(input).not.toHaveProperty("admission");
+  });
+
   test("a pre-resolved digest takes precedence and is used directly", async () => {
     appendReleaseRecordMock.mockResolvedValue({
       commit: "b".repeat(40),

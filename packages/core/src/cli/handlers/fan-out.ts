@@ -60,7 +60,7 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
 import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { resolveBuildRoot } from "./lifecycle";
-import { GATED_EXIT_CODE, recordAutoReleasesForRun } from "./run";
+import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
 
 /**
@@ -417,11 +417,13 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // A gated-wave run can stop at a later wave's gate after earlier waves
   // applied, and those applies are recorded like any other.
   if (result.status !== "gated" || result.completed.length > 0) {
+    const release = autoReleaseRun(`fan-out-${Date.now()}`);
     await recordAutoReleasesForRun(
       result.results,
       args.env ?? "local",
-      `fan-out-${Date.now()}`,
+      release.runId,
       resolveAutoReleaseDisabled(config, args.noReleaseRecord),
+      release.runOrigin,
     );
   }
 

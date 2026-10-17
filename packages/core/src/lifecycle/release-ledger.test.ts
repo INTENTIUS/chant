@@ -146,6 +146,20 @@ describe("release-ledger", () => {
       });
     });
 
+    test("records the gate resolution that admitted the deploy, and an older record without it still reads (#4020)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const admission = { op: "search-service", gate: "approve-prod", resolvedAt: "2026-01-01T00:05:00.000Z" };
+        await appendReleaseRecord(makeInput({ timestamp: "2026-01-01T00:06:00.000Z", approver: "alice@corp", admission }), { cwd: dir });
+        await appendReleaseRecord(makeInput({ component: "worker", timestamp: "2026-01-01T00:07:00.000Z" }), { cwd: dir });
+        const { records, malformed } = await readReleaseLedger("prod", { cwd: dir });
+        expect(malformed).toBe(0);
+        expect(records[0].admission).toEqual(admission);
+        expect(records[0].approver).toBe("alice@corp");
+        expect(records[1].admission).toBeUndefined();
+      });
+    });
+
     test("approver is absent for an ungated change (#1035)", async () => {
       await withTestDir(async (dir) => {
         await initRepo(dir);

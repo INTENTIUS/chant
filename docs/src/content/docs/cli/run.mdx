@@ -168,6 +168,8 @@ An Op that declares `failOn: "drift"` (on `WatchOp`, or on any `Op`) gets the sa
 
 Every run appends one record to the run ledger on the `chant/lifecycle` branch, at `<env>/runs__<name>.jsonl` beside the converge ledger. The record carries the run id, the start and end instants, the status (`ok`, `fail`), the Op's `labels`, every `outcomeAttribute` the run captured, and each phase's per-step status. `--json` prints that same record, so what you read on stdout and what `chant operator log` reads back later are one document. `<env>` is the Op's own `labels.Env`, or `local` when it declares none.
 
+The record also names where the run was built and where it ran ([#4020](https://github.com/INTENTIUS/chant/issues/4020)). `gitSha` is the checkout's `HEAD`, or the commit the CI job started for when the checkout has no git. `runOrigin` is set when the Op ran in CI and has the same shape as a [release record's `runOrigin`](/chant/components/observability/#the-release-ledger): the forge (`github`, which also covers Forgejo, or `gitlab`), the repository and a link to the CI run. The record's `id` stays the Op's own run id. The gate facts the run writes carry the same `gitSha` and the run id, so a gate joins to its run by either. Chant 0.124.28 and newer write these fields, and a record from an older chant has neither.
+
 ### `run list`
 
 List all discovered Ops (`*.op.ts` files) with their declared `labels` and the run state the selected runtime reports for each.

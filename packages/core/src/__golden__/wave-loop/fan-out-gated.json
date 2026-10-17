@@ -64,6 +64,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 1 of 3: net",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
       },
       "waves": [
@@ -136,6 +137,7 @@
           "timestamp": "2026-10-11T00:00:00.000Z",
           "expiresAt": "2026-10-13T00:00:00.000Z",
           "description": "wave 1 of 3: net",
+          "gitSha": "1111111111111111111111111111111111111111",
           "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
         }
       ],
@@ -234,6 +236,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 2 of 3: a, b",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd"
       },
       "waves": [
@@ -407,6 +410,7 @@
           "timestamp": "2026-10-11T00:00:00.000Z",
           "expiresAt": "2026-10-13T00:00:00.000Z",
           "description": "wave 2 of 3: a, b",
+          "gitSha": "1111111111111111111111111111111111111111",
           "planDigest": "jcs1-sha256:f56bc903abaf2bb2f593fcb6f83b48322c7079deed286c1439d2a4e0310e2bdd"
         }
       ],
@@ -479,6 +483,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 1 of 3: net",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
       },
       "waves": [
@@ -553,6 +558,7 @@
           "timestamp": "2026-10-11T00:00:00.000Z",
           "expiresAt": "2026-10-13T00:00:00.000Z",
           "description": "wave 1 of 3: net",
+          "gitSha": "1111111111111111111111111111111111111111",
           "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
         }
       ],
@@ -625,6 +631,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-11T02:00:00.000Z",
         "description": "the release",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
       },
       "waves": [
@@ -697,6 +704,7 @@
           "timestamp": "2026-10-11T00:00:00.000Z",
           "expiresAt": "2026-10-11T02:00:00.000Z",
           "description": "the release",
+          "gitSha": "1111111111111111111111111111111111111111",
           "planDigest": "jcs1-sha256:95bbd78ad48471cefeb1cb32a3f308abde40b2d299eac36ab86b0614f23bcccf"
         }
       ],

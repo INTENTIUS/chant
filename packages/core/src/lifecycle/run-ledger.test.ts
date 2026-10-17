@@ -92,6 +92,16 @@ describe("buildRunRecord", () => {
     expect(input.phases[1].steps.map((s) => s.status)).toEqual(["ok", "skipped"]);
   });
 
+  test("carries the commit and the CI run origin when given (#4020), and neither when not", () => {
+    const times = { started: "2026-01-01T00:00:00.000Z", ended: "2026-01-01T00:00:01.000Z", status: "ok" as const };
+    const withBoth = buildRunRecord({ name: "ship" }, [], { ...times, gitSha: "a".repeat(40), runOrigin: { forge: "github", repo: "acme/app" } });
+    expect(withBoth.gitSha).toBe("a".repeat(40));
+    expect(withBoth.runOrigin).toEqual({ forge: "github", repo: "acme/app" });
+    const without = buildRunRecord({ name: "ship" }, [], times);
+    expect(without).not.toHaveProperty("gitSha");
+    expect(without).not.toHaveProperty("runOrigin");
+  });
+
   test("a phase with a failed step is fail; a phase whose steps all skipped is skipped", () => {
     const input = buildRunRecord(
       { name: "deploy" },

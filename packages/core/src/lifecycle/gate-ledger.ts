@@ -139,6 +139,16 @@ export interface GateResolutionRecord {
    */
   planDigest?: string;
   /**
+   * The commit the gate was waiting on (#4020), copied off the pending fact the
+   * approval answers, or the run's own commit for a resolution a run writes
+   * itself (a decision point's answer, a review, a carried approval). It is not
+   * the approver's checkout, and a seal does not cover it. Absent on a
+   * resolution written before 0.124.28 and when no commit was known.
+   */
+  gitSha?: string;
+  /** The run the gate was waiting on (#4020), copied the same way as {@link GateResolutionRecord.gitSha}. */
+  runId?: string;
+  /**
    * The checkpoint this approval lets a run resume from (#3947), copied off
    * the pending fact it answers. Set only on an approval of a gate that
    * resumes (`resume: true`) whose run stored a checkpoint. A seal covers it.
@@ -292,8 +302,19 @@ export interface PendingGateRecord {
   gate: string;
   /** The gate's human-readable description, when it declared one — what `chant operator status` shows a reader who wasn't there for the run. */
   description?: string;
-  /** The run that reached the gate, when the caller identifies its runs. */
+  /**
+   * The run that reached the gate. An Op run records its own id; a run with no
+   * id of its own (a component gate) records the CI run id when it ran in CI
+   * (#4020). Absent outside CI for a run that mints none.
+   */
   runId?: string;
+  /**
+   * The commit the run reached the gate at (#4020): the checkout's `HEAD`, else
+   * the commit the CI job started for. It is the commit the gate waits on, and
+   * `chant approve` copies it onto the resolution. Absent on a record written
+   * before 0.124.28 and when the run knew no commit.
+   */
+  gitSha?: string;
   /** ISO-8601 timestamp, caller-supplied (library code never calls `Date.now()` internally). */
   timestamp: string;
   /** ISO-8601 expiry, from the gate's `timeout` (default {@link DEFAULT_GATE_EXPIRY}). Past it, the fact is stale and a run re-records it. */
@@ -524,6 +545,11 @@ export function parseGateLedger(
       if (rawCheckpoint !== undefined && typeof rawCheckpoint !== "string") {
         malformed++;
         continue;
+      }
+      // #4020: a commit or run id of the wrong type is dropped, so a reader can trust the type without losing the line.
+      for (const key of ["gitSha", "runId"] as const) {
+        const v: unknown = (parsed as Record<string, unknown>)[key];
+        if (v !== undefined && typeof v !== "string") delete (parsed as Record<string, unknown>)[key];
       }
       if (parsed.kind === "pending") {
         if (typeof parsed.expiresAt !== "string") {

@@ -34,6 +34,9 @@ import type { DriverComponent } from "./components/driver";
 import type { RunProgressEvent } from "./components/run-progress";
 import type { WaveRecord } from "./gated-waves";
 
+// #4020: every pending fact names the commit it was recorded at. The transcripts pin one.
+vi.mock("./lifecycle/commit-sha", () => ({ resolveCommitSha: async () => "1".repeat(40) }));
+
 const digest = (n: string) => `sha256:${n.repeat(64)}`;
 const NOW = "2026-10-11T00:00:00.000Z";
 const BEFORE = "2026-10-10T00:00:00Z";
@@ -46,6 +49,12 @@ beforeEach(() => {
   // A pull request's address would land on every pending fact too.
   vi.stubEnv("GITHUB_REF_NAME", "");
   vi.stubEnv("CI_MERGE_REQUEST_IID", "");
+  // A CI run's id would land on them as well (#4020).
+  vi.stubEnv("GITHUB_RUN_ID", "");
+  vi.stubEnv("CI_PIPELINE_ID", "");
+  // And the commit the CI job started for, which a decision point's gate reads from the environment.
+  vi.stubEnv("GITHUB_SHA", "");
+  vi.stubEnv("CI_COMMIT_SHA", "");
 });
 afterEach(() => vi.unstubAllEnvs());
 

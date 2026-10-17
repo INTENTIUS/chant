@@ -503,3 +503,36 @@ describe("pending fact wave and heldBy (#3886, #3887)", () => {
     expect(pending[0]!.heldBy).toBeUndefined();
   });
 });
+
+describe("commit and run on gate records (#4020)", () => {
+  const base = { version: 1, op: "tg", gate: "g", timestamp: "2026-10-01T00:00:00Z" };
+  const parse = (...lines: Record<string, unknown>[]) => parseGateLedger(lines.map((l) => JSON.stringify(l)).join("\n"));
+  test("a pending fact and a resolution read back with their commit and run", () => {
+    const { pending, resolutions, malformed } = parse(
+      { ...base, kind: "pending", expiresAt: "2026-10-02T00:00:00Z", gitSha: "a".repeat(40), runId: "9001" },
+      { ...base, resolvedBy: "alice", gitSha: "a".repeat(40), runId: "9001" },
+    );
+    expect(malformed).toBe(0);
+    expect(pending[0]).toMatchObject({ gitSha: "a".repeat(40), runId: "9001" });
+    expect(resolutions[0]).toMatchObject({ gitSha: "a".repeat(40), runId: "9001" });
+  });
+  test("lines written before the fields existed still read, with neither", () => {
+    const { pending, resolutions, malformed } = parse(
+      { ...base, kind: "pending", expiresAt: "2026-10-02T00:00:00Z" },
+      { ...base, resolvedBy: "alice" },
+    );
+    expect(malformed).toBe(0);
+    expect(pending[0]).not.toHaveProperty("gitSha");
+    expect(resolutions[0]).not.toHaveProperty("runId");
+  });
+  test("a commit or run of the wrong type is dropped and the line is kept", () => {
+    const { pending, resolutions, malformed } = parse(
+      { ...base, kind: "pending", expiresAt: "2026-10-02T00:00:00Z", gitSha: 7, runId: { id: 1 } },
+      { ...base, resolvedBy: "alice", gitSha: ["x"] },
+    );
+    expect(malformed).toBe(0);
+    expect(pending[0]!.gitSha).toBeUndefined();
+    expect(pending[0]!.runId).toBeUndefined();
+    expect(resolutions[0]!.gitSha).toBeUndefined();
+  });
+});

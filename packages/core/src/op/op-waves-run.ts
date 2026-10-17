@@ -71,6 +71,7 @@ import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-appli
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../workspace/trust/gate-seal";
+import { ciRunIdFromEnv } from "./gate-run-locator";
 import {
   OP_WAVE_DEFAULT_APPLY,
   OP_WAVE_GATE_POLICIES,
@@ -2228,6 +2229,9 @@ async function approveByReview(
     timestamp: at.now,
     planDigest: at.digest,
     approver: { kind: "human" },
+    // #4020: the commit the wave applies, and the CI run applying it.
+    gitSha: head,
+    ...(ciRunIdFromEnv() ? { runId: ciRunIdFromEnv()! } : {}),
     note,
     ...(merged.url ? { url: merged.url } : {}),
     review: { pr: merged.pr, head: merged.head, approvers: merged.approvers },

@@ -112,6 +112,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
       timestamp: now,
       expiresAt: now,
       ...(standing.description ? { description: standing.description } : {}),
+      ...(standing.runId ? { runId: standing.runId } : {}),
+      ...(standing.gitSha ? { gitSha: standing.gitSha } : {}),
     });
     const push = await reportedPush(
       `The expiry is recorded locally on ${LIFECYCLE_BRANCH}. Until it reaches the remote, ` +
@@ -587,6 +589,9 @@ export async function recordGateApproval(
     ...(planDigest !== undefined ? { planDigest } : {}),
     ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
     ...(environment !== undefined ? { environment } : {}),
+    // #4020: the commit and run the gate waited on, off the fact this approves.
+    ...(standing?.gitSha ? { gitSha: standing.gitSha } : {}),
+    ...(standing?.runId ? { runId: standing.runId } : {}),
     origin,
     ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
   });

@@ -20,6 +20,7 @@ import type { OpConfig } from "./types";
 import type { StepRecord, OpRunResult } from "./local-executor";
 import type { WaitingPoint } from "./steward-points";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
+import type { RunOrigin } from "../lifecycle/release-ledger";
 import type { RunComponentsOptions, RunComponentsResult } from "../components/cli-support";
 
 /**
@@ -159,6 +160,19 @@ export interface OpRunRecord {
    * first phase.
    */
   resumed?: { gate: string; run: string; checkpoint: string };
+  /**
+   * The commit the run built from (#4020): the checkout's `HEAD`, else the
+   * commit the CI job started for. Gate facts the run writes carry the same
+   * commit, so a run and its gate join on it. Absent on a record written
+   * before 0.124.28 and when the run knew no commit.
+   */
+  gitSha?: string;
+  /**
+   * The CI run this Op ran in (#4020), as a deploy record's `runOrigin` names
+   * its run, so the two name a run the same way. `id` is still the Op's own
+   * run id. Absent outside CI and on a record written before 0.124.28.
+   */
+  runOrigin?: RunOrigin;
 }
 
 /** An {@link OpRunRecord} before the ledger stamps its version and mints an id. */

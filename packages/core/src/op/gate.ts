@@ -53,7 +53,8 @@ import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
-import { resolveGateRunLocator } from "./gate-run-locator";
+import { ciRunIdFromEnv, resolveGateRunLocator } from "./gate-run-locator";
+import { resolveCommitSha } from "../lifecycle/commit-sha";
 import { refuseGateWithoutRecording } from "../lifecycle/no-record";
 import { gateCheckpointDigest, gateCheckpointText, readGateCheckpointText, writeGateCheckpoint, type GateCheckpoint } from "../lifecycle/gate-checkpoint";
 import type { ResolvedGateAlias } from "./gate-alias";
@@ -258,8 +259,10 @@ export interface GateCheckInput {
   description?: string;
   /** The gate's authored `timeout`, which becomes the pending fact's expiry. Default {@link DEFAULT_GATE_EXPIRY}. */
   timeout?: string;
-  /** Identifies the run that reached the gate, when the caller has one. */
+  /** Identifies the run that reached the gate, when the caller has one. Absent, a run in CI records the CI run id (#4020). */
   runId?: string;
+  /** The commit the run is at (#4020). Absent, the checkout's `HEAD`, else the commit the CI job started for. */
+  gitSha?: string;
   /**
    * The plan this run reached the gate with (#2300) — `computePlanDigest`'s
    * output (`../lifecycle/plan-digest.ts`), from the Plan phase that ran a
@@ -650,6 +653,16 @@ async function aliasApprovals(
   return out.sort((a, b) => at(a.timestamp) - at(b.timestamp));
 }
 
+/**
+ * The commit and run a gate record names (#4020): the input's own, else the
+ * checkout's commit and, in CI, the CI run id. Fields nobody knows are left out.
+ */
+async function runStamp(input: { runId?: string; gitSha?: string }): Promise<{ runId?: string; gitSha?: string }> {
+  const runId = input.runId ?? ciRunIdFromEnv();
+  const gitSha = input.gitSha ?? (await resolveCommitSha());
+  return { ...(runId ? { runId } : {}), ...(gitSha ? { gitSha } : {}) };
+}
+
 /** Whether two resolved approval blocks are the same, so a standing pending fact still describes this gate. */
 function sameApproval(a: ResolvedGateApproval | undefined, b: ResolvedGateApproval | undefined): boolean {
   return JSON.stringify(a ?? null, sortedJsonReplacer) === JSON.stringify(b ?? null, sortedJsonReplacer);
@@ -722,7 +735,10 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // #3949: write the approvals that counted from an alias under this gate.
   const carry = async (records: readonly GateResolutionRecord[]): Promise<GateResolutionRecord[]> => {
     const written: GateResolutionRecord[] = [];
-    for (const r of records) written.push((await port.appendResolution!(carriedApproval(r, input.op, input.gate, now))).record);
+    if (records.length === 0) return written;
+    // #4020: a carried approval is for this run's gate, so it names this run's commit and run.
+    const at = await runStamp(input);
+    for (const r of records) written.push((await port.appendResolution!({ ...carriedApproval(r, input.op, input.gate, now), ...at })).record);
     return written;
   };
 
@@ -817,6 +833,8 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   const url = resolveApprovalUrl();
   // #3683: in CI, where this job runs, so an approval can start it again.
   const resume = resolveGateRunLocator();
+  // #4020: the commit and run the gate waits on, so a reader can join it to both.
+  const stamp = await runStamp(input);
   const { record, pushed, pushWarning } = await port.appendPending({
     ...(input.fields as Partial<PendingGateInput> | undefined),
     op: input.op,
@@ -826,7 +844,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       new Date(now).getTime() + parseDuration(input.timeout ?? DEFAULT_GATE_EXPIRY),
     ).toISOString(),
     ...(input.description ? { description: input.description } : {}),
-    ...(input.runId ? { runId: input.runId } : {}),
+    ...stamp,
     ...(url ? { url } : {}),
     ...(resume ? { resume } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),

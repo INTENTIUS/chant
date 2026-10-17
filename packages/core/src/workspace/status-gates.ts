@@ -61,6 +61,10 @@ export interface StatusGate {
   state: GateState;
   /** When the run recorded the pending fact the state is read against. */
   recordedAt: string;
+  /** The commit the run reached the gate at (#4020), from the pending fact. Absent on a fact written before chant 0.124.28. */
+  gitSha?: string;
+  /** The run that reached the gate (#4020), from the pending fact: an Op run id, or the CI run id. Absent when the run had none. */
+  runId?: string;
   expiresAt: string;
   /** The approvals that count toward the gate for this plan, oldest first. */
   approvals: StatusGateApproval[];
@@ -179,6 +183,8 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
     planDigest: planDigest ?? null,
     state,
     recordedAt: standing.timestamp,
+    ...(standing.gitSha ? { gitSha: standing.gitSha } : {}),
+    ...(standing.runId ? { runId: standing.runId } : {}),
     expiresAt: standing.expiresAt,
     approvals: approvals.map(approvalOf),
     needed,

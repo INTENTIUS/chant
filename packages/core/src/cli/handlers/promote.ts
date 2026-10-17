@@ -41,6 +41,7 @@ import {
   rollbackRecord,
   redeployRecord,
   gateApprover,
+  gateAdmission,
   type DeployRunInfo,
   type PromotionItem,
   type PromotionPlan,
@@ -216,9 +217,11 @@ async function deployPlan(
   if (deployed.length > 0) {
     try {
       for (const item of deployed) {
-        const approver = gateApprover(run.results.find((r) => r.component === item.component));
+        const result = run.results.find((r) => r.component === item.component);
+        const approver = gateApprover(result);
+        const admission = gateAdmission(result);
         const { record: written } = await appendReleaseRecord(
-          record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}) }),
+          record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}) }),
         );
         recorded.push(written);
       }

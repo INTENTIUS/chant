@@ -53,6 +53,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 1 (layer): 2 runs, gate always, approval ledger",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
           },
           "recorded": true,
@@ -71,6 +72,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 1 (layer): 2 runs, gate always, approval ledger",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
           }
         ],
@@ -181,6 +183,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 1 (layer): 2 runs, gate always, approval ledger",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af"
       },
       "recorded": true,

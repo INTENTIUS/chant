@@ -2,7 +2,7 @@
  * Promote a release without rebuilding (#2530).
  */
 
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { describeGateMismatch, memoryGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import { componentPlanDigest } from "./gate-plan";
@@ -20,6 +20,7 @@ import {
   runPromotion,
   promotionRecord,
   gateApprover,
+  gateAdmission,
   promoteArchivePaths,
   hasPublishStep,
   parseDigestPins,
@@ -282,10 +283,15 @@ describe("running a promotion", () => {
     const { registry, ran } = fakeRegistry({ api: "sha256:api" });
     const opts = { plan: planFor("api", "sha256:api"), components: [prepared(gated)], registry, gates };
 
+    vi.stubEnv("GITHUB_RUN_ID", "9001");
+    vi.stubEnv("GITHUB_SHA", "e".repeat(40));
     const first = await runPromotion({ ...opts, now: "2026-01-03T00:00:00Z" });
     expect(first.status).toBe("gated");
     expect(first.gate?.gate).toBe("prod-release");
     expect(ran).not.toContain("prod:api:apply");
+    // #4020: the pending fact of a component gate names the CI run, and a commit.
+    expect(first.gate?.runId).toBe("9001");
+    expect(first.gate?.gitSha).toMatch(/^[0-9a-f]{40}$/);
 
     // `chant approve` copies the pending fact's environment and plan (#2574).
     const bound = { planDigest: first.gate!.planDigest!, environment: first.gate!.environment! };
@@ -294,6 +300,9 @@ describe("running a promotion", () => {
     const second = await runPromotion({ ...opts, now: "2026-01-03T00:02:00Z" });
     expect(second.status).toBe("ok");
     expect(gateApprover(second.results[0])).toBe("alice");
+    // #4020: and the gate resolution that admitted the deploy.
+    expect(gateAdmission(second.results[0])).toEqual({ op: "api", gate: "prod-release", resolvedAt: "2026-01-03T00:01:00Z" });
+    vi.unstubAllEnvs();
 
     // The same approval does not pass a promote of another release (#2574).
     const other = await runPromotion({

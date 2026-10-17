@@ -113,7 +113,7 @@ function fixture(build: () => string): () => string {
 
 let n = 0;
 /** One ledger line. */
-function release(component: string, env: string, digest: string, gitSha: string, extra: Record<string, string> = {}): string {
+function release(component: string, env: string, digest: string, gitSha: string, extra: Record<string, unknown> = {}): string {
   n++;
   return JSON.stringify({
     version: 1,
@@ -450,6 +450,32 @@ const gated = fixture(() => {
     "_gates/nightly.jsonl": jsonl(pending("nightly", "confirm", "2026-09-23T00:00:00.000Z"), approval("nightly", "confirm", "dave", "2026-09-23T01:00:00.000Z")),
   });
   return root;
+});
+
+describe("commit, run and gate on the records status --json lists (#4020)", () => {
+  test("a release names the gate that admitted it, a gate its commit and run, and an older record gives null", async () => {
+    const root = twoLayouts();
+    const sha = "a".repeat(40);
+    const admission = { op: "web", gate: "deploy", resolvedAt: "2026-09-20T01:00:00.000Z" };
+    lifecycle(root, {
+      "_members/web/staging/releases.jsonl": jsonl(release("web", "staging", D("a"), sha, { approver: "alice", admission })),
+      "_members/web/_gates/web.jsonl": jsonl(
+        pending("web", "deploy", "2026-09-20T00:00:00.000Z", { environment: "staging", planDigest: D("1"), gitSha: sha, runId: "9001" }),
+        approval("web", "deploy", "alice", "2026-09-20T01:00:00.000Z", { environment: "staging", planDigest: D("1"), gitSha: sha, runId: "9001" }),
+        pending("web", "old", "2026-09-20T00:00:00.000Z", { environment: "staging", planDigest: D("2") }),
+      ),
+      "staging/releases.jsonl": jsonl(release("api", "staging", D("b"), "b".repeat(40))),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging", now: NOW }));
+    expectValid(doc);
+    const [, web, api] = doc.members;
+    expect(web.environments[0].releases[0]).toMatchObject({ gitSha: sha, approver: "alice", admission });
+    expect(api.environments[0].releases[0]).toMatchObject({ approver: null, admission: null });
+    const [deploy, old] = web.gates;
+    expect(deploy).toMatchObject({ name: "deploy", gitSha: sha, runId: "9001" });
+    expect(old).not.toHaveProperty("gitSha");
+    expect(old).not.toHaveProperty("runId");
+  });
 });
 
 describe("gate state in chant workspace status --json (#2674)", () => {

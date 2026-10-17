@@ -21,6 +21,8 @@ Each deploy appends one immutable record to the `chant/lifecycle` orphan branch 
 component, env, artifact digest, git sha, run id, timestamp, actor
 ```
 
+A record also carries `runOrigin`, which says which id space `runId` is in and where to open it. A change that passed a gate records who approved it as `approver`, and since chant 0.124.28 the gate resolution that admitted it as `admission` ([#4020](https://github.com/INTENTIUS/chant/issues/4020)): the `op` and `gate` whose ledger file `_gates/<op>.jsonl` holds the resolution, and `resolvedAt`, when it was recorded (the newest one, when several approvals counted). For a component gate, `op` is the component. The gate facts and the Op run record carry the same commit sha and run id, so from a commit, a run, a gate or a deploy you can find the other three. A release written without a gate has no `approver` or `admission`, and neither has one written by an older chant.
+
 ```bash
 chant components release prod \
   --component search-service \
