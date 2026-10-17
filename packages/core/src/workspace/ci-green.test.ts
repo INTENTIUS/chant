@@ -46,6 +46,7 @@ describe("the ci.green block (#3573)", () => {
       ],
       require: ["lint", "test", "macos"],
       signedSince: null,
+      source: "checks",
       pointer: "/ci/green",
     });
     expect(parseDeclaration(decl({ green: { ...GREEN, signedSince: "a".repeat(40) } }), "chant.workspace.json").ci!.green!.signedSince).toBe("a".repeat(40));

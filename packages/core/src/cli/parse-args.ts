@@ -748,7 +748,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--source") {
       // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
       result.source = args[++i];
-      if (!result.source || result.source.startsWith("-")) throw new Error("--source needs a template: --source <repo>[#<member>]");
+      // #4044: also `chant ci tick|list --source checks|runs`.
+      if (!result.source || result.source.startsWith("-")) throw new Error("--source needs a template: --source <repo>[#<member>] for workspace upgrade, or a source for ci tick and ci list: --source checks|runs");
     } else if (arg === "--tags") {
       // #2551 — `chant workspace adopt-lineage --tags <glob>`, also hash-index and versions.
       result.tags = args[++i];

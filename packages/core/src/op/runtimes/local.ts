@@ -177,6 +177,14 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
                 ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
               ...(startOpts.runEvents ? { runEvents: { write: startOpts.runEvents } } : {}),
+              // #4044: a runner key signs the record as the run settles.
+              ...(startOpts.signRecord
+                ? {
+                    signRecord: startOpts.signRecord,
+                    onSignError: (err: unknown) =>
+                      process.stderr.write(`warning: run "${runId}" of "${op.name}" was not signed: ${err instanceof Error ? err.message : String(err)}\n`),
+                  }
+                : {}),
               // #3956: a running step's output, and a still-running line while
               // it is quiet, on stderr as they happen; stdout stays the
               // `--json` record's and `--progress-json`'s.

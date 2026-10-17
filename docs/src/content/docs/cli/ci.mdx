@@ -8,8 +8,8 @@ diataxis: reference
 
 ```
 chant ci last-green [--json] [--from <rev>]
-chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
-chant ci tick [--dry-run] [--forge github] [--key <runner key.pem>]
+chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
+chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -40,7 +40,7 @@ Prints what happened to the branch's recent history: the first-parent commits in
 | `revoked` | The commit has `ci/revoked/<sha>`. |
 | `undecided` | The commit has neither tag. |
 
-A phase's result comes from the tags. A green tag's annotation records the runs of each phase that passed, so a green commit lists every required phase as `pass` with its runs. A revoked one keeps those and shows the phase its revoked tag names as `fail`, with the failed run. An undecided commit has no tag to read, so its phases are `unrecorded` and have no runs. Add `--forge github` to read the check runs of undecided commits from the forge, as `ci tick` does, and each phase becomes `pass`, `fail` or `pending`. The forge is asked about nothing else, and without `--forge` the command reaches no network.
+A phase's result comes from the tags. A green tag's annotation records the runs of each phase that passed, so a green commit lists every required phase as `pass` with its runs. A revoked one keeps those and shows the phase its revoked tag names as `fail`, with the failed run. An undecided commit has no tag to read, so its phases are `unrecorded` and have no runs. Add `--forge github` to read the check runs of undecided commits from the forge, as `ci tick` does, and each phase becomes `pass`, `fail` or `pending`. The forge is asked about nothing else, and without `--forge` the command reaches no network. When the source is [chant runs](#chant-runs-as-the-status-source), an undecided commit's phases are judged from the signed Op runs on the local `chant/lifecycle` instead, still with no network, and `--forge` is refused. Each run then has an `opRun` object naming the run, and each commit has `ignoredRuns`, listing the runs that do not count.
 
 A line for an `unlinked` or `wrong` commit ends with `; why unknown:` and the reason. [Link commits to work items](/chant/guide/work-items/#link-commits-to-work-items) says how a commit names one.
 
@@ -62,7 +62,48 @@ One pass over the branch. It fetches the branch and the `ci/*` tags from `origin
 
 Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag. With [signed tags](#signed-tags), the tick signs each tag it makes and judges the tags already there as every other reader does, so a hand-pushed tag doesn't count. Since chant never moves or deletes a tag, a hand-pushed tag that holds the name of a tag the tick would make stops it, and the tick says which tag to delete. A commit that names no work item, or a wrong one, has `; why unknown:` and the reason at the end of its line, as in `ci list`.
 
-The check runs come from the forge. GitHub is the only one so far: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused. GitLab and Forgejo get no status reader. The decision is to cover them through the results of chant's own runs ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) instead of mapping pipeline jobs and commit statuses to check runs: GitLab reports jobs per pipeline and Forgejo reports statuses per context. Each mapping needs its own rules for retries and skips. A run result is the same on every forge. Until #4044 ships, the tags and `ci list` work on any forge's repository, but `ci tick` has no status source there. Pushing the tags needs `contents: write` on the remote.
+By default the check runs come from the forge. GitHub is the only forge with a check-run reader: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused. GitLab and Forgejo get no status reader, and are covered through the results of chant's own runs instead ([#4044](https://github.com/INTENTIUS/chant/issues/4044)). Mapping pipeline jobs and commit statuses to check runs would need rules for retries and skips per forge, since GitLab reports jobs per pipeline and Forgejo reports statuses per context. An Op run's result is the same on every forge. Pushing the tags needs `contents: write` on the remote.
+
+## Chant runs as the status source
+
+A project whose pipelines run as chant Ops can take its phase results from those runs in place of a forge's check runs ([#4044](https://github.com/INTENTIUS/chant/issues/4044)). This is how a project on GitLab or Forgejo gets green and revoked tags. Set `source` to `runs` in `ci.green`, or pass `--source runs` to `ci tick` and `ci list`, which overrides the declaration either way. `checks` is the default.
+
+```json
+"ci": {
+  "green": {
+    "branch": "main",
+    "phases": { "lint": ["lint"], "test": ["test", "e2e-*"] },
+    "require": ["lint", "test"],
+    "source": "runs"
+  }
+}
+```
+
+With `runs`, a phase's patterns match Op names, with `*` standing for any run of characters, as they match check-run names otherwise. Each Op run's record on `chant/lifecycle` (`<env>/runs__<op>.jsonl`, see [chant run](/chant/cli/run/)) names the commit it built from as `gitSha`, and counts for that commit. For each Op on a commit, the latest record by end time decides, so a re-run replaces the run before it. Status `ok` passes, `fail` fails, and a stop at a gate or a decision point leaves the phase undecided. Records from every environment count alike.
+
+A run counts only when its record carries a statement signed by a runner key. Without that, anyone who can write to `chant/lifecycle` could write a passing run. The runner signs at the end of the run when `chant run <op>` is given a key, with `--key <file>` or the PEM in `CHANT_RUNNER_KEY`. The key and its principal follow the rules for the [tick's own key](#the-runner-key): `.chant/trust.json` at the checkout's `HEAD` must list it under `runners`, and the principal must hold the `runner` role. `chant run --key` refuses any other key before the run starts. A key from `CHANT_RUNNER_KEY` that is not a runner key only prints a warning, and the run is recorded unsigned.
+
+The envelope format matches the tag's, with its own predicate type, `https://intentius.io/chant/op-run/v1`, over the run's commit. The predicate names the signer and the run, with the run's status and the SHA-256 of its record without the statement. Stored on the record as `statement`, it makes the record and its signature one ledger line. Every run is checked against `.chant/trust.json` at the branch's tip, and one whose statement fails is ignored with the statuses a tag uses. Such a run neither greens nor revokes its commit, and appears under the commit as `ignored run <id> of <op> in <env> (<status>): <reason>`.
+
+| Status | When |
+|---|---|
+| `unsigned` | The record carries no statement. |
+| `invalid` | The envelope or its payload is not an op-run statement, or it names another signer than the key's. |
+| `untrusted` | No key that `.chant/trust.json` lists under `runners` signed it, or its principal holds no `runner` role. |
+| `mismatch` | It signs another run, Op, env, status or commit, or the record changed after it was signed. |
+
+A tick from runs fetches `chant/lifecycle` before it reads, without forcing it, and stops when the local branch and the remote's have diverged. It needs no forge token. It signs every tag it makes, so it needs a runner key even without `signedSince`, apart from `--dry-run`. A tag made from runs has `source: "runs"` in its record. Each run in it has `id: null` and an `opRun` object holding the Op run's `id`, `env`, the runner that signed it and the run's statement, so the tag carries the signed word of every run behind it.
+
+A pipeline on GitLab or Forgejo runs its Ops with the key and then the tick. `chant run` appends each run's record to the local `chant/lifecycle` and does not push it, so push the branch for later ticks and other checkouts to see the runs:
+
+```bash
+chant run lint --key "$RUNNER_KEY_FILE"
+chant run test --key "$RUNNER_KEY_FILE"
+git push origin chant/lifecycle
+chant ci tick --source runs --key "$RUNNER_KEY_FILE"
+```
+
+`ci workflow` writes only a GitHub Actions file, so on another forge the tick goes in the pipeline by hand, or in a scheduled job that runs it every few minutes.
 
 ## Signed tags
 

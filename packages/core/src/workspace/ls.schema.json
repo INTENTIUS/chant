@@ -26,7 +26,8 @@
           }
         },
         "require": { "type": "array", "items": { "type": "string" } },
-        "signedSince": { "type": "string", "description": "Added in contract 1 by #4031, written by chant 0.124.28 and newer, and only when the declaration sets it: the full sha of the first commit whose ci tags count only with a statement signed by a runner key. Tags on its strict first-parent ancestors count unsigned." }
+        "signedSince": { "type": "string", "description": "Added in contract 1 by #4031, written by chant 0.124.28 and newer, and only when the declaration sets it: the full sha of the first commit whose ci tags count only with a statement signed by a runner key. Tags on its strict first-parent ancestors count unsigned." },
+        "source": { "const": "runs", "description": "Added in contract 1 by #4044, written by chant 0.124.28 and newer, and only when the declaration sets ci.green.source to runs: ci tick reads each phase's results from chant's own Op runs on chant/lifecycle, each signed by a runner key, in place of the forge's check runs. Absent means check runs." }
       }
     },
     "result": {

@@ -34,12 +34,29 @@
  * reader here, and the release cut, ignores a tag without a valid one and
  * reports it. A tick given a runner key signs the tags it makes. Without
  * `signedSince` every tag counts, as before.
+ *
+ * Chant runs as the source (#4044): with `ci.green.source: "runs"` (or
+ * `--source runs`) the tick reads chant's own Op runs from the run ledger on
+ * `chant/lifecycle` in place of the forge's check runs, so a project whose
+ * pipelines run as chant Ops, such as one on GitLab or Forgejo, gets green
+ * and revoked tags with no forge check runs. A phase's patterns then match
+ * Op names, a run counts for the commit its record names as `gitSha`, and
+ * the latest run of each Op decides, by its end time. A run counts only when
+ * its record carries a statement signed by a runner key whose principal
+ * holds the `runner` role at base (`./trust/op-run-statement.ts`); the tick
+ * ignores and reports any other, so it neither greens nor revokes a commit.
+ * A tick from runs signs every tag it makes, and each run in the tag's
+ * record names the Op run's id and carries its statement.
  */
 
 import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./commit-links";
 import { execFileSync } from "node:child_process";
-import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase } from "./declaration";
-import type { CheckRun, CiForge } from "./ci-green-forge";
+import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
+import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
+import type { OpRunRecord } from "../op/runtime";
+import { readRunLedger } from "../lifecycle/run-ledger";
+import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees } from "../lifecycle/git";
+import { signOpRunRecord, verifyOpRunStatement } from "./trust/op-run-statement";
 import type { ReasonCode } from "./reason-codes";
 import { gitTop } from "./tree";
 import { locateWorkspace } from "./which-chant";
@@ -47,6 +64,9 @@ import { gitRevisionSource } from "./record-source";
 import { emptyPolicy, readTrustPolicy } from "./trust/policy";
 import { loadRunnerKey } from "./trust/dsse";
 import { signCiTagRecord, verifyCiTagStatement, CI_TAG_SIGNER_ROLE, type CiTagFailure, type CiTagRecord, type CiTagSigner } from "./trust/ci-tag-statement";
+
+/** The environment variable a tick (#4031) and `chant run` (#4044) read a runner key from, as PEM, when `--key` is not given. */
+export const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
 
 export const CI_GREEN_TAG_PREFIX = "ci/green/";
 export const CI_REVOKED_TAG_PREFIX = "ci/revoked/";
@@ -95,6 +115,8 @@ export interface RunVerdict {
   conclusion: string | null;
   url: string | null;
   verdict: Verdict;
+  /** The Op run this is, when the source is chant runs (#4044). */
+  opRun?: OpRunRef;
 }
 
 export interface PhaseVerdict {
@@ -122,7 +144,7 @@ export function evaluatePhase(phase: CiPhase, latest: readonly CheckRun[]): Phas
     if (matched.length === 0) unmatched.push(pattern);
     for (const r of matched) {
       if (runs.some((x) => x.name === r.name)) continue;
-      runs.push({ name: r.name, id: r.id, status: r.status, conclusion: r.conclusion, url: r.url, verdict: runVerdict(phase, r) });
+      runs.push({ name: r.name, id: r.id, status: r.status, conclusion: r.conclusion, url: r.url, verdict: runVerdict(phase, r), ...(r.opRun ? { opRun: r.opRun } : {}) });
     }
   }
   const verdict: Verdict = runs.some((r) => r.verdict === "fail")
@@ -170,6 +192,18 @@ export interface TickCommit {
   ignored?: IgnoredCiTag[];
   /** The tag the tick would have made, when an ignored tag already holds its name (#4031). Nothing is made until a person deletes that tag. */
   blocked?: string;
+  /** The Op runs on this commit that were ignored, each without a valid statement (#4044). Absent when none were. */
+  ignoredRuns?: IgnoredOpRun[];
+}
+
+/** An Op run on a commit that does not count (#4044), and why. */
+export interface IgnoredOpRun {
+  run: string;
+  op: string;
+  env: string;
+  /** `unsigned`, `invalid`, `untrusted` or `mismatch`, as for a ci tag. */
+  status: CiTagFailure;
+  reason: string;
 }
 
 export interface TickPlanInput {
@@ -195,7 +229,17 @@ export function windowMs(window: string): number {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 }
 
-const runRecord = (r: RunVerdict) => ({ name: r.name, id: r.id, conclusion: r.conclusion, url: r.url });
+/**
+ * A run as a tag's record holds it. An Op run (#4044) has no forge id; it
+ * names the Op run's id, env and signer, and carries the run's statement.
+ */
+const runRecord = (r: RunVerdict) =>
+  r.opRun
+    ? { name: r.name, id: null, conclusion: r.conclusion, url: r.url, opRun: { id: r.opRun.id, env: r.opRun.env, signer: r.opRun.signer, statement: r.opRun.statement } }
+    : { name: r.name, id: r.id, conclusion: r.conclusion, url: r.url };
+
+/** `source: "runs"` on a record made from chant runs (#4044); nothing for check runs, so their records read as before. */
+const sourceField = (green: CiGreen) => (green.source === "runs" ? { source: "runs" as const } : {});
 
 /** The record as JSON, with the statement that signs it when a signer is given (#4031). */
 function recordJson(record: CiTagRecord, signer: CiTagSigner | undefined): string {
@@ -210,6 +254,7 @@ export function greenAnnotation(green: CiGreen, sha: string, verdict: CommitVerd
     commit: sha,
     branch: green.branch,
     at: iso(at),
+    ...sourceField(green),
     phases: Object.fromEntries(verdict.phases.map((p) => [p.phase, p.runs.map(runRecord)])),
   };
   return `ci: every required phase passed (${green.require.join(", ")})\n\n${recordJson(record, signer)}\n`;
@@ -217,7 +262,7 @@ export function greenAnnotation(green: CiGreen, sha: string, verdict: CommitVerd
 
 /** The annotation of a revoked tag: the phase and the run that failed, and the time, signed when `signer` is given (#4031). */
 export function revokedAnnotation(green: CiGreen, sha: string, failure: NonNullable<CommitVerdict["failure"]>, at: Date, signer?: CiTagSigner): string {
-  const record: CiTagRecord = { schema: 1, tag: "revoked", commit: sha, branch: green.branch, at: iso(at), phase: failure.phase, run: runRecord(failure.run) };
+  const record: CiTagRecord = { schema: 1, tag: "revoked", commit: sha, branch: green.branch, at: iso(at), ...sourceField(green), phase: failure.phase, run: runRecord(failure.run) };
   return `ci: phase ${failure.phase} failed in ${failure.run.name} (${failure.run.conclusion ?? failure.run.status})\n\n${recordJson(record, signer)}\n`;
 }
 
@@ -408,7 +453,14 @@ function readGreen(cwd: string): { green: CiGreen; top: string; workspace: { nam
 
 export interface TickRequest {
   cwd: string;
-  forge: CiForge;
+  /**
+   * Where check runs come from. A function is called only when the source
+   * is `checks`, so a tick from runs needs no forge token. Required for
+   * `checks`.
+   */
+  forge?: CiForge | (() => CiForge);
+  /** Where phase results come from (#4044): overrides `ci.green.source`. */
+  source?: CiSource;
   /** The git remote the branch and the tags are fetched from and pushed to. Default `origin`. */
   remote?: string;
   /** Decide and report, and make and push no tag. */
@@ -433,6 +485,8 @@ export interface TickResult {
   made: string[];
   /** The runner the tags were signed as (#4031), or null when they carry no statement. */
   signer: string | null;
+  /** Where the phase results came from (#4044). */
+  source: CiSource;
 }
 
 /**
@@ -440,7 +494,7 @@ export interface TickResult {
  * at `base` lists the key for, who must hold the `runner` role. Throws when
  * the key is not one, so a tick never makes a tag its readers would ignore.
  */
-export function ciTagSigner(top: string, base: string, pem: string): CiTagSigner {
+export function ciTagSigner(top: string, base: string, pem: string, what = "the tags it signed"): CiTagSigner {
   let loaded: ReturnType<typeof loadRunnerKey>;
   try {
     loaded = loadRunnerKey(pem);
@@ -450,12 +504,12 @@ export function ciTagSigner(top: string, base: string, pem: string): CiTagSigner
   const policy = readTrustPolicy(gitRevisionSource(top, base), base);
   const at = `.chant/trust.json at ${base.slice(0, 12)}`;
   if (policy.signers.some((s) => s.key === loaded.publicKey)) {
-    throw new Error(`the runner key is a signer's key in ${policy.signersPath}; ci tags are signed by a CI identity's key, never by a person's`);
+    throw new Error(`the runner key is a signer's key in ${policy.signersPath}; ci tags and runs are signed by a CI identity's key, never by a person's`);
   }
   const listed = policy.runners.find((r) => r.key === loaded.publicKey);
-  if (!listed) throw new Error(`${at} lists no runner with this key, so the tags it signed would be ignored. Add it under "runners" first:\n  ${loaded.publicKey}`);
+  if (!listed) throw new Error(`${at} lists no runner with this key, so ${what} would be ignored. Add it under "runners" first:\n  ${loaded.publicKey}`);
   const holds = (policy.roles[CI_TAG_SIGNER_ROLE] ?? []).some((p) => p.normalize("NFKC").trim().toLowerCase() === listed.principal.normalize("NFKC").trim().toLowerCase());
-  if (!holds) throw new Error(`${listed.principal} holds no ${CI_TAG_SIGNER_ROLE} role in ${at}, so the tags it signed would be ignored. Grant it: "roles": { "${CI_TAG_SIGNER_ROLE}": ["${listed.principal}"] }`);
+  if (!holds) throw new Error(`${listed.principal} holds no ${CI_TAG_SIGNER_ROLE} role in ${at}, so ${what} would be ignored. Grant it: "roles": { "${CI_TAG_SIGNER_ROLE}": ["${listed.principal}"] }`);
   return { principal: listed.principal, key: loaded.key, publicKey: loaded.publicKey };
 }
 
@@ -465,7 +519,11 @@ export function ciTagSigner(top: string, base: string, pem: string): CiTagSigner
  * window, make the tags that are due and push them, never forced.
  */
 export async function ciTick(req: TickRequest): Promise<TickResult> {
-  const { green, top } = readGreen(req.cwd);
+  const read = readGreen(req.cwd);
+  const top = read.top;
+  const green: CiGreen = { ...read.green, source: req.source ?? read.green.source };
+  const forge = green.source === "checks" ? (typeof req.forge === "function" ? req.forge() : req.forge) : undefined;
+  if (green.source === "checks" && !forge) throw new Error("ci.green.source is checks, so the tick reads check runs and needs a forge");
   const remote = req.remote ?? "origin";
   const now = req.now ?? new Date();
   const tracking = `refs/remotes/${remote}/${green.branch}`;
@@ -492,20 +550,38 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       `ci.green.signedSince is ${green.signedSince}, so every tag the tick makes needs a statement signed by a runner key, and none was given: pass --key <runner key.pem> or set CHANT_RUNNER_KEY`,
     );
   }
+  if (green.source === "runs" && req.runnerKey === undefined && !req.dryRun) {
+    throw new Error("the tick reads chant runs (source runs), and every tag it makes from them is signed by a runner key, and none was given: pass --key <runner key.pem> or set CHANT_RUNNER_KEY");
+  }
   const signer = req.runnerKey !== undefined ? ciTagSigner(top, base, req.runnerKey) : undefined;
   const links = await commitLinks(req.cwd, top, tracking, commits.map((c) => c.sha));
   const tags = readCiTags(top, green, base);
+  let runs: OpRunSource | undefined;
+  if (green.source === "runs") {
+    // The runs live on chant/lifecycle, which a CI checkout may not have yet.
+    const fetched = await fetchLifecycleStatus({ cwd: top });
+    if (fetched.status === "diverged" || fetched.status === "unreachable") {
+      throw new Error(`could not fetch chant/lifecycle, where the Op runs are recorded, from ${fetched.remote}: ${fetched.status === "diverged" ? "the local branch and the remote's have diverged" : fetched.stderr}`);
+    }
+    runs = await readOpRunSource(req.cwd, top, base);
+  }
   const planned = await planTick({
     green,
     commits,
     greenTags: new Set(tags.green.keys()),
     revokedTags: new Set(tags.revoked.keys()),
     ignored: tags.ignored,
-    checkRuns: (sha) => req.forge.checkRuns(sha),
+    checkRuns: async (sha) => (runs ? runs.checkRuns(sha) : forge!.checkRuns(sha)),
     now,
     signer,
   });
   if (links) for (const c of planned) c.work = links.get(c.sha);
+  if (runs) {
+    for (const c of planned) {
+      const ignored = runs.ignored.get(c.sha);
+      if (ignored && ignored.length > 0) c.ignoredRuns = ignored;
+    }
+  }
   const due = planned.filter((c) => c.made !== null);
   if (!req.dryRun && due.length > 0) {
     const ident = taggerConfig(top);
@@ -519,7 +595,80 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       throw new Error(`could not push ${due.map((c) => c.made!.tag).join(", ")} to ${remote}: ${cause ? `${cause}\n` : ""}${stderr}`);
     }
   }
-  return { branch: green.branch, window: green.window, ref: tracking, commits: planned, made: due.map((c) => c.made!.tag), signer: signer?.principal ?? null };
+  return { branch: green.branch, window: green.window, ref: tracking, commits: planned, made: due.map((c) => c.made!.tag), signer: signer?.principal ?? null, source: green.source };
+}
+
+// ── Chant runs as the source (#4044) ─────────────────────────────────────────
+
+/** The Op runs on the ledger, judged, as check runs by commit. */
+export interface OpRunSource {
+  /** The signed runs on `sha`, each as a check run named for its Op. */
+  checkRuns(sha: string): CheckRun[];
+  /** The runs on each commit that do not count, by commit. */
+  ignored: Map<string, IgnoredOpRun[]>;
+}
+
+const RUN_LEDGER_FILE = /^runs__(.+)\.jsonl$/;
+
+/**
+ * An Op run as a check run (#4044): `ok` passes and `fail` fails once the
+ * run has settled; a run stopped at a gate or a decision point is still
+ * going. The id is the run's end time in milliseconds, so the latest run of
+ * an Op is its latest attempt.
+ */
+export function opRunCheckRun(record: OpRunRecord, signer: string): CheckRun {
+  const settled = record.status === "ok" || record.status === "fail";
+  const ended = Date.parse(record.ended);
+  return {
+    id: Number.isFinite(ended) ? ended : 0,
+    name: record.op,
+    status: settled ? "completed" : record.status,
+    conclusion: settled ? (record.status === "ok" ? "success" : "failure") : null,
+    completedAt: settled ? record.ended : null,
+    url: record.runOrigin?.url ?? null,
+    opRun: { id: record.id, env: record.env, signer, statement: record.statement! },
+  };
+}
+
+/**
+ * Judge every Op run record that names a commit against `.chant/trust.json`
+ * at `base` (#4044), from the run ledger the project at `cwd` writes to. A
+ * record with a valid statement becomes a check run on its `gitSha`; any
+ * other is kept as an ignored run. Reads local refs only.
+ */
+export async function readOpRunSource(cwd: string, top: string, base: string): Promise<OpRunSource> {
+  const policy = readTrustPolicy(gitRevisionSource(top, base), base);
+  const byCommit = new Map<string, CheckRun[]>();
+  const ignored = new Map<string, IgnoredOpRun[]>();
+  for (const env of await listLedgerTrees({ cwd })) {
+    for (const file of await listFilesInDir(env, { cwd })) {
+      const op = RUN_LEDGER_FILE.exec(file)?.[1];
+      if (!op) continue;
+      const { records } = await readRunLedger(env, op, { cwd });
+      for (const record of records) {
+        if (!record.gitSha) continue;
+        const v = verifyOpRunStatement(record, policy.runners, policy.roles);
+        if (v.status === "signed") byCommit.set(record.gitSha, [...(byCommit.get(record.gitSha) ?? []), opRunCheckRun(record, v.signer)]);
+        else ignored.set(record.gitSha, [...(ignored.get(record.gitSha) ?? []), { run: record.id, op: record.op, env: record.env, status: v.status, reason: v.reason }]);
+      }
+    }
+  }
+  return { checkRuns: (sha) => byCommit.get(sha) ?? [], ignored };
+}
+
+/**
+ * What `chant run <op> --key` signs a run's record with (#4044): the runner
+ * key `.chant/trust.json` at the checkout's `HEAD` lists for a principal
+ * holding the `runner` role. Throws when the key is not one, or `cwd` is in
+ * no git checkout.
+ */
+export function opRunSigner(cwd: string, pem: string): (record: OpRunRecord) => NonNullable<OpRunRecord["statement"]> {
+  const top = gitTop(cwd);
+  if (!top) throw new Error("a run is signed against .chant/trust.json at HEAD, and this directory is not in a git repository");
+  const head = tryGit(top, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+  if (head === null) throw new Error("a run is signed against .chant/trust.json at HEAD, and this repository has no commit yet");
+  const signer = ciTagSigner(top, head, pem, "the runs it signed");
+  return (record) => signOpRunRecord(record, signer);
 }
 
 /**
@@ -576,7 +725,7 @@ export function whyWorkUnknown(work: CommitLink | null | undefined): string | un
 
 /** The text `chant ci tick` prints. */
 export function formatTick(r: TickResult, dryRun = false): string {
-  const lines = [`${r.branch}, commits within ${r.window}: ${r.commits.length}`];
+  const lines = [`${r.branch}, commits within ${r.window}${r.source === "runs" ? ", judged from chant runs" : ""}: ${r.commits.length}`];
   for (const c of r.commits) {
     const short = c.sha.slice(0, 12);
     const before = lines.length;
@@ -593,6 +742,7 @@ export function formatTick(r: TickResult, dryRun = false): string {
     const why = whyWorkUnknown(c.work);
     if (why) lines[before] += `; why unknown: ${why}`;
     for (const t of c.ignored ?? []) lines.push(`      ignored ${t.tag} (${t.status}): ${t.reason}`);
+    for (const r of c.ignoredRuns ?? []) lines.push(`      ignored run ${r.run} of ${r.op} in ${r.env} (${r.status}): ${r.reason}`);
     if (c.blocked) lines.push(`      did not make ${c.blocked}: an ignored tag holds the name. Delete it to let the tick tag the commit: git push origin :refs/tags/${c.blocked}`);
   }
   if (r.signer && r.made.length > 0) lines.push(`signed as ${r.signer}`);
@@ -681,6 +831,8 @@ export interface CiListRun {
   id: number | null;
   conclusion: string | null;
   url: string | null;
+  /** The Op run, when the run is a chant run (#4044): its id, env and the runner whose statement it carries. Absent for a check run. */
+  opRun?: { id: string; env: string; signer: string };
 }
 
 export interface CiListPhase {
@@ -711,6 +863,8 @@ export interface CiListCommit {
    * is in no workspace that declares a work kind.
    */
   work: CommitLink | null;
+  /** The Op runs on the commit that do not count, each for want of a valid statement (#4044). Present only when the source is chant runs. */
+  ignoredRuns?: IgnoredOpRun[];
 }
 
 export type CiListDocument =
@@ -736,8 +890,13 @@ const asRun = (r: unknown): CiListRun | null => {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
   if (typeof o.name !== "string") return null;
-  return { name: o.name, id: typeof o.id === "number" ? o.id : null, conclusion: typeof o.conclusion === "string" ? o.conclusion : null, url: typeof o.url === "string" ? o.url : null };
+  const op = o.opRun as Record<string, unknown> | undefined;
+  const opRun = op && typeof op === "object" && typeof op.id === "string" && typeof op.env === "string" && typeof op.signer === "string" ? { opRun: { id: op.id, env: op.env, signer: op.signer } } : {};
+  return { name: o.name, id: typeof o.id === "number" ? o.id : null, conclusion: typeof o.conclusion === "string" ? o.conclusion : null, url: typeof o.url === "string" ? o.url : null, ...opRun };
 };
+
+/** A judged run as `ci list` shows it. */
+const listRun = (r: RunVerdict): CiListRun => ({ name: r.name, id: r.opRun ? null : r.id, conclusion: r.conclusion, url: r.url, ...(r.opRun ? { opRun: { id: r.opRun.id, env: r.opRun.env, signer: r.opRun.signer } } : {}) });
 
 /** What the green tag's annotation recorded for a phase: its runs, all of which passed when the tag was made. */
 function recordedPhase(green: CountedCiTag | undefined, phase: string): CiListPhase {
@@ -755,6 +914,12 @@ export interface ListRequest {
   since?: string;
   /** Judge undecided commits from the forge's check runs. Without it they list as `unrecorded`. */
   forge?: CiForge;
+  /**
+   * Where phase results come from (#4044): overrides `ci.green.source`. With
+   * `runs`, undecided commits are judged from the signed Op runs on the
+   * local `chant/lifecycle`, and `forge` is refused.
+   */
+  source?: CiSource;
   now?: Date;
 }
 
@@ -788,7 +953,11 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
     if (req.limit !== undefined) commits = commits.slice(0, req.limit);
 
     const links = await commitLinks(req.cwd, top, ref, commits.map((c) => c.sha));
-    const tags = readCiTags(top, green, git(top, ["rev-parse", `${ref}^{commit}`]));
+    const base = git(top, ["rev-parse", `${ref}^{commit}`]);
+    const tags = readCiTags(top, green, base);
+    const source = req.source ?? green.source;
+    if (source === "runs" && req.forge) throw new Error("--forge reads check runs, and the source is chant runs (ci.green.source or --source runs); drop one");
+    const runs = source === "runs" ? await readOpRunSource(req.cwd, top, base) : undefined;
     const out: CiListCommit[] = [];
     for (const c of commits) {
       const g = tags.green.get(c.sha);
@@ -801,9 +970,9 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
         const run = asRun(r.record?.run);
         revoked = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, tagged: r.tagged, phase, run, signer: r.signer };
         phases = phases.map((p) => (p.phase === phase ? { phase: p.phase, result: "fail", runs: run ? [run] : [] } : p));
-      } else if (!g && req.forge) {
-        const verdict = evaluateCommit(green, await req.forge.checkRuns(c.sha));
-        phases = verdict.phases.map((p) => ({ phase: p.phase, result: p.verdict, runs: p.runs.map(({ name, id, conclusion, url }) => ({ name, id, conclusion, url })) }));
+      } else if (!g && (runs || req.forge)) {
+        const verdict = evaluateCommit(green, runs ? runs.checkRuns(c.sha) : await req.forge!.checkRuns(c.sha));
+        phases = verdict.phases.map((p) => ({ phase: p.phase, result: p.verdict, runs: p.runs.map(listRun) }));
       }
       out.push({
         ...c,
@@ -813,6 +982,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
         phases,
         work: links?.get(c.sha) ?? null,
         ignored: tags.ignored.get(c.sha) ?? [],
+        ...(runs ? { ignoredRuns: runs.ignored.get(c.sha) ?? [] } : {}),
       });
     }
     return { ...head, workspace, branch: green.branch, ref, window: req.since === undefined ? green.window : null, since: req.since ?? null, require: [...green.require], commits: out };
@@ -830,6 +1000,7 @@ export function formatList(doc: Extract<CiListDocument, { branch: string }>): st
     const why = whyWorkUnknown(c.work);
     lines.push(`  ${c.sha.slice(0, 12)}  ${c.state.padEnd(9)}  ${phases}${why ? `; why unknown: ${why}` : ""}`);
     for (const t of c.ignored) lines.push(`      ignored ${t.tag} (${t.status}): ${t.reason}`);
+    for (const r of c.ignoredRuns ?? []) lines.push(`      ignored run ${r.run} of ${r.op} in ${r.env} (${r.status}): ${r.reason}`);
   }
   return lines.join("\n");
 }

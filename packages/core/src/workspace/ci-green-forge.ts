@@ -6,15 +6,18 @@
  * The tags themselves are git's, pushed to the remote like any other ref, so
  * the forge is asked for check runs and nothing else. GitHub is the one
  * forge implemented. Forgejo reports commit statuses rather than check runs,
- * and GitLab reports pipeline jobs; each can implement {@link CiForge} by
- * mapping those to {@link CheckRun}s, and until one does `--forge` refuses
- * them by name.
+ * and GitLab reports pipeline jobs, and neither gets a reader here (#4021): a
+ * project on either runs its pipelines as chant Ops and sets
+ * `ci.green.source` to `runs`, so the tick reads signed Op runs from the run
+ * ledger instead (#4044, `./ci-green.ts`). `--forge` refuses them by name and
+ * says so.
  *
  * The client takes a `fetch` like the pull-request loop's (`../pr-forge.ts`),
  * so the tests drive it with a recording fake and no network.
  */
 
 import { ForgeApiError, ForgeEnvironmentError, type ForgeFetch, type ForgeKind } from "../pr-forge";
+import type { OpRunRecord } from "../op/runtime";
 
 /** One attempt of one check run on a commit. */
 export interface CheckRun {
@@ -27,6 +30,21 @@ export interface CheckRun {
   conclusion: string | null;
   completedAt: string | null;
   url: string | null;
+  /**
+   * Set when the "check run" is a chant Op run (#4044, `ci.green.source:
+   * "runs"`): the run's id and env, the runner whose statement it carries,
+   * and that statement. `name` is then the Op's name and `id` the run's end
+   * time in milliseconds, which orders a re-run after the run it replaced.
+   */
+  opRun?: OpRunRef;
+}
+
+/** The Op run a {@link CheckRun} stands for (#4044). */
+export interface OpRunRef {
+  id: string;
+  env: string;
+  signer: string;
+  statement: NonNullable<OpRunRecord["statement"]>;
 }
 
 export interface CiForge {
@@ -87,7 +105,9 @@ export function githubCiForge(opts: GithubCiForgeOptions): CiForge {
 /** Thrown for a forge `chant ci tick` has no check-run client for yet. */
 export class CiForgeUnsupportedError extends Error {
   constructor(kind: string) {
-    super(`check runs are read from GitHub only so far, and --forge asked for ${kind}; see #3573`);
+    super(
+      `check runs are read from GitHub only, and --forge asked for ${kind}. A ${kind} project runs its pipelines as chant Ops and sets ci.green.source to "runs" (or passes --source runs), so the tick reads signed Op runs from chant/lifecycle instead`,
+    );
     this.name = "CiForgeUnsupportedError";
   }
 }

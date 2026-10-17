@@ -233,18 +233,22 @@ CI:
                         and no ci/revoked tag. Reads local tags only; fetch
                         them first. With ci.green.signedSince, a tag without a
                         valid runner statement is ignored and reported.
-  ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
+  ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
                         The first-parent commits of ci.green's branch within
                         its window, newest first, each green, revoked or
                         undecided with its required phases' results. Reads
                         local tags; --forge reads check runs for undecided
-                        commits. --since replaces the window.
-  ci tick [--dry-run] [--forge github] [--key <runner key.pem>]  Tag each
-                        commit within ci.green's window whose required phases
-                        all passed ci/green/<sha>, and revoke a green one that
-                        now fails ci/revoked/<sha>. Reads check runs from the
-                        forge, pushes the tags. --key, or the PEM in
-                        CHANT_RUNNER_KEY, signs each tag with a runner key.
+                        commits, and source runs reads the signed Op runs on
+                        the local chant/lifecycle. --since replaces the window.
+  ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
+                        Tag each commit within ci.green's window whose
+                        required phases all passed ci/green/<sha>, and revoke
+                        a green one that now fails ci/revoked/<sha>. Reads
+                        check runs from the forge, or with source runs
+                        (ci.green.source or --source) the Op runs on
+                        chant/lifecycle that a runner key signed. Pushes the
+                        tags. --key, or the PEM in CHANT_RUNNER_KEY, signs
+                        each tag with a runner key.
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -300,6 +304,9 @@ Ops:
                         its Drift outcome is true (WatchOp failOn: "drift")
                         --no-record: a test run that records nothing on
                         chant/lifecycle and pushes nothing (local runtime)
+                        --key <runner key.pem>, or the PEM in
+                        CHANT_RUNNER_KEY: sign the run's record with a runner
+                        key, so ci tick from runs counts it (#4044)
   run list              List all Ops with the runtime's state for each
   run status <name>     Show the runtime's state for one Op's latest run
   run approve <op> <gate>  Record a gate's resolution and wake the runtime

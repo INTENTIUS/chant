@@ -10,7 +10,7 @@ import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from 
 import { approveCommand, describeGateMismatch, gateIsSealed } from "../../op/gate";
 import { summaryLedgerPrefix, writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
-import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
+import type { OpRuntimeProvider, OpRunRecord, OpRunStatus } from "../../op/runtime";
 import { pointAnswerCommand, renderHuman, renderJson } from "../../op/local-output";
 import { loadPlugins } from "../plugins";
 import { recordGateApproval } from "./operator";
@@ -1295,6 +1295,15 @@ async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // #4044: a runner key signs the run's record as it settles, so `ci tick`
+  // can count the run. `--key` must be a runner key; the PEM in
+  // CHANT_RUNNER_KEY that is not one leaves the run unsigned, with a warning.
+  const signRecord = await runSignerFor(ctx);
+  if (signRecord === null) {
+    await stewardGate?.release?.();
+    return 1;
+  }
+
   // `--progress-json` streams one NDJSON StepRecord per settled step, fed by
   // whatever the runtime reports through `progress`.
   const progress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
@@ -1333,6 +1342,7 @@ async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
       // `--events-json` (#4041): the runtime writes the run's events itself,
       // since it is the one that knows the run's id and where it ran.
       ...(ctx.args.eventsJson ? { runEvents: stdoutLine } : {}),
+      ...(signRecord ? { signRecord } : {}),
       signal: controller.signal,
       ...(work ? { work } : {}),
     });
@@ -1481,4 +1491,39 @@ export function runOpUnknown(ctx: CommandContext): Promise<number> {
     hint: "Available: chant run <name>, run list, run status, run approve, run cancel, run log, run events",
   }));
   return Promise.resolve(1);
+}
+
+/** The variable a runner key is read from, as PEM, as `chant ci tick` reads it (`RUNNER_KEY_ENV` in ../../workspace/ci-green.ts). */
+const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
+
+/**
+ * What signs the run's record (#4044): the runner key `--key` names, or the
+ * PEM in `CHANT_RUNNER_KEY`, checked against `.chant/trust.json` at `HEAD`.
+ * Undefined when neither is given. Null, after printing why, when `--key`
+ * is not a runner key; an unusable `CHANT_RUNNER_KEY` only warns, since the
+ * variable may be set for `ci tick` in a job that also runs Ops.
+ */
+async function runSignerFor(ctx: CommandContext): Promise<((record: OpRunRecord) => NonNullable<OpRunRecord["statement"]>) | undefined | null> {
+  const fromFlag = ctx.args.key !== undefined;
+  let pem: string | undefined;
+  try {
+    pem = fromFlag ? readFileSync(resolve(ctx.args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
+  } catch (err) {
+    console.error(formatError({ message: `--key ${ctx.args.key}: ${err instanceof Error ? err.message : String(err)}` }));
+    return null;
+  }
+  if (pem === undefined) return undefined;
+  try {
+    // Loaded only when a key is given, so a run without one loads no workspace code (level 0, #2525).
+    const { opRunSigner } = await import("../../workspace/ci-green");
+    return opRunSigner(process.cwd(), pem);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (fromFlag) {
+      console.error(formatError({ message: `the run would not be signed: ${message}` }));
+      return null;
+    }
+    console.error(formatWarning({ message: `${RUNNER_KEY_ENV} is set, and the run will not be signed: ${message}` }));
+    return undefined;
+  }
 }

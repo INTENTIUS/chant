@@ -106,7 +106,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "ci",
     label: "Tagging the commits that passed CI",
     summary:
-      "`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` and `chant ci list` read local tags only and reach nothing, except that `chant ci list --forge github` reads the check runs of the commits that have no tag.",
+      "`chant ci tick` reads each recent commit's check runs from the forge, then fetches the branch and the `ci/*` tags from `origin` and pushes the tags it makes (#3573). It runs in the generated CI file, not on a developer's path. `chant ci last-green` and `chant ci list` read local tags only and reach nothing, except that `chant ci list --forge github` reads the check runs of the commits that have no tag. A tick from chant runs (#4044) asks the forge for nothing and fetches `chant/lifecycle` instead.",
   },
   {
     id: "maintenance",
@@ -286,6 +286,15 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     phase: "ci",
     destination: "the repository's `origin` remote",
     why: "`git push origin refs/tags/ci/green/<sha> ...` pushes the tags the tick made, never forced, so a tag that already exists there is refused rather than moved (#3573).",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant ci tick --source runs, or with ci.green.source set to runs",
+    file: "packages/core/src/lifecycle/git.ts",
+    phase: "ci",
+    destination: "the repository's `origin` remote, or its first remote when there is no `origin`",
+    why: "`git fetch <remote> chant/lifecycle:chant/lifecycle`, never forced, brings the run ledger whose signed Op runs the tick judges (#4044). A local branch ahead of the remote is kept, and one that has diverged stops the tick.",
   },
   {
     binary: "git",
