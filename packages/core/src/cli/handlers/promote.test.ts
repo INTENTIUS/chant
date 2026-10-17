@@ -119,6 +119,23 @@ vi.mock("../../lifecycle/release-store", async () => {
     resolveRelease: async (ref: string) => (releaseFixture && (ref === releaseFixture.label || ref === releaseFixture.release.releaseDigest) ? releaseFixture : null),
     readReleaseTemplate: async () => storedTemplate,
     readRelease: async (digest: string) => knownReleases.get(digest) ?? null,
+    // #4035: labels come from the fixture's cuts, never from this checkout's branch.
+    readCuts: async () => ({
+      cuts: [...knownLabels].map(([releaseDigest, label]) => ({ version: 1, releaseDigest, label, actor: "alice", timestamp: "2026-01-01T00:00:00.000Z", runOrigin: null, signature: null })),
+      malformed: 0,
+    }),
+  };
+});
+const knownLabels = new Map<string, string>();
+
+// #4035: deploy outcomes live in memory.
+const outcomes: import("../../lifecycle/deploy-outcome").DeployOutcome[] = [];
+vi.mock("../../lifecycle/deploy-outcome", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/deploy-outcome")>("../../lifecycle/deploy-outcome");
+  return {
+    ...actual,
+    appendDeployOutcome: async (o: import("../../lifecycle/deploy-outcome").DeployOutcome) => { outcomes.push(o); return "c0ffee1"; },
+    readDeployOutcomes: async (env: string) => outcomes.filter((o) => o.env === env),
   };
 });
 vi.mock("../../components/release-promote", async () => {
@@ -192,6 +209,8 @@ beforeEach(() => {
   storedChangeSets.clear();
   storeFails = false;
   knownReleases.clear();
+  knownLabels.clear();
+  outcomes.length = 0;
   revokedCommits.clear();
   removedTemplates.length = 0;
   ran.length = 0;
@@ -620,7 +639,7 @@ describe("chant components rollback", () => {
 
   test("an environment and --component are required", async () => {
     expect(await runComponentsRollback(rb({ component: undefined }))).toBe(1);
-    expect(errors.join("\n")).toMatch(/--component <name> are required/);
+    expect(errors.join("\n")).toMatch(/--component <name> or --release <label\|digest> are required/);
   });
 
   test("redeploys the previous release from its recorded digest and records what it restored", async () => {
@@ -767,10 +786,13 @@ describe("chant components redeploy", () => {
     expect(errors.join("\n")).toMatch(/then run the same redeploy again/);
   });
 
-  test("a failed redeploy records nothing and exits 1", async () => {
+  test("a failed redeploy records no release, records the component failed (#4035), and exits 1", async () => {
     failApplyFor = "api";
     expect(await runComponentsRedeploy(rd({}))).toBe(1);
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    expect(outcomes).toEqual([
+      expect.objectContaining({ env: "prod", verb: "redeploy", status: "fail", components: [{ component: "api", outcome: "failed", digest: "sha256:new", releaseDigest: null }] }),
+    ]);
     expect(errors.join("\n")).toMatch(/redeploy failed at "api"/);
   });
 });
@@ -841,5 +863,198 @@ describe("--events-json on promote, rollback and redeploy (#4041)", () => {
     expect(errors.join("\n")).toMatch(/--events-json and --progress-json both stream to stdout/);
     expect(ran).toEqual([]);
     expect(out.filter((l) => l.startsWith('{"$schema"'))).toEqual([]);
+  });
+});
+
+describe("chant components rollback --release (#4035)", () => {
+  const prodTemplate = `{"env":"prod"}\n`;
+  const gated: DriverComponent = {
+    ...api,
+    deploy: [
+      ...api.deploy.slice(0, 2),
+      { phase: "Apply", steps: [{ kind: "gate", gate: "prod-release" }, { kind: "apply", template: "dist/api.template.json", imageRef: "@Publish.digest" }] },
+    ],
+  };
+  const releaseAt = (commit: string) =>
+    makeRelease({
+      member: null,
+      commit: commit.padEnd(40, "0"),
+      artifactDigests: [{ component: "api", kind: "image", path: "api.tar", digest: "sha256:api" }],
+      targets: [{ env: "prod", templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(prodTemplate) }], params: [] }],
+    });
+  const r1 = releaseAt("abc123");
+  const r2 = releaseAt("def456");
+  const prod = (digest: string, timestamp: string, runId: string, release: { releaseDigest: string }): ReleaseRecord =>
+    ({ ...staging, env: "prod", digest, timestamp, runId, releaseDigest: release.releaseDigest });
+  let ledger: ReleaseRecord[];
+  const revoke = (r: { commit: string }) =>
+    revokedCommits.set(r.commit, { commit: r.commit, tag: `ci/revoked/${r.commit}`, tagged: "2026-10-16T12:00:00.000Z", phase: "e2e", run: null, signer: null });
+
+  beforeEach(async () => {
+    const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
+    releaseGatePort = memoryGateLedgerPort();
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [gated] });
+    releaseFixture = { release: r1, label: "v1.0.0" };
+    storedTemplate = prodTemplate;
+    for (const [r, label] of [[r1, "v1.0.0"], [r2, "v1.1.0"]] as const) {
+      knownReleases.set(r.releaseDigest, r);
+      knownLabels.set(r.releaseDigest, label);
+    }
+    ledger = [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1", r1), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2", r2)];
+    readReleaseLedgerMock.mockImplementation(async (env: string) => ({ records: env === "prod" ? ledger : [], malformed: 0 }));
+  });
+
+  const rb = (a: Partial<ParsedArgs>) => ctx({ migrateFrom: undefined, migrateTo: undefined, path: "rollback", extraPositional: "prod", ...a });
+
+  test("restores every component of the release through the release gate, and records the release it restored", async () => {
+    expect(await runComponentsRollback(rb({ release: "v1.0.0" }))).toBe(3);
+    expect(ran).toEqual([]);
+    const [doc] = [...storedChangeSets.values()];
+    expect(doc).toMatchObject({ releaseDigest: r1.releaseDigest, environment: "prod" });
+    expect(doc.entries[0]).toMatchObject({ address: "api", action: "update" });
+    expect(releaseGatePort!.appended).toEqual([
+      expect.objectContaining({ op: "release", gate: "prod-release", environment: "prod", planDigest: doc.digest, releaseDigest: r1.releaseDigest }),
+    ]);
+    expect(errors.join("\n")).toMatch(/chant approve release prod-release --env prod/);
+    expect(errors.join("\n")).toMatch(/then run the same rollback again/);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    // Stopped at its gate with nothing deployed: the environment is unchanged, so no outcome.
+    expect(outcomes).toEqual([]);
+
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "prod-release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: doc.digest, environment: "prod", releaseDigest: r1.releaseDigest,
+    });
+    expect(await runComponentsRollback(rb({ release: "v1.0.0" }))).toBe(0);
+    // No build and no publish: the recorded digest of the release, and the release's own template.
+    expect(ran).toEqual(["prod:apply"]);
+    const pinned = `.chant/release-templates/${r1.targets[0].templates[0].digest.replace(/:/g, "_")}/api.template.json`;
+    expect(stepInputs.find((x) => x.kind === "apply")?.input).toMatchObject({ template: pinned, imageRef: "sha256:old" });
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({
+      component: "api",
+      env: "prod",
+      digest: "sha256:old",
+      releaseDigest: r1.releaseDigest,
+      restores: { env: "prod", runId: "run-1", timestamp: "2026-01-01T00:00:00.000Z" },
+      approver: "alice",
+      admission: { op: "release", gate: "prod-release" },
+    });
+    expect(errors.join("\n")).toMatch(/Rolled back .*api.* in prod to sha256:old/);
+  });
+
+  test("--release takes neither --component nor --digest", async () => {
+    expect(await runComponentsRollback(rb({ release: "v1.0.0", component: "api" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--release rolls back every component of a release, so it does not take --component/);
+    expect(await runComponentsRollback(rb({ release: "v1.0.0", digest: "sha256:old" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--digest picks one release of one component/);
+    expect(ran).toEqual([]);
+  });
+
+  test("the release the environment runs is refused, unless a run left one of its components unsettled", async () => {
+    releaseFixture = { release: r2, label: "v1.1.0" };
+    expect(await runComponentsRollback(rb({ release: "v1.1.0" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/"prod" already runs release v1\.1\.0; nothing to roll back/);
+    expect(storedChangeSets.size).toBe(0);
+
+    outcomes.push({
+      version: 1, env: "prod", verb: "promote", runId: "run-3", timestamp: "2026-01-03T00:00:00.000Z", actor: "bob",
+      releaseDigest: `jcs1-sha256:${"9".repeat(64)}`, status: "fail",
+      components: [{ component: "api", outcome: "failed", digest: "sha256:newer", releaseDigest: `jcs1-sha256:${"9".repeat(64)}` }],
+    });
+    // The ledger records v1.1.0, but the failed run left api unknown: a hole, so the gate waits for an approval.
+    expect(await runComponentsRollback(rb({ release: "v1.1.0" }))).toBe(3);
+    const [doc] = [...storedChangeSets.values()];
+    expect(doc.entries).toEqual([]);
+    expect(doc.members[0].holes).toEqual([expect.objectContaining({ address: "api", reason: expect.stringMatching(/the promote run run-3 left api failed in "prod"/) })]);
+    expect(releaseGatePort!.resolved).toEqual([]);
+    expect(releaseGatePort!.appended.at(-1)).toMatchObject({ releaseDigest: r2.releaseDigest, environment: "prod", planDigest: doc.digest });
+  });
+
+  test("a release that never deployed a component to the environment is refused", async () => {
+    ledger = [ledger[1]];
+    expect(await runComponentsRollback(rb({ release: "v1.0.0" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/release v1\.0\.0 never deployed "api" to "prod", so no recorded digest can be restored; promote it instead: chant components promote --to prod --release v1\.0\.0/);
+    expect(ran).toEqual([]);
+  });
+
+  test("a revoked release is refused before anything runs, naming a release to restore instead", async () => {
+    revoke(r1);
+    expect(await runComponentsRollback(rb({ release: "v1.0.0" }))).toBe(1);
+    const said = errors.join("\n");
+    expect(said).toMatch(/release v1\.0\.0 was cut from commit abc123000000, which ci\/revoked\/abc1230{34} revokes .*\[release-revoked\]/);
+    expect(said).toMatch(/chant components rollback prod --release v1\.1\.0/);
+    expect(ran).toEqual([]);
+    expect(storedChangeSets.size).toBe(0);
+  });
+
+  test("rollback --component and redeploy refuse to put back a revoked release (#4033)", async () => {
+    revoke(r2);
+    const rd = ctx({ migrateFrom: undefined, migrateTo: undefined, path: "redeploy", extraPositional: "prod", component: "api" });
+    expect(await runComponentsRedeploy(rd)).toBe(1);
+    expect(errors.join("\n")).toMatch(/release v1\.1\.0 was cut from commit def456000000, .*\[release-revoked\]/);
+    expect(errors.join("\n")).toMatch(/Restore a release cut from a green commit instead: chant components rollback prod --release v1\.0\.0/);
+
+    revokedCommits.clear();
+    revoke(r1);
+    errors.length = 0;
+    expect(await runComponentsRollback(rb({ component: "api" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/release v1\.0\.0 was cut from commit abc123000000, .*\[release-revoked\]/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a promote that applies partly records what the environment runs (#4035)", () => {
+  const web: DriverComponent = { ...api, name: "web" };
+  const release = makeRelease({
+    member: null,
+    commit: "abc123".padEnd(40, "0"),
+    artifactDigests: ["api", "web"].map((component) => ({ component, kind: "image", path: `${component}.tar`, digest: `sha256:${component}` })),
+    targets: [{ env: "prod", templates: [], params: [] }],
+  });
+
+  beforeEach(() => {
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [api, web] });
+    readReleaseLedgerMock.mockResolvedValue({ records: [staging, { ...staging, component: "web" }], malformed: 0 });
+    releaseFixture = { release, label: "v2.0.0" };
+  });
+
+  test("the component that deployed is recorded, the one that failed is recorded failed, and the lines that settle it are printed", async () => {
+    failApplyFor = "web";
+    expect(await runComponentsPromote(ctx({ release: "v2.0.0" }))).toBe(1);
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+    const [record] = appendReleaseRecordMock.mock.calls[0];
+    expect(record).toMatchObject({ component: "api", env: "prod", releaseDigest: release.releaseDigest });
+    expect(outcomes).toEqual([{
+      version: 1,
+      env: "prod",
+      verb: "promote",
+      runId: "run-9",
+      timestamp: record.timestamp,
+      actor: "bob",
+      releaseDigest: release.releaseDigest,
+      status: "fail",
+      components: [
+        { component: "api", outcome: "deployed", digest: "sha256:api", releaseDigest: release.releaseDigest },
+        { component: "web", outcome: "failed", digest: "sha256:api", releaseDigest: release.releaseDigest },
+      ],
+    }]);
+    expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
+    const said = errors.join("\n");
+    expect(said).toMatch(/"prod" now runs a mix: api deployed, web failed/);
+    expect(said).toMatch(/settle web: chant components redeploy prod --component web, or run the same promote again/);
+  });
+
+  test("--json carries the outcome", async () => {
+    failApplyFor = "web";
+    expect(await runComponentsPromote(ctx({ release: "v2.0.0", json: true }))).toBe(1);
+    expect(JSON.parse(logs.join("\n")).outcome).toMatchObject({ status: "fail", components: [{ outcome: "deployed" }, { outcome: "failed" }] });
+  });
+
+  test("a promote that deploys everything records no outcome", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v2.0.0" }))).toBe(0);
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(2);
+    expect(outcomes).toEqual([]);
   });
 });

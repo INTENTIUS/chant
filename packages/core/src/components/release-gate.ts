@@ -47,7 +47,9 @@
  * environment has no deploy of the component). When they are all equal the
  * member has no entries. When the environment's deploy names no release, or
  * the release it names can't be read, the member has a hole: nothing says
- * what the environment runs, so the change can't be shown empty.
+ * what the environment runs, so the change can't be shown empty. So does a
+ * component a promote, rollback or redeploy left failed or gated with nothing
+ * recorded since (#4035): its record names what ran before that run.
  */
 
 import type { CapabilityRegistry } from "./capability";
@@ -111,6 +113,12 @@ export interface ReleaseChangeSetInput {
   registry: CapabilityRegistry;
   /** Per component, what `env` runs now. A component missing here has never been deployed to it. */
   current: ReadonlyMap<string, CurrentDeploy>;
+  /**
+   * Components a promote, rollback or redeploy left failed or gated in `env`
+   * with nothing recorded since (#4035), each with why. What they run is not
+   * known, so each is a hole whatever its ledger record says.
+   */
+  unsettled?: ReadonlyMap<string, string>;
   /** Outputs supplied by the caller (`--seed-outputs`). */
   seededOutputs?: Record<string, Record<string, unknown>>;
   /** The chant version to record in the document. */
@@ -151,6 +159,8 @@ export function chantComponentPart(input: {
   env: string;
   digest: string;
   current: CurrentDeploy | undefined;
+  /** Why the component is unsettled in `env` (#4035), when it is. */
+  unsettled?: string;
 }): ChangeSetPart {
   const { component, release, env, digest, current } = input;
   const name = component.name;
@@ -184,6 +194,10 @@ export function chantComponentPart(input: {
       },
     ],
   });
+  if (input.unsettled !== undefined) {
+    member.holes.push({ address: name, type: RELEASE_COMPONENT_ENTRY_TYPE, reason: input.unsettled });
+    return { member, entries: [] };
+  }
   if (!current) {
     return entry("create", [
       { path: "artifact", after: digest },
@@ -238,7 +252,7 @@ export async function planReleaseChangeSet(input: ReleaseChangeSetInput): Promis
     const digest = input.digests.get(name) ?? "";
     const plannable = capabilitySteps(component.deploy).filter((s) => registry.has(s.kind) && registry.resolve(s.kind).plan !== undefined);
     if (plannable.length === 0) {
-      parts.push(chantComponentPart({ component, release, env, digest, current: input.current.get(name) }));
+      parts.push(chantComponentPart({ component, release, env, digest, current: input.current.get(name), unsettled: input.unsettled?.get(name) }));
       continue;
     }
     const ctx = deployContext({ env }, name);

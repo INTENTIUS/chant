@@ -41,6 +41,8 @@ import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { describeRevocation, revokedCommitsAt, revokedReleaseLookup, type ReleaseRevocation, type RevokedRelease } from "../lifecycle/release-revocation";
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
+import { readDeployOutcomes, type DeployOutcome } from "../lifecycle/deploy-outcome";
+import { mixedEnvironment, releaseRollbackLine, rollbackTarget, type MixedEnvironment, type ReleaseCheck } from "../lifecycle/mixed-environment";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { readCheckoutHead, worktreeChanges, type CheckoutHead } from "./records-checkout";
 import { policyView, replicationState, type ReplicationState } from "./wip";
@@ -153,7 +155,13 @@ export interface StatusRelease {
 
 /** A release an environment runs that was cut from a revoked commit (#4033). */
 export interface StatusRevokedRelease extends RevokedRelease {
-  /** The command that rolls the component back to its release before this one, run in the member's directory. */
+  /**
+   * The command that rolls the environment back, run in the member's
+   * directory: `chant components rollback <env> --release <label|digest>`
+   * naming the newest release the environment ran before this one that is
+   * still kept and not revoked (#4035), or `chant components rollback <env>
+   * --component <component>` when there is none.
+   */
   rollback: string;
 }
 
@@ -172,6 +180,14 @@ export interface StatusEnvironment {
   /** The latest release of each component in the ledger, sorted by component. */
   releases: StatusRelease[];
   reason: { code: StatusReasonCode; message: string } | null;
+  /**
+   * Set when the environment runs a mix (#4035): a promote, rollback or
+   * redeploy left a component failed or gated and nothing has been recorded
+   * for it since, or its components' latest records name more than one
+   * release. Each component with what it runs, and the lines that settle it.
+   * Absent otherwise, and from chant older than 0.124.29.
+   */
+  mixed?: MixedEnvironment;
 }
 
 export type CompareState = "same" | "differs" | "only-env" | "only-compare";
@@ -364,6 +380,8 @@ export interface StatusQuery {
   compareTo?: string;
   /** Reads one ledger; the lifecycle reader unless a test swaps it. */
   readLedger?: LedgerReader;
+  /** Reads the deploy outcomes beside one ledger (#4035), given the ledger's path; the lifecycle reader unless a test swaps it. */
+  readOutcomes?: OutcomeReader;
   /** Reads one member's gate ledger directory; git unless a test swaps it. */
   readGates?: GateLedgerReader;
   /** The instant a gate's expiry is measured against; now by default. */
@@ -466,15 +484,27 @@ async function shipView(member: Member, cwd: string, read: LedgerReader): Promis
 
 const defaultReader: LedgerReader = (path, cwd) => readReleaseLedger(path.slice(0, -"/releases.jsonl".length), { cwd });
 
+/** Reads the deploy outcomes (#4035) in the directory of the ledger at `path`. */
+type OutcomeReader = (path: string, cwd: string) => Promise<DeployOutcome[]>;
+
+const defaultOutcomeReader: OutcomeReader = (path, cwd) => readDeployOutcomes(path.slice(0, -"/releases.jsonl".length), { cwd }).catch(() => []);
+
 /** A release digest's revocation, for one member, or null (#4033). */
 type RevokedOf = (releaseDigest: string) => Promise<RevokedRelease | null>;
 
-/** The rollback line for a component an environment runs from a revoked release (#4033; #4035 extends rollback). */
+/** The per-component rollback line, for a component an environment runs from a revoked release when no earlier release can be named (#4033). */
 export function rollbackLine(env: string, component: string): string {
   return `chant components rollback ${env} --component ${component}`;
 }
 
-async function readEnvironment(member: Member, env: string, cwd: string, read: LedgerReader, revokedOf: RevokedOf = async () => null): Promise<StatusEnvironment> {
+async function readEnvironment(
+  member: Member,
+  env: string,
+  cwd: string,
+  read: LedgerReader,
+  revokedOf: RevokedOf = async () => null,
+  readOutcomes: OutcomeReader = defaultOutcomeReader,
+): Promise<StatusEnvironment> {
   const ledger = await ledgerFor(member, env, cwd);
   let records: ReleaseRecord[];
   let malformed: number;
@@ -497,15 +527,36 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
   const planPrefix = ledger.layout === "members" ? `${MEMBERS_DIR}/${member.name}/` : "";
   const latest = [...latestPerComponent(records).values()].sort((a, b) => (a.component < b.component ? -1 : a.component > b.component ? 1 : 0));
   // #4043: a release item names the label of the release it was deployed from.
+  const memberDir = resolve(cwd, member.dir);
   let labels = new Map<string, string>();
-  if (latest.some((r) => r.releaseDigest !== undefined)) {
+  let labelsRead = false;
+  const readLabels = async (): Promise<Map<string, string>> => {
+    if (labelsRead) return labels;
+    labelsRead = true;
     try {
       const { readCuts, labelsByDigest } = await import("../lifecycle/release-store");
-      labels = labelsByDigest((await readCuts({ cwd: resolve(cwd, member.dir) })).cuts);
+      labels = labelsByDigest((await readCuts({ cwd: memberDir })).cuts);
     } catch {
       // The label is a convenience; the digest is the join key.
     }
-  }
+    return labels;
+  };
+  if (latest.some((r) => r.releaseDigest !== undefined)) await readLabels();
+  // #4035: whether a release a rollback could go back to is kept and not revoked.
+  const checks = new Map<string, Promise<ReleaseCheck>>();
+  const check = (digest: string): Promise<ReleaseCheck> => {
+    let found = checks.get(digest);
+    if (!found) {
+      found = (async () => {
+        const { readRelease } = await import("../lifecycle/release-store");
+        const kept = (await readRelease(digest, { cwd: memberDir }).catch(() => null)) !== null;
+        return { kept, revoked: kept && (await revokedOf(digest)) !== null };
+      })();
+      checks.set(digest, found);
+    }
+    return found;
+  };
+  const back = { records, check, label: async (digest: string) => (await readLabels()).get(digest) };
   const releases: StatusRelease[] = await Promise.all(
     latest.map(async (r) => ({
       component: r.component,
@@ -521,9 +572,10 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       releaseLabel: (r.releaseDigest !== undefined ? labels.get(r.releaseDigest) : undefined) ?? null,
       flags: [...(r.flags ?? [])],
       plan: await readReleasePlan(r.digest, { cwd, prefix: planPrefix }),
-      ...(await revokedItem(r, env, revokedOf)),
+      ...(await revokedItem(r, env, revokedOf, back)),
     })),
   );
+  const mixed = await mixedEnvironment({ env, records, outcomes: await readOutcomes(ledger.path, cwd), label: back.label, check });
   return {
     env,
     ledger: { ...ledger, shared: false },
@@ -532,14 +584,27 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       malformed > 0
         ? { code: "ledger-malformed", message: `${ledger.path}: ${malformed} line${malformed === 1 ? " is" : "s are"} not a release record and ${malformed === 1 ? "was" : "were"} skipped` }
         : null,
+    ...(mixed ? { mixed } : {}),
   };
 }
 
-/** `{ revoked }` when the record names a release cut from a revoked commit (#4033), else nothing. */
-async function revokedItem(r: ReleaseRecord, env: string, revokedOf: RevokedOf): Promise<{ revoked?: StatusRevokedRelease }> {
+/**
+ * `{ revoked }` when the record names a release cut from a revoked commit
+ * (#4033), else nothing. Its rollback line names the newest release the
+ * environment ran before this one that is kept and not revoked (#4035).
+ */
+async function revokedItem(
+  r: ReleaseRecord,
+  env: string,
+  revokedOf: RevokedOf,
+  back: { records: readonly ReleaseRecord[]; check: (digest: string) => Promise<ReleaseCheck>; label: (digest: string) => Promise<string | undefined> },
+): Promise<{ revoked?: StatusRevokedRelease }> {
   if (r.releaseDigest === undefined) return {};
   const revoked = await revokedOf(r.releaseDigest);
-  return revoked ? { revoked: { ...revoked, rollback: rollbackLine(env, r.component) } } : {};
+  if (!revoked) return {};
+  const target = await rollbackTarget({ records: back.records, exclude: new Set([r.releaseDigest]), before: r.timestamp, check: back.check });
+  const rollback = target ? releaseRollbackLine(env, target, await back.label(target)) : rollbackLine(env, r.component);
+  return { revoked: { ...revoked, rollback } };
 }
 
 /**
@@ -617,7 +682,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     for (const m of declaration.members) {
       const revokedOf = revokedReleaseLookup(resolve(found.dir, m.dir), revoked);
       const environments: StatusEnvironment[] = [];
-      for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read, revokedOf));
+      for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read, revokedOf, query.readOutcomes));
       const own = await hasMemberLedger(m, found.dir);
       const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules);
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
@@ -839,6 +904,16 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
           if (!r.revoked) continue;
           const name = r.revoked.label ?? r.revoked.releaseDigest;
           memberNotes.push(`  ${e.env}: ${r.component} runs release ${name}, revoked by ${r.revoked.tag} (${describeRevocation(r.revoked)}); roll back: ${r.revoked.rollback}`);
+        }
+        // #4035: an environment running a mix, what each component runs, and the lines that settle it.
+        if (e.mixed) {
+          const what = e.mixed.components.map((c) => {
+            const runs = c.releaseDigest ? `release ${c.releaseLabel ?? c.releaseDigest.slice(0, 24)}` : c.digest ? "no release" : "nothing recorded";
+            return c.state === "settled" ? `${c.component} runs ${runs}` : `${c.component} ${c.state} (${c.attempt!.verb} ${c.attempt!.runId}), recorded ${runs}`;
+          });
+          memberNotes.push(`  ${e.env} is mixed: ${what.join("; ")}`);
+          for (const line of e.mixed.redeploy) memberNotes.push(`    redeploy: ${line}`);
+          if (e.mixed.rollback) memberNotes.push(`    roll back: ${e.mixed.rollback}`);
         }
       }
       if (memberNotes.length > 0) notes.set(rows.length - 1, memberNotes);

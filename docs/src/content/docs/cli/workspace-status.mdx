@@ -37,7 +37,7 @@ Each compared component gets one of four states.
 | `only-env` | Only the first environment has a release of the component. |
 | `only-compare` | Only the environment given to `--compare-to` has one. |
 
-A component that runs a revoked release gets a line under its member ([#4033](https://github.com/INTENTIUS/chant/issues/4033), [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). See [Revoked releases](#revoked-releases).
+A component that runs a revoked release gets a line under its member ([#4033](https://github.com/INTENTIUS/chant/issues/4033), [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). See [Revoked releases](#revoked-releases). So does an environment that runs more than one release, with the lines that settle it. See [Mixed environments](#mixed-environments).
 
 A release whose ledger records an input digest, such as a pinned Helm deploy, is compared on that digest. Two clusters may render the same input to different bytes, and the input digest is what says they run the same release. The table still shows the digest each cluster received.
 
@@ -72,13 +72,48 @@ A gate also carries `gitSha`, the commit its run reached it at, and `runId`, the
 
 A release is revoked when the commit it was cut from has a `ci/revoked/<sha>` tag that counts ([#4033](https://github.com/INTENTIUS/chant/issues/4033), [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). Nothing records it. The command reads the local tags once, judges them as [`chant release cut`](/chant/cli/release/#release-cut) does, and joins them to the releases the deploy records and gates name. With [signed tags](/chant/cli/ci/#signed-tags), a revoked tag without a valid statement is ignored and revokes nothing. Fetch the tags first with `git fetch origin --tags`.
 
-A component whose latest deploy record names a revoked release in `releaseDigest` carries `revoked` in its release item. It holds the revoked tag as [`chant ci list`](/chant/cli/ci/#ci-list) shows it (`tag`, `tagged`, `phase`, `run` and `signer`), the `commit`, the `releaseDigest` and `label` of the release, and `rollback`, the line that puts the component back on its release before this one:
+A component whose latest deploy record names a revoked release in `releaseDigest` carries `revoked` in its release item. It holds the revoked tag as [`chant ci list`](/chant/cli/ci/#ci-list) shows it (`tag`, `tagged`, `phase`, `run` and `signer`), the `commit`, the `releaseDigest` and `label` of the release, and `rollback`, the line that rolls the environment back. Since chant 0.124.29 that line is [`chant components rollback <env> --release`](/chant/cli/components/#rolling-back-a-release) with the newest release the environment ran before this one that is still kept and not revoked ([#4035](https://github.com/INTENTIUS/chant/issues/4035)). When the environment ran no such release, the line falls back to `chant components rollback <env> --component <component>`, the one chant 0.124.28 printed every time. The text view puts it at the end of the component's line.
 
 ```
-  prod: api runs release v1.4.0, revoked by ci/revoked/9f3c... (phase e2e failed in smoke (run 4471)); roll back: chant components rollback prod --component api
+  prod: api runs release v1.4.0, revoked by ci/revoked/9f3c... (phase e2e failed in smoke (run 4471)); roll back: chant components rollback prod --release v1.3.2
 ```
 
 A tag made from [chant runs](/chant/cli/ci/#chant-runs-as-the-status-source) names its run with `id: null` and the Op run in `run.opRun`. A release gate whose release is revoked reads `superseded` unless it has expired, and carries `revoked` too. [`chant approve`](/chant/cli/operator/#approve-op-gate) refuses it with `release-revoked`, and `chant components promote --release` refuses the release, so no approval of it passes. A deploy record that names no release is never flagged.
+
+### Mixed environments
+
+An environment is mixed when its components don't run one known release ([#4035](https://github.com/INTENTIUS/chant/issues/4035)). That happens in two ways:
+
+- A run of `chant components` left a component failed or gated, and nothing has been recorded for it since. The run's deploy outcome in `<env>/outcomes.jsonl` says so (see [When a deploy applies partly](/chant/cli/components/#when-a-deploy-applies-partly)). The ledger still names what the component ran before that run, but the component may be running part of the new one.
+- The latest records of its components name more than one release. A record of no release counts as one value, and at least one has to name a release, so an environment that has never deployed a release is not mixed.
+
+Nothing records the mixed state itself. The command derives it from the release ledger and the outcomes each time it reads them, so it clears as soon as each unsettled component has a newer release record and every component names the same release. A mixed environment carries a `mixed` object like the one below.
+
+```json
+"mixed": {
+  "components": [
+    { "component": "api", "digest": "sha256:7d1e...", "releaseDigest": "jcs1-sha256:a41f...", "releaseLabel": "v1.4.0", "state": "settled", "attempt": null },
+    {
+      "component": "web",
+      "digest": "sha256:52c9...",
+      "releaseDigest": "jcs1-sha256:0be3...",
+      "releaseLabel": "v1.3.2",
+      "state": "failed",
+      "attempt": { "verb": "promote", "runId": "4471", "timestamp": "2026-10-17T13:00:00.000Z", "digest": "sha256:e08a...", "releaseDigest": "jcs1-sha256:a41f...", "releaseLabel": "v1.4.0" }
+    }
+  ],
+  "redeploy": ["chant components redeploy prod --component web"],
+  "rollback": "chant components rollback prod --release v1.3.2"
+}
+```
+
+Each component has what the ledger records it running, and its `state`: `settled`, or `failed` or `gated` with the run that left it so in `attempt`. `redeploy` has the line that puts each unsettled component's recorded release back. `rollback` restores every component of one release. Its release is the most recent one in the ledger whose file is still on the branch and whose commit is not revoked, other than the release the environment was moving to. It is `null` when no release qualifies. Both lines run in the member's directory, and the text view prints them under the member.
+
+```
+  prod is mixed: api runs release v1.4.0; web failed (promote 4471), recorded release v1.3.2
+    redeploy: chant components redeploy prod --component web
+    roll back: chant components rollback prod --release v1.3.2
+```
 
 ### Boxes
 
