@@ -86,7 +86,7 @@ function keyOf(prefix: string, env: string, op: string): string {
 }
 
 /** The checkout's shared git directory (the same for every worktree), or null outside a checkout. */
-async function gitCommonDir(cwd: string): Promise<string | null> {
+export async function gitCommonDir(cwd: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", ["rev-parse", "--git-common-dir"], { cwd });
     const dir = stdout.trim();

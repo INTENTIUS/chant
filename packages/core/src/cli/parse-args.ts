@@ -49,6 +49,7 @@ const BOOLEAN_FLAGS = new Set([
   "--json",
   "--progress-json",
   "--events-json",
+  "--follow",
   "--update-snapshot",
   "--update-baseline",
   "--run-examples",
@@ -394,6 +395,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.progressJson = true;
     } else if (arg === "--events-json") {
       result.eventsJson = true;
+    } else if (arg === "--follow") {
+      // `chant run events <run> --follow` (#4042): tail a run in progress on this host.
+      result.follow = true;
     } else if (arg === "--gated-exit") {
       // `chant run <op> --gated-exit <code>` (#2243) — remap only the gated
       // outcome's exit code. Parsed as a number here and range-checked in the
