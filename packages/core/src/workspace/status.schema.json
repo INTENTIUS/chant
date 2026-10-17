@@ -228,6 +228,18 @@
               "message": { "type": "string" }
             }
           }
+        },
+        "promotionOrder": {
+          "description": "The member's promotion order (#4030): the literal entries of the environments array in its chant.config.ts, in order, with a pattern entry such as pr-* left out. A release moves from each step to the next, and components promote --to defaults --from to the step before. Empty when the config declares no environments, and null when it could not be read. canary is declared and shown only; no chant command acts on it yet. Optional: written from chant 0.124.28, absent from older output.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["name", "canary"],
+            "properties": {
+              "name": { "type": "string" },
+              "canary": { "type": "boolean", "description": "True when the entry sets canary: true." }
+            }
+          }
         }
       }
     },

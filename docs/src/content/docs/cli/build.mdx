@@ -8,7 +8,7 @@ diataxis: reference
 
 ```
 chant build [path] [flags]
-chant build [path] --components --generate <lexicon> [--env <name>] [--promote-to <env>] [-o <file>]
+chant build [path] --components --generate <lexicon> [--env <name>] [--promote-to <env> [--allow-skip]] [-o <file>]
 ```
 
 ## Description
@@ -33,6 +33,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
 | `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
 | `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
+| `--allow-skip` | `boolean` | `false` | With `--promote-to`. Let the promote job skip a step of the member's [promotion order](/chant/cli/components/#the-promotion-order). The generated job runs `promote` with `--allow-skip`. |
 | `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. Without `--components --generate <lexicon>` the command fails rather than ignoring the flag. See [Promote job](#promote-job) |
 | `--root-only` | `bool` | `false` | At the root of a declared workspace, build the root project alone instead of refusing. See [At a workspace root](#at-a-workspace-root) |
 | `--fold-rank [path]` | `bool` or `string` | off | After a folded build, print the run-fallback blockers ranked by how many files each one keeps from folding. With a path, also write the ranking in collapsed-stack format to that file for a flame-graph viewer. No-op with `--no-fold` |
@@ -143,6 +144,8 @@ A promote publishes from the build archive on disk, and the promote job runs on 
 - Each component job uploads the files its `docker-build`, `zip-package` and `jvm-build` steps wrote to `into`. On GitHub and Forgejo that is an `actions/upload-artifact` step named `<component>-archive`, and the promote job downloads each one back to the same path. On GitLab the files join the job's `artifacts:`, and the promote job, in a `promote` stage, receives them through `needs:`.
 - The `beforeScript` and `extraScript` options apply to the promote job as they do to the component jobs, and `promoteCommand` replaces its command. The `--digest` pins are appended to `promoteCommand` as well.
 - An `into` the generator cannot read as a plain path, such as a wiring reference or an `$env.` value, fails generation and names the component, because the file it names is only known at run time.
+
+When the member's `chant.config.ts` declares [environments](/chant/configuration/config-file/#promotion-order-and-canary), the build checks the promotion before it writes anything. A `--promote-to` more than one step after `--env` in that order fails with the `promote-skips-environment` code and a fix line, since the job would be refused when it ran. Pass `--allow-skip` to generate it anyway, and the job runs `chant components promote --from <env> --to <promote-to> --allow-skip`. With no declared environments nothing is checked.
 
 Without `--promote-to` the generated pipeline has no promote job. It uploads no archives and writes no digest files either.
 

@@ -775,6 +775,7 @@ These fields are optional in their documents. Each schema description names the 
 |---|---|---|---|
 | `status` | `releases[].approver` | 0.124.28 | Who approved the change at its gate, or `null` for an ungated release. The release ledger has recorded it since [#1035](https://github.com/INTENTIUS/chant/issues/1035), and `status` first lists it here |
 | `status` | `releases[].admission` | 0.124.28 | The gate resolution that admitted the release: `op`, `gate` and `resolvedAt`. `null` for an ungated release and for one recorded by an older chant ([#4020](https://github.com/INTENTIUS/chant/issues/4020)) |
+| `status` | `members[].promotionOrder` | 0.124.28 | The member's promotion order ([#4030](https://github.com/INTENTIUS/chant/issues/4030)): the literal entries of the `environments` array in its `chant.config.ts`, in order, each as `name` and `canary`. `[]` when the config declares none, `null` when it could not be read. `canary` is declared and shown, and no command acts on it yet |
 | `status` | `gates[].gitSha` | 0.124.28 | The commit the run reached the gate at |
 | `status` | `gates[].runId` | 0.124.28 | The run that reached the gate: an Op run id, or the CI run id for a component gate that ran in CI |
 | `status` | `stewards[].ops[].lastRun.gitSha` | 0.124.28 | The commit the run built from |

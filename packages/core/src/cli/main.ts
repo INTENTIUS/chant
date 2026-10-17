@@ -799,9 +799,11 @@ Component release ledger + status:
                             byte-for-byte plus a self-describing manifest.json
   components promote        Deploy the digests one environment's release
                             ledger records to another, without a build
-                            (--from <env> --to <env> [--component <name>
-                             [--digest <sha256:...>]]; --dry-run prints the
-                             plan; the target's gates still apply)
+                            (--to <env> [--from <env>] [--allow-skip]
+                             [--component <name> [--digest <sha256:...>]];
+                             --from defaults to the environment before --to
+                             in the config's environments; --dry-run prints
+                             the plan; the target's gates still apply)
   components rollback <env> Redeploy an earlier release of an environment
                             from its recorded digest (--component <name>
                             [--digest <sha256:...>]; defaults to the release

@@ -205,6 +205,8 @@ export interface ComponentPlanInput {
   /** `--env`, or undefined for the generator's default. */
   env?: string;
   promoteTo?: string;
+  /** `--allow-skip` (#4030): the generated promote job may skip a step of the promotion order. */
+  allowSkip?: boolean;
   /** `--output`, relative to the current directory. */
   output?: string;
   params?: string[];
@@ -246,6 +248,7 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
 
   const parts = ["chant", "build", "--components", "--generate", input.lexicon, "--env", env];
   if (input.promoteTo) parts.push("--promote-to", input.promoteTo);
+  if (input.promoteTo && input.allowSkip) parts.push("--allow-skip");
   if (input.waveGate) {
     parts.push("--wave-gate", input.waveGate.gate);
     if (input.waveGate.canary?.length) parts.push("--canary", input.waveGate.canary.join(","));

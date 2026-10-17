@@ -315,7 +315,11 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "waiting": []
         }
       ],
-      "stewardReasons": []
+      "stewardReasons": [],
+      "promotionOrder": [
+        { "name": "staging", "canary": true },
+        { "name": "prod", "canary": false }
+      ]
     }
   ],
   "leases": [
@@ -359,6 +363,8 @@ Gates have a reason of their own, in `gateLedger.reason`. It doesn't change `rea
 | `gates-no-ledger` | aren't there, because the checkout has no `chant/lifecycle` branch |
 | `gates-no-gate-ledger` | don't exist on the branch, because no run of the member has reached a gate |
 | `gates-ledger-unreadable` | couldn't be read, so no gate is listed |
+
+`promotionOrder` gives the order a member promotes a release through: the literal entries of the `environments` array in its `chant.config.ts`, each as `{ "name": "staging", "canary": false }`. `chant components promote` reads the same [order](/chant/cli/components/#the-promotion-order). The list is empty for a config with no environments, and `promotionOrder` is `null` when the config fails to load. `canary: true` is declared and shown only. Output from a chant older than 0.124.28 has no `promotionOrder`.
 
 Stewards have reasons of their own, in `stewardReasons`. They don't change `readable` or the summary.
 

@@ -137,6 +137,8 @@ export interface ParsedArgs {
   namespace?: string;
   /** `chant workspace upgrade --allow-code` (#2550) — run migrations whose body is the template's own code. */
   allowCode?: boolean;
+  /** `chant components promote --allow-skip` (#4030): promote past a step of the member's declared promotion order. */
+  allowSkip?: boolean;
   /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
   source?: string;
   /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */
