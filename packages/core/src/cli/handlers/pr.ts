@@ -74,7 +74,7 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
 import { findWorkspaceRoot } from "../../project-root";
 import { resolveChangedUnits } from "./fan-out";
-import { GATED_EXIT_CODE, recordAutoReleasesForRun } from "./run";
+import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
 import type { DriverComponent } from "../../components/driver";
@@ -497,7 +497,8 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
       : {}),
   });
   recordAttempt();
-  await recordAutoReleasesForRun(applied.run.results, p.env, `${op}-${Date.now()}`, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord));
+  const release = autoReleaseRun(`${op}-${Date.now()}`);
+  await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), release.runOrigin);
   const report = prReport({
     ...base,
     approval,

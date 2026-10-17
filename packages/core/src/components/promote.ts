@@ -39,7 +39,7 @@
  */
 
 import { parseWiringRef, type WiringRef } from "../lint/rules/comp/support";
-import { latestPerComponent, type ReleaseRecord, type ReleaseRecordInput, type RunOrigin } from "../lifecycle/release-ledger";
+import { latestPerComponent, type ReleaseRecord, type ReleaseRecordInput, type ReleaseAdmission, type RunOrigin } from "../lifecycle/release-ledger";
 import { CapabilityRegistry, type Capability } from "./capability";
 import {
   runInterpretDriver,
@@ -584,6 +584,19 @@ export function gateApprover(result: DriverComponentResult | undefined): string 
   return approver;
 }
 
+/**
+ * The gate resolution that admitted a component's last gate in this run (#4020):
+ * which gate, in the component's gate ledger, and when the resolution was
+ * recorded. Undefined for a component that passed no gate.
+ */
+export function gateAdmission(result: DriverComponentResult | undefined): ReleaseAdmission | undefined {
+  let admission: ReleaseAdmission | undefined;
+  for (const record of result?.records ?? []) {
+    if (record.approval) admission = { op: result!.component, gate: record.approval.gate, resolvedAt: record.approval.timestamp };
+  }
+  return admission;
+}
+
 /** What a promote, rollback or redeploy knows about its own run, for the records it writes. */
 export interface DeployRunInfo {
   runId: string;
@@ -591,6 +604,8 @@ export interface DeployRunInfo {
   actor: string;
   timestamp: string;
   approver?: string;
+  /** The gate resolution that admitted the deploy (#4020), from {@link gateAdmission}. */
+  admission?: ReleaseAdmission;
 }
 
 /** The fields a promote, a rollback and a redeploy record share: the artifact is the earlier release's own. */
@@ -606,6 +621,7 @@ function sharedRecord(item: PromotionItem, env: string, run: DeployRunInfo): Rel
     timestamp: run.timestamp,
     actor: run.actor,
     ...(run.approver ? { approver: run.approver } : {}),
+    ...(run.admission ? { admission: run.admission } : {}),
     ...(source.manifestDigest ? { manifestDigest: source.manifestDigest } : {}),
     ...(source.inputDigest ? { inputDigest: source.inputDigest } : {}),
   };

@@ -95,6 +95,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by before-apply hook lag",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
           },
           "recorded": true,
@@ -113,6 +114,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by before-apply hook lag",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
           }
         ],

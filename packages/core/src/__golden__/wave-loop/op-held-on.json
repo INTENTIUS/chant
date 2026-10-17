@@ -110,6 +110,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "move the queues",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
           }
         ],
@@ -250,6 +251,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "move the topics",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
           }
         ],

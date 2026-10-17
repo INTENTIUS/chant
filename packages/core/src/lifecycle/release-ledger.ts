@@ -32,6 +32,7 @@ import { sortedJsonReplacer } from "../utils";
 import { warnOnLegacyDigests, withoutReadFlags, type LegacyDigestFlag } from "./legacy-digest";
 import { appendReleaseRecordLine, readReleaseLedgerLines, listLedgerEnvironments as gitListLedgerEnvironments, type LedgerLocation } from "./git";
 import { parseReleaseLedger, validateReleaseRecord } from "./release-read";
+import type { GateResolutionRecord } from "./gate-ledger";
 
 // The pure readers live apart, so a bundle can import them without git (#3865).
 export { validateReleaseRecord, parseReleaseLedger, releaseLedgerLines, readReleaseRecords, listReleaseEnvironmentsOn } from "./release-read";
@@ -54,6 +55,40 @@ export interface RunOrigin {
   repo?: string;
   /** Resolved link to the run, when the environment provided enough to build one. */
   url?: string;
+}
+
+/**
+ * The gate resolution that admitted a deploy (#4020): the gate's address in the
+ * gate ledger (`_gates/<op>.jsonl`, `op` and `gate`) and when the resolution
+ * was recorded. With `approver` on the same record it names the line a reader
+ * opens to see what was approved. Chant 0.124.28 and newer write it.
+ */
+export interface ReleaseAdmission {
+  /** The op, or for a component gate the component, whose gate ledger holds the resolution. */
+  op: string;
+  /** The gate's name. */
+  gate: string;
+  /** ISO-8601 time the resolution was recorded (`GateResolutionRecord.timestamp`). When several approvals counted, the newest one. */
+  resolvedAt: string;
+}
+
+/**
+ * The approver and admission a release records for the resolutions of its gate
+ * (#4020): those of `gate` on `op` bound to `planDigest`. The approver is the
+ * distinct `resolvedBy` names, comma joined, as `approver` has always been
+ * written by the release activities; `resolvedAt` is the newest one's time.
+ * Undefined when no resolution is bound to the plan.
+ */
+export function admissionOf(
+  resolutions: readonly GateResolutionRecord[],
+  at: { op: string; gate: string; planDigest?: string },
+): { approver: string; admission: ReleaseAdmission } | undefined {
+  const bound = resolutions.filter((r) => r.gate === at.gate && r.planDigest === at.planDigest);
+  if (bound.length === 0) return undefined;
+  return {
+    approver: [...new Set(bound.map((r) => r.resolvedBy))].join(", "),
+    admission: { op: at.op, gate: at.gate, resolvedAt: bound.map((r) => r.timestamp).sort().at(-1)! },
+  };
 }
 
 /**
@@ -126,6 +161,13 @@ export interface ReleaseRecord {
    * the one who triggered the deploy (separation of duties).
    */
   approver?: string;
+  /**
+   * The gate resolution that admitted this deploy (#4020), for a gated change:
+   * which gate (`op` and `gate`) and when it was resolved. The approver is
+   * `approver`. Optional and omitted for an ungated change and for a record
+   * written before 0.124.28, whose gate cannot be recovered from the record.
+   */
+  admission?: ReleaseAdmission;
   /** Optional: the archive's own manifest digest (../components/verbs/build-archive.ts's `manifestDigest`), when the caller has it — lets a reader recover full build contents/provenance, not just the promoted image digest. */
   manifestDigest?: string;
   /**
@@ -213,27 +255,46 @@ export function resolveRunId(
   explicit?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { runId: string; runOrigin?: RunOrigin } {
-  const githubOrigin = (id: string): RunOrigin => ({
-    forge: "github",
-    ...(env.GITHUB_REPOSITORY ? { repo: env.GITHUB_REPOSITORY } : {}),
-    ...(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
-      ? { url: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${id}` }
-      : {}),
-  });
-  const gitlabOrigin = (): RunOrigin => ({
-    forge: "gitlab",
-    ...(env.CI_PROJECT_PATH ? { repo: env.CI_PROJECT_PATH } : {}),
-    ...(env.CI_PIPELINE_URL ? { url: env.CI_PIPELINE_URL } : {}),
-  });
-
+  const ci = resolveCiRun(env);
   if (explicit) {
-    if (env.GITHUB_RUN_ID && explicit === env.GITHUB_RUN_ID) return { runId: explicit, runOrigin: githubOrigin(explicit) };
-    if (env.CI_PIPELINE_ID && explicit === env.CI_PIPELINE_ID) return { runId: explicit, runOrigin: gitlabOrigin() };
+    if (ci && explicit === ci.runId) return ci;
     return { runId: explicit };
   }
-  if (env.GITHUB_RUN_ID) return { runId: env.GITHUB_RUN_ID, runOrigin: githubOrigin(env.GITHUB_RUN_ID) };
-  if (env.CI_PIPELINE_ID) return { runId: env.CI_PIPELINE_ID, runOrigin: gitlabOrigin() };
+  if (ci) return ci;
   return { runId: `local-${Date.now()}`, runOrigin: { forge: "local" } };
+}
+
+/**
+ * The CI run the environment names, with the origin that locates it, or
+ * undefined outside CI (#4020). `resolveRunId` takes its CI branches from
+ * here, and an Op run record takes its `runOrigin` from here, so a run and the
+ * deploy it made name the run the same way.
+ */
+export function resolveCiRun(env: NodeJS.ProcessEnv = process.env): { runId: string; runOrigin: RunOrigin } | undefined {
+  if (env.GITHUB_RUN_ID) {
+    const id = env.GITHUB_RUN_ID;
+    return {
+      runId: id,
+      runOrigin: {
+        forge: "github",
+        ...(env.GITHUB_REPOSITORY ? { repo: env.GITHUB_REPOSITORY } : {}),
+        ...(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY
+          ? { url: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${id}` }
+          : {}),
+      },
+    };
+  }
+  if (env.CI_PIPELINE_ID) {
+    return {
+      runId: env.CI_PIPELINE_ID,
+      runOrigin: {
+        forge: "gitlab",
+        ...(env.CI_PROJECT_PATH ? { repo: env.CI_PROJECT_PATH } : {}),
+        ...(env.CI_PIPELINE_URL ? { url: env.CI_PIPELINE_URL } : {}),
+      },
+    };
+  }
+  return undefined;
 }
 
 /**

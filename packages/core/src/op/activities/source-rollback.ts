@@ -24,7 +24,7 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ReleaseRecord, ReleaseRef } from "../../lifecycle/release-ledger";
+import type { ReleaseAdmission, ReleaseRecord, ReleaseRef } from "../../lifecycle/release-ledger";
 import { archiveSourceTree } from "../source-archive";
 import { readReleasePlan, releasePlan, releasePlanDigest } from "./source-release";
 
@@ -200,15 +200,18 @@ export async function releaseRollbackRecord(args: ReleaseRollbackRecordArgs): Pr
   const env = plan.env as string;
   const gitSha = plan.gitSha as string;
 
-  const { readReleaseLedger, latestPerComponent, appendReleaseRecord, resolveRunId } = await import("../../lifecycle/release-ledger");
+  const { readReleaseLedger, latestPerComponent, appendReleaseRecord, resolveRunId, admissionOf } = await import("../../lifecycle/release-ledger");
   const { pushLifecycle } = await import("../../lifecycle/git");
 
   let approver: string | null = null;
+  let admission: ReleaseAdmission | undefined;
   if (args.approval) {
     const { readGateLedger } = await import("../../lifecycle/gate-ledger");
     const { resolutions } = await readGateLedger(args.approval.op, opts);
-    const bound = resolutions.filter((r) => r.gate === args.approval!.gate && r.planDigest === plan.digest);
-    approver = bound.length > 0 ? [...new Set(bound.map((r) => r.resolvedBy))].join(", ") : null;
+    // #4020: the approver and the gate resolution that admitted the release.
+    const admitted = admissionOf(resolutions, { ...args.approval, planDigest: plan.digest });
+    approver = admitted?.approver ?? null;
+    admission = admitted?.admission;
   }
 
   const latest = latestPerComponent((await readReleaseLedger(env, opts)).records.filter((r) => r.component === component)).get(component);
@@ -230,6 +233,7 @@ export async function releaseRollbackRecord(args: ReleaseRollbackRecordArgs): Pr
       timestamp: new Date().toISOString(),
       actor,
       ...(approver ? { approver } : {}),
+      ...(admission ? { admission } : {}),
       restores: rollback.restores,
     },
     opts,

@@ -113,6 +113,8 @@ converge(staging): drifted=1 remediated=0 reported=0 skipped-budget=0 skipped-fl
 
 The tick ends there for that rule; it does not block, retry, or queue. The next tick re-observes independently and may fire the same rule again. Either way it shows in `chant operator status`'s pending-gates list.
 
+The pending fact also carries the commit the run was at (`gitSha`) and the run that reached the gate (`runId`), and `chant approve` copies both onto the approval ([#4020](https://github.com/INTENTIUS/chant/issues/4020)). That is how a gate is joined to the commit it is waiting on, to its run's record and to the release it admits. Chant 0.124.28 and newer write them.
+
 The pending fact carries an address when the run has one. A run inside the PR (or MR) job that carries the change knows where approval happens, so it records that link, and `chant operator status` prints it under the pending gate:
 
 ```

@@ -26,7 +26,7 @@
  * env vars, timestamp is a real `new Date()` taken at record time).
  */
 import { getHeadCommit, pushLifecycle, StaleLifecycleBranchError } from "../lifecycle/git";
-import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseRecord, type RunOrigin } from "../lifecycle/release-ledger";
+import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseAdmission, type ReleaseRecord, type RunOrigin } from "../lifecycle/release-ledger";
 import type { DriverStepRecord } from "./driver";
 
 /**
@@ -94,6 +94,9 @@ export interface AutoReleaseRunInfo {
   runId: string;
   /** The id space `runId` lives in (#2045) — `{ forge: "op" }` for a hosted run, `{ forge: "local" }` for a local-executor mint. Recorded verbatim as the release record's `runOrigin`. */
   runOrigin?: RunOrigin;
+  /** Who approved the deploy at its gate (#1035) and the gate resolution that admitted it (#4020), when it passed one. `recordAutoReleasesForRun` reads both off the component's gate step records. */
+  approver?: string;
+  admission?: ReleaseAdmission;
   /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
   profileOverride?: string;
   /** The deploy's input-side digest, when `digest` is a rendered-content identity (a pinned helm deploy, chant #1242) — recorded as the release record's `inputDigest` so ledger queries can still join on inputs across clusters whose bytes legitimately differ. */
@@ -184,6 +187,8 @@ export async function maybeRecordAutoRelease(
         ...(run.runOrigin ? { runOrigin: run.runOrigin } : {}),
         timestamp,
         actor,
+        ...(run.approver ? { approver: run.approver } : {}),
+        ...(run.admission ? { admission: run.admission } : {}),
         ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
         ...(run.inputDigest ? { inputDigest: run.inputDigest } : {}),
       },

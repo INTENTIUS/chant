@@ -45,6 +45,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
           },
           "recorded": true,
@@ -63,6 +64,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
           }
         ],
@@ -138,6 +140,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 1 (prod): 2 runs, gate never, approval ledger, held by the hooks at base cannot be run (waves.json at bbbbbbbbbbbb: `hooks.before.plan[0].command` must be a command as argv, a non-empty array of strings.)",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f"
       },
       "recorded": true,

@@ -82,6 +82,7 @@
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
             "neverOverMcp": true
           },
@@ -110,6 +111,7 @@
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
             "neverOverMcp": true
           }
@@ -299,6 +301,7 @@
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
             "neverOverMcp": true
           },
@@ -333,6 +336,7 @@
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
             "neverOverMcp": true
           }
@@ -743,6 +747,7 @@
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
             "neverOverMcp": true
           },
@@ -1150,6 +1155,7 @@
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
             "neverOverMcp": true
           },
@@ -1662,6 +1668,7 @@
         "gate": "wave-1",
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:e8c434b396fbbce2b501a5fb746548ad4db81a26543b4dc2c757ec148379f853",
         "neverOverMcp": true
       },

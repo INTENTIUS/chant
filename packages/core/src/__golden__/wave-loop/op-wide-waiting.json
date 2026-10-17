@@ -49,6 +49,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
           },
           "recorded": true,
@@ -67,6 +68,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
           }
         ],
@@ -125,6 +127,7 @@
             "timestamp": "2026-10-11T00:00:00.000Z",
             "expiresAt": "2026-10-13T00:00:00.000Z",
             "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+            "gitSha": "1111111111111111111111111111111111111111",
             "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
           },
           "recorded": true,
@@ -221,6 +224,7 @@
         "timestamp": "2026-10-11T00:00:00.000Z",
         "expiresAt": "2026-10-13T00:00:00.000Z",
         "description": "wave 3 (prod): 3 runs, gate always, approval ledger",
+        "gitSha": "1111111111111111111111111111111111111111",
         "planDigest": "jcs1-sha256:106d25f35ee6bc02e9aa253d0b2633a764396833c82e0c5ec5a4ad83a2a85b4e"
       },
       "recorded": true,

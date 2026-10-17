@@ -30,7 +30,8 @@ import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
 import { isComponentList, type ComponentRunPlan } from "../../components/cli-support";
-import type { ReleaseRecord } from "../../lifecycle/release-ledger";
+import { resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
+import { gateAdmission, gateApprover } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
 
 /**
@@ -792,6 +793,16 @@ export async function runOp(ctx: CommandContext): Promise<number> {
 // ── Auto-release recording post-run (#597) ──────────────────────────────────
 
 /**
+ * The run id and origin an auto-recorded release names (#4020): the CI run
+ * when the process is in CI, so the release and the gate it passed (which
+ * records the CI run id) name the same run, else `localId` with the `local`
+ * origin.
+ */
+export function autoReleaseRun(localId: string): { runId: string; runOrigin: RunOrigin } {
+  return resolveCiRun() ?? { runId: localId, runOrigin: { forge: "local" } };
+}
+
+/**
  * After a successful `chant run --components` (local executor), auto-emit
  * one release record per successfully deployed component that published a
  * digest-bearing artifact — reusing `maybeRecordAutoRelease`
@@ -831,6 +842,7 @@ export async function recordAutoReleasesForRun(
   env: string,
   runId: string,
   disabled: boolean,
+  runOrigin: RunOrigin = { forge: "local" },
 ): Promise<ReleaseRecord[]> {
   const recorded: ReleaseRecord[] = [];
   for (const componentResult of results) {
@@ -842,8 +854,11 @@ export async function recordAutoReleasesForRun(
         success: true,
         records: componentResult.records,
         runId,
-        // A local-executor id resolves nowhere — say so in a field (#2045).
-        runOrigin: { forge: "local" },
+        // A local-executor id resolves nowhere, and says so in a field (#2045). A run in CI names the CI run.
+        runOrigin,
+        // #1035, #4020: who approved at the gate and which resolution admitted the deploy.
+        ...(gateApprover(componentResult) ? { approver: gateApprover(componentResult) } : {}),
+        ...(gateAdmission(componentResult) ? { admission: gateAdmission(componentResult) } : {}),
       },
       { disabled },
     );
@@ -1094,7 +1109,8 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   if (result.success && result.run) {
     // #3955: a run that records nothing has no release to report either.
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
-    const recorded = await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
+    const release = autoReleaseRun(`local-${Date.now()}`);
+    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote
     // --digest` takes. A generated promote job reads it to promote exactly

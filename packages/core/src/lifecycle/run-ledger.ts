@@ -89,6 +89,10 @@ export function buildRunRecord(
     steward?: string;
     /** The gate the run resumed at, for a run that resumed (#3947). */
     resumed?: OpRunRecord["resumed"];
+    /** The commit the run built from (#4020). */
+    gitSha?: string;
+    /** The CI run the Op ran in (#4020), when it ran in CI. */
+    runOrigin?: OpRunRecord["runOrigin"];
     /** Each phase's wall-clock time, by name, as the executor measured it. */
     phaseDurations?: Record<string, number>;
   },
@@ -138,6 +142,8 @@ export function buildRunRecord(
     ...(times.point ? { point: times.point } : {}),
     ...(times.steward ? { steward: times.steward } : {}),
     ...(times.resumed ? { resumed: times.resumed } : {}),
+    ...(times.gitSha ? { gitSha: times.gitSha } : {}),
+    ...(times.runOrigin ? { runOrigin: times.runOrigin } : {}),
   };
 }
 

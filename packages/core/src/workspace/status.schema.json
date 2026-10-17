@@ -313,6 +313,17 @@
                       "status": { "enum": ["ok", "fail", "gated", "waiting"], "description": "waiting: an activity asked a decision point that is still open (#2749), and the run stopped there." },
                       "started": { "type": "string" },
                       "ended": { "type": "string" },
+                      "gitSha": { "type": "string", "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The commit the run built from. Absent on a record written by an older chant, and when the run knew no commit." },
+                      "runOrigin": {
+                        "type": "object",
+                        "required": ["forge"],
+                        "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The CI run the Op ran in, the shape a release's runOrigin has: the forge (github for GitHub and Forgejo, gitlab), the repo or project, and a link to the run. Absent outside CI.",
+                        "properties": {
+                          "forge": { "enum": ["github", "gitlab", "op", "local"] },
+                          "repo": { "type": "string" },
+                          "url": { "type": "string" }
+                        }
+                      },
                       "gate": {
                         "oneOf": [
                           { "type": "null" },
@@ -828,6 +839,8 @@
           "description": "Read from the newest pending fact for the gate in env, as a run reads it. approved: the approvals recorded since it, for its plan, pass the gate (its quorum, or a policy permit in enforce mode). expired: not approved, and the pending fact is past expiresAt, so the next run records a fresh one. superseded: not approved, and an approval recorded since it names a different plan, so it doesn't count. pending: none of these."
         },
         "recordedAt": { "type": "string", "description": "When the run recorded the pending fact." },
+        "gitSha": { "type": "string", "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The commit the run reached the gate at, from the pending fact. Absent on a fact recorded by an older chant, and when the run knew no commit. It joins the gate to a release's gitSha and to a run's." },
+        "runId": { "type": "string", "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The run that reached the gate: an Op run id, or the CI run id for a component gate that ran in CI. Absent when the run had none." },
         "expiresAt": { "type": "string" },
         "approvals": {
           "description": "The approvals that count toward the gate for its plan, oldest first.",
@@ -918,6 +931,22 @@
         "runId": { "type": "string" },
         "timestamp": { "type": "string" },
         "actor": { "type": "string" },
+        "approver": { "type": ["string", "null"], "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer; the ledger has carried it since #1035. Who approved the change at its gate, or null for an ungated release." },
+        "admission": {
+          "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The gate resolution that admitted the release, or null for an ungated release and for one recorded by an older chant. With approver it names the line in the gate ledger.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["op", "gate", "resolvedAt"],
+              "properties": {
+                "op": { "type": "string", "description": "The op, or for a component gate the component, whose gate ledger (_gates/<op>.jsonl) holds the resolution." },
+                "gate": { "type": "string", "description": "The gate's name." },
+                "resolvedAt": { "type": "string", "description": "When the resolution was recorded. The newest one, when several approvals counted." }
+              }
+            }
+          ]
+        },
         "flags": { "type": "array", "items": { "enum": ["legacy-digest"] } },
         "plan": {
           "type": ["object", "null"],

@@ -54,7 +54,8 @@ import { RunWorkLease, LEASE_LOST, workLeaseProblems, workLeaseNeedsRunItem, typ
 import { WORK_LEASE_STEP_ID } from "./types";
 import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
 import { runEnvOf } from "../lifecycle/run-ledger";
-import { getHeadCommit } from "../lifecycle/git";
+import { resolveCommitSha } from "../lifecycle/commit-sha";
+import { resolveCiRun } from "../lifecycle/release-ledger";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateCheckpoint } from "../lifecycle/gate-checkpoint";
 import type { ActivityContract } from "./activity-contract";
@@ -570,6 +571,8 @@ interface GateContext {
   port: GateLedgerPort;
   now?: string;
   runId?: string;
+  /** The commit the run is at (#4020), recorded on the gate facts it writes and on the run record. */
+  gitSha?: string;
   /** Called once per settled step, in production order (#2121) — what `--progress-json` streams from. */
   onRecord?: (record: StepRecord) => void;
   /** The run context's list of passed gates (#2522). A gate that passes is appended here. */
@@ -746,6 +749,7 @@ async function runGateStep(
       ...(step.description ? { description: step.description } : {}),
       ...(step.timeout ? { timeout: step.timeout } : {}),
       ...(gates.runId ? { runId: gates.runId } : {}),
+      ...(gates.gitSha ? { gitSha: gates.gitSha } : {}),
       ...(planDigest !== undefined ? { planDigest } : {}),
       ...(approval ? { approval } : {}),
       ...(gates.now ? { now: gates.now } : {}),
@@ -848,6 +852,7 @@ async function runPointGateStep(
       ...(step.description ? { description: step.description } : {}),
       ...(step.timeout ? { timeout: step.timeout } : {}),
       ...(gates.runId ? { runId: gates.runId } : {}),
+      ...(gates.gitSha ? { gitSha: gates.gitSha } : {}),
       ...(planDigest !== undefined ? { planDigest } : {}),
       ...(gates.env !== undefined ? { env: gates.env } : {}),
       ...(gates.now ? { now: gates.now } : {}),
@@ -1346,12 +1351,17 @@ async function runOpInTurn(
   run: OpRunContext,
 ): Promise<OpRunResult> {
   const runId = options.runId;
+  // #4020: the commit the run builds from, on its record and on the gate facts it writes.
+  const commit = options.commit ?? (await resolveCommitSha(options.cwd ? { cwd: options.cwd } : {}));
+  // #4020: the CI run this one is in, in the shape a deploy record carries it.
+  const ciRun = resolveCiRun();
 
   const gates: GateContext = {
     op: config.name,
     port: options.gates ?? gitGateLedgerPort(options.cwd ? { cwd: options.cwd } : undefined),
     ...(options.now ? { now: options.now } : {}),
     runId,
+    ...(commit ? { gitSha: commit } : {}),
     ...(options.onRecord ? { onRecord: options.onRecord } : {}),
     passed: run.passedGates,
     points: options.points ?? workspaceGatePointAsker(options.cwd ?? process.cwd()),
@@ -1471,6 +1481,8 @@ async function runOpInTurn(
       ...(point ? { point: { ...point, since: ended } } : {}),
       ...(options.steward ? { steward: options.steward } : {}),
       ...(resumed ? { resumed } : {}),
+      ...(commit ? { gitSha: commit } : {}),
+      ...(ciRun ? { runOrigin: ciRun.runOrigin } : {}),
       phaseDurations,
     });
     const record: OpRunRecord = { version: 1, ...input, id: runId };
@@ -1497,7 +1509,7 @@ async function runOpInTurn(
     gates.resume = {
       config,
       gates: new Map(resumeGates.map((g) => [g.step, g])),
-      commit: options.commit ?? (await getHeadCommit(options.cwd ? { cwd: options.cwd } : undefined).catch(() => undefined)),
+      commit,
       ...(options.contracts ? { contracts: options.contracts } : {}),
       note: (line) => resumeNotes.push(line),
     };

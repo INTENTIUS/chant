@@ -78,6 +78,10 @@ export interface StatusStewardRun {
   status: OpRunRecord["status"];
   started: string;
   ended: string;
+  /** The commit the run built from (#4020). Absent on a record written before chant 0.124.28. */
+  gitSha?: string;
+  /** The CI run the Op ran in (#4020), when it ran in CI: the shape a release's `runOrigin` has. */
+  runOrigin?: OpRunRecord["runOrigin"];
   /**
    * The gate the run stopped at, for a `gated` run: its name, when the run
    * stopped there, the op it is recorded under (the Op's own, or the
@@ -411,6 +415,8 @@ export async function readMemberStewards(
             status: newest.status,
             started: newest.started,
             ended: newest.ended,
+            ...(newest.gitSha ? { gitSha: newest.gitSha } : {}),
+            ...(newest.runOrigin ? { runOrigin: newest.runOrigin } : {}),
             gate: newest.gate ? gateOf(newest.gate, op.name) : null,
             point: point?.wait ?? null,
             phases: newest.phases.map((p) => ({

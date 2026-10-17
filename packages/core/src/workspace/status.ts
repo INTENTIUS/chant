@@ -120,6 +120,10 @@ export interface StatusRelease {
   runId: string;
   timestamp: string;
   actor: string;
+  /** Who approved the change at its gate (#1035), when it had one. Null for an ungated release. */
+  approver: string | null;
+  /** The gate resolution that admitted the release (#4020): the gate and when it was resolved. Null for an ungated release and for one recorded before chant 0.124.28. */
+  admission: { op: string; gate: string; resolvedAt: string } | null;
   /** Read flags, such as `legacy-digest` (#2514). */
   flags: string[];
   /**
@@ -443,6 +447,8 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       runId: r.runId,
       timestamp: r.timestamp,
       actor: r.actor,
+      approver: r.approver ?? null,
+      admission: r.admission ? { op: r.admission.op, gate: r.admission.gate, resolvedAt: r.admission.resolvedAt } : null,
       flags: [...(r.flags ?? [])],
       plan: await readReleasePlan(r.digest, { cwd, prefix: planPrefix }),
     })),

@@ -20,6 +20,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { ReleaseAdmission } from "../../lifecycle/release-ledger";
 import { sortedJsonReplacer } from "../../utils";
 import { archiveSourceTree, sha256Digest, type SourceArchive } from "../source-archive";
 
@@ -126,16 +127,19 @@ export async function releaseRecord(args: ReleaseRecordArgs): Promise<ReleaseRec
   const env = plan.env as string;
   const gitSha = plan.gitSha as string;
 
-  const { readReleaseLedger, latestPerComponent, appendReleaseRecord, resolveRunId } = await import("../../lifecycle/release-ledger");
+  const { readReleaseLedger, latestPerComponent, appendReleaseRecord, resolveRunId, admissionOf } = await import("../../lifecycle/release-ledger");
   const { persistReleasePlan } = await import("../../lifecycle/plan-ledger");
   const { pushLifecycle } = await import("../../lifecycle/git");
 
   let approver: string | null = null;
+  let admission: ReleaseAdmission | undefined;
   if (args.approval) {
     const { readGateLedger } = await import("../../lifecycle/gate-ledger");
     const { resolutions } = await readGateLedger(args.approval.op, opts);
-    const bound = resolutions.filter((r) => r.gate === args.approval!.gate && r.planDigest === plan.digest);
-    approver = bound.length > 0 ? [...new Set(bound.map((r) => r.resolvedBy))].join(", ") : null;
+    // #4020: the approver and the gate resolution that admitted the release.
+    const admitted = admissionOf(resolutions, { ...args.approval, planDigest: plan.digest });
+    approver = admitted?.approver ?? null;
+    admission = admitted?.admission;
   }
 
   const latest = latestPerComponent((await readReleaseLedger(env, opts)).records).get(component);
@@ -160,6 +164,7 @@ export async function releaseRecord(args: ReleaseRecordArgs): Promise<ReleaseRec
       timestamp: new Date().toISOString(),
       actor,
       ...(approver ? { approver } : {}),
+      ...(admission ? { admission } : {}),
     },
     opts,
   );

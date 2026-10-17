@@ -36,7 +36,7 @@ import { parseDuration } from "./op/duration";
 import type { GateLedgerPort } from "./op/gate";
 import { DEFAULT_GATE_POINT_PASS, defaultGatePointStore, gatePointInputs, gateSubject, type GatePoint, type GatePointFacts, type GatePointStore } from "./op/gate-point";
 import type { WaitingPoint } from "./op/steward-points";
-import { resolveGateRunLocator, type GateRunLocator } from "./op/gate-run-locator";
+import { ciCommitFromEnv, ciRunIdFromEnv, resolveGateRunLocator, type GateRunLocator } from "./op/gate-run-locator";
 import { refuseGateWithoutRecording } from "./lifecycle/no-record";
 
 export {
@@ -102,6 +102,13 @@ export interface GatePointAsker {
   ask(request: GatePointRequest): Promise<GatePointQuestion>;
 }
 
+/** The run and commit a gate record names (#4020): the input's own, else the CI job's. */
+function runStamp(input: { runId?: string; gitSha?: string }): { runId?: string; gitSha?: string } {
+  const runId = input.runId || ciRunIdFromEnv();
+  const gitSha = input.gitSha || ciCommitFromEnv();
+  return { ...(runId ? { runId } : {}), ...(gitSha ? { gitSha } : {}) };
+}
+
 /** What the run needs to decide a gate that asks a point. */
 export interface PointGateInput {
   op: string;
@@ -112,6 +119,8 @@ export interface PointGateInput {
   description?: string;
   timeout?: string;
   runId?: string;
+  /** The commit the run is at (#4020). Default: the commit the CI job started for, when it runs in CI. */
+  gitSha?: string;
   planDigest?: string;
   /** The environment the run was started for: the `gate.env` input. Op gate facts on the ledger record none. */
   env?: string;
@@ -202,6 +211,7 @@ export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePo
       resolvedBy: resolvedByOf(q),
       timestamp: now,
       note: `answered through decision point ${q.point} (${q.id})`,
+      ...runStamp(input),
       ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
       approver: { kind: q.decider === "quorum" || q.answeredBy.length > 0 ? "human" : "agent" },
       answer,
@@ -228,7 +238,7 @@ export async function evaluatePointGate(port: PointGateLedgerPort, asker: GatePo
     timestamp: now,
     expiresAt: new Date(new Date(now).getTime() + parseDuration(input.timeout ?? DEFAULT_GATE_EXPIRY)).toISOString(),
     ...(input.description ? { description: input.description } : {}),
-    ...(input.runId ? { runId: input.runId } : {}),
+    ...runStamp(input),
     ...(url ? { url } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
     ...(resume ? { resume } : {}),
