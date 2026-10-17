@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json",
+  "title": "chant run event",
+  "description": "One event of a run's stream (#4019, behold #678): one JSON object per line, written by writeRunEvent and createRunEventWriter in src/run-event.ts. It covers Op runs, component runs and pipeline runs alike. Every event names the run, what it ran, the commit it built from and the runtime it ran on, so a reader shows a run the same way wherever it happened. A run's stream opens with run-start and ends with run-settle, whose status is the run's verdict; seq counts the events from 0. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The status sets are closed. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [
+    { "$ref": "#/$defs/run-start" },
+    { "$ref": "#/$defs/run-settle" },
+    { "$ref": "#/$defs/wave-start" },
+    { "$ref": "#/$defs/wave-settle" },
+    { "$ref": "#/$defs/component-start" },
+    { "$ref": "#/$defs/component-settle" },
+    { "$ref": "#/$defs/phase-start" },
+    { "$ref": "#/$defs/phase-settle" },
+    { "$ref": "#/$defs/step-start" },
+    { "$ref": "#/$defs/step-settle" },
+    { "$ref": "#/$defs/gate-waiting" },
+    { "$ref": "#/$defs/gate-resolved" }
+  ],
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "description": "What every event carries.",
+      "required": ["$schema", "contract", "chant", "seq", "at", "type", "runId", "kind", "name", "gitSha", "runtime", "runOrigin"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string", "description": "The version of the chant that wrote the event." },
+        "seq": { "type": "integer", "minimum": 0, "description": "The event's place in its run's stream: 0 for run-start, one more for each event after it." },
+        "at": { "type": "string", "description": "When the event happened, ISO-8601." },
+        "type": { "type": "string" },
+        "runId": { "type": "string", "minLength": 1, "description": "The run's id, in the id space runOrigin.forge names: the Op run id, the GitHub or Forgejo run id, the GitLab pipeline id, or one minted locally." },
+        "kind": { "enum": ["op", "component", "pipeline"], "description": "What ran: an Op, a component selection (chant run --components), or a CI pipeline." },
+        "name": { "type": "string", "description": "The Op's name, the component selection as given, or the pipeline's name." },
+        "gitSha": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The commit the run built from, the same field a release record carries. Null when the run did not start in a git checkout."
+        },
+        "runtime": {
+          "enum": ["local", "steward", "ci"],
+          "description": "Where the run happened: in the process that started it, on a steward, or in a forge's CI."
+        },
+        "runOrigin": { "$ref": "#/$defs/runOrigin" }
+      }
+    },
+    "runOrigin": {
+      "type": "object",
+      "description": "The id space runId lives in and how to reach the run: RunOrigin from lifecycle/release-ledger.ts, the shape a release record's runOrigin has.",
+      "required": ["forge"],
+      "properties": {
+        "forge": {
+          "enum": ["github", "gitlab", "op", "local"],
+          "description": "github: a GitHub Actions run id, also the spelling Forgejo Actions uses. gitlab: a CI pipeline id. op: an Op run id, which a steward's run carries. local: minted on the machine that ran it."
+        },
+        "repo": { "type": "string", "description": "The repository or project slug on the forge, when the environment named one." },
+        "url": { "type": "string", "description": "A link to the run, when the environment gave enough to build one." }
+      }
+    },
+    "settleStatus": {
+      "enum": ["ok", "failed", "gated", "waiting"],
+      "description": "How a run, wave, component or phase settled. gated: it stopped at a gate nobody has approved. waiting: it stopped at a decision point nobody has answered. Neither is a failure."
+    },
+    "component": {
+      "type": ["string", "null"],
+      "description": "The component whose composition the phase or step belongs to in a component run, and null in an Op or pipeline run."
+    },
+    "run-start": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "The run is about to start.",
+          "required": ["type", "waves"],
+          "properties": {
+            "type": { "const": "run-start" },
+            "waves": {
+              "type": ["array", "null"],
+              "items": { "type": "array", "items": { "type": "string" } },
+              "description": "In a component run, the waves of components the run will attempt, in order; wave numbers in later events count from 1 into this list. Null in an Op or pipeline run."
+            }
+          }
+        }
+      ]
+    },
+    "run-settle": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "The run settled. The last event of the stream, and its verdict.",
+          "required": ["type", "status", "durationMs"],
+          "properties": {
+            "type": { "const": "run-settle" },
+            "status": { "$ref": "#/$defs/settleStatus" },
+            "durationMs": { "type": ["integer", "null"], "minimum": 0, "description": "From run-start to now, or null when the writer did not time it." },
+            "error": { "type": "string", "description": "With status failed, what failed, when the writer knows." }
+          }
+        }
+      ]
+    },
+    "wave-start": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A wave of a component run is about to start. Its components may run at the same time.",
+          "required": ["type", "wave", "components"],
+          "properties": {
+            "type": { "const": "wave-start" },
+            "wave": { "type": "integer", "minimum": 1 },
+            "components": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "wave-settle": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A wave settled. failed if any component in it failed, which stops the run before the next wave.",
+          "required": ["type", "wave", "status"],
+          "properties": {
+            "type": { "const": "wave-settle" },
+            "wave": { "type": "integer", "minimum": 1 },
+            "status": { "$ref": "#/$defs/settleStatus" }
+          }
+        }
+      ]
+    },
+    "component-start": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A component in a wave is about to start its deploy composition.",
+          "required": ["type", "wave", "component"],
+          "properties": {
+            "type": { "const": "component-start" },
+            "wave": { "type": "integer", "minimum": 1 },
+            "component": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "component-settle": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A component's composition settled, after any rollback the run did for it.",
+          "required": ["type", "wave", "component", "status"],
+          "properties": {
+            "type": { "const": "component-settle" },
+            "wave": { "type": "integer", "minimum": 1 },
+            "component": { "type": "string" },
+            "status": { "$ref": "#/$defs/settleStatus" }
+          }
+        }
+      ]
+    },
+    "phase-start": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A phase is about to run its steps: an Op's phase, a component composition's phase, or a pipeline's stage.",
+          "required": ["type", "component", "phase"],
+          "properties": {
+            "type": { "const": "phase-start" },
+            "component": { "$ref": "#/$defs/component" },
+            "phase": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "phase-settle": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A phase settled: ok when every step in it settled ok, skipped or cached.",
+          "required": ["type", "component", "phase", "status"],
+          "properties": {
+            "type": { "const": "phase-settle" },
+            "component": { "$ref": "#/$defs/component" },
+            "phase": { "type": "string" },
+            "status": { "$ref": "#/$defs/settleStatus" }
+          }
+        }
+      ]
+    },
+    "step-start": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A step is about to run: an Op or composition step, or a pipeline's job.",
+          "required": ["type", "component", "phase", "step"],
+          "properties": {
+            "type": { "const": "step-start" },
+            "component": { "$ref": "#/$defs/component" },
+            "phase": { "type": "string" },
+            "step": { "type": "string", "description": "The step's activity, gate:<name> for a gate, effect:<name> for an effect, or the job's name." }
+          }
+        }
+      ]
+    },
+    "step-settle": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A step settled.",
+          "required": ["type", "component", "phase", "step", "status", "durationMs"],
+          "properties": {
+            "type": { "const": "step-settle" },
+            "component": { "$ref": "#/$defs/component" },
+            "phase": { "type": "string" },
+            "step": { "type": "string" },
+            "status": {
+              "enum": ["ok", "failed", "skipped", "cached", "gated", "waiting"],
+              "description": "ok: it ran and succeeded. failed: it ran and failed. skipped: it did not run, and skip says why. cached: a cache hit stood in for running it (#4015). gated: it stopped the run at a gate nobody has approved. waiting: it stopped the run at a decision point nobody has answered."
+            },
+            "skip": {
+              "enum": ["receipt", "resumed", "refused", "not-run", null],
+              "description": "With status skipped. receipt: the effect's receipt matched, so it had already applied. resumed: the run resumed at a later gate and carried this step's output from an earlier run. refused: it declined to go on, and message says why. not-run: an earlier step failed or stopped the run. Null when the writer does not know."
+            },
+            "durationMs": { "type": ["integer", "null"], "minimum": 0, "description": "How long it ran, or null when the writer did not time it." },
+            "error": { "type": "string", "description": "With status failed, what failed." },
+            "message": { "type": "string", "description": "Why a step skipped, gated or waited, for a person." }
+          }
+        }
+      ]
+    },
+    "gate-waiting": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "The run stopped and waits on a person: a gate nobody has approved, or a decision point nobody has answered. The step settles gated or waiting next.",
+          "required": ["type", "component", "phase", "step", "op", "gate", "point"],
+          "properties": {
+            "type": { "const": "gate-waiting" },
+            "component": { "$ref": "#/$defs/component" },
+            "phase": { "type": "string" },
+            "step": { "type": "string" },
+            "op": { "type": "string", "description": "The op the gate is recorded under, which chant approve takes. It differs from name when a step's command stopped at a gate of its own." },
+            "gate": { "type": ["string", "null"], "description": "The gate's name, or null when the step waits on a decision point alone." },
+            "point": { "type": ["string", "null"], "description": "The answer record id of the open question, which points answer takes, or null." },
+            "message": { "type": "string", "description": "Why the gate did not pass, such as an approval for a different plan." }
+          }
+        }
+      ]
+    },
+    "gate-resolved": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "type": "object",
+          "description": "A gate the run reached was approved, so its step goes on.",
+          "required": ["type", "component", "phase", "step", "op", "gate", "resolvedBy", "resolvedAt", "via"],
+          "properties": {
+            "type": { "const": "gate-resolved" },
+            "component": { "$ref": "#/$defs/component" },
+            "phase": { "type": "string" },
+            "step": { "type": "string" },
+            "op": { "type": "string" },
+            "gate": { "type": "string" },
+            "resolvedBy": { "type": "string", "description": "Who approved it." },
+            "resolvedAt": { "type": "string", "description": "When the approval was recorded, ISO-8601." },
+            "via": {
+              "enum": ["quorum", "policy", "point", "alias", null],
+              "description": "How the approval passed when it was more than one person's approval of this gate: a quorum, a policy permit, a decision point's answer, or an approval recorded under one of the gate's aliases."
+            },
+            "url": { "type": "string", "description": "Where the approval was made, when known." }
+          }
+        }
+      ]
+    }
+  }
+}

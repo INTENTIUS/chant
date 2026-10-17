@@ -90,6 +90,13 @@ export interface RunDoneEvent {
   status: RunProgressStatus;
 }
 
+/**
+ * @deprecated Read `RunEvent` (`../run-event.ts`, exported from
+ * `@intentius/chant`) instead: one contract for Op, component and pipeline
+ * runs, with the run id, commit and runtime on every event (#4019).
+ * `runEventOfProgress` maps each of these onto it. `--progress-json` keeps
+ * printing this shape until #4041 moves it to the run-event stream.
+ */
 export type RunProgressEvent =
   | RunStartEvent
   | WaveStartEvent

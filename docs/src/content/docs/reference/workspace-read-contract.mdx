@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green` and `ci-list`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list` and `run-event`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -47,6 +47,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
 | [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
+| [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -461,6 +462,48 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 | `attestation` | the statements judged against the runner keys at base: `status` (`signed`, `unsigned`, `mismatch`, `untrusted`, `invalid`), `signer`, `class`, `keyid`, `code`, `reason`, the `commits` the verified statement names, and one verdict per statement in `statements` |
 
 `totals` holds `all`, `byUnit`, `byDecision` and `byPrincipal`, each with `runs`, `running`, `tokens`, `cost` (one sum per currency), `unpriced`, the runs that report no cost, and `unreported`, the runs that report no usage. A run without a cost is listed, never counted as zero. A metering reader sums `cost` per currency and shows `unpriced` beside it, and a reader that trusts only signed figures counts the runs whose `attestation.status` is `signed`. `trust` names the base the statements were judged at (`--base`, else `origin/HEAD`, `main` or `master`), the runner principals listed there with their class, and any `problems` reading it, in which case nothing is signed. `reasons` holds `runs-no-ledger`, `runs-ledger-malformed`, `kind-unreadable` when a work kind can't be read to find what its items implement, and `squash-unfollowed` when `--follow-squash` can't read a pull request's ref. `chant serve mcp` serves the document as `workspace-runs`.
+
+## Run events
+
+An Op run, a component run and a CI pipeline run all report progress as one stream of events, one JSON object per line ([#4019](https://github.com/INTENTIUS/chant/issues/4019)). Each line follows `run-event.schema.json`, whose contract version 1 is written by chant `0.124.28` and newer. behold, terragucci and a CI log read the same fields wherever the run happened, and a step's state is in the event, so nobody parses log text for it.
+
+`@intentius/chant` exports the types (`RunEvent` and one type per event) and the one writer. `createRunEventWriter({ run, write })` keeps a run's identity and its sequence, and each `emit(body)` writes the next line. `writeRunEvent` and `buildRunEvent` do the same for a single event. The commands start printing this stream with [#4041](https://github.com/INTENTIUS/chant/issues/4041), and replay and `--follow` arrive with [#4042](https://github.com/INTENTIUS/chant/issues/4042).
+
+Every event carries the fields in this table.
+
+| Field | Holds |
+|---|---|
+| `$schema`, `contract`, `chant` | the schema's `$id`, `1`, and the version of the chant that wrote it |
+| `seq`, `at` | the event's place in the stream, `0` for `run-start`, and when it happened |
+| `runId`, `runOrigin` | the run's id and its locator, the `RunOrigin` shape a release record carries: `forge` (`github`, `gitlab`, `op` or `local`; Forgejo spells itself `github`), and `repo` and `url` when known |
+| `kind`, `name` | `op`, `component` or `pipeline`, and the Op's name, the component selection as given, or the pipeline's name |
+| `gitSha` | the commit the run built from, `null` outside a git checkout |
+| `runtime` | `local`, `steward` or `ci` |
+
+The `type` field names the event. A stream opens with `run-start` and ends with `run-settle`, whose `status` is the run's verdict.
+
+| `type` | Adds |
+|---|---|
+| `run-start` | `waves`, the component waves in a component run, `null` otherwise |
+| `wave-start`, `wave-settle` | `wave`, counted from 1, and `components` or `status` |
+| `component-start`, `component-settle` | `wave`, `component`, and `status` on settle |
+| `phase-start`, `phase-settle` | `component` (`null` outside a component run), `phase`, and `status` on settle |
+| `step-start`, `step-settle` | `component`, `phase`, `step`; on settle `status`, `durationMs`, and `skip`, `error` or `message` when they apply |
+| `gate-waiting` | `component`, `phase`, `step`, `op` (what `chant approve` takes), `gate` and `point`, the answer record id of an open question |
+| `gate-resolved` | `component`, `phase`, `step`, `op`, `gate`, `resolvedBy`, `resolvedAt`, `via` and `url` |
+| `run-settle` | `status`, `durationMs`, and `error` on a failed run |
+
+A run, wave, component or phase settles `ok`, `failed`, `gated` or `waiting`. `gated` stops at a gate nobody has approved, and `waiting` stops at a decision point nobody has answered. Neither is a failure. A step settles `ok`, `failed`, `skipped`, `cached`, `gated` or `waiting`. `cached` is for a cache hit standing in for the step ([#4015](https://github.com/INTENTIUS/chant/issues/4015)). In a pipeline run a stage is a phase and a job is a step. A skipped step says why in `skip`.
+
+| `skip` | The step |
+|---|---|
+| `receipt` | is an effect whose receipt matched, so it had already applied |
+| `resumed` | ran in an earlier run, which this run resumed from at a later gate |
+| `refused` | declined to go on, and `message` says why |
+| `not-run` | never ran, because an earlier step stopped the run |
+| `null` | was skipped for a reason the writer can't tell |
+
+The two older streams keep their shape until #4041 moves them. `runEventOfProgress` maps a `RunProgressEvent`, a line of `chant run --components --progress-json`, onto a run-event body. `runEventsOfStepRecord` maps a `StepRecord` line of `chant run <op> --progress-json` onto a `step-settle`. When the record holds a gate, a `gate-resolved` or `gate-waiting` comes before it. The executor writes one bare skipped `StepRecord` for several of these cases, so such a record maps to `skip: null`. New readers should read the run-event stream rather than either older shape.
 
 ## Decision points
 
