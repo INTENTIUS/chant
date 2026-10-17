@@ -126,9 +126,9 @@ export interface StatusRelease {
   approver: string | null;
   /** The gate resolution that admitted the release (#4020): the gate and when it was resolved. Null for an ungated release and for one recorded before chant 0.124.28. */
   admission: { op: string; gate: string; resolvedAt: string } | null;
-  /** The release this deploy was made from (#4043): the `releaseDigest` of `_releases/<releaseDigest>.json`. Null for a deploy that named no release and for one recorded before chant 0.124.28. */
+  /** The release this deploy was made from (#4043): the `releaseDigest` of `_releases/<releaseDigest>.json`. Null for a deploy that named no release and for one recorded before chant 0.124.29. */
   releaseDigest: string | null;
-  /** The label that release was cut with (#4043), or null when it has none, when no release is named, or when the cut can't be read. Chant 0.124.28 and newer write it. */
+  /** The label that release was cut with (#4043), or null when it has none, when no release is named, or when the cut can't be read. Chant 0.124.29 and newer write it. */
   releaseLabel: string | null;
   /** Read flags, such as `legacy-digest` (#2514). */
   flags: string[];

@@ -65,7 +65,7 @@ export interface ReleaseJoin {
   reason?: string;
 }
 
-/** The version of the shape above, for a reader that stores it. Chant 0.124.28 and newer. */
+/** The version of the shape above, for a reader that stores it. Chant 0.124.29 and newer. */
 export const RELEASE_JOIN_VERSION = 1;
 
 const MIN_COMMIT_PREFIX = 7;
