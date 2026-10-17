@@ -7,6 +7,7 @@ import { generateComponentsPipeline } from "../../components/cli-support";
 import { loadChantConfigUpward, type ChantConfig } from "../../config";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { findWorkspaceRoot } from "../../project-root";
+import { resolvePromotionSource } from "../../components/promote-order";
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -45,6 +46,24 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // #4030: the generated promote job runs `promote --from <env> --to <promote-to>`,
+  // which the member's declared promotion order refuses when it skips a step.
+  // Refuse here, with the same code, rather than write a job that fails.
+  if (args.promoteTo) {
+    // Loaded here, not at the top: a build without --promote-to loads no workspace module (#2526).
+    const { promotionOrder } = await import("../../workspace/promotion-order");
+    const resolved = resolvePromotionSource({
+      order: promotionOrder(config.environments),
+      to: args.promoteTo,
+      from: args.env ?? "production",
+      ...(args.allowSkip ? { allowSkip: true } : {}),
+    });
+    if ("error" in resolved) {
+      console.error(formatError({ message: `${resolved.error.message} [${resolved.error.code}]`, hint: resolved.error.fix }));
+      return 1;
+    }
+  }
+
   // A project inside a workspace member gets that member's pipeline (#2542):
   // path-filtered, run in the member's directory, written to a file named
   // after the member and recorded as the member's generated file. The
@@ -62,6 +81,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         lexicon,
         env: args.env,
         promoteTo: args.promoteTo,
+        ...(args.allowSkip ? { allowSkip: true } : {}),
         output: args.output,
         params: args.param,
         paramsFile: args.paramsFile,
@@ -86,6 +106,10 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     {
       env: args.env,
       ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}),
+      // #4030: the job passes --allow-skip through, so it is not refused again at deploy time.
+      ...(args.promoteTo && args.allowSkip
+        ? { promoteCommand: ["chant", "components", "promote", "--from", args.env ?? "production", "--to", args.promoteTo, "--allow-skip"] }
+        : {}),
       ...(plan ? { member: plan.member } : {}),
       // #3049: one job per wave of a gated-wave fan-out instead of one per component.
       ...(args.waveGate

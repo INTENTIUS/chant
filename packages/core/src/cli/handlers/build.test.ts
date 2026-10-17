@@ -70,6 +70,37 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--promote-to that skips a step of the declared promotion order is refused, and generates nothing (#4030)", async () => {
+    loadChantConfigUpwardMock.mockResolvedValue({ config: { environments: ["dev", "staging", "prod"] } });
+    const stderr = makeStderrSpy();
+    const exit = await runBuild({ args: makeArgs({ env: "dev", promoteTo: "prod" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(generateComponentsPipelineMock).not.toHaveBeenCalled();
+    const out = stderr.join("\n");
+    expect(out).toMatch(/\[promote-skips-environment\]/);
+    expect(out).toMatch(/--allow-skip/);
+  });
+
+  test("--promote-to the next step of the order generates as before (#4030)", async () => {
+    loadChantConfigUpwardMock.mockResolvedValue({ config: { environments: ["dev", "staging", "prod"] } });
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "x", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await runBuild({ args: makeArgs({ env: "staging", promoteTo: "prod" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock.mock.calls[0][2]).toEqual({ env: "staging", promoteTo: "prod" });
+  });
+
+  test("--allow-skip lets the skip through and the promote job passes it on (#4030)", async () => {
+    loadChantConfigUpwardMock.mockResolvedValue({ config: { environments: ["dev", "staging", "prod"] } });
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "x", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await runBuild({ args: makeArgs({ env: "dev", promoteTo: "prod", allowSkip: true }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock.mock.calls[0][2]).toMatchObject({
+      promoteCommand: ["chant", "components", "promote", "--from", "dev", "--to", "prod", "--allow-skip"],
+    });
+  });
+
   test("--promote-to is forwarded to the generator as promoteTo (#2575)", async () => {
     generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "stages: []", stages: [], jobs: [] });
     vi.spyOn(console, "log").mockImplementation(() => {});

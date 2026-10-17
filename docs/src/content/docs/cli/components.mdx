@@ -425,7 +425,7 @@ The refusals carry a stable code in square brackets at the end of the message:
 | `promote-no-previous-environment` | `--from` was left out and `--to` is the first step of the order. |
 | `promote-to-not-in-order` | `--from` was left out and `--to` is not a step of the order. |
 
-A member that declares no `environments` has no order. Promote requires `--from` and refuses nothing, as before. A step marked `canary: true` is recorded in the order and does nothing else yet.
+`chant build --components --generate --promote-to` applies the same rule when it writes the promote job, so a skip fails at generation time and `--allow-skip` on the build is passed to the job. A member that declares no `environments` has no order. Promote requires `--from` and refuses nothing, as before. A step marked `canary: true` is recorded in the order and does nothing else yet.
 
 ### `components rollback <env>`
 
