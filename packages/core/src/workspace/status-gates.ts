@@ -65,6 +65,13 @@ export interface StatusGate {
   env: string | null;
   /** The plan the run reached the gate with, or null for a gate that binds no plan. */
   planDigest: string | null;
+  /**
+   * The release the gate binds (#4045), from the pending fact: on a release
+   * gate, the one `chant components promote --release` passes, recorded
+   * under the op `release`. Absent on every other gate and on a fact written
+   * before chant 0.124.28.
+   */
+  releaseDigest?: string;
   state: GateState;
   /** When the run recorded the pending fact the state is read against. */
   recordedAt: string;
@@ -176,7 +183,10 @@ const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal
 function decide(component: string, standing: PendingGateRecord, facts: PendingGateRecord[], all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null): StatusGate {
   const gate = standing.gate;
   // #3163: under identity.gates, an unsigned approval, or one from outside the class, doesn't count, as a run reads it.
-  const resolutions = rule === null ? all : all.filter((r) => r.gate !== gate || rule.refuses(r) === null);
+  // #4045: nor does an approval for another release, and an `empty` pass is never an approval.
+  const resolutions = all
+    .filter((r) => r.gate !== gate || (r.empty !== true && r.releaseDigest === standing.releaseDigest))
+    .filter((r) => rule === null || r.gate !== gate || rule.refuses(r) === null);
   const env = standing.environment ?? null;
   const since = standing.timestamp;
   const planDigest = standing.planDigest;
@@ -210,6 +220,7 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
     name: gate,
     env,
     planDigest: planDigest ?? null,
+    ...(standing.releaseDigest !== undefined ? { releaseDigest: standing.releaseDigest } : {}),
     state,
     recordedAt: standing.timestamp,
     ...(standing.gitSha ? { gitSha: standing.gitSha } : {}),

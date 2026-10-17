@@ -806,17 +806,18 @@ The release model adds these fields to contract 1. Every one is optional or null
 | the `releases` output schema, `v1` | the read contract | releases with their targets and the environments running each | 0.124.28 |
 | `releaseDigest` | `ReleaseRecord` | the release a deploy came from. `components promote --release` writes it from 0.124.28; `run --components`, `rollback` and `redeploy` with #4043 | 0.124.28 for a promote |
 | `releaseDigest`, `releaseLabel` | `status` release item | the same, and the release's label, `null` without one | the release with #4043 |
-| `releaseDigest` | `PendingGateRecord`, `GateResolutionRecord` | the release a gate binds | the release with #4045 |
-| `releaseDigest` | `status` gate item | the same | the release with #4045 |
-| `empty` | `GateResolutionRecord` | `true` for a pass over an empty change set | the release with #4045 |
-| `_change-sets/<digest>.json`, keyed by document `digest` | `chant/lifecycle` | the document a pull-request gate bound; a release gate's and an `empty` resolution's with #4045 | 0.124.28 for a pull-request gate |
+| `releaseDigest` | `PendingGateRecord`, `GateResolutionRecord` | the release a gate binds, on a release gate: the gate `components promote --release` passes, under the op `release` | 0.124.28 |
+| `releaseDigest` | `status` gate item | the same | 0.124.28 |
+| `empty` | `GateResolutionRecord` | `true` for a pass over an empty change set | 0.124.28 |
+| `_change-sets/<digest>.json`, keyed by document `digest` | `chant/lifecycle` | the document a pull-request gate, a release gate or an `empty` resolution bound | 0.124.28 |
+| `releaseDigest`, `environment` | a release gate's change-set document | the release and environment it was planned for, both in its `digest` | 0.124.28 |
 | the `change-set-show` output schema, `v1` | the read contract | one stored change set, each entry with its graph `node` | 0.124.28 |
 | `changeSet` | `status` gate item | the stored change set the gate binds | 0.124.28 |
 | `featureFlags` | `status` member | each flag and its value per environment | the release with #4024 |
 
 ## Stored change sets
 
-A gate over a change-set document binds the document's `digest` in `planDigest` ([ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md) question 2). The gate ledger holds only that value, so chant stores the document beside it on `chant/lifecycle` at `_change-sets/<digest>.json`, with `:` written as `_`, under `_members/<member>/` for a workspace member ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). `chant components pr-apply` stores it before it decides the pull request's gate. A release gate and an `empty` resolution store theirs with [#4045](https://github.com/INTENTIUS/chant/issues/4045). A component gate in a plain `chant run --components` binds a lifecycle-plan digest and stores no document; its `planDigest` is all a reader has. The file is written once and never rewritten. How long it is kept is [#4036](https://github.com/INTENTIUS/chant/issues/4036)'s retention policy.
+A gate over a change-set document binds the document's `digest` in `planDigest` ([ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md) question 2). The gate ledger holds only that value, so chant stores the document beside it on `chant/lifecycle` at `_change-sets/<digest>.json`, with `:` written as `_`, under `_members/<member>/` for a workspace member ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). `chant components pr-apply` stores it before it decides the pull request's gate. `chant components promote --release` stores its release gate's before it decides that gate or writes an `empty` resolution ([#4045](https://github.com/INTENTIUS/chant/issues/4045)), and that document carries `releaseDigest` and `environment`, the release and environment it was planned for, both inside its `digest`. A component gate in a plain `chant run --components` binds a lifecycle-plan digest and stores no document; its `planDigest` is all a reader has. The file is written once and never rewritten. How long it is kept is [#4036](https://github.com/INTENTIUS/chant/issues/4036)'s retention policy.
 
 `chant change-set show <digest> --json` prints the `change-set-show` document. Its `changeSet` is the stored document, or `null` when none is stored under the digest, and `member` names the member whose ledger was read. A stored file that isn't the document its digest names reads as `changeSet: null` with the reason `ledger-malformed`. The read never fetches.
 

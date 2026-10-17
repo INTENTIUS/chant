@@ -61,6 +61,18 @@ vi.mock("../../components/fan-out-support", () => ({
       if (ctx.component === failApplyFor) throw new Error("apply failed");
       return {};
     });
+    // #4045: a planner whose member is provisional.
+    registry.register({
+      kind: "plan-provisional",
+      async run() { return {}; },
+      async plan() {
+        return {
+          member: "estate",
+          planDigest: "sha256:" + "3".repeat(64),
+          changeSet: { member: { member: "estate", lexicon: "terraform", planner: "terraform", status: "planned", planDigest: "sha256:" + "3".repeat(64), provisional: true, holes: [] }, entries: [] },
+        };
+      },
+    } as never);
     return registry;
   },
 }));
@@ -69,9 +81,35 @@ vi.mock("../../components/fan-out-support", () => ({
 vi.mock("../../op/gate", async () => {
   const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
   const port = actual.memoryGateLedgerPort();
-  return { ...actual, gitGateLedgerPort: () => port, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
+  return { ...actual, gitGateLedgerPort: () => releaseGatePort ?? port, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
 });
 const sealedGates = new Set<string>();
+/** #4045: a fresh ledger per release gate test, so their approvals don't carry between tests. */
+let releaseGatePort: ReturnType<typeof import("../../op/gate").memoryGateLedgerPort> | null = null;
+
+// #4045: stored change sets live in memory, keyed by digest.
+const storedChangeSets = new Map<string, import("../../change-set").ChangeSetDocument>();
+let storeFails = false;
+vi.mock("../../lifecycle/gate-change-set", () => ({
+  storeGateChangeSet: async ({ doc }: { doc: import("../../change-set").ChangeSetDocument }) => {
+    if (storeFails) throw new Error("the branch is read-only");
+    const written = !storedChangeSets.has(doc.digest);
+    storedChangeSets.set(doc.digest, doc);
+    return { digest: doc.digest, written };
+  },
+}));
+vi.mock("../../lifecycle/change-set-store", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/change-set-store")>("../../lifecycle/change-set-store");
+  return {
+    ...actual,
+    readStoredChangeSet: async (digest: string) => {
+      const doc = storedChangeSets.get(digest);
+      return doc ? actual.parseStoredChangeSet(JSON.stringify(doc), digest) : { status: "missing" };
+    },
+  };
+});
+const knownReleases = new Map<string, import("../../lifecycle/release-store").Release>();
+const removedTemplates: unknown[] = [];
 
 // #4026: the release store holds one release and one template's bytes.
 vi.mock("../../lifecycle/release-store", async () => {
@@ -80,11 +118,16 @@ vi.mock("../../lifecycle/release-store", async () => {
     ...actual,
     resolveRelease: async (ref: string) => (releaseFixture && (ref === releaseFixture.label || ref === releaseFixture.release.releaseDigest) ? releaseFixture : null),
     readReleaseTemplate: async () => storedTemplate,
+    readRelease: async (digest: string) => knownReleases.get(digest) ?? null,
   };
 });
 vi.mock("../../components/release-promote", async () => {
   const actual = await vi.importActual<typeof import("../../components/release-promote")>("../../components/release-promote");
-  return { ...actual, writePinnedTemplates: (_dir: string, files: unknown[]) => writtenTemplates.push(...files) };
+  return {
+    ...actual,
+    writePinnedTemplates: (_dir: string, files: unknown[]) => writtenTemplates.push(...files),
+    removePinnedTemplates: (_dir: string, files: unknown[]) => removedTemplates.push(...files),
+  };
 });
 
 // The run handler pulls in every runtime; the promote needs only its exit code.
@@ -138,6 +181,11 @@ let logs: string[];
 
 beforeEach(() => {
   sealedGates.clear();
+  releaseGatePort = null;
+  storedChangeSets.clear();
+  storeFails = false;
+  knownReleases.clear();
+  removedTemplates.length = 0;
   ran.length = 0;
   stepInputs.length = 0;
   writtenTemplates.length = 0;
@@ -378,6 +426,147 @@ describe("chant components promote --release (#4026)", () => {
     expect(await runComponentsPromote(ctx({}))).toBe(0);
     expect(stepInputs.find((s) => s.kind === "apply")?.input).toMatchObject({ template: "dist/api.template.json" });
     expect(appendReleaseRecordMock.mock.calls[0][0].releaseDigest).toBeUndefined();
+  });
+});
+
+describe("chant components promote --release binds its gate (#4045)", () => {
+  const prodTemplate = `{"env":"prod"}\n`;
+  const stagingTemplate = `{"env":"staging"}\n`;
+  const gated: DriverComponent = {
+    ...api,
+    deploy: [
+      ...api.deploy.slice(0, 2),
+      { phase: "Apply", steps: [{ kind: "gate", gate: "prod-release" }, { kind: "apply", template: "dist/api.template.json", imageRef: "@Publish.digest" }] },
+    ],
+  };
+  const releaseAt = (commit: string) =>
+    makeRelease({
+      member: null,
+      commit: commit.padEnd(40, "0"),
+      artifactDigests: [{ component: "api", kind: "image", path: "api.tar", digest: "sha256:api" }],
+      targets: [
+        { env: "staging", templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(stagingTemplate) }], params: [] },
+        { env: "prod", templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(prodTemplate) }], params: [] },
+      ],
+    });
+  const r1 = releaseAt("abc123");
+  const r2 = releaseAt("def456");
+  const dev: ReleaseRecord = { ...staging, env: "dev" };
+  let ledgers: Record<string, ReleaseRecord[]>;
+
+  beforeEach(async () => {
+    const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
+    releaseGatePort = memoryGateLedgerPort();
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [gated] });
+    releaseFixture = { release: r1, label: "v1.0.0" };
+    storedTemplate = prodTemplate;
+    knownReleases.set(r1.releaseDigest, r1);
+    knownReleases.set(r2.releaseDigest, r2);
+    ledgers = { dev: [dev], staging: [staging], prod: [] };
+    readReleaseLedgerMock.mockImplementation(async (env: string) => ({ records: ledgers[env] ?? [], malformed: 0 }));
+  });
+
+  const onlyStored = () => [...storedChangeSets.values()];
+
+  test("a non-empty change set stops at a release gate that binds the release, the environment and the stored document", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    expect(ran).not.toContain("prod:apply");
+    const [doc] = onlyStored();
+    expect(doc).toMatchObject({ releaseDigest: r1.releaseDigest, environment: "prod" });
+    expect(doc.entries[0]).toMatchObject({ address: "api", action: "create" });
+    expect(releaseGatePort!.appended).toEqual([
+      expect.objectContaining({ op: "release", gate: "prod-release", environment: "prod", planDigest: doc.digest, releaseDigest: r1.releaseDigest }),
+    ]);
+    expect(errors.join("\n")).toMatch(/chant approve release prod-release --env prod/);
+    expect(errors.join("\n")).toMatch(/release gate: change set jcs1-sha256:[0-9a-f]{64} for "prod", 1 entry/);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+    expect(removedTemplates).toHaveLength(1);
+  });
+
+  test("an approval of that release passes the gate, and the deploy record names the release and the gate's resolution", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    const pending = releaseGatePort!.appended[0];
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "prod-release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: pending.planDigest, environment: "prod", releaseDigest: r1.releaseDigest,
+    });
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(ran).toContain("prod:apply");
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({
+      releaseDigest: r1.releaseDigest,
+      approver: "alice",
+      admission: { op: "release", gate: "prod-release" },
+    });
+  });
+
+  test("an approval for one release can't be used by another", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    const pending = releaseGatePort!.appended[0];
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "prod-release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: pending.planDigest, environment: "prod", releaseDigest: r1.releaseDigest,
+    });
+    releaseFixture = { release: r2, label: "v1.0.1" };
+    ran.length = 0;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.1" }))).toBe(3);
+    expect(ran).not.toContain("prod:apply");
+    expect(releaseGatePort!.appended.at(-1)).toMatchObject({ releaseDigest: r2.releaseDigest });
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("an approval for one environment can't be used for another", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    const pending = releaseGatePort!.appended[0];
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "prod-release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: pending.planDigest, environment: "prod", releaseDigest: r1.releaseDigest,
+    });
+    storedTemplate = stagingTemplate;
+    ran.length = 0;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0", migrateFrom: "dev", migrateTo: "staging" }))).toBe(3);
+    expect(ran).not.toContain("staging:apply");
+    expect(releaseGatePort!.appended.at(-1)).toMatchObject({ environment: "staging", releaseDigest: r1.releaseDigest });
+  });
+
+  test("an empty change set passes without an approval: the promote writes an empty resolution and a deploy record naming the release", async () => {
+    ledgers.prod = [{ ...staging, env: "prod", releaseDigest: r1.releaseDigest, timestamp: "2026-01-03T00:00:00.000Z" }];
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(ran).toContain("prod:apply");
+    const [doc] = onlyStored();
+    expect(doc.entries).toEqual([]);
+    expect(releaseGatePort!.appended).toEqual([]);
+    expect(releaseGatePort!.resolved).toEqual([
+      expect.objectContaining({ op: "release", gate: "prod-release", resolvedBy: "bob", empty: true, planDigest: doc.digest, environment: "prod", releaseDigest: r1.releaseDigest }),
+    ]);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", releaseDigest: r1.releaseDigest, approver: "bob", admission: { op: "release", gate: "prod-release" } });
+    expect(errors.join("\n")).toMatch(/empty: its gates pass without an approval/);
+    // Run again: the pass stands, and no second line is written.
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(releaseGatePort!.resolved).toHaveLength(1);
+  });
+
+  test("an empty pass counts only once the stored document reads back empty", async () => {
+    ledgers.prod = [{ ...staging, env: "prod", releaseDigest: r1.releaseDigest, timestamp: "2026-01-03T00:00:00.000Z" }];
+    storeFails = true;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    expect(errors.join("\n")).toMatch(/could not store the change set/);
+    expect(ran).not.toContain("prod:apply");
+  });
+
+  test("a change set with a provisional member is refused before anything deploys", async () => {
+    resolveTargetsMock.mockResolvedValue({
+      success: true,
+      targets: [{ ...gated, deploy: [...gated.deploy, { phase: "Plan", steps: [{ kind: "plan-provisional" }] }] }],
+    });
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/provisional members \(estate\)/);
+    expect(ran).toEqual([]);
+  });
+
+  test("a release promote whose compositions declare no gate binds nothing and stores no change set", async () => {
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [{ ...gated, deploy: [...gated.deploy.slice(0, 2), { phase: "Apply", steps: [{ kind: "apply", template: "dist/api.template.json" }] }] }] });
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(storedChangeSets.size).toBe(0);
   });
 });
 

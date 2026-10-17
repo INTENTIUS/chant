@@ -2,8 +2,9 @@
  * Store the change set a gate binds (#4022), mapped onto the member's graph.
  *
  * {@link storeGateChangeSet} is what a gate that binds a change-set document's
- * digest calls before it decides the gate: `components pr-apply` today, and a
- * release gate and an `empty` resolution with #4045. It reads the member's
+ * digest calls before it decides the gate: `components pr-apply`, and
+ * `components promote --release` before it decides a release gate or writes
+ * an `empty` resolution (#4045). It reads the member's
  * graph the way `chant workspace graph` reads it, from the member's own
  * `chant graph --format ir`, maps each entry onto a node
  * (`../change-set-graph.ts`), and stores the document under its digest

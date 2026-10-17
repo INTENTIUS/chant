@@ -7,7 +7,12 @@ import { describe, test, expect } from "vitest";
 import { contentDigest } from "../content-digest";
 import { makeRelease } from "../lifecycle/release-store";
 import type { DriverComponent } from "./driver";
-import { isImplicitRelease, pinReleaseTemplates, targetFiles, targetFor, RELEASE_TEMPLATES_DIR } from "./release-promote";
+import { isImplicitRelease, pinReleaseTemplates, releaseArtifactMismatches, removePinnedTemplates, targetFiles, targetFor, writePinnedTemplates, RELEASE_TEMPLATES_DIR } from "./release-promote";
+import type { ReleaseRecord } from "../lifecycle/release-ledger";
+import type { BuildArchiveManifest } from "./verbs/build-archive";
+import { withTestDir } from "@intentius/chant-test-utils";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const prodTemplate = `{"env":"prod"}\n`;
 const release = makeRelease({
@@ -92,5 +97,63 @@ describe("an implicit release (#4046)", () => {
     const escaping = { env: "prod", templates: [{ component: null, path: "../x.yaml", digest: contentDigest(yaml) }], params: [] };
     const out = await targetFiles(implicit, escaping, async () => yaml);
     expect("errors" in out && out.errors[0]).toMatch(/not a path inside the member's directory/);
+  });
+});
+
+describe("the artifact a promote under a release deploys (#4045)", () => {
+  const built = makeRelease({
+    member: null,
+    commit: "c".repeat(40),
+    artifactDigests: [{ component: "api", kind: "image", path: "api.tar", digest: "sha256:built" }],
+    targets: release.targets,
+  });
+  const source: ReleaseRecord = {
+    version: 1, component: "api", env: "staging", digest: "sha256:published", gitSha: "c".repeat(40), runId: "r1",
+    timestamp: "2026-10-01T00:00:00.000Z", actor: "ci", manifestDigest: "sha256:manifest",
+  };
+  const manifest = (digest: string): BuildArchiveManifest => ({
+    version: 1, component: "api", createdAt: "2026-10-01T00:00:00.000Z", manifestDigest: "sha256:manifest",
+    contents: [{ kind: "image", path: "api.tar", digest, mediaType: "application/vnd.oci.image.layout.v1+tar" }],
+  } as BuildArchiveManifest);
+
+  test("matches when the source deploy's build manifest holds the release's artifact at its path", async () => {
+    expect(await releaseArtifactMismatches(built, [{ component: "api", source }], async () => manifest("sha256:built"))).toEqual([]);
+  });
+
+  test("names a source deploy built from other bytes", async () => {
+    const out = await releaseArtifactMismatches(built, [{ component: "api", source }], async () => manifest("sha256:rebuilt"));
+    expect(out).toEqual([expect.stringMatching(/api: the staging deploy being promoted was built with api.tar at sha256:rebuilt, but release .* built it at sha256:built/)]);
+  });
+
+  test("a source deploy naming the release, or one with no readable manifest, says nothing", async () => {
+    const read = async () => manifest("sha256:rebuilt");
+    expect(await releaseArtifactMismatches(built, [{ component: "api", source: { ...source, releaseDigest: built.releaseDigest } }], read)).toEqual([]);
+    expect(await releaseArtifactMismatches(built, [{ component: "api", source: { ...source, manifestDigest: undefined } }], read)).toEqual([]);
+    expect(await releaseArtifactMismatches(built, [{ component: "api", source }], async () => null)).toEqual([]);
+  });
+});
+
+describe("removePinnedTemplates (#4045)", () => {
+  test("removes what the promote wrote, and the directory once it is empty", async () => {
+    await withTestDir(async (dir) => {
+      const files = [{ path: `${RELEASE_TEMPLATES_DIR}/sha256_ab/api.template.json`, content: "{}" }];
+      writePinnedTemplates(dir, files);
+      expect(existsSync(join(dir, files[0].path))).toBe(true);
+      removePinnedTemplates(dir, files);
+      expect(existsSync(join(dir, RELEASE_TEMPLATES_DIR))).toBe(false);
+      expect(existsSync(join(dir, ".chant"))).toBe(true);
+    });
+  });
+
+  test("keeps anything else under the directory", async () => {
+    await withTestDir(async (dir) => {
+      mkdirSync(join(dir, RELEASE_TEMPLATES_DIR, "other"), { recursive: true });
+      writeFileSync(join(dir, RELEASE_TEMPLATES_DIR, "other", "x"), "x");
+      const files = [{ path: `${RELEASE_TEMPLATES_DIR}/sha256_ab/api.template.json`, content: "{}" }];
+      writePinnedTemplates(dir, files);
+      removePinnedTemplates(dir, files);
+      expect(existsSync(join(dir, RELEASE_TEMPLATES_DIR, "other", "x"))).toBe(true);
+      expect(existsSync(join(dir, RELEASE_TEMPLATES_DIR, "sha256_ab"))).toBe(false);
+    });
   });
 });

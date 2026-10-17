@@ -45,6 +45,16 @@ export const WORKSPACE_UPGRADE_GATE_OP = "workspace-upgrade";
 export const OVERRIDE_GATE_OP = "policy-override";
 
 /**
+ * The op name every release gate is recorded under (#4045): the gates
+ * `chant components promote --release` reaches, `_gates/release.jsonl`, each
+ * named as its composition names it and bound to a release, an environment
+ * and the release's change set. Like a fan-out, it has no `*.op.ts`, and like
+ * the pull-request gate it approves a change to an environment, so it is
+ * never resolved over MCP or ACP.
+ */
+export const RELEASE_GATE_OP = "release";
+
+/**
  * The pull-request loop records its gate under `pr-<number>`, or
  * `pr-<number>-<member>` in a workspace member (`prOp` in `pr-loop.ts`), and
  * no `*.op.ts` stands behind that name either.
@@ -54,12 +64,12 @@ const PR_GATE_OP = /^pr-\d+(?:-[a-z0-9][a-z0-9-]*)?$/;
 /**
  * Whether gates recorded under this op name are never resolved over MCP or ACP
  * (chant#3485, chant#3513). These are the gate-only names MCP cannot discover:
- * `fan-out`, `workspace-upgrade`, `policy-override` (#3760) and the
- * pull-request gate `pr-<number>`. With
+ * `fan-out`, `workspace-upgrade`, `policy-override` (#3760), `release`
+ * (#4045) and the pull-request gate `pr-<number>`. With
  * no Op config to read `neverOverMcp` from, the pending record carries it.
  */
 export function isNeverOverMcpGateOp(op: string): boolean {
-  return op === FAN_OUT_GATE_OP || op === WORKSPACE_UPGRADE_GATE_OP || op === OVERRIDE_GATE_OP || PR_GATE_OP.test(op);
+  return op === FAN_OUT_GATE_OP || op === WORKSPACE_UPGRADE_GATE_OP || op === OVERRIDE_GATE_OP || op === RELEASE_GATE_OP || PR_GATE_OP.test(op);
 }
 
 /** Either spelling of a gate step's name. `gate` since #2202; `signalName` through 0.59.0. */

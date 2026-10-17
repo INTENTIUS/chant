@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json",
   "title": "chant change-set show output",
-  "description": "What `chant change-set show <digest> --json` prints (#4022): the change-set document a gate bound, stored on chant/lifecycle under its digest (_change-sets/<digest>.json, under _members/<member>/ for a workspace member). A pull-request gate's apply stores it; a release gate and an empty resolution store it with #4045. Each entry carries the graph node it changes. It reads the local chant/lifecycle branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "description": "What `chant change-set show <digest> --json` prints (#4022): the change-set document a gate bound, stored on chant/lifecycle under its digest (_change-sets/<digest>.json, under _members/<member>/ for a workspace member). A pull-request gate's apply stores it, and chant components promote --release stores a release gate's (#4045), which names the release and environment it was planned for. Each entry carries the graph node it changes. It reads the local chant/lifecycle branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.28 and newer; the read contract as a whole by chant 0.81.0 and newer.",
   "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
   "$defs": {
     "result": {
@@ -34,6 +34,8 @@
                 "$schema": { "const": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json" },
                 "contract": { "const": 1 },
                 "digest": { "type": "string" },
+                "releaseDigest": { "type": "string", "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer: the release a release gate's change set was planned for. Absent on a pull request's." },
+                "environment": { "type": "string", "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer: the environment a release gate's change set was planned for. Absent on a pull request's." },
                 "members": { "type": "array" },
                 "entries": {
                   "type": "array",

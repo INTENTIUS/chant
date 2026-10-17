@@ -155,7 +155,16 @@ export interface DriverStepRecord {
   output?: unknown;
   error?: string;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
-  approval?: { gate: string; resolvedBy: string; timestamp: string; url?: string };
+  approval?: {
+    gate: string;
+    resolvedBy: string;
+    timestamp: string;
+    url?: string;
+    /** The gate ledger the approval is in, when it isn't the component's own: a release gate's (#4045). */
+    op?: string;
+    /** Set when the gate passed over an empty change set (#4045) rather than on a person's approval. */
+    empty?: true;
+  };
 }
 
 export interface DriverComponentResult {
@@ -397,6 +406,27 @@ export interface GateContext {
   releases?: ReadonlyMap<string, string>;
   /** This component's plan digest. Set by {@link runComponentDeploy}, never by a caller. */
   planDigest?: string;
+  /**
+   * The release gate binding (#4045): set by a promote under a release.
+   * Every gate the run reaches is then decided in `op`'s ledger against the
+   * change-set document's digest, the release and the environment, in place
+   * of the component's own ledger and composition digest.
+   */
+  releaseGate?: ReleaseGateBinding;
+}
+
+/**
+ * What a release gate binds (#4045, ws-104 question 2): the change-set
+ * document's digest, the release, and (from the run) the environment.
+ */
+export interface ReleaseGateBinding {
+  /** The gate ledger the release gate is recorded in, for every component of the promote. */
+  op: string;
+  /** The digest of the change-set document planned for this release and environment. */
+  planDigest: string;
+  releaseDigest: string;
+  /** Reads the document stored under a digest and says whether it is empty (`evaluateGate`'s `verifyEmpty`). */
+  verifyEmpty?: (planDigest: string) => Promise<boolean>;
 }
 
 /** Run a single capability step. Never throws for a capability-run failure; returns a fail record instead. */
@@ -491,11 +521,14 @@ async function runPhase(
       let check: Awaited<ReturnType<typeof evaluateGate>>;
       try {
         check = await evaluateGate(gates.port, {
-          op: ctx.component,
+          op: gates.releaseGate?.op ?? ctx.component,
           gate: gateName(gate),
           // #2574: an approval counts only for this environment and this plan.
           environment: ctx.env,
           ...(gates.planDigest !== undefined ? { planDigest: gates.planDigest } : {}),
+          // #4045: and under a release, only for that release.
+          ...(gates.releaseGate ? { releaseDigest: gates.releaseGate.releaseDigest } : {}),
+          ...(gates.releaseGate?.verifyEmpty ? { verifyEmpty: gates.releaseGate.verifyEmpty } : {}),
           ...(gate.description ? { description: gate.description } : {}),
           ...(gate.timeout ? { timeout: gate.timeout } : {}),
           ...(gates.now ? { now: gates.now } : {}),
@@ -513,7 +546,7 @@ async function runPhase(
       }
       for (const body of gateEventsOf(
         check,
-        { ...at, op: ctx.component, gate: gateName(gate) },
+        { ...at, op: gates.releaseGate?.op ?? ctx.component, gate: gateName(gate) },
         {
           durationMs: Date.now() - start,
           ...(!check.satisfied && check.mismatch ? { message: "an approval stands for this gate, but for another environment or plan" } : {}),
@@ -537,6 +570,8 @@ async function runPhase(
           resolvedBy: check.resolution.resolvedBy,
           timestamp: check.resolution.timestamp,
           ...(check.resolution.url ? { url: check.resolution.url } : {}),
+          ...(gates.releaseGate ? { op: gates.releaseGate.op } : {}),
+          ...(check.via === "empty" ? { empty: true as const } : {}),
         },
       });
     }
@@ -763,12 +798,15 @@ export async function runComponentDeploy(
   if (ctx.release && release !== undefined && ctx.release.version === undefined) ctx.release.version = release;
   const gates: GateContext = {
     ...gateContext,
-    planDigest: componentPlanDigest({
-      environment: ctx.env,
-      component,
-      ...(ctx.vars ? { vars: ctx.vars } : {}),
-      ...(release !== undefined ? { release } : {}),
-    }),
+    // #4045: a release gate binds the release's change set, not this composition.
+    planDigest:
+      gateContext.releaseGate?.planDigest ??
+      componentPlanDigest({
+        environment: ctx.env,
+        component,
+        ...(ctx.vars ? { vars: ctx.vars } : {}),
+        ...(release !== undefined ? { release } : {}),
+      }),
   };
   const records: DriverStepRecord[] = [];
   const allExecuted: ExecutedStep[] = [];
@@ -956,6 +994,8 @@ export interface InterpretRunOptions {
   now?: string;
   /** The recorded digest a promote or rollback deploys, per component (#2574). Part of the plan a gate approval is bound to. */
   releases?: ReadonlyMap<string, string>;
+  /** A promote under a release (#4045): what every gate the run reaches binds. See {@link GateContext.releaseGate}. */
+  releaseGate?: ReleaseGateBinding;
   /**
    * The release each component deploys (#3061, ws-081), threaded into its
    * `DeployContext.release`. The driver fills in `version` when a publish
@@ -1005,6 +1045,7 @@ export async function runInterpretDriver(
     port: options.gates ?? gitGateLedgerPort(),
     ...(options.now ? { now: options.now } : {}),
     ...(options.releases ? { releases: options.releases } : {}),
+    ...(options.releaseGate ? { releaseGate: options.releaseGate } : {}),
   };
 
   emit?.({ type: "run-start", waves });

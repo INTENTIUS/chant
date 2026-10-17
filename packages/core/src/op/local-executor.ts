@@ -108,7 +108,7 @@ export interface StepRecord {
      * On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. `"point"` on a gate that asks a decision point (#3170).
      * `"alias"` (#3949) when an approval recorded under one of the gate's aliases counted, on any gate.
      */
-    via?: "quorum" | "policy" | "point" | "alias";
+    via?: "quorum" | "policy" | "point" | "alias" | "empty";
     /** On a gate with a quorum (#2508): every approver who counted toward it. */
     approvers?: string[];
     /** On a gate that asks a decision point (#3170): the answer record that passed it, which the gate ledger's resolution cites too. */

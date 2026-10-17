@@ -26,7 +26,16 @@
     "digest": {
       "type": "string",
       "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
-      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries without their node, and the side effects, provisional members and their entries left out. What a gate over the whole run binds."
+      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries without their node, the side effects, and on a release gate's document its releaseDigest and environment, provisional members and their entries left out. What a gate over the whole run binds."
+    },
+    "releaseDigest": {
+      "type": "string",
+      "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
+      "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer. The release a release gate's change set was planned for: the releaseDigest of the release chant components promote --release deploys. Set with environment, and absent on every other change set. Part of digest, so a stored change set names the one release its gate bound."
+    },
+    "environment": {
+      "type": "string",
+      "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer. The environment a release gate's change set was planned for, set with releaseDigest. Part of digest."
     },
     "members": {
       "type": "array",

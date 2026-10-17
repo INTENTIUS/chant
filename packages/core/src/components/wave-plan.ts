@@ -44,7 +44,7 @@ function emptyPart(member: WaveMember): ChangeSetPart {
 }
 
 /** Every capability step in a composition, nested phases included, gates left out. */
-function capabilitySteps(phases: readonly DriverPhase[]): DriverStep[] {
+export function capabilitySteps(phases: readonly DriverPhase[]): DriverStep[] {
   const out: DriverStep[] = [];
   const walk = (steps: DriverPhase["steps"]): void => {
     for (const step of steps) {

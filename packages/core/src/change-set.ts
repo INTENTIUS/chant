@@ -217,6 +217,17 @@ export interface ChangeSetDocument {
    * so every `node` is null. Absent on a document never mapped. Not hashed.
    */
   graph?: ChangeSetGraph | null;
+  /**
+   * The release this change set was planned for (#4045): the `releaseDigest`
+   * of the release a `components promote --release` deploys. Set with
+   * `environment` on a release gate's document, absent on every other. Part
+   * of the digest when present, so a stored document names the one release
+   * and environment its gate bound, and two releases whose plans read the
+   * same never share a document or an approval.
+   */
+  releaseDigest?: string;
+  /** The environment this change set was planned for (#4045), set with `releaseDigest`. Part of the digest when present. */
+  environment?: string;
 }
 
 /** Where a document's node ids come from. */
@@ -264,8 +275,14 @@ export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "me
  *
  * A provisional member is left out, with its entries and side effects, as
  * the set digest leaves it out: no approval of the document covers it.
+ *
+ * A release gate's document (#4045) also hashes the `releaseDigest` and
+ * `environment` it was planned for. A document without them hashes as it
+ * always has, so no earlier digest moves.
  */
-export function changeSetDocumentDigest(doc: Pick<ChangeSetDocument, "members" | "entries" | "sideEffects">): string {
+export function changeSetDocumentDigest(
+  doc: Pick<ChangeSetDocument, "members" | "entries" | "sideEffects" | "releaseDigest" | "environment">,
+): string {
   const provisional = new Set(doc.members.filter((m) => m.provisional === true).map((m) => m.member));
   const members = doc.members
     .filter((m) => !provisional.has(m.member))
@@ -279,7 +296,11 @@ export function changeSetDocumentDigest(doc: Pick<ChangeSetDocument, "members" |
     .map(({ node: _node, ...e }) => e)
     .sort((a, b) => byString(entryKey(a), entryKey(b)));
   const sideEffects = (doc.sideEffects ?? []).filter((s) => !provisional.has(s.member)).sort(bySideEffect);
-  return computePlanDigest("change-set-document", { set: changeSetDigest(doc.members), members, entries, sideEffects });
+  const planned =
+    doc.releaseDigest !== undefined || doc.environment !== undefined
+      ? { planned: { releaseDigest: doc.releaseDigest ?? null, environment: doc.environment ?? null } }
+      : {};
+  return computePlanDigest("change-set-document", { set: changeSetDigest(doc.members), members, entries, sideEffects, ...planned });
 }
 
 /** The summary of a set of members and entries. */
@@ -325,6 +346,8 @@ function sortKeys<T>(o: Record<string, T>): Record<string, T> {
 export interface ComposeChangeSetOptions {
   /** The chant version to record in `chant`. */
   chant?: string;
+  /** The release and environment a release gate's change set was planned for (#4045), recorded and hashed. */
+  planned?: { releaseDigest: string; environment: string };
 }
 
 /**
@@ -346,12 +369,14 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
   const sideEffects: ChangeSetSideEffect[] = parts
     .flatMap((p) => (p.sideEffects ?? []).map((s) => ({ member: p.member.member, ...s })))
     .sort(bySideEffect);
-  const digest = changeSetDocumentDigest({ members, entries, sideEffects });
+  const planned = options.planned ? { releaseDigest: options.planned.releaseDigest, environment: options.planned.environment } : {};
+  const digest = changeSetDocumentDigest({ members, entries, sideEffects, ...planned });
   return {
     $schema: CHANGE_SET_SCHEMA_ID,
     contract: CHANGE_SET_CONTRACT,
     ...(options.chant !== undefined ? { chant: options.chant } : {}),
     digest,
+    ...planned,
     members,
     entries,
     ...(sideEffects.length > 0 ? { sideEffects } : {}),
@@ -364,12 +389,28 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
  * effects give ({@link changeSetDocumentDigest}). A document that names a
  * member twice has no digest and is not verified.
  */
-export function verifyChangeSetDigest(doc: Pick<ChangeSetDocument, "digest" | "members" | "entries" | "sideEffects">): boolean {
+export function verifyChangeSetDigest(
+  doc: Pick<ChangeSetDocument, "digest" | "members" | "entries" | "sideEffects" | "releaseDigest" | "environment">,
+): boolean {
   try {
     return changeSetDocumentDigest(doc) === doc.digest;
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a change set changes nothing (ws-104 question 6, #4045): it has at
+ * least one member, every member planned, none failed or provisional, no
+ * member has a hole, and every entry is a `no-op` or a `read`. A release
+ * gate over such a document passes without an approval.
+ */
+export function isEmptyChangeSet(doc: Pick<ChangeSetDocument, "members" | "entries">): boolean {
+  if (doc.members.length === 0) return false;
+  for (const m of doc.members) {
+    if (m.status !== "planned" || m.provisional === true || m.holes.length > 0) return false;
+  }
+  return doc.entries.every((e) => e.action === "no-op" || e.action === "read");
 }
 
 // ── chant lifecycle plan ───────────────────────────────────────────────────────
