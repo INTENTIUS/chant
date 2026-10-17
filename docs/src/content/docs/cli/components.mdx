@@ -24,7 +24,7 @@ chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
 chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
-chant components promote --from <env> --to <env>
+chant components promote --to <env> [--from <env>] [--allow-skip]
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
                                 [--dry-run] [--json] [--seed-outputs <file>]
@@ -356,6 +356,7 @@ The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) pass
 Deploy the artifact digests one environment's release ledger records to another environment, without a build.
 
 ```bash
+chant components promote --to prod --dry-run
 chant components promote --from staging --to prod --dry-run
 chant components promote --from staging --to prod
 chant components promote --from staging --to prod --component search-service --digest sha256:9fae3d7c...
@@ -396,8 +397,9 @@ When a promote fails partway, the component's in-run unwind undoes the steps it 
 
 | Flag | Meaning |
 |---|---|
-| `--from <env>` | Required. The environment whose release ledger holds the digests. |
+| `--from <env>` | The environment whose release ledger holds the digests. Defaults to the environment before `--to` in the member's [promotion order](#the-promotion-order); required when the member declares none. |
 | `--to <env>` | Required. The environment to deploy them to. Must differ from `--from`. |
+| `--allow-skip` | Promote past a step of the promotion order, for example dev straight to prod. |
 | `--component <name>` | Promote only this component. |
 | `--digest <sha256:...>` | With `--component`, promote this recorded digest rather than the latest one. |
 | `--digest <component>=<sha256:...>` | Without `--component`, promote only the named components, each at this recorded digest. Repeatable. [`chant run --components --digest-file`](/chant/cli/run/#the-recorded-digest---digest-file) writes the value. |
@@ -406,6 +408,24 @@ When a promote fails partway, the component's in-run unwind undoes the steps it 
 | `--seed-outputs <file>` | Load outputs from dependencies outside the promotion. Repeatable. |
 | `--run-id <id>` | Run id for the new records. Defaults as `components release` does. |
 | `--actor <name>` | Who ran the promote. Defaults as `components release` does, and must resolve before anything deploys. |
+
+#### The promotion order
+
+The order of the `environments` array in the member's `chant.config.ts` is its [promotion order](/chant/configuration/config-file/#promotion-order-and-canary). With it declared:
+
+- `--to prod` without `--from` reads the environment before `prod` in the array.
+- A `--from` that is more than one step behind `--to` is refused, and nothing is deployed. The refusal names the skipped steps and ends with a fix line. Pass `--allow-skip` to promote it anyway.
+- A `--from` or `--to` that is not a step of the order, such as a `pr-42` environment matched by a `pr-*` pattern, is not judged. Without `--from`, a `--to` outside the order is refused, since there is no step before it.
+
+The refusals carry a stable code in square brackets at the end of the message:
+
+| Code | When |
+|---|---|
+| `promote-skips-environment` | `--from` is more than one step behind `--to`, and `--allow-skip` was not given. |
+| `promote-no-previous-environment` | `--from` was left out and `--to` is the first step of the order. |
+| `promote-to-not-in-order` | `--from` was left out and `--to` is not a step of the order. |
+
+A member that declares no `environments` has no order. Promote requires `--from` and refuses nothing, as before. A step marked `canary: true` is recorded in the order and does nothing else yet.
 
 ### `components rollback <env>`
 

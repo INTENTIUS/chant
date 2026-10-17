@@ -15,6 +15,7 @@ const readReleaseLedgerMock = vi.fn();
 const pushLifecycleMock = vi.fn();
 const resolveTargetsMock = vi.fn();
 const ran: string[] = [];
+let configEnvironments: unknown[] | undefined;
 let publishedDigest = "sha256:api";
 let failApplyFor: string | undefined;
 
@@ -35,7 +36,7 @@ vi.mock("../../lifecycle/release-ledger", async () => {
 
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
-  return { ...actual, loadChantConfig: async () => ({ config: {} }) };
+  return { ...actual, loadChantConfig: async () => ({ config: configEnvironments ? { environments: configEnvironments } : {} }) };
 });
 
 vi.mock("../../components/cli-support", () => ({
@@ -117,6 +118,7 @@ let logs: string[];
 beforeEach(() => {
   sealedGates.clear();
   ran.length = 0;
+  configEnvironments = undefined;
   publishedDigest = "sha256:api";
   failApplyFor = undefined;
   errors = [];
@@ -135,9 +137,52 @@ afterEach(() => {
 });
 
 describe("chant components promote", () => {
-  test("--from and --to are required", async () => {
+  test("--to is required", async () => {
     expect(await runComponentsPromote(ctx({ migrateTo: undefined }))).toBe(1);
-    expect(errors.join("\n")).toMatch(/--from <env> and --to <env> are required/);
+    expect(errors.join("\n")).toMatch(/--to <env> is required/);
+  });
+
+  test("--from is required when the member declares no environments, and nothing is refused", async () => {
+    expect(await runComponentsPromote(ctx({ migrateFrom: undefined }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--from <env> is required: this member declares no environments/);
+    errors.length = 0;
+    expect(await runComponentsPromote(ctx({ migrateFrom: "dev", migrateTo: "prod" }))).toBe(0);
+  });
+
+  test("the declared order defaults --from to the previous environment (#4030)", async () => {
+    configEnvironments = ["dev", { name: "staging", canary: true }, "prod"];
+    expect(await runComponentsPromote(ctx({ migrateFrom: undefined }))).toBe(0);
+    expect(readReleaseLedgerMock).toHaveBeenCalledWith("staging");
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", promotedFrom: { env: "staging" } });
+  });
+
+  test("a promotion that skips an environment is refused with a code and a fix, and deploys nothing (#4030)", async () => {
+    configEnvironments = ["dev", "staging", "prod"];
+    expect(await runComponentsPromote(ctx({ migrateFrom: "dev", migrateTo: "prod" }))).toBe(1);
+    const out = errors.join("\n");
+    expect(out).toMatch(/promoting dev to prod skips staging/);
+    expect(out).toMatch(/\[promote-skips-environment\]/);
+    expect(out).toMatch(/--allow-skip/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("--allow-skip promotes past a declared environment (#4030)", async () => {
+    configEnvironments = ["dev", "staging", "prod"];
+    readReleaseLedgerMock.mockResolvedValue({ records: [{ ...staging, env: "dev" }], malformed: 0 });
+    expect(await runComponentsPromote(ctx({ migrateFrom: "dev", migrateTo: "prod", allowSkip: true }))).toBe(0);
+    expect(readReleaseLedgerMock).toHaveBeenCalledWith("dev");
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("the first environment of the order has nothing to default --from to (#4030)", async () => {
+    configEnvironments = ["dev", "staging", "prod"];
+    expect(await runComponentsPromote(ctx({ migrateFrom: undefined, migrateTo: "dev" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/\[promote-no-previous-environment\]/);
+    errors.length = 0;
+    expect(await runComponentsPromote(ctx({ migrateFrom: undefined, migrateTo: "qa" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/\[promote-to-not-in-order\]/);
+    expect(ran).toEqual([]);
   });
 
   test("deploys the staging digest to prod without building, and records the promotion", async () => {

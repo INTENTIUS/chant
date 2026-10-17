@@ -50,6 +50,7 @@ import { loadKindRegistry, resolveMemberFields, type MemberFields } from "./kind
 import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
 import { declaredRecordKinds, extensionsAt, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import { readMemberPromotionOrder, type PromotionStep } from "./promotion-order";
 import { gateAdmissionFrom } from "./identity";
 import { scopeSource } from "./write-scope";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
@@ -189,6 +190,14 @@ export interface StatusMember {
   stewards: StatusSteward[];
   /** Why a steward or a last run may be missing from `stewards`. */
   stewardReasons: { code: StewardReasonCode; message: string }[];
+  /**
+   * The member's promotion order (#4030): the literal entries of the
+   * `environments` array in its chant.config.ts, in order, each with whether
+   * it is marked canary. A release moves from each step to the next. `[]`
+   * when the config declares no environments, null when it could not be read.
+   * Added in contract 1 by chant 0.124.28.
+   */
+  promotionOrder: PromotionStep[] | null;
 }
 
 /** The most paths `ship.pending.paths` lists; `files` still counts them all. */
@@ -322,6 +331,8 @@ export interface StatusQuery {
   now?: string;
   /** Reads one member's stewards; the declaration and ledger reader unless a test swaps it. */
   readStewards?: typeof readMemberStewards;
+  /** Reads one member's promotion order from its directory; its chant.config.ts unless a test swaps it. */
+  readPromotionOrder?: (dir: string) => Promise<PromotionStep[] | null>;
 }
 
 /** A factory view with the declaration's x- keys on it and on its check, publish and tiers (#3595). */
@@ -559,6 +570,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,
+        promotionOrder: await (query.readPromotionOrder ?? readMemberPromotionOrder)(resolve(found.dir, m.dir)),
         ...x(m.pointer),
       });
     }

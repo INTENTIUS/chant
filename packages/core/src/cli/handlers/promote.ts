@@ -17,6 +17,8 @@
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { loadChantConfig, type ChantConfig } from "../../config";
+import { promotionOrder } from "../../workspace/promotion-order";
+import { resolvePromotionSource } from "../../components/promote-order";
 import { fetchLifecycle, getHeadCommit, pushLifecycle } from "../../lifecycle/git";
 import {
   appendReleaseRecord,
@@ -55,7 +57,7 @@ import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
 
 const PROMOTE_USAGE =
-  "chant components promote --from <env> --to <env> [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
+  "chant components promote --to <env> [--from <env>] [--allow-skip] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 const REDEPLOY_USAGE =
@@ -299,10 +301,9 @@ function actorOrRefuse(ctx: CommandContext): { actor: string | undefined } | num
 
 export async function runComponentsPromote(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
-  const from = args.migrateFrom;
   const to = args.migrateTo;
-  if (!from || !to) {
-    console.error(formatError({ message: "--from <env> and --to <env> are required", hint: PROMOTE_USAGE }));
+  if (!to) {
+    console.error(formatError({ message: "--to <env> is required", hint: PROMOTE_USAGE }));
     return 1;
   }
   const who = actorOrRefuse(ctx);
@@ -310,6 +311,25 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
 
   const project = await loadProject(ctx, args.component ?? "all");
   if (typeof project === "number") return project;
+
+  // The member's `environments` array is its promotion order (#4030). It
+  // defaults --from and refuses a skipped step; a member that declares none
+  // has no order, so --from is required and nothing is refused.
+  const resolved = resolvePromotionSource({
+    order: promotionOrder(project.config.environments),
+    to,
+    ...(args.migrateFrom ? { from: args.migrateFrom } : {}),
+    ...(args.allowSkip ? { allowSkip: true } : {}),
+  });
+  if ("error" in resolved) {
+    console.error(formatError({ message: `${resolved.error.message} [${resolved.error.code}]`, hint: resolved.error.fix }));
+    return 1;
+  }
+  const from = resolved.from;
+  if (!from) {
+    console.error(formatError({ message: "--from <env> is required: this member declares no environments, so there is no promotion order to default it from", hint: PROMOTE_USAGE }));
+    return 1;
+  }
 
   // Without --component, each --digest is <component>=<digest> (#2602): a
   // generated promote job pins every component to the release its own

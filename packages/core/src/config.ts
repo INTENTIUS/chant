@@ -22,8 +22,13 @@ import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
  * silently querying real AWS. See {@link environmentName}, {@link
  * environmentNames}, {@link environmentEndpoint} below, and
  * `./live-endpoint.ts`'s `applyLiveEndpoint`, the CLI-side consumer.
+ *
+ * The array's order is the member's promotion order (#4030, see
+ * `./workspace/promotion-order.ts`), and `canary: true` marks a step as the
+ * canary step of that order. The canary is declared and surfaced; chant does
+ * not yet act on it.
  */
-export type EnvironmentDeclaration = string | { name: string; endpoint?: string };
+export type EnvironmentDeclaration = string | { name: string; endpoint?: string; canary?: boolean };
 
 /**
  * `ownership.env`: a literal environment identity, or a reference to a
@@ -124,6 +129,7 @@ const EnvironmentEntrySchema = z.union([
   z.object({
     name: z.string().min(1),
     endpoint: z.string().min(1).optional(),
+    canary: z.boolean().optional(),
   }),
 ]);
 

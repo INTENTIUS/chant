@@ -71,6 +71,7 @@ const BOOLEAN_FLAGS = new Set([
   "--current",
   "--uncommitted",
   "--allow-code",
+  "--allow-skip",
   "--root-only",
   "--generated",
   "--decide",
@@ -716,6 +717,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2550 — `chant workspace upgrade` runs a template's code migrations
       // only when asked to.
       result.allowCode = true;
+    } else if (arg === "--allow-skip") {
+      // #4030 — `chant components promote` skips a step of the member's
+      // declared promotion order only when asked to.
+      result.allowSkip = true;
     } else if (arg === "--source") {
       // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
       result.source = args[++i];

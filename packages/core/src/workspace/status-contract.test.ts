@@ -792,4 +792,29 @@ describe("stewards in chant workspace status --json (#2731)", () => {
     expect(doc.members[0].stewards.map((s) => s.name)).toEqual(["box-steward"]);
     expect(doc.members[0].stewardReasons.map((r) => r.code)).toEqual(["stewards-unreadable"]);
   });
+
+  test("a member lists its promotion order from the environments array (#4030)", async () => {
+    const root = stewarded();
+    writeFileSync(
+      join(root, "box", "chant.config.ts"),
+      'export default { environments: ["dev", { name: "staging", canary: true }, "prod", "pr-*"] };\n',
+    );
+    const doc = result(await workspaceStatus({ cwd: root, env: "minimal" }));
+    expectValid(doc);
+    expect(doc.members[0].promotionOrder).toEqual([
+      { name: "dev", canary: false },
+      { name: "staging", canary: true },
+      { name: "prod", canary: false },
+    ]);
+    // A member with no chant.config.ts declares none.
+    expect(doc.members[1].promotionOrder).toEqual([]);
+  });
+
+  test("a promotion order the config can't give is null (#4030)", async () => {
+    const root = stewarded();
+    writeFileSync(join(root, "box", "chant.config.ts"), "throw new Error(\"broken\");\n");
+    const doc = result(await workspaceStatus({ cwd: root, env: "minimal" }));
+    expectValid(doc);
+    expect(doc.members[0].promotionOrder).toBeNull();
+  });
 });

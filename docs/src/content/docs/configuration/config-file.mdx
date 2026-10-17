@@ -145,6 +145,24 @@ environments: [
 
 This is for a local emulator (Floci, mudflaps) or any non-default endpoint. Without it, `--live --env floci` shells out to each lexicon's CLI with whatever the shell exports (`AWS_ENDPOINT_URL` for AWS, `FLY_FLAPS_BASE_URL` for Fly). If that var isn't set, the read targets real AWS/Fly instead of the emulator and returns an empty result with no error. With the endpoint declared, chant sets that var for the read unless the shell already sets it. A value from the shell always wins, so a project that already exports it sees no change. If a `--live` describe still returns zero resources for an environment that has declared entities, chant warns instead of reporting an empty result.
 
+#### Promotion order and canary
+
+The order of the literal entries in `environments` is the member's promotion order: a release moves from each environment to the next, so with `["dev", "staging", "prod"]` a release goes to staging after dev and to prod after staging. A pattern entry such as `pr-*` names no environment and is not a step. A release belongs to one member, so the member's `chant.config.ts` owns the order. A component's own `environments` entries say where its release is hosted in each environment and do not set the order.
+
+`chant components promote --to <env>` defaults `--from` to the step before `--to`. It refuses a promotion that skips a step unless `--allow-skip` is given. See [the promotion order](/chant/cli/components/#the-promotion-order) for the refusal codes. A member with no `environments` has no order, so promote needs `--from` and refuses nothing. [`chant workspace status --json`](/chant/cli/workspace-status/) lists the order in each member's `promotionOrder`.
+
+An entry can mark a step as the canary step with `canary: true`. The bare-name form works unchanged beside it:
+
+```typescript
+environments: [
+  "dev",
+  { name: "staging", canary: true },
+  "prod",
+],
+```
+
+The canary is declared and shown, not enforced. chant records it in `promotionOrder` and does nothing else with it yet. Promote deploys to a canary step like any other step, with no traffic split or hold.
+
 ### `lint.extends`
 
 An array of preset configuration paths to inherit from:
