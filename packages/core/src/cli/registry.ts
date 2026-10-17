@@ -72,6 +72,14 @@ export interface ParsedArgs {
    * unchanged; omitted (undefined, not false) when the flag isn't passed.
    */
   progressJson?: boolean;
+  /**
+   * `--events-json` (#4041) — stream the run's events to stdout, one
+   * `run-event.schema.json` line each (`../../run-event.ts`), on `chant run
+   * <op>`, `chant run --components`, `components promote|rollback|redeploy`,
+   * `components fan-out` and `components pr-plan|pr-apply`. Refused beside
+   * `--progress-json`, which prints the older shapes to the same stdout.
+   */
+  eventsJson?: boolean;
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
   migrateFrom?: string;

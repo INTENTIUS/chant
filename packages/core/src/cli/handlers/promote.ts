@@ -32,6 +32,7 @@ import { applyConfigDefaults } from "../../components/config-defaults";
 import { fanOutRegistry } from "../../components/fan-out-support";
 import { renderDriverHuman } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
+import { openCliRunEvents, refusesBothStreams } from "../run-events";
 import {
   parseDigestPins,
   planPromotion,
@@ -154,6 +155,7 @@ async function deployPlan(
   under?: UnderRelease,
 ): Promise<number> {
   const { args } = ctx;
+  if (refusesBothStreams(args)) return 1;
   const byName = new Map(project.targets.map((c) => [c.name, applyConfigDefaults(c, project.config)]));
   const prepared: DriverComponent[] = [];
   const removed = new Map<string, string[]>();
@@ -237,20 +239,37 @@ async function deployPlan(
   }
 
   const registry = await fanOutRegistry(project.projectPath, project.config);
-  const run = await runPromotion({
-    plan,
-    components: prepared,
-    registry,
-    componentOutputs: seededOutputs,
-    ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
+  // The run id the release records carry, chosen before the run so that
+  // `--events-json` (#4041) names the run by it too.
+  const { runId, runOrigin } = resolveRunId(args.runId);
+  const events = await openCliRunEvents(args, {
+    kind: "component",
+    name: `${verb} ${plan.items.map((i) => i.component).join(",")} in ${plan.to}`,
+    runId,
+    cwd: project.projectPath,
   });
+  let run: Awaited<ReturnType<typeof runPromotion>>;
+  try {
+    run = await runPromotion({
+      plan,
+      components: prepared,
+      registry,
+      componentOutputs: seededOutputs,
+      ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
+      ...(events ? { onRunEvent: events.emit } : {}),
+    });
+  } catch (err) {
+    events?.settle("failed", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  // The driver settles the stream; this only ends one it left open.
+  events?.settle(run.status === "fail" ? "failed" : run.status);
   if (!args.json) renderDriverHuman(run);
 
   // Record every component that deployed, whatever happened to the rest: a
   // component that reached the environment and is missing from its ledger
   // would be exactly the unrecorded deploy the ledger exists to rule out.
   const deployed = plan.items.filter((item) => run.results.some((r) => r.component === item.component && r.status === "ok"));
-  const { runId, runOrigin } = resolveRunId(args.runId);
   const timestamp = new Date().toISOString();
   const recorded: ReleaseRecord[] = [];
   let recordError: string | undefined;

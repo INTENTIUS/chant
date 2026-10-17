@@ -26,10 +26,11 @@ import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/loca
 import { ledgerRecordingOff, noRecordEndNote, noRecordStartNote, resetNoRecordLedger, NO_RECORD_ENV } from "../../lifecycle/no-record";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
+import { openCliRunEvents, refusesBothStreams, stdoutLine } from "../run-events";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
-import { isComponentList, type ComponentRunPlan } from "../../components/cli-support";
+import { isComponentList, type ComponentRunPlan, type RunComponentsResult } from "../../components/cli-support";
 import { resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
 import { gateAdmission, gateApprover } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
@@ -779,6 +780,7 @@ export async function runOp(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
+  if (refusesBothStreams(ctx.args)) return 1;
   if (ctx.args.components) return runOpComponents(ctx);
   if (ctx.args.report) {
     console.error(formatError({
@@ -1026,6 +1028,10 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
+  // `--events-json` (#4041): the run-event stream instead. The run is named by
+  // the id its release records carry, so the two join.
+  const release = autoReleaseRun(`local-${Date.now()}`);
+  const events = await openCliRunEvents(ctx.args, { kind: "component", name: selector, runId: release.runId, cwd: projectPath });
   // A list (#3950) pulls in what its components depend on; say which ones and
   // in what order before the first one runs. stderr, so --json and
   // --progress-json keep stdout to themselves.
@@ -1035,14 +1041,25 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
         if (plan.added.length > 0) console.error(formatInfo(`added as dependencies: ${plan.added.join(", ")}`));
       }
     : undefined;
-  const result = await runtime.runComponents(projectPath, selector, {
-    env: ctx.args.env,
-    componentOutputs: seededOutputs,
-    onProgress,
-    sandbox: ctx.args.sandbox,
-    buildParams: paramsResolution.provenance,
-    ...(onPlan ? { onPlan } : {}),
-  });
+  let result: RunComponentsResult;
+  try {
+    result = await runtime.runComponents(projectPath, selector, {
+      env: ctx.args.env,
+      componentOutputs: seededOutputs,
+      onProgress,
+      ...(events ? { onRunEvent: events.emit } : {}),
+      sandbox: ctx.args.sandbox,
+      buildParams: paramsResolution.provenance,
+      ...(onPlan ? { onPlan } : {}),
+    });
+  } catch (err) {
+    events?.settle("failed", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  // A run that never reached its components (a bad selector, a cycle) still ends its stream.
+  if (result.success) events?.settle("ok");
+  else if (result.gated) events?.settle("gated");
+  else events?.settle("failed", result.error);
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
   // even on failure (partial outputs) so a resumed run still has what completed.
@@ -1109,7 +1126,6 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   if (result.success && result.run) {
     // #3955: a run that records nothing has no release to report either.
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
-    const release = autoReleaseRun(`local-${Date.now()}`);
     const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote
@@ -1233,6 +1249,9 @@ async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
       ...(params ? { params } : {}),
       ...(ctx.args.profile !== undefined ? { profile: ctx.args.profile } : {}),
       progress,
+      // `--events-json` (#4041): the runtime writes the run's events itself,
+      // since it is the one that knows the run's id and where it ran.
+      ...(ctx.args.eventsJson ? { runEvents: stdoutLine } : {}),
       signal: controller.signal,
       ...(work ? { work } : {}),
     });

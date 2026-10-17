@@ -55,7 +55,9 @@ import { WORK_LEASE_STEP_ID } from "./types";
 import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
 import { runEnvOf } from "../lifecycle/run-ledger";
 import { resolveCommitSha } from "../lifecycle/commit-sha";
-import { resolveCiRun } from "../lifecycle/release-ledger";
+import { resolveCiRun, type RunOrigin } from "../lifecycle/release-ledger";
+import { runEventsOfStepRecord, type RunEventRuntime, type RunEventSkipReason } from "../run-event";
+import { openRunEventStream, runEventRunOf, type RunEventSink, type RunEventStream } from "../run-event-stream";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateCheckpoint } from "../lifecycle/gate-checkpoint";
 import type { ActivityContract } from "./activity-contract";
@@ -568,9 +570,29 @@ function receiptReadStep(step: EffectStep, outputs?: string): ActivityStep {
   };
 }
 
-/** A skipped-record for a step that will not run. */
-function skippedRecord(phaseName: string, fn: string, args?: Record<string, unknown>): StepRecord {
-  return { phase: phaseName, fn, args: args ?? {}, status: "skipped", durationMs: 0 };
+/**
+ * What the run-event stream (#4041) says about a record that the record
+ * itself does not: the step's place in its phase, why a bare skipped record
+ * skipped, and the gate a gate step stopped at. Kept beside the record
+ * rather than on it, so `--json`, the run ledger and `--progress-json` print
+ * what they printed before.
+ */
+interface RecordHint {
+  index?: number;
+  skip?: RunEventSkipReason;
+  gate?: { op: string; gate: string };
+}
+const recordHints = new WeakMap<StepRecord, RecordHint>();
+
+/** Note `hint` against `record` for its run events, and hand the record back. */
+function hinted(record: StepRecord, hint: RecordHint): StepRecord {
+  recordHints.set(record, { ...recordHints.get(record), ...hint });
+  return record;
+}
+
+/** A skipped-record for a step that will not run: one an earlier failure or stop left, unless `skip` says otherwise. */
+function skippedRecord(phaseName: string, fn: string, args?: Record<string, unknown>, skip: RunEventSkipReason = "not-run"): StepRecord {
+  return hinted({ phase: phaseName, fn, args: args ?? {}, status: "skipped", durationMs: 0 }, { skip });
 }
 
 // ── Gate steps (#2119) ───────────────────────────────────────────────────────
@@ -585,6 +607,8 @@ interface GateContext {
   gitSha?: string;
   /** Called once per settled step, in production order (#2121) — what `--progress-json` streams from. */
   onRecord?: (record: StepRecord) => void;
+  /** Where the run's events go (#4041): a step's start, its settle and its gate's decision. */
+  emit?: RunEventSink;
   /** The run context's list of passed gates (#2522). A gate that passes is appended here. */
   passed?: PassedGate[];
   /** The run's hold on its work item's lease (#2748). Absent in compensation phases, which run whatever the lease did. */
@@ -621,6 +645,7 @@ async function workBoundary(
   if (!work) return undefined;
   if (work.due(resultsById)) {
     const start = Date.now();
+    startStep(ctx, phaseName, "workLease:claim");
     let claimed: Awaited<ReturnType<RunWorkLease["claim"]>>;
     try {
       claimed = await work.claim(resultsById);
@@ -669,7 +694,25 @@ async function workBoundary(
 /** Collect records and hand each to the caller's progress sink in one move. */
 function pushRecord(sink: StepRecord[], ctx: GateContext, ...recs: StepRecord[]): void {
   sink.push(...recs);
-  for (const r of recs) ctx.onRecord?.(r);
+  for (const r of recs) announce(ctx, r);
+}
+
+/** Hand a settled record to the progress sink and its run events to the event sink. */
+function announce(ctx: GateContext, record: StepRecord): void {
+  ctx.onRecord?.(record);
+  if (!ctx.emit) return;
+  const hint = recordHints.get(record);
+  for (const body of runEventsOfStepRecord(record, { op: ctx.op, ...hint })) ctx.emit(body);
+}
+
+/** A step is about to run: its `step-start` event (#4041). */
+function startStep(ctx: GateContext, phase: string, step: string, index?: number): void {
+  ctx.emit?.({ type: "step-start", component: null, phase, step, ...(index !== undefined ? { index } : {}) });
+}
+
+/** A gate step's record, hinted with its place and, when nobody has approved it, the gate it stopped at. */
+function gateRecordOf(ran: { record: StepRecord; pending?: PendingGateRecord }, index: number): StepRecord {
+  return hinted(ran.record, { index, ...(ran.pending ? { gate: { op: ran.pending.op, gate: ran.pending.gate } } : {}) });
 }
 
 /** The record name a gate step lands under, so a reader (and a JSON consumer) can pick it out of `records`. */
@@ -906,7 +949,8 @@ async function runEffectStep(
   profiles: Record<string, ActivityProfile>,
   resultsById: Map<string, unknown>,
   gates: GateContext,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  index: number,
 ): Promise<{
   records: StepRecord[];
   failed: boolean;
@@ -922,23 +966,26 @@ async function runEffectStep(
     outputs = effectOutputsDigest(step, resultsById);
   } catch (err) {
     // A resolved value JSON cannot hold (canonicalJson refuses it) would be a wrong expectation.
-    pushRecord(records, gates, { phase: phaseName, fn: `effect:${step.receipt.name}`, args: {}, status: "fail", durationMs: 0, error: errMessage(err) });
+    startStep(gates, phaseName, `effect:${step.receipt.name}`, index);
+    pushRecord(records, gates, hinted({ phase: phaseName, fn: `effect:${step.receipt.name}`, args: {}, status: "fail", durationMs: 0, error: errMessage(err) }, { index }));
     return { records, failed: true };
   }
+  startStep(gates, phaseName, "receiptRead", index);
   const read = await runStep(receiptReadStep(step, outputs), phaseName, activities, profiles, resultsById, signal);
-  pushRecord(records, gates, read.record);
+  pushRecord(records, gates, hinted(read.record, { index }));
   if (read.record.status === "fail") return { records, failed: true };
 
   const result = read.result as Partial<ReceiptReadResult> | undefined;
   if (typeof result?.expectation !== "string") {
-    pushRecord(records, gates, {
+    startStep(gates, phaseName, `effect:${step.receipt.name}`, index);
+    pushRecord(records, gates, hinted({
       phase: phaseName,
       fn: `effect:${step.receipt.name}`,
       args: {},
       status: "fail",
       durationMs: 0,
       error: "receiptRead returned no expectation — the receipt store activity must return { current, expectation }",
-    });
+    }, { index }));
     return { records, failed: true };
   }
   const expectation = result.expectation;
@@ -947,9 +994,9 @@ async function runEffectStep(
     // Effect already applied — skip the nested steps, write nothing.
     for (const nested of step.steps) {
       pushRecord(records, gates, 
-        nested.kind === "activity"
-          ? skippedRecord(phaseName, nested.fn, nested.args)
-          : skippedRecord(phaseName, gateFn(nested)),
+        hinted(nested.kind === "activity"
+          ? skippedRecord(phaseName, nested.fn, nested.args, "receipt")
+          : skippedRecord(phaseName, gateFn(nested), undefined, "receipt"), { index }),
       );
     }
     return { records, failed: false };
@@ -958,19 +1005,21 @@ async function runEffectStep(
   const skipRest = (from: number) => {
     for (const skipped of step.steps.slice(from)) {
       pushRecord(records, gates, 
-        skipped.kind === "activity"
+        hinted(skipped.kind === "activity"
           ? skippedRecord(phaseName, skipped.fn, skipped.args)
-          : skippedRecord(phaseName, gateFn(skipped)),
+          : skippedRecord(phaseName, gateFn(skipped)), { index }),
       );
     }
-    pushRecord(records, gates, skippedRecord(phaseName, "receiptWrite"));
+    pushRecord(records, gates, hinted(skippedRecord(phaseName, "receiptWrite"), { index }));
   };
 
   for (let i = 0; i < step.steps.length; i++) {
     const nested = step.steps[i];
     if (isGate(nested)) {
-      const { record, pending, pushed, pushWarning } = await runGateStep(nested, phaseName, gates, resultsById);
-      pushRecord(records, gates, record);
+      startStep(gates, phaseName, gateFn(nested), index);
+      const decided = await runGateStep(nested, phaseName, gates, resultsById);
+      const { record, pending, pushed, pushWarning } = decided;
+      pushRecord(records, gates, gateRecordOf(decided, index));
       if (record.status === "fail") {
         // Receipt left untouched, as for any other failing nested step
         // (#2301) — the effect is not applied and the next run re-proposes it.
@@ -990,8 +1039,9 @@ async function runEffectStep(
       }
       continue;
     }
+    startStep(gates, phaseName, nested.fn, index);
     const ran = await runStep(nested, phaseName, activities, profiles, resultsById, signal);
-    pushRecord(records, gates, ran.record);
+    pushRecord(records, gates, hinted(ran.record, { index }));
     if (ran.pending) {
       // A command's own gate (#2779): the receipt is left untouched, as for a
       // pending gate step.
@@ -1012,6 +1062,7 @@ async function runEffectStep(
   }
 
   // Sole writer of the receipt: on success of every nested step, last.
+  startStep(gates, phaseName, "receiptWrite", index);
   const wrote = await runStep(
     {
       kind: "activity",
@@ -1025,7 +1076,7 @@ async function runEffectStep(
     resultsById,
     signal,
   );
-  pushRecord(records, gates, wrote.record);
+  pushRecord(records, gates, hinted(wrote.record, { index }));
   return { records, failed: wrote.record.status === "fail" };
 }
 
@@ -1056,44 +1107,48 @@ async function runPhase(
     // gate is about to strand would defeat the point of stopping at it.
     const gateRecords: StepRecord[] = [];
     const stop = await workBoundary(phase.name, gates, resultsById, gateRecords);
+    const at = (step: StepDefinition) => phase.steps.indexOf(step);
+    const skipActivities = () => {
+      for (const skipped of phase.steps.filter(isActivity)) {
+        pushRecord(gateRecords, gates, hinted(skippedRecord(phase.name, skipped.fn, skipped.args), { index: at(skipped) }));
+      }
+    };
     if (stop) {
       for (const skipped of phase.steps) {
-        pushRecord(gateRecords, gates, isGate(skipped) ? skippedRecord(phase.name, gateFn(skipped)) : skippedRecord(phase.name, (skipped as ActivityStep).fn, (skipped as ActivityStep).args));
+        pushRecord(gateRecords, gates, hinted(isGate(skipped) ? skippedRecord(phase.name, gateFn(skipped)) : skippedRecord(phase.name, (skipped as ActivityStep).fn, (skipped as ActivityStep).args), { index: at(skipped) }));
       }
       throw new WorkStop(gateRecords, phase.name, stop === "lost");
     }
     for (const step of phase.steps.filter(isGate)) {
-      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
-      pushRecord(gateRecords, gates, record);
+      startStep(gates, phase.name, gateFn(step), at(step));
+      const decided = await runGateStep(step, phase.name, gates, resultsById);
+      const { record, pending, pushed, pushWarning } = decided;
+      pushRecord(gateRecords, gates, gateRecordOf(decided, at(step)));
       if (record.status === "fail") {
         // The gate could not be decided at all (#2301). Same treatment as a
         // pending one: nothing fans out, the activities are recorded skipped.
-        for (const skipped of phase.steps.filter(isActivity)) {
-          pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
-        }
+        skipActivities();
         throw new PhaseFailure(gateRecords);
       }
       if (pending) {
-        for (const skipped of phase.steps.filter(isActivity)) {
-          pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
-        }
+        skipActivities();
         throw new GateStop(gateRecords, pending, phase.name, pushed, pushWarning);
       }
       if (record.point) {
         // A gate's open decision point (#3170): nothing fans out.
-        for (const skipped of phase.steps.filter(isActivity)) {
-          pushRecord(gateRecords, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
-        }
+        skipActivities();
         throw new PointStop(gateRecords, record.point, phase.name);
       }
     }
     const steps = phase.steps.filter(isActivity);
     const settled = await Promise.all(steps.map((s) => {
       const source = gates.compensating ? unfinishedSource(s, resultsById) : undefined;
-      return source ? { record: unfinishedSourceRecord(s, phase.name, source) } as RanStep : runStep(s, phase.name, activities, profiles, resultsById, signal);
+      if (source) return { record: unfinishedSourceRecord(s, phase.name, source) } as RanStep;
+      startStep(gates, phase.name, s.fn, at(s));
+      return runStep(s, phase.name, activities, profiles, resultsById, signal);
     }));
-    const ran = settled.map((r) => r.record);
-    for (const r of ran) gates.onRecord?.(r);
+    const ran = settled.map((r, k) => hinted(r.record, { index: at(steps[k]!) }));
+    for (const r of ran) announce(gates, r);
     const records = gateRecords.concat(ran);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
     // A step whose command stopped at its own gate (#2779) stops the run at
@@ -1111,13 +1166,14 @@ async function runPhase(
   const records: StepRecord[] = [];
 
   const skipRemaining = (from: number) => {
-    for (const skipped of steps.slice(from)) {
+    for (const [k, skipped] of steps.slice(from).entries()) {
+      const index = { index: from + k };
       if (isEffect(skipped)) {
-        pushRecord(records, gates, skippedRecord(phase.name, `effect:${skipped.receipt.name}`));
+        pushRecord(records, gates, hinted(skippedRecord(phase.name, `effect:${skipped.receipt.name}`), index));
       } else if (isGate(skipped)) {
-        pushRecord(records, gates, skippedRecord(phase.name, gateFn(skipped)));
+        pushRecord(records, gates, hinted(skippedRecord(phase.name, gateFn(skipped)), index));
       } else {
-        pushRecord(records, gates, skippedRecord(phase.name, skipped.fn, skipped.args));
+        pushRecord(records, gates, hinted(skippedRecord(phase.name, skipped.fn, skipped.args), index));
       }
     }
   };
@@ -1132,8 +1188,10 @@ async function runPhase(
       throw new WorkStop(records, phase.name, stop === "lost");
     }
     if (isGate(step)) {
-      const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
-      pushRecord(records, gates, record);
+      startStep(gates, phase.name, gateFn(step), i);
+      const decided = await runGateStep(step, phase.name, gates, resultsById);
+      const { record, pending, pushed, pushWarning } = decided;
+      pushRecord(records, gates, gateRecordOf(decided, i));
       if (record.status === "fail") {
         // A gate that could not be decided is a failed step, not a pending
         // one (#2301) — the run failed, and the record says why.
@@ -1154,12 +1212,12 @@ async function runPhase(
     }
     const source = gates.compensating ? unfinishedSource(step, resultsById) : undefined;
     if (source) {
-      pushRecord(records, gates, unfinishedSourceRecord(step, phase.name, source));
+      pushRecord(records, gates, hinted(unfinishedSourceRecord(step, phase.name, source), { index: i }));
       continue;
     }
     if (isEffect(step)) {
       const { records: effRecords, failed, pending, pushed, pushWarning, point } = await runEffectStep(
-        step, phase.name, activities, profiles, resultsById, gates, signal,
+        step, phase.name, activities, profiles, resultsById, gates, signal, i,
       );
       records.push(...effRecords); // already emitted by runEffectStep
       if (point) {
@@ -1176,8 +1234,9 @@ async function runPhase(
       }
       continue;
     }
+    startStep(gates, phase.name, step.fn, i);
     const { record, pending } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
-    pushRecord(records, gates, record);
+    pushRecord(records, gates, hinted(record, { index: i }));
     if (pending) {
       // The step's command stopped at its own gate (#2779): the run ends
       // `gated` there, as at a pending gate step.
@@ -1231,6 +1290,15 @@ export interface RunOpOptions {
    * `--progress-json` from. Side-effect free when omitted.
    */
   onRecord?: (record: StepRecord) => void;
+  /**
+   * Where the run's event stream goes (#4041, `chant run <op> --events-json`),
+   * one `run-event.schema.json` line at a time: the run's start and settle,
+   * each phase's, each step's start and settle, and each gate's decision.
+   * `runtime` and `runOrigin` name where the run happened when the executor
+   * cannot tell: by default it is `ci` in a CI job, `steward` in a steward's
+   * turn and `local` otherwise. Omitted, nothing is written.
+   */
+  runEvents?: { write: (line: string) => void; runtime?: RunEventRuntime; runOrigin?: RunOrigin };
   /**
    * Append the run's {@link OpRunRecord} to the run ledger
    * (`../lifecycle/run-ledger.ts`) when the run settles (#2118). Opt-in on
@@ -1335,6 +1403,9 @@ export async function runOpLocally(
         ...(steward ? { steward } : {}),
       })
     : undefined;
+  // The run's event stream (#4041), opened once the commit is known; held
+  // here so a run that throws before it settles still ends its stream.
+  const events: { stream?: RunEventStream } = {};
   try {
     const stepConsole = options.stepOutput
       ? { write: options.stepOutput, ...(options.stepHeartbeatMs !== undefined ? { heartbeatMs: options.stepHeartbeatMs } : {}) }
@@ -1342,10 +1413,13 @@ export async function runOpLocally(
     return await withLiveRun(live, () =>
       withRunConsole(stepConsole, () =>
         withOpRunContext(run, () =>
-          runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) }, run),
+          runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) }, run, events),
         ),
       ),
     );
+  } catch (err) {
+    events.stream?.settle("failed", errMessage(err));
+    throw err;
   } finally {
     live?.close();
     restore?.();
@@ -1359,12 +1433,32 @@ async function runOpInTurn(
   signal: AbortSignal | undefined,
   options: RunOpOptions & { runId: string },
   run: OpRunContext,
+  events: { stream?: RunEventStream },
 ): Promise<OpRunResult> {
   const runId = options.runId;
   // #4020: the commit the run builds from, on its record and on the gate facts it writes.
   const commit = options.commit ?? (await resolveCommitSha(options.cwd ? { cwd: options.cwd } : {}));
   // #4020: the CI run this one is in, in the shape a deploy record carries it.
   const ciRun = resolveCiRun();
+  // #4041: the run's events name it the way its run record does: its own id,
+  // the commit, and the CI run it is in.
+  const stream = options.runEvents
+    ? openRunEventStream(
+        runEventRunOf({
+          kind: "op",
+          name: config.name,
+          runId,
+          ...(commit ? { gitSha: commit } : {}),
+          ...(ciRun ? { ci: ciRun } : {}),
+          steward: options.steward !== undefined,
+          ...(options.runEvents.runtime ? { runtime: options.runEvents.runtime } : {}),
+          ...(options.runEvents.runOrigin ? { runOrigin: options.runEvents.runOrigin } : {}),
+        }),
+        options.runEvents.write,
+      )
+    : undefined;
+  events.stream = stream;
+  stream?.emit({ type: "run-start", waves: null });
 
   const gates: GateContext = {
     op: config.name,
@@ -1373,6 +1467,7 @@ async function runOpInTurn(
     runId,
     ...(commit ? { gitSha: commit } : {}),
     ...(options.onRecord ? { onRecord: options.onRecord } : {}),
+    ...(stream ? { emit: stream.emit } : {}),
     passed: run.passedGates,
     points: options.points ?? workspaceGatePointAsker(options.cwd ?? process.cwd()),
     ...(options.env !== undefined ? { env: options.env } : {}),
@@ -1460,10 +1555,16 @@ async function runOpInTurn(
     const live = currentLiveRun();
     const t0 = Date.now();
     live?.phaseStarted(phase.name);
+    stream?.emit({ type: "phase-start", component: null, phase: phase.name });
     try {
       const ran = await runPhase(phase, activities, profiles, resultsById, ctx, phaseSignal, from);
       live?.phaseEnded(phase.name, phaseVerdict(ran), Date.now() - t0);
+      stream?.emit({ type: "phase-settle", component: null, phase: phase.name, status: "ok" });
       return ran;
+    } catch (err) {
+      const status = err instanceof GateStop ? "gated" : err instanceof PointStop ? "waiting" : err instanceof WorkStop && !err.lost ? "ok" : "failed";
+      stream?.emit({ type: "phase-settle", component: null, phase: phase.name, status });
+      throw err;
     } finally {
       phaseDurations[phase.name] = (phaseDurations[phase.name] ?? 0) + (Date.now() - t0);
     }
@@ -1496,6 +1597,9 @@ async function runOpInTurn(
       phaseDurations,
     });
     const record: OpRunRecord = { version: 1, ...input, id: runId };
+    // The stream settles as the run does, with the first failing step's error.
+    const firstError = status === "fail" ? settled.find((r) => r.status === "fail")?.error : undefined;
+    stream?.settle(status === "fail" ? "failed" : status, firstError);
     if (!options.ledger) return record;
     try {
       return (await appendRunRecord(input, options.ledger)).record;
@@ -1547,10 +1651,11 @@ async function runOpInTurn(
       const steps = pi < gate.phaseIndex ? phase.steps : phase.parallel ? [] : phase.steps.slice(0, gate.stepIndex);
       for (const [si, step] of steps.entries()) {
         if (gate.planStep && pi === gate.planStep.phaseIndex && si === gate.planStep.stepIndex) {
+          startStep(gates, phase.name, gate.planStep.step.fn, si);
           const ran = await runStep(gate.planStep.step, phase.name, activities, profiles, resultsById, stepSignal);
-          prefix.push(ran.record);
+          prefix.push(hinted(ran.record, { index: si }));
           if (ran.record.status === "fail" || ran.pending || ran.record.point) {
-            for (const r of prefix) gates.onRecord?.(r);
+            for (const r of prefix) announce(gates, r);
             if (ran.pending) throw new GateStop(prefix, ran.pending, phase.name);
             if (ran.record.point) throw new PointStop(prefix, ran.record.point, phase.name);
             throw new PhaseFailure(prefix);
@@ -1562,7 +1667,7 @@ async function runOpInTurn(
           : isGate(step)
             ? skippedRecord(phase.name, gateFn(step))
             : skippedRecord(phase.name, step.fn, step.args);
-        prefix.push({ ...skipped, resumed: marker });
+        prefix.push(hinted({ ...skipped, resumed: marker }, { index: si }));
       }
     }
     // The plan the run would approve now against the one approved: a moved
@@ -1578,7 +1683,7 @@ async function runOpInTurn(
       return undefined;
     }
     records.push(...prefix);
-    for (const r of prefix) gates.onRecord?.(r);
+    for (const r of prefix) announce(gates, r);
     resumed = { gate: gate.name, run: checkpoint.runId, checkpoint: decision.digest };
     return { phaseIndex: gate.phaseIndex, stepIndex: config.phases[gate.phaseIndex]!.parallel ? 0 : gate.stepIndex };
   };

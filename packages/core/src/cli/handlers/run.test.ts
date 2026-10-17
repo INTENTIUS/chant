@@ -98,6 +98,7 @@ vi.mock("../../lifecycle/run-ledger", async (importOriginal) => {
 
 const { runOpList, runOpStatus, runOpLog, runOpSignalRenamed, runOpApprove, runOpCancel, runOp, runOpComponents } =
   await import("./run");
+const { checkRunEventLines } = await import("../../workspace/__fixtures__/run-event-check");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
@@ -1551,6 +1552,35 @@ describe("runOpComponents", () => {
     ]);
     // Every line is a single, complete JSON object — real NDJSON, not one big blob.
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+    vi.restoreAllMocks();
+  });
+
+  test("--events-json streams the run-event stream as runComponents emits it, and ends one that never reached a component (#4041)", async () => {
+    runComponentsMock.mockImplementation(
+      async (_path: string, _selector: string, options: { onRunEvent?: (b: unknown) => void }) => {
+        options.onRunEvent?.({ type: "run-start", waves: [["svc"]] });
+        options.onRunEvent?.({ type: "run-settle", status: "ok", durationMs: null });
+        return {
+          success: true,
+          selected: ["svc"],
+          run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
+        };
+      },
+    );
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    expect(await runOpComponents({ args: makeArgs({ path: "svc", eventsJson: true }), plugins: [], serializers: [] })).toBe(0);
+    const events = checkRunEventLines(stdoutWrite.mock.calls.map((c) => String(c[0])));
+    expect(events[0]).toMatchObject({ type: "run-start", kind: "component", name: "svc", waves: [["svc"]] });
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
+
+    stdoutWrite.mockClear();
+    runComponentsMock.mockReset().mockResolvedValue({ success: false, selected: [], error: "no component named svc" });
+    expect(await runOpComponents({ args: makeArgs({ path: "svc", eventsJson: true }), plugins: [], serializers: [] })).toBe(1);
+    const failed = checkRunEventLines(stdoutWrite.mock.calls.map((c) => String(c[0])));
+    expect(failed.map((e) => e.type)).toEqual(["run-start", "run-settle"]);
+    expect(failed.at(-1)).toMatchObject({ status: "failed", error: "no component named svc" });
     vi.restoreAllMocks();
   });
 

@@ -65,6 +65,8 @@ import { loadChantConfig, type ChantConfig } from "@intentius/chant/config";
 import type { OpConfig, OpGateResolveOptions, OpRunHandle, OpRunRecord, OpRunStartOptions, OpRunState, OpRunStatus, OpRuntimeProvider, StepRecord } from "@intentius/chant/op";
 import { runStateOf } from "@intentius/chant/op";
 import type { GateResolutionRecord } from "@intentius/chant/lifecycle/gate-ledger";
+import type { RunEventSettleStatus } from "@intentius/chant";
+import { openRunEventStream, runEventRunOf, type RunEventStream } from "@intentius/chant/run-event-stream";
 import { resolveProfile, type FountainProfile } from "../config";
 import {
   defaultFountainHttp,
@@ -794,6 +796,7 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
         http,
         ...(opts.conversationPollMs !== undefined ? { pollIntervalMs: opts.conversationPollMs } : {}),
         ...(startOpts.progress ? { progress: startOpts.progress } : {}),
+        ...(startOpts.runEvents ? { runEvents: startOpts.runEvents } : {}),
         ...(startOpts.signal ? { signal: startOpts.signal } : {}),
       });
 
@@ -1077,6 +1080,15 @@ interface TailOptions {
   idleTimeoutMs: number;
   now: () => number;
   progress?: (record: StepRecord) => void;
+  /**
+   * Where the run's event stream goes (#4041, `chant run <op> --on fountain
+   * --events-json`). The tail writes it as the steward works: a phase for
+   * each stage the turn reports, a step for each tool call, started when the
+   * call starts and settled when it settles. `runtime` is `steward`, the run
+   * id is the conversation's, and the commit is null, since the run builds
+   * from whatever the steward's sandbox holds.
+   */
+  runEvents?: (line: string) => void;
   signal?: AbortSignal;
   /**
    * REST seam for the conversation poll (#2167). Without it the tail waits on
@@ -1164,6 +1176,85 @@ async function readConversation(
  * one connection — ends the wait, and it ends it with an error.
  */
 export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> {
+  const stream = opts.runEvents
+    ? openRunEventStream(
+        runEventRunOf({ kind: "op", name: opts.op, runId: opts.conversationId, runtime: "steward", runOrigin: { forge: "op" } }),
+        opts.runEvents,
+        { now: () => new Date(opts.now()) },
+      )
+    : undefined;
+  stream?.emit({ type: "run-start", waves: null });
+  const steps = stewardSteps(stream);
+  try {
+    const status = await tailTurn(opts, steps);
+    steps.close(status.state === "completed" ? "ok" : "failed");
+    stream?.settle(...settleOfState(status));
+    return status;
+  } catch (err) {
+    steps.close("failed");
+    stream?.settle("failed", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
+
+/** A run's final state as its stream's `run-settle`. */
+function settleOfState(status: OpRunStatus): [RunEventSettleStatus, string?] {
+  switch (status.state) {
+    case "completed":
+      return ["ok"];
+    case "gated":
+      return ["gated"];
+    case "waiting":
+      return ["waiting"];
+    case "cancelled":
+      return ["failed", status.error ?? "the run was cancelled"];
+    default:
+      return ["failed", status.error ?? `the run ended ${status.state}`];
+  }
+}
+
+/** The steward's tool calls as run events: a phase per stage, a step per call. */
+interface StewardSteps {
+  /** The tool call `key` started in `phase`. */
+  start(key: string, phase: string, step: string): void;
+  /** The tool call `key` settled. One never seen to start is started first, so its start still comes before its settle. */
+  settle(key: string, phase: string, step: string, ok: boolean, durationMs: number): void;
+  /** Settle the open phase, if any. */
+  close(status: RunEventSettleStatus): void;
+}
+
+function stewardSteps(stream: RunEventStream | undefined): StewardSteps {
+  let open: { phase: string; failed: boolean } | undefined;
+  const started = new Set<string>();
+  const enter = (phase: string): void => {
+    if (!stream || open?.phase === phase) return;
+    if (open) stream.emit({ type: "phase-settle", component: null, phase: open.phase, status: open.failed ? "failed" : "ok" });
+    open = { phase, failed: false };
+    stream.emit({ type: "phase-start", component: null, phase });
+  };
+  return {
+    start(key, phase, step) {
+      if (!stream || started.has(key)) return;
+      started.add(key);
+      enter(phase);
+      stream.emit({ type: "step-start", component: null, phase, step });
+    },
+    settle(key, phase, step, ok, durationMs) {
+      if (!stream) return;
+      this.start(key, phase, step);
+      started.delete(key);
+      if (!ok && open?.phase === phase) open.failed = true;
+      stream.emit({ type: "step-settle", component: null, phase, step, status: ok ? "ok" : "failed", durationMs });
+    },
+    close(status) {
+      if (!stream || !open) return;
+      stream.emit({ type: "phase-settle", component: null, phase: open.phase, status: open.failed ? "failed" : status });
+      open = undefined;
+    },
+  };
+}
+
+async function tailTurn(opts: TailOptions, steps: StewardSteps): Promise<OpRunStatus> {
   const { sse, conversationId, op, startedAt, idleTimeoutMs, now } = opts;
   const path = `/api/conversations/${conversationId}/stream?streams=stdout,stderr,stage&blocks=true`;
 
@@ -1195,6 +1286,7 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
     const key = toolCallId(block);
     const open = pending.get(key);
     pending.delete(key);
+    steps.settle(key, open?.phase ?? phase, open?.fn ?? toolCallName(block), status === "ok", open ? Math.max(0, now() - open.startedAt) : 0);
     if (!opts.progress) return;
     opts.progress({
       phase: open?.phase ?? phase,
@@ -1219,6 +1311,7 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
         const key = toolCallId(block);
         if (!pending.has(key)) {
           pending.set(key, { fn: toolCallName(block), phase, startedAt: now() });
+          steps.start(key, phase, toolCallName(block));
         }
         if (block.status && SETTLED_TOOL_STATUS.has(block.status)) {
           emit(block, block.status === "completed" || block.status === "success" ? "ok" : "fail");

@@ -91,6 +91,7 @@ vi.mock("../../components/release-promote", async () => {
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
 const { runComponentsPromote, runComponentsRollback, runComponentsRedeploy } = await import("./promote");
+const { checkRunEventLines, stepTrail } = await import("../../workspace/__fixtures__/run-event-check");
 
 const api: DriverComponent = {
   name: "api",
@@ -519,5 +520,73 @@ describe("chant components redeploy", () => {
     expect(await runComponentsRedeploy(rd({}))).toBe(1);
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
     expect(errors.join("\n")).toMatch(/redeploy failed at "api"/);
+  });
+});
+
+describe("--events-json on promote, rollback and redeploy (#4041)", () => {
+  const prod = (digest: string, timestamp: string, runId: string): ReleaseRecord =>
+    ({ ...staging, env: "prod", digest, timestamp, runId });
+  let out: string[];
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
+  });
+
+  /** The stream's events, checked, and the release record's run id beside them. */
+  const streamed = () => checkRunEventLines(out);
+
+  test("promote streams the deploy as a component run named by the release record's run id", async () => {
+    expect(await runComponentsPromote(ctx({ eventsJson: true }))).toBe(0);
+    const events = streamed();
+    expect(events[0]).toMatchObject({ type: "run-start", kind: "component", name: "promote api in prod", runId: "run-9", waves: [["api"]] });
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ runId: "run-9" });
+    expect(stepTrail(events)).toEqual([
+      ["step-start", "publish-image"], ["step-settle", "publish-image", "ok"],
+      ["step-start", "apply"], ["step-settle", "apply", "ok"],
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
+  });
+
+  test("rollback streams a gated run: the gate's step settles gated, and the run with it", async () => {
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+    const gated: DriverComponent = {
+      ...api,
+      deploy: [...api.deploy.slice(0, 2), { phase: "Apply", steps: [{ kind: "gate", gate: "rollback-ok" }, { kind: "apply" }] }],
+    };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [gated] });
+    expect(await runComponentsRollback(ctx({ migrateFrom: undefined, migrateTo: undefined, path: "rollback", extraPositional: "prod", component: "api", eventsJson: true }))).toBe(3);
+    const events = streamed();
+    expect(events[0]).toMatchObject({ name: "rollback api in prod" });
+    // A rollback deploys the recorded digest in place of the publish step.
+    expect(stepTrail(events)).toEqual([
+      ["step-start", "recorded-digest"], ["step-settle", "recorded-digest", "ok"],
+      ["step-start", "gate:rollback-ok"], ["gate-waiting", "gate:rollback-ok"], ["step-settle", "gate:rollback-ok", "gated"],
+      ["step-settle", "apply", "skipped:not-run"],
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "gated" });
+  });
+
+  test("redeploy streams a failed run with the failing step's error", async () => {
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+    failApplyFor = "api";
+    expect(await runComponentsRedeploy(ctx({ migrateFrom: undefined, migrateTo: undefined, path: "redeploy", extraPositional: "prod", component: "api", eventsJson: true }))).toBe(1);
+    const events = streamed();
+    expect(events[0]).toMatchObject({ name: "redeploy api in prod" });
+    expect(events.find((e) => e.type === "step-settle" && e.status === "failed")).toMatchObject({ step: "apply", error: "apply failed" });
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed" });
+  });
+
+  test("--events-json beside --progress-json is refused before anything deploys", async () => {
+    expect(await runComponentsPromote(ctx({ eventsJson: true, progressJson: true }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/--events-json and --progress-json both stream to stdout/);
+    expect(ran).toEqual([]);
+    expect(out).toEqual([]);
   });
 });

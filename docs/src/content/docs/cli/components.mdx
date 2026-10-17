@@ -17,24 +17,25 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                                 [--env <env>] [--gate <name> | --wave-gate <name>
                                  [--canary <name>] [--wave <n>]] [--dry-run] [--json]
                                 [--resume <file>] [--seed-outputs <file>]
-                                [--dump-outputs <file>] [--progress-json]
+                                [--dump-outputs <file>] [--progress-json | --events-json]
 chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--member <name>]
-                                [--output <dir>] [--json]
+                                [--output <dir>] [--json] [--events-json]
 chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
+                                [--events-json]
 chant components promote --to <env> [--from <env>] [--allow-skip]
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
                                 [--dry-run] [--json] [--seed-outputs <file>]
-                                [--run-id <id>] [--actor <name>]
+                                [--run-id <id>] [--actor <name>] [--events-json]
 chant components rollback <env> --component <name> [--digest <sha256:...>]
                                 [--dry-run] [--json] [--seed-outputs <file>]
-                                [--run-id <id>] [--actor <name>]
+                                [--run-id <id>] [--actor <name>] [--events-json]
 chant components redeploy <env> --component <name> [--digest <sha256:...>]
                                 [--dry-run] [--json] [--seed-outputs <file>]
-                                [--run-id <id>] [--actor <name>]
+                                [--run-id <id>] [--actor <name>] [--events-json]
 ```
 
 ## Description
@@ -281,7 +282,7 @@ A record whose digest does not match the fan-out derived now is refused with a w
 
 #### Seeding and progress
 
-`--seed-outputs <file>` (repeatable) loads component outputs before the run, so a `stackOutput()` or `@<dep>.publish.*` reference into a component the plan lists under `seeds` resolves. `--dump-outputs <file>` writes what the run holds afterwards. `--progress-json` streams one NDJSON progress record per line to stdout as the waves execute. All three behave as they do on [`chant run --components`](/chant/cli/run/).
+`--seed-outputs <file>` (repeatable) loads component outputs before the run, so a `stackOutput()` or `@<dep>.publish.*` reference into a component the plan lists under `seeds` resolves. `--dump-outputs <file>` writes what the run holds afterwards. `--progress-json` streams one NDJSON progress record per line to stdout as the waves execute, and `--events-json` streams the [run-event stream](/chant/reference/workspace-read-contract/#run-events) instead. These behave as they do on [`chant run --components`](/chant/cli/run/).
 
 | Flag | Meaning |
 |---|---|
@@ -300,6 +301,7 @@ A record whose digest does not match the fan-out derived now is refused with a w
 | `--seed-outputs <file>` | Load component outputs before the run. Repeatable; a later file wins on a key two files share. |
 | `--dump-outputs <file>` | Write the outputs the run holds to this file afterwards. |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the waves execute. |
+| `--events-json` | Stream the run's events to stdout, one `run-event.schema.json` line each. |
 
 ### `components pr-plan` and `components pr-apply`
 
@@ -349,6 +351,7 @@ The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) pass
 | `--resume <file>` | `pr-apply` only. Write the attempt record here, and finish an earlier attempt it records under the same approval. See above. |
 | `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
 | `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
+| `--events-json` | Stream the stage's events to stdout, one `run-event.schema.json` line each: a `plan` phase with a step per component, the gate's decision as a `gate` phase, and on `pr-apply` the apply's waves and components. See [run events](/chant/reference/workspace-read-contract/#run-events). |
 | `--json` | Print the report on stdout. |
 
 ### `components promote`
@@ -417,6 +420,7 @@ When a promote fails partway, the component's in-run unwind undoes the steps it 
 | `--seed-outputs <file>` | Load outputs from dependencies outside the promotion. Repeatable. |
 | `--run-id <id>` | Run id for the new records. Defaults as `components release` does. |
 | `--actor <name>` | Who ran the promote. Defaults as `components release` does, and must resolve before anything deploys. |
+| `--events-json` | Stream the deploy's events to stdout, one `run-event.schema.json` line each, named by the run id the new records carry. Rollback and redeploy take it too. |
 
 #### The promotion order
 

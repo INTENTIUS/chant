@@ -52,6 +52,7 @@ import { remainingFanOut, type ComponentChangeSignal, type FanOutPlan } from "./
 import type { PrApplyRecord } from "./fan-out-record";
 import type { CapabilityRegistry } from "./capability";
 import type { RunProgressEvent } from "./run-progress";
+import type { RunEventSink } from "../run-event-stream";
 import { planWaveComponent, readComponentOutputs } from "./wave-plan";
 
 export interface PrPlanSetOptions {
@@ -64,7 +65,16 @@ export interface PrPlanSetOptions {
   vars?: Record<string, unknown>;
   /** Outputs supplied by the caller (`--seed-outputs`). They win over outputs read here. */
   seededOutputs?: Record<string, Record<string, unknown>>;
+  /**
+   * Where the planning's events go (#4041): a `plan` phase with no
+   * component, and in it one `plan` step per component, started as its wave
+   * is planned and settled `ok` or `failed`.
+   */
+  onRunEvent?: RunEventSink;
 }
+
+/** The phase a pull request's planning is, in its run's events. */
+export const PR_PLAN_PHASE = "plan";
 
 /** Every member of a pull request, planned. */
 export interface PrPlanSet {
@@ -101,6 +111,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const componentOf = new Map<string, string>();
   const plans: Record<string, Record<string, unknown>> = {};
   let failed = false;
+  const emit = options.onRunEvent;
+  emit?.({ type: "phase-start", component: null, phase: PR_PLAN_PHASE });
 
   for (const wave of options.plan.waves) {
     // The dependencies' outputs first, each read once. A dependency that
@@ -115,7 +127,20 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       }
     }
     const planned = await Promise.all(
-      wave.map((name) => planWaveComponent(byName.get(name)!, options.registry, deployContext(options, name), outputs)),
+      wave.map(async (name) => {
+        const at = { component: name, phase: PR_PLAN_PHASE, step: "plan" };
+        emit?.({ type: "step-start", ...at });
+        const start = Date.now();
+        const p = await planWaveComponent(byName.get(name)!, options.registry, deployContext(options, name), outputs);
+        emit?.({
+          type: "step-settle",
+          ...at,
+          status: "error" in p ? "failed" : "ok",
+          durationMs: Date.now() - start,
+          ...("error" in p ? { error: p.error } : {}),
+        });
+        return p;
+      }),
     );
     for (const p of planned) {
       const component = byName.get(p.component)!;
@@ -135,6 +160,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     }
   }
 
+  emit?.({ type: "phase-settle", component: null, phase: PR_PLAN_PHASE, status: failed ? "failed" : "ok" });
   const doc = composeChangeSet(parts);
   const members: PrMember[] = doc.members.map((m) => ({
     member: m.member,
@@ -206,6 +232,8 @@ export interface PrApplyOptions {
   /** The set {@link planPrSet} planned and the gate approved, or {@link resumePrSet}'s set. */
   set: PrPlanSet;
   onProgress?: (event: RunProgressEvent) => void;
+  /** Where the apply's events go (#4041): the fan-out's run events. */
+  onRunEvent?: RunEventSink;
   /**
    * What an earlier attempt at this approved set applied (#3464): its
    * components, which are reported applied and not run again, and the
@@ -230,6 +258,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<{ members: Pr
     plans: options.set.plans,
     componentOutputs: { ...before },
     ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
     ...(options.onComponentSettled ? { onComponentSettled: options.onComponentSettled } : {}),
   });
   const completed = new Set(run.completed);

@@ -176,6 +176,7 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
                     `appended to the run ledger: ${err instanceof Error ? err.message : String(err)}\n`,
                 ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
+              ...(startOpts.runEvents ? { runEvents: { write: startOpts.runEvents } } : {}),
               // #3956: a running step's output, and a still-running line while
               // it is quiet, on stderr as they happen; stdout stays the
               // `--json` record's and `--progress-json`'s.

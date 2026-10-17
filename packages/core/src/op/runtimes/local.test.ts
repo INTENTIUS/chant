@@ -51,6 +51,7 @@ vi.mock("../../lifecycle/run-ledger", async () => {
 });
 
 const { createLocalOpRuntime } = await import("./local");
+const { checkRunEventLines, stepTrail } = await import("../../workspace/__fixtures__/run-event-check");
 
 function op(name: string, steps: unknown[]): OpConfig {
   return {
@@ -143,6 +144,21 @@ describe("the local op runtime", () => {
     await handle.result();
 
     expect(seen).toEqual(["ok", "ok"]);
+  });
+
+  test("runEvents gets the run's event stream, named by the handle's run id (#4041)", async () => {
+    loadActivitiesMock.mockResolvedValue(new Map([["ok", vi.fn(async () => ({}))]]));
+    const runtime = createLocalOpRuntime();
+    const lines: string[] = [];
+
+    const handle = await runtime.start(op("hello", [{ kind: "activity", fn: "ok", args: {} }]), { runEvents: (l) => lines.push(l) });
+    await handle.result();
+
+    const events = checkRunEventLines(lines);
+    expect(events[0]).toMatchObject({ type: "run-start", runId: handle.runId, kind: "op", name: "hello" });
+    expect(events[0]!.runtime).toBe(process.env.GITHUB_RUN_ID || process.env.CI_PIPELINE_ID ? "ci" : "local");
+    expect(stepTrail(events)).toEqual([["step-start", "ok"], ["step-settle", "ok", "ok"]]);
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
   });
 
   test("a gated Op settles as gated, naming the gate, and runs nothing after it (#2119)", async () => {

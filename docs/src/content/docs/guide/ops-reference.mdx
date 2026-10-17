@@ -107,6 +107,10 @@ A record is emitted once a step reaches a terminal state, `"ok"` or `"fail"`. `"
 
 The same reconstruction backs the `op-status` MCP tool's `progress` field and the `chant://ops/<name>/runs/latest` resource, so a point-in-time query and a live stream answer with the same shape.
 
+### `--events-json`
+
+`chant run <name> --events-json` streams the [run-event stream](/chant/reference/workspace-read-contract/#run-events) instead ([#4041](https://github.com/INTENTIUS/chant/issues/4041)). Each line names the run, its commit and its runtime. A step's `step-start` comes as it starts and its `step-settle` as it settles, a gate's decision is a `gate-waiting` or `gate-resolved` event of its own, and a skipped step says why: `not-run` behind a failure or a gate, `receipt` inside an effect whose receipt matched, `resumed` before a gate the run resumed at. `--progress-json` is unchanged, and the two are refused together.
+
 ### Gate state
 
 A run that stopped at an unapproved gate says so on the record it wrote, and the pending fact itself lives on the gate ledger at `_gates/<op>.jsonl`:

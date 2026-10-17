@@ -8,16 +8,18 @@
  * the one writer: every emitter hands a writer the type-specific body and
  * the writer stamps the run's identity, the sequence number, the time and the
  * contract fields on it, then writes one JSON line. The emitters themselves
- * are #4041's work; replay and `--follow` are #4042's.
+ * are in `./run-event-stream.ts` and the runtimes (#4041); replay and
+ * `--follow` are #4042's.
  *
- * Two older streams predate this one and keep their shape until #4041 moves
- * them: `RunProgressEvent` (`./components/run-progress.ts`, from `chant run
+ * Two older streams predate this one and keep their shape behind
+ * `--progress-json`, while `--events-json` prints this one (#4041):
+ * `RunProgressEvent` (`./components/run-progress.ts`, from `chant run
  * --components --progress-json`) and the Op path's `StepRecord` lines
  * (`./op/local-executor.ts`, from `chant run <op> --progress-json`).
  * {@link runEventOfProgress} and {@link runEventsOfStepRecord} say how each
  * maps onto this contract.
  *
- * This module imports no runtime code beyond the chant version, so a consumer
+ * This module imports no runtime code beyond the chant version (`./chant-version.ts`), so a consumer
  * can import the types and the writer without loading the rest of chant. It
  * lives outside `workspace/` so that a level-0 import of `@intentius/chant`
  * loads no workspace module (#2526).
@@ -26,7 +28,7 @@
 import type { RunProgressEvent } from "./components/run-progress";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { StepRecord } from "./op/local-executor";
-import { CHANT_VERSION } from "./cli/version";
+import { CHANT_VERSION } from "./chant-version";
 
 /** The schema's `$id`, which every event carries as `$schema`. */
 export const RUN_EVENT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json";
@@ -145,6 +147,13 @@ export interface RunEventStepStart {
   phase: string;
   /** The activity, `gate:<name>`, `effect:<name>`, or the job's name. */
   step: string;
+  /**
+   * The step's place in its phase as authored, from 0, so two steps of one
+   * phase that share a name stay apart. Optional: added within contract 1 by
+   * chant 0.124.28 (#4041), and left out where the writer has no authored
+   * position, such as a step the executor adds itself.
+   */
+  index?: number;
 }
 
 export interface RunEventStepSettle {
@@ -152,6 +161,8 @@ export interface RunEventStepSettle {
   component: string | null;
   phase: string;
   step: string;
+  /** As on {@link RunEventStepStart.index}. */
+  index?: number;
   status: RunEventStepStatus;
   /** With `skipped`: why, or null when the writer does not know. */
   skip?: RunEventSkipReason | null;
@@ -168,6 +179,8 @@ export interface RunEventGateWaiting {
   component: string | null;
   phase: string;
   step: string;
+  /** As on {@link RunEventStepStart.index}. */
+  index?: number;
   /** The op the gate is recorded under, which `chant approve` takes. */
   op: string;
   /** The gate's name, or null when the step waits on a decision point alone. */
@@ -182,6 +195,8 @@ export interface RunEventGateResolved {
   component: string | null;
   phase: string;
   step: string;
+  /** As on {@link RunEventStepStart.index}. */
+  index?: number;
   op: string;
   gate: string;
   resolvedBy: string;
@@ -357,12 +372,25 @@ const GATE_PREFIX = "gate:";
  * A record skipped with nothing to say why maps to `skip: null`. The local
  * executor writes the same record for a gate nobody has approved, for a step
  * of an effect whose receipt matched and for a step an earlier failure
- * stopped, so only an emitter that knows which (#4041) can say `gated`,
- * `receipt` or `not-run`. The run's own status still says `gated`.
+ * stopped, so only an emitter that knows which can say `gated`, `receipt` or
+ * `not-run`. The run's own status still says `gated`. The local executor
+ * (#4041) knows, and passes `skip` for a bare skipped record and `gate` for
+ * a gate step nobody has approved; it passes `index`, the step's place in
+ * its phase, too.
  */
-export function runEventsOfStepRecord(record: StepRecord, ctx: { op: string; component?: string | null }): RunEventBody[] {
+export function runEventsOfStepRecord(
+  record: StepRecord,
+  ctx: {
+    op: string;
+    component?: string | null;
+    skip?: RunEventSkipReason;
+    index?: number;
+    /** The gate a skipped gate step stopped at, when the emitter knows it. */
+    gate?: { op: string; gate: string };
+  },
+): RunEventBody[] {
   const component = ctx.component ?? null;
-  const at = { component, phase: record.phase, step: record.fn };
+  const at = { component, phase: record.phase, step: record.fn, ...(ctx.index !== undefined ? { index: ctx.index } : {}) };
   const out: RunEventBody[] = [];
   const settle = (status: RunEventStepStatus, extra: Partial<RunEventStepSettle> = {}): RunEventStepSettle => ({
     type: "step-settle",
@@ -395,11 +423,12 @@ export function runEventsOfStepRecord(record: StepRecord, ctx: { op: string; com
     return out;
   }
   const message = record.refusal !== undefined ? { message: record.refusal } : {};
+  const stoppedAt = record.gate ?? ctx.gate;
   if (record.point) {
     out.push({ type: "gate-waiting", ...at, op: ctx.op, gate: gateOfFn, point: record.point.id, ...message });
     out.push(settle("waiting", message));
-  } else if (record.gate) {
-    out.push({ type: "gate-waiting", ...at, op: record.gate.op, gate: record.gate.gate, point: null, ...message });
+  } else if (stoppedAt) {
+    out.push({ type: "gate-waiting", ...at, op: stoppedAt.op, gate: stoppedAt.gate, point: null, ...message });
     out.push(settle("gated", message));
   } else if (gateOfFn !== null && record.refusal !== undefined) {
     out.push({ type: "gate-waiting", ...at, op: ctx.op, gate: gateOfFn, point: null, ...message });
@@ -409,7 +438,7 @@ export function runEventsOfStepRecord(record: StepRecord, ctx: { op: string; com
   } else if (record.refusal !== undefined) {
     out.push(settle("skipped", { skip: "refused", ...message }));
   } else {
-    out.push(settle("skipped", { skip: null }));
+    out.push(settle("skipped", { skip: ctx.skip ?? null }));
   }
   return out;
 }

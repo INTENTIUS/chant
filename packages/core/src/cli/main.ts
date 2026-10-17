@@ -317,6 +317,11 @@ Ops:
                         consumer to render live wave/component/phase/step
                         progress instead of tailing raw logs (additive; run
                         semantics/exit code unchanged)
+                        --events-json: stream the run's events instead, one
+                        run-event.schema.json line each, with the run id,
+                        commit and runtime on every line (#4041). Also on
+                        run <op>, components promote|rollback|redeploy,
+                        fan-out, pr-plan and pr-apply
   operator               Run scheduled ticks for discovered ConvergeOps
                         locally (#1485): acquire/renew a per-op
                         lease (git ref CAS), tick on --interval, record every
