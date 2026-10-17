@@ -205,6 +205,13 @@ export interface CiGreen {
   phases: CiPhase[];
   /** The phases a commit must pass, by name, in file order. */
   require: string[];
+  /**
+   * From this time on a ci tag needs a statement signed by a runner key
+   * (#4031): a tag on a commit committed at or after it counts only with
+   * one, and a tag on an older commit counts unsigned. Null when the
+   * declaration sets none, and then no tag needs a statement.
+   */
+  signedSince: string | null;
   pointer: string;
 }
 
@@ -1029,7 +1036,7 @@ function identityOf(raw: unknown): IdentityPolicy | null {
  */
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[] } };
+  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string } };
   if (block.green === undefined) return { green: null };
   const g = block.green;
   const phases: CiPhase[] = Object.entries(g.phases).map(([name, p]) => ({
@@ -1046,7 +1053,10 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       at(`/ci/green/require/${i}`),
     );
   }
-  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], pointer: "/ci/green" } };
+  if (g.signedSince !== undefined && Number.isNaN(Date.parse(g.signedSince))) {
+    throw new WorkspaceReadError("declaration-invalid", `ci.green.signedSince must be a time, such as 2026-10-16T00:00:00Z, not ${JSON.stringify(g.signedSince)}`, at("/ci/green/signedSince"));
+  }
+  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, pointer: "/ci/green" } };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

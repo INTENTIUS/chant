@@ -135,6 +135,14 @@ describe("the token the tick pushes its tags with (#3573)", () => {
     expect(text.replace("          token: ${{ secrets.CI_GREEN_TOKEN || github.token }}\n", "")).toBe(plain);
   });
 
+  test("--runner-key-secret hands the tick its runner key from the secret, and nothing else changes (#4031)", () => {
+    const plain = renderCiGreenWorkflow(base);
+    const text = renderCiGreenWorkflow({ ...base, runnerKeySecret: "CHANT_RUNNER_KEY" });
+    const steps = (parseYAMLDocument(text) as Yaml).jobs.tick.steps;
+    expect(steps[2].env).toMatchObject({ GITHUB_TOKEN: "${{ github.token }}", CHANT_RUNNER_KEY: "${{ secrets.CHANT_RUNNER_KEY }}" });
+    expect(text.replace("          CHANT_RUNNER_KEY: ${{ secrets.CHANT_RUNNER_KEY }}\n", "")).toBe(plain);
+  });
+
   test("--app-id-var and --app-key-secret mint an App token before the checkout and check out with it", () => {
     const steps = (parseYAMLDocument(renderCiGreenWorkflow({ ...base, push: { appIdVar: "CI_GREEN_APP_ID", appKeySecret: "CI_GREEN_APP_KEY" } })) as Yaml).jobs.tick.steps;
     expect(steps[0]).toMatchObject({
@@ -237,6 +245,12 @@ describe("chant ci workflow (#3573)", () => {
         `# ${GENERATED_MARKER}. Regenerate with: chant ci workflow --app-id-var CI_GREEN_APP_ID --app-key-secret CI_GREEN_APP_KEY (in the workspace root)`,
       );
 
+      // #4031: the runner key's secret goes into the env of the tick and the header.
+      expect(await runCiWorkflow({ args: { ciTokenSecret: "CI_GREEN_TOKEN", ciRunnerKeySecret: "CI_RUNNER_KEY" } } as unknown as CommandContext)).toBe(0);
+      const withKey = readFileSync(file, "utf-8");
+      expect(withKey.split("\n")[0]).toBe(`# ${GENERATED_MARKER}. Regenerate with: chant ci workflow --token-secret CI_GREEN_TOKEN --runner-key-secret CI_RUNNER_KEY (in the workspace root)`);
+      expect((parseYAMLDocument(withKey) as Yaml).jobs.tick.steps[2].env.CHANT_RUNNER_KEY).toBe("${{ secrets.CI_RUNNER_KEY }}");
+
       // Dropping the flag writes the bytes chant 0.108.0 wrote.
       expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
       expect(readFileSync(file, "utf-8")).toBe(plain);
@@ -262,6 +276,8 @@ describe("chant ci workflow (#3573)", () => {
       expect(errors.pop()).toMatch(/one or the other/);
       expect(await run({ ciTokenSecret: "ci-green token" })).toBe(1);
       expect(errors.pop()).toMatch(/--token-secret takes a secret or variable name/);
+      expect(await run({ ciRunnerKeySecret: "runner key" })).toBe(1);
+      expect(errors.pop()).toMatch(/--runner-key-secret takes a secret or variable name/);
       expect(existsSync(join(root, CI_GREEN_WORKFLOW_FILE))).toBe(false);
     } finally {
       cwd.mockRestore();

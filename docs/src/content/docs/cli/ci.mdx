@@ -7,11 +7,12 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant ci last-green [--json]
+chant ci last-green [--json] [--from <rev>]
 chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
-chant ci tick [--dry-run] [--forge github]
+chant ci tick [--dry-run] [--forge github] [--key <runner key.pem>]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
+                  [--runner-key-secret <NAME>]
 ```
 
 `chant ci` records which commits of a branch passed CI as git tags, from the [`ci.green`](/chant/reference/workspace-declaration/#ci) block of the workspace declaration ([#3573](https://github.com/INTENTIUS/chant/issues/3573), [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md)). A commit that passes every required phase gets `ci/green/<sha>`. A green commit that later fails one gets `ci/revoked/<sha>`. Anyone with a clone can then find the newest commit that passed, for example to freeze it and release from it.
@@ -25,9 +26,9 @@ git fetch origin --tags
 git checkout "$(chant ci last-green)"
 ```
 
-When no commit qualifies, a message goes to stderr and the exit code is 1.
+When no commit qualifies, a message goes to stderr and the exit code is 1. `--from <rev>` walks the first-parent commits of `rev` instead of the branch, so `chant ci last-green --from <sha>` prints `<sha>` exactly when that commit counts as green. With [signed tags](#signed-tags), each tag the walk ignores is printed on stderr as a warning.
 
-`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. `ignored` lists the tags the walk passed over for want of a valid statement, newest first, each with `tag`, `status` and `reason`. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
 
 ## ci list
 
@@ -43,6 +44,8 @@ A phase's result comes from the tags. A green tag's annotation records the runs 
 
 A line for an `unlinked` or `wrong` commit ends with `; why unknown:` and the reason. [Link commits to work items](/chant/guide/work-items/#link-commits-to-work-items) says how a commit names one.
 
+With [signed tags](#signed-tags), the state counts only the tags that carry a valid statement. A tag that does not is listed on its own line under the commit, as `ignored <tag> (<status>): <reason>`, and in `--json` under the commit's `ignored`. The `green` and `revoked` objects name the runner that signed the tag in `signer`, which is `null` for a tag that counts unsigned.
+
 `--limit <n>` keeps the newest `n`. `--since <rev>` lists what came after `rev` and replaces the window, so a reader holding the last sha it saw can ask for what is new.
 
 `--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-list.schema.json`, with `window`, `since`, `require` and a `commits` array. Each entry has `sha`, `committed`, `state`, `phases`, and a `green` and a `revoked` object holding the tag and the time it was made, plus the failed phase and run for a revoked tag. Either object is `null` when the tag is absent. Each entry also has `work` ([#4029](https://github.com/INTENTIUS/chant/issues/4029)), `{ state, ids, problems }`, where `state` says whether the commit names its work item. The judgement is the one [`workspace check --changes`](/chant/cli/workspace-check/#commits-that-name-no-work-item) makes, against the work records at the listed ref. `work` is `null` when the workspace declares no work kind. chant 0.124.28 added it within contract 1, and a reader ignores fields it does not know. A failure uses the codes of `ci last-green`, and `revision-unknown` when `--since` names no commit, with exit code 1.
@@ -57,9 +60,59 @@ One pass over the branch. It fetches the branch and the `ci/*` tags from `origin
 | a green tag and no revoked tag | fails a required phase | `ci/revoked/<sha>` |
 | a revoked tag | anything | nothing, and its check runs are not read |
 
-Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag. A commit that names no work item, or a wrong one, has `; why unknown:` and the reason at the end of its line, as in `ci list`.
+Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag. With [signed tags](#signed-tags), the tick signs each tag it makes and judges the tags already there as every other reader does, so a hand-pushed tag doesn't count. Since chant never moves or deletes a tag, a hand-pushed tag that holds the name of a tag the tick would make stops it, and the tick says which tag to delete. A commit that names no work item, or a wrong one, has `; why unknown:` and the reason at the end of its line, as in `ci list`.
 
 The check runs come from the forge. GitHub is the only one so far: the tick reads `GITHUB_REPOSITORY`, a token from `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` with `checks: read`, and `GITHUB_API_URL` for GitHub Enterprise Server. `--forge gitlab` and `--forge forgejo` are refused. GitLab and Forgejo get no status reader. The decision is to cover them through the results of chant's own runs ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) instead of mapping pipeline jobs and commit statuses to check runs: GitLab reports jobs per pipeline and Forgejo reports statuses per context. Each mapping needs its own rules for retries and skips. A run result is the same on every forge. Until #4044 ships, the tags and `ci list` work on any forge's repository, but `ci tick` has no status source there. Pushing the tags needs `contents: write` on the remote.
+
+## Signed tags
+
+The tags are plain git tags, so anyone who may push a tag could make `ci/green/<sha>` by hand and go around CI ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). Setting `ci.green.signedSince` in the [declaration](/chant/reference/workspace-declaration/#ci) closes that: a tag on a commit committed at or after that time counts only when its annotation carries a statement signed by a runner key. Without `signedSince`, every tag counts, as before.
+
+```json
+"ci": {
+  "green": {
+    "branch": "main",
+    "phases": { "test": ["test"] },
+    "require": ["test"],
+    "signedSince": "2026-11-01T00:00:00Z"
+  }
+}
+```
+
+The statement is the one [runner evidence](/chant/cli/workspace-evidence/) and [agent-run statements](/chant/cli/workspace-runs/#signed-statements) use: an in-toto statement in a DSSE envelope, signed with an Ed25519 key. Its subject is the tagged commit, and its predicate (`https://intentius.io/chant/ci-tag/v1`) holds the signer and the tag's JSON record. The envelope sits in that record as `statement`, so a reader that doesn't know it reads the record as before.
+
+A reader counts a tag after `signedSince` when all of these hold, and otherwise ignores it with one of four statuses:
+
+| Status | When |
+|---|---|
+| `unsigned` | The annotation carries no statement, as with a lightweight tag or one made by hand. |
+| `invalid` | The envelope or its payload is not a ci-tag statement, or it names another signer than the key's. |
+| `untrusted` | No key that `.chant/trust.json` lists under `runners` signed it, or its principal holds no `runner` role there. Both are read where the branch is, at `refs/remotes/origin/<branch>` or the local branch. |
+| `mismatch` | It signs another commit, another kind of tag or another branch, the annotation's record is not the one signed, or the tag points at another commit than its name gives. |
+
+A tag on a commit committed before `signedSince` counts without a statement, so the tags a workspace already has keep working. The commit's committer time decides, never the tag's date, which whoever makes the tag chooses. A backdated tag on a new commit therefore gains nothing. Every reader judges the tags the same way: `ci tick`, `ci list`, `ci last-green`, [`release cut`](/chant/cli/release/#release-cut) and chant's own `scripts/release-preflight.sh`.
+
+### The runner key
+
+The tick signs with an Ed25519 private key in PEM, from `--key <file>` or from the `CHANT_RUNNER_KEY` environment variable. `.chant/trust.json` lists its public half under `runners`, and the principal it names holds the `runner` role:
+
+```json
+{
+  "schema": 1,
+  "runners": [{ "principal": "ci:acme/app", "class": "runner", "key": "ssh-ed25519 AAAA..." }],
+  "roles": { "runner": ["ci:acme/app"] }
+}
+```
+
+The tick refuses a key the file doesn't list, a principal without the role and a key the signers file lists, before it makes any tag. A person's key never signs a tag. With `signedSince` set, the tick refuses to run without a key, apart from `--dry-run`. Both files are read at the branch's tip, and changing either is a protected write, as for [runner evidence](/chant/cli/workspace-evidence/). Make the key as for runner evidence:
+
+```bash
+openssl genpkey -algorithm ed25519 -out runner.pem
+```
+
+A tick given a key the file doesn't list yet refuses it and prints the key's `ssh-ed25519` line to add under `runners`. Keep `runner.pem` out of the repository.
+
+On GitHub the key lives in a repository secret, and `chant ci workflow --runner-key-secret <NAME>` hands it to the tick as `CHANT_RUNNER_KEY`. Turn signing on in this order: add the key to `runners` and the principal to `roles.runner`, store the secret and regenerate the workflow, then set `signedSince`. A chant older than 0.124.28 refuses a declaration with `signedSince`, so set `minReader` to `0.124.28` with it.
 
 ## ci workflow
 
@@ -87,6 +140,8 @@ A GitHub App with Contents and Workflows write works too. Put its id in an Actio
 chant ci workflow --app-id-var CI_GREEN_APP_ID --app-key-secret CI_GREEN_APP_KEY
 ```
 
+`--runner-key-secret <NAME>` passes the repository secret `NAME` to the tick step as `CHANT_RUNNER_KEY`, so the tick [signs its tags](#signed-tags). The secret holds the runner key as PEM, and the key's principal needs the `runner` role in `.chant/trust.json`. When the declaration sets `ci.green.signedSince` and the flag is missing, `ci workflow` warns, since every tick would fail.
+
 Regenerating keeps the token flags you passed, since the header records them. Leave them out and the file comes out byte for byte as 0.108.0 wrote it.
 
 ## chant's own repository
@@ -99,4 +154,4 @@ Its tick runs the source at the commit it checks out, so a change to `chant ci` 
 chant ci workflow --chant 'npx tsx packages/core/src/cli/main.ts' --install 'npm install --ignore-scripts'
 ```
 
-The install skips the lexicon builds, and the tick needs none of them. `just release` picks the commit it tags from these tags: `scripts/release-preflight.sh` reads them whenever the declaration on `origin/main` sets `ci.green` for `main`. When no commit has a green tag, it refuses to release. It doesn't fall back to asking GitHub, and `CHANT_RELEASE_SKIP_PREFLIGHT=1` skips the check. The publish workflow has a second gate, `release-gate`, that waits for a green run on the released commit. A tag push skips that gate and publishes. To get it, start `publish.yml` by hand with `verify_ci` checked. The repository variable `CHANT_RELEASE_SKIP_CI_GATE` that used to skip it is no longer read.
+The install skips the lexicon builds, and the tick needs none of them. `just release` picks the commit it tags from these tags: `scripts/release-preflight.sh` reads them whenever the declaration on `origin/main` sets `ci.green` for `main`. When no commit has a green tag, it refuses to release. It doesn't fall back to asking GitHub, and `CHANT_RELEASE_SKIP_PREFLIGHT=1` skips the check. chant does not set `signedSince` yet, so its tags are unsigned and the script checks that they exist. Once the declaration on `origin/main` sets it, the script asks chant instead. It runs `ci last-green --from <commit>` through `$CHANT_CLI`, which defaults to this checkout's source through tsx. Each tag chant ignored is printed as it goes. Turning signing on for chant itself waits on a runner key in its secrets ([#4040](https://github.com/INTENTIUS/chant/issues/4040)). The publish workflow has a second gate, `release-gate`, that waits for a green run on the released commit. A tag push skips that gate and publishes. To get it, start `publish.yml` by hand with `verify_ci` checked. The repository variable `CHANT_RELEASE_SKIP_CI_GATE` that used to skip it is no longer read.

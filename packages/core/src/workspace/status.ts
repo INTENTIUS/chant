@@ -51,7 +51,8 @@ import { factoryView, listingView, plantability, treeBytes, type FactoryView, ty
 import { declaredRecordKinds, extensionsAt, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { readMemberPromotionOrder, type PromotionStep } from "./promotion-order";
-import { gateAdmissionFrom } from "./identity";
+import { gateAdmissionFrom, releaseRuleFrom } from "./identity";
+import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
 import { scopeSource } from "./write-scope";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
@@ -198,6 +199,26 @@ export interface StatusMember {
    * Added in contract 1 by chant 0.124.28.
    */
   promotionOrder: PromotionStep[] | null;
+  /**
+   * The member's release cuts (#4026, ws-104), oldest first, each with
+   * whether its signature verifies for its actor against the signers at
+   * base and, when the declaration names a `release` gate with a class,
+   * whether the actor is in it (#4031). `[]` when none is cut, null when the
+   * cuts could not be read. Added in contract 1 by chant 0.124.28.
+   */
+  releaseCuts: StatusReleaseCut[] | null;
+}
+
+/** One cut of a member's release (#4031), as `status --json` lists it. */
+export interface StatusReleaseCut {
+  releaseDigest: string;
+  label: string | null;
+  /** The release's commit, or null when its release file can't be read. */
+  commit: string | null;
+  actor: string;
+  timestamp: string;
+  signature: string | null;
+  signatureCheck: ReleaseSignatureCheck;
 }
 
 /** The most paths `ship.pending.paths` lists; `files` still counts them all. */
@@ -523,6 +544,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     // #3163: the declaration's identity.gates at base, read once for every member's gates.
     const ruleSource = scopeSource(found.dir);
     const rules = (gate: string) => gateAdmissionFrom(ruleSource, gate);
+    const releaseRule = releaseRuleFrom(ruleSource).rule;
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const environments: StatusEnvironment[] = [];
@@ -571,6 +593,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,
         promotionOrder: await (query.readPromotionOrder ?? readMemberPromotionOrder)(resolve(found.dir, m.dir)),
+        releaseCuts: await readReleaseCuts(resolve(found.dir, m.dir), releaseRule),
         ...x(m.pointer),
       });
     }
@@ -610,6 +633,35 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     }
     if (err instanceof StatusError) return { ...head, error: { code: err.code, message: err.message, location: null } };
     throw err;
+  }
+}
+
+/**
+ * A member's release cuts with their signatures judged (#4031), read from
+ * its ledger on the local `chant/lifecycle`. Null when they can't be read.
+ */
+async function readReleaseCuts(memberDir: string, rule: GateAdmissionRule): Promise<StatusReleaseCut[] | null> {
+  try {
+    const { readCuts, readRelease } = await import("../lifecycle/release-store");
+    const loc = { cwd: memberDir };
+    const { cuts } = await readCuts(loc);
+    const commits = new Map<string, string | null>();
+    const out: StatusReleaseCut[] = [];
+    for (const c of cuts) {
+      if (!commits.has(c.releaseDigest)) commits.set(c.releaseDigest, (await readRelease(c.releaseDigest, loc))?.commit ?? null);
+      out.push({
+        releaseDigest: c.releaseDigest,
+        label: c.label,
+        commit: commits.get(c.releaseDigest) ?? null,
+        actor: c.actor,
+        timestamp: c.timestamp,
+        signature: c.signature,
+        signatureCheck: checkReleaseSignature(rule, c),
+      });
+    }
+    return out;
+  } catch {
+    return null;
   }
 }
 
@@ -731,6 +783,15 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
     lines.push("");
     const rows: string[][] = [["WORK ITEM", "STATE", "CRITERIA MET"]];
     for (const a of doc.acceptance) rows.push([a.member ? `${a.member}/${a.item}` : a.item, a.state ?? "-", `${a.met}/${a.total}`]);
+    lines.push(...table(rows));
+  }
+  const cut = doc.members.filter((m) => (m.releaseCuts ?? []).length > 0);
+  if (cut.length > 0) {
+    lines.push("");
+    const rows: string[][] = [["MEMBER", "RELEASE", "COMMIT", "CUT BY", "SIGNATURE"]];
+    for (const m of cut) {
+      for (const c of m.releaseCuts!) rows.push([m.name, c.label ?? c.releaseDigest.slice(0, 24), c.commit?.slice(0, 12) ?? "-", c.actor, c.signatureCheck.status]);
+    }
     lines.push(...table(rows));
   }
   const boxes = doc.members.filter((m) => m.box?.isolation);

@@ -1,20 +1,25 @@
 /**
  * `chant ci` (#3573, ws-103): which commits passed CI.
  *
- *   ci last-green [--json]               the newest commit on the branch with a green tag and no revoked tag
+ *   ci last-green [--json] [--from <rev>] the newest commit on the branch with a green tag and no revoked tag
  *   ci list [--json] [--limit <n>] [--since <rev>] [--forge github]
  *                                        the branch's commits within the window, each with its state and phase results
- *   ci tick [--dry-run] [--forge github] tag the commits that turned green, revoke the ones that turned red
+ *   ci tick [--dry-run] [--forge github] [--key <runner key.pem>]
+ *                                        tag the commits that turned green, revoke the ones that turned red
  *   ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
- *               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
+ *               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]
  *                                        write the root CI file that runs the tick
+ *
+ * The tick signs its tags with a runner key (#4031) from `--key <file>` or
+ * the PEM in `CHANT_RUNNER_KEY`, which the generated workflow sets from the
+ * secret `--runner-key-secret` names.
  *
  * `last-green --json` prints `ci-last-green.schema.json` and `list --json` prints
  * `ci-list.schema.json`. The tick and the
  * workflow print text.
  */
 
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
@@ -26,10 +31,20 @@ import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaratio
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
-const USAGE = "chant ci last-green [--json] | ci list [--json] [--limit <n>] [--since <rev>] [--forge github] | ci tick [--dry-run] [--forge github] | ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]";
+const USAGE =
+  "chant ci last-green [--json] [--from <rev>] | ci list [--json] [--limit <n>] [--since <rev>] [--forge github] | ci tick [--dry-run] [--forge github] [--key <runner key.pem>] | " +
+  "ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]";
+
+/** The environment variable a tick reads its runner key from, as PEM, when `--key` is not given (#4031). */
+export const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
+
+/** Each ignored tag as a warning line for stderr (#4031). */
+function warnIgnored(ignored: readonly { tag: string; status: string; reason: string }[]): void {
+  for (const t of ignored) console.error(`warning: ignored ${t.tag} (${t.status}): ${t.reason}`);
+}
 
 export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
-  const doc = lastGreen({ cwd: process.cwd() });
+  const doc = lastGreen({ cwd: process.cwd(), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
   if (ctx.args.json) {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
@@ -38,6 +53,7 @@ export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: doc.error.message, hint: USAGE }));
     return 1;
   }
+  warnIgnored(doc.ignored);
   if (!doc.commit) {
     console.error(`No first-parent commit of ${doc.ref} has a ci/green tag without a ci/revoked one. Fetch the tags first: git fetch origin --tags`);
     return 1;
@@ -74,7 +90,8 @@ const describe = (err: unknown) => (err instanceof WorkspaceReadError ? err.desc
 export async function runCiTick(ctx: CommandContext): Promise<number> {
   try {
     const forge = ciForgeFromEnv(ctx.args.forge ?? "github");
-    const result = await ciTick({ cwd: process.cwd(), forge, dryRun: ctx.args.dryRun === true });
+    const runnerKey = ctx.args.key !== undefined ? readFileSync(resolve(ctx.args.key), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
+    const result = await ciTick({ cwd: process.cwd(), forge, dryRun: ctx.args.dryRun === true, ...(runnerKey !== undefined ? { runnerKey } : {}) });
     console.log(formatTick(result, ctx.args.dryRun === true));
     return 0;
   } catch (err) {
@@ -86,7 +103,7 @@ export async function runCiTick(ctx: CommandContext): Promise<number> {
 /** The push token the flags ask for, or none for the Actions token. Throws on a half-given or clashing pair. */
 function pushToken(args: CommandContext["args"]): PushToken | undefined {
   const { ciTokenSecret: secret, ciAppIdVar: appIdVar, ciAppKeySecret: appKeySecret } = args;
-  for (const [flag, name] of [["--token-secret", secret], ["--app-id-var", appIdVar], ["--app-key-secret", appKeySecret]] as const) {
+  for (const [flag, name] of [["--token-secret", secret], ["--app-id-var", appIdVar], ["--app-key-secret", appKeySecret], ["--runner-key-secret", args.ciRunnerKeySecret]] as const) {
     if (name !== undefined && !ACTIONS_NAME.test(name)) throw new Error(`${flag} takes a secret or variable name, letters, digits and underscores, not ${JSON.stringify(name)}`);
   }
   if (secret !== undefined && (appIdVar !== undefined || appKeySecret !== undefined)) throw new Error("--token-secret and --app-id-var/--app-key-secret each name the push token; pass one or the other");
@@ -128,11 +145,16 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     if (ctx.args.ciInstall) parts.push("--install", ctx.args.ciInstall);
     if (push && "secret" in push) parts.push("--token-secret", push.secret);
     if (push && "appIdVar" in push) parts.push("--app-id-var", push.appIdVar, "--app-key-secret", push.appKeySecret);
+    const runnerKeySecret = ctx.args.ciRunnerKeySecret;
+    if (runnerKeySecret) parts.push("--runner-key-secret", runnerKeySecret);
+    if (green.signedSince && !runnerKeySecret) {
+      console.error(`warning: ci.green.signedSince is set, so the tick needs a runner key; pass --runner-key-secret <NAME> naming the repository secret that holds it, or every tick will fail`);
+    }
     const command = parts.map(shellArg).join(" ");
     const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
     // The install runs in the workspace root, so its lockfile there keys setup-node's npm cache.
     const npmLock = ctx.args.ciInstall && existsSync(join(root, "package-lock.json")) ? (workspaceRoot === "." ? "package-lock.json" : `${workspaceRoot}/package-lock.json`) : undefined;
-    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push });
+    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push, ...(runnerKeySecret ? { runnerKeySecret } : {}) });
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
     console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}, and every 15 minutes.`);

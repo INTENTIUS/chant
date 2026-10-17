@@ -45,8 +45,10 @@ describe("the ci.green block (#3573)", () => {
         { name: "macos", runs: ["macos (test)"], skipped: "pass", pointer: "/ci/green/phases/macos" },
       ],
       require: ["lint", "test", "macos"],
+      signedSince: null,
       pointer: "/ci/green",
     });
+    expect(parseDeclaration(decl({ green: { ...GREEN, signedSince: "2026-10-16T00:00:00Z" } }), "chant.workspace.json").ci!.green!.signedSince).toBe("2026-10-16T00:00:00Z");
     expect(parseDeclaration(decl({ green: { ...GREEN, window: "90m" } }), "chant.workspace.json").ci!.green!.window).toBe("90m");
     expect(parseDeclaration(decl({}), "chant.workspace.json").ci).toEqual({ green: null });
     expect(parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [] }), "chant.workspace.json").ci).toBeNull();
@@ -62,6 +64,8 @@ describe("the ci.green block (#3573)", () => {
       { ...GREEN, require: [] },
       { phases: GREEN.phases, require: GREEN.require },
       { ...GREEN, branch: "has space" },
+      { ...GREEN, signedSince: "yesterday" },
+      { ...GREEN, signedSince: "2026-13-45T00:00:00Z" },
     ]) {
       expect(() => parseDeclaration(decl({ green: bad }), "chant.workspace.json"), JSON.stringify(bad)).toThrow();
     }

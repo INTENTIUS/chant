@@ -25,7 +25,8 @@
             }
           }
         },
-        "require": { "type": "array", "items": { "type": "string" } }
+        "require": { "type": "array", "items": { "type": "string" } },
+        "signedSince": { "type": "string", "description": "Added in contract 1 by #4031, written by chant 0.124.28 and newer, and only when the declaration sets it: from this time on a ci tag on a commit committed at or after it counts only with a statement signed by a runner key." }
       }
     },
     "result": {

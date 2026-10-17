@@ -64,10 +64,10 @@
         },
         "ref": {
           "type": "string",
-          "description": "The ref whose first-parent commits were walked: refs/remotes/origin/<branch> when the checkout has it, else refs/heads/<branch>."
+          "description": "The ref whose first-parent commits were walked: refs/remotes/origin/<branch> when the checkout has it, else refs/heads/<branch>, or the revision --from names (#4031)."
         },
         "commit": {
-          "description": "The newest green commit that is not revoked, or null when there is none.",
+          "description": "The newest green commit that is not revoked, or null when there is none. Only tags that count are read: with ci.green.signedSince set, a tag on a commit committed at or after it counts only with a valid statement signed by a runner key (#4031).",
           "oneOf": [
             {
               "type": "null"
@@ -103,6 +103,36 @@
               }
             }
           ]
+        },
+        "ignored": {
+          "type": "array",
+          "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The tags on the commits walked, newest first and down to the one found, that do not count for want of a valid statement. Empty when ci.green.signedSince is not set.",
+          "items": {
+            "type": "object",
+            "required": [
+              "tag",
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "tag": {
+                "type": "string",
+                "description": "ci/green/<sha> or ci/revoked/<sha>."
+              },
+              "status": {
+                "enum": [
+                  "unsigned",
+                  "invalid",
+                  "untrusted",
+                  "mismatch"
+                ],
+                "description": "unsigned: the annotation carries no statement. invalid: the statement is not a ci-tag statement, or names another signer than the key's. untrusted: no runner key .chant/trust.json lists at base signed it, or its principal holds no runner role. mismatch: it signs another commit, tag kind or branch, the annotation's record is not the one signed, or the tag points at another commit than its name gives."
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },

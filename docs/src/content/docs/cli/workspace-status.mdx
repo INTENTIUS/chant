@@ -319,6 +319,17 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "promotionOrder": [
         { "name": "staging", "canary": true },
         { "name": "prod", "canary": false }
+      ],
+      "releaseCuts": [
+        {
+          "releaseDigest": "jcs1-sha256:5d1c...",
+          "label": "v1.4.0",
+          "commit": "8b045980cf9cd1351dd4f60c9c46ee69d45ec0d7",
+          "actor": "github:alice",
+          "timestamp": "2026-09-21T08:00:00.000Z",
+          "signature": "-----BEGIN SSH SIGNATURE-----\n...",
+          "signatureCheck": { "status": "verified", "key": "SHA256:...", "reason": "signed by github:alice, in the class releaser" }
+        }
       ]
     }
   ],
@@ -365,6 +376,8 @@ Gates have a reason of their own, in `gateLedger.reason`. It doesn't change `rea
 | `gates-ledger-unreadable` | couldn't be read, so no gate is listed |
 
 `promotionOrder` gives the order a member promotes a release through: the literal entries of the `environments` array in its `chant.config.ts`, each as `{ "name": "staging", "canary": false }`. `chant components promote` reads the same [order](/chant/cli/components/#the-promotion-order). The list is empty for a config with no environments, and `promotionOrder` is `null` when the config fails to load. `canary: true` is declared and shown only. Output from a chant older than 0.124.28 has no `promotionOrder`.
+
+`releaseCuts` lists the member's [release cuts](/chant/cli/release/#release-cut) oldest first ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). Each cut has the fields of its line in `_releases/cuts.jsonl` and the commit of its release. `signatureCheck` says whether the signature verifies for the actor against `.chant/allowed_signers` at base. When the declaration names a `release` gate with a class, it also says whether the role grants at base put the actor in that class. The check runs on every read and gives `verified`, `unsigned` or `unverified` with the key's fingerprint and the reason. An empty list means nothing is cut, and `null` means the cuts can't be read. The text view adds a table of cuts when there are any. The field is new in 0.124.28, so an older chant writes none.
 
 Stewards have reasons of their own, in `stewardReasons`. They don't change `readable` or the summary.
 

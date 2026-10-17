@@ -19,6 +19,14 @@
  *
  * Compiling goes through a {@link TargetCompiler}, so a test hands the cut
  * fixtures and the CLI hands it child processes.
+ *
+ * Who may cut (#4031): when the declaration at base names a `release` gate
+ * in `identity.gates`, a cut must be signed (`--sign`), its signature must
+ * verify for the actor against the signers at base, and when the gate names
+ * a class the actor must be in it. A cut signed without that gate is signed
+ * all the same, and readers report whether the signature verifies. With
+ * `ci.green.signedSince` declared, a green tag counts only with a valid
+ * statement (`../workspace/ci-green.ts`), so a hand-pushed tag cuts nothing.
  */
 
 import { execFileSync } from "node:child_process";
@@ -51,7 +59,9 @@ export type ReleaseCutCode =
   | "release-worktree-dirty"
   | "release-no-environments"
   | "release-no-components"
-  | "release-build-inputs-differ";
+  | "release-build-inputs-differ"
+  | "release-unsigned"
+  | "release-signer-refused";
 
 export class ReleaseCutError extends Error {
   constructor(
@@ -76,6 +86,13 @@ export interface CutRequest {
   now?: () => Date;
   /** The process environment the CI run is read from. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Sign the cut (#4031): an ssh key file, or true for git's
+   * `user.signingkey`, as `chant approve --sign` takes it. The signature is
+   * over the release digest, the label, the actor and the time, and `actor`
+   * must be the principal the signers file lists the key for.
+   */
+  sign?: string | true;
 }
 
 export interface CutResult {
@@ -102,12 +119,28 @@ function tryGit(top: string, args: string[]): string | null {
   }
 }
 
-/** Whether `sha` has a green tag and no revoked tag, read from local tags. */
-export async function greenState(top: string, sha: string): Promise<"green" | "revoked" | "none"> {
+/**
+ * Whether `sha` has a green tag and no revoked tag, read from local tags,
+ * and the tags on it that were ignored for want of a valid statement
+ * (#4031). The tags are judged by `green`, the declaration's `ci.green` at
+ * base, with the runner keys read at its branch's tip; with no `ci.green`,
+ * every tag counts.
+ */
+export async function greenState(
+  top: string,
+  sha: string,
+  green: import("../workspace/declaration").CiGreen | null = null,
+): Promise<{ state: "green" | "revoked" | "none"; ignored: Array<{ tag: string; status: string; reason: string }> }> {
   const { readCiTags } = await import("../workspace/ci-green");
-  const tags = readCiTags(top);
-  if (tags.revoked.has(sha)) return "revoked";
-  return tags.green.has(sha) ? "green" : "none";
+  const base = green
+    ? (tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${green.branch}^{commit}`]) ??
+      tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${green.branch}^{commit}`]) ??
+      tryGit(top, ["rev-parse", "HEAD"]))
+    : null;
+  const tags = readCiTags(top, green, base);
+  const ignored = tags.ignored.get(sha) ?? [];
+  if (tags.revoked.has(sha)) return { state: "revoked", ignored };
+  return { state: tags.green.has(sha) ? "green" : "none", ignored };
 }
 
 /** Which components' build steps differ between environments, with the environments they appear in. */
@@ -155,14 +188,30 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
   if (!top) throw new ReleaseCutError("not-a-git-repository", "a release is cut from a commit, and this directory is not in a git repository");
   const commit = await getHeadCommit({ cwd });
 
-  const state = await greenState(top, commit);
+  // #4031: the declaration at base says whether tags need a statement and who may cut.
+  const { scopeSource } = await import("../workspace/write-scope");
+  const { releaseRuleFrom } = await import("../workspace/identity");
+  const source = scopeSource(cwd);
+  const { state, ignored } = await greenState(top, commit, source.declaration?.ci?.green ?? null);
   if (state !== "green") {
+    const why = ignored.length > 0 ? `; ignored: ${ignored.map((t) => `${t.tag} (${t.status}): ${t.reason}`).join("; ")}` : "";
     throw new ReleaseCutError(
       state === "revoked" ? "release-commit-revoked" : "release-commit-not-green",
       state === "revoked"
         ? `commit ${commit.slice(0, 12)} has a ci/revoked tag: it went red after it was green, so no release is cut from it`
-        : `commit ${commit.slice(0, 12)} has no ci/green tag, so no release is cut from it`,
+        : ignored.some((t) => t.tag.startsWith("ci/green/"))
+          ? `commit ${commit.slice(0, 12)} has no ci/green tag that counts, so no release is cut from it${why}`
+          : `commit ${commit.slice(0, 12)} has no ci/green tag, so no release is cut from it`,
       "Check out a green commit (`chant ci last-green` names the newest) after fetching the tags: git fetch origin --tags",
+    );
+  }
+  // Who may cut is the declaration's identity.gates.release, read at base.
+  const releaseRule = releaseRuleFrom(source);
+  if (releaseRule.requirement && req.sign === undefined) {
+    throw new ReleaseCutError(
+      "release-unsigned",
+      `chant.workspace.json at base names a release gate in identity.gates${releaseRule.requirement.class !== null ? `, from the class ${releaseRule.requirement.class}` : ""}, and this cut is not signed`,
+      `chant release cut <label> --actor <principal> --sign [<key file>], with a key ${releaseRule.rule.signers.signersPath} at base lists for that principal.`,
     );
   }
   const dirty = tryGit(top, ["status", "--porcelain", "--untracked-files=no"]);
@@ -248,6 +297,36 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
 
   const ledger = await resolveMemberLedger(cwd);
   const release = makeRelease({ member: ledger.members.length > 0 ? ledger.members.join("/") : null, commit, artifactDigests: artifacts, targets });
+  const timestamp = (req.now ?? (() => new Date()))().toISOString();
+  const signed = { releaseDigest: release.releaseDigest, label: req.label, actor: req.actor, timestamp };
+  let signature: string | null = null;
+  if (req.sign !== undefined) {
+    const { resolveSigningKey, sealReleaseCut, SealError } = await import("../workspace/trust/seal");
+    try {
+      const key = resolveSigningKey(req.sign, cwd);
+      try {
+        signature = sealReleaseCut(key.file, signed).signature;
+      } finally {
+        key.cleanup();
+      }
+    } catch (err) {
+      if (!(err instanceof SealError)) throw err;
+      throw new ReleaseCutError("release-signer-refused", `no release was cut: ${err.message}`);
+    }
+  }
+  if (releaseRule.requirement) {
+    const { admitReleaseCut } = await import("../workspace/identity-gate-rule");
+    const why = admitReleaseCut(releaseRule.rule, { ...signed, signature });
+    if (why !== null) {
+      throw new ReleaseCutError(
+        "release-signer-refused",
+        `no release was cut: ${why}`,
+        `identity.gates.release in chant.workspace.json at base counts only a cut signed by a key ${releaseRule.rule.signers.signersPath} lists for the actor` +
+          (releaseRule.requirement.class !== null ? `, who holds the role of the class ${releaseRule.requirement.class}` : "") +
+          ". Pass --actor <principal> naming that signer.",
+      );
+    }
+  }
   const stored = await persistRelease(release, templates, { cwd });
   const ci = resolveCiRun(req.env ?? process.env);
   const outcome = await appendCut(
@@ -255,8 +334,9 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       releaseDigest: release.releaseDigest,
       label: req.label,
       actor: req.actor,
-      timestamp: (req.now ?? (() => new Date()))().toISOString(),
+      timestamp,
       runOrigin: ci?.runOrigin ?? null,
+      signature,
     },
     { cwd },
   );

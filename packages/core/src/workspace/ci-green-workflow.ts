@@ -34,6 +34,11 @@
  * tick's own `GITHUB_TOKEN`, which reads check runs, stays the Actions token:
  * a fine-grained personal access token can't call the Checks API.
  *
+ * `--runner-key-secret <NAME>` (#4031) hands the tick the runner key it
+ * signs its tags with, from `secrets.<NAME>` as `CHANT_RUNNER_KEY`. A
+ * declaration that sets `ci.green.signedSince` needs it: a tag on a newer
+ * commit without a statement is ignored.
+ *
  * Like a member's pipelines (./member-pipeline.ts), the file starts with the
  * generated-file header naming the command, and the member whose directory
  * the command runs in records it in its generated-file record, so `WSP081`
@@ -158,6 +163,12 @@ export interface WorkflowInput {
   workspaceRoot: string;
   /** How the tag push authenticates, when not with the Actions token. */
   push?: PushToken;
+  /**
+   * The repository secret holding the runner key the tick signs its tags
+   * with, as PEM (#4031). The tick step reads it from `CHANT_RUNNER_KEY`.
+   * The key's principal needs the `runner` role in `.chant/trust.json`.
+   */
+  runnerKeySecret?: string;
 }
 
 /**
@@ -237,6 +248,7 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "          GITHUB_TOKEN: ${{ github.token }}",
     "          GIT_COMMITTER_NAME: github-actions[bot]",
     "          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com",
+    ...(input.runnerKeySecret ? [`          CHANT_RUNNER_KEY: \${{ secrets.${input.runnerKeySecret} }}`] : []),
     `        run: ${tick}`,
   ];
   return lines.join("\n") + "\n";

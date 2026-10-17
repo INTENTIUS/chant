@@ -450,6 +450,8 @@ export interface ParsedArgs {
   ciAppIdVar?: string;
   /** `chant ci workflow --app-key-secret <NAME>` (#3573): the secret holding that App's private key. */
   ciAppKeySecret?: string;
+  /** `chant ci workflow --runner-key-secret <NAME>` (#4031): the secret holding the runner key the tick signs its tags with. */
+  ciRunnerKeySecret?: string;
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new
@@ -476,7 +478,7 @@ export interface ParsedArgs {
   prefix?: string;
   /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
   require?: string;
-  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). */
+  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). Also `chant ci tick --key` (#4031): the runner key the tick signs its tags with. */
   key?: string;
   /** `chant workspace evidence sign --check-id <id>` (#2553): the check the evidence is for. */
   checkId?: string;

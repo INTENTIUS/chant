@@ -26,7 +26,7 @@
  */
 
 import type { Declaration, SignedGate } from "./declaration";
-import { admitApprover } from "./identity-gate-rule";
+import { admitApprover, RELEASE_GATE, type GateAdmissionRule } from "./identity-gate-rule";
 import { classesOf, coreClassRegistry, roleGrants, type ClassRegistry } from "./principal-classes";
 import type { ReasonCode } from "./reason-codes";
 import { normalisePrincipal } from "./records";
@@ -163,6 +163,19 @@ export function gateAdmissionFrom(source: GateRuleSource, gate: string): GateAdm
   const { policy, classes } = source;
   const rule = { gate, class: requirement.class, signers: policy, roles: roleGrants(policy), classes: classes.all() };
   return { requirement, refuses: (a) => admitApprover(rule, a) };
+}
+
+/**
+ * The rule a release cut is judged by (#4031): the declaration's
+ * `identity.gates.release` entry with its class, read at base, or, when the
+ * declaration names no `release` gate, a rule with no class, which checks a
+ * cut's signature alone. `requirement` is null in that case, and a cut may
+ * then be made unsigned.
+ */
+export function releaseRuleFrom(source: GateRuleSource): { requirement: SignedGate | null; rule: GateAdmissionRule } {
+  const requirement = source.declaration?.identity?.gates[RELEASE_GATE] ?? null;
+  const { policy, classes } = source;
+  return { requirement, rule: { gate: RELEASE_GATE, class: requirement?.class ?? null, signers: policy, roles: roleGrants(policy), classes: classes.all() } };
 }
 
 /**

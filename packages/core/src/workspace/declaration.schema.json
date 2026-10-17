@@ -1450,6 +1450,11 @@
           "items": {
             "$ref": "#/$defs/ciPhaseName"
           }
+        },
+        "signedSince": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+          "description": "Added by #4031, read by chant 0.124.28 and newer. From this time on a ci tag counts only with a statement signed by a runner key: a ci/green or ci/revoked tag on a commit committed at or after it needs a DSSE statement in its annotation, signed by a key .chant/trust.json at base lists under runners for a principal holding the runner role. A tag on an older commit counts unsigned, so existing tags keep working. The commit's committer time decides, never the tag's date, which whoever makes the tag sets. Absent, no tag needs a statement."
         }
       },
       "patternProperties": {

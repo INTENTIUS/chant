@@ -22,6 +22,12 @@
 # failed. There the tags decide, the same "green" `chant ci last-green` reads,
 # and gh is not asked. Every other repository is checked as below.
 #
+# When that declaration also sets ci.green.signedSince (#4031), a tag on a
+# commit made since counts only with a statement signed by a runner key,
+# which the shell can't check. Then chant reads the tags: `ci last-green
+# --from <commit>`, run with $CHANT_CLI (default: this checkout's source
+# through tsx). A tag it ignores is printed and never releases.
+#
 # Emergency opt-out: CHANT_RELEASE_SKIP_PREFLIGHT=1 (releases the named
 # commit, or origin/main's HEAD, without checking CI).
 set -euo pipefail
@@ -60,6 +66,29 @@ fi
 ci_branch=$(git show origin/main:chant.workspace.json 2>/dev/null | jq -r '.ci.green.branch // empty' 2>/dev/null || true)
 if [ "$ci_branch" = "main" ]; then
   git fetch --quiet --prune origin '+refs/tags/ci/*:refs/tags/ci/*' 2>/dev/null || fail "could not fetch the ci tags from origin."
+  signed_since=$(git show origin/main:chant.workspace.json 2>/dev/null | jq -r '.ci.green.signedSince // empty' 2>/dev/null || true)
+  if [ -n "$signed_since" ]; then
+    # #4031: chant judges each tag's statement against the runner keys on main.
+    read -r -a chant_cli <<< "${CHANT_CLI:-npx tsx packages/core/src/cli/main.ts}"
+    last_green() { # <commit> -> the newest green commit from it, by chant, with what it ignored on stderr
+      local doc
+      doc=$("${chant_cli[@]}" ci last-green --json --from "$1" 2>/dev/null) || fail "chant ci last-green failed: $(printf '%s' "$doc" | jq -r '.error.message // empty' 2>/dev/null)"
+      printf '%s' "$doc" | jq -r '.ignored[] | "preflight: ignored \(.tag) (\(.status)): \(.reason)"' >&2
+      printf '%s' "$doc" | jq -r '.commit.sha // empty'
+    }
+    if [ -n "$wanted" ]; then
+      [ "$(last_green "$sha")" = "$sha" ] || fail "$(short "$sha") has no ci/green tag that counts, or has a ci/revoked one (ci.green.signedSince is $signed_since)."
+      echo "preflight: $(short "$sha") is on main and tagged ci/green, and chant counts the tag ✓" >&2
+      echo "$sha"
+      exit 0
+    fi
+    c=$(last_green "$main")
+    [ -n "$c" ] || fail "no commit on main has a ci/green tag that counts without a ci/revoked one (ci.green.signedSince is $signed_since)."
+    [ "$c" != "$main" ] && echo "preflight: newer commit(s) on main are not tagged ci/green; releasing an older one" >&2
+    echo "preflight: $(short "$c") is the newest commit on main tagged ci/green ✓" >&2
+    echo "$c"
+    exit 0
+  fi
   ci_green() { # <sha> -> success when it has a green tag and no revoked one
     git rev-parse --quiet --verify "refs/tags/ci/green/$1" >/dev/null \
       && ! git rev-parse --quiet --verify "refs/tags/ci/revoked/$1" >/dev/null
