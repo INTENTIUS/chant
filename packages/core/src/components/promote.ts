@@ -53,6 +53,7 @@ import {
   type DriverStep,
 } from "./driver";
 import type { GateLedgerPort } from "../op/gate";
+import type { Release } from "../lifecycle/release-store";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
 
@@ -247,6 +248,66 @@ export function planRollback(input: {
     return { error: `${target.digest} is already the current release of "${component}" in "${env}"; nothing to roll back` };
   }
   return { from: env, to: env, items: [{ component, digest: target.digest, source: target }], notPromoted: [] };
+}
+
+/**
+ * Decide what a rollback to a release restores (#4035): every component of
+ * `release`, each at the newest record in `env`'s ledger that names the
+ * release, so the digest restored is the one the environment ran from it. A
+ * component of the release this checkout does not declare is reported and
+ * left alone. One the environment never ran from the release has no recorded
+ * digest, and is refused. So is a release the environment already runs,
+ * unless one of its components is `unsettled` (a run left it failed or gated):
+ * then the rollback is what puts that component back too.
+ */
+export function planReleaseRollback(input: {
+  env: string;
+  records: ReleaseRecord[];
+  declared: string[];
+  release: Pick<Release, "releaseDigest" | "artifactDigests" | "targets">;
+  /** The release's label, or null; used in messages. */
+  label: string | null;
+  /** Components a run left failed or gated in `env` (../lifecycle/mixed-environment.ts). */
+  unsettled?: ReadonlySet<string>;
+}): PromotionPlan | { error: string } {
+  const { env, records, declared, release } = input;
+  const name = input.label ?? release.releaseDigest;
+  const target = release.targets.find((t) => t.env === env);
+  const inRelease = new Set<string>();
+  for (const t of target?.templates ?? []) if (t.component !== null) inRelease.add(t.component);
+  for (const a of release.artifactDigests) inRelease.add(a.component);
+  const items: PromotionItem[] = [];
+  const notPromoted: PromotionPlan["notPromoted"] = [];
+  const neverRan: string[] = [];
+  for (const component of [...inRelease].sort()) {
+    if (!declared.includes(component)) {
+      notPromoted.push({ component, reason: `in release ${name} but not declared in this checkout` });
+      continue;
+    }
+    const ran = records.filter((r) => r.component === component && r.releaseDigest === release.releaseDigest);
+    if (ran.length === 0) {
+      neverRan.push(component);
+      continue;
+    }
+    const record = latestPerComponent(ran).get(component)!;
+    items.push({ component, digest: record.digest, source: record });
+  }
+  if (neverRan.length > 0) {
+    return {
+      error: `release ${name} never deployed ${neverRan.map((c) => `"${c}"`).join(", ")} to "${env}", so no recorded digest can be restored; ` +
+        `promote it instead: chant components promote --to ${env} --release ${name}`,
+    };
+  }
+  if (items.length === 0) return { error: `release ${name} has no component declared in this checkout` };
+  const current = latestPerComponent(records);
+  const already = items.every((i) => {
+    const now = current.get(i.component);
+    return now !== undefined && now.releaseDigest === release.releaseDigest && now.digest === i.digest && !input.unsettled?.has(i.component);
+  });
+  if (already) {
+    return { error: `"${env}" already runs release ${name}; nothing to roll back. After a deploy that failed partway, chant components redeploy puts a component's release back` };
+  }
+  return { from: env, to: env, items, notPromoted };
 }
 
 /**

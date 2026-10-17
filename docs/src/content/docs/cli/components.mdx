@@ -30,7 +30,8 @@ chant components promote --to <env> [--from <env>] [--allow-skip]
                                  | --digest <component>=<sha256:...> ...]
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>] [--events-json]
-chant components rollback <env> --component <name> [--digest <sha256:...>]
+chant components rollback <env> (--component <name> [--digest <sha256:...>]
+                                 | --release <label|digest>)
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>] [--events-json]
 chant components redeploy <env> --component <name> [--digest <sha256:...>]
@@ -462,12 +463,13 @@ The refusals carry a stable code in square brackets at the end of the message:
 
 ### `components rollback <env>`
 
-Redeploy an earlier release of one component in `<env>` from the digest its release record carries.
+Redeploy an earlier release of one component in `<env>` from the digest its release record carries. With `--release`, redeploy every component of an earlier [release](/chant/cli/release/) at once.
 
 ```bash
 chant components rollback prod --component search-service --dry-run
 chant components rollback prod --component search-service
 chant components rollback prod --component search-service --digest sha256:4c1e0b...
+chant components rollback prod --release v1.4.0
 ```
 
 By default the rollback restores the newest release in `<env>`'s ledger with a digest other than the current one. A redeploy of the current digest therefore does not count as an earlier release. With `--digest`, it restores the latest release that recorded that digest instead. Naming the digest that is already current, or one the ledger never recorded for the component, is refused before anything runs.
@@ -491,10 +493,29 @@ This is a different mechanism from the saga unwind inside a single run, which un
 
 A rollback always moves to a release other than the current one, so it cannot recover from a deploy that failed partway. A failed deploy records nothing, and the ledger still names the last good release as current while the environment may be running part of the failed one. [`components redeploy`](#components-redeploy-env) puts the current release back. The same applies when a rollback itself fails: the ledger still names the release that was current before it.
 
+A rollback or a redeploy that would put back a release cut from a revoked commit is refused before anything runs, with `release-revoked`, as `promote --release` refuses one ([#4033](https://github.com/INTENTIUS/chant/issues/4033)). The refusal names a release to restore instead: the newest one `<env>` ran that is still kept and not revoked.
+
+#### Rolling back a release
+
+`--release <label|digest>` restores every component of an earlier release in one run ([#4035](https://github.com/INTENTIUS/chant/issues/4035)). It is a promote of that release into `<env>`, and it runs the way [`promote --release`](#components-promote) runs:
+
+- Each component of the release is restored at the newest record in `<env>`'s ledger that names the release, so the digest deployed is the one `<env>` ran from it. Its deploy reads the templates the release recorded for `<env>`, checked against their digests.
+- When a composition declares a gate, the release's change set is planned against what `<env>` runs now and stored on `chant/lifecycle`, and every gate binds it under the op `release`. An approval of it counts only for this release and `<env>`, and an empty change set passes without one.
+- One change set covers the whole rollback, so one approval passes it.
+
+A release that `<env>` never ran one of its components from is refused, since no recorded digest says what to restore; promote it instead. A release `<env>` already runs is refused, unless a run left one of its components failed or gated (see [When a deploy applies partly](#when-a-deploy-applies-partly)). Then the rollback is what puts that component back, and the component is a hole in the change set, so its gate waits for an approval. A revoked release is refused with `release-revoked`. A component of the release this checkout does not declare is listed and left alone. `--release` takes neither `--component` nor `--digest`.
+
+#### When a deploy applies partly
+
+A promote, rollback or redeploy that deploys some components and not others, or fails on one, appends a deploy outcome to `<env>/outcomes.jsonl` on `chant/lifecycle`, beside the environment's `releases.jsonl` and under the same member prefix ([#4035](https://github.com/INTENTIUS/chant/issues/4035)). It names each component the run planned and what happened to it: `deployed`, `failed`, `gated` (stopped at a gate after the steps before it ran) or `not-run`, with the digest and release the run was deploying. A run that stops at a gate before deploying anything writes none, because the environment did not change. The command prints which components ended which way and the redeploy line for each one it left failed or gated, and `--json` gains `outcome`.
+
+[`chant workspace status`](/chant/cli/workspace-status/#mixed-environments) reads the outcomes with the ledger and shows the environment as mixed until each of those components has a newer release record: a redeploy, a rollback, or the same command run again.
+
 | Flag | Meaning |
 |---|---|
-| `--component <name>` | Required. The component to roll back. |
-| `--digest <sha256:...>` | Restore the release that recorded this digest, rather than the one before the current release. |
+| `--component <name>` | The component to roll back. Required unless `--release` is given. |
+| `--digest <sha256:...>` | Restore the release that recorded this digest, rather than the one before the current release. Needs `--component`. |
+| `--release <label\|digest>` | Restore every component of that release through the release gate. See [Rolling back a release](#rolling-back-a-release). |
 | `--dry-run` | Print the release that would be restored and the steps that will not run, and deploy nothing. |
 | `--json` | Emit the plan, the run result and the record written as one JSON document on stdout. |
 | `--seed-outputs <file>` | Load outputs from dependencies. Repeatable. |
@@ -526,7 +547,7 @@ A successful redeploy appends a record to `<env>`'s ledger that carries the curr
 }
 ```
 
-A redeploy that fails records nothing, like any other deploy, and can be run again.
+A redeploy that fails writes no release record, like any other deploy, and can be run again. It does append a deploy outcome naming the component failed, so the environment reads as mixed until the component is recorded again (see [When a deploy applies partly](#when-a-deploy-applies-partly)).
 
 | Flag | Meaning |
 |---|---|

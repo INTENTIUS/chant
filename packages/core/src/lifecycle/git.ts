@@ -555,15 +555,30 @@ export async function appendReleaseRecordLine(
   recordJson: string,
   opts?: { cwd?: string },
 ): Promise<string> {
-  const filename = "releases.jsonl";
+  return appendLedgerLine(environment, "releases.jsonl", recordJson, "Release record", opts);
+}
 
+/**
+ * Append one line to `<environment>/<filename>` on the orphan branch, with
+ * the same read, append and compare-and-swap retry as
+ * {@link appendReleaseRecordLine}. The deploy outcomes of
+ * ../lifecycle/deploy-outcome.ts (#4035) are appended through here, beside
+ * the environment's `releases.jsonl`.
+ */
+export async function appendLedgerLine(
+  environment: string,
+  filename: string,
+  recordJson: string,
+  commitMessage: string,
+  opts?: { cwd?: string },
+): Promise<string> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= WRITE_BLOB_RETRY_ATTEMPTS; attempt++) {
     try {
       const priorSha = await readPathSha(environment, filename, opts);
       const existing = priorSha ? await readBlobBySha(priorSha, opts) : null;
       const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${recordJson}\n`;
-      return await writeBlobToPath(environment, filename, content, "Release record", {
+      return await writeBlobToPath(environment, filename, content, commitMessage, {
         ...opts,
         expectPriorPathSha: priorSha,
       });

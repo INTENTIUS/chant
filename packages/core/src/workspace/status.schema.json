@@ -958,6 +958,59 @@
               }
             }
           ]
+        },
+        "mixed": { "$ref": "#/$defs/mixed" }
+      }
+    },
+    "mixed": {
+      "type": "object",
+      "description": "Added in contract 1 by #4035, written by chant 0.124.29 and newer. Set when the environment runs a mix: a components promote, rollback or redeploy left a component failed or gated (its <env>/outcomes.jsonl on chant/lifecycle says so) and the release ledger has recorded nothing for it since, or the latest records of its components name more than one release, a record of no release counting as one, with at least one naming a release. Derived when read. Absent otherwise.",
+      "required": ["components", "redeploy", "rollback"],
+      "properties": {
+        "components": {
+          "description": "Every component the ledger records in the environment or a run left unsettled, sorted by name.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["component", "digest", "releaseDigest", "releaseLabel", "state", "attempt"],
+            "properties": {
+              "component": { "type": "string" },
+              "digest": { "type": ["string", "null"], "description": "The digest the release ledger records the component running, or null when it has no record in the environment." },
+              "releaseDigest": { "type": ["string", "null"], "description": "The release that record names, or null." },
+              "releaseLabel": { "type": ["string", "null"], "description": "That release's label, or null." },
+              "state": {
+                "enum": ["settled", "failed", "gated"],
+                "description": "settled: the record is what the component runs. failed or gated: the newest run that named it failed on it or stopped at its gate after the steps before the gate ran, and nothing has been recorded for it since, so what it runs is not known."
+              },
+              "attempt": {
+                "description": "For an unsettled component, the run that left it so and what it was deploying. Null when settled.",
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["verb", "runId", "timestamp", "digest", "releaseDigest", "releaseLabel"],
+                    "properties": {
+                      "verb": { "enum": ["promote", "rollback", "redeploy"] },
+                      "runId": { "type": "string" },
+                      "timestamp": { "type": "string" },
+                      "digest": { "type": "string" },
+                      "releaseDigest": { "type": ["string", "null"] },
+                      "releaseLabel": { "type": ["string", "null"] }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "redeploy": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "chant components redeploy <env> --component <component> for each unsettled component the ledger records, run in the member's directory: it puts the component's recorded release back. Empty when no component is unsettled."
+        },
+        "rollback": {
+          "type": ["string", "null"],
+          "description": "chant components rollback <env> --release <label|digest>, run in the member's directory: it restores every component of the newest release the environment ran, other than the one it was moving to, that is still kept and not revoked. Null when there is none."
         }
       }
     },
@@ -1005,7 +1058,7 @@
               "properties": {
                 "releaseDigest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "The revoked release the environment runs." },
                 "label": { "type": ["string", "null"], "description": "The release's label, or null when its cuts gave it none." },
-                "rollback": { "type": "string", "description": "The line that rolls the component back to the release before this one, run in the member's directory: chant components rollback <env> --component <component>." }
+                "rollback": { "type": "string", "description": "The line that rolls the environment back, run in the member's directory. Since #4035 (chant 0.124.29): chant components rollback <env> --release <label|digest>, naming the newest release the environment ran before this one that is still kept and not revoked. When there is none, and from chant 0.124.28: chant components rollback <env> --component <component>." }
               }
             }
           ]

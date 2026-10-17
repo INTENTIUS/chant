@@ -12,6 +12,13 @@
  * failed or stopped at a gate, so the ledger never misses a deploy that
  * happened. Unlike an auto-recorded release, the record is what these
  * commands are for, so a failed write is an error rather than a warning.
+ * A run that applied partly, or failed, also appends a deploy outcome
+ * (#4035, ../../lifecycle/deploy-outcome.ts) naming what it did to each
+ * component, so `workspace status` reads the environment as mixed.
+ *
+ * `rollback --release` (#4035) is a promote of an earlier release into the
+ * environment: every component of the release at the digest the environment
+ * ran from it, through the release gate `promote --release` binds (#4045).
  */
 
 import { resolve } from "node:path";
@@ -38,6 +45,7 @@ import {
   parseDigestPins,
   planPromotion,
   planRollback,
+  planReleaseRollback,
   planRedeploy,
   withoutBuildSteps,
   runPromotion,
@@ -59,11 +67,12 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
+import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 
 const PROMOTE_USAGE =
   "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
-  "chant components rollback <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
+  "chant components rollback <env> (--component <name> [--digest <sha256:...>] | --release <label|digest>) [--dry-run] [--json]";
 const REDEPLOY_USAGE =
   "chant components redeploy <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 
@@ -171,7 +180,8 @@ async function bindReleaseGate(input: {
 
   // What the environment runs now, to compare each component with.
   const { readRelease } = await import("../../lifecycle/release-store");
-  const latest = latestPerComponent((await readLedger(env)).filter((r) => r.env === env));
+  const envRecords = (await readLedger(env)).filter((r) => r.env === env);
+  const latest = latestPerComponent(envRecords);
   const releases = new Map<string, import("../../lifecycle/release-store").Release | null>();
   const current = new Map<string, import("../../components/release-gate").CurrentDeploy>();
   for (const item of plan.items) {
@@ -182,6 +192,13 @@ async function bindReleaseGate(input: {
     current.set(item.component, { record, release: named !== undefined ? (releases.get(named) ?? null) : null });
   }
 
+  // #4035: a component a run left failed or gated runs something the ledger doesn't say.
+  const { readDeployOutcomes } = await import("../../lifecycle/deploy-outcome");
+  const unsettled = new Map<string, string>();
+  for (const [component, u] of unsettledComponents(envRecords, await readDeployOutcomes(env).catch(() => []))) {
+    unsettled.set(component, `the ${u.outcome.verb} run ${u.outcome.runId} left ${component} ${u.state} in "${env}" and nothing has been recorded for it since, so what it runs is not known`);
+  }
+
   const doc = await gate.planReleaseChangeSet({
     release: under.release,
     env,
@@ -189,6 +206,7 @@ async function bindReleaseGate(input: {
     digests: new Map(plan.items.map((i) => [i.component, i.digest])),
     registry: input.registry,
     current,
+    unsettled,
     seededOutputs: input.seededOutputs,
   });
   const provisional = gate.provisionalMembers(doc);
@@ -423,7 +441,11 @@ async function deployPlan(
   const timestamp = new Date().toISOString();
   const recorded: ReleaseRecord[] = [];
   let recordError: string | undefined;
-  if (deployed.length > 0) {
+  // #4035: a run that applied partly, or failed, records what it did to each
+  // component, so the environment reads as mixed until it is settled.
+  const { deployOutcomeOf, appendDeployOutcome } = await import("../../lifecycle/deploy-outcome");
+  const outcome = deployOutcomeOf({ verb, plan, run, releaseDigest: under?.release.releaseDigest ?? null, runId, timestamp, actor: actor! });
+  if (deployed.length > 0 || outcome) {
     try {
       for (const item of deployed) {
         const result = run.results.find((r) => r.component === item.component);
@@ -433,6 +455,7 @@ async function deployPlan(
         const { record: written } = await appendReleaseRecord(under ? { ...input, releaseDigest: under.release.releaseDigest } : input);
         recorded.push(written);
       }
+      if (outcome) await appendDeployOutcome(outcome);
       await pushLifecycle();
     } catch (err) {
       recordError = err instanceof Error ? err.message : String(err);
@@ -441,7 +464,7 @@ async function deployPlan(
 
   if (args.json) {
     const withChangeSet = under && changeSetJson ? { release: { ...releaseJson.release!, ...changeSetJson } } : releaseJson;
-    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, run, recorded }, null, 2));
+    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, run, recorded, ...(outcome ? { outcome } : {}) }, null, 2));
   } else {
     for (const r of recorded) {
       console.error(formatSuccess(
@@ -454,9 +477,20 @@ async function deployPlan(
     }
   }
 
+  if (outcome && recordError === undefined) {
+    const unsettled = outcome.components.filter((c) => c.outcome === "failed" || c.outcome === "gated");
+    console.error(formatWarning({
+      message: `"${plan.to}" now runs a mix: ${outcome.components.map((c) => `${c.component} ${c.outcome}`).join(", ")}. ` +
+        `chant workspace status ${plan.to} --json lists what each component runs and the rollback line`,
+    }));
+    for (const c of unsettled) console.error(formatInfo(`settle ${c.component}: ${redeployLine(plan.to, c.component)}, or run the same ${verb} again`));
+  }
+
   if (recordError !== undefined) {
     console.error(formatError({
-      message: `deployed to "${plan.to}", but the release record was not written: ${recordError}`,
+      message: deployed.length > 0
+        ? `deployed to "${plan.to}", but the release record was not written: ${recordError}`
+        : `the outcome of the ${verb} in "${plan.to}" was not written: ${recordError}`,
       hint: `Pull the chant/lifecycle branch and check \`chant components status ${plan.to}\` before running this again.`,
     }));
     return 1;
@@ -504,6 +538,115 @@ function actorOrRefuse(ctx: CommandContext): { actor: string | undefined } | num
     return 1;
   }
   return { actor };
+}
+
+/** The revoked commits, or the exit code of a refusal already printed when the ci tags can't be judged (#4033). */
+async function revokedOrRefuse(what: string): Promise<Map<string, import("../../lifecycle/release-revocation").ReleaseRevocation> | number> {
+  const { readRevokedCommits } = await import("../../lifecycle/release-revocation");
+  try {
+    return await readRevokedCommits(process.cwd());
+  } catch (err) {
+    console.error(formatError({
+      message: `the ci tags can't be judged, so whether ${what} is revoked is unknown: ${err instanceof Error ? err.message : String(err)} [declaration-invalid]`,
+      hint: "Fix ci.green in chant.workspace.json at base; chant workspace check names the problem.",
+    }));
+    return 1;
+  }
+}
+
+/**
+ * Resolve `--release` for a promote or a rollback to `env` (#4026, #4035):
+ * the release, its label and its target for `env`. Refused, with the exit
+ * code returned, when the release can't be found, has no target for `env`,
+ * is of a project with no components (#4046), or was cut from a revoked
+ * commit (#4033), so a gate pending for it can't pass.
+ */
+async function resolveUnderRelease(ref: string, env: string, verb: "promote" | "rollback", fix: (release: { releaseDigest: string }) => Promise<string> | string): Promise<UnderRelease | number> {
+  const { resolveRelease } = await import("../../lifecycle/release-store");
+  const { targetFor, isImplicitRelease } = await import("../../components/release-promote");
+  const found = await resolveRelease(ref);
+  if (!found) {
+    console.error(formatError({ message: `no release is labelled or digested "${ref}" in this member`, hint: "List them with: chant release list" }));
+    return 1;
+  }
+  const target = targetFor(found.release, env);
+  if ("error" in target) {
+    console.error(formatError({ message: target.error }));
+    return 1;
+  }
+  // #4046: a release of a project with no components records build output
+  // and no component, so there is no deploy step here to point at it.
+  if (isImplicitRelease(found.release)) {
+    const name = found.label ?? found.release.releaseDigest;
+    console.error(formatError({
+      message: `release ${name} is of a project with no components, so ${verb} has no component to deploy`,
+      hint: `Write its "${env}" build output with \`chant release export ${name} --env ${env}\`, then run the project's own deploy against those files.`,
+    }));
+    return 1;
+  }
+  // #4033 (ws-105): a release cut from a revoked commit is never deployed,
+  // so a gate pending for it can't pass. Read from local tags, as the cut reads them.
+  const revoked = await revokedOrRefuse(`release ${found.label ?? found.release.releaseDigest}`);
+  if (typeof revoked === "number") return revoked;
+  const { revocationOf, revokedRefusal } = await import("../../lifecycle/release-revocation");
+  const revocation = revocationOf(found.release, revoked);
+  if (revocation) {
+    console.error(formatError(revokedRefusal({ releaseDigest: found.release.releaseDigest, label: found.label }, revocation, await fix(found.release))));
+    return 1;
+  }
+  return { release: found.release, label: found.label, target: target.target };
+}
+
+/**
+ * The line that rolls `env` back past `exclude` (#4035): to the newest
+ * release in its ledger that is still kept and not revoked, by label, or
+ * null when there is none.
+ */
+async function rollbackLineFor(env: string, records: readonly ReleaseRecord[], exclude: ReadonlySet<string>, revoked: ReadonlyMap<string, import("../../lifecycle/release-revocation").ReleaseRevocation>): Promise<string | null> {
+  const { readRelease, readCuts, labelsByDigest } = await import("../../lifecycle/release-store");
+  const { revocationOf } = await import("../../lifecycle/release-revocation");
+  const target = await rollbackTarget({
+    records,
+    exclude,
+    check: async (digest) => {
+      const release = await readRelease(digest).catch(() => null);
+      return { kept: release !== null, revoked: release !== null && revocationOf(release, revoked) !== null };
+    },
+  });
+  if (!target) return null;
+  const labels = await readCuts().then((c) => labelsByDigest(c.cuts), () => new Map<string, string>());
+  return releaseRollbackLine(env, target, labels.get(target));
+}
+
+/**
+ * Refuse a rollback or a redeploy that would put back a release cut from a
+ * revoked commit (#4033, #4035), naming the release to go back to instead.
+ * Returns the exit code of the refusal, or undefined when nothing restored
+ * names a revoked release.
+ */
+async function refuseRevokedRestore(verb: "rollback" | "redeploy", plan: PromotionPlan, records: readonly ReleaseRecord[]): Promise<number | undefined> {
+  const named = [...new Set(plan.items.map((i) => i.source.releaseDigest).filter((d): d is string => d !== undefined))];
+  if (named.length === 0) return undefined;
+  const revoked = await revokedOrRefuse(`the release this ${verb} restores`);
+  if (typeof revoked === "number") return revoked;
+  if (revoked.size === 0) return undefined;
+  const { readRelease, readCuts, labelsByDigest } = await import("../../lifecycle/release-store");
+  const { revocationOf, revokedRefusal } = await import("../../lifecycle/release-revocation");
+  for (const digest of named) {
+    const release = await readRelease(digest).catch(() => null);
+    const revocation = release ? revocationOf(release, revoked) : null;
+    if (!revocation) continue;
+    const labels = await readCuts().then((c) => labelsByDigest(c.cuts), () => new Map<string, string>());
+    const back = await rollbackLineFor(plan.to, records, new Set([digest]), revoked);
+    console.error(formatError(revokedRefusal(
+      { releaseDigest: digest, label: labels.get(digest) ?? null },
+      revocation,
+      back ? `Restore a release cut from a green commit instead: ${back}` : `No other release "${plan.to}" ran is kept and green; promote a release cut from a green commit (\`chant ci last-green\` names the newest).`,
+    )));
+    console.error(formatError({ message: "nothing was deployed" }));
+    return 1;
+  }
+  return undefined;
 }
 
 export async function runComponentsPromote(ctx: CommandContext): Promise<number> {
@@ -560,51 +703,11 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   // #4026: --release names the release this promote deploys, by label or digest.
   let under: UnderRelease | undefined;
   if (args.release) {
-    const { resolveRelease } = await import("../../lifecycle/release-store");
-    const { targetFor, isImplicitRelease } = await import("../../components/release-promote");
-    const found = await resolveRelease(args.release);
-    if (!found) {
-      console.error(formatError({ message: `no release is labelled or digested "${args.release}" in this member`, hint: "List them with: chant release list" }));
-      return 1;
-    }
-    const target = targetFor(found.release, to);
-    if ("error" in target) {
-      console.error(formatError({ message: target.error }));
-      return 1;
-    }
-    // #4046: a release of a project with no components records build output
-    // and no component, so there is no deploy step here to point at it.
-    if (isImplicitRelease(found.release)) {
-      const name = found.label ?? found.release.releaseDigest;
-      console.error(formatError({
-        message: `release ${name} is of a project with no components, so promote has no component to deploy`,
-        hint: `Write its "${to}" build output with \`chant release export ${name} --env ${to}\`, then run the project's own deploy against those files.`,
-      }));
-      return 1;
-    }
-    // #4033 (ws-105): a release cut from a revoked commit is never deployed,
-    // so a gate pending for it can't pass. Read from local tags, as the cut reads them.
-    const { readRevokedCommits, revocationOf, revokedRefusal } = await import("../../lifecycle/release-revocation");
-    let revoked: Awaited<ReturnType<typeof readRevokedCommits>>;
-    try {
-      revoked = await readRevokedCommits(process.cwd());
-    } catch (err) {
-      console.error(formatError({
-        message: `the ci tags can't be judged, so whether release ${found.label ?? found.release.releaseDigest} is revoked is unknown: ${err instanceof Error ? err.message : String(err)} [declaration-invalid]`,
-        hint: "Fix ci.green in chant.workspace.json at base; chant workspace check names the problem.",
-      }));
-      return 1;
-    }
-    const revocation = revocationOf(found.release, revoked);
-    if (revocation) {
-      console.error(formatError(revokedRefusal(
-        { releaseDigest: found.release.releaseDigest, label: found.label },
-        revocation,
-        "Promote a release cut from a green commit: `chant ci last-green` names the newest, and `chant release list` marks the revoked releases. Fetch the tags first: git fetch origin --tags",
-      )));
-      return 1;
-    }
-    under = { release: found.release, label: found.label, target: target.target };
+    const found = await resolveUnderRelease(args.release, to, "promote", () =>
+      "Promote a release cut from a green commit: `chant ci last-green` names the newest, and `chant release list` marks the revoked releases. Fetch the tags first: git fetch origin --tags",
+    );
+    if (typeof found === "number") return found;
+    under = found;
   }
 
   const plan = planPromotion({
@@ -626,29 +729,77 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
 export async function runComponentsRollback(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const env = args.extraPositional;
-  if (!env || !args.component) {
-    console.error(formatError({ message: "an environment and --component <name> are required", hint: ROLLBACK_USAGE }));
+  if (!env || (!args.component && !args.release)) {
+    console.error(formatError({ message: "an environment and --component <name> or --release <label|digest> are required", hint: ROLLBACK_USAGE }));
+    return 1;
+  }
+  if (args.component && args.release) {
+    console.error(formatError({ message: "--release rolls back every component of a release, so it does not take --component", hint: ROLLBACK_USAGE }));
+    return 1;
+  }
+  if (args.release && args.digest) {
+    console.error(formatError({ message: "--digest picks one release of one component, so it needs --component, not --release", hint: ROLLBACK_USAGE }));
     return 1;
   }
   const who = actorOrRefuse(ctx);
   if (typeof who === "number") return who;
+  if (args.release) return runReleaseRollback(ctx, env, args.release, who.actor);
 
-  const project = await loadProject(ctx, args.component);
+  const project = await loadProject(ctx, args.component!);
   if (typeof project === "number") return project;
 
   await fetchLifecycle().catch(() => false);
+  const records = await readLedger(env);
   const plan = planRollback({
     env,
-    records: await readLedger(env),
+    records,
     declared: project.targets.map((c) => c.name),
-    component: args.component,
+    component: args.component!,
     ...(args.digest ? { digest: args.digest } : {}),
   });
   if ("error" in plan) {
     console.error(formatError({ message: plan.error, hint: ROLLBACK_USAGE }));
     return 1;
   }
+  const refused = await refuseRevokedRestore("rollback", plan, records);
+  if (refused !== undefined) return refused;
   return deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord);
+}
+
+/**
+ * `chant components rollback <env> --release <label|digest>` (#4035): a
+ * gated promote of an earlier release into `env`. Every component of the
+ * release is restored at the digest `env` recorded running it from that
+ * release, its deploy reads the templates the release recorded for `env`,
+ * and its gates bind the release's change set planned against what `env`
+ * runs now, as `promote --release` binds them (#4045).
+ */
+async function runReleaseRollback(ctx: CommandContext, env: string, ref: string, actor: string | undefined): Promise<number> {
+  const project = await loadProject(ctx, "all");
+  if (typeof project === "number") return project;
+  await fetchLifecycle().catch(() => false);
+  const records = await readLedger(env);
+  const under = await resolveUnderRelease(ref, env, "rollback", async (release) => {
+    const revoked = await revokedOrRefuse("the release before it").then((r) => (typeof r === "number" ? new Map() : r));
+    const back = await rollbackLineFor(env, records, new Set([release.releaseDigest]), revoked);
+    return back ? `Roll back to a release cut from a green commit: ${back}` : "Roll back to a release cut from a green commit; `chant release list` marks the revoked releases.";
+  });
+  if (typeof under === "number") return under;
+  const { readDeployOutcomes } = await import("../../lifecycle/deploy-outcome");
+  const outcomes = await readDeployOutcomes(env).catch(() => []);
+  const plan = planReleaseRollback({
+    env,
+    records,
+    declared: project.targets.map((c) => c.name),
+    release: under.release,
+    label: under.label,
+    unsettled: new Set(unsettledComponents(records, outcomes).keys()),
+  });
+  if ("error" in plan) {
+    console.error(formatError({ message: plan.error, hint: ROLLBACK_USAGE }));
+    return 1;
+  }
+  return deployPlan(ctx, "rollback", plan, project, actor, rollbackRecord, under);
 }
 
 export async function runComponentsRedeploy(ctx: CommandContext): Promise<number> {
@@ -665,9 +816,10 @@ export async function runComponentsRedeploy(ctx: CommandContext): Promise<number
   if (typeof project === "number") return project;
 
   await fetchLifecycle().catch(() => false);
+  const records = await readLedger(env);
   const plan = planRedeploy({
     env,
-    records: await readLedger(env),
+    records,
     declared: project.targets.map((c) => c.name),
     component: args.component,
     ...(args.digest ? { digest: args.digest } : {}),
@@ -676,5 +828,7 @@ export async function runComponentsRedeploy(ctx: CommandContext): Promise<number
     console.error(formatError({ message: plan.error, hint: REDEPLOY_USAGE }));
     return 1;
   }
+  const refused = await refuseRevokedRestore("redeploy", plan, records);
+  if (refused !== undefined) return refused;
   return deployPlan(ctx, "redeploy", plan, project, who.actor, redeployRecord);
 }
