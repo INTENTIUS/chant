@@ -57,12 +57,14 @@ export function splitSignedCommit(raw: Buffer, header = "gpgsig"): SignedCommit 
   return { payload, signature: sig.length > 0 ? sig.join("\n") + "\n" : undefined };
 }
 
-function objectFormat(repo: string): string {
-  try {
-    return execFileSync("git", ["rev-parse", "--show-object-format"], { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
-    return "sha1";
-  }
+/**
+ * The signature header of a raw commit object, by its object format, which
+ * shows in the length of its tree id. Read from the object itself, so judging
+ * a commit starts no `git rev-parse` (#4032).
+ */
+function signatureHeader(raw: Buffer): "gpgsig" | "gpgsig-sha256" {
+  const tree = /^tree ([0-9a-f]+)$/m.exec(raw.subarray(0, 200).toString("latin1"))?.[1];
+  return tree?.length === 64 ? "gpgsig-sha256" : "gpgsig";
 }
 
 /** Run ssh-keygen; `missing` is true when it is not installed. Shared with the verdict seals (./seal.ts). */
@@ -117,14 +119,13 @@ export const sshCommitAttestor: CommitAttestor = {
     const hit = cache.get(memo);
     if (hit) return hit;
     const raw = execFileSync("git", ["cat-file", "commit", commit], { cwd: ctx.repo, maxBuffer: 64 * 1024 * 1024 });
-    const answer = judgeRaw(raw, objectFormat(ctx.repo) === "sha256" ? "gpgsig-sha256" : "gpgsig", signers);
+    const answer = judgeRaw(raw, signatureHeader(raw), signers);
     cache.set(memo, answer);
     return answer;
   },
   attestRaw(ctx: AttestorContext, raw: Buffer): CommitAttestation {
     // A commit from another repository: its object format shows in its tree line.
-    const tree = /^tree ([0-9a-f]+)$/m.exec(raw.subarray(0, 200).toString("latin1"))?.[1];
-    return judgeRaw(raw, tree?.length === 64 ? "gpgsig-sha256" : "gpgsig", ctx.policy.signers);
+    return judgeRaw(raw, signatureHeader(raw), ctx.policy.signers);
   },
 };
 

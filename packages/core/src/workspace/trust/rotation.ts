@@ -256,15 +256,24 @@ export function signerHistory(repo: string, base: string, signersPath: string): 
   return { versions };
 }
 
+/** A full commit id, as git prints it: lowercase hex, sha1 or sha256. */
+const FULL_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 /**
  * Finds the signer set in effect for a commit, by its position in the base's
- * history. Built once per base; the first-parent line is read once and
- * each lookup is a binary search.
+ * history. Built once per base. The first-parent line and the parents of
+ * every commit the base reaches are read once, in two `git rev-list` walks,
+ * and each lookup of a full commit id is then a map read (#4032). Before,
+ * each lookup ran `git merge-base --is-ancestor` about log2(n) times, and a
+ * trace over a busy file spent most of its time starting those processes. A
+ * commit named any other way (a ref, an abbreviated id) is still looked up
+ * with `git merge-base`, as before.
  */
 export class SignerPositions {
   private line: string[] | undefined;
   private index = new Map<string, number>();
   private memo = new Map<string, SignerVersion | null>();
+  private entries: Map<string, number> | undefined;
 
   constructor(
     private readonly repo: string,
@@ -291,21 +300,39 @@ export class SignerPositions {
   }
 
   /**
-   * The version that judges `commit`, or null when no signer set was in
-   * effect there (before the first one, or the chain is broken).
+   * For every commit the base reaches, the index on the first-parent line
+   * (newest first) of the oldest first-parent commit that contains it: where
+   * it came in. The line is walked oldest first, and each first-parent commit
+   * marks what it reaches that nothing older reached. A marked commit's
+   * ancestors are all marked, so the walk stops at one.
    */
-  versionFor(commit: string): SignerVersion | null {
-    const hit = this.memo.get(commit);
-    if (hit !== undefined) return hit;
-    const answer = this.lookup(commit);
-    this.memo.set(commit, answer);
-    return answer;
+  private entryIndex(): Map<string, number> {
+    if (!this.entries) {
+      const line = this.firstParents();
+      const parents = new Map<string, string[]>();
+      for (const row of git(this.repo, ["rev-list", "--parents", this.base]).split("\n")) {
+        const [commit, ...ps] = row.trim().split(" ");
+        if (commit) parents.set(commit, ps);
+      }
+      const entries = new Map<string, number>();
+      for (let i = line.length - 1; i >= 0; i--) {
+        const stack = [line[i]];
+        while (stack.length > 0) {
+          const c = stack.pop()!;
+          if (entries.has(c)) continue;
+          entries.set(c, i);
+          for (const p of parents.get(c) ?? []) if (!entries.has(p)) stack.push(p);
+        }
+      }
+      this.entries = entries;
+    }
+    return this.entries;
   }
 
-  private lookup(commit: string): SignerVersion | null {
-    if (this.history.broken) return null;
-    const latest = this.history.versions.at(-1) ?? null;
-    if (!this.isAncestor(commit, this.base)) return latest;
+  /** Where `commit` came in on the first-parent line, or null when the base doesn't reach it. */
+  private entryOf(commit: string): number | null {
+    if (FULL_ID.test(commit)) return this.entryIndex().get(commit) ?? null;
+    if (!this.isAncestor(commit, this.base)) return null;
     const line = this.firstParents();
     // The oldest first-parent commit that contains `commit` is where it came in.
     let lo = 0;
@@ -320,6 +347,26 @@ export class SignerPositions {
         hi = mid - 1;
       }
     }
+    return at;
+  }
+
+  /**
+   * The version that judges `commit`, or null when no signer set was in
+   * effect there (before the first one, or the chain is broken).
+   */
+  versionFor(commit: string): SignerVersion | null {
+    const hit = this.memo.get(commit);
+    if (hit !== undefined) return hit;
+    const answer = this.lookup(commit);
+    this.memo.set(commit, answer);
+    return answer;
+  }
+
+  private lookup(commit: string): SignerVersion | null {
+    if (this.history.broken) return null;
+    const latest = this.history.versions.at(-1) ?? null;
+    const at = this.entryOf(commit);
+    if (at === null) return latest;
     // The newest version made strictly before that commit.
     let best: SignerVersion | null = null;
     let bestIndex = Infinity;

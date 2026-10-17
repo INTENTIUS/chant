@@ -772,9 +772,56 @@ export function windowOpening(top: string, rev: string, view: Pick<RecordView, "
   return view.decidedIn?.sha ?? addingCommit(top, rev, view.path);
 }
 
-/** `commit` and every commit between it and `rev` that has it as an ancestor. */
+/** A full commit id, as git prints it: lowercase hex, sha1 or sha256. */
+const FULL_COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * The children of every commit `rev` reaches, from one `git rev-list
+ * --parents` walk (#4032). Kept in memory for the last repository and commit
+ * read, since a walk asks for the windows of many records at one revision. A
+ * commit id names the same history for good, so the entry never goes stale.
+ */
+let childIndex: { key: string; children: Map<string, string[]> } | undefined;
+
+function childrenWithin(top: string, rev: string): Map<string, string[]> | undefined {
+  const key = `${top}\0${rev}`;
+  if (childIndex?.key === key) return childIndex.children;
+  const text = tryGit(top, ["rev-list", "--parents", rev]);
+  if (text === undefined) return undefined;
+  const children = new Map<string, string[]>();
+  for (const row of text.split("\n")) {
+    const [commit, ...parents] = row.trim().split(" ");
+    if (!commit) continue;
+    for (const p of parents) {
+      const list = children.get(p);
+      if (list) list.push(commit);
+      else children.set(p, [commit]);
+    }
+  }
+  childIndex = { key, children };
+  return children;
+}
+
+/**
+ * `commit` and every commit between it and `rev` that has it as an ancestor:
+ * what `git rev-list --ancestry-path <commit>..<rev>` lists, plus `commit`.
+ * With full commit ids it is read from the children of what `rev` reaches,
+ * walked once per revision, instead of one `git rev-list` per record (#4032).
+ */
 export function descendants(top: string, commit: string, rev: string): Set<string> {
   const out = new Set<string>([commit]);
+  const children = FULL_COMMIT_ID.test(commit) && FULL_COMMIT_ID.test(rev) ? childrenWithin(top, rev) : undefined;
+  if (children) {
+    const stack = [commit];
+    while (stack.length > 0) {
+      for (const c of children.get(stack.pop()!) ?? []) {
+        if (out.has(c)) continue;
+        out.add(c);
+        stack.push(c);
+      }
+    }
+    return out;
+  }
   const text = tryGit(top, ["rev-list", "--ancestry-path", `${commit}..${rev}`]);
   for (const line of (text ?? "").split("\n")) if (line.trim()) out.add(line.trim());
   return out;

@@ -129,6 +129,9 @@ jobs:
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
+        with:
+          # Whole history, for the trace budget step (#4032): a trace reads a region's commits and blame.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -232,6 +235,18 @@ jobs:
           test -s sbom.spdx.json
           test -s config-bom.spdx.json
           rm -f result.json sbom.spdx.json config-bom.spdx.json
+
+      # #4032: a single-resource trace (`workspace graph --intent <region>`)
+      # may take at most twice as long as `workspace status --json` on the
+      # same runner, median of 5 runs of each, interleaved. The trace judges
+      # each commit's signature by the signer policy at base, which it finds
+      # at origin/HEAD; actions/checkout doesn't set that ref, so it is set
+      # here from the fetched main, without the network. About 1.5 minutes.
+      - name: Trace time budget (#4032)
+        run: |
+          set -o pipefail
+          git remote set-head origin main
+          npx tsx scripts/bench-trace.ts | tee -a "$GITHUB_STEP_SUMMARY"
 
       # #2817: each run's length in its summary, so drift shows before it
       # becomes a timeout.
