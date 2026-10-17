@@ -1,0 +1,326 @@
+{
+  "$comment": "Ledger lines as chant 0.124.27 and older producers wrote them, before #4020 (gitSha and runOrigin on run records, gitSha and runId on gate lines, admission on deploy records), #4043 (releaseDigest on deploy records), #4045 (releaseDigest and empty on gate lines) and #4046 (implicit releases) added their fields. Data only: workspace/older-records.test.ts writes each file to the chant/lifecycle branch of a temp repo and reads it through the real readers (INTENTIUS/chant#4034). Every entry names the producer that wrote its shape and the source it was taken from. The values are made up. The keys, and which keys are present, are what each producer wrote.",
+  "files": {
+    "staging/releases.jsonl": [
+      {
+        "producer": "chant components release (a CI job)",
+        "source": "packages/core/src/cli/handlers/components.ts at 162e1602c^ (the appendReleaseRecord call in the release handler): component, env, digest, gitSha, runId, runOrigin from resolveRunId, timestamp, actor; no approver because none was passed",
+        "line": {
+          "version": 1,
+          "component": "api",
+          "env": "staging",
+          "digest": "sha256:47e0cbb98c01f4a49e3450e8686ca069f23c3c13c2d49cf50a4c3513f01b6ed3",
+          "gitSha": "2f22765d04931a078909145ca628d2264c852d7d",
+          "runId": "8431209934",
+          "runOrigin": { "forge": "github", "repo": "acme/shop", "url": "https://github.com/acme/shop/actions/runs/8431209934" },
+          "timestamp": "2026-09-08T14:02:11.482Z",
+          "actor": "ci-bot"
+        }
+      },
+      {
+        "producer": "chant components release --approver (a person at a terminal)",
+        "source": "the same call with args.approver set (#1035) and no CI env, so resolveRunId minted a local id",
+        "line": {
+          "version": 1,
+          "component": "worker",
+          "env": "staging",
+          "digest": "sha256:fc653e205472032353d140e5cd5543e7d3e3de8dc2013b1a43e2f068a4260198",
+          "gitSha": "6b1f53303a732ccc8c6aae6640399827c15250e3",
+          "runId": "local-1788901200000",
+          "runOrigin": { "forge": "local" },
+          "timestamp": "2026-09-08T21:00:00.000Z",
+          "actor": "alice",
+          "approver": "bob"
+        }
+      },
+      {
+        "producer": "chant run --components (auto-release), a pinned helm deploy",
+        "source": "packages/core/src/components/auto-release.ts at 162e1602c^ (maybeRecordAutoRelease): the rendered digest in digest, the input-side digest in inputDigest (#1242, #1243); no approver and no admission, which run --components copied only from 0.124.28",
+        "line": {
+          "version": 1,
+          "component": "ingress",
+          "env": "staging",
+          "digest": "sha256:9ccd4fd27f728a7d88462fc94e6c8d901d1d2de3d5d0291ca99bccd462d8d3e4",
+          "gitSha": "a625406f6977d45c1391b078f4d3656e0b75bfcb",
+          "runId": "local-1788904800000",
+          "runOrigin": { "forge": "local" },
+          "timestamp": "2026-09-08T22:00:00.000Z",
+          "actor": "alice",
+          "inputDigest": "sha256:bc227a21bd89c5c2e7e971e001e538da4dff21e972059a914b38595400418ca1"
+        }
+      },
+      {
+        "producer": "SQL Yodeler (yodel apply)",
+        "source": "INTENTIUS/sql-yodeler at 8dacbec, src/release/index.ts recordRelease: component is the project directory in its repository or schema, digest is schemaSha of the recorded schema (test/release.test.ts holds the call), runId and runOrigin from resolveRunId, approver when a gate approved",
+        "line": {
+          "version": 1,
+          "component": "schema",
+          "env": "staging",
+          "digest": "sha256:69c1a029277e628cfd0386e730d5d8decf9414b4fde67b37c77efe32b7550804",
+          "gitSha": "e4666a670f042877c67a84473a71675ee0950a08",
+          "runId": "8431977120",
+          "runOrigin": { "forge": "github", "repo": "acme/warehouse", "url": "https://github.com/acme/warehouse/actions/runs/8431977120" },
+          "timestamp": "2026-09-09T08:30:00.000Z",
+          "actor": "acme-deploy",
+          "approver": "alice"
+        }
+      }
+    ],
+    "prod/releases.jsonl": [
+      {
+        "producer": "chant components release",
+        "source": "as the first staging entry; the build api went to prod first",
+        "line": {
+          "version": 1,
+          "component": "api",
+          "env": "prod",
+          "digest": "sha256:db88ccee4ed09c4324d896b8a0db6dab0091c76f579eab51e54656c40517866f",
+          "gitSha": "8dc29fc58c0bd99068c2e5c752aa61521d4f11ce",
+          "runId": "8399000111",
+          "runOrigin": { "forge": "github", "repo": "acme/shop", "url": "https://github.com/acme/shop/actions/runs/8399000111" },
+          "timestamp": "2026-09-01T10:00:00.000Z",
+          "actor": "ci-bot"
+        }
+      },
+      {
+        "producer": "chant components promote",
+        "source": "packages/core/src/components/promote.ts at 162e1602c^ (sharedRecord plus promotedFrom, #2530): the artifact is the staging record's own, and promotedFrom names the staging record by env, runId and timestamp",
+        "line": {
+          "version": 1,
+          "component": "api",
+          "env": "prod",
+          "digest": "sha256:47e0cbb98c01f4a49e3450e8686ca069f23c3c13c2d49cf50a4c3513f01b6ed3",
+          "gitSha": "2f22765d04931a078909145ca628d2264c852d7d",
+          "runId": "local-1788987600000",
+          "runOrigin": { "forge": "local" },
+          "timestamp": "2026-09-09T12:00:00.000Z",
+          "actor": "alice",
+          "approver": "bob",
+          "promotedFrom": { "env": "staging", "runId": "8431209934", "timestamp": "2026-09-08T14:02:11.482Z" }
+        }
+      },
+      {
+        "producer": "chant components rollback",
+        "source": "packages/core/src/op/activities/source-rollback.ts at 162e1602c^ and promote.ts rollbackRecord (#2531): the earlier release's digest again, with restores naming it",
+        "line": {
+          "version": 1,
+          "component": "api",
+          "env": "prod",
+          "digest": "sha256:db88ccee4ed09c4324d896b8a0db6dab0091c76f579eab51e54656c40517866f",
+          "gitSha": "8dc29fc58c0bd99068c2e5c752aa61521d4f11ce",
+          "runId": "local-1789074000000",
+          "runOrigin": { "forge": "local" },
+          "timestamp": "2026-09-10T12:00:00.000Z",
+          "actor": "alice",
+          "restores": { "env": "prod", "runId": "8399000111", "timestamp": "2026-09-01T10:00:00.000Z" }
+        }
+      },
+      {
+        "producer": "chant components redeploy",
+        "source": "promote.ts redeployRecord (#2604): the digest the ledger recorded as current, deployed again, with redeploys naming that record",
+        "line": {
+          "version": 1,
+          "component": "api",
+          "env": "prod",
+          "digest": "sha256:db88ccee4ed09c4324d896b8a0db6dab0091c76f579eab51e54656c40517866f",
+          "gitSha": "8dc29fc58c0bd99068c2e5c752aa61521d4f11ce",
+          "runId": "local-1789077600000",
+          "runOrigin": { "forge": "local" },
+          "timestamp": "2026-09-10T13:00:00.000Z",
+          "actor": "alice",
+          "redeploys": { "env": "prod", "runId": "local-1789074000000", "timestamp": "2026-09-10T12:00:00.000Z" }
+        }
+      },
+      {
+        "producer": "SQL Yodeler, a tenant",
+        "source": "recordRelease with env.tenant set: the component is schema/<tenant> and the ledger env is the tenant's env",
+        "line": {
+          "version": 1,
+          "component": "schema/acme",
+          "env": "prod",
+          "digest": "sha256:69c1a029277e628cfd0386e730d5d8decf9414b4fde67b37c77efe32b7550804",
+          "gitSha": "e4666a670f042877c67a84473a71675ee0950a08",
+          "runId": "8432100045",
+          "runOrigin": { "forge": "github", "repo": "acme/warehouse", "url": "https://github.com/acme/warehouse/actions/runs/8432100045" },
+          "timestamp": "2026-09-09T16:00:00.000Z",
+          "actor": "acme-deploy"
+        }
+      }
+    ],
+    "fly/releases.jsonl": [
+      {
+        "producer": "chud-studio (arugula-salad/studio), the release Op's Record phase",
+        "source": "template/delivery/ops/release.op.ts at studio 6e0e5d8 calls releaseRecord, chant's op/activities/source-release.ts, whose appendReleaseRecord call at 162e1602c^ wrote this shape: digest is the release plan's digest, gitSha the plan's, approver the gate's resolvedBy names",
+        "line": {
+          "version": 1,
+          "component": "app",
+          "env": "fly",
+          "digest": "sha256:65a540cde9fceddfc88c9a21750b256c99096ebe6ae31f4a8ff26e89712f67cf",
+          "gitSha": "2f22765d04931a078909145ca628d2264c852d7d",
+          "runId": "local-1788998400000",
+          "runOrigin": { "forge": "local" },
+          "timestamp": "2026-09-10T00:00:00.000Z",
+          "actor": "alex",
+          "approver": "alex"
+        }
+      }
+    ],
+    "fly/runs__release.jsonl": [
+      {
+        "producer": "chud-studio's release Op, first run, stopped at the ship gate",
+        "source": "packages/core/src/lifecycle/run-ledger.ts buildRunRecord at 162e1602c^ (OpRunRecord in op/runtime.ts): no gitSha and no runOrigin",
+        "line": {
+          "version": 1,
+          "id": "0b7d6a3e-5f1c-4c52-9a52-6f0d3f6f5a11",
+          "op": "release",
+          "env": "fly",
+          "started": "2026-09-09T23:50:00.000Z",
+          "ended": "2026-09-09T23:50:41.000Z",
+          "status": "gated",
+          "labels": { "Env": "fly" },
+          "outcomes": {},
+          "phases": [
+            { "name": "Check", "status": "ok", "durationMs": 20100, "steps": [{ "fn": "shell", "status": "ok", "durationMs": 20100 }] },
+            { "name": "Plan", "status": "ok", "durationMs": 900, "steps": [{ "fn": "releasePlan", "status": "ok", "durationMs": 900 }] },
+            { "name": "Gate", "status": "skipped", "steps": [{ "fn": "gate:ship", "status": "skipped", "durationMs": 0 }] }
+          ],
+          "gate": { "name": "ship", "since": "2026-09-09T23:50:40.000Z" }
+        }
+      },
+      {
+        "producer": "chud-studio's release Op, second run, after the approval",
+        "source": "as above; the Gate step carries approval { gate, resolvedBy, timestamp } (#2119)",
+        "line": {
+          "version": 1,
+          "id": "9c1e5b07-2d44-4f9a-8d0b-3a7f1c2b9e22",
+          "op": "release",
+          "env": "fly",
+          "started": "2026-09-10T00:00:00.000Z",
+          "ended": "2026-09-10T00:01:10.000Z",
+          "status": "ok",
+          "labels": { "Env": "fly" },
+          "outcomes": {},
+          "phases": [
+            { "name": "Check", "status": "ok", "durationMs": 20300, "steps": [{ "fn": "shell", "status": "ok", "durationMs": 20300 }] },
+            { "name": "Gate", "status": "ok", "durationMs": 5, "steps": [{ "fn": "gate:ship", "status": "ok", "durationMs": 5, "approval": { "gate": "ship", "resolvedBy": "alex", "timestamp": "2026-09-09T23:55:00.000Z" } }] },
+            { "name": "Ship", "status": "ok", "durationMs": 40100, "steps": [{ "fn": "flyRelease", "status": "ok", "durationMs": 40100 }] }
+          ]
+        }
+      }
+    ],
+    "_gates/api.jsonl": [
+      {
+        "producer": "chant run --components, a component gate (the pending fact)",
+        "source": "packages/core/src/lifecycle/gate-ledger.ts PendingGateRecord at 162e1602c^: environment and planDigest since #2574; no gitSha, runId, releaseDigest",
+        "line": {
+          "version": 1,
+          "kind": "pending",
+          "op": "api",
+          "gate": "deploy",
+          "environment": "prod",
+          "planDigest": "sha256:0c3c94bc645b25af58a4ed063bbd3c428cc9eeb119ed7c86f197c63c3c6b5000",
+          "timestamp": "2026-09-09T11:00:00.000Z",
+          "expiresAt": "2026-09-16T11:00:00.000Z"
+        }
+      },
+      {
+        "producer": "chant approve api deploy --env prod",
+        "source": "GateResolutionRecord at 162e1602c^, a line with no kind (the shape before #2119 stayed valid) and origin cli (#2384); no gitSha, runId, releaseDigest, empty",
+        "line": {
+          "version": 1,
+          "op": "api",
+          "gate": "deploy",
+          "resolvedBy": "bob",
+          "timestamp": "2026-09-09T11:30:00.000Z",
+          "planDigest": "sha256:0c3c94bc645b25af58a4ed063bbd3c428cc9eeb119ed7c86f197c63c3c6b5000",
+          "environment": "prod",
+          "origin": "cli"
+        }
+      }
+    ],
+    "_gates/release.jsonl": [
+      {
+        "producer": "chud-studio's release Op gate ship (the pending fact)",
+        "source": "a gate step of an authored Op (op/gate.ts at 162e1602c^): no environment, the plan digest from the releasePlan activity; the quorum block studio adds is left out",
+        "line": {
+          "version": 1,
+          "kind": "pending",
+          "op": "release",
+          "gate": "ship",
+          "description": "Ship app to fly",
+          "planDigest": "sha256:65a540cde9fceddfc88c9a21750b256c99096ebe6ae31f4a8ff26e89712f67cf",
+          "timestamp": "2026-09-09T23:50:40.000Z",
+          "expiresAt": "2026-09-16T23:50:40.000Z"
+        }
+      },
+      {
+        "producer": "chant approve release ship --plan <digest>",
+        "source": "GateResolutionRecord at 162e1602c^ with kind resolution (#2119) and the plan (#2300)",
+        "line": {
+          "version": 1,
+          "kind": "resolution",
+          "op": "release",
+          "gate": "ship",
+          "resolvedBy": "alex",
+          "timestamp": "2026-09-09T23:55:00.000Z",
+          "planDigest": "sha256:65a540cde9fceddfc88c9a21750b256c99096ebe6ae31f4a8ff26e89712f67cf",
+          "origin": "cli"
+        }
+      }
+    ],
+    "_gates/web.jsonl": [
+      {
+        "producer": "chant components pr-apply (the pending fact for a pull request's change set)",
+        "source": "pr-apply bound the change-set document's digest in planDigest from #4022 (984534ea9); the document is change-set-984534ea9.json beside this file: composeChangeSet and lifecyclePlanPart as they stood at 984534ea9, before #4045 added releaseDigest and environment, then mapChangeSetToGraph with no graph read, which is what storeGateChangeSet stores when the graph can't be read (every node null, graph null)",
+        "line": {
+          "version": 1,
+          "kind": "pending",
+          "op": "web",
+          "gate": "pr-apply",
+          "environment": "staging",
+          "planDigest": "jcs1-sha256:38ee3f4bfab616f181ff10ea6b2c75284e3b93a0f976907fc84954e6c0356f07",
+          "timestamp": "2026-09-09T09:00:00.000Z",
+          "expiresAt": "2026-09-16T09:00:00.000Z"
+        }
+      }
+    ],
+    "_gates/nightly.jsonl": [
+      {
+        "producer": "an Op gate that binds no plan (before #2300)",
+        "source": "PendingGateRecord with no planDigest and no environment, and a resolution with neither, the shape every gate had before #2300",
+        "line": {
+          "version": 1,
+          "kind": "pending",
+          "op": "nightly",
+          "gate": "confirm",
+          "timestamp": "2026-09-08T00:00:00.000Z",
+          "expiresAt": "2026-09-15T00:00:00.000Z"
+        }
+      },
+      {
+        "producer": "chant approve nightly confirm",
+        "source": "as above, written before #2119 so it has no kind",
+        "line": {
+          "version": 1,
+          "op": "nightly",
+          "gate": "confirm",
+          "resolvedBy": "dave",
+          "timestamp": "2026-09-08T01:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "plans": {
+    "producer": "chud-studio's release Op, the releasePlan activity, persisted by releaseRecord (persistReleasePlan, plan-ledger.ts, ws-055)",
+    "source": "template/delivery/ops/release.op.ts at studio 6e0e5d8: component, env, gitSha and content { artifact, shipSkip }; the plan carries its own digest",
+    "digest": "sha256:65a540cde9fceddfc88c9a21750b256c99096ebe6ae31f4a8ff26e89712f67cf",
+    "plan": {
+      "digest": "sha256:65a540cde9fceddfc88c9a21750b256c99096ebe6ae31f4a8ff26e89712f67cf",
+      "component": "app",
+      "env": "fly",
+      "gitSha": "2f22765d04931a078909145ca628d2264c852d7d",
+      "artifact": { "kind": "source-tree", "digest": "sha256:6ce407d632d7e805de020f9d0a5d70fea814b67285ced915be1271255b4fb622", "dir": "app" },
+      "shipSkip": { "answer": "ship", "decider": "model" }
+    }
+  }
+}

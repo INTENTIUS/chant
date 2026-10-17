@@ -856,6 +856,24 @@ These fields are optional in their documents. Each schema description names the 
 
 The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and `statement` when a runner key signed it ([#4044](https://github.com/INTENTIUS/chant/issues/4044)), and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.
 
+## Reading older records
+
+A ledger line is never rewritten, so a line an older chant wrote keeps its shape for good, and it sits beside lines of the newer shape in the same file ([#4034](https://github.com/INTENTIUS/chant/issues/4034)). Every reader in chant reads it unchanged and skips no line for it. A field the line lacks reads as absent: a `status` item gives `null` where its schema says so, and a ledger line gives no key. chant fills a missing field from no other record, and no command writes a new line to supply one. A reader of your own does the same.
+
+| Record | Written before | Missing field | How it reads |
+|---|---|---|---|
+| a deploy record in `<env>/releases.jsonl`, from `components release`, `run --components`, `components promote`, `rollback`, `redeploy`, SQL Yodeler or chud-studio | 0.124.28 | `admission` | `status` gives `admission: null`. `approver` is whatever the record had, and `null` when it had none |
+| the same | 0.124.29 | `releaseDigest` | `status` gives `releaseDigest: null` and `releaseLabel: null`. The deploy joins to no release, and `chant release list` shows no environment running a release for it |
+| a pending fact or a resolution in `_gates/<op>.jsonl` | 0.124.28 | `gitSha`, `runId`, `releaseDigest`, `empty` | a `status` gate has no `gitSha`, `runId` or `releaseDigest` key. A resolution with no `releaseDigest` counts for a gate that binds none, as before, and counts for no release gate |
+| a resolution | the chant that added the field | `kind` ([#2119](https://github.com/INTENTIUS/chant/issues/2119)), `seal` ([#3163](https://github.com/INTENTIUS/chant/issues/3163)), `carriedFrom` ([#3949](https://github.com/INTENTIUS/chant/issues/3949)) | a line with no `kind` is a resolution, one with no `seal` is unsigned, and one with no `carriedFrom` was recorded by its approver |
+| a run record in `<env>/runs__<op>.jsonl` | 0.124.28 | `gitSha`, `runOrigin` | a steward's `lastRun` has neither key |
+| a change-set document in `_change-sets/<digest>.json` | 0.124.28 | `releaseDigest`, `environment` | `change-set show` prints it without them, and its `digest` still verifies, since a document without them hashes as it always did |
+| a release plan in `_plans/<digest>.json` | none | none | read by the digest a deploy record names, as before |
+
+Three consequences follow for a reader that shows releases. A deploy record with no `releaseDigest` was not made from a release, or was made before chant could say so; the two can't be told apart from the record. A commit that a release was cut from does not link an older deploy of that commit to the release, because a plain run compiles its templates when it deploys and may have rendered something else. `joinRelease` returns `releases: []` with a reason for such a deploy, and for a gate that binds no release. An approval recorded under a component's own gate ledger before 0.124.28 does not carry over to the `release` gate: that gate counts only a resolution that names its release, its environment and its change-set digest.
+
+Releases in the sense of [#4026](https://github.com/INTENTIUS/chant/issues/4026) are new, so none exists to migrate. A cut line with no `signature` key reads as `signature: null`, an unsigned cut. A release cut for a project with no components has templates whose `component` is `null` ([#4046](https://github.com/INTENTIUS/chant/issues/4046)), and a reader takes `component` as a string or `null` in every release.
+
 ## Joining the documents
 
 A reader such as behold or hud builds one view from several commands. The join keys are the same in every document.
