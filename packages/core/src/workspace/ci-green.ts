@@ -895,6 +895,18 @@ const asRun = (r: unknown): CiListRun | null => {
   return { name: o.name, id: typeof o.id === "number" ? o.id : null, conclusion: typeof o.conclusion === "string" ? o.conclusion : null, url: typeof o.url === "string" ? o.url : null, ...opRun };
 };
 
+/** The revoked tag on a commit as `ci list` shows it, which the release reads of #4033 (ws-105) reuse. */
+export type RevokedTagView = NonNullable<CiListCommit["revoked"]>;
+
+/**
+ * A counted revoked tag as `ci list` shows it: its name and time, the phase
+ * and run its annotation names, and its signer. A tag made from chant runs
+ * (#4044) names its run with `id: null` and the Op run in `opRun`.
+ */
+export function revokedTagView(sha: string, r: CountedCiTag): RevokedTagView {
+  return { tag: `${CI_REVOKED_TAG_PREFIX}${sha}`, tagged: r.tagged, phase: typeof r.record?.phase === "string" ? r.record.phase : null, run: asRun(r.record?.run), signer: r.signer };
+}
+
 /** A judged run as `ci list` shows it. */
 const listRun = (r: RunVerdict): CiListRun => ({ name: r.name, id: r.opRun ? null : r.id, conclusion: r.conclusion, url: r.url, ...(r.opRun ? { opRun: { id: r.opRun.id, env: r.opRun.env, signer: r.opRun.signer } } : {}) });
 
@@ -966,9 +978,8 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
       let phases = green.require.map((name) => recordedPhase(g, name));
       let revoked: CiListCommit["revoked"] = null;
       if (r) {
-        const phase = typeof r.record?.phase === "string" ? r.record.phase : null;
-        const run = asRun(r.record?.run);
-        revoked = { tag: `${CI_REVOKED_TAG_PREFIX}${c.sha}`, tagged: r.tagged, phase, run, signer: r.signer };
+        revoked = revokedTagView(c.sha, r);
+        const { phase, run } = revoked;
         phases = phases.map((p) => (p.phase === phase ? { phase: p.phase, result: "fail", runs: run ? [run] : [] } : p));
       } else if (!g && (runs || req.forge)) {
         const verdict = evaluateCommit(green, runs ? runs.checkRuns(c.sha) : await req.forge!.checkRuns(c.sha));

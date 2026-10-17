@@ -39,6 +39,7 @@ import type { CommandContext } from "../cli/registry";
 import { GATES_DIR } from "../lifecycle/gate-ledger";
 import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
+import { describeRevocation, revokedCommitsAt, revokedReleaseLookup, type ReleaseRevocation, type RevokedRelease } from "../lifecycle/release-revocation";
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { readCheckoutHead, worktreeChanges, type CheckoutHead } from "./records-checkout";
@@ -141,6 +142,19 @@ export interface StatusRelease {
    * hasn't fetched yet.
    */
   plan: ReleasePlan | null;
+  /**
+   * Set when the deploy names a release (`releaseDigest` on its record) that
+   * was cut from a revoked commit (#4033, ws-105): the revoked tag on that
+   * commit, the release and its label, and the line that rolls the component
+   * back. Absent otherwise, and from chant older than 0.124.28.
+   */
+  revoked?: StatusRevokedRelease;
+}
+
+/** A release an environment runs that was cut from a revoked commit (#4033). */
+export interface StatusRevokedRelease extends RevokedRelease {
+  /** The command that rolls the component back to its release before this one, run in the member's directory. */
+  rollback: string;
 }
 
 export interface StatusLedger {
@@ -452,7 +466,15 @@ async function shipView(member: Member, cwd: string, read: LedgerReader): Promis
 
 const defaultReader: LedgerReader = (path, cwd) => readReleaseLedger(path.slice(0, -"/releases.jsonl".length), { cwd });
 
-async function readEnvironment(member: Member, env: string, cwd: string, read: LedgerReader): Promise<StatusEnvironment> {
+/** A release digest's revocation, for one member, or null (#4033). */
+type RevokedOf = (releaseDigest: string) => Promise<RevokedRelease | null>;
+
+/** The rollback line for a component an environment runs from a revoked release (#4033; #4035 extends rollback). */
+export function rollbackLine(env: string, component: string): string {
+  return `chant components rollback ${env} --component ${component}`;
+}
+
+async function readEnvironment(member: Member, env: string, cwd: string, read: LedgerReader, revokedOf: RevokedOf = async () => null): Promise<StatusEnvironment> {
   const ledger = await ledgerFor(member, env, cwd);
   let records: ReleaseRecord[];
   let malformed: number;
@@ -499,6 +521,7 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
       releaseLabel: (r.releaseDigest !== undefined ? labels.get(r.releaseDigest) : undefined) ?? null,
       flags: [...(r.flags ?? [])],
       plan: await readReleasePlan(r.digest, { cwd, prefix: planPrefix }),
+      ...(await revokedItem(r, env, revokedOf)),
     })),
   );
   return {
@@ -510,6 +533,31 @@ async function readEnvironment(member: Member, env: string, cwd: string, read: L
         ? { code: "ledger-malformed", message: `${ledger.path}: ${malformed} line${malformed === 1 ? " is" : "s are"} not a release record and ${malformed === 1 ? "was" : "were"} skipped` }
         : null,
   };
+}
+
+/** `{ revoked }` when the record names a release cut from a revoked commit (#4033), else nothing. */
+async function revokedItem(r: ReleaseRecord, env: string, revokedOf: RevokedOf): Promise<{ revoked?: StatusRevokedRelease }> {
+  if (r.releaseDigest === undefined) return {};
+  const revoked = await revokedOf(r.releaseDigest);
+  return revoked ? { revoked: { ...revoked, rollback: rollbackLine(env, r.component) } } : {};
+}
+
+/**
+ * A release gate whose release was cut from a revoked commit is superseded
+ * (#4033): `chant approve` refuses it and the promote refuses the release, so
+ * neither an approval nor a pending fact will pass it. An expired gate stays
+ * expired. The gate carries the revocation.
+ */
+async function supersedeRevokedGates(gates: StatusGate[], revokedOf: RevokedOf): Promise<StatusGate[]> {
+  return Promise.all(
+    gates.map(async (g) => {
+      if (g.releaseDigest === undefined) return g;
+      const revoked = await revokedOf(g.releaseDigest);
+      if (!revoked) return g;
+      const { releaseDigest: _d, label: _l, ...revocation } = revoked;
+      return { ...g, state: g.state === "expired" ? g.state : "superseded", revoked: revocation };
+    }),
+  );
 }
 
 /** The digest two environments are compared on: the input side when there is one. */
@@ -561,10 +609,15 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const ruleSource = scopeSource(found.dir);
     const rules = (gate: string) => gateAdmissionFrom(ruleSource, gate);
     const releaseRule = releaseRuleFrom(ruleSource).rule;
+    // #4033 (ws-105): revoked commits, read from local tags once and only when a release is met.
+    // Tags that can't be judged read as none revoked; workspace check reports the declaration.
+    let revokedCommits: Promise<ReadonlyMap<string, ReleaseRevocation>> | undefined;
+    const revoked = () => (revokedCommits ??= revokedCommitsAt(top, ruleSource.declaration?.ci?.green ?? null).catch(() => new Map()));
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
+      const revokedOf = revokedReleaseLookup(resolve(found.dir, m.dir), revoked);
       const environments: StatusEnvironment[] = [];
-      for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read));
+      for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read, revokedOf));
       const own = await hasMemberLedger(m, found.dir);
       const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules);
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
@@ -581,7 +634,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         compare: query.compareTo === undefined ? null : compareEnvironments(environments[0], environments[environments.length - 1]),
         readable: environments.every((e) => e.reason === null),
         gateLedger: gates.ledger,
-        gates: gates.gates,
+        gates: await supersedeRevokedGates(gates.gates, revokedOf),
         box:
           m.box === null
             ? null
@@ -781,6 +834,12 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
       for (const e of m.environments) {
         if (e.reason) memberNotes.push(`  ${e.reason.code}: ${e.reason.message}`);
         else if (e.ledger.shared && e.releases.length > 0) memberNotes.push(`  ${e.env} is read from the shared flat ledger ${e.ledger.path}`);
+        // #4033: a component running a release cut from a revoked commit, and the way back.
+        for (const r of e.releases) {
+          if (!r.revoked) continue;
+          const name = r.revoked.label ?? r.revoked.releaseDigest;
+          memberNotes.push(`  ${e.env}: ${r.component} runs release ${name}, revoked by ${r.revoked.tag} (${describeRevocation(r.revoked)}); roll back: ${r.revoked.rollback}`);
+        }
       }
       if (memberNotes.length > 0) notes.set(rows.length - 1, memberNotes);
     }

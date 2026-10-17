@@ -119,8 +119,13 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
     // #4031: the newest cut's signature, as the policy at base judges it.
     const newest = r.cuts.at(-1);
     const signature = newest ? (newest.signatureCheck.status === "verified" ? `signed by ${newest.actor}` : newest.signatureCheck.status) : "-";
-    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}`);
+    // #4033: a release cut from a revoked commit says so at the end of its line, and why on stderr.
+    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${r.revoked ? "  revoked" : ""}`);
     if (newest?.signatureCheck.status === "unverified") console.error(`  ${r.label ?? r.releaseDigest}: ${newest.signatureCheck.reason}`);
+    if (r.revoked) {
+      const { describeRevocation } = await import("../../lifecycle/release-revocation");
+      console.error(`  ${r.label ?? r.releaseDigest}: revoked by ${r.revoked.tag}, ${describeRevocation(r.revoked)}`);
+    }
   }
   return 0;
 }

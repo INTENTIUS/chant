@@ -8,6 +8,12 @@
  * `releaseDigest`. A promote under a release writes that field; deploys made
  * any other way do not name a release yet (#4043), so they list nowhere.
  *
+ * Each release carries `revoked` (#4033, ws-105): the `ci/revoked/<sha>` tag
+ * on its commit, judged as `release cut` judges it, or null. It is read from
+ * local tags at read time; nothing records it. When the tags can't be judged
+ * (a `ci.green.signedSince` naming no commit here) every release reads null,
+ * and `chant workspace check` reports the declaration.
+ *
  * Each cut carries `signatureCheck` (#4031): whether its signature verifies
  * for its actor against the signers at base, and, when the declaration names
  * a `release` gate with a class, whether the actor is in it.
@@ -24,6 +30,7 @@ import { readAllReleases, readCuts, type Release, type ReleaseCut } from "../lif
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { readerVersion } from "./declaration";
 import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
+import { readRevokedCommits, revocationOf, type ReleaseRevocation } from "../lifecycle/release-revocation";
 
 export const RELEASES_CONTRACT_VERSION = 1;
 export const RELEASES_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json";
@@ -41,6 +48,8 @@ export interface ReleaseEntry extends Omit<Release, "version"> {
   cuts: Array<Omit<ReleaseCut, "version" | "releaseDigest"> & { signatureCheck: ReleaseSignatureCheck }>;
   /** The environments that run it, and in each the components whose latest deploy names it. Sorted by env. */
   environments: Array<{ env: string; components: string[] }>;
+  /** The revoked tag on its commit (#4033), or null when the commit is not revoked. */
+  revoked: ReleaseRevocation | null;
 }
 
 export type ReleasesDocument =
@@ -93,6 +102,7 @@ export async function releasesDocument(req: { cwd: string }): Promise<ReleasesDo
     }
 
     const rule = await releaseRule(req.cwd);
+    const revoked = await readRevokedCommits(req.cwd).catch(() => new Map<string, ReleaseRevocation>());
     const entries: ReleaseEntry[] = releases.map(({ version: _v, ...release }) => {
       const own = cuts.filter((c) => c.releaseDigest === release.releaseDigest);
       return {
@@ -102,6 +112,7 @@ export async function releasesDocument(req: { cwd: string }): Promise<ReleasesDo
         environments: [...(running.get(release.releaseDigest) ?? new Map<string, string[]>())]
           .map(([env, components]) => ({ env, components }))
           .sort((a, b) => (a.env < b.env ? -1 : 1)),
+        revoked: revocationOf(release, revoked),
       };
     });
     const latest = (e: ReleaseEntry): string => e.cuts.map((c) => c.timestamp).sort().at(-1) ?? "";

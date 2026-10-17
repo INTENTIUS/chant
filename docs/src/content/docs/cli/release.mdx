@@ -19,7 +19,7 @@ This is a separate object from a deploy record. A deploy record is a line of `<e
 
 ## release cut
 
-Cuts a release of the member in the current directory from the checkout's `HEAD`.
+Cuts a release of the member in the current directory from the checkout's `HEAD`. A release is only ever cut by this command; [`chant ci tick`](/chant/cli/ci/#ci-tick) never cuts one ([ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md), proposed). See [Cutting on green](#cutting-on-green) for a pipeline that cuts every green commit.
 
 ```bash
 git fetch origin --tags
@@ -127,6 +127,29 @@ The signature is `ssh-keygen -Y sign` in the `chant-release` namespace over four
 | `--sign [<key file>]` | Sign the cut with an ssh key, or with git's `user.signingkey` when no file is given. See [Who may cut](#who-may-cut). |
 | `--json` | Print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release. |
 
+### Cutting on green
+
+A project that wants a release for every green commit runs the cut in its own pipeline, after the tick. Cutting a digest that is already cut does nothing, so the step can run on every tick:
+
+```bash
+git fetch origin --tags
+git checkout "$(chant ci last-green)"
+chant release cut --build "npm run build"
+```
+
+The step needs only git, the tags and the member's build, so it runs on any runner, including one whose tick reads [chant runs](/chant/cli/ci/#chant-runs-as-the-status-source). Under a `release` gate in `identity.gates` the cut must be signed by a signer in the gate's class. The job then needs that signer's key, so the declaration decides whether CI may cut.
+
+### Revoked releases
+
+A release is revoked when the commit it was cut from gets a `ci/revoked/<sha>` tag that counts, after the cut ([#4033](https://github.com/INTENTIUS/chant/issues/4033)). Nothing is written when that happens: every reader joins the release's `commit` to the local tags, judged as the cut judges them, so with [signed tags](/chant/cli/ci/#signed-tags) a revoked tag without a valid statement revokes nothing. Fetch the tags before reading.
+
+| Command | With a revoked release |
+|---|---|
+| `release list` | Marks it, see [release list](#release-list). |
+| [`chant components promote --release`](/chant/cli/components/#promoting-a-release) | Refuses it with `release-revoked` before anything runs. |
+| [`chant approve`](/chant/cli/operator/#approve-op-gate) on its release gate | Refuses with `release-revoked`, so a gate pending for it never passes. `chant approve release <gate> --expire` clears the pending fact. |
+| [`chant workspace status`](/chant/cli/workspace-status/#revoked-releases) | Flags each component of an environment that runs it, with the `chant components rollback` line, and reads its pending gate as `superseded`. |
+
 ## release export
 
 Writes the files a cut recorded for one environment, each at the path it was compiled to, under `-o <dir>` (the member's directory by default). Each file's bytes are read from `chant/lifecycle`, after a best-effort fetch, and checked against the target's digest first. A missing or changed file stops the export before anything is written.
@@ -140,9 +163,9 @@ This is how a project with no components deploys what it cut. [`chant components
 
 ## release list
 
-Lists every release of the member, newest cut first. Each line starts with the label and the digest. The commit comes next, then the newest cut's signature (`signed by <actor>`, `unsigned` or `unverified`), then where the release runs. An `unverified` signature's reason goes to stderr.
+Lists every release of the member, newest cut first. Each line starts with the label and the digest. The commit comes next, then the newest cut's signature (`signed by <actor>`, `unsigned` or `unverified`), then where the release runs. An `unverified` signature's reason goes to stderr. A [revoked](#revoked-releases) release's line ends with `revoked`. Why it was revoked goes to stderr.
 
-`--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. Each cut carries `signatureCheck`, `{ status, key, reason }`. Its `status` is `verified`, `unsigned` or `unverified`, and `key` is the fingerprint in the signature. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. Each entry has `revoked`, which is `null` unless the release's commit is revoked. When it is, `revoked` holds the commit and the revoked tag as [`chant ci list`](/chant/cli/ci/#ci-list) shows it. It is also `null` when the tags can't be judged. Each cut carries `signatureCheck`, `{ status, key, reason }`. Its `status` is `verified`, `unsigned` or `unverified`, and `key` is the fingerprint in the signature. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.
 
 ## Joining a release to its commit, gates and deploys
 

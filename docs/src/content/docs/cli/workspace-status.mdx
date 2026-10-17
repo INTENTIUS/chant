@@ -37,6 +37,8 @@ Each compared component gets one of four states.
 | `only-env` | Only the first environment has a release of the component. |
 | `only-compare` | Only the environment given to `--compare-to` has one. |
 
+A component that runs a revoked release gets a line under its member ([#4033](https://github.com/INTENTIUS/chant/issues/4033), [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). See [Revoked releases](#revoked-releases).
+
 A release whose ledger records an input digest, such as a pinned Helm deploy, is compared on that digest. Two clusters may render the same input to different bytes, and the input digest is what says they run the same release. The table still shows the digest each cluster received.
 
 ### Where the ledgers are read from
@@ -58,13 +60,25 @@ A gate is listed for each environment the command shows, once a run has reached 
 | `approved` | The approvals that count pass the gate: its quorum, or a policy permit in `enforce` mode. |
 | `pending` | The gate is waiting for approvals. `approvals` lists those it has so far, and `needed` how many it needs. |
 | `expired` | Not approved, and the pending fact is past `expiresAt`. The next run records a fresh one. |
-| `superseded` | Not approved, and an approval recorded since the gate was reached names a different plan, so it doesn't count. |
+| `superseded` | Not approved, and an approval recorded since the gate was reached names a different plan, so it doesn't count. Also a release gate that has not expired and whose release was cut from a revoked commit, which then carries `revoked`; see [Revoked releases](#revoked-releases). |
 
 Each approval names its `principal` (the approver), the `channel` it was recorded on, and `relayedBy`: who carried it to chant for the approver (`chant approve --relayed-by`, [#3402](https://github.com/INTENTIUS/chant/issues/3402)), or `null` when the approver recorded it themselves.
 
 Each gate carries `approve`, the exact command that approves it, to run in the member's directory: `chant approve <component> <gate> --env <env>`, without `--env` for a gate that records no environment.
 
 A gate also carries `gitSha`, the commit its run reached it at, and `runId`, the run that reached it ([#4020](https://github.com/INTENTIUS/chant/issues/4020)). The run id is the Op's run id, or the CI run id for a component gate that ran in CI. Both come from the pending fact, and both are left out when the fact was written by a chant older than 0.124.28 or the run knew none. When a change set is stored on `chant/lifecycle` under a gate's `planDigest`, as a pull-request gate's or a release gate's is, the gate also carries that digest in `changeSet` ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). A [release gate](/chant/cli/components/#the-release-gate) is listed under the op `release` and also carries `releaseDigest` ([#4045](https://github.com/INTENTIUS/chant/issues/4045)). Only an approval recorded for that release counts toward it. [`chant change-set show`](/chant/cli/change-set/#change-set-show) prints the change set with each entry on its graph node. A release in the same output has the same `gitSha` and, for a gated deploy, an `approver` and an `admission` naming the gate (`op`, `gate`) and when it was resolved (`resolvedAt`). Both are `null` for a release with no gate.
+
+### Revoked releases
+
+A release is revoked when the commit it was cut from has a `ci/revoked/<sha>` tag that counts ([#4033](https://github.com/INTENTIUS/chant/issues/4033), [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). Nothing records it. The command reads the local tags once, judges them as [`chant release cut`](/chant/cli/release/#release-cut) does, and joins them to the releases the deploy records and gates name. With [signed tags](/chant/cli/ci/#signed-tags), a revoked tag without a valid statement is ignored and revokes nothing. Fetch the tags first with `git fetch origin --tags`.
+
+A component whose latest deploy record names a revoked release in `releaseDigest` carries `revoked` in its release item. It holds the revoked tag as [`chant ci list`](/chant/cli/ci/#ci-list) shows it (`tag`, `tagged`, `phase`, `run` and `signer`), the `commit`, the `releaseDigest` and `label` of the release, and `rollback`, the line that puts the component back on its release before this one:
+
+```
+  prod: api runs release v1.4.0, revoked by ci/revoked/9f3c... (phase e2e failed in smoke (run 4471)); roll back: chant components rollback prod --component api
+```
+
+A tag made from [chant runs](/chant/cli/ci/#chant-runs-as-the-status-source) names its run with `id: null` and the Op run in `run.opRun`. A release gate whose release is revoked reads `superseded` unless it has expired, and carries `revoked` too. [`chant approve`](/chant/cli/operator/#approve-op-gate) refuses it with `release-revoked`, and `chant components promote --release` refuses the release, so no approval of it passes. A deploy record that names no release is never flagged.
 
 ### Boxes
 

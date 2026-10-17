@@ -874,13 +874,14 @@
         "planDigest": { "type": ["string", "null"], "description": "The plan the run reached the gate with (#2300), or null for a gate that binds no plan. An approval counts only for this plan." },
         "state": {
           "enum": ["pending", "approved", "expired", "superseded"],
-          "description": "Read from the newest pending fact for the gate in env, as a run reads it. approved: the approvals recorded since it, for its plan, pass the gate (its quorum, or a policy permit in enforce mode). expired: not approved, and the pending fact is past expiresAt, so the next run records a fresh one. superseded: not approved, and an approval recorded since it names a different plan, so it doesn't count. pending: none of these."
+          "description": "Read from the newest pending fact for the gate in env, as a run reads it. approved: the approvals recorded since it, for its plan, pass the gate (its quorum, or a policy permit in enforce mode). expired: not approved, and the pending fact is past expiresAt, so the next run records a fresh one. superseded: not approved, and an approval recorded since it names a different plan, so it doesn't count; or, on a release gate that is not expired, its release was cut from a revoked commit (#4033, ws-105), so chant approve refuses it with release-revoked and revoked is set. pending: none of these."
         },
         "recordedAt": { "type": "string", "description": "When the run recorded the pending fact." },
         "gitSha": { "type": "string", "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The commit the run reached the gate at, from the pending fact. Absent on a fact recorded by an older chant, and when the run knew no commit. It joins the gate to a release's gitSha and to a run's." },
         "runId": { "type": "string", "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The run that reached the gate: an Op run id, or the CI run id for a component gate that ran in CI. Absent when the run had none." },
         "changeSet": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "Added in contract 1 by #4022, written by chant 0.124.28 and newer. The change set the gate binds: planDigest, when a change-set document is stored under it in the member's _change-sets/ on chant/lifecycle, as a pull-request gate's apply and a release gate (#4045) store it. chant change-set show <changeSet> --json prints it, each entry with its graph node. Absent when none is stored, as for a component gate, which binds a lifecycle-plan digest." },
         "releaseDigest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer. The release the gate binds, from the pending fact: set on a release gate, the gate chant components promote --release passes for an environment, whose component is the op release. An approval counts toward it only when it was recorded for this release, environment and planDigest. Absent on every other gate." },
+        "revoked": { "$ref": "#/$defs/revocation", "description": "Added in contract 1 by #4033 (ws-105), written by chant 0.124.28 and newer. Set on a release gate whose release was cut from a commit with a ci/revoked/<sha> tag, judged as release cut judges it: the tag. The gate's state is then superseded, or expired when its pending fact has expired. Absent otherwise." },
         "expiresAt": { "type": "string" },
         "approvals": {
           "description": "The approvals that count toward the gate for its plan, oldest first.",
@@ -993,7 +994,56 @@
         "plan": {
           "type": ["object", "null"],
           "description": "The release plan digest names, read from _plans/<digest>.json on chant/lifecycle (ws-055, #2733): the work items and evidence this release shipped. Null when this checkout has no plan stored under that digest — most releases carry no plan, and a plan not yet fetched also reads null."
+        },
+        "revoked": {
+          "description": "Added in contract 1 by #4033 (ws-105), written by chant 0.124.28 and newer. Set when the deploy record names a release in releaseDigest and that release was cut from a commit with a ci/revoked/<sha> tag: the environment runs a revoked release. Read from local tags at read time and judged as release cut judges them, so with ci.green.signedSince an unsigned revoked tag is ignored. Absent when the release is not revoked, when the record names no release, and when the ci tags can't be judged.",
+          "allOf": [
+            { "$ref": "#/$defs/revocation" },
+            {
+              "type": "object",
+              "required": ["releaseDigest", "label", "rollback"],
+              "properties": {
+                "releaseDigest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "The revoked release the environment runs." },
+                "label": { "type": ["string", "null"], "description": "The release's label, or null when its cuts gave it none." },
+                "rollback": { "type": "string", "description": "The line that rolls the component back to the release before this one, run in the member's directory: chant components rollback <env> --component <component>." }
+              }
+            }
+          ]
         }
+      }
+    },
+    "revocation": {
+      "type": "object",
+      "description": "The ci/revoked/<sha> tag on a release's commit (#4033, ws-105), as chant ci list --json shows a commit's revoked tag, with the commit.",
+      "required": ["commit", "tag", "tagged", "phase", "run", "signer"],
+      "properties": {
+        "commit": { "type": "string", "description": "The release's commit, which the tag names." },
+        "tag": { "type": "string", "description": "ci/revoked/<sha>." },
+        "tagged": { "type": ["string", "null"], "description": "When the tag was made, ISO 8601, or null for a lightweight tag." },
+        "phase": { "type": ["string", "null"], "description": "The phase the annotation names as failed, or null when the annotation can't be read." },
+        "run": {
+          "description": "The run the annotation names as failed, or null.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["name", "id", "conclusion", "url"],
+              "properties": {
+                "name": { "type": "string" },
+                "id": { "type": ["integer", "null"], "description": "The check run's id, or null for a chant Op run." },
+                "conclusion": { "type": ["string", "null"] },
+                "url": { "type": ["string", "null"] },
+                "opRun": {
+                  "type": "object",
+                  "required": ["id", "env", "signer"],
+                  "properties": { "id": { "type": "string" }, "env": { "type": "string" }, "signer": { "type": "string" } },
+                  "description": "Present only when the run is a chant Op run (ci.green.source runs, #4044): its id, the env it is recorded under and the runner whose statement it carries. id is then null."
+                }
+              }
+            }
+          ]
+        },
+        "signer": { "type": ["string", "null"], "description": "The runner principal whose statement the tag carries, or null when it counts unsigned." }
       }
     },
     "compare": {

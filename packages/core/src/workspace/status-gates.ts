@@ -25,6 +25,7 @@ import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
 import { humanQuorumSince, tallyGateApprovals, type GateApprovalRule } from "../op/gate";
 import type { ReasonCode } from "./reason-codes";
+import type { ReleaseRevocation } from "../lifecycle/release-revocation";
 import { CHANGE_SETS_DIR, changeSetFile } from "../lifecycle/change-set-store";
 
 /** The stored change-set directory beside a gate ledger directory: `<prefix>_change-sets`. */
@@ -73,6 +74,13 @@ export interface StatusGate {
    */
   releaseDigest?: string;
   state: GateState;
+  /**
+   * Set on a release gate whose release was cut from a revoked commit
+   * (#4033, ws-105): the revoked tag on that commit. The gate is then
+   * `superseded` (or `expired`), and `chant approve` refuses it with
+   * `release-revoked`. Added by `workspace status`; absent otherwise.
+   */
+  revoked?: ReleaseRevocation;
   /** When the run recorded the pending fact the state is read against. */
   recordedAt: string;
   /** The commit the run reached the gate at (#4020), from the pending fact. Absent on a fact written before chant 0.124.28. */
